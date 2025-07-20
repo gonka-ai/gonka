@@ -25,11 +25,6 @@ type BankEscrowKeeper interface {
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 }
 
-// StakingKeeper defines the expected interface for the Staking module.
-type StakingKeeper interface {
-	// Methods imported from staking should be defined here
-}
-
 // ParamSubspace defines the expected Subspace interface for parameters.
 type ParamSubspace interface {
 	Get(context.Context, []byte, interface{})

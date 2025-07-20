@@ -30,7 +30,7 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 	}
 
 	// Get the current collateral (if any)
-	currentCollateral, found := k.GetCollateral(ctx, msg.Participant)
+	currentCollateral, found := k.GetCollateral(ctx, participantAddr)
 	if found {
 		// Add to existing collateral (denom check not needed since we enforce single denom)
 		currentCollateral = currentCollateral.Add(msg.Amount)
@@ -40,7 +40,7 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 	}
 
 	// Store the updated collateral
-	k.SetCollateral(ctx, msg.Participant, currentCollateral)
+	k.SetCollateral(ctx, participantAddr, currentCollateral)
 
 	// Emit deposit event
 	ctx.EventManager().EmitEvents(sdk.Events{

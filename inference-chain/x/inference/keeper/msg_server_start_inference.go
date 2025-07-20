@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -60,7 +61,7 @@ func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
 		ExpirationHeight: uint64(inference.StartBlockHeight + expirationBlocks),
 		InferenceId:      inference.InferenceId,
 	})
-	k.LogInfo("Inference Timeout Set:", types.Inferences, "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)
+	k.LogInfo("Inference Timeout Set:", types.Inferences, "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+expirationBlocks)
 }
 
 func (k msgServer) processInferencePayments(

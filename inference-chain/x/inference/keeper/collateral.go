@@ -35,8 +35,14 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 
 	k.LogInfo("Collateral grace period has ended. Adjusting weights by collateral.", types.Tokenomics, "current_epoch", latestEpoch.Index)
 
-	baseWeightRatio := collateralParams.BaseWeightRatio
-	collateralPerWeightUnit := collateralParams.CollateralPerWeightUnit
+	baseWeightRatio, err := collateralParams.BaseWeightRatio.ToLegacyDec()
+	if err != nil {
+		panic(fmt.Sprintf("invalid base_weight_ratio: %v", err))
+	}
+	collateralPerWeightUnit, err := collateralParams.CollateralPerWeightUnit.ToLegacyDec()
+	if err != nil {
+		panic(fmt.Sprintf("invalid collateral_per_weight_unit: %v", err))
+	}
 
 	if collateralPerWeightUnit.IsZero() {
 		k.LogWarn("CollateralPerWeightUnit is zero. Any non-zero collateral deposit will activate all eligible weight.", types.Tokenomics)
@@ -98,7 +104,10 @@ func (k Keeper) CheckAndSlashForInvalidStatus(ctx context.Context, originalStatu
 	if originalStatus != types.ParticipantStatus_INVALID && participant.Status == types.ParticipantStatus_INVALID {
 		sdkCtx := sdk.UnwrapSDKContext(ctx)
 		params := k.GetParams(sdkCtx)
-		slashFraction := params.CollateralParams.SlashFractionInvalid
+		slashFraction, err := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
+		if err != nil {
+			panic(fmt.Sprintf("invalid slash_fraction_invalid: %v", err))
+		}
 
 		participantAddress, err := sdk.AccAddressFromBech32(participant.Address)
 		if err != nil {
@@ -109,7 +118,7 @@ func (k Keeper) CheckAndSlashForInvalidStatus(ctx context.Context, originalStatu
 				"participant", participant.Address,
 				"slash_fraction", slashFraction.String(),
 			)
-			err := k.collateralKeeper.Slash(sdkCtx, participantAddress, slashFraction)
+			_, err := k.collateralKeeper.Slash(sdkCtx, participantAddress, slashFraction)
 			if err != nil {
 				k.LogError("Failed to slash participant", types.Tokenomics, "participant", participant.Address, "error", err)
 				// Non-fatal error, we log and continue. The participant is already marked INVALID.
@@ -120,23 +129,29 @@ func (k Keeper) CheckAndSlashForInvalidStatus(ctx context.Context, originalStatu
 
 // CheckAndSlashForDowntime checks a participant's performance for the completed epoch and
 // slashes their collateral if their missed request percentage exceeds the threshold.
-func (k Keeper) CheckAndSlashForDowntime(ctx context.Context, participant *types.Participant, performance *types.EpochPerformanceSummary) {
+func (k Keeper) CheckAndSlashForDowntime(ctx context.Context, participant *types.Participant) {
 	// Don't slash participants who had no work assigned.
-	totalRequests := performance.InferenceCount + performance.MissedRequests
+	totalRequests := participant.CurrentEpochStats.InferenceCount + participant.CurrentEpochStats.MissedRequests
 	if totalRequests == 0 {
 		return
 	}
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	params := k.GetParams(sdkCtx)
-	downtimeThreshold := params.CollateralParams.DowntimeMissedPercentageThreshold
+	downtimeThreshold, err := params.CollateralParams.DowntimeMissedPercentageThreshold.ToLegacyDec()
+	if err != nil {
+		panic(fmt.Sprintf("invalid downtime_missed_percentage_threshold: %v", err))
+	}
 
-	missedPercentage := math.LegacyNewDec(int64(performance.MissedRequests)).Quo(
+	missedPercentage := math.LegacyNewDec(int64(participant.CurrentEpochStats.MissedRequests)).Quo(
 		math.LegacyNewDec(int64(totalRequests)),
 	)
 
 	if missedPercentage.GT(downtimeThreshold) {
-		slashFraction := params.CollateralParams.SlashFractionDowntime
+		slashFraction, err := params.CollateralParams.SlashFractionDowntime.ToLegacyDec()
+		if err != nil {
+			panic(fmt.Sprintf("invalid slash_fraction_downtime: %v", err))
+		}
 		participantAddress, err := sdk.AccAddressFromBech32(participant.Address)
 		if err != nil {
 			k.LogError("Could not parse participant address for downtime slashing", types.Tokenomics, "address", participant.Address, "error", err)
@@ -150,9 +165,11 @@ func (k Keeper) CheckAndSlashForDowntime(ctx context.Context, participant *types
 			"slash_fraction", slashFraction.String(),
 		)
 
-		err = k.collateralKeeper.Slash(sdkCtx, participantAddress, slashFraction)
+		_, err = k.collateralKeeper.Slash(sdkCtx, participantAddress, slashFraction)
 		if err != nil {
 			k.LogError("Failed to slash participant for downtime", types.Tokenomics, "participant", participant.Address, "error", err)
 		}
+	} else {
+		k.LogInfo("Participant did not exceed downtime threshold", types.Tokenomics, "participant", participant.Address, "missed_percentage", missedPercentage.String(), "downtime_threshold", downtimeThreshold.String())
 	}
 }

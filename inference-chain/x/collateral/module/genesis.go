@@ -11,17 +11,29 @@ import (
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
 	// Set all the collateral balances
 	for _, elem := range genState.CollateralBalanceList {
-		k.SetCollateral(ctx, elem.Participant, elem.Amount)
+		participant, err := sdk.AccAddressFromBech32(elem.Participant)
+		if err != nil {
+			panic(err)
+		}
+		k.SetCollateral(ctx, participant, elem.Amount)
 	}
 
 	// Set all the unbonding collateral entries
 	for _, elem := range genState.UnbondingCollateralList {
-		k.SetUnbondingCollateral(ctx, elem)
+		participant, err := sdk.AccAddressFromBech32(elem.Participant)
+		if err != nil {
+			panic(err)
+		}
+		k.AddUnbondingCollateral(ctx, participant, elem.CompletionEpoch, elem.Amount)
 	}
 
 	// Set all the jailedParticipant
 	for _, elem := range genState.JailedParticipantList {
-		k.SetJailed(ctx, elem.Address)
+		jailedAddr, err := sdk.AccAddressFromBech32(elem.Address)
+		if err != nil {
+			panic(err)
+		}
+		k.SetJailed(ctx, jailedAddr)
 	}
 
 	// this line is used by starport scaffolding # genesis/module/init
@@ -36,7 +48,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.Params = k.GetParams(ctx)
 
 	// Export all collateral balances
-	collateralMap := k.GetAllCollateral(ctx)
+	collateralMap := k.GetAllCollaterals(ctx)
 	collateralBalances := make([]types.CollateralBalance, 0, len(collateralMap))
 
 	for participant, amount := range collateralMap {
@@ -49,7 +61,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.CollateralBalanceList = collateralBalances
 
 	// Export all unbonding collateral entries
-	unbondingCollaterals := k.GetAllUnbonding(ctx)
+	unbondingCollaterals := k.GetAllUnbondings(ctx)
 	genesis.UnbondingCollateralList = unbondingCollaterals
 
 	jailedParticipants := k.GetAllJailed(ctx)

@@ -24,7 +24,7 @@ service Query {
   }
 
   // Queries all active collateral.
-  rpc AllCollateral(QueryAllCollateralRequest) returns (QueryAllCollateralResponse) {
+  rpc AllCollaterals(QueryAllCollateralsRequest) returns (QueryAllCollateralsResponse) {
     option (google.api.http).get = "/productscience/inference/collateral/collateral";
   }
 
@@ -34,7 +34,7 @@ service Query {
   }
 
   // Queries all unbonding collateral.
-  rpc AllUnbondingCollateral(QueryAllUnbondingCollateralRequest) returns (QueryAllUnbondingCollateralResponse) {
+  rpc AllUnbondingCollaterals(QueryAllUnbondingCollateralsRequest) returns (QueryAllUnbondingCollateralsResponse) {
     option (google.api.http).get = "/productscience/inference/collateral/unbonding";
   }
 }
@@ -58,13 +58,13 @@ message QueryCollateralResponse {
   cosmos.base.v1beta1.Coin amount = 1 [(gogoproto.nullable) = false];
 }
 
-// QueryAllCollateralRequest is the request type for the Query/AllCollateral RPC method.
-message QueryAllCollateralRequest {
+// QueryAllCollateralsRequest is the request type for the Query/AllCollaterals RPC method.
+message QueryAllCollateralsRequest {
   cosmos.base.query.v1beta1.PageRequest pagination = 1;
 }
 
-// QueryAllCollateralResponse is the response type for the Query/AllCollateral RPC method.
-message QueryAllCollateralResponse {
+// QueryAllCollateralsResponse is the response type for the Query/AllCollaterals RPC method.
+message QueryAllCollateralsResponse {
   repeated CollateralBalance collateral = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
@@ -79,13 +79,13 @@ message QueryUnbondingCollateralResponse {
   repeated UnbondingCollateral unbondings = 1 [(gogoproto.nullable) = false];
 }
 
-// QueryAllUnbondingCollateralRequest is the request type for the Query/AllUnbondingCollateral RPC method.
-message QueryAllUnbondingCollateralRequest {
+// QueryAllUnbondingCollateralsRequest is the request type for the Query/AllUnbondingCollaterals RPC method.
+message QueryAllUnbondingCollateralsRequest {
   cosmos.base.query.v1beta1.PageRequest pagination = 1;
 }
 
-// QueryAllUnbondingCollateralResponse is the response type for the Query/AllUnbondingCollateral RPC method.
-message QueryAllUnbondingCollateralResponse {
+// QueryAllUnbondingCollateralsResponse is the response type for the Query/AllUnbondingCollaterals RPC method.
+message QueryAllUnbondingCollateralsResponse {
   repeated UnbondingCollateral unbondings = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }

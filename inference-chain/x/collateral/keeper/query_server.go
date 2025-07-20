@@ -22,7 +22,12 @@ func (k Keeper) Collateral(c context.Context, req *types.QueryCollateralRequest)
 	}
 	ctx := sdk.UnwrapSDKContext(c)
 
-	collateral, found := k.GetCollateral(ctx, req.Participant)
+	participantAddr, err := sdk.AccAddressFromBech32(req.Participant)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid participant address: %v", err)
+	}
+
+	collateral, found := k.GetCollateral(ctx, participantAddr)
 	if !found {
 		return nil, status.Errorf(codes.NotFound, "collateral not found for participant %s", req.Participant)
 	}
@@ -30,7 +35,7 @@ func (k Keeper) Collateral(c context.Context, req *types.QueryCollateralRequest)
 	return &types.QueryCollateralResponse{Amount: collateral}, nil
 }
 
-func (k Keeper) AllCollateral(c context.Context, req *types.QueryAllCollateralRequest) (*types.QueryAllCollateralResponse, error) {
+func (k Keeper) AllCollaterals(c context.Context, req *types.QueryAllCollateralsRequest) (*types.QueryAllCollateralsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
@@ -56,7 +61,7 @@ func (k Keeper) AllCollateral(c context.Context, req *types.QueryAllCollateralRe
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &types.QueryAllCollateralResponse{Collateral: collaterals, Pagination: pageRes}, nil
+	return &types.QueryAllCollateralsResponse{Collateral: collaterals, Pagination: pageRes}, nil
 }
 
 func (k Keeper) UnbondingCollateral(c context.Context, req *types.QueryUnbondingCollateralRequest) (*types.QueryUnbondingCollateralResponse, error) {
@@ -65,12 +70,17 @@ func (k Keeper) UnbondingCollateral(c context.Context, req *types.QueryUnbonding
 	}
 	ctx := sdk.UnwrapSDKContext(c)
 
-	unbondings := k.GetUnbondingByParticipant(ctx, req.Participant)
+	participantAddr, err := sdk.AccAddressFromBech32(req.Participant)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid participant address: %v", err)
+	}
+
+	unbondings := k.GetUnbondingByParticipant(ctx, participantAddr)
 
 	return &types.QueryUnbondingCollateralResponse{Unbondings: unbondings}, nil
 }
 
-func (k Keeper) AllUnbondingCollateral(c context.Context, req *types.QueryAllUnbondingCollateralRequest) (*types.QueryAllUnbondingCollateralResponse, error) {
+func (k Keeper) AllUnbondingCollaterals(c context.Context, req *types.QueryAllUnbondingCollateralsRequest) (*types.QueryAllUnbondingCollateralsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
@@ -94,5 +104,5 @@ func (k Keeper) AllUnbondingCollateral(c context.Context, req *types.QueryAllUnb
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &types.QueryAllUnbondingCollateralResponse{Unbondings: allUnbondings, Pagination: pageRes}, nil
+	return &types.QueryAllUnbondingCollateralsResponse{Unbondings: allUnbondings, Pagination: pageRes}, nil
 }

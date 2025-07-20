@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -29,7 +30,6 @@ type (
 
 		bankKeeper       types.BankKeeper
 		bankEscrowKeeper types.BankEscrowKeeper
-		stakingKeeper    types.StakingKeeper
 	}
 )
 
@@ -41,7 +41,6 @@ func NewKeeper(
 
 	bankKeeper types.BankKeeper,
 	bankEscrowKeeper types.BankEscrowKeeper,
-	stakingKeeper types.StakingKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -55,7 +54,6 @@ func NewKeeper(
 
 		bankKeeper:       bankKeeper,
 		bankEscrowKeeper: bankEscrowKeeper,
-		stakingKeeper:    stakingKeeper,
 	}
 }
 
@@ -70,22 +68,24 @@ func (k Keeper) Logger() log.Logger {
 }
 
 // SetCollateral stores a participant's collateral amount
-func (k Keeper) SetCollateral(ctx sdk.Context, participantAddress string, amount sdk.Coin) {
-	store := k.storeService.OpenKVStore(ctx)
+func (k Keeper) SetCollateral(ctx context.Context, participantAddress sdk.AccAddress, amount sdk.Coin) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	store := k.storeService.OpenKVStore(sdkCtx)
 	bz, err := k.cdc.Marshal(&amount)
 	if err != nil {
 		panic(err)
 	}
-	err = store.Set(types.GetCollateralKey(participantAddress), bz)
+	err = store.Set(types.GetCollateralKey(participantAddress.String()), bz)
 	if err != nil {
 		panic(err)
 	}
 }
 
 // GetCollateral retrieves a participant's collateral amount
-func (k Keeper) GetCollateral(ctx sdk.Context, participantAddress string) (sdk.Coin, bool) {
-	store := k.storeService.OpenKVStore(ctx)
-	bz, err := store.Get(types.GetCollateralKey(participantAddress))
+func (k Keeper) GetCollateral(ctx context.Context, participantAddress sdk.AccAddress) (sdk.Coin, bool) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	store := k.storeService.OpenKVStore(sdkCtx)
+	bz, err := store.Get(types.GetCollateralKey(participantAddress.String()))
 	if err != nil {
 		panic(err)
 	}
@@ -102,17 +102,19 @@ func (k Keeper) GetCollateral(ctx sdk.Context, participantAddress string) (sdk.C
 }
 
 // RemoveCollateral removes a participant's collateral from the store
-func (k Keeper) RemoveCollateral(ctx sdk.Context, participantAddress string) {
-	store := k.storeService.OpenKVStore(ctx)
-	err := store.Delete(types.GetCollateralKey(participantAddress))
+func (k Keeper) RemoveCollateral(ctx context.Context, participantAddress sdk.AccAddress) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	store := k.storeService.OpenKVStore(sdkCtx)
+	err := store.Delete(types.GetCollateralKey(participantAddress.String()))
 	if err != nil {
 		panic(err)
 	}
 }
 
-// GetAllCollateral returns all collateral entries
-func (k Keeper) GetAllCollateral(ctx sdk.Context) map[string]sdk.Coin {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+// GetAllCollaterals returns all collateral entries
+func (k Keeper) GetAllCollaterals(ctx context.Context) map[string]sdk.Coin {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(sdkCtx))
 	collateralStore := prefix.NewStore(storeAdapter, types.CollateralKey)
 	collateralMap := make(map[string]sdk.Coin)
 
@@ -137,17 +139,28 @@ func (k Keeper) GetAllCollateral(ctx sdk.Context) map[string]sdk.Coin {
 	return collateralMap
 }
 
-// SetUnbondingCollateral stores an unbonding entry, adding to existing if already present
-func (k Keeper) SetUnbondingCollateral(ctx sdk.Context, unbonding types.UnbondingCollateral) {
-	store := k.storeService.OpenKVStore(ctx)
-
+// AddUnbondingCollateral stores an unbonding entry, adding to the amount if one already exists for the same participant and epoch.
+func (k Keeper) AddUnbondingCollateral(ctx sdk.Context, participantAddress sdk.AccAddress, completionEpoch uint64, amount sdk.Coin) {
 	// Check if an entry already exists for this epoch and participant
-	existing, found := k.GetUnbondingCollateral(ctx, unbonding.Participant, unbonding.CompletionEpoch)
+	existing, found := k.GetUnbondingCollateral(ctx, participantAddress, completionEpoch)
 	if found {
 		// Add to the existing amount
-		unbonding.Amount = unbonding.Amount.Add(existing.Amount)
+		amount = amount.Add(existing.Amount)
 	}
 
+	unbonding := types.UnbondingCollateral{
+		Participant:     participantAddress.String(),
+		CompletionEpoch: completionEpoch,
+		Amount:          amount,
+	}
+
+	k.setUnbondingCollateralEntry(ctx, unbonding)
+}
+
+// setUnbondingCollateralEntry writes an unbonding entry directly to the store, overwriting any existing entry.
+// This is an internal helper to be used by functions like Slash that need to update state without aggregation.
+func (k Keeper) setUnbondingCollateralEntry(ctx sdk.Context, unbonding types.UnbondingCollateral) {
+	store := k.storeService.OpenKVStore(ctx)
 	bz := k.cdc.MustMarshal(&unbonding)
 	key := types.GetUnbondingKey(unbonding.CompletionEpoch, unbonding.Participant)
 	err := store.Set(key, bz)
@@ -157,9 +170,9 @@ func (k Keeper) SetUnbondingCollateral(ctx sdk.Context, unbonding types.Unbondin
 }
 
 // GetUnbondingCollateral retrieves a specific unbonding entry
-func (k Keeper) GetUnbondingCollateral(ctx sdk.Context, participantAddress string, completionEpoch uint64) (types.UnbondingCollateral, bool) {
+func (k Keeper) GetUnbondingCollateral(ctx sdk.Context, participantAddress sdk.AccAddress, completionEpoch uint64) (types.UnbondingCollateral, bool) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := types.GetUnbondingKey(completionEpoch, participantAddress)
+	key := types.GetUnbondingKey(completionEpoch, participantAddress.String())
 	bz, err := store.Get(key)
 	if err != nil {
 		panic(err)
@@ -174,9 +187,9 @@ func (k Keeper) GetUnbondingCollateral(ctx sdk.Context, participantAddress strin
 }
 
 // RemoveUnbondingCollateral removes an unbonding entry
-func (k Keeper) RemoveUnbondingCollateral(ctx sdk.Context, participantAddress string, completionEpoch uint64) {
+func (k Keeper) RemoveUnbondingCollateral(ctx sdk.Context, participantAddress sdk.AccAddress, completionEpoch uint64) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := types.GetUnbondingKey(completionEpoch, participantAddress)
+	key := types.GetUnbondingKey(completionEpoch, participantAddress.String())
 	err := store.Delete(key)
 	if err != nil {
 		panic(err)
@@ -223,7 +236,7 @@ func (k Keeper) GetUnbondingByEpoch(ctx sdk.Context, completionEpoch uint64) []t
 }
 
 // GetUnbondingByParticipant returns all unbonding entries for a specific participant
-func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress string) []types.UnbondingCollateral {
+func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress sdk.AccAddress) []types.UnbondingCollateral {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	unbondingStore := prefix.NewStore(storeAdapter, types.UnbondingKey)
 	unbondingList := []types.UnbondingCollateral{}
@@ -236,7 +249,7 @@ func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress st
 		var unbonding types.UnbondingCollateral
 		k.cdc.MustUnmarshal(iterator.Value(), &unbonding)
 
-		if unbonding.Participant == participantAddress {
+		if unbonding.Participant == participantAddress.String() {
 			unbondingList = append(unbondingList, unbonding)
 		}
 	}
@@ -270,15 +283,16 @@ func (k Keeper) SetCurrentEpoch(ctx sdk.Context, epoch uint64) {
 
 // AdvanceEpoch is called by an external module (inference) to signal an epoch transition.
 // It processes the unbonding queue for the completed epoch and increments the internal epoch counter.
-func (k Keeper) AdvanceEpoch(ctx sdk.Context, completedEpoch uint64) {
+func (k Keeper) AdvanceEpoch(ctx context.Context, completedEpoch uint64) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	k.Logger().Info("advancing epoch in collateral module", "completed_epoch", completedEpoch)
 
 	// Process unbonding queue for the epoch that just finished
-	k.ProcessUnbondingQueue(ctx, completedEpoch)
+	k.ProcessUnbondingQueue(sdkCtx, completedEpoch)
 
 	// Increment the epoch counter
 	nextEpoch := completedEpoch + 1
-	k.SetCurrentEpoch(ctx, nextEpoch)
+	k.SetCurrentEpoch(sdkCtx, nextEpoch)
 }
 
 // ProcessUnbondingQueue iterates through all unbonding entries for a given epoch,
@@ -326,8 +340,8 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) {
 	}
 }
 
-// GetAllUnbonding returns all unbonding entries (for genesis export)
-func (k Keeper) GetAllUnbonding(ctx sdk.Context) []types.UnbondingCollateral {
+// GetAllUnbondings returns all unbonding entries (for genesis export)
+func (k Keeper) GetAllUnbondings(ctx sdk.Context) []types.UnbondingCollateral {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	unbondingStore := prefix.NewStore(storeAdapter, types.UnbondingKey)
 	unbondingList := []types.UnbondingCollateral{}
@@ -346,28 +360,28 @@ func (k Keeper) GetAllUnbonding(ctx sdk.Context) []types.UnbondingCollateral {
 
 // SetJailed stores a participant's jailed status.
 // The presence of the key indicates the participant is jailed.
-func (k Keeper) SetJailed(ctx sdk.Context, participantAddress string) {
+func (k Keeper) SetJailed(ctx sdk.Context, participantAddress sdk.AccAddress) {
 	store := k.storeService.OpenKVStore(ctx)
 	// We store a simple value, like a single byte, as the presence of the key is what matters.
-	err := store.Set(types.GetJailedKey(participantAddress), []byte{1})
+	err := store.Set(types.GetJailedKey(participantAddress.String()), []byte{1})
 	if err != nil {
 		panic(err)
 	}
 }
 
 // RemoveJailed removes a participant's jailed status.
-func (k Keeper) RemoveJailed(ctx sdk.Context, participantAddress string) {
+func (k Keeper) RemoveJailed(ctx sdk.Context, participantAddress sdk.AccAddress) {
 	store := k.storeService.OpenKVStore(ctx)
-	err := store.Delete(types.GetJailedKey(participantAddress))
+	err := store.Delete(types.GetJailedKey(participantAddress.String()))
 	if err != nil {
 		panic(err)
 	}
 }
 
 // IsJailed checks if a participant is currently marked as jailed.
-func (k Keeper) IsJailed(ctx sdk.Context, participantAddress string) bool {
+func (k Keeper) IsJailed(ctx sdk.Context, participantAddress sdk.AccAddress) bool {
 	store := k.storeService.OpenKVStore(ctx)
-	bz, err := store.Get(types.GetJailedKey(participantAddress))
+	bz, err := store.Get(types.GetJailedKey(participantAddress.String()))
 	if err != nil {
 		panic(err)
 	}
@@ -395,7 +409,8 @@ func (k Keeper) GetAllJailed(ctx sdk.Context) []string {
 // Slash penalizes a participant by burning a fraction of their total collateral.
 // This includes both their active collateral and any collateral in the unbonding queue.
 // The slash is applied proportionally to all holdings.
-func (k Keeper) Slash(ctx sdk.Context, participantAddress string, slashFraction math.LegacyDec) (sdk.Coin, error) {
+func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, slashFraction math.LegacyDec) (sdk.Coin, error) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	if slashFraction.IsNegative() || slashFraction.GT(math.LegacyOneDec()) {
 		return sdk.Coin{}, fmt.Errorf("slash fraction must be between 0 and 1, got %s", slashFraction)
 	}
@@ -416,7 +431,7 @@ func (k Keeper) Slash(ctx sdk.Context, participantAddress string, slashFraction 
 	}
 
 	// 2. Slash unbonding collateral
-	unbondingEntries := k.GetUnbondingByParticipant(ctx, participantAddress)
+	unbondingEntries := k.GetUnbondingByParticipant(sdkCtx, participantAddress)
 	for _, entry := range unbondingEntries {
 		slashAmountDec := math.LegacyNewDecFromInt(entry.Amount.Amount).Mul(slashFraction)
 		slashAmount := sdk.NewCoin(entry.Amount.Denom, slashAmountDec.TruncateInt())
@@ -427,9 +442,14 @@ func (k Keeper) Slash(ctx sdk.Context, participantAddress string, slashFraction 
 
 			// If the unbonding entry is now zero, remove it. Otherwise, update it.
 			if newUnbondingAmount.IsZero() {
-				k.RemoveUnbondingCollateral(ctx, entry.Participant, entry.CompletionEpoch)
+				pAddr, err := sdk.AccAddressFromBech32(entry.Participant)
+				if err != nil {
+					// This should not happen if addresses are valid
+					panic(fmt.Sprintf("invalid address in unbonding entry: %s", entry.Participant))
+				}
+				k.RemoveUnbondingCollateral(sdkCtx, pAddr, entry.CompletionEpoch)
 			} else {
-				k.SetUnbondingCollateral(ctx, entry)
+				k.setUnbondingCollateralEntry(sdkCtx, entry)
 			}
 			totalSlashedAmount = totalSlashedAmount.Add(slashAmount)
 		}
@@ -437,24 +457,24 @@ func (k Keeper) Slash(ctx sdk.Context, participantAddress string, slashFraction 
 
 	// 3. Burn the total slashed amount from the module account
 	if !totalSlashedAmount.IsZero() {
-		err := k.bankEscrowKeeper.BurnCoins(ctx, types.ModuleName, sdk.NewCoins(totalSlashedAmount))
+		err := k.bankEscrowKeeper.BurnCoins(sdkCtx, types.ModuleName, sdk.NewCoins(totalSlashedAmount))
 		if err != nil {
 			// This is a critical error, indicating an issue with the module account or supply
 			return sdk.Coin{}, fmt.Errorf("failed to burn slashed coins: %w", err)
 		}
 
 		// 4. Emit a slash event
-		ctx.EventManager().EmitEvent(
+		sdkCtx.EventManager().EmitEvent(
 			sdk.NewEvent(
 				types.EventTypeSlashCollateral,
-				sdk.NewAttribute(types.AttributeKeyParticipant, participantAddress),
+				sdk.NewAttribute(types.AttributeKeyParticipant, participantAddress.String()),
 				sdk.NewAttribute(types.AttributeKeySlashAmount, totalSlashedAmount.String()),
 				sdk.NewAttribute(types.AttributeKeySlashFraction, slashFraction.String()),
 			),
 		)
 
 		k.Logger().Info("slashed participant collateral",
-			"participant", participantAddress,
+			"participant", participantAddress.String(),
 			"slash_fraction", slashFraction.String(),
 			"slashed_amount", totalSlashedAmount.String(),
 		)

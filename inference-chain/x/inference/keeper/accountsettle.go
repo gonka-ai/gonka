@@ -128,6 +128,14 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		k.ReduceSubsidyPercentage(ctx)
 	}
 
+	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(participants.Participant))
+	for _, participant := range participants.Participant {
+		k.LogInfo("Checking downtime for participant", types.Settle, "participant", participant.Address, "missed_requests", participant.CurrentEpochStats.MissedRequests, "inference_count", participant.CurrentEpochStats.InferenceCount)
+		// TODO: Check if it is better to move this function outside the settleAccounts function.
+		// Check for downtime and slash if necessary.
+		k.CheckAndSlashForDowntime(ctx, &participant)
+	}
+
 	for _, amount := range amounts {
 		if amount.Error != nil {
 			k.LogError("Error calculating settle amounts", types.Settle, "error", amount.Error, "participant", amount.Settle.Participant)
@@ -155,6 +163,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		participant.CurrentEpochStats.EarnedCoins = 0
 
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
+		// TODO: Check if it is ok, that we create a new EpochPerformanceSummary only if there is an amount to settle.
 		epochPerformance := types.EpochPerformanceSummary{
 			EpochStartHeight:      pocBlockHeight,
 			ParticipantId:         participant.Address,
@@ -167,10 +176,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			Claimed:               false,
 		}
 		k.SetEpochPerformanceSummary(ctx, epochPerformance)
-
-		// TODO: Check if it is better to move this function outside the settleAccounts function.
-		// Check for downtime and slash if necessary.
-		k.CheckAndSlashForDowntime(ctx, &participant, &epochPerformance)
 
 		participant.CurrentEpochStats = &types.CurrentEpochStats{}
 		k.SetParticipant(ctx, participant)

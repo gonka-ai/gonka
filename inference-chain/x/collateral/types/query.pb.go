@@ -204,23 +204,23 @@ func (m *QueryCollateralResponse) GetAmount() types.Coin {
 	return types.Coin{}
 }
 
-// QueryAllCollateralRequest is the request type for the Query/AllCollateral RPC method.
-type QueryAllCollateralRequest struct {
+// QueryAllCollateralsRequest is the request type for the Query/AllCollaterals RPC method.
+type QueryAllCollateralsRequest struct {
 	Pagination *query.PageRequest `protobuf:"bytes,1,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (m *QueryAllCollateralRequest) Reset()         { *m = QueryAllCollateralRequest{} }
-func (m *QueryAllCollateralRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryAllCollateralRequest) ProtoMessage()    {}
-func (*QueryAllCollateralRequest) Descriptor() ([]byte, []int) {
+func (m *QueryAllCollateralsRequest) Reset()         { *m = QueryAllCollateralsRequest{} }
+func (m *QueryAllCollateralsRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryAllCollateralsRequest) ProtoMessage()    {}
+func (*QueryAllCollateralsRequest) Descriptor() ([]byte, []int) {
 	return fileDescriptor_eba28a79880c27ca, []int{4}
 }
-func (m *QueryAllCollateralRequest) XXX_Unmarshal(b []byte) error {
+func (m *QueryAllCollateralsRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *QueryAllCollateralRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *QueryAllCollateralsRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_QueryAllCollateralRequest.Marshal(b, m, deterministic)
+		return xxx_messageInfo_QueryAllCollateralsRequest.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -230,43 +230,43 @@ func (m *QueryAllCollateralRequest) XXX_Marshal(b []byte, deterministic bool) ([
 		return b[:n], nil
 	}
 }
-func (m *QueryAllCollateralRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryAllCollateralRequest.Merge(m, src)
+func (m *QueryAllCollateralsRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryAllCollateralsRequest.Merge(m, src)
 }
-func (m *QueryAllCollateralRequest) XXX_Size() int {
+func (m *QueryAllCollateralsRequest) XXX_Size() int {
 	return m.Size()
 }
-func (m *QueryAllCollateralRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryAllCollateralRequest.DiscardUnknown(m)
+func (m *QueryAllCollateralsRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryAllCollateralsRequest.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_QueryAllCollateralRequest proto.InternalMessageInfo
+var xxx_messageInfo_QueryAllCollateralsRequest proto.InternalMessageInfo
 
-func (m *QueryAllCollateralRequest) GetPagination() *query.PageRequest {
+func (m *QueryAllCollateralsRequest) GetPagination() *query.PageRequest {
 	if m != nil {
 		return m.Pagination
 	}
 	return nil
 }
 
-// QueryAllCollateralResponse is the response type for the Query/AllCollateral RPC method.
-type QueryAllCollateralResponse struct {
+// QueryAllCollateralsResponse is the response type for the Query/AllCollaterals RPC method.
+type QueryAllCollateralsResponse struct {
 	Collateral []CollateralBalance `protobuf:"bytes,1,rep,name=collateral,proto3" json:"collateral"`
 	Pagination *query.PageResponse `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (m *QueryAllCollateralResponse) Reset()         { *m = QueryAllCollateralResponse{} }
-func (m *QueryAllCollateralResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryAllCollateralResponse) ProtoMessage()    {}
-func (*QueryAllCollateralResponse) Descriptor() ([]byte, []int) {
+func (m *QueryAllCollateralsResponse) Reset()         { *m = QueryAllCollateralsResponse{} }
+func (m *QueryAllCollateralsResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryAllCollateralsResponse) ProtoMessage()    {}
+func (*QueryAllCollateralsResponse) Descriptor() ([]byte, []int) {
 	return fileDescriptor_eba28a79880c27ca, []int{5}
 }
-func (m *QueryAllCollateralResponse) XXX_Unmarshal(b []byte) error {
+func (m *QueryAllCollateralsResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *QueryAllCollateralResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *QueryAllCollateralsResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_QueryAllCollateralResponse.Marshal(b, m, deterministic)
+		return xxx_messageInfo_QueryAllCollateralsResponse.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -276,26 +276,26 @@ func (m *QueryAllCollateralResponse) XXX_Marshal(b []byte, deterministic bool) (
 		return b[:n], nil
 	}
 }
-func (m *QueryAllCollateralResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryAllCollateralResponse.Merge(m, src)
+func (m *QueryAllCollateralsResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryAllCollateralsResponse.Merge(m, src)
 }
-func (m *QueryAllCollateralResponse) XXX_Size() int {
+func (m *QueryAllCollateralsResponse) XXX_Size() int {
 	return m.Size()
 }
-func (m *QueryAllCollateralResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryAllCollateralResponse.DiscardUnknown(m)
+func (m *QueryAllCollateralsResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryAllCollateralsResponse.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_QueryAllCollateralResponse proto.InternalMessageInfo
+var xxx_messageInfo_QueryAllCollateralsResponse proto.InternalMessageInfo
 
-func (m *QueryAllCollateralResponse) GetCollateral() []CollateralBalance {
+func (m *QueryAllCollateralsResponse) GetCollateral() []CollateralBalance {
 	if m != nil {
 		return m.Collateral
 	}
 	return nil
 }
 
-func (m *QueryAllCollateralResponse) GetPagination() *query.PageResponse {
+func (m *QueryAllCollateralsResponse) GetPagination() *query.PageResponse {
 	if m != nil {
 		return m.Pagination
 	}
@@ -392,23 +392,23 @@ func (m *QueryUnbondingCollateralResponse) GetUnbondings() []UnbondingCollateral
 	return nil
 }
 
-// QueryAllUnbondingCollateralRequest is the request type for the Query/AllUnbondingCollateral RPC method.
-type QueryAllUnbondingCollateralRequest struct {
+// QueryAllUnbondingCollateralsRequest is the request type for the Query/AllUnbondingCollaterals RPC method.
+type QueryAllUnbondingCollateralsRequest struct {
 	Pagination *query.PageRequest `protobuf:"bytes,1,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (m *QueryAllUnbondingCollateralRequest) Reset()         { *m = QueryAllUnbondingCollateralRequest{} }
-func (m *QueryAllUnbondingCollateralRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryAllUnbondingCollateralRequest) ProtoMessage()    {}
-func (*QueryAllUnbondingCollateralRequest) Descriptor() ([]byte, []int) {
+func (m *QueryAllUnbondingCollateralsRequest) Reset()         { *m = QueryAllUnbondingCollateralsRequest{} }
+func (m *QueryAllUnbondingCollateralsRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryAllUnbondingCollateralsRequest) ProtoMessage()    {}
+func (*QueryAllUnbondingCollateralsRequest) Descriptor() ([]byte, []int) {
 	return fileDescriptor_eba28a79880c27ca, []int{8}
 }
-func (m *QueryAllUnbondingCollateralRequest) XXX_Unmarshal(b []byte) error {
+func (m *QueryAllUnbondingCollateralsRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *QueryAllUnbondingCollateralRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *QueryAllUnbondingCollateralsRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_QueryAllUnbondingCollateralRequest.Marshal(b, m, deterministic)
+		return xxx_messageInfo_QueryAllUnbondingCollateralsRequest.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -418,43 +418,43 @@ func (m *QueryAllUnbondingCollateralRequest) XXX_Marshal(b []byte, deterministic
 		return b[:n], nil
 	}
 }
-func (m *QueryAllUnbondingCollateralRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryAllUnbondingCollateralRequest.Merge(m, src)
+func (m *QueryAllUnbondingCollateralsRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryAllUnbondingCollateralsRequest.Merge(m, src)
 }
-func (m *QueryAllUnbondingCollateralRequest) XXX_Size() int {
+func (m *QueryAllUnbondingCollateralsRequest) XXX_Size() int {
 	return m.Size()
 }
-func (m *QueryAllUnbondingCollateralRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryAllUnbondingCollateralRequest.DiscardUnknown(m)
+func (m *QueryAllUnbondingCollateralsRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryAllUnbondingCollateralsRequest.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_QueryAllUnbondingCollateralRequest proto.InternalMessageInfo
+var xxx_messageInfo_QueryAllUnbondingCollateralsRequest proto.InternalMessageInfo
 
-func (m *QueryAllUnbondingCollateralRequest) GetPagination() *query.PageRequest {
+func (m *QueryAllUnbondingCollateralsRequest) GetPagination() *query.PageRequest {
 	if m != nil {
 		return m.Pagination
 	}
 	return nil
 }
 
-// QueryAllUnbondingCollateralResponse is the response type for the Query/AllUnbondingCollateral RPC method.
-type QueryAllUnbondingCollateralResponse struct {
+// QueryAllUnbondingCollateralsResponse is the response type for the Query/AllUnbondingCollaterals RPC method.
+type QueryAllUnbondingCollateralsResponse struct {
 	Unbondings []UnbondingCollateral `protobuf:"bytes,1,rep,name=unbondings,proto3" json:"unbondings"`
 	Pagination *query.PageResponse   `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (m *QueryAllUnbondingCollateralResponse) Reset()         { *m = QueryAllUnbondingCollateralResponse{} }
-func (m *QueryAllUnbondingCollateralResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryAllUnbondingCollateralResponse) ProtoMessage()    {}
-func (*QueryAllUnbondingCollateralResponse) Descriptor() ([]byte, []int) {
+func (m *QueryAllUnbondingCollateralsResponse) Reset()         { *m = QueryAllUnbondingCollateralsResponse{} }
+func (m *QueryAllUnbondingCollateralsResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryAllUnbondingCollateralsResponse) ProtoMessage()    {}
+func (*QueryAllUnbondingCollateralsResponse) Descriptor() ([]byte, []int) {
 	return fileDescriptor_eba28a79880c27ca, []int{9}
 }
-func (m *QueryAllUnbondingCollateralResponse) XXX_Unmarshal(b []byte) error {
+func (m *QueryAllUnbondingCollateralsResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *QueryAllUnbondingCollateralResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *QueryAllUnbondingCollateralsResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_QueryAllUnbondingCollateralResponse.Marshal(b, m, deterministic)
+		return xxx_messageInfo_QueryAllUnbondingCollateralsResponse.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -464,26 +464,26 @@ func (m *QueryAllUnbondingCollateralResponse) XXX_Marshal(b []byte, deterministi
 		return b[:n], nil
 	}
 }
-func (m *QueryAllUnbondingCollateralResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryAllUnbondingCollateralResponse.Merge(m, src)
+func (m *QueryAllUnbondingCollateralsResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryAllUnbondingCollateralsResponse.Merge(m, src)
 }
-func (m *QueryAllUnbondingCollateralResponse) XXX_Size() int {
+func (m *QueryAllUnbondingCollateralsResponse) XXX_Size() int {
 	return m.Size()
 }
-func (m *QueryAllUnbondingCollateralResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryAllUnbondingCollateralResponse.DiscardUnknown(m)
+func (m *QueryAllUnbondingCollateralsResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryAllUnbondingCollateralsResponse.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_QueryAllUnbondingCollateralResponse proto.InternalMessageInfo
+var xxx_messageInfo_QueryAllUnbondingCollateralsResponse proto.InternalMessageInfo
 
-func (m *QueryAllUnbondingCollateralResponse) GetUnbondings() []UnbondingCollateral {
+func (m *QueryAllUnbondingCollateralsResponse) GetUnbondings() []UnbondingCollateral {
 	if m != nil {
 		return m.Unbondings
 	}
 	return nil
 }
 
-func (m *QueryAllUnbondingCollateralResponse) GetPagination() *query.PageResponse {
+func (m *QueryAllUnbondingCollateralsResponse) GetPagination() *query.PageResponse {
 	if m != nil {
 		return m.Pagination
 	}
@@ -495,61 +495,61 @@ func init() {
 	proto.RegisterType((*QueryParamsResponse)(nil), "inference.collateral.QueryParamsResponse")
 	proto.RegisterType((*QueryCollateralRequest)(nil), "inference.collateral.QueryCollateralRequest")
 	proto.RegisterType((*QueryCollateralResponse)(nil), "inference.collateral.QueryCollateralResponse")
-	proto.RegisterType((*QueryAllCollateralRequest)(nil), "inference.collateral.QueryAllCollateralRequest")
-	proto.RegisterType((*QueryAllCollateralResponse)(nil), "inference.collateral.QueryAllCollateralResponse")
+	proto.RegisterType((*QueryAllCollateralsRequest)(nil), "inference.collateral.QueryAllCollateralsRequest")
+	proto.RegisterType((*QueryAllCollateralsResponse)(nil), "inference.collateral.QueryAllCollateralsResponse")
 	proto.RegisterType((*QueryUnbondingCollateralRequest)(nil), "inference.collateral.QueryUnbondingCollateralRequest")
 	proto.RegisterType((*QueryUnbondingCollateralResponse)(nil), "inference.collateral.QueryUnbondingCollateralResponse")
-	proto.RegisterType((*QueryAllUnbondingCollateralRequest)(nil), "inference.collateral.QueryAllUnbondingCollateralRequest")
-	proto.RegisterType((*QueryAllUnbondingCollateralResponse)(nil), "inference.collateral.QueryAllUnbondingCollateralResponse")
+	proto.RegisterType((*QueryAllUnbondingCollateralsRequest)(nil), "inference.collateral.QueryAllUnbondingCollateralsRequest")
+	proto.RegisterType((*QueryAllUnbondingCollateralsResponse)(nil), "inference.collateral.QueryAllUnbondingCollateralsResponse")
 }
 
 func init() { proto.RegisterFile("inference/collateral/query.proto", fileDescriptor_eba28a79880c27ca) }
 
 var fileDescriptor_eba28a79880c27ca = []byte{
-	// 678 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x95, 0xcb, 0x6e, 0xd3, 0x4e,
-	0x14, 0xc6, 0x33, 0xfd, 0xff, 0x09, 0xe2, 0x44, 0x6c, 0xa6, 0x55, 0x69, 0xad, 0xca, 0x0d, 0x06,
-	0xd1, 0x16, 0xa8, 0xdd, 0xa6, 0xa2, 0x85, 0x8a, 0x8b, 0x68, 0xb9, 0xac, 0x10, 0x6d, 0x24, 0x36,
-	0x6c, 0xd0, 0xd8, 0x1d, 0x8c, 0x25, 0x67, 0xc6, 0xf5, 0x05, 0x51, 0x21, 0x36, 0x3c, 0x01, 0x2a,
-	0x8f, 0xc1, 0x86, 0x05, 0x7b, 0x56, 0x48, 0x15, 0xab, 0x4a, 0x6c, 0x58, 0x21, 0xd4, 0xf0, 0x20,
-	0x28, 0xe3, 0x71, 0xec, 0x90, 0x89, 0x49, 0xaa, 0xb2, 0x1b, 0x39, 0xdf, 0xf9, 0xe6, 0x77, 0xbe,
-	0x33, 0x33, 0x81, 0xba, 0xc7, 0x9e, 0xd3, 0x90, 0x32, 0x87, 0x5a, 0x0e, 0xf7, 0x7d, 0x12, 0xd3,
-	0x90, 0xf8, 0xd6, 0x6e, 0x42, 0xc3, 0x3d, 0x33, 0x08, 0x79, 0xcc, 0xf1, 0x44, 0x57, 0x61, 0xe6,
-	0x0a, 0x6d, 0xc2, 0xe5, 0x2e, 0x17, 0x02, 0xab, 0xb3, 0x4a, 0xb5, 0xda, 0x8c, 0xcb, 0xb9, 0xeb,
-	0x53, 0x8b, 0x04, 0x9e, 0x45, 0x18, 0xe3, 0x31, 0x89, 0x3d, 0xce, 0x22, 0xf9, 0xeb, 0x65, 0x87,
-	0x47, 0x2d, 0x1e, 0x59, 0x36, 0x89, 0x68, 0xba, 0x85, 0xf5, 0x72, 0xd9, 0xa6, 0x31, 0x59, 0xb6,
-	0x02, 0xe2, 0x7a, 0x4c, 0x88, 0xa5, 0xf6, 0xbc, 0x92, 0x2b, 0x20, 0x21, 0x69, 0x65, 0x76, 0x7a,
-	0xd1, 0x2e, 0x33, 0x72, 0xb8, 0x97, 0x59, 0x5c, 0x54, 0x5a, 0x24, 0xcc, 0xe6, 0x6c, 0xc7, 0x63,
-	0xae, 0x54, 0x2d, 0x2a, 0x55, 0xf9, 0xf2, 0x99, 0x4d, 0x7c, 0xd2, 0x69, 0x5e, 0xc8, 0x8d, 0x09,
-	0xc0, 0xdb, 0x1d, 0xf2, 0x2d, 0x41, 0xd2, 0xa4, 0xbb, 0x09, 0x8d, 0x62, 0x63, 0x1b, 0xc6, 0x7b,
-	0xbe, 0x46, 0x01, 0x67, 0x11, 0xc5, 0xeb, 0x50, 0x4d, 0x89, 0xa7, 0x50, 0x1d, 0xcd, 0xd7, 0x1a,
-	0x33, 0xa6, 0x2a, 0x4b, 0x33, 0xad, 0xda, 0xf8, 0xff, 0xe0, 0xc7, 0x6c, 0xa5, 0x29, 0x2b, 0x8c,
-	0x75, 0x98, 0x14, 0x96, 0x9b, 0x5d, 0x9d, 0xdc, 0x0c, 0xd7, 0xa1, 0x16, 0x90, 0x30, 0xf6, 0x1c,
-	0x2f, 0x20, 0x2c, 0x16, 0xd6, 0x67, 0x9a, 0xc5, 0x4f, 0x46, 0x13, 0xce, 0xf5, 0xd5, 0x4a, 0xa4,
-	0x35, 0xa8, 0x92, 0x16, 0x4f, 0x64, 0x5d, 0xad, 0x31, 0x6d, 0xa6, 0x29, 0x9a, 0x9d, 0x14, 0x4d,
-	0x99, 0xa2, 0xb9, 0xc9, 0x3d, 0x96, 0xf1, 0xa4, 0x72, 0xc3, 0x81, 0x69, 0xe1, 0x79, 0xd7, 0xf7,
-	0xfb, 0x91, 0x1e, 0x00, 0xe4, 0x13, 0x94, 0xce, 0x97, 0x7a, 0x9c, 0xd3, 0x13, 0x95, 0xf9, 0x6f,
-	0x11, 0x97, 0xca, 0xda, 0x66, 0xa1, 0xd2, 0xf8, 0x84, 0x40, 0x53, 0xed, 0x22, 0xe1, 0x1f, 0x01,
-	0xe4, 0xb1, 0x4d, 0xa1, 0xfa, 0x7f, 0xf3, 0xb5, 0xc6, 0x9c, 0x3a, 0xd3, 0xbc, 0x7a, 0x23, 0x9d,
-	0x9f, 0x6c, 0xa7, 0x60, 0x80, 0x1f, 0xf6, 0x50, 0x8f, 0x09, 0xea, 0xb9, 0xbf, 0x52, 0xa7, 0x2c,
-	0x3d, 0xd8, 0x9b, 0x30, 0x2b, 0xa8, 0x9f, 0x64, 0x67, 0xeb, 0x38, 0x43, 0x8b, 0xa0, 0x3e, 0xd8,
-	0x44, 0x06, 0xf0, 0x18, 0xa0, 0x7b, 0x7e, 0x23, 0x19, 0xc0, 0x82, 0x3a, 0x00, 0x85, 0x4d, 0x16,
-	0x41, 0x6e, 0x61, 0xf8, 0x60, 0x64, 0x79, 0x97, 0xc0, 0x9f, 0xd4, 0x78, 0x3f, 0x23, 0xb8, 0x50,
-	0xba, 0xdd, 0x3f, 0x6a, 0xf3, 0xc4, 0x26, 0xdd, 0xd8, 0x3f, 0x0d, 0xa7, 0x44, 0x07, 0x78, 0x1f,
-	0x41, 0x35, 0xbd, 0xb8, 0x78, 0x5e, 0x8d, 0xd6, 0xff, 0x4e, 0x68, 0x0b, 0x43, 0x28, 0xd3, 0x5d,
-	0x8d, 0x95, 0xb7, 0xdf, 0x7e, 0xbd, 0x1f, 0x5b, 0xc4, 0x57, 0xac, 0x20, 0xe4, 0x3b, 0x89, 0x13,
-	0x47, 0x8e, 0x27, 0x5e, 0xa9, 0x92, 0x87, 0x11, 0x7f, 0x44, 0x00, 0x79, 0x10, 0xf8, 0x6a, 0xc9,
-	0x76, 0x7d, 0x53, 0xd6, 0x16, 0x87, 0x54, 0x4b, 0xc0, 0xfb, 0x02, 0xf0, 0x0e, 0xbe, 0x35, 0x14,
-	0x60, 0x61, 0xf9, 0xba, 0x70, 0xea, 0xdf, 0xe0, 0x0f, 0x08, 0xce, 0xf6, 0xdc, 0x76, 0x6c, 0x95,
-	0x70, 0xa8, 0x5e, 0x1f, 0x6d, 0x69, 0xf8, 0x02, 0xc9, 0xbe, 0x26, 0xd8, 0x97, 0xb1, 0x35, 0x22,
-	0x3b, 0xfe, 0x8a, 0x60, 0x5c, 0x71, 0xe4, 0xf0, 0xb5, 0x12, 0x84, 0xc1, 0x17, 0x4b, 0x5b, 0x1d,
-	0xb5, 0x4c, 0xf2, 0xdf, 0x13, 0xfc, 0xb7, 0xf1, 0xcd, 0xa1, 0xf8, 0xbb, 0x17, 0xe1, 0x8f, 0xe8,
-	0xbf, 0x20, 0x98, 0x54, 0xdf, 0x44, 0x7c, 0xbd, 0x3c, 0xd2, 0x92, 0x96, 0x6e, 0x1c, 0xa3, 0x52,
-	0x76, 0xb5, 0x2a, 0xba, 0x5a, 0xc2, 0xe6, 0x68, 0x5d, 0x6d, 0x6c, 0x1d, 0x1c, 0xe9, 0xe8, 0xf0,
-	0x48, 0x47, 0x3f, 0x8f, 0x74, 0xf4, 0xae, 0xad, 0x57, 0x0e, 0xdb, 0x7a, 0xe5, 0x7b, 0x5b, 0xaf,
-	0x3c, 0x5d, 0x75, 0xbd, 0xf8, 0x45, 0x62, 0x9b, 0x0e, 0x6f, 0x0d, 0xf6, 0x7c, 0x55, 0x74, 0x8d,
-	0xf7, 0x02, 0x1a, 0xd9, 0x55, 0xf1, 0x67, 0xbf, 0xf2, 0x3b, 0x00, 0x00, 0xff, 0xff, 0x6f, 0x4d,
-	0xd6, 0xc1, 0x1e, 0x09, 0x00, 0x00,
+	// 681 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x95, 0xcb, 0x6e, 0xd3, 0x40,
+	0x14, 0x86, 0x33, 0x05, 0x82, 0x38, 0x91, 0x58, 0x4c, 0x2b, 0x5a, 0x4c, 0xe5, 0x06, 0x53, 0xd1,
+	0x16, 0xa8, 0xdd, 0xa4, 0xa2, 0x15, 0x15, 0x17, 0xd1, 0x72, 0x59, 0x21, 0xda, 0x48, 0x6c, 0xd8,
+	0xa0, 0xb1, 0x3b, 0x18, 0x4b, 0xce, 0x8c, 0xeb, 0x0b, 0xa2, 0x42, 0x6c, 0x78, 0x02, 0x04, 0x1b,
+	0x9e, 0x02, 0xb1, 0x61, 0xcf, 0xb2, 0x62, 0x55, 0x89, 0x0d, 0x2b, 0x84, 0x5a, 0x1e, 0x04, 0x65,
+	0x3c, 0x8e, 0x1d, 0x32, 0x31, 0x49, 0x55, 0x76, 0x23, 0xe7, 0x3f, 0xff, 0xf9, 0xce, 0x3f, 0x97,
+	0x40, 0xdd, 0x63, 0xcf, 0x69, 0x48, 0x99, 0x43, 0x2d, 0x87, 0xfb, 0x3e, 0x89, 0x69, 0x48, 0x7c,
+	0x6b, 0x27, 0xa1, 0xe1, 0xae, 0x19, 0x84, 0x3c, 0xe6, 0x78, 0xa2, 0xab, 0x30, 0x73, 0x85, 0x36,
+	0xe1, 0x72, 0x97, 0x0b, 0x81, 0xd5, 0x59, 0xa5, 0x5a, 0x6d, 0xda, 0xe5, 0xdc, 0xf5, 0xa9, 0x45,
+	0x02, 0xcf, 0x22, 0x8c, 0xf1, 0x98, 0xc4, 0x1e, 0x67, 0x91, 0xfc, 0xf5, 0x8a, 0xc3, 0xa3, 0x36,
+	0x8f, 0x2c, 0x9b, 0x44, 0x34, 0x6d, 0x61, 0xbd, 0x6c, 0xd8, 0x34, 0x26, 0x0d, 0x2b, 0x20, 0xae,
+	0xc7, 0x84, 0x58, 0x6a, 0x2f, 0x2a, 0xb9, 0x02, 0x12, 0x92, 0x76, 0x66, 0xa7, 0x17, 0xed, 0x32,
+	0x23, 0x87, 0x7b, 0x99, 0xc5, 0xac, 0xd2, 0x22, 0x61, 0x36, 0x67, 0xdb, 0x1e, 0x73, 0xa5, 0x6a,
+	0x51, 0xa9, 0xca, 0x97, 0xcf, 0x6c, 0xe2, 0x93, 0xce, 0xf0, 0x42, 0x6e, 0x4c, 0x00, 0xde, 0xea,
+	0x90, 0x6f, 0x0a, 0x92, 0x16, 0xdd, 0x49, 0x68, 0x14, 0x1b, 0x5b, 0x30, 0xde, 0xf3, 0x35, 0x0a,
+	0x38, 0x8b, 0x28, 0x5e, 0x83, 0x6a, 0x4a, 0x3c, 0x85, 0xea, 0x68, 0xbe, 0xd6, 0x9c, 0x36, 0x55,
+	0x59, 0x9a, 0x69, 0xd5, 0xfa, 0xc9, 0xbd, 0x9f, 0x33, 0x95, 0x96, 0xac, 0x30, 0xd6, 0xe0, 0x9c,
+	0xb0, 0xdc, 0xe8, 0xea, 0x64, 0x33, 0x5c, 0x87, 0x5a, 0x40, 0xc2, 0xd8, 0x73, 0xbc, 0x80, 0xb0,
+	0x58, 0x58, 0x9f, 0x69, 0x15, 0x3f, 0x19, 0x2d, 0x98, 0xec, 0xab, 0x95, 0x48, 0xab, 0x50, 0x25,
+	0x6d, 0x9e, 0xc8, 0xba, 0x5a, 0xf3, 0xbc, 0x99, 0xa6, 0x68, 0x76, 0x52, 0x34, 0x65, 0x8a, 0xe6,
+	0x06, 0xf7, 0x58, 0xc6, 0x93, 0xca, 0x8d, 0x6d, 0xd0, 0x84, 0xe7, 0x5d, 0xdf, 0xcf, 0x6d, 0xb3,
+	0x00, 0xf0, 0x03, 0x80, 0x7c, 0x0b, 0xa5, 0xf5, 0xe5, 0x1e, 0xeb, 0xf4, 0x48, 0x65, 0x0d, 0x36,
+	0x89, 0x4b, 0x65, 0x6d, 0xab, 0x50, 0x69, 0x7c, 0x41, 0x70, 0x41, 0xd9, 0x46, 0xe2, 0x3f, 0x02,
+	0xc8, 0x83, 0x9b, 0x42, 0xf5, 0x13, 0xf3, 0xb5, 0xe6, 0x9c, 0x3a, 0xd5, 0xbc, 0x7c, 0x3d, 0xdd,
+	0x41, 0x39, 0x50, 0xc1, 0x00, 0x3f, 0xec, 0xc1, 0x1e, 0x13, 0xd8, 0x73, 0xff, 0xc4, 0x4e, 0x59,
+	0x7a, 0xb8, 0x37, 0x60, 0x46, 0x60, 0x3f, 0xc9, 0x4e, 0xd7, 0x51, 0xb6, 0x2d, 0x82, 0xfa, 0x60,
+	0x13, 0x19, 0xc0, 0x63, 0x80, 0xee, 0x09, 0x8e, 0x64, 0x00, 0x0b, 0xea, 0x00, 0x14, 0x36, 0x59,
+	0x04, 0xb9, 0x85, 0xd1, 0x86, 0x4b, 0x59, 0xe0, 0x8a, 0x82, 0x63, 0xdf, 0xe0, 0xaf, 0x08, 0x66,
+	0xcb, 0xfb, 0xfd, 0xa7, 0x41, 0x8f, 0x6d, 0xaf, 0x9b, 0x1f, 0x4f, 0xc3, 0x29, 0x31, 0x02, 0x7e,
+	0x8f, 0xa0, 0x9a, 0x5e, 0x5e, 0x3c, 0xaf, 0x46, 0xeb, 0x7f, 0x2b, 0xb4, 0x85, 0x21, 0x94, 0x69,
+	0x57, 0x63, 0xf9, 0xed, 0xf7, 0xdf, 0x1f, 0xc6, 0x16, 0xf1, 0x55, 0x2b, 0x08, 0xf9, 0x76, 0xe2,
+	0xc4, 0x91, 0xe3, 0x89, 0x97, 0xaa, 0xe4, 0x71, 0xc4, 0x9f, 0x11, 0x40, 0x1e, 0x04, 0xbe, 0x56,
+	0xd2, 0xae, 0xef, 0x90, 0x6a, 0x8b, 0x43, 0xaa, 0x25, 0xe0, 0x7d, 0x01, 0x78, 0x07, 0xdf, 0x1a,
+	0x0a, 0xb0, 0xb0, 0x7c, 0x5d, 0x38, 0xf7, 0x6f, 0xf0, 0x27, 0x04, 0x67, 0x7b, 0x2f, 0x3c, 0x5e,
+	0x2a, 0x01, 0x51, 0x3e, 0x41, 0x5a, 0x63, 0x84, 0x0a, 0x89, 0xbf, 0x2a, 0xf0, 0x1b, 0xd8, 0x1a,
+	0x11, 0x1f, 0x7f, 0x43, 0x30, 0xae, 0x38, 0x75, 0xf8, 0x7a, 0x09, 0xc3, 0xe0, 0xa7, 0x41, 0x5b,
+	0x19, 0xb5, 0x4c, 0xf2, 0xdf, 0x13, 0xfc, 0xb7, 0xf1, 0xcd, 0xa1, 0xf8, 0xbb, 0x77, 0xe1, 0xaf,
+	0xf4, 0xf7, 0x10, 0x4c, 0x0e, 0xb8, 0x8d, 0xf8, 0x46, 0x79, 0xa8, 0x25, 0x2f, 0x86, 0xb6, 0x76,
+	0x94, 0x52, 0x39, 0xd8, 0x8a, 0x18, 0x6c, 0x09, 0x9b, 0xa3, 0x0d, 0xb6, 0xbe, 0xb9, 0x77, 0xa0,
+	0xa3, 0xfd, 0x03, 0x1d, 0xfd, 0x3a, 0xd0, 0xd1, 0xbb, 0x43, 0xbd, 0xb2, 0x7f, 0xa8, 0x57, 0x7e,
+	0x1c, 0xea, 0x95, 0xa7, 0x2b, 0xae, 0x17, 0xbf, 0x48, 0x6c, 0xd3, 0xe1, 0xed, 0xc1, 0x9e, 0xaf,
+	0x8a, 0xae, 0xf1, 0x6e, 0x40, 0x23, 0xbb, 0x2a, 0xfe, 0xf6, 0x97, 0xff, 0x04, 0x00, 0x00, 0xff,
+	0xff, 0xb0, 0x22, 0x4b, 0x7b, 0x28, 0x09, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -569,11 +569,11 @@ type QueryClient interface {
 	// Queries a specific participant's active collateral.
 	Collateral(ctx context.Context, in *QueryCollateralRequest, opts ...grpc.CallOption) (*QueryCollateralResponse, error)
 	// Queries all active collateral.
-	AllCollateral(ctx context.Context, in *QueryAllCollateralRequest, opts ...grpc.CallOption) (*QueryAllCollateralResponse, error)
+	AllCollaterals(ctx context.Context, in *QueryAllCollateralsRequest, opts ...grpc.CallOption) (*QueryAllCollateralsResponse, error)
 	// Queries a specific participant's unbonding collateral.
 	UnbondingCollateral(ctx context.Context, in *QueryUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryUnbondingCollateralResponse, error)
 	// Queries all unbonding collateral.
-	AllUnbondingCollateral(ctx context.Context, in *QueryAllUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryAllUnbondingCollateralResponse, error)
+	AllUnbondingCollaterals(ctx context.Context, in *QueryAllUnbondingCollateralsRequest, opts ...grpc.CallOption) (*QueryAllUnbondingCollateralsResponse, error)
 }
 
 type queryClient struct {
@@ -602,9 +602,9 @@ func (c *queryClient) Collateral(ctx context.Context, in *QueryCollateralRequest
 	return out, nil
 }
 
-func (c *queryClient) AllCollateral(ctx context.Context, in *QueryAllCollateralRequest, opts ...grpc.CallOption) (*QueryAllCollateralResponse, error) {
-	out := new(QueryAllCollateralResponse)
-	err := c.cc.Invoke(ctx, "/inference.collateral.Query/AllCollateral", in, out, opts...)
+func (c *queryClient) AllCollaterals(ctx context.Context, in *QueryAllCollateralsRequest, opts ...grpc.CallOption) (*QueryAllCollateralsResponse, error) {
+	out := new(QueryAllCollateralsResponse)
+	err := c.cc.Invoke(ctx, "/inference.collateral.Query/AllCollaterals", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -620,9 +620,9 @@ func (c *queryClient) UnbondingCollateral(ctx context.Context, in *QueryUnbondin
 	return out, nil
 }
 
-func (c *queryClient) AllUnbondingCollateral(ctx context.Context, in *QueryAllUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryAllUnbondingCollateralResponse, error) {
-	out := new(QueryAllUnbondingCollateralResponse)
-	err := c.cc.Invoke(ctx, "/inference.collateral.Query/AllUnbondingCollateral", in, out, opts...)
+func (c *queryClient) AllUnbondingCollaterals(ctx context.Context, in *QueryAllUnbondingCollateralsRequest, opts ...grpc.CallOption) (*QueryAllUnbondingCollateralsResponse, error) {
+	out := new(QueryAllUnbondingCollateralsResponse)
+	err := c.cc.Invoke(ctx, "/inference.collateral.Query/AllUnbondingCollaterals", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -636,11 +636,11 @@ type QueryServer interface {
 	// Queries a specific participant's active collateral.
 	Collateral(context.Context, *QueryCollateralRequest) (*QueryCollateralResponse, error)
 	// Queries all active collateral.
-	AllCollateral(context.Context, *QueryAllCollateralRequest) (*QueryAllCollateralResponse, error)
+	AllCollaterals(context.Context, *QueryAllCollateralsRequest) (*QueryAllCollateralsResponse, error)
 	// Queries a specific participant's unbonding collateral.
 	UnbondingCollateral(context.Context, *QueryUnbondingCollateralRequest) (*QueryUnbondingCollateralResponse, error)
 	// Queries all unbonding collateral.
-	AllUnbondingCollateral(context.Context, *QueryAllUnbondingCollateralRequest) (*QueryAllUnbondingCollateralResponse, error)
+	AllUnbondingCollaterals(context.Context, *QueryAllUnbondingCollateralsRequest) (*QueryAllUnbondingCollateralsResponse, error)
 }
 
 // UnimplementedQueryServer can be embedded to have forward compatible implementations.
@@ -653,14 +653,14 @@ func (*UnimplementedQueryServer) Params(ctx context.Context, req *QueryParamsReq
 func (*UnimplementedQueryServer) Collateral(ctx context.Context, req *QueryCollateralRequest) (*QueryCollateralResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Collateral not implemented")
 }
-func (*UnimplementedQueryServer) AllCollateral(ctx context.Context, req *QueryAllCollateralRequest) (*QueryAllCollateralResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AllCollateral not implemented")
+func (*UnimplementedQueryServer) AllCollaterals(ctx context.Context, req *QueryAllCollateralsRequest) (*QueryAllCollateralsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AllCollaterals not implemented")
 }
 func (*UnimplementedQueryServer) UnbondingCollateral(ctx context.Context, req *QueryUnbondingCollateralRequest) (*QueryUnbondingCollateralResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UnbondingCollateral not implemented")
 }
-func (*UnimplementedQueryServer) AllUnbondingCollateral(ctx context.Context, req *QueryAllUnbondingCollateralRequest) (*QueryAllUnbondingCollateralResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AllUnbondingCollateral not implemented")
+func (*UnimplementedQueryServer) AllUnbondingCollaterals(ctx context.Context, req *QueryAllUnbondingCollateralsRequest) (*QueryAllUnbondingCollateralsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AllUnbondingCollaterals not implemented")
 }
 
 func RegisterQueryServer(s grpc1.Server, srv QueryServer) {
@@ -703,20 +703,20 @@ func _Query_Collateral_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_AllCollateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryAllCollateralRequest)
+func _Query_AllCollaterals_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllCollateralsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).AllCollateral(ctx, in)
+		return srv.(QueryServer).AllCollaterals(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/inference.collateral.Query/AllCollateral",
+		FullMethod: "/inference.collateral.Query/AllCollaterals",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).AllCollateral(ctx, req.(*QueryAllCollateralRequest))
+		return srv.(QueryServer).AllCollaterals(ctx, req.(*QueryAllCollateralsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -739,20 +739,20 @@ func _Query_UnbondingCollateral_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_AllUnbondingCollateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryAllUnbondingCollateralRequest)
+func _Query_AllUnbondingCollaterals_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllUnbondingCollateralsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).AllUnbondingCollateral(ctx, in)
+		return srv.(QueryServer).AllUnbondingCollaterals(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/inference.collateral.Query/AllUnbondingCollateral",
+		FullMethod: "/inference.collateral.Query/AllUnbondingCollaterals",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).AllUnbondingCollateral(ctx, req.(*QueryAllUnbondingCollateralRequest))
+		return srv.(QueryServer).AllUnbondingCollaterals(ctx, req.(*QueryAllUnbondingCollateralsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -771,16 +771,16 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Query_Collateral_Handler,
 		},
 		{
-			MethodName: "AllCollateral",
-			Handler:    _Query_AllCollateral_Handler,
+			MethodName: "AllCollaterals",
+			Handler:    _Query_AllCollaterals_Handler,
 		},
 		{
 			MethodName: "UnbondingCollateral",
 			Handler:    _Query_UnbondingCollateral_Handler,
 		},
 		{
-			MethodName: "AllUnbondingCollateral",
-			Handler:    _Query_AllUnbondingCollateral_Handler,
+			MethodName: "AllUnbondingCollaterals",
+			Handler:    _Query_AllUnbondingCollaterals_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -906,7 +906,7 @@ func (m *QueryCollateralResponse) MarshalToSizedBuffer(dAtA []byte) (int, error)
 	return len(dAtA) - i, nil
 }
 
-func (m *QueryAllCollateralRequest) Marshal() (dAtA []byte, err error) {
+func (m *QueryAllCollateralsRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -916,12 +916,12 @@ func (m *QueryAllCollateralRequest) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *QueryAllCollateralRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *QueryAllCollateralsRequest) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *QueryAllCollateralRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *QueryAllCollateralsRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -941,7 +941,7 @@ func (m *QueryAllCollateralRequest) MarshalToSizedBuffer(dAtA []byte) (int, erro
 	return len(dAtA) - i, nil
 }
 
-func (m *QueryAllCollateralResponse) Marshal() (dAtA []byte, err error) {
+func (m *QueryAllCollateralsResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -951,12 +951,12 @@ func (m *QueryAllCollateralResponse) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *QueryAllCollateralResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *QueryAllCollateralsResponse) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *QueryAllCollateralResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *QueryAllCollateralsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1057,7 +1057,7 @@ func (m *QueryUnbondingCollateralResponse) MarshalToSizedBuffer(dAtA []byte) (in
 	return len(dAtA) - i, nil
 }
 
-func (m *QueryAllUnbondingCollateralRequest) Marshal() (dAtA []byte, err error) {
+func (m *QueryAllUnbondingCollateralsRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1067,12 +1067,12 @@ func (m *QueryAllUnbondingCollateralRequest) Marshal() (dAtA []byte, err error) 
 	return dAtA[:n], nil
 }
 
-func (m *QueryAllUnbondingCollateralRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *QueryAllUnbondingCollateralsRequest) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *QueryAllUnbondingCollateralRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *QueryAllUnbondingCollateralsRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1092,7 +1092,7 @@ func (m *QueryAllUnbondingCollateralRequest) MarshalToSizedBuffer(dAtA []byte) (
 	return len(dAtA) - i, nil
 }
 
-func (m *QueryAllUnbondingCollateralResponse) Marshal() (dAtA []byte, err error) {
+func (m *QueryAllUnbondingCollateralsResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1102,12 +1102,12 @@ func (m *QueryAllUnbondingCollateralResponse) Marshal() (dAtA []byte, err error)
 	return dAtA[:n], nil
 }
 
-func (m *QueryAllUnbondingCollateralResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *QueryAllUnbondingCollateralsResponse) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *QueryAllUnbondingCollateralResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *QueryAllUnbondingCollateralsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1196,7 +1196,7 @@ func (m *QueryCollateralResponse) Size() (n int) {
 	return n
 }
 
-func (m *QueryAllCollateralRequest) Size() (n int) {
+func (m *QueryAllCollateralsRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1209,7 +1209,7 @@ func (m *QueryAllCollateralRequest) Size() (n int) {
 	return n
 }
 
-func (m *QueryAllCollateralResponse) Size() (n int) {
+func (m *QueryAllCollateralsResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1256,7 +1256,7 @@ func (m *QueryUnbondingCollateralResponse) Size() (n int) {
 	return n
 }
 
-func (m *QueryAllUnbondingCollateralRequest) Size() (n int) {
+func (m *QueryAllUnbondingCollateralsRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1269,7 +1269,7 @@ func (m *QueryAllUnbondingCollateralRequest) Size() (n int) {
 	return n
 }
 
-func (m *QueryAllUnbondingCollateralResponse) Size() (n int) {
+func (m *QueryAllUnbondingCollateralsResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1592,7 +1592,7 @@ func (m *QueryCollateralResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *QueryAllCollateralRequest) Unmarshal(dAtA []byte) error {
+func (m *QueryAllCollateralsRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1615,10 +1615,10 @@ func (m *QueryAllCollateralRequest) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: QueryAllCollateralRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: QueryAllCollateralsRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryAllCollateralRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: QueryAllCollateralsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -1678,7 +1678,7 @@ func (m *QueryAllCollateralRequest) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *QueryAllCollateralResponse) Unmarshal(dAtA []byte) error {
+func (m *QueryAllCollateralsResponse) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1701,10 +1701,10 @@ func (m *QueryAllCollateralResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: QueryAllCollateralResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: QueryAllCollateralsResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryAllCollateralResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: QueryAllCollateralsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -1964,7 +1964,7 @@ func (m *QueryUnbondingCollateralResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *QueryAllUnbondingCollateralRequest) Unmarshal(dAtA []byte) error {
+func (m *QueryAllUnbondingCollateralsRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1987,10 +1987,10 @@ func (m *QueryAllUnbondingCollateralRequest) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: QueryAllUnbondingCollateralRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: QueryAllUnbondingCollateralsRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryAllUnbondingCollateralRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: QueryAllUnbondingCollateralsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -2050,7 +2050,7 @@ func (m *QueryAllUnbondingCollateralRequest) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *QueryAllUnbondingCollateralResponse) Unmarshal(dAtA []byte) error {
+func (m *QueryAllUnbondingCollateralsResponse) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2073,10 +2073,10 @@ func (m *QueryAllUnbondingCollateralResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: QueryAllUnbondingCollateralResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: QueryAllUnbondingCollateralsResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryAllUnbondingCollateralResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: QueryAllUnbondingCollateralsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:

@@ -57,6 +57,7 @@ data class InferenceParams(
     val validationParams: ValidationParams,
     val pocParams: PocParams,
     val tokenomicsParams: TokenomicsParams,
+    val collateralParams: CollateralParams,
 )
 
 data class TokenomicsParams(

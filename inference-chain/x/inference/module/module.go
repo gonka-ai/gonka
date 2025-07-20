@@ -188,6 +188,7 @@ func (am AppModule) handleExpiredInference(ctx context.Context, inference types.
 		am.LogError("Error issuing refund", types.Inferences, "error", err)
 	}
 	am.keeper.SetInference(ctx, inference)
+	executor.CurrentEpochStats.MissedRequests++
 	am.keeper.SetParticipant(ctx, executor)
 }
 
@@ -531,8 +532,8 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ValidatorSet,
 		in.StakingKeeper,
 		in.AccountKeeper,
-		in.GetWasmKeeper,
 		in.CollateralKeeper,
+		in.GetWasmKeeper,
 	)
 
 	m := NewAppModule(

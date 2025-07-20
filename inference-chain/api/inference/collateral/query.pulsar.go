@@ -1663,25 +1663,25 @@ func (x *fastReflection_QueryCollateralResponse) ProtoMethods() *protoiface.Meth
 }
 
 var (
-	md_QueryAllCollateralRequest            protoreflect.MessageDescriptor
-	fd_QueryAllCollateralRequest_pagination protoreflect.FieldDescriptor
+	md_QueryAllCollateralsRequest            protoreflect.MessageDescriptor
+	fd_QueryAllCollateralsRequest_pagination protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_collateral_query_proto_init()
-	md_QueryAllCollateralRequest = File_inference_collateral_query_proto.Messages().ByName("QueryAllCollateralRequest")
-	fd_QueryAllCollateralRequest_pagination = md_QueryAllCollateralRequest.Fields().ByName("pagination")
+	md_QueryAllCollateralsRequest = File_inference_collateral_query_proto.Messages().ByName("QueryAllCollateralsRequest")
+	fd_QueryAllCollateralsRequest_pagination = md_QueryAllCollateralsRequest.Fields().ByName("pagination")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryAllCollateralRequest)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryAllCollateralsRequest)(nil)
 
-type fastReflection_QueryAllCollateralRequest QueryAllCollateralRequest
+type fastReflection_QueryAllCollateralsRequest QueryAllCollateralsRequest
 
-func (x *QueryAllCollateralRequest) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryAllCollateralRequest)(x)
+func (x *QueryAllCollateralsRequest) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryAllCollateralsRequest)(x)
 }
 
-func (x *QueryAllCollateralRequest) slowProtoReflect() protoreflect.Message {
+func (x *QueryAllCollateralsRequest) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_collateral_query_proto_msgTypes[4]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1693,43 +1693,43 @@ func (x *QueryAllCollateralRequest) slowProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryAllCollateralRequest_messageType fastReflection_QueryAllCollateralRequest_messageType
-var _ protoreflect.MessageType = fastReflection_QueryAllCollateralRequest_messageType{}
+var _fastReflection_QueryAllCollateralsRequest_messageType fastReflection_QueryAllCollateralsRequest_messageType
+var _ protoreflect.MessageType = fastReflection_QueryAllCollateralsRequest_messageType{}
 
-type fastReflection_QueryAllCollateralRequest_messageType struct{}
+type fastReflection_QueryAllCollateralsRequest_messageType struct{}
 
-func (x fastReflection_QueryAllCollateralRequest_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryAllCollateralRequest)(nil)
+func (x fastReflection_QueryAllCollateralsRequest_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryAllCollateralsRequest)(nil)
 }
-func (x fastReflection_QueryAllCollateralRequest_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryAllCollateralRequest)
+func (x fastReflection_QueryAllCollateralsRequest_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryAllCollateralsRequest)
 }
-func (x fastReflection_QueryAllCollateralRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllCollateralRequest
+func (x fastReflection_QueryAllCollateralsRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllCollateralsRequest
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryAllCollateralRequest) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllCollateralRequest
+func (x *fastReflection_QueryAllCollateralsRequest) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllCollateralsRequest
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryAllCollateralRequest) Type() protoreflect.MessageType {
-	return _fastReflection_QueryAllCollateralRequest_messageType
+func (x *fastReflection_QueryAllCollateralsRequest) Type() protoreflect.MessageType {
+	return _fastReflection_QueryAllCollateralsRequest_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryAllCollateralRequest) New() protoreflect.Message {
-	return new(fastReflection_QueryAllCollateralRequest)
+func (x *fastReflection_QueryAllCollateralsRequest) New() protoreflect.Message {
+	return new(fastReflection_QueryAllCollateralsRequest)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryAllCollateralRequest) Interface() protoreflect.ProtoMessage {
-	return (*QueryAllCollateralRequest)(x)
+func (x *fastReflection_QueryAllCollateralsRequest) Interface() protoreflect.ProtoMessage {
+	return (*QueryAllCollateralsRequest)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -1737,10 +1737,10 @@ func (x *fastReflection_QueryAllCollateralRequest) Interface() protoreflect.Prot
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryAllCollateralRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_QueryAllCollateralsRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.Pagination != nil {
 		value := protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
-		if !f(fd_QueryAllCollateralRequest_pagination, value) {
+		if !f(fd_QueryAllCollateralsRequest_pagination, value) {
 			return
 		}
 	}
@@ -1757,15 +1757,15 @@ func (x *fastReflection_QueryAllCollateralRequest) Range(f func(protoreflect.Fie
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryAllCollateralRequest) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryAllCollateralsRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralRequest.pagination":
+	case "inference.collateral.QueryAllCollateralsRequest.pagination":
 		return x.Pagination != nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -1775,15 +1775,15 @@ func (x *fastReflection_QueryAllCollateralRequest) Has(fd protoreflect.FieldDesc
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralRequest) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryAllCollateralsRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralRequest.pagination":
+	case "inference.collateral.QueryAllCollateralsRequest.pagination":
 		x.Pagination = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -1793,16 +1793,16 @@ func (x *fastReflection_QueryAllCollateralRequest) Clear(fd protoreflect.FieldDe
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryAllCollateralRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllCollateralsRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.collateral.QueryAllCollateralRequest.pagination":
+	case "inference.collateral.QueryAllCollateralsRequest.pagination":
 		value := x.Pagination
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralRequest does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsRequest does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -1816,15 +1816,15 @@ func (x *fastReflection_QueryAllCollateralRequest) Get(descriptor protoreflect.F
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryAllCollateralsRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralRequest.pagination":
+	case "inference.collateral.QueryAllCollateralsRequest.pagination":
 		x.Pagination = value.Message().Interface().(*v1beta11.PageRequest)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -1838,44 +1838,44 @@ func (x *fastReflection_QueryAllCollateralRequest) Set(fd protoreflect.FieldDesc
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllCollateralsRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralRequest.pagination":
+	case "inference.collateral.QueryAllCollateralsRequest.pagination":
 		if x.Pagination == nil {
 			x.Pagination = new(v1beta11.PageRequest)
 		}
 		return protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryAllCollateralRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllCollateralsRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralRequest.pagination":
+	case "inference.collateral.QueryAllCollateralsRequest.pagination":
 		m := new(v1beta11.PageRequest)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryAllCollateralRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryAllCollateralsRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllCollateralRequest", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllCollateralsRequest", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -1883,7 +1883,7 @@ func (x *fastReflection_QueryAllCollateralRequest) WhichOneof(d protoreflect.One
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryAllCollateralRequest) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryAllCollateralsRequest) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -1894,7 +1894,7 @@ func (x *fastReflection_QueryAllCollateralRequest) GetUnknown() protoreflect.Raw
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralRequest) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryAllCollateralsRequest) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -1906,7 +1906,7 @@ func (x *fastReflection_QueryAllCollateralRequest) SetUnknown(fields protoreflec
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryAllCollateralRequest) IsValid() bool {
+func (x *fastReflection_QueryAllCollateralsRequest) IsValid() bool {
 	return x != nil
 }
 
@@ -1916,9 +1916,9 @@ func (x *fastReflection_QueryAllCollateralRequest) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryAllCollateralRequest) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryAllCollateralsRequest) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryAllCollateralRequest)
+		x := input.Message.Interface().(*QueryAllCollateralsRequest)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1944,7 +1944,7 @@ func (x *fastReflection_QueryAllCollateralRequest) ProtoMethods() *protoiface.Me
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllCollateralRequest)
+		x := input.Message.Interface().(*QueryAllCollateralsRequest)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1988,7 +1988,7 @@ func (x *fastReflection_QueryAllCollateralRequest) ProtoMethods() *protoiface.Me
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllCollateralRequest)
+		x := input.Message.Interface().(*QueryAllCollateralsRequest)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -2020,10 +2020,10 @@ func (x *fastReflection_QueryAllCollateralRequest) ProtoMethods() *protoiface.Me
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralRequest: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralsRequest: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -2097,79 +2097,79 @@ func (x *fastReflection_QueryAllCollateralRequest) ProtoMethods() *protoiface.Me
 	}
 }
 
-var _ protoreflect.List = (*_QueryAllCollateralResponse_1_list)(nil)
+var _ protoreflect.List = (*_QueryAllCollateralsResponse_1_list)(nil)
 
-type _QueryAllCollateralResponse_1_list struct {
+type _QueryAllCollateralsResponse_1_list struct {
 	list *[]*CollateralBalance
 }
 
-func (x *_QueryAllCollateralResponse_1_list) Len() int {
+func (x *_QueryAllCollateralsResponse_1_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_QueryAllCollateralResponse_1_list) Get(i int) protoreflect.Value {
+func (x *_QueryAllCollateralsResponse_1_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_QueryAllCollateralResponse_1_list) Set(i int, value protoreflect.Value) {
+func (x *_QueryAllCollateralsResponse_1_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*CollateralBalance)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_QueryAllCollateralResponse_1_list) Append(value protoreflect.Value) {
+func (x *_QueryAllCollateralsResponse_1_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*CollateralBalance)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_QueryAllCollateralResponse_1_list) AppendMutable() protoreflect.Value {
+func (x *_QueryAllCollateralsResponse_1_list) AppendMutable() protoreflect.Value {
 	v := new(CollateralBalance)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_QueryAllCollateralResponse_1_list) Truncate(n int) {
+func (x *_QueryAllCollateralsResponse_1_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_QueryAllCollateralResponse_1_list) NewElement() protoreflect.Value {
+func (x *_QueryAllCollateralsResponse_1_list) NewElement() protoreflect.Value {
 	v := new(CollateralBalance)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_QueryAllCollateralResponse_1_list) IsValid() bool {
+func (x *_QueryAllCollateralsResponse_1_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_QueryAllCollateralResponse            protoreflect.MessageDescriptor
-	fd_QueryAllCollateralResponse_collateral protoreflect.FieldDescriptor
-	fd_QueryAllCollateralResponse_pagination protoreflect.FieldDescriptor
+	md_QueryAllCollateralsResponse            protoreflect.MessageDescriptor
+	fd_QueryAllCollateralsResponse_collateral protoreflect.FieldDescriptor
+	fd_QueryAllCollateralsResponse_pagination protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_collateral_query_proto_init()
-	md_QueryAllCollateralResponse = File_inference_collateral_query_proto.Messages().ByName("QueryAllCollateralResponse")
-	fd_QueryAllCollateralResponse_collateral = md_QueryAllCollateralResponse.Fields().ByName("collateral")
-	fd_QueryAllCollateralResponse_pagination = md_QueryAllCollateralResponse.Fields().ByName("pagination")
+	md_QueryAllCollateralsResponse = File_inference_collateral_query_proto.Messages().ByName("QueryAllCollateralsResponse")
+	fd_QueryAllCollateralsResponse_collateral = md_QueryAllCollateralsResponse.Fields().ByName("collateral")
+	fd_QueryAllCollateralsResponse_pagination = md_QueryAllCollateralsResponse.Fields().ByName("pagination")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryAllCollateralResponse)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryAllCollateralsResponse)(nil)
 
-type fastReflection_QueryAllCollateralResponse QueryAllCollateralResponse
+type fastReflection_QueryAllCollateralsResponse QueryAllCollateralsResponse
 
-func (x *QueryAllCollateralResponse) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryAllCollateralResponse)(x)
+func (x *QueryAllCollateralsResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryAllCollateralsResponse)(x)
 }
 
-func (x *QueryAllCollateralResponse) slowProtoReflect() protoreflect.Message {
+func (x *QueryAllCollateralsResponse) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_collateral_query_proto_msgTypes[5]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2181,43 +2181,43 @@ func (x *QueryAllCollateralResponse) slowProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryAllCollateralResponse_messageType fastReflection_QueryAllCollateralResponse_messageType
-var _ protoreflect.MessageType = fastReflection_QueryAllCollateralResponse_messageType{}
+var _fastReflection_QueryAllCollateralsResponse_messageType fastReflection_QueryAllCollateralsResponse_messageType
+var _ protoreflect.MessageType = fastReflection_QueryAllCollateralsResponse_messageType{}
 
-type fastReflection_QueryAllCollateralResponse_messageType struct{}
+type fastReflection_QueryAllCollateralsResponse_messageType struct{}
 
-func (x fastReflection_QueryAllCollateralResponse_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryAllCollateralResponse)(nil)
+func (x fastReflection_QueryAllCollateralsResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryAllCollateralsResponse)(nil)
 }
-func (x fastReflection_QueryAllCollateralResponse_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryAllCollateralResponse)
+func (x fastReflection_QueryAllCollateralsResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryAllCollateralsResponse)
 }
-func (x fastReflection_QueryAllCollateralResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllCollateralResponse
+func (x fastReflection_QueryAllCollateralsResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllCollateralsResponse
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryAllCollateralResponse) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllCollateralResponse
+func (x *fastReflection_QueryAllCollateralsResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllCollateralsResponse
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryAllCollateralResponse) Type() protoreflect.MessageType {
-	return _fastReflection_QueryAllCollateralResponse_messageType
+func (x *fastReflection_QueryAllCollateralsResponse) Type() protoreflect.MessageType {
+	return _fastReflection_QueryAllCollateralsResponse_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryAllCollateralResponse) New() protoreflect.Message {
-	return new(fastReflection_QueryAllCollateralResponse)
+func (x *fastReflection_QueryAllCollateralsResponse) New() protoreflect.Message {
+	return new(fastReflection_QueryAllCollateralsResponse)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryAllCollateralResponse) Interface() protoreflect.ProtoMessage {
-	return (*QueryAllCollateralResponse)(x)
+func (x *fastReflection_QueryAllCollateralsResponse) Interface() protoreflect.ProtoMessage {
+	return (*QueryAllCollateralsResponse)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -2225,16 +2225,16 @@ func (x *fastReflection_QueryAllCollateralResponse) Interface() protoreflect.Pro
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryAllCollateralResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_QueryAllCollateralsResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if len(x.Collateral) != 0 {
-		value := protoreflect.ValueOfList(&_QueryAllCollateralResponse_1_list{list: &x.Collateral})
-		if !f(fd_QueryAllCollateralResponse_collateral, value) {
+		value := protoreflect.ValueOfList(&_QueryAllCollateralsResponse_1_list{list: &x.Collateral})
+		if !f(fd_QueryAllCollateralsResponse_collateral, value) {
 			return
 		}
 	}
 	if x.Pagination != nil {
 		value := protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
-		if !f(fd_QueryAllCollateralResponse_pagination, value) {
+		if !f(fd_QueryAllCollateralsResponse_pagination, value) {
 			return
 		}
 	}
@@ -2251,17 +2251,17 @@ func (x *fastReflection_QueryAllCollateralResponse) Range(f func(protoreflect.Fi
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryAllCollateralResponse) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryAllCollateralsResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralResponse.collateral":
+	case "inference.collateral.QueryAllCollateralsResponse.collateral":
 		return len(x.Collateral) != 0
-	case "inference.collateral.QueryAllCollateralResponse.pagination":
+	case "inference.collateral.QueryAllCollateralsResponse.pagination":
 		return x.Pagination != nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -2271,17 +2271,17 @@ func (x *fastReflection_QueryAllCollateralResponse) Has(fd protoreflect.FieldDes
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralResponse) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryAllCollateralsResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralResponse.collateral":
+	case "inference.collateral.QueryAllCollateralsResponse.collateral":
 		x.Collateral = nil
-	case "inference.collateral.QueryAllCollateralResponse.pagination":
+	case "inference.collateral.QueryAllCollateralsResponse.pagination":
 		x.Pagination = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -2291,22 +2291,22 @@ func (x *fastReflection_QueryAllCollateralResponse) Clear(fd protoreflect.FieldD
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryAllCollateralResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllCollateralsResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.collateral.QueryAllCollateralResponse.collateral":
+	case "inference.collateral.QueryAllCollateralsResponse.collateral":
 		if len(x.Collateral) == 0 {
-			return protoreflect.ValueOfList(&_QueryAllCollateralResponse_1_list{})
+			return protoreflect.ValueOfList(&_QueryAllCollateralsResponse_1_list{})
 		}
-		listValue := &_QueryAllCollateralResponse_1_list{list: &x.Collateral}
+		listValue := &_QueryAllCollateralsResponse_1_list{list: &x.Collateral}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.collateral.QueryAllCollateralResponse.pagination":
+	case "inference.collateral.QueryAllCollateralsResponse.pagination":
 		value := x.Pagination
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralResponse does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsResponse does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -2320,19 +2320,19 @@ func (x *fastReflection_QueryAllCollateralResponse) Get(descriptor protoreflect.
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryAllCollateralsResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralResponse.collateral":
+	case "inference.collateral.QueryAllCollateralsResponse.collateral":
 		lv := value.List()
-		clv := lv.(*_QueryAllCollateralResponse_1_list)
+		clv := lv.(*_QueryAllCollateralsResponse_1_list)
 		x.Collateral = *clv.list
-	case "inference.collateral.QueryAllCollateralResponse.pagination":
+	case "inference.collateral.QueryAllCollateralsResponse.pagination":
 		x.Pagination = value.Message().Interface().(*v1beta11.PageResponse)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -2346,53 +2346,53 @@ func (x *fastReflection_QueryAllCollateralResponse) Set(fd protoreflect.FieldDes
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllCollateralsResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralResponse.collateral":
+	case "inference.collateral.QueryAllCollateralsResponse.collateral":
 		if x.Collateral == nil {
 			x.Collateral = []*CollateralBalance{}
 		}
-		value := &_QueryAllCollateralResponse_1_list{list: &x.Collateral}
+		value := &_QueryAllCollateralsResponse_1_list{list: &x.Collateral}
 		return protoreflect.ValueOfList(value)
-	case "inference.collateral.QueryAllCollateralResponse.pagination":
+	case "inference.collateral.QueryAllCollateralsResponse.pagination":
 		if x.Pagination == nil {
 			x.Pagination = new(v1beta11.PageResponse)
 		}
 		return protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryAllCollateralResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllCollateralsResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllCollateralResponse.collateral":
+	case "inference.collateral.QueryAllCollateralsResponse.collateral":
 		list := []*CollateralBalance{}
-		return protoreflect.ValueOfList(&_QueryAllCollateralResponse_1_list{list: &list})
-	case "inference.collateral.QueryAllCollateralResponse.pagination":
+		return protoreflect.ValueOfList(&_QueryAllCollateralsResponse_1_list{list: &list})
+	case "inference.collateral.QueryAllCollateralsResponse.pagination":
 		m := new(v1beta11.PageResponse)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryAllCollateralResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryAllCollateralsResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllCollateralResponse", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllCollateralsResponse", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -2400,7 +2400,7 @@ func (x *fastReflection_QueryAllCollateralResponse) WhichOneof(d protoreflect.On
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryAllCollateralResponse) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryAllCollateralsResponse) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -2411,7 +2411,7 @@ func (x *fastReflection_QueryAllCollateralResponse) GetUnknown() protoreflect.Ra
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllCollateralResponse) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryAllCollateralsResponse) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -2423,7 +2423,7 @@ func (x *fastReflection_QueryAllCollateralResponse) SetUnknown(fields protorefle
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryAllCollateralResponse) IsValid() bool {
+func (x *fastReflection_QueryAllCollateralsResponse) IsValid() bool {
 	return x != nil
 }
 
@@ -2433,9 +2433,9 @@ func (x *fastReflection_QueryAllCollateralResponse) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryAllCollateralResponse) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryAllCollateralsResponse) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryAllCollateralResponse)
+		x := input.Message.Interface().(*QueryAllCollateralsResponse)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -2467,7 +2467,7 @@ func (x *fastReflection_QueryAllCollateralResponse) ProtoMethods() *protoiface.M
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllCollateralResponse)
+		x := input.Message.Interface().(*QueryAllCollateralsResponse)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -2527,7 +2527,7 @@ func (x *fastReflection_QueryAllCollateralResponse) ProtoMethods() *protoiface.M
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllCollateralResponse)
+		x := input.Message.Interface().(*QueryAllCollateralsResponse)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -2559,10 +2559,10 @@ func (x *fastReflection_QueryAllCollateralResponse) ProtoMethods() *protoiface.M
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralResponse: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralsResponse: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllCollateralsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -3585,25 +3585,25 @@ func (x *fastReflection_QueryUnbondingCollateralResponse) ProtoMethods() *protoi
 }
 
 var (
-	md_QueryAllUnbondingCollateralRequest            protoreflect.MessageDescriptor
-	fd_QueryAllUnbondingCollateralRequest_pagination protoreflect.FieldDescriptor
+	md_QueryAllUnbondingCollateralsRequest            protoreflect.MessageDescriptor
+	fd_QueryAllUnbondingCollateralsRequest_pagination protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_collateral_query_proto_init()
-	md_QueryAllUnbondingCollateralRequest = File_inference_collateral_query_proto.Messages().ByName("QueryAllUnbondingCollateralRequest")
-	fd_QueryAllUnbondingCollateralRequest_pagination = md_QueryAllUnbondingCollateralRequest.Fields().ByName("pagination")
+	md_QueryAllUnbondingCollateralsRequest = File_inference_collateral_query_proto.Messages().ByName("QueryAllUnbondingCollateralsRequest")
+	fd_QueryAllUnbondingCollateralsRequest_pagination = md_QueryAllUnbondingCollateralsRequest.Fields().ByName("pagination")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryAllUnbondingCollateralRequest)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryAllUnbondingCollateralsRequest)(nil)
 
-type fastReflection_QueryAllUnbondingCollateralRequest QueryAllUnbondingCollateralRequest
+type fastReflection_QueryAllUnbondingCollateralsRequest QueryAllUnbondingCollateralsRequest
 
-func (x *QueryAllUnbondingCollateralRequest) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryAllUnbondingCollateralRequest)(x)
+func (x *QueryAllUnbondingCollateralsRequest) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryAllUnbondingCollateralsRequest)(x)
 }
 
-func (x *QueryAllUnbondingCollateralRequest) slowProtoReflect() protoreflect.Message {
+func (x *QueryAllUnbondingCollateralsRequest) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_collateral_query_proto_msgTypes[8]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3615,43 +3615,43 @@ func (x *QueryAllUnbondingCollateralRequest) slowProtoReflect() protoreflect.Mes
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryAllUnbondingCollateralRequest_messageType fastReflection_QueryAllUnbondingCollateralRequest_messageType
-var _ protoreflect.MessageType = fastReflection_QueryAllUnbondingCollateralRequest_messageType{}
+var _fastReflection_QueryAllUnbondingCollateralsRequest_messageType fastReflection_QueryAllUnbondingCollateralsRequest_messageType
+var _ protoreflect.MessageType = fastReflection_QueryAllUnbondingCollateralsRequest_messageType{}
 
-type fastReflection_QueryAllUnbondingCollateralRequest_messageType struct{}
+type fastReflection_QueryAllUnbondingCollateralsRequest_messageType struct{}
 
-func (x fastReflection_QueryAllUnbondingCollateralRequest_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryAllUnbondingCollateralRequest)(nil)
+func (x fastReflection_QueryAllUnbondingCollateralsRequest_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryAllUnbondingCollateralsRequest)(nil)
 }
-func (x fastReflection_QueryAllUnbondingCollateralRequest_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryAllUnbondingCollateralRequest)
+func (x fastReflection_QueryAllUnbondingCollateralsRequest_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryAllUnbondingCollateralsRequest)
 }
-func (x fastReflection_QueryAllUnbondingCollateralRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllUnbondingCollateralRequest
+func (x fastReflection_QueryAllUnbondingCollateralsRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllUnbondingCollateralsRequest
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllUnbondingCollateralRequest
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllUnbondingCollateralsRequest
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Type() protoreflect.MessageType {
-	return _fastReflection_QueryAllUnbondingCollateralRequest_messageType
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Type() protoreflect.MessageType {
+	return _fastReflection_QueryAllUnbondingCollateralsRequest_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) New() protoreflect.Message {
-	return new(fastReflection_QueryAllUnbondingCollateralRequest)
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) New() protoreflect.Message {
+	return new(fastReflection_QueryAllUnbondingCollateralsRequest)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Interface() protoreflect.ProtoMessage {
-	return (*QueryAllUnbondingCollateralRequest)(x)
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Interface() protoreflect.ProtoMessage {
+	return (*QueryAllUnbondingCollateralsRequest)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -3659,10 +3659,10 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) Interface() protoref
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.Pagination != nil {
 		value := protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
-		if !f(fd_QueryAllUnbondingCollateralRequest_pagination, value) {
+		if !f(fd_QueryAllUnbondingCollateralsRequest_pagination, value) {
 			return
 		}
 	}
@@ -3679,15 +3679,15 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) Range(f func(protore
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralRequest.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsRequest.pagination":
 		return x.Pagination != nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -3697,15 +3697,15 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) Has(fd protoreflect.
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralRequest.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsRequest.pagination":
 		x.Pagination = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -3715,16 +3715,16 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) Clear(fd protoreflec
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralRequest.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsRequest.pagination":
 		value := x.Pagination
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralRequest does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsRequest does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -3738,15 +3738,15 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) Get(descriptor proto
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralRequest.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsRequest.pagination":
 		x.Pagination = value.Message().Interface().(*v1beta11.PageRequest)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -3760,44 +3760,44 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) Set(fd protoreflect.
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralRequest.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsRequest.pagination":
 		if x.Pagination == nil {
 			x.Pagination = new(v1beta11.PageRequest)
 		}
 		return protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralRequest.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsRequest.pagination":
 		m := new(v1beta11.PageRequest)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsRequest"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllUnbondingCollateralRequest", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllUnbondingCollateralsRequest", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -3805,7 +3805,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) WhichOneof(d protore
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -3816,7 +3816,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) GetUnknown() protore
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -3828,7 +3828,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) SetUnknown(fields pr
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) IsValid() bool {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) IsValid() bool {
 	return x != nil
 }
 
@@ -3838,9 +3838,9 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryAllUnbondingCollateralRequest) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryAllUnbondingCollateralsRequest) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryAllUnbondingCollateralRequest)
+		x := input.Message.Interface().(*QueryAllUnbondingCollateralsRequest)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -3866,7 +3866,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) ProtoMethods() *prot
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllUnbondingCollateralRequest)
+		x := input.Message.Interface().(*QueryAllUnbondingCollateralsRequest)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -3910,7 +3910,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) ProtoMethods() *prot
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllUnbondingCollateralRequest)
+		x := input.Message.Interface().(*QueryAllUnbondingCollateralsRequest)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -3942,10 +3942,10 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) ProtoMethods() *prot
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralRequest: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralsRequest: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -4019,79 +4019,79 @@ func (x *fastReflection_QueryAllUnbondingCollateralRequest) ProtoMethods() *prot
 	}
 }
 
-var _ protoreflect.List = (*_QueryAllUnbondingCollateralResponse_1_list)(nil)
+var _ protoreflect.List = (*_QueryAllUnbondingCollateralsResponse_1_list)(nil)
 
-type _QueryAllUnbondingCollateralResponse_1_list struct {
+type _QueryAllUnbondingCollateralsResponse_1_list struct {
 	list *[]*UnbondingCollateral
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) Len() int {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) Get(i int) protoreflect.Value {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) Set(i int, value protoreflect.Value) {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*UnbondingCollateral)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) Append(value protoreflect.Value) {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*UnbondingCollateral)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) AppendMutable() protoreflect.Value {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) AppendMutable() protoreflect.Value {
 	v := new(UnbondingCollateral)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) Truncate(n int) {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) NewElement() protoreflect.Value {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) NewElement() protoreflect.Value {
 	v := new(UnbondingCollateral)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_QueryAllUnbondingCollateralResponse_1_list) IsValid() bool {
+func (x *_QueryAllUnbondingCollateralsResponse_1_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_QueryAllUnbondingCollateralResponse            protoreflect.MessageDescriptor
-	fd_QueryAllUnbondingCollateralResponse_unbondings protoreflect.FieldDescriptor
-	fd_QueryAllUnbondingCollateralResponse_pagination protoreflect.FieldDescriptor
+	md_QueryAllUnbondingCollateralsResponse            protoreflect.MessageDescriptor
+	fd_QueryAllUnbondingCollateralsResponse_unbondings protoreflect.FieldDescriptor
+	fd_QueryAllUnbondingCollateralsResponse_pagination protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_collateral_query_proto_init()
-	md_QueryAllUnbondingCollateralResponse = File_inference_collateral_query_proto.Messages().ByName("QueryAllUnbondingCollateralResponse")
-	fd_QueryAllUnbondingCollateralResponse_unbondings = md_QueryAllUnbondingCollateralResponse.Fields().ByName("unbondings")
-	fd_QueryAllUnbondingCollateralResponse_pagination = md_QueryAllUnbondingCollateralResponse.Fields().ByName("pagination")
+	md_QueryAllUnbondingCollateralsResponse = File_inference_collateral_query_proto.Messages().ByName("QueryAllUnbondingCollateralsResponse")
+	fd_QueryAllUnbondingCollateralsResponse_unbondings = md_QueryAllUnbondingCollateralsResponse.Fields().ByName("unbondings")
+	fd_QueryAllUnbondingCollateralsResponse_pagination = md_QueryAllUnbondingCollateralsResponse.Fields().ByName("pagination")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryAllUnbondingCollateralResponse)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryAllUnbondingCollateralsResponse)(nil)
 
-type fastReflection_QueryAllUnbondingCollateralResponse QueryAllUnbondingCollateralResponse
+type fastReflection_QueryAllUnbondingCollateralsResponse QueryAllUnbondingCollateralsResponse
 
-func (x *QueryAllUnbondingCollateralResponse) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryAllUnbondingCollateralResponse)(x)
+func (x *QueryAllUnbondingCollateralsResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryAllUnbondingCollateralsResponse)(x)
 }
 
-func (x *QueryAllUnbondingCollateralResponse) slowProtoReflect() protoreflect.Message {
+func (x *QueryAllUnbondingCollateralsResponse) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_collateral_query_proto_msgTypes[9]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4103,43 +4103,43 @@ func (x *QueryAllUnbondingCollateralResponse) slowProtoReflect() protoreflect.Me
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryAllUnbondingCollateralResponse_messageType fastReflection_QueryAllUnbondingCollateralResponse_messageType
-var _ protoreflect.MessageType = fastReflection_QueryAllUnbondingCollateralResponse_messageType{}
+var _fastReflection_QueryAllUnbondingCollateralsResponse_messageType fastReflection_QueryAllUnbondingCollateralsResponse_messageType
+var _ protoreflect.MessageType = fastReflection_QueryAllUnbondingCollateralsResponse_messageType{}
 
-type fastReflection_QueryAllUnbondingCollateralResponse_messageType struct{}
+type fastReflection_QueryAllUnbondingCollateralsResponse_messageType struct{}
 
-func (x fastReflection_QueryAllUnbondingCollateralResponse_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryAllUnbondingCollateralResponse)(nil)
+func (x fastReflection_QueryAllUnbondingCollateralsResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryAllUnbondingCollateralsResponse)(nil)
 }
-func (x fastReflection_QueryAllUnbondingCollateralResponse_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryAllUnbondingCollateralResponse)
+func (x fastReflection_QueryAllUnbondingCollateralsResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryAllUnbondingCollateralsResponse)
 }
-func (x fastReflection_QueryAllUnbondingCollateralResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllUnbondingCollateralResponse
+func (x fastReflection_QueryAllUnbondingCollateralsResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllUnbondingCollateralsResponse
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryAllUnbondingCollateralResponse
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllUnbondingCollateralsResponse
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Type() protoreflect.MessageType {
-	return _fastReflection_QueryAllUnbondingCollateralResponse_messageType
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Type() protoreflect.MessageType {
+	return _fastReflection_QueryAllUnbondingCollateralsResponse_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) New() protoreflect.Message {
-	return new(fastReflection_QueryAllUnbondingCollateralResponse)
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) New() protoreflect.Message {
+	return new(fastReflection_QueryAllUnbondingCollateralsResponse)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Interface() protoreflect.ProtoMessage {
-	return (*QueryAllUnbondingCollateralResponse)(x)
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Interface() protoreflect.ProtoMessage {
+	return (*QueryAllUnbondingCollateralsResponse)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -4147,16 +4147,16 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) Interface() protore
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if len(x.Unbondings) != 0 {
-		value := protoreflect.ValueOfList(&_QueryAllUnbondingCollateralResponse_1_list{list: &x.Unbondings})
-		if !f(fd_QueryAllUnbondingCollateralResponse_unbondings, value) {
+		value := protoreflect.ValueOfList(&_QueryAllUnbondingCollateralsResponse_1_list{list: &x.Unbondings})
+		if !f(fd_QueryAllUnbondingCollateralsResponse_unbondings, value) {
 			return
 		}
 	}
 	if x.Pagination != nil {
 		value := protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
-		if !f(fd_QueryAllUnbondingCollateralResponse_pagination, value) {
+		if !f(fd_QueryAllUnbondingCollateralsResponse_pagination, value) {
 			return
 		}
 	}
@@ -4173,17 +4173,17 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) Range(f func(protor
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.unbondings":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings":
 		return len(x.Unbondings) != 0
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.pagination":
 		return x.Pagination != nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -4193,17 +4193,17 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) Has(fd protoreflect
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.unbondings":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings":
 		x.Unbondings = nil
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.pagination":
 		x.Pagination = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -4213,22 +4213,22 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) Clear(fd protorefle
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.unbondings":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings":
 		if len(x.Unbondings) == 0 {
-			return protoreflect.ValueOfList(&_QueryAllUnbondingCollateralResponse_1_list{})
+			return protoreflect.ValueOfList(&_QueryAllUnbondingCollateralsResponse_1_list{})
 		}
-		listValue := &_QueryAllUnbondingCollateralResponse_1_list{list: &x.Unbondings}
+		listValue := &_QueryAllUnbondingCollateralsResponse_1_list{list: &x.Unbondings}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.pagination":
 		value := x.Pagination
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralResponse does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsResponse does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -4242,19 +4242,19 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) Get(descriptor prot
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.unbondings":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings":
 		lv := value.List()
-		clv := lv.(*_QueryAllUnbondingCollateralResponse_1_list)
+		clv := lv.(*_QueryAllUnbondingCollateralsResponse_1_list)
 		x.Unbondings = *clv.list
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.pagination":
 		x.Pagination = value.Message().Interface().(*v1beta11.PageResponse)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -4268,53 +4268,53 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) Set(fd protoreflect
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.unbondings":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings":
 		if x.Unbondings == nil {
 			x.Unbondings = []*UnbondingCollateral{}
 		}
-		value := &_QueryAllUnbondingCollateralResponse_1_list{list: &x.Unbondings}
+		value := &_QueryAllUnbondingCollateralsResponse_1_list{list: &x.Unbondings}
 		return protoreflect.ValueOfList(value)
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.pagination":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.pagination":
 		if x.Pagination == nil {
 			x.Pagination = new(v1beta11.PageResponse)
 		}
 		return protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.unbondings":
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings":
 		list := []*UnbondingCollateral{}
-		return protoreflect.ValueOfList(&_QueryAllUnbondingCollateralResponse_1_list{list: &list})
-	case "inference.collateral.QueryAllUnbondingCollateralResponse.pagination":
+		return protoreflect.ValueOfList(&_QueryAllUnbondingCollateralsResponse_1_list{list: &list})
+	case "inference.collateral.QueryAllUnbondingCollateralsResponse.pagination":
 		m := new(v1beta11.PageResponse)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.collateral.QueryAllUnbondingCollateralsResponse"))
 		}
-		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.collateral.QueryAllUnbondingCollateralsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllUnbondingCollateralResponse", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.collateral.QueryAllUnbondingCollateralsResponse", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -4322,7 +4322,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) WhichOneof(d protor
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -4333,7 +4333,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) GetUnknown() protor
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -4345,7 +4345,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) SetUnknown(fields p
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) IsValid() bool {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) IsValid() bool {
 	return x != nil
 }
 
@@ -4355,9 +4355,9 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryAllUnbondingCollateralResponse) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryAllUnbondingCollateralsResponse) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryAllUnbondingCollateralResponse)
+		x := input.Message.Interface().(*QueryAllUnbondingCollateralsResponse)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -4389,7 +4389,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) ProtoMethods() *pro
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllUnbondingCollateralResponse)
+		x := input.Message.Interface().(*QueryAllUnbondingCollateralsResponse)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -4449,7 +4449,7 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) ProtoMethods() *pro
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryAllUnbondingCollateralResponse)
+		x := input.Message.Interface().(*QueryAllUnbondingCollateralsResponse)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -4481,10 +4481,10 @@ func (x *fastReflection_QueryAllUnbondingCollateralResponse) ProtoMethods() *pro
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralResponse: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralsResponse: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllUnbondingCollateralsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -4741,8 +4741,8 @@ func (x *QueryCollateralResponse) GetAmount() *v1beta1.Coin {
 	return nil
 }
 
-// QueryAllCollateralRequest is the request type for the Query/AllCollateral RPC method.
-type QueryAllCollateralRequest struct {
+// QueryAllCollateralsRequest is the request type for the Query/AllCollaterals RPC method.
+type QueryAllCollateralsRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -4750,8 +4750,8 @@ type QueryAllCollateralRequest struct {
 	Pagination *v1beta11.PageRequest `protobuf:"bytes,1,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (x *QueryAllCollateralRequest) Reset() {
-	*x = QueryAllCollateralRequest{}
+func (x *QueryAllCollateralsRequest) Reset() {
+	*x = QueryAllCollateralsRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_collateral_query_proto_msgTypes[4]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4759,26 +4759,26 @@ func (x *QueryAllCollateralRequest) Reset() {
 	}
 }
 
-func (x *QueryAllCollateralRequest) String() string {
+func (x *QueryAllCollateralsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryAllCollateralRequest) ProtoMessage() {}
+func (*QueryAllCollateralsRequest) ProtoMessage() {}
 
-// Deprecated: Use QueryAllCollateralRequest.ProtoReflect.Descriptor instead.
-func (*QueryAllCollateralRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryAllCollateralsRequest.ProtoReflect.Descriptor instead.
+func (*QueryAllCollateralsRequest) Descriptor() ([]byte, []int) {
 	return file_inference_collateral_query_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *QueryAllCollateralRequest) GetPagination() *v1beta11.PageRequest {
+func (x *QueryAllCollateralsRequest) GetPagination() *v1beta11.PageRequest {
 	if x != nil {
 		return x.Pagination
 	}
 	return nil
 }
 
-// QueryAllCollateralResponse is the response type for the Query/AllCollateral RPC method.
-type QueryAllCollateralResponse struct {
+// QueryAllCollateralsResponse is the response type for the Query/AllCollaterals RPC method.
+type QueryAllCollateralsResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -4787,8 +4787,8 @@ type QueryAllCollateralResponse struct {
 	Pagination *v1beta11.PageResponse `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (x *QueryAllCollateralResponse) Reset() {
-	*x = QueryAllCollateralResponse{}
+func (x *QueryAllCollateralsResponse) Reset() {
+	*x = QueryAllCollateralsResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_collateral_query_proto_msgTypes[5]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4796,25 +4796,25 @@ func (x *QueryAllCollateralResponse) Reset() {
 	}
 }
 
-func (x *QueryAllCollateralResponse) String() string {
+func (x *QueryAllCollateralsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryAllCollateralResponse) ProtoMessage() {}
+func (*QueryAllCollateralsResponse) ProtoMessage() {}
 
-// Deprecated: Use QueryAllCollateralResponse.ProtoReflect.Descriptor instead.
-func (*QueryAllCollateralResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryAllCollateralsResponse.ProtoReflect.Descriptor instead.
+func (*QueryAllCollateralsResponse) Descriptor() ([]byte, []int) {
 	return file_inference_collateral_query_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *QueryAllCollateralResponse) GetCollateral() []*CollateralBalance {
+func (x *QueryAllCollateralsResponse) GetCollateral() []*CollateralBalance {
 	if x != nil {
 		return x.Collateral
 	}
 	return nil
 }
 
-func (x *QueryAllCollateralResponse) GetPagination() *v1beta11.PageResponse {
+func (x *QueryAllCollateralsResponse) GetPagination() *v1beta11.PageResponse {
 	if x != nil {
 		return x.Pagination
 	}
@@ -4893,8 +4893,8 @@ func (x *QueryUnbondingCollateralResponse) GetUnbondings() []*UnbondingCollatera
 	return nil
 }
 
-// QueryAllUnbondingCollateralRequest is the request type for the Query/AllUnbondingCollateral RPC method.
-type QueryAllUnbondingCollateralRequest struct {
+// QueryAllUnbondingCollateralsRequest is the request type for the Query/AllUnbondingCollaterals RPC method.
+type QueryAllUnbondingCollateralsRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -4902,8 +4902,8 @@ type QueryAllUnbondingCollateralRequest struct {
 	Pagination *v1beta11.PageRequest `protobuf:"bytes,1,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (x *QueryAllUnbondingCollateralRequest) Reset() {
-	*x = QueryAllUnbondingCollateralRequest{}
+func (x *QueryAllUnbondingCollateralsRequest) Reset() {
+	*x = QueryAllUnbondingCollateralsRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_collateral_query_proto_msgTypes[8]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4911,26 +4911,26 @@ func (x *QueryAllUnbondingCollateralRequest) Reset() {
 	}
 }
 
-func (x *QueryAllUnbondingCollateralRequest) String() string {
+func (x *QueryAllUnbondingCollateralsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryAllUnbondingCollateralRequest) ProtoMessage() {}
+func (*QueryAllUnbondingCollateralsRequest) ProtoMessage() {}
 
-// Deprecated: Use QueryAllUnbondingCollateralRequest.ProtoReflect.Descriptor instead.
-func (*QueryAllUnbondingCollateralRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryAllUnbondingCollateralsRequest.ProtoReflect.Descriptor instead.
+func (*QueryAllUnbondingCollateralsRequest) Descriptor() ([]byte, []int) {
 	return file_inference_collateral_query_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *QueryAllUnbondingCollateralRequest) GetPagination() *v1beta11.PageRequest {
+func (x *QueryAllUnbondingCollateralsRequest) GetPagination() *v1beta11.PageRequest {
 	if x != nil {
 		return x.Pagination
 	}
 	return nil
 }
 
-// QueryAllUnbondingCollateralResponse is the response type for the Query/AllUnbondingCollateral RPC method.
-type QueryAllUnbondingCollateralResponse struct {
+// QueryAllUnbondingCollateralsResponse is the response type for the Query/AllUnbondingCollaterals RPC method.
+type QueryAllUnbondingCollateralsResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -4939,8 +4939,8 @@ type QueryAllUnbondingCollateralResponse struct {
 	Pagination *v1beta11.PageResponse `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (x *QueryAllUnbondingCollateralResponse) Reset() {
-	*x = QueryAllUnbondingCollateralResponse{}
+func (x *QueryAllUnbondingCollateralsResponse) Reset() {
+	*x = QueryAllUnbondingCollateralsResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_collateral_query_proto_msgTypes[9]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4948,25 +4948,25 @@ func (x *QueryAllUnbondingCollateralResponse) Reset() {
 	}
 }
 
-func (x *QueryAllUnbondingCollateralResponse) String() string {
+func (x *QueryAllUnbondingCollateralsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryAllUnbondingCollateralResponse) ProtoMessage() {}
+func (*QueryAllUnbondingCollateralsResponse) ProtoMessage() {}
 
-// Deprecated: Use QueryAllUnbondingCollateralResponse.ProtoReflect.Descriptor instead.
-func (*QueryAllUnbondingCollateralResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryAllUnbondingCollateralsResponse.ProtoReflect.Descriptor instead.
+func (*QueryAllUnbondingCollateralsResponse) Descriptor() ([]byte, []int) {
 	return file_inference_collateral_query_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *QueryAllUnbondingCollateralResponse) GetUnbondings() []*UnbondingCollateral {
+func (x *QueryAllUnbondingCollateralsResponse) GetUnbondings() []*UnbondingCollateral {
 	if x != nil {
 		return x.Unbondings
 	}
 	return nil
 }
 
-func (x *QueryAllUnbondingCollateralResponse) GetPagination() *v1beta11.PageResponse {
+func (x *QueryAllUnbondingCollateralsResponse) GetPagination() *v1beta11.PageResponse {
 	if x != nil {
 		return x.Pagination
 	}
@@ -5010,125 +5010,126 @@ var file_inference_collateral_query_proto_rawDesc = []byte{
 	0x12, 0x37, 0x0a, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b,
 	0x32, 0x19, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x76,
 	0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x43, 0x6f, 0x69, 0x6e, 0x42, 0x04, 0xc8, 0xde, 0x1f,
-	0x00, 0x52, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0x63, 0x0a, 0x19, 0x51, 0x75, 0x65,
-	0x72, 0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f, 0x73,
-	0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76,
-	0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0xb4,
-	0x01, 0x0a, 0x1a, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61,
-	0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4d, 0x0a,
-	0x0a, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x18, 0x01, 0x20, 0x03, 0x28,
-	0x0b, 0x32, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f,
-	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65,
-	0x72, 0x61, 0x6c, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00,
-	0x52, 0x0a, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0x47, 0x0a, 0x0a,
-	0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b,
-	0x32, 0x27, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71,
-	0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67,
-	0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x43, 0x0a, 0x1f, 0x51, 0x75, 0x65, 0x72, 0x79, 0x55, 0x6e,
-	0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61,
-	0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x70,
-	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x22, 0x73, 0x0a, 0x20, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c,
-	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4f,
-	0x0a, 0x0a, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x18, 0x01, 0x20, 0x03,
-	0x28, 0x0b, 0x32, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63,
-	0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64,
-	0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x42, 0x04, 0xc8,
-	0xde, 0x1f, 0x00, 0x52, 0x0a, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x22,
-	0x6c, 0x0a, 0x22, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e,
-	0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31,
-	0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0xbf, 0x01,
-	0x0a, 0x23, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64,
-	0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4f, 0x0a, 0x0a, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69,
-	0x6e, 0x67, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c,
-	0x2e, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
-	0x65, 0x72, 0x61, 0x6c, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0a, 0x75, 0x6e, 0x62, 0x6f,
-	0x6e, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x12, 0x47, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x63, 0x6f, 0x73,
-	0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76,
-	0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x32,
-	0x92, 0x07, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x92, 0x01, 0x0a, 0x06, 0x50, 0x61,
-	0x72, 0x61, 0x6d, 0x73, 0x12, 0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72,
-	0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x29,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61,
-	0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d,
-	0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x33, 0x82, 0xd3, 0xe4, 0x93, 0x02,
-	0x2d, 0x12, 0x2b, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6c,
-	0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0xb0,
-	0x01, 0x0a, 0x0a, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0x2c, 0x2e,
+	0x00, 0x52, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0x64, 0x0a, 0x1a, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x73,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f,
+	0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e,
+	0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22,
+	0xb5, 0x01, 0x0a, 0x1b, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c,
+	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
+	0x4d, 0x0a, 0x0a, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x18, 0x01, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x43, 0x6f, 0x6c, 0x6c, 0x61,
+	0x74, 0x65, 0x72, 0x61, 0x6c, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde,
+	0x1f, 0x00, 0x52, 0x0a, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0x47,
+	0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x27, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65,
+	0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50,
+	0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67,
+	0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x43, 0x0a, 0x1f, 0x51, 0x75, 0x65, 0x72, 0x79,
+	0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65,
+	0x72, 0x61, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61,
+	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x22, 0x73, 0x0a, 0x20,
+	0x51, 0x75, 0x65, 0x72, 0x79, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f,
+	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x12, 0x4f, 0x0a, 0x0a, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x18, 0x01,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x55, 0x6e, 0x62, 0x6f,
+	0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x42,
+	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0a, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67,
+	0x73, 0x22, 0x6d, 0x0a, 0x23, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62,
+	0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c,
+	0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69,
+	0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63,
+	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79,
+	0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x22, 0xc0, 0x01, 0x0a, 0x24, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62,
+	0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c,
+	0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4f, 0x0a, 0x0a, 0x75, 0x6e, 0x62,
+	0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x29, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
-	0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
-	0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72,
-	0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72,
-	0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x45, 0x82, 0xd3, 0xe4, 0x93,
-	0x02, 0x3f, 0x12, 0x3d, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65,
-	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x63, 0x6f,
-	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65,
-	0x72, 0x61, 0x6c, 0x2f, 0x7b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
-	0x7d, 0x12, 0xab, 0x01, 0x0a, 0x0d, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65,
-	0x72, 0x61, 0x6c, 0x12, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79,
-	0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72,
-	0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x37, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x31, 0x12, 0x2f,
-	0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
-	0x65, 0x72, 0x61, 0x6c, 0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12,
-	0xca, 0x01, 0x0a, 0x13, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c,
-	0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0x35, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c,
-	0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x36,
+	0x65, 0x72, 0x61, 0x6c, 0x2e, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f,
+	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0a,
+	0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x12, 0x47, 0x0a, 0x0a, 0x70, 0x61,
+	0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27,
+	0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65,
+	0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x32, 0x98, 0x07, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x92, 0x01,
+	0x0a, 0x06, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e,
+	0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63,
+	0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50,
+	0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x33, 0x82,
+	0xd3, 0xe4, 0x93, 0x02, 0x2d, 0x12, 0x2b, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73,
+	0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x70, 0x61, 0x72, 0x61,
+	0x6d, 0x73, 0x12, 0xb0, 0x01, 0x0a, 0x0a, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61,
+	0x6c, 0x12, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f,
+	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x43, 0x6f,
+	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c,
+	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x43, 0x6f, 0x6c, 0x6c,
+	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x45,
+	0x82, 0xd3, 0xe4, 0x93, 0x02, 0x3f, 0x12, 0x3d, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74,
+	0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x63, 0x6f, 0x6c,
+	0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x7b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
+	0x70, 0x61, 0x6e, 0x74, 0x7d, 0x12, 0xae, 0x01, 0x0a, 0x0e, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c,
+	0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x73, 0x12, 0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e,
+	0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72,
+	0x61, 0x6c, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x31, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61,
+	0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
+	0x65, 0x72, 0x61, 0x6c, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x37, 0x82,
+	0xd3, 0xe4, 0x93, 0x02, 0x31, 0x12, 0x2f, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73,
+	0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x63, 0x6f, 0x6c, 0x6c,
+	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0xca, 0x01, 0x0a, 0x13, 0x55, 0x6e, 0x62, 0x6f, 0x6e,
+	0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0x35,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61,
 	0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x55, 0x6e, 0x62, 0x6f, 0x6e,
 	0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x44, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x3e, 0x12, 0x3c,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x36, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61,
+	0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x44, 0x82,
+	0xd3, 0xe4, 0x93, 0x02, 0x3e, 0x12, 0x3c, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73,
+	0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x75, 0x6e, 0x62, 0x6f,
+	0x6e, 0x64, 0x69, 0x6e, 0x67, 0x2f, 0x7b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
+	0x6e, 0x74, 0x7d, 0x12, 0xc8, 0x01, 0x0a, 0x17, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e,
+	0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x73, 0x12,
+	0x39, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c,
+	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55,
+	0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72,
+	0x61, 0x6c, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x3a, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61,
+	0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64,
+	0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x73, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x36, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x30, 0x12, 0x2e,
 	0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
-	0x65, 0x72, 0x61, 0x6c, 0x2f, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x2f, 0x7b,
-	0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x7d, 0x12, 0xc5, 0x01, 0x0a,
-	0x16, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c,
-	0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x12, 0x38, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67,
-	0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x39, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f,
-	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c,
-	0x6c, 0x55, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
-	0x65, 0x72, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x36, 0x82, 0xd3,
-	0xe4, 0x93, 0x02, 0x30, 0x12, 0x2e, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63,
-	0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x2f, 0x75, 0x6e, 0x62, 0x6f, 0x6e,
-	0x64, 0x69, 0x6e, 0x67, 0x42, 0xbe, 0x01, 0x0a, 0x18, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61,
-	0x6c, 0x42, 0x0a, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
-	0x25, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
-	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6c, 0x6c,
-	0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0xa2, 0x02, 0x03, 0x49, 0x43, 0x58, 0xaa, 0x02, 0x14, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65,
-	0x72, 0x61, 0x6c, 0xca, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0xe2, 0x02, 0x20, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61,
-	0x6c, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x15,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x43, 0x6f, 0x6c, 0x6c, 0x61,
-	0x74, 0x65, 0x72, 0x61, 0x6c, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x65, 0x72, 0x61, 0x6c, 0x2f, 0x75, 0x6e, 0x62, 0x6f, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x42, 0xbe,
+	0x01, 0x0a, 0x18, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x42, 0x0a, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x25, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
+	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c,
+	0xa2, 0x02, 0x03, 0x49, 0x43, 0x58, 0xaa, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0xca, 0x02, 0x14,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74,
+	0x65, 0x72, 0x61, 0x6c, 0xe2, 0x02, 0x20, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x5c, 0x47, 0x50, 0x42, 0x4d,
+	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x62,
+	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -5145,43 +5146,43 @@ func file_inference_collateral_query_proto_rawDescGZIP() []byte {
 
 var file_inference_collateral_query_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_inference_collateral_query_proto_goTypes = []interface{}{
-	(*QueryParamsRequest)(nil),                  // 0: inference.collateral.QueryParamsRequest
-	(*QueryParamsResponse)(nil),                 // 1: inference.collateral.QueryParamsResponse
-	(*QueryCollateralRequest)(nil),              // 2: inference.collateral.QueryCollateralRequest
-	(*QueryCollateralResponse)(nil),             // 3: inference.collateral.QueryCollateralResponse
-	(*QueryAllCollateralRequest)(nil),           // 4: inference.collateral.QueryAllCollateralRequest
-	(*QueryAllCollateralResponse)(nil),          // 5: inference.collateral.QueryAllCollateralResponse
-	(*QueryUnbondingCollateralRequest)(nil),     // 6: inference.collateral.QueryUnbondingCollateralRequest
-	(*QueryUnbondingCollateralResponse)(nil),    // 7: inference.collateral.QueryUnbondingCollateralResponse
-	(*QueryAllUnbondingCollateralRequest)(nil),  // 8: inference.collateral.QueryAllUnbondingCollateralRequest
-	(*QueryAllUnbondingCollateralResponse)(nil), // 9: inference.collateral.QueryAllUnbondingCollateralResponse
-	(*Params)(nil),                              // 10: inference.collateral.Params
-	(*v1beta1.Coin)(nil),                        // 11: cosmos.base.v1beta1.Coin
-	(*v1beta11.PageRequest)(nil),                // 12: cosmos.base.query.v1beta1.PageRequest
-	(*CollateralBalance)(nil),                   // 13: inference.collateral.CollateralBalance
-	(*v1beta11.PageResponse)(nil),               // 14: cosmos.base.query.v1beta1.PageResponse
-	(*UnbondingCollateral)(nil),                 // 15: inference.collateral.UnbondingCollateral
+	(*QueryParamsRequest)(nil),                   // 0: inference.collateral.QueryParamsRequest
+	(*QueryParamsResponse)(nil),                  // 1: inference.collateral.QueryParamsResponse
+	(*QueryCollateralRequest)(nil),               // 2: inference.collateral.QueryCollateralRequest
+	(*QueryCollateralResponse)(nil),              // 3: inference.collateral.QueryCollateralResponse
+	(*QueryAllCollateralsRequest)(nil),           // 4: inference.collateral.QueryAllCollateralsRequest
+	(*QueryAllCollateralsResponse)(nil),          // 5: inference.collateral.QueryAllCollateralsResponse
+	(*QueryUnbondingCollateralRequest)(nil),      // 6: inference.collateral.QueryUnbondingCollateralRequest
+	(*QueryUnbondingCollateralResponse)(nil),     // 7: inference.collateral.QueryUnbondingCollateralResponse
+	(*QueryAllUnbondingCollateralsRequest)(nil),  // 8: inference.collateral.QueryAllUnbondingCollateralsRequest
+	(*QueryAllUnbondingCollateralsResponse)(nil), // 9: inference.collateral.QueryAllUnbondingCollateralsResponse
+	(*Params)(nil),                               // 10: inference.collateral.Params
+	(*v1beta1.Coin)(nil),                         // 11: cosmos.base.v1beta1.Coin
+	(*v1beta11.PageRequest)(nil),                 // 12: cosmos.base.query.v1beta1.PageRequest
+	(*CollateralBalance)(nil),                    // 13: inference.collateral.CollateralBalance
+	(*v1beta11.PageResponse)(nil),                // 14: cosmos.base.query.v1beta1.PageResponse
+	(*UnbondingCollateral)(nil),                  // 15: inference.collateral.UnbondingCollateral
 }
 var file_inference_collateral_query_proto_depIdxs = []int32{
 	10, // 0: inference.collateral.QueryParamsResponse.params:type_name -> inference.collateral.Params
 	11, // 1: inference.collateral.QueryCollateralResponse.amount:type_name -> cosmos.base.v1beta1.Coin
-	12, // 2: inference.collateral.QueryAllCollateralRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
-	13, // 3: inference.collateral.QueryAllCollateralResponse.collateral:type_name -> inference.collateral.CollateralBalance
-	14, // 4: inference.collateral.QueryAllCollateralResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
+	12, // 2: inference.collateral.QueryAllCollateralsRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
+	13, // 3: inference.collateral.QueryAllCollateralsResponse.collateral:type_name -> inference.collateral.CollateralBalance
+	14, // 4: inference.collateral.QueryAllCollateralsResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
 	15, // 5: inference.collateral.QueryUnbondingCollateralResponse.unbondings:type_name -> inference.collateral.UnbondingCollateral
-	12, // 6: inference.collateral.QueryAllUnbondingCollateralRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
-	15, // 7: inference.collateral.QueryAllUnbondingCollateralResponse.unbondings:type_name -> inference.collateral.UnbondingCollateral
-	14, // 8: inference.collateral.QueryAllUnbondingCollateralResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
+	12, // 6: inference.collateral.QueryAllUnbondingCollateralsRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
+	15, // 7: inference.collateral.QueryAllUnbondingCollateralsResponse.unbondings:type_name -> inference.collateral.UnbondingCollateral
+	14, // 8: inference.collateral.QueryAllUnbondingCollateralsResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
 	0,  // 9: inference.collateral.Query.Params:input_type -> inference.collateral.QueryParamsRequest
 	2,  // 10: inference.collateral.Query.Collateral:input_type -> inference.collateral.QueryCollateralRequest
-	4,  // 11: inference.collateral.Query.AllCollateral:input_type -> inference.collateral.QueryAllCollateralRequest
+	4,  // 11: inference.collateral.Query.AllCollaterals:input_type -> inference.collateral.QueryAllCollateralsRequest
 	6,  // 12: inference.collateral.Query.UnbondingCollateral:input_type -> inference.collateral.QueryUnbondingCollateralRequest
-	8,  // 13: inference.collateral.Query.AllUnbondingCollateral:input_type -> inference.collateral.QueryAllUnbondingCollateralRequest
+	8,  // 13: inference.collateral.Query.AllUnbondingCollaterals:input_type -> inference.collateral.QueryAllUnbondingCollateralsRequest
 	1,  // 14: inference.collateral.Query.Params:output_type -> inference.collateral.QueryParamsResponse
 	3,  // 15: inference.collateral.Query.Collateral:output_type -> inference.collateral.QueryCollateralResponse
-	5,  // 16: inference.collateral.Query.AllCollateral:output_type -> inference.collateral.QueryAllCollateralResponse
+	5,  // 16: inference.collateral.Query.AllCollaterals:output_type -> inference.collateral.QueryAllCollateralsResponse
 	7,  // 17: inference.collateral.Query.UnbondingCollateral:output_type -> inference.collateral.QueryUnbondingCollateralResponse
-	9,  // 18: inference.collateral.Query.AllUnbondingCollateral:output_type -> inference.collateral.QueryAllUnbondingCollateralResponse
+	9,  // 18: inference.collateral.Query.AllUnbondingCollaterals:output_type -> inference.collateral.QueryAllUnbondingCollateralsResponse
 	14, // [14:19] is the sub-list for method output_type
 	9,  // [9:14] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name
@@ -5247,7 +5248,7 @@ func file_inference_collateral_query_proto_init() {
 			}
 		}
 		file_inference_collateral_query_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryAllCollateralRequest); i {
+			switch v := v.(*QueryAllCollateralsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5259,7 +5260,7 @@ func file_inference_collateral_query_proto_init() {
 			}
 		}
 		file_inference_collateral_query_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryAllCollateralResponse); i {
+			switch v := v.(*QueryAllCollateralsResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5295,7 +5296,7 @@ func file_inference_collateral_query_proto_init() {
 			}
 		}
 		file_inference_collateral_query_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryAllUnbondingCollateralRequest); i {
+			switch v := v.(*QueryAllUnbondingCollateralsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5307,7 +5308,7 @@ func file_inference_collateral_query_proto_init() {
 			}
 		}
 		file_inference_collateral_query_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryAllUnbondingCollateralResponse); i {
+			switch v := v.(*QueryAllUnbondingCollateralsResponse); i {
 			case 0:
 				return &v.state
 			case 1:

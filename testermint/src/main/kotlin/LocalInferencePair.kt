@@ -10,6 +10,7 @@ import com.github.dockerjava.core.DockerClientBuilder
 import com.github.dockerjava.transport.DockerHttpClient
 import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.AppState
+import com.productscience.data.Collateral
 import com.productscience.data.EpochPhase
 import com.productscience.data.EpochResponse
 import com.productscience.data.GovernanceMessage
@@ -192,6 +193,34 @@ data class LocalInferencePair(
     fun getEpochData(): EpochResponse {
         refreshMostRecentState()
         return this.mostRecentEpochData ?: error("No epoch data available")
+    }
+
+    fun getBalance(address: String): Long {
+        return this.node.getBalance(address, this.node.config.denom).balance.amount
+    }
+
+    fun queryCollateral(address: String): Collateral {
+        return this.node.queryCollateral(address)
+    }
+
+    fun depositCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "deposit-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
+    }
+
+    fun withdrawCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "withdraw-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
     }
 
     fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {

@@ -5217,20 +5217,20 @@ func (x *fastReflection_CollateralParams) Interface() protoreflect.ProtoMessage 
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_CollateralParams) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.SlashFractionInvalid != "" {
-		value := protoreflect.ValueOfString(x.SlashFractionInvalid)
+	if x.SlashFractionInvalid != nil {
+		value := protoreflect.ValueOfMessage(x.SlashFractionInvalid.ProtoReflect())
 		if !f(fd_CollateralParams_slash_fraction_invalid, value) {
 			return
 		}
 	}
-	if x.SlashFractionDowntime != "" {
-		value := protoreflect.ValueOfString(x.SlashFractionDowntime)
+	if x.SlashFractionDowntime != nil {
+		value := protoreflect.ValueOfMessage(x.SlashFractionDowntime.ProtoReflect())
 		if !f(fd_CollateralParams_slash_fraction_downtime, value) {
 			return
 		}
 	}
-	if x.DowntimeMissedPercentageThreshold != "" {
-		value := protoreflect.ValueOfString(x.DowntimeMissedPercentageThreshold)
+	if x.DowntimeMissedPercentageThreshold != nil {
+		value := protoreflect.ValueOfMessage(x.DowntimeMissedPercentageThreshold.ProtoReflect())
 		if !f(fd_CollateralParams_downtime_missed_percentage_threshold, value) {
 			return
 		}
@@ -5241,14 +5241,14 @@ func (x *fastReflection_CollateralParams) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
-	if x.BaseWeightRatio != "" {
-		value := protoreflect.ValueOfString(x.BaseWeightRatio)
+	if x.BaseWeightRatio != nil {
+		value := protoreflect.ValueOfMessage(x.BaseWeightRatio.ProtoReflect())
 		if !f(fd_CollateralParams_base_weight_ratio, value) {
 			return
 		}
 	}
-	if x.CollateralPerWeightUnit != "" {
-		value := protoreflect.ValueOfString(x.CollateralPerWeightUnit)
+	if x.CollateralPerWeightUnit != nil {
+		value := protoreflect.ValueOfMessage(x.CollateralPerWeightUnit.ProtoReflect())
 		if !f(fd_CollateralParams_collateral_per_weight_unit, value) {
 			return
 		}
@@ -5269,17 +5269,17 @@ func (x *fastReflection_CollateralParams) Range(f func(protoreflect.FieldDescrip
 func (x *fastReflection_CollateralParams) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.CollateralParams.slash_fraction_invalid":
-		return x.SlashFractionInvalid != ""
+		return x.SlashFractionInvalid != nil
 	case "inference.inference.CollateralParams.slash_fraction_downtime":
-		return x.SlashFractionDowntime != ""
+		return x.SlashFractionDowntime != nil
 	case "inference.inference.CollateralParams.downtime_missed_percentage_threshold":
-		return x.DowntimeMissedPercentageThreshold != ""
+		return x.DowntimeMissedPercentageThreshold != nil
 	case "inference.inference.CollateralParams.grace_period_end_epoch":
 		return x.GracePeriodEndEpoch != uint64(0)
 	case "inference.inference.CollateralParams.base_weight_ratio":
-		return x.BaseWeightRatio != ""
+		return x.BaseWeightRatio != nil
 	case "inference.inference.CollateralParams.collateral_per_weight_unit":
-		return x.CollateralPerWeightUnit != ""
+		return x.CollateralPerWeightUnit != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CollateralParams"))
@@ -5297,17 +5297,17 @@ func (x *fastReflection_CollateralParams) Has(fd protoreflect.FieldDescriptor) b
 func (x *fastReflection_CollateralParams) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.CollateralParams.slash_fraction_invalid":
-		x.SlashFractionInvalid = ""
+		x.SlashFractionInvalid = nil
 	case "inference.inference.CollateralParams.slash_fraction_downtime":
-		x.SlashFractionDowntime = ""
+		x.SlashFractionDowntime = nil
 	case "inference.inference.CollateralParams.downtime_missed_percentage_threshold":
-		x.DowntimeMissedPercentageThreshold = ""
+		x.DowntimeMissedPercentageThreshold = nil
 	case "inference.inference.CollateralParams.grace_period_end_epoch":
 		x.GracePeriodEndEpoch = uint64(0)
 	case "inference.inference.CollateralParams.base_weight_ratio":
-		x.BaseWeightRatio = ""
+		x.BaseWeightRatio = nil
 	case "inference.inference.CollateralParams.collateral_per_weight_unit":
-		x.CollateralPerWeightUnit = ""
+		x.CollateralPerWeightUnit = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CollateralParams"))
@@ -5326,22 +5326,22 @@ func (x *fastReflection_CollateralParams) Get(descriptor protoreflect.FieldDescr
 	switch descriptor.FullName() {
 	case "inference.inference.CollateralParams.slash_fraction_invalid":
 		value := x.SlashFractionInvalid
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.CollateralParams.slash_fraction_downtime":
 		value := x.SlashFractionDowntime
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.CollateralParams.downtime_missed_percentage_threshold":
 		value := x.DowntimeMissedPercentageThreshold
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.CollateralParams.grace_period_end_epoch":
 		value := x.GracePeriodEndEpoch
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.CollateralParams.base_weight_ratio":
 		value := x.BaseWeightRatio
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.CollateralParams.collateral_per_weight_unit":
 		value := x.CollateralPerWeightUnit
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CollateralParams"))
@@ -5363,17 +5363,17 @@ func (x *fastReflection_CollateralParams) Get(descriptor protoreflect.FieldDescr
 func (x *fastReflection_CollateralParams) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.CollateralParams.slash_fraction_invalid":
-		x.SlashFractionInvalid = value.Interface().(string)
+		x.SlashFractionInvalid = value.Message().Interface().(*Decimal)
 	case "inference.inference.CollateralParams.slash_fraction_downtime":
-		x.SlashFractionDowntime = value.Interface().(string)
+		x.SlashFractionDowntime = value.Message().Interface().(*Decimal)
 	case "inference.inference.CollateralParams.downtime_missed_percentage_threshold":
-		x.DowntimeMissedPercentageThreshold = value.Interface().(string)
+		x.DowntimeMissedPercentageThreshold = value.Message().Interface().(*Decimal)
 	case "inference.inference.CollateralParams.grace_period_end_epoch":
 		x.GracePeriodEndEpoch = value.Uint()
 	case "inference.inference.CollateralParams.base_weight_ratio":
-		x.BaseWeightRatio = value.Interface().(string)
+		x.BaseWeightRatio = value.Message().Interface().(*Decimal)
 	case "inference.inference.CollateralParams.collateral_per_weight_unit":
-		x.CollateralPerWeightUnit = value.Interface().(string)
+		x.CollateralPerWeightUnit = value.Message().Interface().(*Decimal)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CollateralParams"))
@@ -5395,17 +5395,32 @@ func (x *fastReflection_CollateralParams) Set(fd protoreflect.FieldDescriptor, v
 func (x *fastReflection_CollateralParams) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.CollateralParams.slash_fraction_invalid":
-		panic(fmt.Errorf("field slash_fraction_invalid of message inference.inference.CollateralParams is not mutable"))
+		if x.SlashFractionInvalid == nil {
+			x.SlashFractionInvalid = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.SlashFractionInvalid.ProtoReflect())
 	case "inference.inference.CollateralParams.slash_fraction_downtime":
-		panic(fmt.Errorf("field slash_fraction_downtime of message inference.inference.CollateralParams is not mutable"))
+		if x.SlashFractionDowntime == nil {
+			x.SlashFractionDowntime = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.SlashFractionDowntime.ProtoReflect())
 	case "inference.inference.CollateralParams.downtime_missed_percentage_threshold":
-		panic(fmt.Errorf("field downtime_missed_percentage_threshold of message inference.inference.CollateralParams is not mutable"))
+		if x.DowntimeMissedPercentageThreshold == nil {
+			x.DowntimeMissedPercentageThreshold = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.DowntimeMissedPercentageThreshold.ProtoReflect())
+	case "inference.inference.CollateralParams.base_weight_ratio":
+		if x.BaseWeightRatio == nil {
+			x.BaseWeightRatio = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.BaseWeightRatio.ProtoReflect())
+	case "inference.inference.CollateralParams.collateral_per_weight_unit":
+		if x.CollateralPerWeightUnit == nil {
+			x.CollateralPerWeightUnit = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.CollateralPerWeightUnit.ProtoReflect())
 	case "inference.inference.CollateralParams.grace_period_end_epoch":
 		panic(fmt.Errorf("field grace_period_end_epoch of message inference.inference.CollateralParams is not mutable"))
-	case "inference.inference.CollateralParams.base_weight_ratio":
-		panic(fmt.Errorf("field base_weight_ratio of message inference.inference.CollateralParams is not mutable"))
-	case "inference.inference.CollateralParams.collateral_per_weight_unit":
-		panic(fmt.Errorf("field collateral_per_weight_unit of message inference.inference.CollateralParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CollateralParams"))
@@ -5420,17 +5435,22 @@ func (x *fastReflection_CollateralParams) Mutable(fd protoreflect.FieldDescripto
 func (x *fastReflection_CollateralParams) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.CollateralParams.slash_fraction_invalid":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.CollateralParams.slash_fraction_downtime":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.CollateralParams.downtime_missed_percentage_threshold":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.CollateralParams.grace_period_end_epoch":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.CollateralParams.base_weight_ratio":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.CollateralParams.collateral_per_weight_unit":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CollateralParams"))
@@ -5500,27 +5520,27 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		l = len(x.SlashFractionInvalid)
-		if l > 0 {
+		if x.SlashFractionInvalid != nil {
+			l = options.Size(x.SlashFractionInvalid)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.SlashFractionDowntime)
-		if l > 0 {
+		if x.SlashFractionDowntime != nil {
+			l = options.Size(x.SlashFractionDowntime)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.DowntimeMissedPercentageThreshold)
-		if l > 0 {
+		if x.DowntimeMissedPercentageThreshold != nil {
+			l = options.Size(x.DowntimeMissedPercentageThreshold)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.GracePeriodEndEpoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.GracePeriodEndEpoch))
 		}
-		l = len(x.BaseWeightRatio)
-		if l > 0 {
+		if x.BaseWeightRatio != nil {
+			l = options.Size(x.BaseWeightRatio)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.CollateralPerWeightUnit)
-		if l > 0 {
+		if x.CollateralPerWeightUnit != nil {
+			l = options.Size(x.CollateralPerWeightUnit)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
@@ -5552,17 +5572,31 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.CollateralPerWeightUnit) > 0 {
-			i -= len(x.CollateralPerWeightUnit)
-			copy(dAtA[i:], x.CollateralPerWeightUnit)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.CollateralPerWeightUnit)))
+		if x.CollateralPerWeightUnit != nil {
+			encoded, err := options.Marshal(x.CollateralPerWeightUnit)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0x32
 		}
-		if len(x.BaseWeightRatio) > 0 {
-			i -= len(x.BaseWeightRatio)
-			copy(dAtA[i:], x.BaseWeightRatio)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.BaseWeightRatio)))
+		if x.BaseWeightRatio != nil {
+			encoded, err := options.Marshal(x.BaseWeightRatio)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0x2a
 		}
@@ -5571,24 +5605,45 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x20
 		}
-		if len(x.DowntimeMissedPercentageThreshold) > 0 {
-			i -= len(x.DowntimeMissedPercentageThreshold)
-			copy(dAtA[i:], x.DowntimeMissedPercentageThreshold)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.DowntimeMissedPercentageThreshold)))
+		if x.DowntimeMissedPercentageThreshold != nil {
+			encoded, err := options.Marshal(x.DowntimeMissedPercentageThreshold)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0x1a
 		}
-		if len(x.SlashFractionDowntime) > 0 {
-			i -= len(x.SlashFractionDowntime)
-			copy(dAtA[i:], x.SlashFractionDowntime)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.SlashFractionDowntime)))
+		if x.SlashFractionDowntime != nil {
+			encoded, err := options.Marshal(x.SlashFractionDowntime)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0x12
 		}
-		if len(x.SlashFractionInvalid) > 0 {
-			i -= len(x.SlashFractionInvalid)
-			copy(dAtA[i:], x.SlashFractionInvalid)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.SlashFractionInvalid)))
+		if x.SlashFractionInvalid != nil {
+			encoded, err := options.Marshal(x.SlashFractionInvalid)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0xa
 		}
@@ -5645,7 +5700,7 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SlashFractionInvalid", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5655,29 +5710,33 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.SlashFractionInvalid = string(dAtA[iNdEx:postIndex])
+				if x.SlashFractionInvalid == nil {
+					x.SlashFractionInvalid = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.SlashFractionInvalid); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			case 2:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SlashFractionDowntime", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5687,29 +5746,33 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.SlashFractionDowntime = string(dAtA[iNdEx:postIndex])
+				if x.SlashFractionDowntime == nil {
+					x.SlashFractionDowntime = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.SlashFractionDowntime); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			case 3:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DowntimeMissedPercentageThreshold", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5719,23 +5782,27 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.DowntimeMissedPercentageThreshold = string(dAtA[iNdEx:postIndex])
+				if x.DowntimeMissedPercentageThreshold == nil {
+					x.DowntimeMissedPercentageThreshold = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.DowntimeMissedPercentageThreshold); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			case 4:
 				if wireType != 0 {
@@ -5760,7 +5827,7 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BaseWeightRatio", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5770,29 +5837,33 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.BaseWeightRatio = string(dAtA[iNdEx:postIndex])
+				if x.BaseWeightRatio == nil {
+					x.BaseWeightRatio = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.BaseWeightRatio); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			case 6:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CollateralPerWeightUnit", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5802,23 +5873,27 @@ func (x *fastReflection_CollateralParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.CollateralPerWeightUnit = string(dAtA[iNdEx:postIndex])
+				if x.CollateralPerWeightUnit == nil {
+					x.CollateralPerWeightUnit = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.CollateralPerWeightUnit); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
@@ -6417,16 +6492,16 @@ type CollateralParams struct {
 	unknownFields protoimpl.UnknownFields
 
 	// slash_fraction_invalid is the percentage of collateral to slash when a participant is marked INVALID.
-	SlashFractionInvalid string `protobuf:"bytes,1,opt,name=slash_fraction_invalid,json=slashFractionInvalid,proto3" json:"slash_fraction_invalid,omitempty"`
+	SlashFractionInvalid *Decimal `protobuf:"bytes,1,opt,name=slash_fraction_invalid,json=slashFractionInvalid,proto3" json:"slash_fraction_invalid,omitempty"`
 	// slash_fraction_downtime is the percentage of collateral to slash for downtime.
-	SlashFractionDowntime string `protobuf:"bytes,2,opt,name=slash_fraction_downtime,json=slashFractionDowntime,proto3" json:"slash_fraction_downtime,omitempty"`
+	SlashFractionDowntime *Decimal `protobuf:"bytes,2,opt,name=slash_fraction_downtime,json=slashFractionDowntime,proto3" json:"slash_fraction_downtime,omitempty"`
 	// downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
-	DowntimeMissedPercentageThreshold string `protobuf:"bytes,3,opt,name=downtime_missed_percentage_threshold,json=downtimeMissedPercentageThreshold,proto3" json:"downtime_missed_percentage_threshold,omitempty"`
-	GracePeriodEndEpoch               uint64 `protobuf:"varint,4,opt,name=grace_period_end_epoch,json=gracePeriodEndEpoch,proto3" json:"grace_period_end_epoch,omitempty"`
+	DowntimeMissedPercentageThreshold *Decimal `protobuf:"bytes,3,opt,name=downtime_missed_percentage_threshold,json=downtimeMissedPercentageThreshold,proto3" json:"downtime_missed_percentage_threshold,omitempty"`
+	GracePeriodEndEpoch               uint64   `protobuf:"varint,4,opt,name=grace_period_end_epoch,json=gracePeriodEndEpoch,proto3" json:"grace_period_end_epoch,omitempty"`
 	// BaseWeightRatio is the portion of potential weight granted unconditionally (0-1)
-	BaseWeightRatio string `protobuf:"bytes,5,opt,name=base_weight_ratio,json=baseWeightRatio,proto3" json:"base_weight_ratio,omitempty"`
+	BaseWeightRatio *Decimal `protobuf:"bytes,5,opt,name=base_weight_ratio,json=baseWeightRatio,proto3" json:"base_weight_ratio,omitempty"`
 	// CollateralPerWeightUnit is the amount of collateral required per unit of weight
-	CollateralPerWeightUnit string `protobuf:"bytes,6,opt,name=collateral_per_weight_unit,json=collateralPerWeightUnit,proto3" json:"collateral_per_weight_unit,omitempty"`
+	CollateralPerWeightUnit *Decimal `protobuf:"bytes,6,opt,name=collateral_per_weight_unit,json=collateralPerWeightUnit,proto3" json:"collateral_per_weight_unit,omitempty"`
 }
 
 func (x *CollateralParams) Reset() {
@@ -6449,25 +6524,25 @@ func (*CollateralParams) Descriptor() ([]byte, []int) {
 	return file_inference_inference_params_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *CollateralParams) GetSlashFractionInvalid() string {
+func (x *CollateralParams) GetSlashFractionInvalid() *Decimal {
 	if x != nil {
 		return x.SlashFractionInvalid
 	}
-	return ""
+	return nil
 }
 
-func (x *CollateralParams) GetSlashFractionDowntime() string {
+func (x *CollateralParams) GetSlashFractionDowntime() *Decimal {
 	if x != nil {
 		return x.SlashFractionDowntime
 	}
-	return ""
+	return nil
 }
 
-func (x *CollateralParams) GetDowntimeMissedPercentageThreshold() string {
+func (x *CollateralParams) GetDowntimeMissedPercentageThreshold() *Decimal {
 	if x != nil {
 		return x.DowntimeMissedPercentageThreshold
 	}
-	return ""
+	return nil
 }
 
 func (x *CollateralParams) GetGracePeriodEndEpoch() uint64 {
@@ -6477,18 +6552,18 @@ func (x *CollateralParams) GetGracePeriodEndEpoch() uint64 {
 	return 0
 }
 
-func (x *CollateralParams) GetBaseWeightRatio() string {
+func (x *CollateralParams) GetBaseWeightRatio() *Decimal {
 	if x != nil {
 		return x.BaseWeightRatio
 	}
-	return ""
+	return nil
 }
 
-func (x *CollateralParams) GetCollateralPerWeightUnit() string {
+func (x *CollateralParams) GetCollateralPerWeightUnit() *Decimal {
 	if x != nil {
 		return x.CollateralPerWeightUnit
 	}
-	return ""
+	return nil
 }
 
 var File_inference_inference_params_proto protoreflect.FileDescriptor
@@ -6677,64 +6752,52 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x12, 0x1a, 0x0a, 0x08,
 	0x65, 0x78, 0x70, 0x6f, 0x6e, 0x65, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05, 0x52, 0x08,
-	0x65, 0x78, 0x70, 0x6f, 0x6e, 0x65, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xca,
-	0x05, 0x0a, 0x10, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x50, 0x61, 0x72,
-	0x61, 0x6d, 0x73, 0x12, 0x78, 0x0a, 0x16, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x5f, 0x66, 0x72, 0x61,
+	0x65, 0x78, 0x70, 0x6f, 0x6e, 0x65, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x8b,
+	0x04, 0x0a, 0x10, 0x43, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x50, 0x61, 0x72,
+	0x61, 0x6d, 0x73, 0x12, 0x52, 0x0a, 0x16, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x5f, 0x66, 0x72, 0x61,
 	0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x09, 0x42, 0x42, 0xc8, 0xde, 0x1f, 0x00, 0xda, 0xde, 0x1f, 0x1b, 0x63, 0x6f, 0x73,
-	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61, 0x74, 0x68, 0x2e, 0x4c,
-	0x65, 0x67, 0x61, 0x63, 0x79, 0x44, 0x65, 0x63, 0xd2, 0xb4, 0x2d, 0x1b, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65,
-	0x67, 0x61, 0x63, 0x79, 0x44, 0x65, 0x63, 0x52, 0x14, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x46, 0x72,
-	0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12, 0x7a, 0x0a,
-	0x17, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x5f, 0x66, 0x72, 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
-	0x64, 0x6f, 0x77, 0x6e, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x42, 0x42,
-	0xc8, 0xde, 0x1f, 0x00, 0xda, 0xde, 0x1f, 0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
-	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79,
-	0x44, 0x65, 0x63, 0xd2, 0xb4, 0x2d, 0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79, 0x44,
-	0x65, 0x63, 0x52, 0x15, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x46, 0x72, 0x61, 0x63, 0x74, 0x69, 0x6f,
-	0x6e, 0x44, 0x6f, 0x77, 0x6e, 0x74, 0x69, 0x6d, 0x65, 0x12, 0x93, 0x01, 0x0a, 0x24, 0x64, 0x6f,
-	0x77, 0x6e, 0x74, 0x69, 0x6d, 0x65, 0x5f, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x5f, 0x70, 0x65,
-	0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x74, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f,
-	0x6c, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x42, 0x42, 0xc8, 0xde, 0x1f, 0x00, 0xda, 0xde,
-	0x1f, 0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d,
-	0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79, 0x44, 0x65, 0x63, 0xd2, 0xb4, 0x2d,
-	0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61,
-	0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79, 0x44, 0x65, 0x63, 0x52, 0x21, 0x64, 0x6f,
-	0x77, 0x6e, 0x74, 0x69, 0x6d, 0x65, 0x4d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x50, 0x65, 0x72, 0x63,
-	0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x12,
-	0x33, 0x0a, 0x16, 0x67, 0x72, 0x61, 0x63, 0x65, 0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x5f,
-	0x65, 0x6e, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52,
-	0x13, 0x67, 0x72, 0x61, 0x63, 0x65, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x45, 0x6e, 0x64, 0x45,
-	0x70, 0x6f, 0x63, 0x68, 0x12, 0x6e, 0x0a, 0x11, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x77, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x5f, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x42,
-	0x42, 0xc8, 0xde, 0x1f, 0x00, 0xda, 0xde, 0x1f, 0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73,
-	0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63,
-	0x79, 0x44, 0x65, 0x63, 0xd2, 0xb4, 0x2d, 0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
-	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79,
-	0x44, 0x65, 0x63, 0x52, 0x0f, 0x62, 0x61, 0x73, 0x65, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52,
-	0x61, 0x74, 0x69, 0x6f, 0x12, 0x7f, 0x0a, 0x1a, 0x63, 0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72,
-	0x61, 0x6c, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x5f, 0x75, 0x6e,
-	0x69, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x42, 0x42, 0xc8, 0xde, 0x1f, 0x00, 0xda, 0xde,
-	0x1f, 0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d,
-	0x61, 0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79, 0x44, 0x65, 0x63, 0xd2, 0xb4, 0x2d,
-	0x1b, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x6d, 0x61,
-	0x74, 0x68, 0x2e, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79, 0x44, 0x65, 0x63, 0x52, 0x17, 0x63, 0x6f,
-	0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x50, 0x65, 0x72, 0x57, 0x65, 0x69, 0x67, 0x68,
-	0x74, 0x55, 0x6e, 0x69, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17,
-	0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50,
-	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
-	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49,
-	0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02,
-	0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
-	0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61,
+	0x6c, 0x52, 0x14, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x46, 0x72, 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e,
+	0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12, 0x54, 0x0a, 0x17, 0x73, 0x6c, 0x61, 0x73, 0x68,
+	0x5f, 0x66, 0x72, 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x64, 0x6f, 0x77, 0x6e, 0x74, 0x69,
+	0x6d, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44,
+	0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x15, 0x73, 0x6c, 0x61, 0x73, 0x68, 0x46, 0x72, 0x61,
+	0x63, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x6f, 0x77, 0x6e, 0x74, 0x69, 0x6d, 0x65, 0x12, 0x6d, 0x0a,
+	0x24, 0x64, 0x6f, 0x77, 0x6e, 0x74, 0x69, 0x6d, 0x65, 0x5f, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64,
+	0x5f, 0x70, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x74, 0x68, 0x72, 0x65,
+	0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x21, 0x64, 0x6f, 0x77, 0x6e, 0x74,
+	0x69, 0x6d, 0x65, 0x4d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x50, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74,
+	0x61, 0x67, 0x65, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x12, 0x33, 0x0a, 0x16,
+	0x67, 0x72, 0x61, 0x63, 0x65, 0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x5f, 0x65, 0x6e, 0x64,
+	0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x67, 0x72,
+	0x61, 0x63, 0x65, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x45, 0x6e, 0x64, 0x45, 0x70, 0x6f, 0x63,
+	0x68, 0x12, 0x48, 0x0a, 0x11, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x5f, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x0f, 0x62, 0x61, 0x73, 0x65,
+	0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52, 0x61, 0x74, 0x69, 0x6f, 0x12, 0x59, 0x0a, 0x1a, 0x63,
+	0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x77, 0x65,
+	0x69, 0x67, 0x68, 0x74, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32,
+	0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x17, 0x63,
+	0x6f, 0x6c, 0x6c, 0x61, 0x74, 0x65, 0x72, 0x61, 0x6c, 0x50, 0x65, 0x72, 0x57, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a,
+	0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
+	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73,
+	0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03,
+	0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2,
+	0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
+	0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -6777,11 +6840,16 @@ var file_inference_inference_params_proto_depIdxs = []int32{
 	6,  // 13: inference.inference.ValidationParams.min_validation_halfway:type_name -> inference.inference.Decimal
 	6,  // 14: inference.inference.ValidationParams.miss_percentage_cutoff:type_name -> inference.inference.Decimal
 	6,  // 15: inference.inference.ValidationParams.miss_requests_penalty:type_name -> inference.inference.Decimal
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	6,  // 16: inference.inference.CollateralParams.slash_fraction_invalid:type_name -> inference.inference.Decimal
+	6,  // 17: inference.inference.CollateralParams.slash_fraction_downtime:type_name -> inference.inference.Decimal
+	6,  // 18: inference.inference.CollateralParams.downtime_missed_percentage_threshold:type_name -> inference.inference.Decimal
+	6,  // 19: inference.inference.CollateralParams.base_weight_ratio:type_name -> inference.inference.Decimal
+	6,  // 20: inference.inference.CollateralParams.collateral_per_weight_unit:type_name -> inference.inference.Decimal
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_params_proto_init() }

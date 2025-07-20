@@ -108,12 +108,12 @@ func DefaultTokenomicsParams() *TokenomicsParams {
 
 func DefaultCollateralParams() *CollateralParams {
 	return &CollateralParams{
-		SlashFractionInvalid:              math.LegacyMustNewDecFromStr("0.20"),
-		SlashFractionDowntime:             math.LegacyMustNewDecFromStr("0.10"),
-		DowntimeMissedPercentageThreshold: math.LegacyMustNewDecFromStr("0.05"),
+		SlashFractionInvalid:              DecimalFromFloat(0.20),
+		SlashFractionDowntime:             DecimalFromFloat(0.10),
+		DowntimeMissedPercentageThreshold: DecimalFromFloat(0.05),
 		GracePeriodEndEpoch:               180,
-		BaseWeightRatio:                   math.LegacyNewDecWithPrec(2, 1), // 0.2 (20%)
-		CollateralPerWeightUnit:           math.LegacyNewDec(1),            // 1 token per weight unit
+		BaseWeightRatio:                   DecimalFromFloat(0.2),
+		CollateralPerWeightUnit:           DecimalFromFloat(1),
 	}
 }
 
@@ -182,53 +182,67 @@ func (p *CollateralParams) Validate() error {
 }
 
 func validateSlashFraction(i interface{}) error {
-	v, ok := i.(math.LegacyDec)
+	v, ok := i.(*Decimal)
 	if !ok {
 		return fmt.Errorf("invalid parameter type: %T", i)
 	}
-	if v.IsNegative() || v.GT(math.LegacyOneDec()) {
-		return fmt.Errorf("slash fraction must be between 0 and 1, but is %s", v.String())
+	legacyDec, err := v.ToLegacyDec()
+	if err != nil {
+		return err
+	}
+	if legacyDec.IsNegative() || legacyDec.GT(math.LegacyOneDec()) {
+		return fmt.Errorf("slash fraction must be between 0 and 1, but is %s", legacyDec.String())
 	}
 	return nil
 }
 
-func validateBaseWeightRatio(v interface{}) error {
-	baseWeightRatio, ok := v.(math.LegacyDec)
+func validateBaseWeightRatio(i interface{}) error {
+	v, ok := i.(*Decimal)
 	if !ok {
-		return fmt.Errorf("invalid parameter type: %T", v)
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	legacyDec, err := v.ToLegacyDec()
+	if err != nil {
+		return err
+	}
+	if legacyDec.IsNegative() {
+		return fmt.Errorf("base weight ratio cannot be negative: %s", legacyDec)
 	}
 
-	if baseWeightRatio.IsNegative() {
-		return fmt.Errorf("base weight ratio cannot be negative: %s", baseWeightRatio)
-	}
-
-	if baseWeightRatio.GT(math.LegacyOneDec()) {
-		return fmt.Errorf("base weight ratio cannot be greater than 1: %s", baseWeightRatio)
+	if legacyDec.GT(math.LegacyOneDec()) {
+		return fmt.Errorf("base weight ratio cannot be greater than 1: %s", legacyDec)
 	}
 
 	return nil
 }
 
-func validateCollateralPerWeightUnit(v interface{}) error {
-	collateralPerWeightUnit, ok := v.(math.LegacyDec)
+func validateCollateralPerWeightUnit(i interface{}) error {
+	v, ok := i.(*Decimal)
 	if !ok {
-		return fmt.Errorf("invalid parameter type: %T", v)
+		return fmt.Errorf("invalid parameter type: %T", i)
 	}
-
-	if collateralPerWeightUnit.IsNegative() {
-		return fmt.Errorf("collateral per weight unit cannot be negative: %s", collateralPerWeightUnit)
+	legacyDec, err := v.ToLegacyDec()
+	if err != nil {
+		return err
+	}
+	if legacyDec.IsNegative() {
+		return fmt.Errorf("collateral per weight unit cannot be negative: %s", legacyDec)
 	}
 
 	return nil
 }
 
 func validatePercentage(i interface{}) error {
-	v, ok := i.(math.LegacyDec)
+	v, ok := i.(*Decimal)
 	if !ok {
 		return fmt.Errorf("invalid parameter type: %T", i)
 	}
-	if v.IsNegative() || v.GT(math.LegacyOneDec()) {
-		return fmt.Errorf("percentage must be between 0 and 1, but is %s", v.String())
+	legacyDec, err := v.ToLegacyDec()
+	if err != nil {
+		return err
+	}
+	if legacyDec.IsNegative() || legacyDec.GT(math.LegacyOneDec()) {
+		return fmt.Errorf("percentage must be between 0 and 1, but is %s", legacyDec.String())
 	}
 	return nil
 }
@@ -249,6 +263,10 @@ func (p *TokenomicsParams) ReduceSubsidyPercentage() *TokenomicsParams {
 	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra)).Round(4)
 	p.CurrentSubsidyPercentage = &Decimal{Value: newCSP.CoefficientInt64(), Exponent: newCSP.Exponent()}
 	return p
+}
+
+func (d *Decimal) ToLegacyDec() (math.LegacyDec, error) {
+	return math.LegacyNewDecFromStr(d.ToDecimal().String())
 }
 
 func (d *Decimal) ToDecimal() decimal.Decimal {

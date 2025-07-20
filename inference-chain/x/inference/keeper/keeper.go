@@ -42,8 +42,8 @@ func NewKeeper(
 	validatorSet types.ValidatorSet,
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
-	getWasmKeeper func() wasmkeeper.Keeper,
 	collateralKeeper types.CollateralKeeper,
+	getWasmKeeper func() wasmkeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -60,8 +60,8 @@ func NewKeeper(
 		validatorSet:     validatorSet,
 		Staking:          staking,
 		AccountKeeper:    accountKeeper,
-		getWasmKeeper:    getWasmKeeper,
 		collateralKeeper: collateralKeeper,
+		getWasmKeeper:    getWasmKeeper,
 	}
 }
 

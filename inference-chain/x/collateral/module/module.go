@@ -100,7 +100,6 @@ type AppModule struct {
 	accountKeeper    types.AccountKeeper
 	bankKeeper       types.BankKeeper
 	bankEscrowKeeper types.BankEscrowKeeper
-	stakingKeeper    types.StakingKeeper
 }
 
 func NewAppModule(
@@ -109,7 +108,6 @@ func NewAppModule(
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
 	bankEscrowKeeper types.BankEscrowKeeper,
-	stakingKeeper types.StakingKeeper,
 ) AppModule {
 	return AppModule{
 		AppModuleBasic:   NewAppModuleBasic(cdc),
@@ -117,7 +115,6 @@ func NewAppModule(
 		accountKeeper:    accountKeeper,
 		bankKeeper:       bankKeeper,
 		bankEscrowKeeper: bankEscrowKeeper,
-		stakingKeeper:    stakingKeeper,
 	}
 }
 
@@ -190,7 +187,6 @@ type ModuleInputs struct {
 	AccountKeeper    types.AccountKeeper
 	BankKeeper       types.BankKeeper
 	BankEscrowKeeper types.BankEscrowKeeper
-	StakingKeeper    types.StakingKeeper
 }
 
 type ModuleOutputs struct {
@@ -214,7 +210,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority.String(),
 		in.BankKeeper,
 		in.BankEscrowKeeper,
-		in.StakingKeeper,
 	)
 	m := NewAppModule(
 		in.Cdc,
@@ -222,7 +217,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AccountKeeper,
 		in.BankKeeper,
 		in.BankEscrowKeeper,
-		in.StakingKeeper,
 	)
 
 	return ModuleOutputs{

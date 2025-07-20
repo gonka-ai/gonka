@@ -13,7 +13,7 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Validate the participant address
-	_, err := sdk.AccAddressFromBech32(msg.Participant)
+	participantAddr, err := sdk.AccAddressFromBech32(msg.Participant)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +25,7 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 	}
 
 	// Get the participant's current collateral
-	currentCollateral, found := k.GetCollateral(ctx, msg.Participant)
+	currentCollateral, found := k.GetCollateral(ctx, participantAddr)
 	if !found {
 		return nil, types.ErrNoCollateralFound.Wrapf("participant %s has no collateral", msg.Participant)
 	}
@@ -45,20 +45,15 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 	// Calculate the completion epoch
 	completionEpoch := currentEpoch + params.UnbondingPeriodEpochs
 
-	// Create the unbonding entry (SetUnbondingCollateral will aggregate if entry exists)
-	unbonding := types.UnbondingCollateral{
-		Participant:     msg.Participant,
-		Amount:          msg.Amount,
-		CompletionEpoch: completionEpoch,
-	}
-	k.SetUnbondingCollateral(ctx, unbonding)
+	// Create the unbonding entry
+	k.AddUnbondingCollateral(ctx, participantAddr, completionEpoch, msg.Amount)
 
 	// Reduce the active collateral
 	newCollateral := currentCollateral.Sub(msg.Amount)
 	if newCollateral.IsZero() {
-		k.RemoveCollateral(ctx, msg.Participant)
+		k.RemoveCollateral(ctx, participantAddr)
 	} else {
-		k.SetCollateral(ctx, msg.Participant, newCollateral)
+		k.SetCollateral(ctx, participantAddr, newCollateral)
 	}
 
 	// Emit withdrawal event

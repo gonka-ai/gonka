@@ -37,16 +37,18 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	validatorSetMock := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock)
+	collateralMock := NewMockCollateralKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, collateralMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
 
 type InferenceMocks struct {
-	BankKeeper    *MockBankEscrowKeeper
-	AccountKeeper *MockAccountKeeper
-	GroupKeeper   *MockGroupMessageKeeper
-	StakingKeeper *MockStakingKeeper
+	BankKeeper       *MockBankEscrowKeeper
+	AccountKeeper    *MockAccountKeeper
+	GroupKeeper      *MockGroupMessageKeeper
+	StakingKeeper    *MockStakingKeeper
+	CollateralKeeper *MockCollateralKeeper
 }
 
 func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
@@ -115,15 +117,17 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	validatorSet := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock)
+	collateralMock := NewMockCollateralKeeper(ctrl)
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, collateralMock)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
 	keep.SetGenesisOnlyParams(context, &genesisParams)
 	mocks := InferenceMocks{
-		BankKeeper:    escrowKeeper,
-		AccountKeeper: accountKeeperMock,
-		GroupKeeper:   groupMock,
-		StakingKeeper: stakingMock,
+		BankKeeper:       escrowKeeper,
+		AccountKeeper:    accountKeeperMock,
+		GroupKeeper:      groupMock,
+		StakingKeeper:    stakingMock,
+		CollateralKeeper: collateralMock,
 	}
 	return keep, context, mocks
 }
@@ -135,6 +139,7 @@ func InferenceKeeperWithMock(
 	validatorSet types.ValidatorSet,
 	groupMock types.GroupMessageKeeper,
 	stakingKeeper types.StakingKeeper,
+	collateralKeeper types.CollateralKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -158,7 +163,7 @@ func InferenceKeeperWithMock(
 		validatorSet,
 		stakingKeeper,
 		accountKeeper,
-		nil,
+		collateralKeeper,
 		nil,
 	)
 

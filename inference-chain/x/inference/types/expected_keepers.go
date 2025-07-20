@@ -84,7 +84,7 @@ type StakingKeeper interface {
 type CollateralKeeper interface {
 	AdvanceEpoch(ctx context.Context, completedEpoch uint64)
 	GetCollateral(ctx context.Context, participant sdk.AccAddress) (collateral sdk.Coin, found bool)
-	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec) error
+	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec) (sdk.Coin, error)
 }
 
 type ParticipantKeeper interface {

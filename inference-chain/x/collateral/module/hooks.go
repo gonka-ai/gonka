@@ -36,20 +36,16 @@ func (h StakingHooks) AfterValidatorRemoved(ctx context.Context, consAddr sdk.Co
 
 func (h StakingHooks) AfterValidatorBonded(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	participantAddr := sdk.AccAddress(valAddr).String()
-
-	h.k.RemoveJailed(sdkCtx, participantAddr)
-
+	// When a validator is bonded (e.g., un-jailed), we remove them from our jailed list.
+	h.k.RemoveJailed(sdkCtx, sdk.AccAddress(valAddr))
 	h.k.Logger().Debug("Staking hook: AfterValidatorBonded, removed jailed status", "validator_address", valAddr.String(), "height", sdkCtx.BlockHeight())
 	return nil
 }
 
 func (h StakingHooks) AfterValidatorBeginUnbonding(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	participantAddr := sdk.AccAddress(valAddr).String()
-
-	h.k.SetJailed(sdkCtx, participantAddr)
-
+	// When a validator is jailed, we mark their corresponding participant as jailed in our module.
+	h.k.SetJailed(sdkCtx, sdk.AccAddress(valAddr))
 	h.k.Logger().Debug("Staking hook: AfterValidatorBeginUnbonding, set jailed status", "validator_address", valAddr.String(), "height", sdkCtx.BlockHeight())
 	return nil
 }
@@ -78,14 +74,13 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr sdk.Va
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	accAddr := sdk.AccAddress(valAddr)
-	participantAddr := accAddr.String()
 
 	h.k.Logger().Debug("Staking hook: Slashing collateral for validator",
 		"validator_address", valAddr.String(),
-		"participant_address", participantAddr,
+		"participant_address", accAddr.String(),
 		"fraction", fraction.String(),
 	)
 
-	_, err := h.k.Slash(sdkCtx, participantAddr, fraction)
+	_, err := h.k.Slash(sdkCtx, accAddr, fraction)
 	return err
 }

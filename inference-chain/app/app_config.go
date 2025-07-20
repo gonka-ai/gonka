@@ -98,9 +98,9 @@ var (
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
 		// chain modules
+		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
-		collateralmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 
@@ -125,9 +125,9 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
-		collateralmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	}
 
@@ -146,9 +146,9 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
-		collateralmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	}
 
@@ -312,12 +312,12 @@ var (
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
 			},
 			{
-				Name:   inferencemoduletypes.ModuleName,
-				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
-			},
-			{
 				Name:   collateralmoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
+			},
+			{
+				Name:   inferencemoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},

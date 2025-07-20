@@ -85,39 +85,19 @@ message CollateralParams {
   option (gogoproto.equal) = true;
 
   // slash_fraction_invalid is the percentage of collateral to slash when a participant is marked INVALID.
-  string slash_fraction_invalid = 1 [
-    (cosmos_proto.scalar) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.nullable) = false
-  ];
+  Decimal slash_fraction_invalid = 1;
 
   // slash_fraction_downtime is the percentage of collateral to slash for downtime.
-  string slash_fraction_downtime = 2 [
-    (cosmos_proto.scalar) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.nullable) = false
-  ];
+  Decimal slash_fraction_downtime = 2;
 
   // downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
-  string downtime_missed_percentage_threshold = 3 [
-    (cosmos_proto.scalar) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.nullable) = false
-  ];
+  Decimal downtime_missed_percentage_threshold = 3;
 
   uint64 grace_period_end_epoch = 4;
 
   // BaseWeightRatio is the portion of potential weight granted unconditionally (0-1)
-  string base_weight_ratio = 5 [
-    (cosmos_proto.scalar) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.nullable) = false
-  ];
+  Decimal base_weight_ratio = 5;
 
   // CollateralPerWeightUnit is the amount of collateral required per unit of weight
-  string collateral_per_weight_unit = 6 [
-    (cosmos_proto.scalar) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
-    (gogoproto.nullable) = false
-  ];
+  Decimal collateral_per_weight_unit = 6;
 }

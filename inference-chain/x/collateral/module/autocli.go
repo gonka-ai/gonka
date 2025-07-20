@@ -24,8 +24,8 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
 				{
-					RpcMethod: "CollateralAll",
-					Use:       "list-collateral",
+					RpcMethod: "AllCollaterals",
+					Use:       "list-collaterals",
 					Short:     "List all collateral",
 				},
 				{
@@ -35,8 +35,8 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
 				{
-					RpcMethod: "UnbondingCollateralAll",
-					Use:       "list-unbonding-collateral",
+					RpcMethod: "AllUnbondingCollaterals",
+					Use:       "list-unbonding-collaterals",
 					Short:     "List all unbondingCollateral",
 				},
 				// this line is used by ignite scaffolding # autocli/query
