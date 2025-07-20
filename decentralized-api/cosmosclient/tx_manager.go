@@ -29,6 +29,7 @@ import (
 const (
 	txSenderConsumer   = "tx-sender"
 	txObserverConsumer = "tx-observer"
+	txResenderConsumer = "tx-resender"
 
 	defaultBlockTimeout = uint64(300) // around 30 mins if block is produced every 5-6 sec
 	defaultNackDelay    = time.Second * 30
@@ -97,6 +98,7 @@ type txInfo struct {
 	Id            string
 	RawTx         []byte
 	TxHash        string
+	Sequence      uint64
 	TimeOutHeight uint64
 }
 
@@ -107,29 +109,29 @@ func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
 func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncWithRetry: sending tx", types.Messages, "tx_id", id)
-	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
+	resp, sequence, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
 	if broadcastErr != nil {
 		if isTxErrorCritical(broadcastErr) {
 			return nil, broadcastErr
 		}
-		err := m.putOnRetry(id, "", 0, rawTx, false)
+		err := m.putOnRetry(id, "", 0, 0, rawTx, false)
 		return nil, err
 	}
-	err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, true)
+	err := m.putOnRetry(id, resp.TxHash, sequence, timeout, rawTx, true)
 	return resp, err
 }
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncNoRetry: sending tx", types.Messages, "tx_id", id)
-	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
+	resp, _, _, broadcastErr := m.broadcastMessage(id, rawTx)
 	return resp, broadcastErr
 }
 
 func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionSyncNoRetry: sending tx", types.Messages, "tx_id", id)
-	resp, _, err := m.broadcastMessage(id, msg)
+	resp, _, _, err := m.broadcastMessage(id, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +158,7 @@ func (m *manager) SignBytes(seed []byte) ([]byte, error) {
 func (m *manager) putOnRetry(
 	id,
 	txHash string,
+	sequence,
 	timeoutBlock uint64,
 	rawTx sdk.Msg,
 	sent bool) error {
@@ -182,7 +185,7 @@ func (m *manager) putOnRetry(
 	return err
 }
 
-func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeOutHeight uint64) error {
+func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, sequence, timeOutHeight uint64) error {
 	bz, err := m.client.Context().Codec.MarshalInterfaceJSON(rawTx)
 	if err != nil {
 		return err
@@ -192,6 +195,7 @@ func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeOu
 		Id:            id,
 		RawTx:         bz,
 		TxHash:        txHash,
+		Sequence:      sequence,
 		TimeOutHeight: timeOutHeight,
 	})
 	if err != nil {
@@ -224,7 +228,7 @@ func (m *manager) SendTxs() error {
 
 		if !tx.Sent {
 			logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id)
-			resp, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
+			resp, sequence, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
 			if err != nil {
 				if isTxErrorCritical(err) {
 					msg.Ack() // invalid tx, drop it
@@ -236,12 +240,13 @@ func (m *manager) SendTxs() error {
 
 			tx.TxInfo.TimeOutHeight = blockTimeout
 			tx.TxInfo.TxHash = resp.TxHash
+			tx.TxInfo.Sequence = sequence
 			tx.Sent = true
 		}
 
 		logging.Debug("tx broadcasted, put to observe", types.Messages, "id", tx.TxInfo.Id, "tx_hash", tx.TxInfo.TxHash, "block_timeout", tx.TxInfo.TimeOutHeight)
 
-		if err := m.putTxToObserve(tx.TxInfo.Id, rawTx, tx.TxInfo.TxHash, tx.TxInfo.TimeOutHeight); err != nil {
+		if err := m.putTxToObserve(tx.TxInfo.Id, rawTx, tx.TxInfo.TxHash, tx.TxInfo.Sequence, tx.TxInfo.TimeOutHeight); err != nil {
 			logging.Error("error pushing to observe queue", types.Messages, "id", tx.TxInfo.Id, "err", err)
 			msg.NakWithDelay(defaultNackDelay)
 		} else {
@@ -260,50 +265,50 @@ func (m *manager) ObserveTxs() error {
 			return
 		}
 
-		bz, err := hex.DecodeString(tx.TxHash)
-		if err != nil {
-			logging.Error("ObserveTxs: error decoding tx hash", types.Messages, "err", err)
+		logging.Debug("ObserveTxs: try to check tx with hash", types.Messages, "tx_hash", tx.TxHash, "tx_id", tx.Id)
+
+		found, err := m.checkTxStatus(tx.TxHash)
+		if found {
+			logging.Debug("tx found, remove tx from observer queue", types.Messages, "txHash", tx.TxHash, "tx_id", tx.Id)
 			msg.Ack()
 			return
 		}
 
-		logging.Debug("ObserveTxs: try to check tx with hash", types.Messages, "tx_hash", tx.TxHash, "tx_id", tx.Id)
+		if errors.Is(err, ErrDecodingTxHash) {
+			msg.Ack() // malformed, drop
+			return
+		}
 
-		resp, err := m.client.Context().Client.Tx(m.ctx, bz, false)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				currentHeight, err := m.client.LatestBlockHeight(m.ctx)
-				if err != nil {
-					logging.Error("error getting latest block", types.Messages, "err", err)
-					msg.NakWithDelay(defaultNackDelay)
-					return // retry later
-				}
+		if errors.Is(err, ErrTxNotFound) {
+			currentHeight, err := m.client.LatestBlockHeight(m.ctx)
+			if err != nil {
+				logging.Error("error getting latest block", types.Messages, "err", err)
+				msg.NakWithDelay(defaultNackDelay)
+				return // retry later
+			}
 
-				if uint64(currentHeight) > tx.TimeOutHeight {
-					logging.Debug("Transaction wasn't included in block within timeout: try to resend", types.Messages, "tx_hash", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight, "current_height", currentHeight, "id", tx.Id)
-					m.pauseSendTxs()
+			if uint64(currentHeight) < tx.TimeOutHeight {
+				msg.NakWithDelay(defaultNackDelay)
+				return // retry later
+			}
 
-					logging.Debug("Pause sending txs", types.Messages, "id", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight)
+			logging.Debug("Transaction wasn't included in block within timeout: try to resend", types.Messages, "tx_hash", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight, "current_height", currentHeight, "tx_id", tx.Id)
+			m.pauseSendTxs()
+			defer m.resumeSendTxs()
 
-					if err := m.resendAllTxs(tx.TimeOutHeight); err != nil {
-						logging.Error("Failed to resend transactions batch", types.Messages, "err", err)
-					}
-
-					if err := m.setUpSequenceFromBlockchain(); err != nil {
-						logging.Error("Failed to setup new sequence", types.Messages, "error", err)
-					}
-
-					m.resumeSendTxs()
-					logging.Debug("Resume sending txs", types.Messages, "txHash", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight)
-				}
+			logging.Debug("Paused sending txs with retry", types.Messages, "tx_hash", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight, "tx_id", tx.Id)
+			if err := m.resendFailedTransactions(tx.Sequence, tx.TxHash); err != nil {
+				logging.Error("Failed to resend transactions batch", types.Messages, "err", err)
 				return
 			}
-			logging.Error("error checking Tx status", types.Messages, "txHash", tx.TxHash, "err", err)
-			return
-			msg.NakWithDelay(defaultNackDelay)
+
+			if err := m.setUpSequenceFromBlockchain(); err != nil {
+				logging.Error("Failed to setup new sequence", types.Messages, "error", err)
+				return
+			}
 		}
-		logging.Debug("tx found", types.Messages, "txHash", tx.TxHash, "resp", resp, "err", err)
-		msg.Ack()
+		msg.NakWithDelay(defaultNackDelay)
+		return // retry later
 	}, nats.Durable(txObserverConsumer), nats.ManualAck())
 	return err
 }
@@ -313,55 +318,106 @@ func (m *manager) GetClientContext() client.Context {
 }
 
 func (m *manager) pauseSendTxs() {
+	logging.Debug("Pause sending txs", types.Messages)
 	m.paused = true
 }
 
 func (m *manager) resumeSendTxs() {
+	logging.Debug("Resume sending txs", types.Messages)
 	m.paused = false
 }
 
-func (m *manager) resendAllTxs(blockTimeout uint64) error {
-	sub, err := m.js.PullSubscribe(server.TxsToObserveStream, txObserverConsumer, nats.Bind(server.TxsToSendStream, txObserverConsumer))
+func (m *manager) checkTxStatus(hash string) (bool, error) {
+	bz, err := hex.DecodeString(hash)
+	if err != nil {
+		logging.Error("checkTxStatus: error decoding tx hash", types.Messages, "err", err)
+		return false, ErrDecodingTxHash
+	}
+
+	resp, err := m.client.Context().Client.Tx(m.ctx, bz, false)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return false, ErrTxNotFound
+		}
+		return false, err
+	}
+
+	logging.Debug("checkTxStatus: found tx result", types.Messages, "txHash", hash, "resp", resp)
+	return true, nil
+}
+
+func (m *manager) resendFailedTransactions(failedTxSequence uint64, failedTxHash string) error {
+	sub, err := m.js.PullSubscribe(
+		server.TxsToObserveStream,
+		txResenderConsumer,
+		nats.Bind(server.TxsToObserveStream, txResenderConsumer),
+	)
 	if err != nil {
 		return err
 	}
+	defer sub.Unsubscribe()
 
+	earliestKnownFailedNonce := failedTxSequence
 	for {
-		msgs, err := sub.Fetch(100, nats.MaxWait(2*time.Second))
+		msgs, err := sub.Fetch(100, nats.MaxWait(1*time.Second))
 		if err != nil {
 			if errors.Is(err, nats.ErrTimeout) {
-				break
-			} else {
-				return err
+				break // empty queue
 			}
+			return err
 		}
 
 		for _, msg := range msgs {
 			var tx txInfo
 			if err := json.Unmarshal(msg.Data, &tx); err != nil {
-				msg.Ack() // drop malformed
+				msg.Ack()
 				continue
 			}
 
 			rawTx, err := m.unpackTx(tx.RawTx)
 			if err != nil {
-				msg.Ack() // drop malformed
+				msg.Ack()
 				continue
 			}
 
-			if tx.TimeOutHeight > blockTimeout {
-				// tx was sent after failed tx, resend them all
-				if err := m.putOnRetry(tx.Id, "", 0, rawTx, false); err != nil {
+			if tx.TxHash == failedTxHash {
+				if err := m.putOnRetry(tx.Id, "", 0, tx.TimeOutHeight, rawTx, false); err != nil {
 					msg.NakWithDelay(defaultNackDelay)
 					continue
 				}
-			} else {
-				if err := m.putOnRetry(tx.Id, tx.TxHash, tx.TimeOutHeight, rawTx, true); err != nil {
+				msg.Ack()
+				return nil
+			}
+
+			if tx.Sequence > earliestKnownFailedNonce {
+				if err := m.putOnRetry(tx.Id, "", 0, 0, rawTx, false); err != nil {
+					msg.NakWithDelay(defaultNackDelay)
+					continue
+				}
+				msg.Ack()
+				continue
+			}
+
+			found, err := m.checkTxStatus(tx.TxHash)
+			if found {
+				msg.Ack()
+				continue
+			}
+
+			if errors.Is(err, ErrDecodingTxHash) {
+				msg.Ack() // malformed, drop
+				continue
+			}
+
+			if errors.Is(err, ErrTxNotFound) {
+				earliestKnownFailedNonce = tx.Sequence
+				if err := m.putOnRetry(tx.Id, "", 0, 0, rawTx, false); err != nil {
 					msg.NakWithDelay(defaultNackDelay)
 					continue
 				}
 			}
-			msg.Ack()
+			msg.NakWithDelay(defaultNackDelay)
+			continue
 		}
 	}
 	return nil
@@ -413,20 +469,20 @@ func ParseMsgResponse(data []byte, msgIndex int, dstMsg proto.Message) error {
 	return nil
 }
 
-func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, uint64, error) {
+func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, uint64, uint64, error) {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 
 	address, err := m.account.Record.GetAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	accountNumber, sequence, err := m.accountRetriever.GetAccountNumberSequence(m.client.Context(), address)
 	if err != nil {
 		logging.Error("Failed to get account number and sequence", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	logging.Debug("Got account number and sequence", types.Messages, "tx_id", id, "blockchain_sequence", sequence, "highest_sequence", m.highestSequence)
@@ -439,7 +495,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, u
 	currentHeight, err := m.client.LatestBlockHeight(m.ctx)
 	if err != nil {
 		logging.Error("Failed to latest block", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	timeout := uint64(currentHeight) + m.blockTimeout
@@ -463,7 +519,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, u
 	unsignedTx, err := factory.BuildUnsignedTx(rawTx)
 	if err != nil {
 		logging.Error("error building unsigned tx", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, ErrBuildingUnsignedTx
+		return nil, 0, 0, ErrBuildingUnsignedTx
 	}
 
 	unsignedTx.SetGasLimit(1000000000)
@@ -472,29 +528,29 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, u
 	err = txclient.Sign(m.ctx, factory, m.account.Name, unsignedTx, false)
 	if err != nil {
 		logging.Error("Failed to sign transaction", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, ErrFailedToSignTx
+		return nil, 0, 0, ErrFailedToSignTx
 	}
 
 	txBytes, err := m.client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
 	if err != nil {
 		logging.Error("Failed to encode transaction", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, ErrFailedToEncodeTx
+		return nil, 0, 0, ErrFailedToEncodeTx
 	}
 
 	resp, err := m.client.Context().BroadcastTxSync(txBytes)
 	if err != nil {
 		logging.Error("SendTxs: Failed to  Broadcast, try later", types.Messages, "id", id, "err", err)
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	if resp.Code > 0 {
 		err = NewTransactionErrorFromResponse(resp)
 		logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "err", err)
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	m.highestSequence = int64(factory.Sequence())
-	return resp, unsignedTx.GetTx().GetTimeoutHeight(), nil
+	return resp, sequence, unsignedTx.GetTx().GetTimeoutHeight(), nil
 }
 
 func (m *manager) setUpSequenceFromBlockchain() error {
@@ -507,7 +563,7 @@ func (m *manager) setUpSequenceFromBlockchain() error {
 		return err
 	}
 
-	logging.Debug("setUpSequenceFromBlockchain: setup sequence", types.Messages, "sequence", sequence, "highestSequence", m.highestSequence)
+	logging.Debug("setUpSequenceFromBlockchain: setup sequence", types.Messages, "blockchain_sequence", sequence, "current highestSequence", m.highestSequence)
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 	if m.highestSequence != int64(sequence) {
