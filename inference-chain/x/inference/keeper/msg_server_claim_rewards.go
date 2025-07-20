@@ -42,7 +42,6 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
-
 	params := ms.GetParams(ctx)
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
 	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
