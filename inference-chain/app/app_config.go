@@ -131,6 +131,7 @@ var (
 		// chain modules
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		streamvestingmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	}
@@ -152,6 +153,7 @@ var (
 		// chain modules
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		streamvestingmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	}
