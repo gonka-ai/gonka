@@ -8,7 +8,7 @@ import (
 
 func (s *Server) getPricing(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 	req := &types.QueryCurrentEpochGroupDataRequest{}
 	response, err := queryClient.CurrentEpochGroupData(context, req)
 	// FIXME: handle epoch 0, there's a default price specifically for that,

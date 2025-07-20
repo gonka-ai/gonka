@@ -8,7 +8,7 @@ import (
 
 func (s *Server) getModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	modelsResponse, err := queryClient.ModelsAll(context, &types.QueryModelsAllRequest{})
 	if err != nil {

@@ -53,11 +53,11 @@ func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	req := &types.QueryHardwareNodesRequest{
 		Participant: b.client.GetAddress(),
 	}
-	return queryClient.HardwareNodes(*b.client.GetContext(), req)
+	return queryClient.HardwareNodes(b.client.GetContext(), req)
 }
 
 func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
-	_, err := b.client.SendTransaction(diff)
+	_, err := b.client.SendTransactionAsyncNoRetry(diff)
 	return err
 }
 

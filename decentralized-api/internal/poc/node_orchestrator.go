@@ -40,7 +40,7 @@ type OrchestratorChainBridgeImpl struct {
 }
 
 func (b *OrchestratorChainBridgeImpl) PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error) {
-	response, err := b.cosmosClient.NewInferenceQueryClient().PocBatchesForStage(*b.cosmosClient.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: startPoCBlockHeight})
+	response, err := b.cosmosClient.NewInferenceQueryClient().PocBatchesForStage(b.cosmosClient.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: startPoCBlockHeight})
 	if err != nil {
 		logging.Error("Failed to query PoC batches for stage", types.PoC, "error", err)
 		return nil, err
@@ -49,7 +49,7 @@ func (b *OrchestratorChainBridgeImpl) PoCBatchesForStage(startPoCBlockHeight int
 }
 
 func (b *OrchestratorChainBridgeImpl) GetPocParams() (*types.PocParams, error) {
-	response, err := b.cosmosClient.NewInferenceQueryClient().Params(*b.cosmosClient.GetContext(), &types.QueryParamsRequest{})
+	response, err := b.cosmosClient.NewInferenceQueryClient().Params(b.cosmosClient.GetContext(), &types.QueryParamsRequest{})
 	if err != nil {
 		logging.Error("Failed to query params", types.PoC, "error", err)
 		return nil, err

@@ -7,6 +7,7 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/nats/server"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
@@ -60,6 +61,11 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
+	natssrv := server.NewServer(config.GetNatsConfig())
+	if err := natssrv.Start(); err != nil {
+		panic(err)
+	}
+
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
 		"gonka",
@@ -98,7 +104,7 @@ func main() {
 	}
 
 	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", recorder.Account.Name,
+		types.PoC, "name", recorder.GetAccount().Name,
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
