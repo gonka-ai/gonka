@@ -1,0 +1,35 @@
+syntax = "proto3";
+package inference.streamvesting;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
+
+option go_package = "github.com/productscience/inference/x/streamvesting/types";
+
+// EpochCoins represents the coins to be unlocked in a specific epoch
+message EpochCoins {
+  option (gogoproto.equal) = true;
+  
+  repeated cosmos.base.v1beta1.Coin coins = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+}
+
+// VestingSchedule defines a participant's vesting schedule
+message VestingSchedule {
+  option (gogoproto.equal) = true;
+
+  // participant_address is the address of the participant
+  string participant_address = 1;
+  
+  // epoch_amounts contains the coins to vest for each epoch
+  // The first element is unlocked in the next epoch, second in epoch+1, etc.
+  // Each element contains sdk.Coins supporting multiple denominations per epoch
+  repeated EpochCoins epoch_amounts = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+} 

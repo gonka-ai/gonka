@@ -57,10 +57,13 @@ import (
 
 	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
 	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
+	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
 	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
 	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
+	_ "github.com/productscience/inference/x/streamvesting/module" // import for side-effects
+	streamvestingmoduletypes "github.com/productscience/inference/x/streamvesting/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 )
 
@@ -101,6 +104,7 @@ var (
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		streamvestingmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 
@@ -174,6 +178,7 @@ var (
 		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: collateralmoduletypes.ModuleName, Permissions: []string{authtypes.Burner}},
+		{Account: streamvestingmoduletypes.ModuleName, Permissions: []string{authtypes.Minter}},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 
@@ -318,6 +323,10 @@ var (
 			{
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
+			},
+			{
+				Name:   streamvestingmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&streamvestingmodulev1.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},

@@ -83,23 +83,53 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Mock the account keeper to return our mock account
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
-	// Mock the bank keeper to allow payments
+	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
+	// Expect direct payment flow (if vesting periods are 0 or nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		workCoins,
-	).Return(nil)
+	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		rewardCoins,
-	).Return(nil)
+	).Return(nil).AnyTimes()
+
+	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // escrow payment from inference module
+		"streamvesting",
+		workCoins,
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		workCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+	).Return(nil).AnyTimes()
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // reward payment from inference module
+		"streamvesting",
+		rewardCoins,
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		rewardCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -327,23 +357,53 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Mock the account keeper again for the second call
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
-	// Mock the bank keeper to allow payments
+	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
+	// Expect direct payment flow (if vesting periods are 0 or nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		workCoins,
-	).Return(nil)
+	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		rewardCoins,
-	).Return(nil)
+	).Return(nil).AnyTimes()
+
+	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // escrow payment from inference module
+		"streamvesting",
+		workCoins,
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		workCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+	).Return(nil).AnyTimes()
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // reward payment from inference module
+		"streamvesting",
+		rewardCoins,
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		rewardCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -552,23 +612,53 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Mock the account keeper again for the fourth call
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
-	// Mock the bank keeper to allow payments
+	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
+	// Expect direct payment flow (if vesting periods are 0 or nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		workCoins,
-	).Return(nil)
+	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		rewardCoins,
-	).Return(nil)
+	).Return(nil).AnyTimes()
+
+	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // escrow payment from inference module
+		"streamvesting",
+		workCoins,
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		workCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+	).Return(nil).AnyTimes()
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // reward payment from inference module
+		"streamvesting",
+		rewardCoins,
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		rewardCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{

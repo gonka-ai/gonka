@@ -103,6 +103,9 @@ func DefaultTokenomicsParams() *TokenomicsParams {
 		CurrentSubsidyPercentage: DecimalFromFloat(0.90),
 		TopRewardAllowedFailure:  DecimalFromFloat(0.10),
 		TopMinerPocQualification: 10,
+		WorkVestingPeriod:        0, // Default: no vesting (production: 180, E2E tests: 2)
+		RewardVestingPeriod:      0, // Default: no vesting (production: 180, E2E tests: 2)
+		TopMinerVestingPeriod:    0, // Default: no vesting (production: 180, E2E tests: 2)
 	}
 }
 

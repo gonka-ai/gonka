@@ -296,6 +296,15 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
 	}
 
+	// Signal to the streamvesting module that the epoch has advanced.
+	// This will trigger vested token unlocking for the completed epoch.
+	if am.keeper.GetStreamVestingKeeper() != nil {
+		err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
+		}
+	}
+
 	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight))
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
@@ -496,14 +505,15 @@ type ModuleInputs struct {
 	Config       *modulev1.Module
 	Logger       log.Logger
 
-	AccountKeeper    types.AccountKeeper
-	BankKeeper       types.BankKeeper
-	BankEscrowKeeper types.BankEscrowKeeper
-	ValidatorSet     types.ValidatorSet
-	StakingKeeper    types.StakingKeeper
-	GroupServer      types.GroupMessageKeeper
-	CollateralKeeper types.CollateralKeeper
-	GetWasmKeeper    func() wasmkeeper.Keeper `optional:"true"`
+	AccountKeeper       types.AccountKeeper
+	BankKeeper          types.BankKeeper
+	BankEscrowKeeper    types.BankEscrowKeeper
+	ValidatorSet        types.ValidatorSet
+	StakingKeeper       types.StakingKeeper
+	GroupServer         types.GroupMessageKeeper
+	CollateralKeeper    types.CollateralKeeper
+	StreamVestingKeeper types.StreamVestingKeeper
+	GetWasmKeeper       func() wasmkeeper.Keeper `optional:"true"`
 }
 
 type ModuleOutputs struct {
@@ -533,6 +543,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.StakingKeeper,
 		in.AccountKeeper,
 		in.CollateralKeeper,
+		in.StreamVestingKeeper,
 		in.GetWasmKeeper,
 	)
 

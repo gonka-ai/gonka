@@ -790,6 +790,58 @@ func (mr *MockCollateralKeeperMockRecorder) Slash(ctx, participant, slashFractio
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Slash", reflect.TypeOf((*MockCollateralKeeper)(nil).Slash), ctx, participant, slashFraction)
 }
 
+// MockStreamVestingKeeper is a mock of StreamVestingKeeper interface.
+type MockStreamVestingKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockStreamVestingKeeperMockRecorder
+	isgomock struct{}
+}
+
+// MockStreamVestingKeeperMockRecorder is the mock recorder for MockStreamVestingKeeper.
+type MockStreamVestingKeeperMockRecorder struct {
+	mock *MockStreamVestingKeeper
+}
+
+// NewMockStreamVestingKeeper creates a new mock instance.
+func NewMockStreamVestingKeeper(ctrl *gomock.Controller) *MockStreamVestingKeeper {
+	mock := &MockStreamVestingKeeper{ctrl: ctrl}
+	mock.recorder = &MockStreamVestingKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockStreamVestingKeeper) EXPECT() *MockStreamVestingKeeperMockRecorder {
+	return m.recorder
+}
+
+// AddVestedRewards mocks base method.
+func (m *MockStreamVestingKeeper) AddVestedRewards(ctx context.Context, participantAddress string, amount types.Coins, vestingEpochs *uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddVestedRewards", ctx, participantAddress, amount, vestingEpochs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddVestedRewards indicates an expected call of AddVestedRewards.
+func (mr *MockStreamVestingKeeperMockRecorder) AddVestedRewards(ctx, participantAddress, amount, vestingEpochs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddVestedRewards", reflect.TypeOf((*MockStreamVestingKeeper)(nil).AddVestedRewards), ctx, participantAddress, amount, vestingEpochs)
+}
+
+// AdvanceEpoch mocks base method.
+func (m *MockStreamVestingKeeper) AdvanceEpoch(ctx context.Context, completedEpoch uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AdvanceEpoch", ctx, completedEpoch)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AdvanceEpoch indicates an expected call of AdvanceEpoch.
+func (mr *MockStreamVestingKeeperMockRecorder) AdvanceEpoch(ctx, completedEpoch any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdvanceEpoch", reflect.TypeOf((*MockStreamVestingKeeper)(nil).AdvanceEpoch), ctx, completedEpoch)
+}
+
 // MockParticipantKeeper is a mock of ParticipantKeeper interface.
 type MockParticipantKeeper struct {
 	ctrl     *gomock.Controller

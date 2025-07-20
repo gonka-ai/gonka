@@ -87,6 +87,12 @@ type CollateralKeeper interface {
 	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec) (sdk.Coin, error)
 }
 
+// StreamVestingKeeper defines the expected interface for the StreamVesting module.
+type StreamVestingKeeper interface {
+	AddVestedRewards(ctx context.Context, participantAddress string, amount sdk.Coins, vestingEpochs *uint64) error
+	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
+}
+
 type ParticipantKeeper interface {
 	GetParticipant(ctx context.Context, index string) (val Participant, found bool)
 	GetParticipants(ctx context.Context, ids []string) ([]Participant, bool)

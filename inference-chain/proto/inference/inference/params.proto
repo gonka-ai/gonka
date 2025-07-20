@@ -39,6 +39,9 @@ message TokenomicsParams {
   Decimal current_subsidy_percentage = 3;
   Decimal top_reward_allowed_failure = 4;
   int64 top_miner_poc_qualification = 5;
+  uint64 work_vesting_period = 6;
+  uint64 reward_vesting_period = 7;
+  uint64 top_miner_vesting_period = 8;
 }
 
 message EpochParams {

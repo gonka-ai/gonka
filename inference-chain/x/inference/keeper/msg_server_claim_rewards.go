@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -37,9 +38,12 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {
+	// TODO: Optimization: Payout claim should be done in one transaction
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
 	escrowPayment := settleAmount.GetWorkCoins()
-	err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant)
+	params := ms.GetParams(ctx)
+	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
+	err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant, workVestingPeriod)
 	if err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.handleUnderfundedWork(ctx, err, settleAmount)
@@ -49,7 +53,8 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		return err
 	}
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
-	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant)
+	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
+	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod)
 	if err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
@@ -59,6 +64,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
 		return err
 	}
+
 	ms.finishSettle(ctx, settleAmount)
 	return nil
 }

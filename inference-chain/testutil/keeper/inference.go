@@ -38,17 +38,19 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
 	collateralMock := NewMockCollateralKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, collateralMock)
+	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, collateralMock, streamvestingMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
 
 type InferenceMocks struct {
-	BankKeeper       *MockBankEscrowKeeper
-	AccountKeeper    *MockAccountKeeper
-	GroupKeeper      *MockGroupMessageKeeper
-	StakingKeeper    *MockStakingKeeper
-	CollateralKeeper *MockCollateralKeeper
+	BankKeeper          *MockBankEscrowKeeper
+	AccountKeeper       *MockAccountKeeper
+	GroupKeeper         *MockGroupMessageKeeper
+	StakingKeeper       *MockStakingKeeper
+	CollateralKeeper    *MockCollateralKeeper
+	StreamVestingKeeper *MockStreamVestingKeeper
 }
 
 func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
@@ -118,16 +120,18 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
 	collateralMock := NewMockCollateralKeeper(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, collateralMock)
+	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, collateralMock, streamvestingMock)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
 	keep.SetGenesisOnlyParams(context, &genesisParams)
 	mocks := InferenceMocks{
-		BankKeeper:       escrowKeeper,
-		AccountKeeper:    accountKeeperMock,
-		GroupKeeper:      groupMock,
-		StakingKeeper:    stakingMock,
-		CollateralKeeper: collateralMock,
+		BankKeeper:          escrowKeeper,
+		AccountKeeper:       accountKeeperMock,
+		GroupKeeper:         groupMock,
+		StakingKeeper:       stakingMock,
+		CollateralKeeper:    collateralMock,
+		StreamVestingKeeper: streamvestingMock,
 	}
 	return keep, context, mocks
 }
@@ -140,6 +144,7 @@ func InferenceKeeperWithMock(
 	groupMock types.GroupMessageKeeper,
 	stakingKeeper types.StakingKeeper,
 	collateralKeeper types.CollateralKeeper,
+	streamvestingKeeper types.StreamVestingKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -164,6 +169,7 @@ func InferenceKeeperWithMock(
 		stakingKeeper,
 		accountKeeper,
 		collateralKeeper,
+		streamvestingKeeper,
 		nil,
 	)
 

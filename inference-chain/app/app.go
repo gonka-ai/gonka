@@ -81,6 +81,7 @@ import (
 	collateralmodulekeeper "github.com/productscience/inference/x/collateral/keeper"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 
+	streamvestingmodulekeeper "github.com/productscience/inference/x/streamvesting/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	// WASM
@@ -155,8 +156,9 @@ type App struct {
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 	//ContractKeeper   *wasmkeeper.PermissionedKeeper
 
-	InferenceKeeper  inferencemodulekeeper.Keeper
-	CollateralKeeper collateralmodulekeeper.Keeper
+	InferenceKeeper     inferencemodulekeeper.Keeper
+	CollateralKeeper    collateralmodulekeeper.Keeper
+	StreamvestingKeeper streamvestingmodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
 
 	// simulation manager
@@ -299,6 +301,7 @@ func New(
 		&app.CircuitBreakerKeeper,
 		&app.InferenceKeeper,
 		&app.CollateralKeeper,
+		&app.StreamvestingKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
 		panic(err)

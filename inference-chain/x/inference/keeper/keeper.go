@@ -27,7 +27,8 @@ type (
 		AccountKeeper types.AccountKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
 
-		collateralKeeper types.CollateralKeeper
+		collateralKeeper    types.CollateralKeeper
+		streamvestingKeeper types.StreamVestingKeeper
 	}
 )
 
@@ -43,6 +44,7 @@ func NewKeeper(
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
 	collateralKeeper types.CollateralKeeper,
+	streamvestingKeeper types.StreamVestingKeeper,
 	getWasmKeeper func() wasmkeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
@@ -50,18 +52,19 @@ func NewKeeper(
 	}
 
 	return Keeper{
-		cdc:              cdc,
-		storeService:     storeService,
-		authority:        authority,
-		logger:           logger,
-		BankKeeper:       bank,
-		bankView:         bankView,
-		group:            group,
-		validatorSet:     validatorSet,
-		Staking:          staking,
-		AccountKeeper:    accountKeeper,
-		collateralKeeper: collateralKeeper,
-		getWasmKeeper:    getWasmKeeper,
+		cdc:                 cdc,
+		storeService:        storeService,
+		authority:           authority,
+		logger:              logger,
+		BankKeeper:          bank,
+		bankView:            bankView,
+		group:               group,
+		validatorSet:        validatorSet,
+		Staking:             staking,
+		AccountKeeper:       accountKeeper,
+		collateralKeeper:    collateralKeeper,
+		streamvestingKeeper: streamvestingKeeper,
+		getWasmKeeper:       getWasmKeeper,
 	}
 }
 
@@ -78,6 +81,11 @@ func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
 // GetCollateralKeeper returns the collateral keeper.
 func (k Keeper) GetCollateralKeeper() types.CollateralKeeper {
 	return k.collateralKeeper
+}
+
+// GetStreamVestingKeeper returns the streamvesting keeper.
+func (k Keeper) GetStreamVestingKeeper() types.StreamVestingKeeper {
+	return k.streamvestingKeeper
 }
 
 // Logger returns a module-specific logger.

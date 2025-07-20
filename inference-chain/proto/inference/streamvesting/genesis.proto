@@ -1,0 +1,24 @@
+syntax = "proto3";
+package inference.streamvesting;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/streamvesting/params.proto";
+import "inference/streamvesting/vesting_schedule.proto";
+
+option go_package = "github.com/productscience/inference/x/streamvesting/types";
+
+// GenesisState defines the streamvesting module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  
+  // vesting_schedule_list contains all vesting schedules
+  repeated VestingSchedule vesting_schedule_list = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
