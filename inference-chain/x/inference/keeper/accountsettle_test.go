@@ -1,12 +1,13 @@
 package keeper_test
 
 import (
+	"testing"
+
 	keeper2 "github.com/productscience/inference/testutil/keeper"
 	inference "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 var tokenomicsParams = types.DefaultParams().TokenomicsParams
@@ -269,7 +270,7 @@ func TestActualSettle(t *testing.T) {
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
 
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin)).Return(nil)
-	err := keeper.SettleAccounts(ctx, 10)
+	err := keeper.SettleAccounts(ctx, 10, 0)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
 	require.True(t, found)

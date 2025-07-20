@@ -87,7 +87,7 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 	}
 }
 
-func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) error {
+func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, previousEpochPocStartHeight uint64) error {
 	k.LogInfo("SettleAccounts", types.Settle, "pocBlockHeight", pocBlockHeight)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
@@ -179,6 +179,22 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			}
 		}
 		k.SetSettleAmount(ctx, *amount.Settle)
+	}
+
+	if previousEpochPocStartHeight == 0 {
+		return nil
+	}
+
+	k.LogInfo("Burning old settle amounts", types.Settle, "previousEpochPocStartHeight", previousEpochPocStartHeight)
+	allSettleAmounts := k.GetAllSettleAmount(ctx)
+	for _, settleAmount := range allSettleAmounts {
+		if settleAmount.PocStartHeight < previousEpochPocStartHeight {
+			err = k.BurnCoins(ctx, int64(settleAmount.GetTotalCoins()), "no_claim:"+settleAmount.Participant)
+			if err != nil {
+				k.LogError("Error burning old settle amount", types.Settle, "error", err)
+			}
+			k.RemoveSettleAmount(ctx, settleAmount.Participant)
+		}
 	}
 	return nil
 }

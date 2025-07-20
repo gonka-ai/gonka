@@ -10,6 +10,14 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"net/url"
+	"strconv"
+	"sync"
+	"time"
+
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/labstack/echo/v4"
@@ -18,13 +26,6 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
-	"io"
-	"math/rand"
-	"net/http"
-	"net/url"
-	"strconv"
-	"sync"
-	"time"
 )
 
 // AuthKeyContext represents the context in which an AuthKey was used
@@ -113,7 +114,7 @@ func cleanupExpiredAuthKeys(currentBlockHeight int64) {
 
 		// Use twice the timestamp_expiration value (converted to blocks)
 		// Assuming average block time of 5 seconds
-		expirationBlocks = (timestampExpiration * 2) / 5
+		expirationBlocks = (timestampExpiration * 2) / 4
 
 		// Ensure we keep at least 4 blocks for safety
 		if expirationBlocks < 4 {

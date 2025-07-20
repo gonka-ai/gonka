@@ -75,6 +75,12 @@ func (m MockOrchestratorChainBridge) GetBlockHash(height int64) (string, error) 
 	return fmt.Sprintf("block-hash-%d", height), nil
 }
 
+func (m MockOrchestratorChainBridge) GetPocParams() (*types.PocParams, error) {
+	return &types.PocParams{
+		ValidationSampleSize: 200,
+	}, nil
+}
+
 type MockBrokerChainBridge struct {
 	mock.Mock
 }

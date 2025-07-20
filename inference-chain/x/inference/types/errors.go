@@ -41,4 +41,5 @@ var (
 	ErrLatestEpochNotFound                     = sdkerrors.Register(ModuleName, 1130, "latest epoch group data not found")
 	ErrEpochGroupDataAlreadyExists             = sdkerrors.Register(ModuleName, 1131, "epoch group data already exists for the given poc start block height and model id")
 	ErrInvalidSignature                        = sdkerrors.Register(ModuleName, 1132, "invalid keys provided for StartInference")
+	ErrInferenceExpired                        = sdkerrors.Register(ModuleName, 1133, "inference has expired")
 )
