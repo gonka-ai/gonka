@@ -305,7 +305,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		}
 	}
 
-	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight))
+	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
+	previousEpochPocStartHeight := uint64(0)
+	if found {
+		previousEpochPocStartHeight = uint64(previousEpoch.PocStartBlockHeight)
+	}
+
+	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight), previousEpochPocStartHeight)
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}

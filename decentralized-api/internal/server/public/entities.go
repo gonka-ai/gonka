@@ -8,14 +8,16 @@ import (
 )
 
 type ChatRequest struct {
-	Body             []byte
-	Request          *http.Request
-	OpenAiRequest    OpenAiRequest
-	AuthKey          string // signature signing inference request
-	PubKey           string // pubkey of participant, who signed inference request
-	Seed             string
-	InferenceId      string
-	RequesterAddress string // address of participant, who signed inference request
+	Body              []byte
+	Request           *http.Request
+	OpenAiRequest     OpenAiRequest
+	AuthKey           string // signature signing inference request
+	Seed              string
+	InferenceId       string
+	RequesterAddress  string // address of participant, who signed inference request
+	TransferAddress   string
+	Timestamp         int64  // timestamp of the request
+	TransferSignature string // signature of the transfer address
 }
 
 type OpenAiRequest struct {
@@ -33,17 +35,6 @@ type Message struct {
 type ExecutorDestination struct {
 	Url     string `json:"url"`
 	Address string `json:"address"`
-}
-
-type InferenceTransaction struct {
-	PromptHash           string `json:"promptHash"`
-	PromptPayload        string `json:"promptPayload"`
-	ResponseHash         string `json:"responseHash"`
-	ResponsePayload      string `json:"responsePayload"`
-	PromptTokenCount     uint64 `json:"promptTokenCount"`
-	CompletionTokenCount uint64 `json:"completionTokenCount"`
-	Model                string `json:"model"`
-	Id                   string `json:"id"`
 }
 
 type ModelsResponse struct {

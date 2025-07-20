@@ -95,20 +95,23 @@ class DurationSerializer : JsonSerializer<Duration> {
     }
 }
 
-class MessageSerializer : JsonSerializer<GovernanceMessage> {
+class MessageSerializer(val namingPolicy: com.google.gson.FieldNamingPolicy) : JsonSerializer<TxMessage> {
     override fun serialize(
-        src: GovernanceMessage,
+        src: TxMessage,
         typeOfSrc: Type,
         context: JsonSerializationContext
     ): JsonElement? {
         val jsonObject = com.google.gson.JsonObject()
-        jsonObject.addProperty("@type", src.type)
+        jsonObject.add("@type", context.serialize(src.type))
 
         src::class.java.declaredFields.forEach { field ->
             field.isAccessible = true
             if (field.name != "type") {
                 val value = field.get(src)
-                jsonObject.add(field.name, context.serialize(value))
+                val fieldName = if (namingPolicy == com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES) {
+                    camelToSnake(field.name)
+                } else field.name
+                jsonObject.add(fieldName, context.serialize(value))
             }
         }
 

@@ -206,6 +206,10 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 
 func LoadMetadataToSdk(metadata banktypes.Metadata) error {
 	// NOTE: sdk.RegisterDenom stores the mapping in a process-global registry.
+	// This function is called in two places:
+	// 1. During genesis initialization (InitHoldingAccounts)
+	// 2. During app startup (app.initializeDenomMetadata in app.go)
+	//
 	// When several tests initialise the app within the same "go test" process
 	// the same denom (nicoin/icoin/…) can be registered more than once and the
 	// second attempt returns an error.  In production this situation should be

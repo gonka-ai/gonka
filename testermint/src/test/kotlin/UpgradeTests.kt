@@ -145,6 +145,7 @@ class UpgradeTests : TestermintTest() {
                 )
             )
         }
+        genesis.waitForNextInferenceWindow()
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
         val proposalId = genesis.runProposal(
@@ -158,6 +159,7 @@ class UpgradeTests : TestermintTest() {
         logSection("Waiting for upgrade to be effective")
         genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
         logSection("Verifying new inference hits right endpoint")
+        genesis.waitForNextInferenceWindow()
         val proposals = genesis.node.getGovernanceProposals()
         Logger.info("Proposals: $proposals", "")
         val newResult = genesis.makeInferenceRequest(inferenceRequest)
@@ -167,7 +169,7 @@ class UpgradeTests : TestermintTest() {
     fun getBinaryPath(path: String): String {
         val localPath = "../public-html/$path"
         val sha = getSha256Checksum(localPath)
-        return "http://genesis-mock-server:8080/$path?checksum=sha256:$sha"
+        return "http://genesis-mock-server:8080/files/$path?checksum=sha256:$sha"
     }
 }
 
@@ -184,5 +186,3 @@ fun getSha256Checksum(filePath: String): String {
     }
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
-
-

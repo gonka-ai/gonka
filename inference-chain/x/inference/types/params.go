@@ -87,12 +87,15 @@ func DefaultValidationParams() *ValidationParams {
 		MinValidationTrafficCutoff:  100,
 		MissPercentageCutoff:        DecimalFromFloat(0.01),
 		MissRequestsPenalty:         DecimalFromFloat(1.0),
+		TimestampExpiration:         60,
+		TimestampAdvance:            30,
 	}
 }
 
 func DefaultPocParams() *PocParams {
 	return &PocParams{
-		DefaultDifficulty: 5,
+		DefaultDifficulty:    5,
+		ValidationSampleSize: 200,
 	}
 }
 
@@ -147,17 +150,35 @@ func (p Params) Validate() error {
 	// if err := p.EpochParams.Validate(); err != nil {
 	// 	return err
 	// }
-	// if err := p.ValidationParams.Validate(); err != nil {
-	// 	return err
-	// }
+	if err := p.ValidationParams.Validate(); err != nil {
+		return err
+	}
 	// if err := p.PocParams.Validate(); err != nil {
 	// 	return err
 	// }
-	// if err := p.TokenomicsParams.Validate(); err != nil {
-	// 	return err
-	// }
+	if err := p.TokenomicsParams.Validate(); err != nil {
+		return err
+	}
 	if err := p.CollateralParams.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (p *ValidationParams) Validate() error {
+	// Validate timestamp parameters
+	if p.TimestampExpiration <= 0 {
+		return fmt.Errorf("timestamp expiration must be positive")
+	}
+	if p.TimestampAdvance <= 0 {
+		return fmt.Errorf("timestamp advance must be positive")
+	}
+	return nil
+}
+
+func (p *TokenomicsParams) Validate() error {
+	if p.SubsidyReductionInterval == nil {
+		return fmt.Errorf("subsidy reduction interval cannot be nil")
 	}
 	return nil
 }

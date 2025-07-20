@@ -2,8 +2,9 @@ package completionapi
 
 import (
 	"encoding/json"
-	"github.com/productscience/inference/x/inference/keeper"
 	"log"
+
+	"github.com/productscience/inference/x/inference/keeper"
 )
 
 type ModifiedRequest struct {
@@ -32,6 +33,9 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 
 	requestMap["max_tokens"] = maxTokens
 	requestMap["max_completion_tokens"] = maxTokens
+	if _, ok := requestMap["seed"]; !ok {
+		requestMap["seed"] = defaultSeed
+	}
 
 	if doStream, ok := requestMap["stream"]; ok && doStream.(bool) {
 		if _, ok := requestMap["stream_options"]; !ok {

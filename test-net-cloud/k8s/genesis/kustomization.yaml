@@ -12,7 +12,8 @@ resources:
 - node-statefulset.yaml
 - api-deployment.yaml
 - inference-deployment.yaml
-- api-public-service.yaml
+- inference-deployment-2.yaml
+- proxy-service.yaml
 - node-service.yaml
 
 components:

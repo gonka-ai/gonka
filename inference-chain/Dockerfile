@@ -40,6 +40,7 @@ RUN wget -O /root/cw20_base.wasm \
 WORKDIR /app/inference-chain
 
 COPY inference-chain/go.mod inference-chain/go.sum ./
+
 RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go mod download

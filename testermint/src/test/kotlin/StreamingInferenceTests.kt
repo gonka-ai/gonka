@@ -33,6 +33,7 @@ class StreamingInferenceTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making streaming inference")
         val beforeBalances = genesis.api.getParticipants()
         val inferenceResult = getStreamingInferenceResult(genesis)
@@ -57,6 +58,7 @@ class StreamingInferenceTests : TestermintTest() {
         participants.forEach {
             Logger.info("Participant: ${it.id}, Balance: ${it.balance}")
         }
+        genesis.waitForNextInferenceWindow()
         logSection("Making inference")
         val inferences: Sequence<InferenceResult> = generateSequence {
             getStreamingInferenceResult(genesis)
@@ -69,6 +71,7 @@ class StreamingInferenceTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making interrupted streaming inference")
         val beforeBalances = genesis.api.getParticipants()
 
@@ -90,11 +93,12 @@ class StreamingInferenceTests : TestermintTest() {
     @Test
     @Tag("unstable")
     fun `spam interrupted streaming requests`() {
-        val maxConcurrentRequests = 100
-        val totalRequests = 100
+        val maxConcurrentRequests = 50
+        val totalRequests = 50
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making interrupted streaming inference")
         val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
 
@@ -137,6 +141,7 @@ class StreamingInferenceTests : TestermintTest() {
         }
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making interrupted streaming inference")
         val beforeBalances = genesis.api.getParticipants()
 

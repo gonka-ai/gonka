@@ -17,12 +17,9 @@ import (
 func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
+	mockAccount := NewMockAccount(testutil.Creator)
 	// Setup a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
-
-	// Generate a private key and get its public key
-	privKey := secp256k1.GenPrivKey()
-	pubKey := privKey.PubKey()
+	MustAddParticipant(t, ms, ctx, *mockAccount)
 
 	// Create a seed value and its binary representation
 	seed := uint64(1)
@@ -30,7 +27,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	binary.BigEndian.PutUint64(seedBytes, seed)
 
 	// Sign the seed with the private key
-	signature, err := privKey.Sign(seedBytes)
+	signature, err := mockAccount.key.Sign(seedBytes)
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
@@ -76,9 +73,6 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Setup account with public key for signature verification
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
-
-	// Create a mock account with the public key
-	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 
 	// Mock the account keeper to return our mock account
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
@@ -142,7 +136,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(1500), resp.Amount)
-	require.Equal(t, "Rewards claimed", resp.Result)
+	require.Equal(t, "Rewards claimed successfully", resp.Result)
 
 	// Verify the settle amount was removed
 	_, found := k.GetSettleAmount(sdk.UnwrapSDKContext(ctx), testutil.Creator)
@@ -232,10 +226,13 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
+	mockCreator := NewMockAccount(testutil.Creator)
+	mockExecutor1 := NewMockAccount("executor1")
+	mockExecutor2 := NewMockAccount("executor2")
 	// Setup participants
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
-	MustAddParticipant(t, ms, ctx, "executor1")
-	MustAddParticipant(t, ms, ctx, "executor2")
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	MustAddParticipant(t, ms, ctx, *mockExecutor1)
+	MustAddParticipant(t, ms, ctx, *mockExecutor2)
 
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
@@ -336,15 +333,17 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
-	_, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: 100,
 		Seed:           12345,
 	})
 
-	// Verify that the error is about validations missed
-	require.Error(t, err)
-	require.Equal(t, types.ErrValidationsMissed.Error(), err.Error())
+	// Verify that the response indicates validation failure
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, uint64(0), resp.Amount)
+	require.Equal(t, "Inference not validated", resp.Result)
 
 	// Now let's validate all inferences and try again
 	validations := types.EpochGroupValidations{
@@ -406,7 +405,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: 100,
 		Seed:           12345,
@@ -416,7 +415,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(1500), resp.Amount)
-	require.Equal(t, "Rewards claimed", resp.Result)
+	require.Equal(t, "Rewards claimed successfully", resp.Result)
 
 	// Verify the settle amount was removed
 	_, found := k.GetSettleAmount(sdkCtx, testutil.Creator)
@@ -435,10 +434,13 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
+	mockCreator := NewMockAccount(testutil.Creator)
+	mockExecutor1 := NewMockAccount("executor1")
+	mockExecutor2 := NewMockAccount("executor2")
 	// Setup participants
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
-	MustAddParticipant(t, ms, ctx, "executor1")
-	MustAddParticipant(t, ms, ctx, "executor2")
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	MustAddParticipant(t, ms, ctx, *mockExecutor1)
+	MustAddParticipant(t, ms, ctx, *mockExecutor2)
 
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
@@ -539,15 +541,17 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
-	_, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: 100,
 		Seed:           12345,
 	})
 
-	// Verify that the error is about validations missed
-	require.Error(t, err)
-	require.Equal(t, types.ErrValidationsMissed.Error(), err.Error())
+	// Verify that the response indicates validation failure
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, uint64(0), resp.Amount)
+	require.Equal(t, "Inference not validated", resp.Result)
 
 	// Now let's try validating only inference2 (the one with low reputation)
 	// This should still fail because we need to validate all required inferences
@@ -562,15 +566,17 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Call ClaimRewards again - this should still fail
-	_, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: 100,
 		Seed:           12345,
 	})
 
-	// Verify that the error is still about validations missed
-	require.Error(t, err)
-	require.Equal(t, types.ErrValidationsMissed.Error(), err.Error())
+	// Verify that the response still indicates validation failure
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, uint64(0), resp.Amount)
+	require.Equal(t, "Inference not validated", resp.Result)
 
 	// Now let's try a different approach - we'll run multiple tests with different seeds
 	// to find a seed where only inference2 needs to be validated
@@ -592,7 +598,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Call ClaimRewards with the new seed
-	_, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: 100,
 		Seed:           54321,
@@ -661,7 +667,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: 100,
 		Seed:           54321,
@@ -671,5 +677,5 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(1500), resp.Amount)
-	require.Equal(t, "Rewards claimed", resp.Result)
+	require.Equal(t, "Rewards claimed successfully", resp.Result)
 }
