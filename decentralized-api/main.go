@@ -104,7 +104,7 @@ func main() {
 	}
 
 	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", recorder.Account.Name,
+		types.PoC, "name", recorder.GetAccount().Name,
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 

@@ -37,6 +37,7 @@ const (
 type TxManager interface {
 	GetClientContext() client.Context
 	SignBytes(seed []byte) ([]byte, error)
+	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
@@ -99,10 +100,18 @@ type txInfo struct {
 	TimeOutHeight uint64
 }
 
+func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
+	return m.client.Status(ctx)
+}
+
 func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
+	logging.Debug("SendTransactionAsyncWithRetry: sending tx", types.Messages, "tx_id", id)
 	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
 	if broadcastErr != nil {
+		if isTxErrorCritical(broadcastErr) {
+			return nil, broadcastErr
+		}
 		err := m.putOnRetry(id, "", 0, rawTx, false)
 		return nil, err
 	}
@@ -112,8 +121,36 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse,
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
+	logging.Debug("SendTransactionAsyncNoRetry: sending tx", types.Messages, "tx_id", id)
 	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
 	return resp, broadcastErr
+}
+
+func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
+	id := uuid.New().String()
+	logging.Debug("SendTransactionSyncNoRetry: sending tx", types.Messages, "tx_id", id)
+	resp, _, err := m.broadcastMessage(id, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", resp.TxHash)
+	result, err := m.WaitForResponse(resp.TxHash)
+	if err != nil {
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
+		return nil, err
+	}
+	return result, nil
+}
+
+func (m *manager) SignBytes(seed []byte) ([]byte, error) {
+	name := m.account.Name
+	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
+	bytes, _, err := m.client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
 }
 
 func (m *manager) putOnRetry(
@@ -143,16 +180,6 @@ func (m *manager) putOnRetry(
 	}
 	_, err = m.js.Publish(server.TxsToSendStream, b)
 	return err
-}
-
-func (m *manager) SignBytes(seed []byte) ([]byte, error) {
-	name := m.account.Name
-	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
-	bytes, _, err := m.client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
-	if err != nil {
-		return nil, err
-	}
-	return bytes, nil
 }
 
 func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeOutHeight uint64) error {
@@ -199,6 +226,10 @@ func (m *manager) SendTxs() error {
 			logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id)
 			resp, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
 			if err != nil {
+				if isTxErrorCritical(err) {
+					msg.Ack() // invalid tx, drop it
+					return
+				}
 				msg.NakWithDelay(defaultNackDelay)
 				return
 			}
@@ -236,7 +267,7 @@ func (m *manager) ObserveTxs() error {
 			return
 		}
 
-		logging.Debug("ObserveTxs: try to check tx with hash", types.Messages, "tx_hash", tx.TxHash)
+		logging.Debug("ObserveTxs: try to check tx with hash", types.Messages, "tx_hash", tx.TxHash, "tx_id", tx.Id)
 
 		resp, err := m.client.Context().Client.Tx(m.ctx, bz, false)
 		if err != nil {
@@ -244,8 +275,10 @@ func (m *manager) ObserveTxs() error {
 				currentHeight, err := m.client.LatestBlockHeight(m.ctx)
 				if err != nil {
 					logging.Error("error getting latest block", types.Messages, "err", err)
+					msg.NakWithDelay(defaultNackDelay)
 					return // retry later
 				}
+
 				if uint64(currentHeight) > tx.TimeOutHeight {
 					logging.Debug("Transaction wasn't included in block within timeout: try to resend", types.Messages, "tx_hash", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight, "current_height", currentHeight, "id", tx.Id)
 					m.pauseSendTxs()
@@ -332,22 +365,6 @@ func (m *manager) resendAllTxs(blockTimeout uint64) error {
 		}
 	}
 	return nil
-}
-
-func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
-	id := uuid.New().String()
-	resp, _, err := m.broadcastMessage(id, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", resp.TxHash)
-	result, err := m.WaitForResponse(resp.TxHash)
-	if err != nil {
-		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
-		return nil, err
-	}
-	return result, nil
 }
 
 func (m *manager) WaitForResponse(txHash string) (*ctypes.ResultTx, error) {
@@ -445,7 +462,8 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, u
 
 	unsignedTx, err := factory.BuildUnsignedTx(rawTx)
 	if err != nil {
-		return nil, 0, err
+		logging.Error("error building unsigned tx", types.Messages, "tx_id", id, "error", err)
+		return nil, 0, ErrBuildingUnsignedTx
 	}
 
 	unsignedTx.SetGasLimit(1000000000)
@@ -454,13 +472,13 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, u
 	err = txclient.Sign(m.ctx, factory, m.account.Name, unsignedTx, false)
 	if err != nil {
 		logging.Error("Failed to sign transaction", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return nil, 0, ErrFailedToSignTx
 	}
 
 	txBytes, err := m.client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
 	if err != nil {
 		logging.Error("Failed to encode transaction", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return nil, 0, ErrFailedToEncodeTx
 	}
 
 	resp, err := m.client.Context().BroadcastTxSync(txBytes)

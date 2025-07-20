@@ -28,7 +28,7 @@ services:
       - "${ML_SERVER_PORT}:9100"
       - "${ADMIN_SERVER_PORT}:9200"
       - "${ML_GRPC_SERVER_PORT}:9300"
-      - "4222:4222"
+      - "${NATS_SERVER_PORT}:4222"
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node

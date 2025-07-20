@@ -8,6 +8,8 @@ import (
 	"decentralized-api/logging"
 	"errors"
 	"fmt"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -145,9 +147,19 @@ type CosmosMessageClient interface {
 	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error
+	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	GetContext() context.Context
+	GetClientContext() sdkclient.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
+}
+
+func (icc *InferenceCosmosClient) GetClientContext() sdkclient.Context {
+	return icc.manager.GetClientContext()
+}
+
+func (icc *InferenceCosmosClient) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
+	return icc.manager.Status(ctx)
 }
 
 func (icc *InferenceCosmosClient) GetContext() context.Context {
@@ -302,15 +314,6 @@ func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
 	return cmtservice.NewServiceClient(icc.manager.GetClientContext())
-}
-
-func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, error) {
-	queryClient := icc.NewInferenceQueryClient()
-	resp, err := queryClient.GetRandomExecutor(icc.ctx, &types.QueryGetRandomExecutorRequest{})
-	if err != nil {
-		return nil, err
-	}
-	return &resp.Executor, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error {

@@ -196,7 +196,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return err
 	}
 
-	status, err := s.recorder.GetCosmosClient().Status(context.Background())
+	status, err := s.recorder.Status(context.Background())
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
 		return err
@@ -485,7 +485,7 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 }
 
 func (s *Server) validateTimestampNonce(err error, request *ChatRequest) error {
-	status, err := s.recorder.GetCosmosClient().Status(context.Background())
+	status, err := s.recorder.Status(context.Background())
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
 		return err
@@ -567,7 +567,7 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 
 	accountSigner := &cmd.AccountSigner{
 		Addr:    address,
-		Context: s.recorder.GetCosmosClient().Context(),
+		Context: s.recorder.GetClientContext(),
 	}
 
 	signature, err := calculations.Sign(accountSigner, components, agentType)
