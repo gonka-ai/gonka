@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -39,6 +40,15 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
+
+	if found && existingInference.Status == types.InferenceStatus_EXPIRED {
+		k.LogWarn("FinishInference: cannot finish expired inference", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"currentStatus", existingInference.Status,
+			"executedBy", msg.ExecutedBy)
+		return nil, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired")
+	}
+
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),

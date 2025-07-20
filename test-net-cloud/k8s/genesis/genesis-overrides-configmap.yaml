@@ -36,6 +36,25 @@ data:
               "poc_validation_delay": "5",
               "poc_validation_duration": "10",
               "default_unit_of_compute_price": "100"
+            },
+            "tokenomicsParams": {
+              "subsidy_reduction_interval": {
+                "value": "5",
+                "exponent": -2
+              },
+              "subsidy_reduction_amount": {
+                "value": "2",
+                "exponent": -1
+              },
+              "current_subsidy_percentage": {
+                "value": "1",
+                "exponent": -1
+              },
+              "top_reward_allowed_failure": {
+                "value": "1",
+                "exponent": -1
+              },
+              "top_miner_poc_qualification": "10"
             }
           },
           "genesis_only_params": {
