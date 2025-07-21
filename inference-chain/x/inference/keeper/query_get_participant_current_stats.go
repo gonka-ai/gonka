@@ -56,17 +56,10 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 			continue
 		}
 
-		// Find validator address for this participant (handles both genesis and runtime validators)
-		validatorAddr, err := k.findValidatorAddressForParticipant(ctx, member.MemberAddress, participant.ValidatorKey)
-		if err != nil {
-			k.LogError("GetParticipantsFullStats: failed to find validator for participant", types.Participants,
-				"participant", member.MemberAddress, "error", err.Error())
-			continue
-		}
-
+		accAddr, _ := sdk.AccAddressFromBech32(member.MemberAddress)
 		participants[member.MemberAddress] = &types.ParticipantFullStats{
 			AccountAddress:          member.MemberAddress,
-			OperatorAddress:         validatorAddr,
+			OperatorAddress:         sdk.ValAddress(accAddr).String(),
 			Reputation:              member.Reputation,
 			EarnedCoinsCurrentEpoch: participant.CurrentEpochStats.EarnedCoins,
 			EpochsCompleted:         participant.EpochsCompleted,
