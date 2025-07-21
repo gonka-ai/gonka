@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.3
+    image: ghcr.io/product-science/inferenced:0.1.14
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -22,7 +22,7 @@ services:
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.3
+    image: ghcr.io/product-science/api:0.1.14
     restart: always
     depends_on:
       - node
@@ -38,6 +38,7 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
     volumes:
       - /srv/dai/inference:/root/.inference
+      - /srv/dai/dapi:/root/.dapi
       - ./node-config.json:/root/node_config.json
     ports:
       - "8000:9000"
@@ -45,7 +46,7 @@ services:
       - "9200:9200"
 
   inference:
-    image: ghcr.io/product-science/mlnode:3.0.4-alpha2
+    image: ghcr.io/product-science/mlnode:3.0.6
     restart: always
     command: >
       uvicorn api.app:app
@@ -54,6 +55,7 @@ services:
     environment:
       - HF_HOME=/root/.cache
       - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - HF_HUB_OFFLINE=1
     volumes:
       - /mnt/shared/:/root/.cache
     ipc: host
