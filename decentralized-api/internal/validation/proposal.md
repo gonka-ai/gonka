@@ -3,6 +3,7 @@
 The task can be separated into three somewhat independent parts. 
 I think it's better to release them 1 by 1, so we're not overwhelmed 
 with the amount of changes in a single update: easier to test and debug.
+Especially since we're releasing it combined with the scheduling changes.
 
 # 1. Claim reward
 
@@ -55,3 +56,12 @@ The nodes might be unavailable and we will lose the validation request.
 ## Proposed solution (short term)
 
 On server reboot, when initializing `InferenceValidationTaskStorage`, query the chain and try to determine which inferences need to be validated.
+
+## Proposed solution (long term)
+
+`OnDiskValidationTaskStorage`
+
+## Proposed solution (ideal)
+
+A separate middleware service between the chain node and the API that will analyze each transaction and create a task in a participant's local DB.
+Like a more reliable event listener that will guarantee not to miss any blocks.
