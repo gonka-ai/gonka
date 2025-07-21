@@ -52,3 +52,20 @@ message Inference {
   string original_prompt = 31;
 }
 
+message InferenceStatsStorage {
+  string index = 1;
+  string inference_id = 2;
+  InferenceStatus status = 3;
+  int64 start_block_timestamp = 4;
+  int64 end_block_timestamp = 5;
+  uint64 epoch_id = 6;
+  uint64 epoch_poc_start_block_height = 7;
+  uint64 prompt_token_count = 8;
+  uint64 completion_token_count = 9;
+  int64 actual_cost = 10;
+  string requested_by = 11;
+  string executed_by = 12;
+  string transferred_by = 13;
+  string model = 14;
+}
+

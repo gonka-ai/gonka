@@ -46,8 +46,10 @@ func TestInferenceRemove(t *testing.T) {
 		keeper.RemoveInference(ctx,
 			item.Index,
 		)
+		// Use disableFallback=true to ensure we're checking for actual removal, not just conversion to stats
 		_, found := keeper.GetInference(ctx,
 			item.Index,
+			true, // disableFallback
 		)
 		require.False(t, found)
 	}

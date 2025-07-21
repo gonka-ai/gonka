@@ -9,7 +9,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetInference set a specific inference in the store from its index
+// SetInference sets a specific inference in the store from its index and creates/updates its stats
 func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
@@ -17,6 +17,14 @@ func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
 	store.Set(types.InferenceKey(
 		inference.Index,
 	), b)
+
+	// Create and store the stats version
+	stats := types.CreateInferenceStatsStorage(inference)
+	statsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceStatsStorageKeyPrefix))
+	statsBytes := k.cdc.MustMarshal(&stats)
+	statsStore.Set(types.InferenceStatsStorageKey(
+		inference.Index,
+	), statsBytes)
 
 	err := k.SetDeveloperStats(ctx, inference)
 	if err != nil {
@@ -33,13 +41,22 @@ func (k Keeper) SetInferenceWithoutDevStatComputation(ctx context.Context, infer
 	store.Set(types.InferenceKey(
 		inference.Index,
 	), b)
+
+	// Create and store the stats version
+	stats := types.CreateInferenceStatsStorage(inference)
+	statsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceStatsStorageKeyPrefix))
+	statsBytes := k.cdc.MustMarshal(&stats)
+	statsStore.Set(types.InferenceStatsStorageKey(
+		inference.Index,
+	), statsBytes)
 }
 
-// GetInference returns a inference from its index
+// GetInference returns an inference from its index, falling back to stats if full inference is not found
+// The disableFallback parameter can be used to disable the fallback to stats (used in tests)
 func (k Keeper) GetInference(
 	ctx context.Context,
 	index string,
-
+	disableFallback ...bool,
 ) (val types.Inference, found bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
@@ -47,20 +64,63 @@ func (k Keeper) GetInference(
 	b := store.Get(types.InferenceKey(
 		index,
 	))
-	if b == nil {
+	if b != nil {
+		k.cdc.MustUnmarshal(b, &val)
+		return val, true
+	}
+
+	// Check if fallback is disabled (used in tests)
+	if len(disableFallback) > 0 && disableFallback[0] {
 		return val, false
 	}
 
-	k.cdc.MustUnmarshal(b, &val)
+	// If full inference not found, try to get stats version
+	statsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceStatsStorageKeyPrefix))
+	statsBytes := statsStore.Get(types.InferenceStatsStorageKey(
+		index,
+	))
+	if statsBytes == nil {
+		return val, false
+	}
+
+	// Convert stats to inference
+	var stats types.InferenceStatsStorage
+	k.cdc.MustUnmarshal(statsBytes, &stats)
+	val = types.InferenceFromStatsStorage(stats)
 	return val, true
 }
 
-// RemoveInference removes a inference from the store
+// RemoveInference removes a inference from the store with an option to convert to stats-only before removal
 func (k Keeper) RemoveInference(
 	ctx context.Context,
 	index string,
-
+	convertToStats ...bool,
 ) {
+	shouldConvertToStats := false
+	if len(convertToStats) > 0 {
+		shouldConvertToStats = convertToStats[0]
+	}
+
+	if shouldConvertToStats {
+		// Get the inference directly from the store (not using GetInference to avoid recursion)
+		inference, found := k.GetInferenceDirectFromStore(ctx, index)
+		if found {
+			// Create and store the stats version
+			stats := types.CreateInferenceStatsStorage(inference)
+			storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+			statsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceStatsStorageKeyPrefix))
+			statsBytes := k.cdc.MustMarshal(&stats)
+			statsStore.Set(types.InferenceStatsStorageKey(
+				inference.Index,
+			), statsBytes)
+
+			k.LogInfo("Converted inference to stats-only", types.Inferences,
+				"inference_id", inference.InferenceId,
+				"status", inference.Status.String())
+		}
+	}
+
+	// Remove the full inference
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
 	store.Delete(types.InferenceKey(

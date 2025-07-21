@@ -248,6 +248,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+
+		// Clean up inferences during PoC phase
+		am.cleanupInferencesForPoc(ctx)
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
@@ -278,6 +281,30 @@ func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 
 func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
+}
+
+// cleanupInferencesForPoc converts full inferences to stats-only during PoC phase
+func (am AppModule) cleanupInferencesForPoc(ctx context.Context) {
+	am.LogInfo("Starting inference cleanup during PoC phase", types.Inferences)
+
+	// Get all inferences
+	inferences := am.keeper.GetAllInference(ctx)
+	for _, inference := range inferences {
+		// Check if inference is in FINISHED, VALIDATED, or INVALIDATED state
+		if inference.Status == types.InferenceStatus_FINISHED ||
+			inference.Status == types.InferenceStatus_VALIDATED ||
+			inference.Status == types.InferenceStatus_INVALIDATED {
+
+			am.LogInfo("Converting inference to stats-only during PoC", types.Inferences,
+				"inference_id", inference.InferenceId,
+				"status", inference.Status.String())
+
+			// Convert to stats-only
+			am.keeper.RemoveInference(ctx, inference.Index, true)
+		}
+	}
+
+	am.LogInfo("Completed inference cleanup during PoC phase", types.Inferences)
 }
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {

@@ -2751,6 +2751,1130 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 	}
 }
 
+var (
+	md_InferenceStatsStorage                              protoreflect.MessageDescriptor
+	fd_InferenceStatsStorage_index                        protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_inference_id                 protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_status                       protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_start_block_timestamp        protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_end_block_timestamp          protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_epoch_id                     protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_epoch_poc_start_block_height protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_prompt_token_count           protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_completion_token_count       protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_actual_cost                  protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_requested_by                 protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_executed_by                  protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_transferred_by               protoreflect.FieldDescriptor
+	fd_InferenceStatsStorage_model                        protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_inference_proto_init()
+	md_InferenceStatsStorage = File_inference_inference_inference_proto.Messages().ByName("InferenceStatsStorage")
+	fd_InferenceStatsStorage_index = md_InferenceStatsStorage.Fields().ByName("index")
+	fd_InferenceStatsStorage_inference_id = md_InferenceStatsStorage.Fields().ByName("inference_id")
+	fd_InferenceStatsStorage_status = md_InferenceStatsStorage.Fields().ByName("status")
+	fd_InferenceStatsStorage_start_block_timestamp = md_InferenceStatsStorage.Fields().ByName("start_block_timestamp")
+	fd_InferenceStatsStorage_end_block_timestamp = md_InferenceStatsStorage.Fields().ByName("end_block_timestamp")
+	fd_InferenceStatsStorage_epoch_id = md_InferenceStatsStorage.Fields().ByName("epoch_id")
+	fd_InferenceStatsStorage_epoch_poc_start_block_height = md_InferenceStatsStorage.Fields().ByName("epoch_poc_start_block_height")
+	fd_InferenceStatsStorage_prompt_token_count = md_InferenceStatsStorage.Fields().ByName("prompt_token_count")
+	fd_InferenceStatsStorage_completion_token_count = md_InferenceStatsStorage.Fields().ByName("completion_token_count")
+	fd_InferenceStatsStorage_actual_cost = md_InferenceStatsStorage.Fields().ByName("actual_cost")
+	fd_InferenceStatsStorage_requested_by = md_InferenceStatsStorage.Fields().ByName("requested_by")
+	fd_InferenceStatsStorage_executed_by = md_InferenceStatsStorage.Fields().ByName("executed_by")
+	fd_InferenceStatsStorage_transferred_by = md_InferenceStatsStorage.Fields().ByName("transferred_by")
+	fd_InferenceStatsStorage_model = md_InferenceStatsStorage.Fields().ByName("model")
+}
+
+var _ protoreflect.Message = (*fastReflection_InferenceStatsStorage)(nil)
+
+type fastReflection_InferenceStatsStorage InferenceStatsStorage
+
+func (x *InferenceStatsStorage) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_InferenceStatsStorage)(x)
+}
+
+func (x *InferenceStatsStorage) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_inference_proto_msgTypes[2]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_InferenceStatsStorage_messageType fastReflection_InferenceStatsStorage_messageType
+var _ protoreflect.MessageType = fastReflection_InferenceStatsStorage_messageType{}
+
+type fastReflection_InferenceStatsStorage_messageType struct{}
+
+func (x fastReflection_InferenceStatsStorage_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_InferenceStatsStorage)(nil)
+}
+func (x fastReflection_InferenceStatsStorage_messageType) New() protoreflect.Message {
+	return new(fastReflection_InferenceStatsStorage)
+}
+func (x fastReflection_InferenceStatsStorage_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_InferenceStatsStorage
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_InferenceStatsStorage) Descriptor() protoreflect.MessageDescriptor {
+	return md_InferenceStatsStorage
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_InferenceStatsStorage) Type() protoreflect.MessageType {
+	return _fastReflection_InferenceStatsStorage_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_InferenceStatsStorage) New() protoreflect.Message {
+	return new(fastReflection_InferenceStatsStorage)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_InferenceStatsStorage) Interface() protoreflect.ProtoMessage {
+	return (*InferenceStatsStorage)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_InferenceStatsStorage) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Index != "" {
+		value := protoreflect.ValueOfString(x.Index)
+		if !f(fd_InferenceStatsStorage_index, value) {
+			return
+		}
+	}
+	if x.InferenceId != "" {
+		value := protoreflect.ValueOfString(x.InferenceId)
+		if !f(fd_InferenceStatsStorage_inference_id, value) {
+			return
+		}
+	}
+	if x.Status != 0 {
+		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.Status))
+		if !f(fd_InferenceStatsStorage_status, value) {
+			return
+		}
+	}
+	if x.StartBlockTimestamp != int64(0) {
+		value := protoreflect.ValueOfInt64(x.StartBlockTimestamp)
+		if !f(fd_InferenceStatsStorage_start_block_timestamp, value) {
+			return
+		}
+	}
+	if x.EndBlockTimestamp != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EndBlockTimestamp)
+		if !f(fd_InferenceStatsStorage_end_block_timestamp, value) {
+			return
+		}
+	}
+	if x.EpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochId)
+		if !f(fd_InferenceStatsStorage_epoch_id, value) {
+			return
+		}
+	}
+	if x.EpochPocStartBlockHeight != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochPocStartBlockHeight)
+		if !f(fd_InferenceStatsStorage_epoch_poc_start_block_height, value) {
+			return
+		}
+	}
+	if x.PromptTokenCount != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.PromptTokenCount)
+		if !f(fd_InferenceStatsStorage_prompt_token_count, value) {
+			return
+		}
+	}
+	if x.CompletionTokenCount != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CompletionTokenCount)
+		if !f(fd_InferenceStatsStorage_completion_token_count, value) {
+			return
+		}
+	}
+	if x.ActualCost != int64(0) {
+		value := protoreflect.ValueOfInt64(x.ActualCost)
+		if !f(fd_InferenceStatsStorage_actual_cost, value) {
+			return
+		}
+	}
+	if x.RequestedBy != "" {
+		value := protoreflect.ValueOfString(x.RequestedBy)
+		if !f(fd_InferenceStatsStorage_requested_by, value) {
+			return
+		}
+	}
+	if x.ExecutedBy != "" {
+		value := protoreflect.ValueOfString(x.ExecutedBy)
+		if !f(fd_InferenceStatsStorage_executed_by, value) {
+			return
+		}
+	}
+	if x.TransferredBy != "" {
+		value := protoreflect.ValueOfString(x.TransferredBy)
+		if !f(fd_InferenceStatsStorage_transferred_by, value) {
+			return
+		}
+	}
+	if x.Model != "" {
+		value := protoreflect.ValueOfString(x.Model)
+		if !f(fd_InferenceStatsStorage_model, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_InferenceStatsStorage) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.InferenceStatsStorage.index":
+		return x.Index != ""
+	case "inference.inference.InferenceStatsStorage.inference_id":
+		return x.InferenceId != ""
+	case "inference.inference.InferenceStatsStorage.status":
+		return x.Status != 0
+	case "inference.inference.InferenceStatsStorage.start_block_timestamp":
+		return x.StartBlockTimestamp != int64(0)
+	case "inference.inference.InferenceStatsStorage.end_block_timestamp":
+		return x.EndBlockTimestamp != int64(0)
+	case "inference.inference.InferenceStatsStorage.epoch_id":
+		return x.EpochId != uint64(0)
+	case "inference.inference.InferenceStatsStorage.epoch_poc_start_block_height":
+		return x.EpochPocStartBlockHeight != uint64(0)
+	case "inference.inference.InferenceStatsStorage.prompt_token_count":
+		return x.PromptTokenCount != uint64(0)
+	case "inference.inference.InferenceStatsStorage.completion_token_count":
+		return x.CompletionTokenCount != uint64(0)
+	case "inference.inference.InferenceStatsStorage.actual_cost":
+		return x.ActualCost != int64(0)
+	case "inference.inference.InferenceStatsStorage.requested_by":
+		return x.RequestedBy != ""
+	case "inference.inference.InferenceStatsStorage.executed_by":
+		return x.ExecutedBy != ""
+	case "inference.inference.InferenceStatsStorage.transferred_by":
+		return x.TransferredBy != ""
+	case "inference.inference.InferenceStatsStorage.model":
+		return x.Model != ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceStatsStorage"))
+		}
+		panic(fmt.Errorf("message inference.inference.InferenceStatsStorage does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_InferenceStatsStorage) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.InferenceStatsStorage.index":
+		x.Index = ""
+	case "inference.inference.InferenceStatsStorage.inference_id":
+		x.InferenceId = ""
+	case "inference.inference.InferenceStatsStorage.status":
+		x.Status = 0
+	case "inference.inference.InferenceStatsStorage.start_block_timestamp":
+		x.StartBlockTimestamp = int64(0)
+	case "inference.inference.InferenceStatsStorage.end_block_timestamp":
+		x.EndBlockTimestamp = int64(0)
+	case "inference.inference.InferenceStatsStorage.epoch_id":
+		x.EpochId = uint64(0)
+	case "inference.inference.InferenceStatsStorage.epoch_poc_start_block_height":
+		x.EpochPocStartBlockHeight = uint64(0)
+	case "inference.inference.InferenceStatsStorage.prompt_token_count":
+		x.PromptTokenCount = uint64(0)
+	case "inference.inference.InferenceStatsStorage.completion_token_count":
+		x.CompletionTokenCount = uint64(0)
+	case "inference.inference.InferenceStatsStorage.actual_cost":
+		x.ActualCost = int64(0)
+	case "inference.inference.InferenceStatsStorage.requested_by":
+		x.RequestedBy = ""
+	case "inference.inference.InferenceStatsStorage.executed_by":
+		x.ExecutedBy = ""
+	case "inference.inference.InferenceStatsStorage.transferred_by":
+		x.TransferredBy = ""
+	case "inference.inference.InferenceStatsStorage.model":
+		x.Model = ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceStatsStorage"))
+		}
+		panic(fmt.Errorf("message inference.inference.InferenceStatsStorage does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_InferenceStatsStorage) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.InferenceStatsStorage.index":
+		value := x.Index
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.InferenceStatsStorage.inference_id":
+		value := x.InferenceId
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.InferenceStatsStorage.status":
+		value := x.Status
+		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
+	case "inference.inference.InferenceStatsStorage.start_block_timestamp":
+		value := x.StartBlockTimestamp
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.InferenceStatsStorage.end_block_timestamp":
+		value := x.EndBlockTimestamp
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.InferenceStatsStorage.epoch_id":
+		value := x.EpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.InferenceStatsStorage.epoch_poc_start_block_height":
+		value := x.EpochPocStartBlockHeight
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.InferenceStatsStorage.prompt_token_count":
+		value := x.PromptTokenCount
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.InferenceStatsStorage.completion_token_count":
+		value := x.CompletionTokenCount
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.InferenceStatsStorage.actual_cost":
+		value := x.ActualCost
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.InferenceStatsStorage.requested_by":
+		value := x.RequestedBy
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.InferenceStatsStorage.executed_by":
+		value := x.ExecutedBy
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.InferenceStatsStorage.transferred_by":
+		value := x.TransferredBy
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.InferenceStatsStorage.model":
+		value := x.Model
+		return protoreflect.ValueOfString(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceStatsStorage"))
+		}
+		panic(fmt.Errorf("message inference.inference.InferenceStatsStorage does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_InferenceStatsStorage) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.InferenceStatsStorage.index":
+		x.Index = value.Interface().(string)
+	case "inference.inference.InferenceStatsStorage.inference_id":
+		x.InferenceId = value.Interface().(string)
+	case "inference.inference.InferenceStatsStorage.status":
+		x.Status = (InferenceStatus)(value.Enum())
+	case "inference.inference.InferenceStatsStorage.start_block_timestamp":
+		x.StartBlockTimestamp = value.Int()
+	case "inference.inference.InferenceStatsStorage.end_block_timestamp":
+		x.EndBlockTimestamp = value.Int()
+	case "inference.inference.InferenceStatsStorage.epoch_id":
+		x.EpochId = value.Uint()
+	case "inference.inference.InferenceStatsStorage.epoch_poc_start_block_height":
+		x.EpochPocStartBlockHeight = value.Uint()
+	case "inference.inference.InferenceStatsStorage.prompt_token_count":
+		x.PromptTokenCount = value.Uint()
+	case "inference.inference.InferenceStatsStorage.completion_token_count":
+		x.CompletionTokenCount = value.Uint()
+	case "inference.inference.InferenceStatsStorage.actual_cost":
+		x.ActualCost = value.Int()
+	case "inference.inference.InferenceStatsStorage.requested_by":
+		x.RequestedBy = value.Interface().(string)
+	case "inference.inference.InferenceStatsStorage.executed_by":
+		x.ExecutedBy = value.Interface().(string)
+	case "inference.inference.InferenceStatsStorage.transferred_by":
+		x.TransferredBy = value.Interface().(string)
+	case "inference.inference.InferenceStatsStorage.model":
+		x.Model = value.Interface().(string)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceStatsStorage"))
+		}
+		panic(fmt.Errorf("message inference.inference.InferenceStatsStorage does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_InferenceStatsStorage) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.InferenceStatsStorage.index":
+		panic(fmt.Errorf("field index of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.status":
+		panic(fmt.Errorf("field status of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.start_block_timestamp":
+		panic(fmt.Errorf("field start_block_timestamp of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.end_block_timestamp":
+		panic(fmt.Errorf("field end_block_timestamp of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.epoch_id":
+		panic(fmt.Errorf("field epoch_id of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.epoch_poc_start_block_height":
+		panic(fmt.Errorf("field epoch_poc_start_block_height of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.prompt_token_count":
+		panic(fmt.Errorf("field prompt_token_count of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.completion_token_count":
+		panic(fmt.Errorf("field completion_token_count of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.actual_cost":
+		panic(fmt.Errorf("field actual_cost of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.requested_by":
+		panic(fmt.Errorf("field requested_by of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.executed_by":
+		panic(fmt.Errorf("field executed_by of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.transferred_by":
+		panic(fmt.Errorf("field transferred_by of message inference.inference.InferenceStatsStorage is not mutable"))
+	case "inference.inference.InferenceStatsStorage.model":
+		panic(fmt.Errorf("field model of message inference.inference.InferenceStatsStorage is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceStatsStorage"))
+		}
+		panic(fmt.Errorf("message inference.inference.InferenceStatsStorage does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_InferenceStatsStorage) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.InferenceStatsStorage.index":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.InferenceStatsStorage.inference_id":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.InferenceStatsStorage.status":
+		return protoreflect.ValueOfEnum(0)
+	case "inference.inference.InferenceStatsStorage.start_block_timestamp":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.InferenceStatsStorage.end_block_timestamp":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.InferenceStatsStorage.epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.InferenceStatsStorage.epoch_poc_start_block_height":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.InferenceStatsStorage.prompt_token_count":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.InferenceStatsStorage.completion_token_count":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.InferenceStatsStorage.actual_cost":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.InferenceStatsStorage.requested_by":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.InferenceStatsStorage.executed_by":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.InferenceStatsStorage.transferred_by":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.InferenceStatsStorage.model":
+		return protoreflect.ValueOfString("")
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceStatsStorage"))
+		}
+		panic(fmt.Errorf("message inference.inference.InferenceStatsStorage does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_InferenceStatsStorage) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.InferenceStatsStorage", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_InferenceStatsStorage) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_InferenceStatsStorage) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_InferenceStatsStorage) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_InferenceStatsStorage) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*InferenceStatsStorage)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Index)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.InferenceId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.Status != 0 {
+			n += 1 + runtime.Sov(uint64(x.Status))
+		}
+		if x.StartBlockTimestamp != 0 {
+			n += 1 + runtime.Sov(uint64(x.StartBlockTimestamp))
+		}
+		if x.EndBlockTimestamp != 0 {
+			n += 1 + runtime.Sov(uint64(x.EndBlockTimestamp))
+		}
+		if x.EpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochId))
+		}
+		if x.EpochPocStartBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochPocStartBlockHeight))
+		}
+		if x.PromptTokenCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.PromptTokenCount))
+		}
+		if x.CompletionTokenCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.CompletionTokenCount))
+		}
+		if x.ActualCost != 0 {
+			n += 1 + runtime.Sov(uint64(x.ActualCost))
+		}
+		l = len(x.RequestedBy)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.ExecutedBy)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.TransferredBy)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Model)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*InferenceStatsStorage)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Model) > 0 {
+			i -= len(x.Model)
+			copy(dAtA[i:], x.Model)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Model)))
+			i--
+			dAtA[i] = 0x72
+		}
+		if len(x.TransferredBy) > 0 {
+			i -= len(x.TransferredBy)
+			copy(dAtA[i:], x.TransferredBy)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.TransferredBy)))
+			i--
+			dAtA[i] = 0x6a
+		}
+		if len(x.ExecutedBy) > 0 {
+			i -= len(x.ExecutedBy)
+			copy(dAtA[i:], x.ExecutedBy)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ExecutedBy)))
+			i--
+			dAtA[i] = 0x62
+		}
+		if len(x.RequestedBy) > 0 {
+			i -= len(x.RequestedBy)
+			copy(dAtA[i:], x.RequestedBy)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RequestedBy)))
+			i--
+			dAtA[i] = 0x5a
+		}
+		if x.ActualCost != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ActualCost))
+			i--
+			dAtA[i] = 0x50
+		}
+		if x.CompletionTokenCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CompletionTokenCount))
+			i--
+			dAtA[i] = 0x48
+		}
+		if x.PromptTokenCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PromptTokenCount))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.EpochPocStartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochPocStartBlockHeight))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.EpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.EndBlockTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EndBlockTimestamp))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.StartBlockTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartBlockTimestamp))
+			i--
+			dAtA[i] = 0x20
+		}
+		if x.Status != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Status))
+			i--
+			dAtA[i] = 0x18
+		}
+		if len(x.InferenceId) > 0 {
+			i -= len(x.InferenceId)
+			copy(dAtA[i:], x.InferenceId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.InferenceId)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.Index) > 0 {
+			i -= len(x.Index)
+			copy(dAtA[i:], x.Index)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Index)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*InferenceStatsStorage)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: InferenceStatsStorage: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: InferenceStatsStorage: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Index", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Index = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.InferenceId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
+				}
+				x.Status = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Status |= InferenceStatus(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartBlockTimestamp", wireType)
+				}
+				x.StartBlockTimestamp = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.StartBlockTimestamp |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EndBlockTimestamp", wireType)
+				}
+				x.EndBlockTimestamp = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EndBlockTimestamp |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				}
+				x.EpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochPocStartBlockHeight", wireType)
+				}
+				x.EpochPocStartBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochPocStartBlockHeight |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PromptTokenCount", wireType)
+				}
+				x.PromptTokenCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PromptTokenCount |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CompletionTokenCount", wireType)
+				}
+				x.CompletionTokenCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CompletionTokenCount |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ActualCost", wireType)
+				}
+				x.ActualCost = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ActualCost |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 11:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestedBy", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.RequestedBy = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 12:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExecutedBy", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ExecutedBy = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 13:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TransferredBy", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.TransferredBy = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 14:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Model", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Model = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
 // Code generated by protoc-gen-go. DO NOT EDIT.
 // versions:
 // 	protoc-gen-go v1.27.0
@@ -3148,6 +4272,145 @@ func (x *Inference) GetOriginalPrompt() string {
 	return ""
 }
 
+type InferenceStatsStorage struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Index                    string          `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	InferenceId              string          `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Status                   InferenceStatus `protobuf:"varint,3,opt,name=status,proto3,enum=inference.inference.InferenceStatus" json:"status,omitempty"`
+	StartBlockTimestamp      int64           `protobuf:"varint,4,opt,name=start_block_timestamp,json=startBlockTimestamp,proto3" json:"start_block_timestamp,omitempty"`
+	EndBlockTimestamp        int64           `protobuf:"varint,5,opt,name=end_block_timestamp,json=endBlockTimestamp,proto3" json:"end_block_timestamp,omitempty"`
+	EpochId                  uint64          `protobuf:"varint,6,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	EpochPocStartBlockHeight uint64          `protobuf:"varint,7,opt,name=epoch_poc_start_block_height,json=epochPocStartBlockHeight,proto3" json:"epoch_poc_start_block_height,omitempty"`
+	PromptTokenCount         uint64          `protobuf:"varint,8,opt,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty"`
+	CompletionTokenCount     uint64          `protobuf:"varint,9,opt,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty"`
+	ActualCost               int64           `protobuf:"varint,10,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
+	RequestedBy              string          `protobuf:"bytes,11,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
+	ExecutedBy               string          `protobuf:"bytes,12,opt,name=executed_by,json=executedBy,proto3" json:"executed_by,omitempty"`
+	TransferredBy            string          `protobuf:"bytes,13,opt,name=transferred_by,json=transferredBy,proto3" json:"transferred_by,omitempty"`
+	Model                    string          `protobuf:"bytes,14,opt,name=model,proto3" json:"model,omitempty"`
+}
+
+func (x *InferenceStatsStorage) Reset() {
+	*x = InferenceStatsStorage{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_inference_proto_msgTypes[2]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *InferenceStatsStorage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InferenceStatsStorage) ProtoMessage() {}
+
+// Deprecated: Use InferenceStatsStorage.ProtoReflect.Descriptor instead.
+func (*InferenceStatsStorage) Descriptor() ([]byte, []int) {
+	return file_inference_inference_inference_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *InferenceStatsStorage) GetIndex() string {
+	if x != nil {
+		return x.Index
+	}
+	return ""
+}
+
+func (x *InferenceStatsStorage) GetInferenceId() string {
+	if x != nil {
+		return x.InferenceId
+	}
+	return ""
+}
+
+func (x *InferenceStatsStorage) GetStatus() InferenceStatus {
+	if x != nil {
+		return x.Status
+	}
+	return InferenceStatus_STARTED
+}
+
+func (x *InferenceStatsStorage) GetStartBlockTimestamp() int64 {
+	if x != nil {
+		return x.StartBlockTimestamp
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetEndBlockTimestamp() int64 {
+	if x != nil {
+		return x.EndBlockTimestamp
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetEpochPocStartBlockHeight() uint64 {
+	if x != nil {
+		return x.EpochPocStartBlockHeight
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetPromptTokenCount() uint64 {
+	if x != nil {
+		return x.PromptTokenCount
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetCompletionTokenCount() uint64 {
+	if x != nil {
+		return x.CompletionTokenCount
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetActualCost() int64 {
+	if x != nil {
+		return x.ActualCost
+	}
+	return 0
+}
+
+func (x *InferenceStatsStorage) GetRequestedBy() string {
+	if x != nil {
+		return x.RequestedBy
+	}
+	return ""
+}
+
+func (x *InferenceStatsStorage) GetExecutedBy() string {
+	if x != nil {
+		return x.ExecutedBy
+	}
+	return ""
+}
+
+func (x *InferenceStatsStorage) GetTransferredBy() string {
+	if x != nil {
+		return x.TransferredBy
+	}
+	return ""
+}
+
+func (x *InferenceStatsStorage) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
 var File_inference_inference_inference_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_proto_rawDesc = []byte{
@@ -3245,26 +4508,63 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x12, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74,
 	0x75, 0x72, 0x65, 0x12, 0x27, 0x0a, 0x0f, 0x6f, 0x72, 0x69, 0x67, 0x69, 0x6e, 0x61, 0x6c, 0x5f,
 	0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x18, 0x1f, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x6f, 0x72,
-	0x69, 0x67, 0x69, 0x6e, 0x61, 0x6c, 0x50, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x2a, 0x65, 0x0a, 0x0f,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12,
-	0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08,
-	0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09, 0x56, 0x41,
-	0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12, 0x0f, 0x0a, 0x0b, 0x49, 0x4e, 0x56,
-	0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03, 0x12, 0x0a, 0x0a, 0x06, 0x56, 0x4f,
-	0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x12, 0x0b, 0x0a, 0x07, 0x45, 0x58, 0x50, 0x49, 0x52, 0x45,
-	0x44, 0x10, 0x05, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
-	0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
-	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
-	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x69, 0x67, 0x69, 0x6e, 0x61, 0x6c, 0x50, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x22, 0xd3, 0x04, 0x0a,
+	0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x73, 0x53,
+	0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21, 0x0a, 0x0c,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x12,
+	0x3c, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0e, 0x32,
+	0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53,
+	0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x32, 0x0a,
+	0x15, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x74, 0x69, 0x6d,
+	0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x73, 0x74,
+	0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d,
+	0x70, 0x12, 0x2e, 0x0a, 0x13, 0x65, 0x6e, 0x64, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x74,
+	0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x11,
+	0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d,
+	0x70, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x06, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x3e, 0x0a, 0x1c,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f,
+	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x07, 0x20, 0x01,
+	0x28, 0x04, 0x52, 0x18, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72,
+	0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x2c, 0x0a, 0x12,
+	0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x63, 0x6f, 0x75,
+	0x6e, 0x74, 0x18, 0x08, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74,
+	0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x34, 0x0a, 0x16, 0x63, 0x6f,
+	0x6d, 0x70, 0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x63,
+	0x6f, 0x75, 0x6e, 0x74, 0x18, 0x09, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70,
+	0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74,
+	0x12, 0x1f, 0x0a, 0x0b, 0x61, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x5f, 0x63, 0x6f, 0x73, 0x74, 0x18,
+	0x0a, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x61, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x43, 0x6f, 0x73,
+	0x74, 0x12, 0x21, 0x0a, 0x0c, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x5f, 0x62,
+	0x79, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x65, 0x64, 0x42, 0x79, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64,
+	0x5f, 0x62, 0x79, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75,
+	0x74, 0x65, 0x64, 0x42, 0x79, 0x12, 0x25, 0x0a, 0x0e, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65,
+	0x72, 0x72, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x74,
+	0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0x72, 0x65, 0x64, 0x42, 0x79, 0x12, 0x14, 0x0a, 0x05,
+	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64,
+	0x65, 0x6c, 0x2a, 0x65, 0x0a, 0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53,
+	0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44,
+	0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01,
+	0x12, 0x0d, 0x0a, 0x09, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12,
+	0x0f, 0x0a, 0x0b, 0x49, 0x4e, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03,
+	0x12, 0x0a, 0x0a, 0x06, 0x56, 0x4f, 0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x12, 0x0b, 0x0a, 0x07,
+	0x45, 0x58, 0x50, 0x49, 0x52, 0x45, 0x44, 0x10, 0x05, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f,
+	0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73,
+	0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03,
+	0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2,
+	0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
+	0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -3280,20 +4580,22 @@ func file_inference_inference_inference_proto_rawDescGZIP() []byte {
 }
 
 var file_inference_inference_inference_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_inference_inference_inference_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_inference_inference_inference_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_inference_inference_inference_proto_goTypes = []interface{}{
-	(InferenceStatus)(0),    // 0: inference.inference.InferenceStatus
-	(*ProposalDetails)(nil), // 1: inference.inference.ProposalDetails
-	(*Inference)(nil),       // 2: inference.inference.Inference
+	(InferenceStatus)(0),          // 0: inference.inference.InferenceStatus
+	(*ProposalDetails)(nil),       // 1: inference.inference.ProposalDetails
+	(*Inference)(nil),             // 2: inference.inference.Inference
+	(*InferenceStatsStorage)(nil), // 3: inference.inference.InferenceStatsStorage
 }
 var file_inference_inference_inference_proto_depIdxs = []int32{
 	0, // 0: inference.inference.Inference.status:type_name -> inference.inference.InferenceStatus
 	1, // 1: inference.inference.Inference.proposal_details:type_name -> inference.inference.ProposalDetails
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	0, // 2: inference.inference.InferenceStatsStorage.status:type_name -> inference.inference.InferenceStatus
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_inference_proto_init() }
@@ -3326,6 +4628,18 @@ func file_inference_inference_inference_proto_init() {
 				return nil
 			}
 		}
+		file_inference_inference_inference_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*InferenceStatsStorage); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3333,7 +4647,7 @@ func file_inference_inference_inference_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_inference_proto_rawDesc,
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
