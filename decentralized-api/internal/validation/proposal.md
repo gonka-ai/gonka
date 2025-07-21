@@ -21,6 +21,7 @@ In `msg_server_claim_reward.go` there's a `getMustBeValidatedInferences` that:
 ## Proposed solution
 
 1. **Migration:** `InferenceValidationDetails` now indexed by `{epochId}` instead of `{epochGroupId}`
+**Note:** we can skip the migration for now and keep using `{epochGroupId}` as an index for now.
 2. If `max(Inference.startBlockHeight, Inference.endBlockHeight) >= nextPocStart - inferenceValidationBufferZoneConstant` 
 (help with naming is appreciated haha) then it gets assigned `epochId + 1`
 3. If we're doing this task first (this is what I'd suggest, since it's the most tricky part)
