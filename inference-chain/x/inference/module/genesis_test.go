@@ -79,12 +79,12 @@ func TestGenesis(t *testing.T) {
 		},
 		InferenceValidationDetailsList: []types.InferenceValidationDetails{
 			{
-				EpochGroupId: 0,
-				InferenceId:  "0",
+				EpochId:     0,
+				InferenceId: "0",
 			},
 			{
-				EpochGroupId: 1,
-				InferenceId:  "1",
+				EpochId:     1,
+				InferenceId: "1",
 			},
 		},
 		EpochPerformanceSummaryList: []types.EpochPerformanceSummary{

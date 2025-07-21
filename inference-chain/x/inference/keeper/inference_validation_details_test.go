@@ -18,7 +18,7 @@ var _ = strconv.IntSize
 func createNInferenceValidationDetails(keeper keeper.Keeper, ctx context.Context, n int) []types.InferenceValidationDetails {
 	items := make([]types.InferenceValidationDetails, n)
 	for i := range items {
-		items[i].EpochGroupId = uint64(i)
+		items[i].EpochId = uint64(i)
 		items[i].InferenceId = strconv.Itoa(i)
 
 		keeper.SetInferenceValidationDetails(ctx, items[i])
