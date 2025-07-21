@@ -1,10 +1,16 @@
 import com.productscience.data.Collateral
 import com.productscience.data.TxResponse
+import com.productscience.data.spec
+import com.productscience.data.AppState
+import com.productscience.data.InferenceState
+import com.productscience.data.InferenceParams
+import com.productscience.data.ValidationParams
 import com.productscience.EpochStage
 import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.makeInferenceRequest
 import com.productscience.inferenceRequest
+import com.productscience.inferenceConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -75,7 +81,22 @@ class CollateralTests : TestermintTest() {
 
     @Test
     fun `a participant is slashed for downtime with unbonding slashed`() {
-        val (cluster, genesis) = initCluster(reboot = true)
+        // Configure genesis with fast expiration for downtime testing
+        val fastExpirationSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::validationParams] = spec<ValidationParams> {
+                        this[ValidationParams::expirationBlocks] = 2L // Fast expiration for testing
+                    }
+                }
+            }
+        }
+
+        val fastExpirationConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(fastExpirationSpec) ?: fastExpirationSpec
+        )
+
+        val (cluster, genesis) = initCluster(config = fastExpirationConfig, reboot = true)
         val genesisAddress = genesis.node.getAddress()
         val depositAmount = 1000L
 
