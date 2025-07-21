@@ -42,4 +42,6 @@ var (
 	ErrEpochGroupDataAlreadyExists             = sdkerrors.Register(ModuleName, 1131, "epoch group data already exists for the given poc start block height and model id")
 	ErrInvalidModel                            = sdkerrors.Register(ModuleName, 1132, "invalid model")
 	ErrModelSnapshotNotFound                   = sdkerrors.Register(ModuleName, 1133, "model snapshot not found in epoch group data")
+	ErrEpochNotFound                           = sdkerrors.Register(ModuleName, 1127, "epoch not found")
+	ErrIllegalState                            = sdkerrors.Register(ModuleName, 1134, "illegal state for the operation requested")
 )

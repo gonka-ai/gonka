@@ -223,6 +223,22 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		return nil, types.ErrCurrentEpochGroupNotFound
 	}
 
+	epoch, found := k.GetEpoch(ctx, mainEpochData.EpochId)
+	if !found || epoch == nil {
+		k.LogError("MsgClaimReward. getMustBeValidatedInferences. Epoch not found", types.Claims,
+			"epochId", mainEpochData.EpochId, "found", found, "epoch", epoch)
+		return nil, types.ErrEpochNotFound.Wrapf("epochId = %d. found = %v. epoch = %v", mainEpochData.EpochId, found, epoch)
+	}
+
+	if uint64(epoch.PocStartBlockHeight) != msg.PocStartHeight || uint64(epoch.PocStartBlockHeight) != mainEpochData.PocStartBlockHeight {
+		k.LogError("MsgClaimReward. getMustBeValidatedInferences. ILLEGAL STATE. Epoch start block height does not match", types.Claims,
+			"epoch.PocStartHeight", epoch.PocStartBlockHeight, "msg.PocStartHeight", msg.PocStartHeight, "mainEpochData.PocStartBlockHeight", mainEpochData.PocStartBlockHeight)
+		return nil, types.ErrIllegalState.Wrapf("epoch.PocStartHeight = %d, msg.PocStartHeight = %d, mainEpochData.PocStartBlockHeight = %d", epoch.PocStartBlockHeight, msg.PocStartHeight, mainEpochData.PocStartBlockHeight)
+	}
+
+	params := k.Keeper.GetParams(ctx).EpochParams
+	epochContext := types.NewEpochContext(*epoch, *params)
+
 	// Create a map to store weight maps for each model
 	modelWeightMaps := make(map[string]map[string]types.ValidationWeight)
 	modelTotalWeights := make(map[string]int64)
@@ -281,8 +297,8 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		// Get the total weight for this model
 		totalWeight := modelTotalWeights[modelId]
 
-		if k.IsOrderedAtPoC(&inference) && !k.isAvailableDuringPoC(&validatorPowerForModel) {
-			k.LogInfo("MsgClaimReward. Validator was not available during PoC, but ", types.Claims, "validator", msg.Creator, "model", modelId, "inference", inference.InferenceId)
+		if k.OverlapsWithPoC(&inference, epochContext) && !k.isActiveDuringPoC(&validatorPowerForModel) {
+			k.LogInfo("MsgClaimReward. Validator was not available during PoC, skipping the inference", types.Claims, "validator", msg.Creator, "model", modelId, "inference", inference.InferenceId)
 			continue
 		}
 
@@ -297,17 +313,17 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	return mustBeValidated, nil
 }
 
-func (k msgServer) IsOrderedAtPoC(inferenceDetails *types.InferenceValidationDetails) bool {
+func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDetails, epochContext types.EpochContext) bool {
 	if inferenceDetails == nil {
-		k.LogError("MsgClaimReward. IsOrderedAtPoC. Inference details is nil", types.Claims, "inferenceDetails", inferenceDetails)
+		k.LogError("MsgClaimReward. OverlapsWithPoC. Inference details is nil", types.Claims, "inferenceDetails", inferenceDetails)
 		return false
 	}
 
 	if inferenceDetails.CreatedAtBlockHeight == 0 {
-		k.LogWarn("MsgClaimReward. IsOrderedAtPoC. CreatedAtBlockHeight is not set", types.Claims, "inferenceDetails", inferenceDetails)
+		k.LogWarn("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is not set", types.Claims, "inferenceDetails", inferenceDetails)
 		return false
 	} else if inferenceDetails.CreatedAtBlockHeight < 0 {
-		k.LogError("MsgClaimReward. IsOrderedAtPoC. CreatedAtBlockHeight is negative!", types.Claims, "inferenceDetails", inferenceDetails)
+		k.LogError("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is negative!", types.Claims, "inferenceDetails", inferenceDetails)
 		return false
 	}
 
@@ -315,9 +331,9 @@ func (k msgServer) IsOrderedAtPoC(inferenceDetails *types.InferenceValidationDet
 	return true
 }
 
-func (k msgServer) isAvailableDuringPoC(weight *types.ValidationWeight) bool {
+func (k msgServer) isActiveDuringPoC(weight *types.ValidationWeight) bool {
 	if weight == nil {
-		k.LogError("MsgClaimReward. isAvailableDuringPoC. Validation weight is nil", types.Claims, "weight", weight)
+		k.LogError("MsgClaimReward. isActiveDuringPoC. Validation weight is nil", types.Claims, "weight", weight)
 		return false
 	}
 
