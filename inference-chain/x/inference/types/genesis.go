@@ -123,7 +123,7 @@ func (gs GenesisState) Validate() error {
 	inferenceValidationDetailsIndexMap := make(map[string]struct{})
 
 	for _, elem := range gs.InferenceValidationDetailsList {
-		index := string(InferenceValidationDetailsKey(elem.EpochGroupId, elem.InferenceId))
+		index := string(InferenceValidationDetailsKey(elem.EpochId, elem.InferenceId))
 		if _, ok := inferenceValidationDetailsIndexMap[index]; ok {
 			return fmt.Errorf("duplicated index for inferenceValidationDetails")
 		}
