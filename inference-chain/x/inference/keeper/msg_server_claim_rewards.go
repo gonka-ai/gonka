@@ -280,7 +280,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	}
 
 	mustBeValidated := make([]string, 0)
-	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochGroupId)
+	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochId)
 	for _, inference := range finishedInferences {
 		if inference.ExecutorId == msg.Creator {
 			continue

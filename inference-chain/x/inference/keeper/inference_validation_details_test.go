@@ -31,7 +31,7 @@ func TestInferenceValidationDetailsGet(t *testing.T) {
 	items := createNInferenceValidationDetails(keeper, ctx, 10)
 	for _, item := range items {
 		rst, found := keeper.GetInferenceValidationDetails(ctx,
-			item.EpochGroupId,
+			item.EpochId,
 			item.InferenceId,
 		)
 		require.True(t, found)
@@ -46,11 +46,11 @@ func TestInferenceValidationDetailsRemove(t *testing.T) {
 	items := createNInferenceValidationDetails(keeper, ctx, 10)
 	for _, item := range items {
 		keeper.RemoveInferenceValidationDetails(ctx,
-			item.EpochGroupId,
+			item.EpochId,
 			item.InferenceId,
 		)
 		_, found := keeper.GetInferenceValidationDetails(ctx,
-			item.EpochGroupId,
+			item.EpochId,
 			item.InferenceId,
 		)
 		require.False(t, found)
