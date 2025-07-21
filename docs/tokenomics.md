@@ -75,6 +75,96 @@ This dual reward system ensures that participants are compensated directly for t
 
 In addition to the regular rewards and subsidies, there are special rewards for the top miners in the network. These rewards are designed to incentivize high-performing and reliable participants. The criteria for being a top miner and the distribution of these rewards are defined in `inference-chain/x/inference/keeper/top_miner_calculations.go`.
 
+## Collateral System
+
+The network implements a collateral system that strengthens security by ensuring participants with significant network influence have a direct financial stake in the network's integrity. This system was introduced as part of Tokenomics V2 to create accountability and prevent malicious behavior.
+
+### Participant Weight and Collateral
+
+Network participants earn "weight" through Proof of Compute activities (work done, nonces delivered, etc.). This weight influences their role in governance processes, such as unit of compute price calculation. The collateral system introduces a hybrid model that combines:
+
+1. **Base Weight**: A portion of potential weight granted unconditionally (default 20%)
+2. **Collateral-Eligible Weight**: Additional weight that must be backed by deposited collateral (remaining 80%)
+
+### Grace Period
+
+To encourage early adoption, there is an initial grace period (default 180 epochs) during which no collateral is required. During this period, all potential weight is granted unconditionally. After the grace period ends, the collateral requirements become active.
+
+### Managing Collateral
+
+Participants can interact with the collateral system through two main operations:
+
+- **Deposit Collateral**: Transfer tokens from spendable balance to be held as collateral
+- **Withdraw Collateral**: Initiate return of collateral (subject to unbonding period)
+
+Withdrawals are not immediate - they enter an "unbonding queue" for a configurable period (default 1 epoch) before being released. This ensures collateral remains slashable even after withdrawal is initiated.
+
+### Slashing Conditions
+
+Collateral can be "slashed" (seized and burned) under specific conditions:
+
+1. **Malicious Behavior**: When a participant is marked as `INVALID` due to consistently incorrect work (default 20% slash)
+2. **Downtime**: When a participant fails to meet participation requirements in an epoch (default 10% slash)
+3. **Consensus Faults**: When the associated validator commits consensus-level violations
+
+Slashing is applied proportionally to both active collateral and any collateral in the unbonding queue.
+
+### Integration with Consensus
+
+The collateral system integrates with the underlying Cosmos SDK staking module through hooks, ensuring that consensus-level penalties (validator slashing, jailing) are reflected in the application-specific collateral system.
+
+*For detailed technical specifications, see the [Collateral Proposal](../proposals/tokenomics-v2/collateral.md).*
+
+## Reward Vesting
+
+To better align long-term incentives of network participants with sustained growth and stability, the network implements a reward vesting system. This ensures that newly distributed rewards are released gradually over time rather than immediately.
+
+### Vesting Mechanism
+
+All newly distributed rewards are routed through a dedicated vesting system:
+
+- **Work Coins**: Fees from user requests, subject to configurable vesting periods
+- **Reward Coins**: Newly minted subsidies, subject to configurable vesting periods  
+- **Top Miner Rewards**: Special high-performer rewards, subject to configurable vesting periods
+
+### Vesting Schedule
+
+Each participant maintains a personal vesting schedule - essentially an array where each element represents tokens unlocking in a specific epoch. When new rewards are earned:
+
+1. The reward amount is divided evenly across the vesting period
+2. Any remainder from division is added to the first epoch for precision
+3. Amounts are aggregated into existing schedule elements to maintain efficiency
+
+### Vesting Periods
+
+The system supports different vesting periods for different reward types:
+
+- `WorkVestingPeriod`: Controls vesting for work coins (default 0, configurable via governance)
+- `RewardVestingPeriod`: Controls vesting for reward subsidies (default 0, configurable via governance)  
+- `TopMinerVestingPeriod`: Controls vesting for top miner rewards (default 0, configurable via governance)
+
+In production environments, these are typically configured to 180 epochs (~180 days) to encourage long-term participation.
+
+### Token Unlocking
+
+Vested tokens are automatically unlocked once per epoch:
+
+1. The system processes each participant's vesting schedule
+2. Tokens from the oldest vesting entry are transferred to the participant's spendable balance
+3. The processed entry is removed from the schedule
+4. Empty schedules are cleaned up to prevent state bloat
+
+This creates a predictable, automated release of vested tokens synchronized with the network's epoch lifecycle.
+
+### Querying Vesting Status
+
+Participants can query their vesting status to see:
+- Total amount currently vesting
+- Detailed breakdown of future unlock schedule  
+- Historical information about released tokens
+
+*For detailed technical specifications, see the [Vesting Proposal](../proposals/tokenomics-v2/vesting.md).*
+
 ## Token Supply
 
 The initial total supply of the native coin and its distribution are defined in the `DefaultGenesisOnlyParams` function in `inference-chain/x/inference/types/params.go`. This includes the allocation for the originator, top reward amount, pre-programmed sale amount, and standard reward amount. 
