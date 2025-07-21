@@ -2,9 +2,7 @@ package keeper
 
 import (
 	"context"
-	"encoding/base64"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/maps"
@@ -80,58 +78,4 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 	return &types.QueryParticipantsFullStatsResponse{
 		ParticipantsStats: maps.Values(participants),
 	}, nil
-}
-
-// findValidatorAddressForParticipant attempts to find the validator address for a participant
-// Handles both genesis validators (account-derived) and runtime validators (consensus-derived)
-func (k Keeper) findValidatorAddressForParticipant(ctx context.Context, participantAddr string, validatorKey string) (string, error) {
-	// Get all validators from staking keeper
-	validators, err := k.Staking.GetAllValidators(ctx)
-	if err != nil {
-		k.LogError("Failed to get all validators", types.Participants, "error", err.Error())
-		return "", err
-	}
-
-	// First try: account-derived validator address (genesis case)
-	accAddr, err := sdk.AccAddressFromBech32(participantAddr)
-	if err != nil {
-		return "", err
-	}
-
-	accountBasedValAddr := sdk.ValAddress(accAddr)
-
-	// Look for validator with account-derived address
-	for _, validator := range validators {
-		if validator.OperatorAddress == accountBasedValAddr.String() {
-			k.LogDebug("Found validator using account-derived address", types.Participants,
-				"participant", participantAddr, "validatorAddr", accountBasedValAddr.String())
-			return accountBasedValAddr.String(), nil
-		}
-	}
-
-	// Second try: consensus-derived validator address (runtime case)
-	if validatorKey != "" {
-		// Try to decode as base64-encoded public key
-		pubKeyBytes, err := base64.StdEncoding.DecodeString(validatorKey)
-		if err == nil {
-			// Create Ed25519 public key and get validator address
-			pubKey := &ed25519.PubKey{Key: pubKeyBytes}
-			consensusBasedValAddr := sdk.ValAddress(pubKey.Address())
-
-			// Look for validator with consensus-derived address
-			for _, validator := range validators {
-				if validator.OperatorAddress == consensusBasedValAddr.String() {
-					k.LogDebug("Found validator using consensus-derived address", types.Participants,
-						"participant", participantAddr, "validatorAddr", consensusBasedValAddr.String())
-					return consensusBasedValAddr.String(), nil
-				}
-			}
-		}
-	}
-
-	// If we couldn't find the validator by either method, return account-based address as fallback
-	// This ensures we don't break existing functionality
-	k.LogWarn("Could not find validator for participant, using account-derived address as fallback", types.Participants,
-		"participant", participantAddr, "validatorAddr", accountBasedValAddr.String())
-	return accountBasedValAddr.String(), nil
 }
