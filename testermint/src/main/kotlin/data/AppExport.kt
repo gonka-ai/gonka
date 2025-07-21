@@ -1,5 +1,6 @@
 package com.productscience.data
 
+import com.google.gson.annotations.SerializedName
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
@@ -66,6 +67,12 @@ data class TokenomicsParams(
     val currentSubsidyPercentage: Decimal,
     val topRewardAllowedFailure: Decimal,
     val topMinerPocQualification: Long,
+    @SerializedName("work_vesting_period")
+    val workVestingPeriod: Long? = null,
+    @SerializedName("reward_vesting_period") 
+    val rewardVestingPeriod: Long? = null,
+    @SerializedName("top_miner_vesting_period")
+    val topMinerVestingPeriod: Long? = null
 )
 
 data class EpochParams(

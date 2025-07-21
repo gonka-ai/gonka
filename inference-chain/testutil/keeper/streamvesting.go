@@ -16,12 +16,43 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/productscience/inference/x/streamvesting/keeper"
 	"github.com/productscience/inference/x/streamvesting/types"
 )
 
+// StreamVestingMocks holds all the mock keepers for testing
+type StreamVestingMocks struct {
+	BankKeeper *MockBankEscrowKeeper
+}
+
 func StreamvestingKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
+	ctrl := gomock.NewController(t)
+	bankEscrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	// BankEscrowKeeper can be nil for basic tests
+	k, ctx := StreamVestingKeeperWithMock(t, bankEscrowKeeper)
+
+	return k, ctx
+}
+
+func StreamVestingKeeperWithMocks(t testing.TB) (keeper.Keeper, sdk.Context, StreamVestingMocks) {
+	ctrl := gomock.NewController(t)
+	bankEscrowKeeper := NewMockBankEscrowKeeper(ctrl)
+
+	k, ctx := StreamVestingKeeperWithMock(t, bankEscrowKeeper)
+
+	mocks := StreamVestingMocks{
+		BankKeeper: bankEscrowKeeper,
+	}
+
+	return k, ctx, mocks
+}
+
+func StreamVestingKeeperWithMock(
+	t testing.TB,
+	bankEscrowKeeper *MockBankEscrowKeeper,
+) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -38,7 +69,8 @@ func StreamvestingKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 		runtime.NewKVStoreService(storeKey),
 		log.NewNopLogger(),
 		authority.String(),
-		nil,
+		nil, // BankKeeper can be nil for tests
+		bankEscrowKeeper,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

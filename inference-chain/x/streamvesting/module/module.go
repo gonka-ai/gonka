@@ -95,9 +95,10 @@ func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *r
 type AppModule struct {
 	AppModuleBasic
 
-	keeper        keeper.Keeper
-	accountKeeper types.AccountKeeper
-	bankKeeper    types.BankKeeper
+	keeper           keeper.Keeper
+	accountKeeper    types.AccountKeeper
+	bankKeeper       types.BankKeeper
+	bankEscrowKeeper types.BankEscrowKeeper
 }
 
 func NewAppModule(
@@ -105,12 +106,14 @@ func NewAppModule(
 	keeper keeper.Keeper,
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
+	bankEscrowKeeper types.BankEscrowKeeper,
 ) AppModule {
 	return AppModule{
-		AppModuleBasic: NewAppModuleBasic(cdc),
-		keeper:         keeper,
-		accountKeeper:  accountKeeper,
-		bankKeeper:     bankKeeper,
+		AppModuleBasic:   NewAppModuleBasic(cdc),
+		keeper:           keeper,
+		accountKeeper:    accountKeeper,
+		bankKeeper:       bankKeeper,
+		bankEscrowKeeper: bankEscrowKeeper,
 	}
 }
 
@@ -180,8 +183,9 @@ type ModuleInputs struct {
 	Config       *modulev1.Module
 	Logger       log.Logger
 
-	AccountKeeper types.AccountKeeper
-	BankKeeper    types.BankKeeper
+	AccountKeeper    types.AccountKeeper
+	BankKeeper       types.BankKeeper
+	BankEscrowKeeper types.BankEscrowKeeper
 }
 
 type ModuleOutputs struct {
@@ -203,12 +207,14 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.Logger,
 		authority.String(),
 		in.BankKeeper,
+		in.BankEscrowKeeper,
 	)
 	m := NewAppModule(
 		in.Cdc,
 		k,
 		in.AccountKeeper,
 		in.BankKeeper,
+		in.BankEscrowKeeper,
 	)
 
 	return ModuleOutputs{StreamvestingKeeper: k, Module: m}

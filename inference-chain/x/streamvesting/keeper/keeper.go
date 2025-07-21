@@ -27,7 +27,8 @@ type (
 		// should be the x/gov module account.
 		authority string
 
-		bankKeeper types.BankKeeper
+		bankKeeper       types.BankKeeper
+		bankEscrowKeeper types.BankEscrowKeeper
 	}
 )
 
@@ -38,6 +39,7 @@ func NewKeeper(
 	authority string,
 
 	bankKeeper types.BankKeeper,
+	bankEscrowKeeper types.BankEscrowKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -49,7 +51,8 @@ func NewKeeper(
 		authority:    authority,
 		logger:       logger,
 
-		bankKeeper: bankKeeper,
+		bankKeeper:       bankKeeper,
+		bankEscrowKeeper: bankEscrowKeeper,
 	}
 }
 
@@ -78,6 +81,16 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 
 	if epochs == 0 {
 		return fmt.Errorf("vesting epochs cannot be zero")
+	}
+
+	if amount.IsZero() {
+		return fmt.Errorf("amount cannot be empty")
+	}
+
+	// Validate participant address
+	_, err := sdk.AccAddressFromBech32(participantAddress)
+	if err != nil {
+		return fmt.Errorf("invalid participant address: %w", err)
 	}
 
 	// Get or create vesting schedule
@@ -193,7 +206,7 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 			continue
 		}
 
-		err = k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, coinsToUnlock)
+		err = k.bankEscrowKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, coinsToUnlock)
 		if err != nil {
 			k.Logger().Error("Failed to unlock vested tokens", "participant", schedule.ParticipantAddress, "amount", coinsToUnlock, "error", err)
 			continue

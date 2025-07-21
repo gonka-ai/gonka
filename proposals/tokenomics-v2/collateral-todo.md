@@ -455,31 +455,80 @@ Each task includes:
 
 ### Section 7: Network Upgrade
 
-**Objective**: To create and register the necessary network upgrade handler to activate the collateral system on the live network.
+**Objective**: To create and register the necessary network upgrade handler to activate both the collateral and streamvesting systems on the live network in a single coordinated upgrade.
 
-#### **7.1 Create Upgrade Package**
-- **Task**: [ ] Create the upgrade package directory
-- **What**: Create a new directory for the upgrade. It should be named `v2_collateral` to represent the major feature addition.
-- **Where**: `inference-chain/app/upgrades/v2_collateral/`
-- **Dependencies**: All previous sections.
+#### **7.1 Create Combined Upgrade Package**
+- **Task**: [x] Create the upgrade package directory for both modules
+- **What**: Create a new directory for the upgrade. It should be named `v1_15` to represent the major tokenomics v2 feature addition that includes both collateral and streamvesting systems.
+- **Where**: `inference-chain/app/upgrades/v1_15/`
+- **Dependencies**: All previous sections from both collateral and streamvesting.
+- **Result**: ✅ **COMPLETED** - Successfully created `inference-chain/app/upgrades/v1_15/` directory for the combined upgrade.
 
-#### **7.2 Implement Upgrade Handler**
-- **Task**: [ ] Implement the upgrade handler logic
-- **What**: Create an `upgrades.go` file with a `CreateUpgradeHandler` function. This handler will perform the one-time state migration for the `x/inference` module's parameters.
-- **Logic**:
-    1. Inside the handler, get the `x/inference` keeper.
-    2. Read the existing module parameters.
-    3. Add the three new slashing and downtime parameters with their agreed-upon default values.
-    4. Set the updated parameters back into the store.
-- **Where**: `inference-chain/app/upgrades/v2_collateral/upgrades.go`
+#### **7.2 Create Constants File**
+- **Task**: [x] Create the constants file
+- **What**: Create a `constants.go` file defining the upgrade name.
+- **Content**:
+  ```go
+  package v1_15
+  
+  const UpgradeName = "v0.1.15"
+  ```
+- **Where**: `inference-chain/app/upgrades/v1_15/constants.go`
 - **Dependencies**: 7.1
+- **Result**: ✅ **COMPLETED** - Successfully created constants file with upgrade name `v0.1.15`.
 
-#### **7.3 Register Upgrade Handler in `app.go`**
-- **Task**: [ ] Register the upgrade handler and new module store
-- **What**: Modify the main application setup to be aware of the new upgrade. This involves two steps: defining the new store and registering the handler.
+#### **7.3 Implement Combined Upgrade Handler**
+- **Task**: [x] Implement the upgrade handler logic for both modules
+- **What**: Create an `upgrades.go` file with a `CreateUpgradeHandler` function. This handler will perform the one-time state migration and module initialization.
+- **Logic**:
+    1. **Log upgrade start**: Log the beginning of the v1_15 upgrade process
+    2. **Initialize collateral module parameters**: Set default values for the new collateral-related parameters in the `x/inference` module:
+       - `CollateralParams.BaseWeightRatio`: Default `0.2` (20%)
+       - `CollateralParams.CollateralPerWeightUnit`: Default `1`
+       - `CollateralParams.SlashFractionInvalid`: Default `0.20` (20%)
+       - `CollateralParams.SlashFractionDowntime`: Default `0.10` (10%)
+       - `CollateralParams.DowntimeMissedPercentageThreshold`: Default `0.05` (5%)
+       - `CollateralParams.GracePeriodEndEpoch`: Default `180`
+    3. **Initialize vesting module parameters**: Set default values for the new vesting-related parameters in the `x/inference` module:
+       - `TokenomicsParams.WorkVestingPeriod`: Default `0`
+       - `TokenomicsParams.RewardVestingPeriod`: Default `0`
+       - `TokenomicsParams.TopMinerVestingPeriod`: Default `0`
+    4. **Initialize streamvesting module parameters**: The streamvesting module will use its default parameter (`RewardVestingPeriod`: `180`)
+    5. **Module store initialization**: Both modules' stores will be automatically initialized during the migration process
+    6. **Validation**: Verify that parameters were set correctly
+    7. **Log completion**: Log successful completion of the upgrade
+- **Where**: `inference-chain/app/upgrades/v1_15/upgrades.go`
+- **Dependencies**: 7.2
+- **Result**: ✅ **COMPLETED** - Successfully implemented comprehensive upgrade handler that initializes all collateral and vesting parameters, handles module store initialization via migrations, includes parameter validation and comprehensive logging.
+
+#### **7.4 Register Combined Upgrade Handler in `app.go`**
+- **Task**: [x] Register the upgrade handler and new module stores
+- **What**: Modify the main application setup to be aware of the new upgrade. This involves defining the new stores and registering the handler.
 - **Where**: `inference-chain/app/upgrades.go` (in the `setupUpgradeHandlers` function)
 - **Logic**:
-    1. Define a `storetypes.StoreUpgrades` object that includes an `Added: []string{"collateral"}` entry.
-    2. Call `app.SetStoreLoader` with the upgrade name and the store upgrades object.
-    3. Call `app.UpgradeKeeper.SetUpgradeHandler`, passing it the `v2_collateral` upgrade name and the `CreateUpgradeHandler` function from the new package.
-- **Dependencies**: 7.2 
+    1. **Import the v1_15 package**: Add import for the new upgrade package
+    2. **Define store upgrades**: Create a `storetypes.StoreUpgrades` object that includes both new modules
+    3. **Set store loader**: Call `app.SetStoreLoader` with the upgrade name and the store upgrades object (only when this specific upgrade is being applied)
+    4. **Register handler**: Call `app.UpgradeKeeper.SetUpgradeHandler`, passing it the `v1_15.UpgradeName` and the `CreateUpgradeHandler` function from the new package
+- **Dependencies**: 7.3
+- **Result**: ✅ **COMPLETED** - Successfully registered v1_15 upgrade handler in `app/upgrades.go`. Added proper store loader for both collateral and streamvesting modules, registered upgrade handler, and verified successful build of both inference chain and API components.
+
+#### **7.5 Integration Testing**
+- **Task**: [ ] Test the upgrade process
+- **What**: Verify that the upgrade works correctly in a test environment.
+- **Testing Steps**:
+    1. **Pre-upgrade state**: Start a network with the previous version
+    2. **Prepare upgrade**: Submit an upgrade proposal for `v0.1.15`
+    3. **Execute upgrade**: Allow the upgrade to execute at the specified height
+    4. **Post-upgrade validation**: 
+       - Verify both modules are active and functional
+       - Check that collateral deposits/withdrawals work
+       - Verify that rewards are being vested through streamvesting
+       - Confirm all new parameters are set to their default values
+       - Test weight adjustments based on collateral
+       - Test slashing mechanisms
+    5. **End-to-end testing**: Run a complete tokenomics v2 workflow
+- **Where**: Local testnet and testermint integration tests
+- **Dependencies**: 7.4
+
+**Summary**: The v1_15 upgrade will be a major release that activates the complete Tokenomics V2 system, including both collateral requirements for network weight and reward vesting mechanics. This upgrade represents the transition from the grace period system to the full collateral-backed participation model. The upgrade will activate collateral parameters in the inference module and three key vesting parameters (`WorkVestingPeriod`, `RewardVestingPeriod`, `TopMinerVestingPeriod`) that enable reward vesting through the streamvesting system. 

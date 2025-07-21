@@ -210,6 +210,28 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "collateral", "params"))
     }
 
+    fun queryVestingSchedule(address: String): VestingScheduleResponse = wrapLog("queryVestingSchedule", false) {
+        try {
+            execAndParse(listOf("query", "streamvesting", "vesting-schedule", address))
+        } catch (e: Exception) {
+            // Return empty schedule if not found
+            VestingScheduleResponse(null)
+        }
+    }
+
+    fun queryTotalVestingAmount(address: String): TotalVestingAmountResponse = wrapLog("queryTotalVestingAmount", false) {
+        try {
+            execAndParse(listOf("query", "streamvesting", "total-vesting", address))
+        } catch (e: Exception) {
+            // Return null amount if not found
+            TotalVestingAmountResponse(null)
+        }
+    }
+
+    fun queryStreamVestingParams(): StreamVestingParamsWrapper = wrapLog("queryStreamVestingParams", false) {
+        execAndParse(listOf("query", "streamvesting", "params"))
+    }
+
     fun getGovParams(): GovState = wrapLog("getGovParams", false) {
         execAndParse(listOf("query", "gov", "params"))
     }
