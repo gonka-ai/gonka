@@ -1,12 +1,39 @@
 package com.productscience
 
+import com.google.common.hash.Hashing
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
+import org.bitcoin.Secp256k1Context
+import org.bitcoinj.core.ECKey
+import org.bitcoinj.core.Sha256Hash
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
+import java.security.InvalidKeyException
+import java.security.Security
 import java.time.Duration
 import java.time.Instant
+import java.util.*
+
+fun signWithBitcoinj(privateKeyHex: String, message: ByteArray): String {
+    val key = ECKey.fromPrivate(privateKeyHex.toBigInteger(16))
+    val hash = Sha256Hash.of(message)
+    val signature = key.sign(hash)
+
+    // Create a raw signature by concatenating r and s values
+    // Each value is 32 bytes (padded with leading zeros if needed)
+    val rBytes = signature.r.toByteArray().let {
+        if (it.size > 32) it.copyOfRange(it.size - 32, it.size)
+        else ByteArray(32 - it.size) + it
+    }
+    val sBytes = signature.s.toByteArray().let {
+        if (it.size > 32) it.copyOfRange(it.size - 32, it.size)
+        else ByteArray(32 - it.size) + it
+    }
+    val rawSignature = rBytes + sBytes
+    return Base64.getEncoder().encodeToString(rawSignature)
+}
 
 interface CliExecutor {
     fun exec(args: List<String>): List<String>
@@ -94,7 +121,11 @@ data class ApplicationCLI(
                     error("State is stale, was identical for $staleTimeout. Wait failed for: $description")
                 }
                 previousState = currentState
-                Logger.debug("Current block is {}, continuing to wait for: {}", currentState.syncInfo.latestBlockHeight, description)
+                Logger.debug(
+                    "Current block is {}, continuing to wait for: {}",
+                    currentState.syncInfo.latestBlockHeight,
+                    description
+                )
                 Thread.sleep(1000)
             }
             // IDE says unreachable (and it's because of the timeout error in the while loop above,
@@ -170,6 +201,25 @@ data class ApplicationCLI(
             object : TypeToken<List<Validator>>() {},
             listOf("keys", "list") + config.keychainParams
         )
+    }
+
+    private var privateKey: String? = null
+    fun getPrivateKey(): String = wrapLog {
+        if (privateKey == null) {
+            val accountName = this.getAccountName()
+            privateKey = exec(
+                listOf(
+                    config.execName,
+                    "keys",
+                    "export",
+                    accountName,
+                    "--unarmored-hex",
+                    "--unsafe",
+                    "--yes",
+                )
+            ).first()
+        }
+        privateKey!!
     }
 
     fun createKey(keyName: String): Validator = wrapLog("createKey", false) {
@@ -277,26 +327,53 @@ data class ApplicationCLI(
         } ?: error("Could not extract signature from response: $response")
     }
 
-    fun signPayload(payload: String, accountAddress: String? = null, timestamp: Long? = null, endpointAccount: String? =null): String {
-        val parameters = listOfNotNull(
-            config.execName,
-            "signature",
-            "create",
-            // Do we need single quotes here?
-            payload,
-            timestamp?.let { "--timestamp" }, timestamp?.toString(),
-            endpointAccount?.let { "--endpoint-account" }, endpointAccount,
-            accountAddress?.let { "--account-address" },
-            accountAddress,
-        ) + config.keychainParams
-        return wrapLog("signPayload", true) {
-            val response = this.exec(
-                parameters
-            )
-            extractSignature(response).also {
-                Logger.info("Signature created, signature={}", it)
-            }
-        }
+    fun signPayload(
+        payload: String,
+        accountAddress: String? = null,
+        timestamp: Long? = null,
+        endpointAccount: String? = null
+    ): String {
+        val arrays = listOfNotNull(
+            payload.toByteArray(),
+            timestamp?.toString()?.toByteArray(),
+            endpointAccount?.toByteArray()
+        )
+        val allBytes = arrays.fold(ByteArray(0)) { acc, bytes -> acc + bytes }
+        val bytesHash = Hashing.sha256().hashBytes(allBytes).asBytes()
+        org.tinylog.Logger.info("Hash of payload: {}", Base64.getEncoder().encodeToString(bytesHash))
+        val privateKeyString = getPrivateKey()
+        val encodedSignature = signWithBitcoinj(privateKeyString, allBytes)
+        Logger.info("Signature: {}", encodedSignature)
+        return encodedSignature
+//        val parameters = listOfNotNull(
+//            config.execName,
+//            "signature",
+//            "create",
+//            // Do we need single quotes here?
+//            payload,
+//            timestamp?.let { "--timestamp" }, timestamp?.toString(),
+//            endpointAccount?.let { "--endpoint-account" }, endpointAccount,
+//            accountAddress?.let { "--account-address" },
+//            accountAddress,
+//        ) + config.keychainParams
+//        return wrapLog("signPayload", true) {
+//            val response = this.exec(
+//                parameters
+//            )
+//            extractSignature(response).also {
+//                if (it == encodedSignature) {
+//                    Logger.info("Signature matches expected signature")
+//                } else {
+//                    Logger.warn(
+//                        "Signature does not match expected signature, expected={}, actual={}",
+//                        it,
+//                        encodedSignature
+//                    )
+//                    throw AssertionError("Signature does not match expected signature")
+//                }
+//                Logger.info("Signature created, signature={}", it)
+//            }
+//        }
     }
 
     fun getTxStatus(txHash: String): TxResponse = wrapLog("getTxStatus", false) {
@@ -440,3 +517,10 @@ data class CliRetryRule(
         }
     }
 }
+
+fun ensureBouncyCastleProvider() {
+    if (Security.getProvider("BC") == null) {
+        Security.addProvider(BouncyCastleProvider())
+    }
+}
+

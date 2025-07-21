@@ -155,6 +155,7 @@ data class ApplicationAPI(
 
     fun setNodesTo(node: InferenceNode) {
         val nodes = getNodes()
+        if (nodes.singleOrNull()?.node == node) return
         nodes.forEach { removeNode(it.node.id) }
         addNode(node)
     }
