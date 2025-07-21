@@ -2,6 +2,12 @@ name: Integration Tests
 
 on:
   workflow_dispatch:
+    inputs:
+      use_matrix:
+        description: 'Use matrix strategy for parallel test execution'
+        required: false
+        type: boolean
+        default: true
   push:
     branches:
       - main
@@ -23,3 +29,4 @@ jobs:
       is_pr_comment: ${{ github.event_name == 'issue_comment' }}
       pr_number: ${{ github.event.issue.number || '' }}
       enable_upgrades: true
+      use_matrix: ${{ github.event_name == 'workflow_dispatch' && inputs.use_matrix || true }}
