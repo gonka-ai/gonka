@@ -1,8 +1,10 @@
 package calculations
 
 import (
-	"github.com/stretchr/testify/require"
+	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestShareRewards(t *testing.T) {
@@ -84,4 +86,122 @@ func TestShareRewards(t *testing.T) {
 			require.ElementsMatch(t, tt.expectedActions, got)
 		})
 	}
+}
+
+func TestSequentialWorkShare(t *testing.T) {
+	tests := []struct {
+		name       string
+		totalCost  int64
+		numWorkers int
+	}{
+		{
+			name:       "Real-world scenario",
+			totalCost:  1136000,
+			numWorkers: 4,
+		},
+		{
+			name:       "Simple case",
+			totalCost:  100,
+			numWorkers: 2,
+		},
+		{
+			name:       "Large group",
+			totalCost:  1000000,
+			numWorkers: 10,
+		},
+		{
+			name:       "Small amount",
+			totalCost:  7,
+			numWorkers: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Track balances
+			balances := make(map[string]int64)
+			balances["worker1"] = tt.totalCost
+
+			// Sequentially add workers
+			existingWorkers := []string{"worker1"}
+			for i := 2; i <= tt.numWorkers; i++ {
+				newWorker := fmt.Sprintf("worker%d", i)
+				adjustments := ShareWork(existingWorkers, []string{newWorker}, tt.totalCost)
+
+				// Apply adjustments
+				for _, adj := range adjustments {
+					balances[adj.ParticipantId] += adj.WorkAdjustment
+				}
+
+				// Add new worker to existing workers list
+				existingWorkers = append(existingWorkers, newWorker)
+			}
+
+			// Calculate total
+			var total int64
+			for _, balance := range balances {
+				total += balance
+			}
+
+			// Verify total balance
+			require.Equal(t, tt.totalCost, total, "Total balance must be preserved")
+		})
+	}
+}
+
+// TestShareWorkComprehensive - Tests a wide range of costs and worker counts
+func TestShareWorkComprehensive(t *testing.T) {
+	// Test costs from 1000 to 100000 with step 1000
+	costs := []int64{}
+	for cost := int64(1000); cost <= 100000; cost += 1000 {
+		costs = append(costs, cost)
+	}
+
+	// Test worker counts: 1, 2, 3, 4, 5, 10, 20, 50, 100, 200, 500, 1000
+	workerCounts := []int{1, 2, 3, 4, 5, 10, 20, 50, 100, 200, 500, 1000}
+
+	totalTests := len(costs) * len(workerCounts)
+	t.Logf("Running %d comprehensive balance tests...", totalTests)
+
+	for _, cost := range costs {
+		for _, numWorkers := range workerCounts {
+			// Skip single worker case (nothing to test)
+			if numWorkers == 1 {
+				continue
+			}
+
+			// Track balances
+			balances := make(map[string]int64)
+			balances["worker1"] = cost
+
+			// Sequentially add workers
+			existingWorkers := []string{"worker1"}
+			for i := 2; i <= numWorkers; i++ {
+				newWorker := fmt.Sprintf("worker%d", i)
+				adjustments := ShareWork(existingWorkers, []string{newWorker}, cost)
+
+				// Apply adjustments
+				for _, adj := range adjustments {
+					balances[adj.ParticipantId] += adj.WorkAdjustment
+				}
+
+				// Add new worker to existing workers list
+				existingWorkers = append(existingWorkers, newWorker)
+			}
+
+			// Calculate total
+			var total int64
+			for _, balance := range balances {
+				total += balance
+			}
+
+			// Verify total balance
+			if total != cost {
+				t.Errorf("Balance not preserved: cost=%d, workers=%d, expected=%d, actual=%d",
+					cost, numWorkers, cost, total)
+			}
+		}
+	}
+
+	t.Logf("All %d comprehensive tests passed!", totalTests-len(costs)) // -len(costs) because we skip single worker cases
 }
