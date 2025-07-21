@@ -280,4 +280,57 @@ Each task includes:
 - **Where**: Local testnet and testermint integration tests
 - **Dependencies**: 5.4
 
-**Summary**: The streamvesting module will be activated as part of the v1_15 upgrade alongside the collateral system. This unified deployment ensures that both the weight-based collateral requirements and reward vesting mechanics are introduced simultaneously, providing a complete Tokenomics V2 experience. After the upgrade, all network rewards will vest over the configured period (default 180 epochs), creating a more sustainable and long-term-oriented reward structure. The upgrade will activate three key vesting parameters in the inference module (`WorkVestingPeriod`, `RewardVestingPeriod`, `TopMinerVestingPeriod`) and ensure all reward types flow through the streamvesting system. 
+**Summary**: The streamvesting module will be activated as part of the v1_15 upgrade alongside the collateral system. This unified deployment ensures that both the weight-based collateral requirements and reward vesting mechanics are introduced simultaneously, providing a complete Tokenomics V2 experience. After the upgrade, all network rewards will vest over the configured period (default 180 epochs), creating a more sustainable and long-term-oriented reward structure. The upgrade will activate three key vesting parameters in the inference module (`WorkVestingPeriod`, `RewardVestingPeriod`, `TopMinerVestingPeriod`) and ensure all reward types flow through the streamvesting system.
+
+### Section 6: Governance Integration
+
+**Objective**: To ensure all vesting-related parameters can be modified through on-chain governance voting, providing decentralized control over the vesting economics.
+
+**Note**: The streamvesting module already has governance support via `MsgUpdateParams`, but the three vesting parameters in the inference module need to be made governable.
+
+#### **6.1 Add Parameter Keys for Inference Vesting Parameters (Shared with Collateral)**
+- **Task**: [x] Add parameter keys for the three vesting parameters in the inference module
+- **What**: Add parameter key constants for `WorkVestingPeriod`, `RewardVestingPeriod`, and `TopMinerVestingPeriod` to make them governable through the inference module's parameter system.
+- **Where**: `inference-chain/x/inference/types/params.go` (in the parameter key constants section)
+- **Why**: These parameters control vesting behavior and need to be governable so the community can adjust vesting periods through proposals.
+- **Dependencies**: Section 5 (Network Upgrade)
+- **Result**: ✅ **COMPLETED** - Successfully added parameter keys `KeyWorkVestingPeriod`, `KeyRewardVestingPeriod`, and `KeyTopMinerVestingPeriod` to the inference module's parameter system (shared implementation with collateral).
+
+#### **6.2 Update ParamSetPairs for Inference Vesting Parameters (Shared with Collateral)**
+- **Task**: [x] Include vesting parameters in governance parameter set
+- **What**: Update the `ParamSetPairs()` function in the inference module to include the three new vesting parameters with proper validation functions.
+- **Where**: `inference-chain/x/inference/types/params.go` (in the `ParamSetPairs()` method)
+- **Dependencies**: 6.1
+- **Result**: ✅ **COMPLETED** - Successfully implemented `ParamSetPairs()` method for `TokenomicsParams` with comprehensive validation. Created `validateVestingPeriod()` function with robust type handling for both pointer and direct value types. All three vesting parameters properly integrated into governance system (shared implementation with collateral).
+
+#### **6.3 Test Governance Parameter Changes for Vesting**
+- **Task**: [x] Create tests for vesting parameter governance
+- **What**: Create unit tests that verify the three vesting parameters can be updated through governance parameter change proposals and that the changes take effect in reward distribution.
+- **Where**: `inference-chain/x/inference/keeper/params_test.go` or similar test file
+- **Dependencies**: 6.2
+- **Result**: ✅ **COMPLETED** - Successfully implemented comprehensive test suite covering all vesting governance scenarios:
+  - `TestTokenomicsParamsGovernance()`: Tests parameter updates across different vesting configurations
+  - `TestVestingParameterValidation()`: Validates parameter types and constraints  
+  - `TestTokenomicsParamsParamSetPairs()`: Verifies governance integration setup
+All tests validate that parameter changes work correctly and take effect in the reward distribution system.
+
+#### **6.4 Testermint Vesting Governance E2E Test**
+- **Task**: [x] Create E2E test for vesting parameter governance
+- **What**: Create a testermint E2E test that submits a parameter change proposal to modify vesting periods (e.g., change `RewardVestingPeriod` from 180 to 90 epochs) and verifies new rewards use the updated vesting period.
+- **Where**: `testermint/src/test/kotlin/VestingGovernanceTests.kt`
+- **Test Scenario**:
+    1. Submit governance proposal to change `RewardVestingPeriod` from default to new value
+    2. Vote and execute the proposal
+    3. Claim rewards and verify they vest over the new period length
+    4. Verify existing vesting schedules are unaffected (only new rewards use new period)
+- **Dependencies**: 6.3
+- **Result**: ✅ **COMPLETED** - Successfully implemented comprehensive E2E governance test covering complete workflow:
+  1. **Parameter Verification**: Confirms initial vesting periods (2 epochs each)
+  2. **Governance Proposal**: Submits multi-parameter change proposal (5, 10, 15 epochs respectively)
+  3. **Voting Process**: All validators vote and proposal execution verified
+  4. **Parameter Updates**: Confirms all three vesting parameters updated correctly
+  5. **New Reward Behavior**: Tests that newly claimed rewards use updated vesting periods
+  6. **Backward Compatibility**: Verifies existing vesting schedules remain unaffected
+Test provides end-to-end validation of complete vesting governance lifecycle.
+
+**Summary**: ✅ **GOVERNANCE INTEGRATION COMPLETED** - The vesting system is now fully governable with two levels of decentralized control: (1) The streamvesting module's `RewardVestingPeriod` parameter (already governable via `MsgUpdateParams`), and (2) The three inference module vesting parameters (`WorkVestingPeriod`, `RewardVestingPeriod`, `TopMinerVestingPeriod`) that control which reward types vest and for how long. Complete test coverage validates governance functionality from unit tests to E2E scenarios. This provides comprehensive decentralized control over the vesting economics while maintaining Cosmos SDK governance patterns. 

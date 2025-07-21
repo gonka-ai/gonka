@@ -16,6 +16,10 @@ var (
 	KeyGracePeriodEndEpoch               = []byte("GracePeriodEndEpoch")
 	KeyBaseWeightRatio                   = []byte("BaseWeightRatio")
 	KeyCollateralPerWeightUnit           = []byte("CollateralPerWeightUnit")
+	// Vesting parameter keys for TokenomicsParams
+	KeyWorkVestingPeriod     = []byte("WorkVestingPeriod")
+	KeyRewardVestingPeriod   = []byte("RewardVestingPeriod")
+	KeyTopMinerVestingPeriod = []byte("TopMinerVestingPeriod")
 )
 
 var _ paramtypes.ParamSet = (*Params)(nil)
@@ -140,25 +144,50 @@ func (p *CollateralParams) ParamSetPairs() paramtypes.ParamSetPairs {
 	}
 }
 
+// ParamSetPairs gets the params for the tokenomics vesting parameters
+func (p *TokenomicsParams) ParamSetPairs() paramtypes.ParamSetPairs {
+	return paramtypes.ParamSetPairs{
+		paramtypes.NewParamSetPair(KeyWorkVestingPeriod, &p.WorkVestingPeriod, validateVestingPeriod),
+		paramtypes.NewParamSetPair(KeyRewardVestingPeriod, &p.RewardVestingPeriod, validateVestingPeriod),
+		paramtypes.NewParamSetPair(KeyTopMinerVestingPeriod, &p.TopMinerVestingPeriod, validateVestingPeriod),
+	}
+}
+
 func validateEpochParams(i interface{}) error {
 	return nil
 }
 
 // Validate validates the set of params
 func (p Params) Validate() error {
+	// Check for nil nested structs before calling their Validate() methods
+	if p.ValidationParams == nil {
+		return fmt.Errorf("validation params cannot be nil")
+	}
+	if p.TokenomicsParams == nil {
+		return fmt.Errorf("tokenomics params cannot be nil")
+	}
+	if p.CollateralParams == nil {
+		return fmt.Errorf("collateral params cannot be nil")
+	}
+	if p.EpochParams == nil {
+		return fmt.Errorf("epoch params cannot be nil")
+	}
+	if p.PocParams == nil {
+		return fmt.Errorf("poc params cannot be nil")
+	}
+	if err := p.ValidationParams.Validate(); err != nil {
+		return err
+	}
+	if err := p.TokenomicsParams.Validate(); err != nil {
+		return err
+	}
 	// TODO: Uncomment this when we have a way to validate the params
 	// if err := p.EpochParams.Validate(); err != nil {
 	// 	return err
 	// }
-	if err := p.ValidationParams.Validate(); err != nil {
-		return err
-	}
 	// if err := p.PocParams.Validate(); err != nil {
 	// 	return err
 	// }
-	if err := p.TokenomicsParams.Validate(); err != nil {
-		return err
-	}
 	if err := p.CollateralParams.Validate(); err != nil {
 		return err
 	}
@@ -166,6 +195,28 @@ func (p Params) Validate() error {
 }
 
 func (p *ValidationParams) Validate() error {
+	// Check for nil Decimal fields first
+	if p.FalsePositiveRate == nil {
+		return fmt.Errorf("false positive rate cannot be nil")
+	}
+	if p.PassValue == nil {
+		return fmt.Errorf("pass value cannot be nil")
+	}
+	if p.MinValidationAverage == nil {
+		return fmt.Errorf("min validation average cannot be nil")
+	}
+	if p.MaxValidationAverage == nil {
+		return fmt.Errorf("max validation average cannot be nil")
+	}
+	if p.MinValidationHalfway == nil {
+		return fmt.Errorf("min validation halfway cannot be nil")
+	}
+	if p.MissPercentageCutoff == nil {
+		return fmt.Errorf("miss percentage cutoff cannot be nil")
+	}
+	if p.MissRequestsPenalty == nil {
+		return fmt.Errorf("miss requests penalty cannot be nil")
+	}
 	// Validate timestamp parameters
 	if p.TimestampExpiration <= 0 {
 		return fmt.Errorf("timestamp expiration must be positive")
@@ -177,9 +228,31 @@ func (p *ValidationParams) Validate() error {
 }
 
 func (p *TokenomicsParams) Validate() error {
+	// Check for nil Decimal fields first
 	if p.SubsidyReductionInterval == nil {
 		return fmt.Errorf("subsidy reduction interval cannot be nil")
 	}
+	if p.SubsidyReductionAmount == nil {
+		return fmt.Errorf("subsidy reduction amount cannot be nil")
+	}
+	if p.CurrentSubsidyPercentage == nil {
+		return fmt.Errorf("current subsidy percentage cannot be nil")
+	}
+	if p.TopRewardAllowedFailure == nil {
+		return fmt.Errorf("top reward allowed failure cannot be nil")
+	}
+
+	// Validate vesting parameters
+	if err := validateVestingPeriod(p.WorkVestingPeriod); err != nil {
+		return errors.Wrap(err, "invalid work_vesting_period")
+	}
+	if err := validateVestingPeriod(p.RewardVestingPeriod); err != nil {
+		return errors.Wrap(err, "invalid reward_vesting_period")
+	}
+	if err := validateVestingPeriod(p.TopMinerVestingPeriod); err != nil {
+		return errors.Wrap(err, "invalid top_miner_vesting_period")
+	}
+
 	return nil
 }
 
@@ -252,8 +325,32 @@ func validateCollateralPerWeightUnit(i interface{}) error {
 	if legacyDec.IsNegative() {
 		return fmt.Errorf("collateral per weight unit cannot be negative: %s", legacyDec)
 	}
-
 	return nil
+}
+
+func validateVestingPeriod(i interface{}) error {
+	if i == nil {
+		return fmt.Errorf("vesting period cannot be nil")
+	}
+
+	switch v := i.(type) {
+	case *uint64:
+		// Pointer to uint64 (what we expect from ParamSetPairs)
+		if v == nil {
+			return fmt.Errorf("vesting period cannot be nil")
+		}
+		return nil
+	case uint64:
+		// Direct uint64 value (also valid)
+		return nil
+	default:
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+}
+
+// ValidateVestingPeriod is the exported version of validateVestingPeriod for testing
+func ValidateVestingPeriod(i interface{}) error {
+	return validateVestingPeriod(i)
 }
 
 func validatePercentage(i interface{}) error {
