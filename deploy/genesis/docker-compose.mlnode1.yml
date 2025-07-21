@@ -1,6 +1,6 @@
 services:
   inference:
-    image: ghcr.io/product-science/mlnode:3.0.4-alpha2
+    image: ghcr.io/product-science/mlnode:3.0.6
     restart: always
     command: >
       uvicorn api.app:app

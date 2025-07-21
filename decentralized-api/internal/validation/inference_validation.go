@@ -237,9 +237,9 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 		return nil, err
 	}
 
-	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrl(), "v1/chat/completions")
+	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrl(inference.NodeVersion), "v1/chat/completions")
 	if err != nil {
-		logging.Error("Failed to join url", types.Validation, "url", inferenceNode.InferenceUrl(), "error", err)
+		logging.Error("Failed to join url", types.Validation, "url", inferenceNode.InferenceUrl(inference.NodeVersion), "error", err)
 		return nil, err
 	}
 

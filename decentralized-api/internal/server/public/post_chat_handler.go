@@ -329,8 +329,9 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 		TokenCount int `json:"count"`
 	}
 
-	response, err := broker.LockNode(s.nodeBroker, model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
-		tokenizeUrl, err := url.JoinPath(node.InferenceUrl(), "/tokenize")
+	nodeVersion := s.configManager.GetCurrentNodeVersion()
+	response, err := broker.LockNode(s.nodeBroker, model, nodeVersion, func(node *broker.Node) (*http.Response, error) {
+		tokenizeUrl, err := url.JoinPath(node.InferenceUrl(nodeVersion), "/tokenize")
 		if err != nil {
 			return nil, err
 		}
@@ -403,11 +404,12 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
-	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
+	nodeVersion := s.configManager.GetCurrentNodeVersion()
+	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, nodeVersion, func(node *broker.Node) (*http.Response, error) {
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
-			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrl())
+			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrl(nodeVersion))
 
-		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
+		completionsUrl, err := url.JoinPath(node.InferenceUrl(nodeVersion), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
 		}

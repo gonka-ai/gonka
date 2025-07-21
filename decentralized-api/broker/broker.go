@@ -122,12 +122,20 @@ type Node struct {
 	Version          string               `json:"version"`
 }
 
-func (n *Node) InferenceUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
+func (n *Node) InferenceUrl(version ...string) string {
+	baseUrl := fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
+	if len(version) > 0 && version[0] != "" {
+		return fmt.Sprintf("http://%s:%d%s/v%s", n.Host, n.InferencePort, n.InferenceSegment, version[0])
+	}
+	return baseUrl
 }
 
-func (n *Node) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+func (n *Node) PoCUrl(version ...string) string {
+	baseUrl := fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+	if len(version) > 0 && version[0] != "" {
+		return fmt.Sprintf("http://%s:%d%s/v%s", n.Host, n.PoCPort, n.PoCSegment, version[0])
+	}
+	return baseUrl
 }
 
 type NodeWithState struct {
@@ -359,7 +367,7 @@ func (b *Broker) QueueMessage(command Command) error {
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(), node.InferenceUrl())
+	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(node.Version), node.InferenceUrl(node.Version))
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
