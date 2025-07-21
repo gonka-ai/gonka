@@ -3061,6 +3061,8 @@ var (
 	fd_ValidationParams_min_validation_traffic_cutoff  protoreflect.FieldDescriptor
 	fd_ValidationParams_miss_percentage_cutoff         protoreflect.FieldDescriptor
 	fd_ValidationParams_miss_requests_penalty          protoreflect.FieldDescriptor
+	fd_ValidationParams_timestamp_expiration           protoreflect.FieldDescriptor
+	fd_ValidationParams_timestamp_advance              protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -3078,6 +3080,8 @@ func init() {
 	fd_ValidationParams_min_validation_traffic_cutoff = md_ValidationParams.Fields().ByName("min_validation_traffic_cutoff")
 	fd_ValidationParams_miss_percentage_cutoff = md_ValidationParams.Fields().ByName("miss_percentage_cutoff")
 	fd_ValidationParams_miss_requests_penalty = md_ValidationParams.Fields().ByName("miss_requests_penalty")
+	fd_ValidationParams_timestamp_expiration = md_ValidationParams.Fields().ByName("timestamp_expiration")
+	fd_ValidationParams_timestamp_advance = md_ValidationParams.Fields().ByName("timestamp_advance")
 }
 
 var _ protoreflect.Message = (*fastReflection_ValidationParams)(nil)
@@ -3217,6 +3221,18 @@ func (x *fastReflection_ValidationParams) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
+	if x.TimestampExpiration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TimestampExpiration)
+		if !f(fd_ValidationParams_timestamp_expiration, value) {
+			return
+		}
+	}
+	if x.TimestampAdvance != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TimestampAdvance)
+		if !f(fd_ValidationParams_timestamp_advance, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -3256,6 +3272,10 @@ func (x *fastReflection_ValidationParams) Has(fd protoreflect.FieldDescriptor) b
 		return x.MissPercentageCutoff != nil
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		return x.MissRequestsPenalty != nil
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		return x.TimestampExpiration != int64(0)
+	case "inference.inference.ValidationParams.timestamp_advance":
+		return x.TimestampAdvance != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3296,6 +3316,10 @@ func (x *fastReflection_ValidationParams) Clear(fd protoreflect.FieldDescriptor)
 		x.MissPercentageCutoff = nil
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		x.MissRequestsPenalty = nil
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		x.TimestampExpiration = int64(0)
+	case "inference.inference.ValidationParams.timestamp_advance":
+		x.TimestampAdvance = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3348,6 +3372,12 @@ func (x *fastReflection_ValidationParams) Get(descriptor protoreflect.FieldDescr
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		value := x.MissRequestsPenalty
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		value := x.TimestampExpiration
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.timestamp_advance":
+		value := x.TimestampAdvance
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3392,6 +3422,10 @@ func (x *fastReflection_ValidationParams) Set(fd protoreflect.FieldDescriptor, v
 		x.MissPercentageCutoff = value.Message().Interface().(*Decimal)
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		x.MissRequestsPenalty = value.Message().Interface().(*Decimal)
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		x.TimestampExpiration = value.Int()
+	case "inference.inference.ValidationParams.timestamp_advance":
+		x.TimestampAdvance = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3457,6 +3491,10 @@ func (x *fastReflection_ValidationParams) Mutable(fd protoreflect.FieldDescripto
 		panic(fmt.Errorf("field full_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
 	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
 		panic(fmt.Errorf("field min_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		panic(fmt.Errorf("field timestamp_expiration of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.timestamp_advance":
+		panic(fmt.Errorf("field timestamp_advance of message inference.inference.ValidationParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3501,6 +3539,10 @@ func (x *fastReflection_ValidationParams) NewField(fd protoreflect.FieldDescript
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		m := new(Decimal)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.timestamp_advance":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3613,6 +3655,12 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 			l = options.Size(x.MissRequestsPenalty)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.TimestampExpiration != 0 {
+			n += 1 + runtime.Sov(uint64(x.TimestampExpiration))
+		}
+		if x.TimestampAdvance != 0 {
+			n += 1 + runtime.Sov(uint64(x.TimestampAdvance))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -3641,6 +3689,16 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.TimestampAdvance != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TimestampAdvance))
+			i--
+			dAtA[i] = 0x70
+		}
+		if x.TimestampExpiration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TimestampExpiration))
+			i--
+			dAtA[i] = 0x68
 		}
 		if x.MissRequestsPenalty != nil {
 			encoded, err := options.Marshal(x.MissRequestsPenalty)
@@ -4161,6 +4219,44 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 13:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TimestampExpiration", wireType)
+				}
+				x.TimestampExpiration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TimestampExpiration |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 14:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TimestampAdvance", wireType)
+				}
+				x.TimestampAdvance = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TimestampAdvance |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -4197,14 +4293,16 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_PocParams                    protoreflect.MessageDescriptor
-	fd_PocParams_default_difficulty protoreflect.FieldDescriptor
+	md_PocParams                        protoreflect.MessageDescriptor
+	fd_PocParams_default_difficulty     protoreflect.FieldDescriptor
+	fd_PocParams_validation_sample_size protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_params_proto_init()
 	md_PocParams = File_inference_inference_params_proto.Messages().ByName("PocParams")
 	fd_PocParams_default_difficulty = md_PocParams.Fields().ByName("default_difficulty")
+	fd_PocParams_validation_sample_size = md_PocParams.Fields().ByName("validation_sample_size")
 }
 
 var _ protoreflect.Message = (*fastReflection_PocParams)(nil)
@@ -4278,6 +4376,12 @@ func (x *fastReflection_PocParams) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
+	if x.ValidationSampleSize != int32(0) {
+		value := protoreflect.ValueOfInt32(x.ValidationSampleSize)
+		if !f(fd_PocParams_validation_sample_size, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -4295,6 +4399,8 @@ func (x *fastReflection_PocParams) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
 		return x.DefaultDifficulty != int32(0)
+	case "inference.inference.PocParams.validation_sample_size":
+		return x.ValidationSampleSize != int32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -4313,6 +4419,8 @@ func (x *fastReflection_PocParams) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
 		x.DefaultDifficulty = int32(0)
+	case "inference.inference.PocParams.validation_sample_size":
+		x.ValidationSampleSize = int32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -4331,6 +4439,9 @@ func (x *fastReflection_PocParams) Get(descriptor protoreflect.FieldDescriptor) 
 	switch descriptor.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
 		value := x.DefaultDifficulty
+		return protoreflect.ValueOfInt32(value)
+	case "inference.inference.PocParams.validation_sample_size":
+		value := x.ValidationSampleSize
 		return protoreflect.ValueOfInt32(value)
 	default:
 		if descriptor.IsExtension() {
@@ -4354,6 +4465,8 @@ func (x *fastReflection_PocParams) Set(fd protoreflect.FieldDescriptor, value pr
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
 		x.DefaultDifficulty = int32(value.Int())
+	case "inference.inference.PocParams.validation_sample_size":
+		x.ValidationSampleSize = int32(value.Int())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -4376,6 +4489,8 @@ func (x *fastReflection_PocParams) Mutable(fd protoreflect.FieldDescriptor) prot
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
 		panic(fmt.Errorf("field default_difficulty of message inference.inference.PocParams is not mutable"))
+	case "inference.inference.PocParams.validation_sample_size":
+		panic(fmt.Errorf("field validation_sample_size of message inference.inference.PocParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -4390,6 +4505,8 @@ func (x *fastReflection_PocParams) Mutable(fd protoreflect.FieldDescriptor) prot
 func (x *fastReflection_PocParams) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
+		return protoreflect.ValueOfInt32(int32(0))
+	case "inference.inference.PocParams.validation_sample_size":
 		return protoreflect.ValueOfInt32(int32(0))
 	default:
 		if fd.IsExtension() {
@@ -4463,6 +4580,9 @@ func (x *fastReflection_PocParams) ProtoMethods() *protoiface.Methods {
 		if x.DefaultDifficulty != 0 {
 			n += 1 + runtime.Sov(uint64(x.DefaultDifficulty))
 		}
+		if x.ValidationSampleSize != 0 {
+			n += 1 + runtime.Sov(uint64(x.ValidationSampleSize))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -4491,6 +4611,11 @@ func (x *fastReflection_PocParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ValidationSampleSize != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidationSampleSize))
+			i--
+			dAtA[i] = 0x10
 		}
 		if x.DefaultDifficulty != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.DefaultDifficulty))
@@ -4561,6 +4686,25 @@ func (x *fastReflection_PocParams) ProtoMethods() *protoiface.Methods {
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.DefaultDifficulty |= int32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidationSampleSize", wireType)
+				}
+				x.ValidationSampleSize = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ValidationSampleSize |= int32(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -5415,6 +5559,8 @@ type ValidationParams struct {
 	MinValidationTrafficCutoff  int64    `protobuf:"varint,10,opt,name=min_validation_traffic_cutoff,json=minValidationTrafficCutoff,proto3" json:"min_validation_traffic_cutoff,omitempty"`
 	MissPercentageCutoff        *Decimal `protobuf:"bytes,11,opt,name=miss_percentage_cutoff,json=missPercentageCutoff,proto3" json:"miss_percentage_cutoff,omitempty"`
 	MissRequestsPenalty         *Decimal `protobuf:"bytes,12,opt,name=miss_requests_penalty,json=missRequestsPenalty,proto3" json:"miss_requests_penalty,omitempty"`
+	TimestampExpiration         int64    `protobuf:"varint,13,opt,name=timestamp_expiration,json=timestampExpiration,proto3" json:"timestamp_expiration,omitempty"` // Max time in seconds until timestamps are "too old"
+	TimestampAdvance            int64    `protobuf:"varint,14,opt,name=timestamp_advance,json=timestampAdvance,proto3" json:"timestamp_advance,omitempty"`          // Max time in seconds until timestamps are "in the future"
 }
 
 func (x *ValidationParams) Reset() {
@@ -5521,12 +5667,27 @@ func (x *ValidationParams) GetMissRequestsPenalty() *Decimal {
 	return nil
 }
 
+func (x *ValidationParams) GetTimestampExpiration() int64 {
+	if x != nil {
+		return x.TimestampExpiration
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetTimestampAdvance() int64 {
+	if x != nil {
+		return x.TimestampAdvance
+	}
+	return 0
+}
+
 type PocParams struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	DefaultDifficulty int32 `protobuf:"varint,1,opt,name=default_difficulty,json=defaultDifficulty,proto3" json:"default_difficulty,omitempty"`
+	DefaultDifficulty    int32 `protobuf:"varint,1,opt,name=default_difficulty,json=defaultDifficulty,proto3" json:"default_difficulty,omitempty"`
+	ValidationSampleSize int32 `protobuf:"varint,2,opt,name=validation_sample_size,json=validationSampleSize,proto3" json:"validation_sample_size,omitempty"`
 }
 
 func (x *PocParams) Reset() {
@@ -5552,6 +5713,13 @@ func (*PocParams) Descriptor() ([]byte, []int) {
 func (x *PocParams) GetDefaultDifficulty() int32 {
 	if x != nil {
 		return x.DefaultDifficulty
+	}
+	return 0
+}
+
+func (x *PocParams) GetValidationSampleSize() int32 {
+	if x != nil {
+		return x.ValidationSampleSize
 	}
 	return 0
 }
@@ -5718,7 +5886,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x17, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
 	0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x15,
 	0x70, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x75, 0x72,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xd7, 0x06, 0x0a, 0x10,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xb7, 0x07, 0x0a, 0x10,
 	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
 	0x12, 0x4c, 0x0a, 0x13, 0x66, 0x61, 0x6c, 0x73, 0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69,
 	0x76, 0x65, 0x5f, 0x72, 0x61, 0x74, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
@@ -5771,28 +5939,38 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x13, 0x6d, 0x69, 0x73, 0x73,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x50, 0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x3a,
-	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x50, 0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x12,
+	0x31, 0x0a, 0x14, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x5f, 0x65, 0x78, 0x70,
+	0x69, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x74,
+	0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x45, 0x78, 0x70, 0x69, 0x72, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x12, 0x2b, 0x0a, 0x11, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x5f,
+	0x61, 0x64, 0x76, 0x61, 0x6e, 0x63, 0x65, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x74,
+	0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x41, 0x64, 0x76, 0x61, 0x6e, 0x63, 0x65, 0x3a,
+	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x76, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61,
 	0x6d, 0x73, 0x12, 0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69,
 	0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x05, 0x52, 0x11,
 	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74,
-	0x79, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x41, 0x0a, 0x07, 0x44, 0x65, 0x63, 0x69, 0x6d,
-	0x61, 0x6c, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x03, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x12, 0x1a, 0x0a, 0x08, 0x65, 0x78, 0x70, 0x6f,
-	0x6e, 0x65, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05, 0x52, 0x08, 0x65, 0x78, 0x70, 0x6f,
-	0x6e, 0x65, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63,
-	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
-	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
+	0x79, 0x12, 0x34, 0x0a, 0x16, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
+	0x73, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x5f, 0x73, 0x69, 0x7a, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x05, 0x52, 0x14, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x61, 0x6d,
+	0x70, 0x6c, 0x65, 0x53, 0x69, 0x7a, 0x65, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x41, 0x0a,
+	0x07, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75,
+	0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x12, 0x1a,
+	0x0a, 0x08, 0x65, 0x78, 0x70, 0x6f, 0x6e, 0x65, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05,
+	0x52, 0x08, 0x65, 0x78, 0x70, 0x6f, 0x6e, 0x65, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01,
+	0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61,
+	0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
 	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
-	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

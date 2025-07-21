@@ -18,14 +18,14 @@ import java.time.Duration
 class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
-        val (_, genesis) = initCluster(config = inferenceConfig.copy(genesisSpec = createSpec(epochLength = 20)))
-        genesis.waitForNextInferenceWindow(windowSizeInBlocks = 12)
+        val (_, genesis) = initCluster()
+        genesis.waitForNextInferenceWindow()
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
         runParallelInferences(genesis, 10)
         logSection("Waiting for next epoch")
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForNextInferenceWindow()
         logSection("verifying reputation increase")
         val endStats = genesis.node.getParticipantCurrentStats()
 

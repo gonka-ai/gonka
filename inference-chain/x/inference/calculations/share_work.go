@@ -13,39 +13,67 @@ func ShareWork(existingWorkers []string, newWorkers []string, actualCost int64) 
 		return actions
 	}
 
-	// Calculate new share per worker and remainder
 	newSharePerWorker := actualCost / int64(totalWorkers)
 	remainder := actualCost % int64(totalWorkers)
 
-	// Handle empty existingWorkers case
-	var oldSharePerWorker int64
-	var oldRemainder int64
-	if len(existingWorkers) > 0 {
-		oldSharePerWorker = actualCost / int64(len(existingWorkers))
-		oldRemainder = actualCost % int64(len(existingWorkers))
+	if len(existingWorkers) == 0 {
+		for i, worker := range newWorkers {
+			share := newSharePerWorker
+			if i == 0 {
+				share += remainder
+			}
+			actions = append(actions, Adjustment{
+				WorkAdjustment: share,
+				ParticipantId:  worker,
+			})
+		}
+		return actions
 	}
 
-	// Deduct excess from existing workers
+	oldSharePerWorker := actualCost / int64(len(existingWorkers))
+	oldRemainder := actualCost % int64(len(existingWorkers))
+
+	var totalAdjustments int64
+
 	for i, worker := range existingWorkers {
-		deductAmount := oldSharePerWorker - newSharePerWorker
-		if i == 0 && remainder > 0 {
-			// First worker keeps the remainder
-			deductAmount = oldSharePerWorker + oldRemainder - (newSharePerWorker + remainder)
+		var currentShare int64
+		var targetShare int64
+
+		currentShare = oldSharePerWorker
+		if i == 0 {
+			currentShare += oldRemainder
 		}
-		if deductAmount > 0 {
+
+		targetShare = newSharePerWorker
+		if i == 0 && remainder > 0 {
+			targetShare += remainder
+		}
+
+		deductAmount := currentShare - targetShare
+		if deductAmount != 0 {
 			actions = append(actions, Adjustment{
 				WorkAdjustment: -deductAmount,
 				ParticipantId:  worker,
 			})
+			totalAdjustments += -deductAmount
 		}
 	}
 
-	// Add share to new workers
 	for _, worker := range newWorkers {
 		actions = append(actions, Adjustment{
 			WorkAdjustment: newSharePerWorker,
 			ParticipantId:  worker,
 		})
+		totalAdjustments += newSharePerWorker
+	}
+
+	if totalAdjustments != 0 {
+		for i := range actions {
+			if actions[i].ParticipantId == existingWorkers[0] {
+				actions[i].WorkAdjustment -= totalAdjustments
+				break
+			}
+		}
 	}
 
 	return actions

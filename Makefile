@@ -1,11 +1,11 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker mock-server-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
@@ -17,9 +17,12 @@ mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
 	@cd testermint/mock_server && ./gradlew clean && ./gradlew shadowJar
 	@echo "Building mock-server docker image..."
-	@docker build -t inference-mock-server -f testermint/Dockerfile testermint
+	@DOCKER_BUILDKIT=1 docker build --load -t inference-mock-server -f testermint/Dockerfile testermint
 
-release: decentralized-api-release inference-chain-release tmkms-release
+proxy-build-docker:
+	@make -C proxy build-docker SET_LATEST=1
+
+release: decentralized-api-release inference-chain-release tmkms-release proxy-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
@@ -38,14 +41,22 @@ tmkms-release:
 	@make -C tmkms release
 	@make -C tmkms docker-push
 
+proxy-release:
+	@echo "Releasing proxy..."
+	@make -C proxy release
+	@make -C proxy docker-push
+
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
+# Default to running all tests if TESTS is not specified
+TESTS ?= "*"
+
 run-tests:
-	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
+	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DexcludeTags=unstable,exclude
 
 run-sanity:
-	@cd testermint && ./gradlew test --tests "*" -DincludeTags=sanity
+	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DincludeTags=sanity
 
 test-blockchain: check-docker run-blockchain-tests
 

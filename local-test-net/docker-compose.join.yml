@@ -1,0 +1,12 @@
+services:
+  chain-node:
+    environment:
+      - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
+      - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
+      - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
+      - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
+      - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+
+  api:
+    environment:
+      - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL} 

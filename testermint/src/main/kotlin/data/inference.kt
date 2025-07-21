@@ -22,6 +22,10 @@ data class InferencePayload(
     val escrowAmount: Long?,
     val assignedTo: String?,
     val validatedBy: List<String> = listOf(),
+    val transferredBy: String? = null,
+    val requestTimestamp: Long? = null,
+    val transferSignature: String? = null,
+    val executionSignature: String? = null,
 ) {
     companion object {
         fun empty() = InferencePayload(
@@ -70,6 +74,10 @@ data class InferencesWrapper(
     val inference: List<InferencePayload> = listOf()
 )
 
+data class InferenceWrapper(
+    val inference: InferencePayload
+)
+
 data class InferenceTimeoutsWrapper(
     val inferenceTimeout: List<InferenceTimeout> = listOf()
 )
@@ -78,3 +86,38 @@ data class InferenceTimeout(
     val expirationHeight: String,
     val inferenceId: String,
 )
+
+data class MsgStartInference(
+    override val type: String = "/inference.inference.MsgStartInference",
+    val creator: String = "",
+    val inferenceId: String,
+    val promptHash: String,
+    val promptPayload: String,
+    val model: String = "",
+    val requestedBy: String = "",
+    val assignedTo: String = "",
+    val nodeVersion: String = "",
+    val maxTokens: Long = 0,
+    val promptTokenCount: Long = 0,
+    val requestTimestamp: Long = 0,
+    val transferSignature: String = "",
+    val originalPrompt: String = promptPayload,
+) : TxMessage
+
+data class MsgFinishInference(
+    override val type: String = "/inference.inference.MsgFinishInference",
+    val creator: String = "",
+    val inferenceId: String = "",
+    val responseHash: String = "",
+    val responsePayload: String = "",
+    val promptTokenCount: Long = 0,
+    val completionTokenCount: Long = 0,
+    val executedBy: String = "",
+    val transferredBy: String = "",
+    val requestTimestamp: Long = 0,
+    val transferSignature: String = "",
+    val executorSignature: String = "",
+    val requestedBy: String = "",
+    val originalPrompt: String = "",
+) : TxMessage
+

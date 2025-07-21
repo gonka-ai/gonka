@@ -86,6 +86,9 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, wasmConfig wasmtypes.Wa
 				SignModeHandler: txConfig.SignModeHandler(),
 				FeegrantKeeper:  app.FeeGrantKeeper,
 				SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+				SigVerifyOptions: []ante.SigVerificationDecoratorOption{
+					ante.WithUnorderedTxGasCost(0),
+				},
 			},
 			IBCKeeper:             app.IBCKeeper,
 			WasmConfig:            &wasmConfig,

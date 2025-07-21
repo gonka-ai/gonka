@@ -1,0 +1,17 @@
+services:
+  tmkms:
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen
+    container_name: ${KEY_NAME}-tmkms
+    restart: unless-stopped
+    environment:
+      - VALIDATOR_LISTEN_ADDRESS=tcp://${KEY_NAME}-node:${TMKMS_PORT:-26658}
+    networks:
+      - chain-public
+
+  chain-node:
+    environment:
+      - TMKMS_PORT=${TMKMS_PORT:-26658}
+    expose:
+      - "${TMKMS_PORT:-26658}"
+    depends_on:
+      - tmkms 

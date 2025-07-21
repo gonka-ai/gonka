@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
+	"encoding/base64"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -14,13 +15,22 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
-	_, found := k.GetParticipant(ctx, msg.Creator)
+	transferAgent, found := k.GetParticipant(ctx, msg.Creator)
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator)
 	}
-	_, found = k.GetParticipant(ctx, msg.RequestedBy)
+	dev, found := k.GetParticipant(ctx, msg.RequestedBy)
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy)
+	}
+
+	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
+	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
+
+	err := k.verifyKeys(ctx, msg, transferAgent, dev)
+	if err != nil {
+		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
+		return nil, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error())
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
@@ -52,6 +62,27 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
 	}, nil
+}
+
+func (k msgServer) verifyKeys(ctx context.Context, msg *types.MsgStartInference, agent types.Participant, dev types.Participant) error {
+	components := getSignatureComponents(msg)
+
+	// Create SignatureData with the necessary participants and signatures
+	sigData := calculations.SignatureData{
+		DevSignature:      msg.InferenceId, // Using InferenceId as the dev signature
+		TransferSignature: msg.TransferSignature,
+		Dev:               &dev,
+		TransferAgent:     &agent,
+	}
+
+	// Use the generic VerifyKeys function
+	err := calculations.VerifyKeys(ctx, components, sigData, k)
+	if err != nil {
+		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
+		return err
+	}
+
+	return nil
 }
 
 func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
@@ -96,4 +127,27 @@ func (k msgServer) processInferencePayments(
 	}
 	return inference, nil
 
+}
+
+func getSignatureComponents(msg *types.MsgStartInference) calculations.SignatureComponents {
+	return calculations.SignatureComponents{
+		Payload:         msg.OriginalPrompt,
+		Timestamp:       msg.RequestTimestamp,
+		TransferAddress: msg.Creator,
+		ExecutorAddress: msg.AssignedTo,
+	}
+}
+
+func (k msgServer) GetAccountPubKey(ctx context.Context, address string) (string, error) {
+	addr, err := sdk.AccAddressFromBech32(address)
+	if err != nil {
+		k.LogError("getAccountPubKey: Invalid address", types.Participants, "address", address, "error", err)
+		return "", err
+	}
+	acc := k.AccountKeeper.GetAccount(ctx, addr)
+	if acc == nil {
+		k.LogError("getAccountPubKey: Account not found", types.Participants, "address", address)
+		return "", sdkerrors.Wrap(types.ErrParticipantNotFound, address)
+	}
+	return base64.StdEncoding.EncodeToString(acc.GetPubKey().Bytes()), nil
 }

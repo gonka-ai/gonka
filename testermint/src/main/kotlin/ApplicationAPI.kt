@@ -72,10 +72,37 @@ data class ApplicationAPI(
         response.third.get()
     }
 
+    fun makeExecutorInferenceRequest(
+        request: String,
+        requesterAddress: String,
+        devSignature: String,
+        transferAddress: String,
+        taSignature: String,
+        timestamp: Long,
+        seed: Long = 0
+    ): OpenAIResponse = wrapLog("MakeExecutorInferenceRequest", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        val response = Fuel.post((url + "/v1/chat/completions"))
+            .jsonBody(request)
+            .header("X-Requester-Address", requesterAddress)
+            .header("Authorization", devSignature)
+            .header("X-Timestamp", timestamp)
+            .header("X-Transfer-Address", transferAddress)
+            .header("X-Inference-Id", devSignature)
+            .header("X-Seed", seed)
+            .header("X-TA-Signature", taSignature)
+            .timeout(1000 * 60)
+            .timeoutRead(1000 * 60)
+            .responseObject<OpenAIResponse>(gsonDeserializer(cosmosJson))
+        logResponse(response)
+        response.third.get()
+    }
+
     fun makeInferenceRequest(
         request: String,
         address: String,
         signature: String,
+        timestamp: Long,
     ): OpenAIResponse =
         wrapLog("MakeInferenceRequest", true) {
             val url = urlFor(SERVER_TYPE_PUBLIC)
@@ -83,6 +110,7 @@ data class ApplicationAPI(
                 .jsonBody(request)
                 .header("X-Requester-Address", address)
                 .header("Authorization", signature)
+                .header("X-Timestamp", timestamp)
                 .timeout(1000 * 60)
                 .timeoutRead(1000 * 60)
                 .responseObject<OpenAIResponse>(gsonDeserializer(cosmosJson))
@@ -102,7 +130,7 @@ data class ApplicationAPI(
 
     /**
      * Creates a stream connection for inference requests that can be interrupted.
-     * 
+     *
      * @param request The request body as a string
      * @param address The requester address
      * @param signature The authorization signature
@@ -112,14 +140,16 @@ data class ApplicationAPI(
         request: String,
         address: String,
         signature: String,
+        timestamp: Long,
     ): StreamConnection =
         wrapLog("CreateInferenceStreamConnection", true) {
             val url = urlFor(SERVER_TYPE_PUBLIC)
             createStreamConnection(
-                url = "$url/v1/chat/completions", 
-                address = address, 
-                signature = signature, 
-                jsonBody = request
+                url = "$url/v1/chat/completions",
+                address = address,
+                signature = signature,
+                jsonBody = request,
+                timestamp = timestamp
             )
         }
 
@@ -340,14 +370,14 @@ fun stream(url: String, address: String, signature: String, jsonBody: String): L
 
 /**
  * Creates a stream connection for inference requests that can be interrupted.
- * 
+ *
  * @param url The URL to connect to
  * @param address The requester address
  * @param signature The authorization signature
  * @param jsonBody The JSON request body
  * @return A StreamConnection object that can be used to read from the stream and interrupt it
  */
-fun createStreamConnection(url: String, address: String, signature: String, jsonBody: String): StreamConnection {
+fun createStreamConnection(url: String, address: String, signature: String, jsonBody: String, timestamp: Long): StreamConnection {
     // Set up the URL and connection
     val url = URL(url)
     val connection = url.openConnection() as HttpURLConnection
@@ -355,6 +385,7 @@ fun createStreamConnection(url: String, address: String, signature: String, json
     connection.setRequestProperty("X-Requester-Address", address)
     connection.setRequestProperty("Authorization", signature)
     connection.setRequestProperty("Content-Type", "application/json")
+    connection.setRequestProperty("X-Timestamp", timestamp.toString())
     connection.doOutput = true
 
     // Send the request body
@@ -389,7 +420,7 @@ class StreamConnection(
 
     /**
      * Reads the next line from the stream.
-     * 
+     *
      * @return The next line, or null if the stream is closed or has reached the end
      */
     fun readLine(): String? {

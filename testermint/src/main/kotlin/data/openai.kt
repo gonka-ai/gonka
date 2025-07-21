@@ -2,7 +2,7 @@ package com.productscience.data
 
 data class RequestModel(
     val model: String,
-    val messages: List<Message>,
+    val messages: List<TxMessage>,
     val frequencyPenalty: Int,
     val logitBias: Any?,
     val logprobs: Boolean,
