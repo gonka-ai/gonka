@@ -187,7 +187,7 @@ func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRe
 	return wasValidated
 }
 
-func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint64, modelId string) (*types.EpochGroupData, map[string]int64, int64, bool) {
+func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint64, modelId string) (*types.EpochGroupData, map[string]types.ValidationWeight, int64, bool) {
 	epochData, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
 	if !found {
 		if modelId == "" {
@@ -199,11 +199,16 @@ func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint6
 	}
 
 	// Build weight map and total weight for the epoch group
-	weightMap := make(map[string]int64)
+	weightMap := make(map[string]types.ValidationWeight)
 	totalWeight := int64(0)
 	for _, weight := range epochData.ValidationWeights {
+		if weight == nil {
+			k.LogError("Validation weight is nil", types.Claims, "height", pocStartHeight, "modelId", modelId)
+			continue
+		}
+
 		totalWeight += weight.Weight
-		weightMap[weight.MemberAddress] = weight.Weight
+		weightMap[weight.MemberAddress] = *weight
 	}
 
 	k.LogInfo("Epoch group weight data", types.Claims, "height", pocStartHeight, "modelId", modelId, "totalWeight", totalWeight)
@@ -219,7 +224,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	}
 
 	// Create a map to store weight maps for each model
-	modelWeightMaps := make(map[string]map[string]int64)
+	modelWeightMaps := make(map[string]map[string]types.ValidationWeight)
 	modelTotalWeights := make(map[string]int64)
 
 	// Store main model data
@@ -276,8 +281,13 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		// Get the total weight for this model
 		totalWeight := modelTotalWeights[modelId]
 
+		if k.IsOrderedAtPoC(&inference) && !k.isAvailableDuringPoC(&validatorPowerForModel) {
+			k.LogInfo("MsgClaimReward. Validator was not available during PoC, but ", types.Claims, "validator", msg.Creator, "model", modelId, "inference", inference.InferenceId)
+			continue
+		}
+
 		k.LogInfo("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
-		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPowerForModel), uint32(executorPower),
+		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPowerForModel.Weight), uint32(executorPower.Weight),
 			k.Keeper.GetParams(ctx).ValidationParams)
 		k.LogInfo(s, types.Claims, "inference", inference.InferenceId, "seed", msg.Seed, "model", modelId, "validator", msg.Creator)
 		if shouldValidate {
@@ -285,4 +295,37 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 	}
 	return mustBeValidated, nil
+}
+
+func (k msgServer) IsOrderedAtPoC(inferenceDetails *types.InferenceValidationDetails) bool {
+	if inferenceDetails == nil {
+		k.LogError("MsgClaimReward. IsOrderedAtPoC. Inference details is nil", types.Claims, "inferenceDetails", inferenceDetails)
+		return false
+	}
+
+	if inferenceDetails.CreatedAtBlockHeight == 0 {
+		k.LogWarn("MsgClaimReward. IsOrderedAtPoC. CreatedAtBlockHeight is not set", types.Claims, "inferenceDetails", inferenceDetails)
+		return false
+	} else if inferenceDetails.CreatedAtBlockHeight < 0 {
+		k.LogError("MsgClaimReward. IsOrderedAtPoC. CreatedAtBlockHeight is negative!", types.Claims, "inferenceDetails", inferenceDetails)
+		return false
+	}
+
+	// FIXME: actually compare the block height with some epoch data :)
+	return true
+}
+
+func (k msgServer) isAvailableDuringPoC(weight *types.ValidationWeight) bool {
+	if weight == nil {
+		k.LogError("MsgClaimReward. isAvailableDuringPoC. Validation weight is nil", types.Claims, "weight", weight)
+		return false
+	}
+
+	for _, n := range weight.MlNodes {
+		if n.IsActiveDuringPoC() {
+			return true
+		}
+	}
+
+	return false
 }
