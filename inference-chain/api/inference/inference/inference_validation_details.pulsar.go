@@ -926,7 +926,7 @@ type InferenceValidationDetails struct {
 	Model                string `protobuf:"bytes,7,opt,name=model,proto3" json:"model,omitempty"`
 	TotalPower           uint64 `protobuf:"varint,8,opt,name=total_power,json=totalPower,proto3" json:"total_power,omitempty"`
 	EpochGroupId         uint64 `protobuf:"varint,10,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`                           // The ID of the Group created by the GroupModule!
-	CreatedAtBlockHeight int64  `protobuf:"varint,11,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"` // When this entity was created
+	CreatedAtBlockHeight int64  `protobuf:"varint,11,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"` // Should be the same as block_finished for the inference
 }
 
 func (x *InferenceValidationDetails) Reset() {

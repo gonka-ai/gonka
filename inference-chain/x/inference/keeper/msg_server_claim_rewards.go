@@ -268,6 +268,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	mustBeValidated := make([]string, 0)
 	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochGroupId)
+	var skipped int
 	for _, inference := range finishedInferences {
 		if inference.ExecutorId == msg.Creator {
 			continue
@@ -298,7 +299,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		totalWeight := modelTotalWeights[modelId]
 
 		if k.OverlapsWithPoC(&inference, epochContext) && !k.isActiveDuringPoC(&validatorPowerForModel) {
-			k.LogInfo("MsgClaimReward. Validator was not available during PoC, skipping the inference", types.Claims, "validator", msg.Creator, "model", modelId, "inference", inference.InferenceId)
+			skipped++
 			continue
 		}
 
@@ -310,6 +311,13 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 			mustBeValidated = append(mustBeValidated, inference.InferenceId)
 		}
 	}
+
+	k.LogInfo("Must be validated inferences", types.Claims,
+		"count", len(mustBeValidated),
+		"validator_not_available_at_poc_skipped", skipped,
+		"total", len(finishedInferences),
+	)
+
 	return mustBeValidated, nil
 }
 
@@ -327,8 +335,8 @@ func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDe
 		return false
 	}
 
-	// FIXME: actually compare the block height with some epoch data :)
-	return true
+	happenedAfterCutoff := inferenceDetails.CreatedAtBlockHeight >= epochContext.InferenceValidationCutoff()
+	return happenedAfterCutoff
 }
 
 func (k msgServer) isActiveDuringPoC(weight *types.ValidationWeight) bool {
