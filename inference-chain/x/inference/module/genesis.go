@@ -24,9 +24,7 @@ var IgnoreDuplicateDenomRegistration bool
 // InitGenesis initializes the module's state from a provided genesis state.
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
 	// Observability: start of InitGenesis
-	k.LogInfo("InitGenesis: starting module genesis", types.System,
-		"participants", len(genState.ParticipantList),
-	)
+	k.LogInfo("InitGenesis: starting module genesis", types.System)
 	// PRTODO: set active participants here, but how?
 	// Set all the epochGroupData
 	// Add explicit InitGenesis method for setting epoch data
@@ -35,30 +33,12 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}*/
 	InitGenesisEpoch(ctx, k)
 
-	// Set all the participant
-	for _, elem := range genState.ParticipantList {
-		k.SetParticipant(ctx, elem)
-	}
-
 	InitHoldingAccounts(ctx, k, genState)
-
-	// Set if defined
-	if genState.TokenomicsData != nil {
-		k.SetTokenomicsData(ctx, *genState.TokenomicsData)
-	}
 
 	k.SetContractsParams(ctx, genState.CosmWasmParams)
 
 	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
 
-	// Set all the topMiner
-	for _, elem := range genState.TopMinerList {
-		k.SetTopMiner(ctx, elem)
-	}
-	// Set all the partialUpgrade
-	for _, elem := range genState.PartialUpgradeList {
-		k.SetPartialUpgrade(ctx, elem)
-	}
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -216,13 +196,6 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := &types.GenesisState{}
 	genesis.Params = k.GetParams(ctx)
 
-	genesis.ParticipantList = k.GetAllParticipant(ctx)
-	genesis.EpochGroupDataList = k.GetAllEpochGroupData(ctx)
-	// Get all tokenomicsData
-	tokenomicsData, found := k.GetTokenomicsData(ctx)
-	if found {
-		genesis.TokenomicsData = &tokenomicsData
-	}
 	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
 	if found {
 		genesis.GenesisOnlyParams = genesisOnlyParams
@@ -232,8 +205,6 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		genesis.CosmWasmParams = contractsParams
 	}
 	genesis.ModelList = getModels(&ctx, &k)
-	genesis.TopMinerList = k.GetAllTopMiner(ctx)
-	genesis.PartialUpgradeList = k.GetAllPartialUpgrade(ctx)
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis
