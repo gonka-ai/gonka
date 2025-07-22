@@ -327,7 +327,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt() + 2) {
             val address = pair.node.getAddress()
             val stats = pair.node.getParticipantCurrentStats()
-            val weight = stats.participantCurrentStats.find { it.participantId == address }?.weight ?: 0
+            val weight = stats.participantCurrentStats?.find { it.participantId == address }?.weight ?: 0
             weight != 0L
         }
     }
