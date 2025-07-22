@@ -18,8 +18,6 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	mockAccount := NewMockAccount(testutil.Creator)
-	// Setup a participant
-	MustAddParticipant(t, ms, ctx, *mockAccount)
 
 	// Create a seed value and its binary representation
 	seed := uint64(1)
