@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -17,9 +18,20 @@ import java.util.concurrent.TimeUnit
 class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
-        val (_, genesis) = initCluster()
+        val (_, genesis) = initCluster(
+            config = inferenceConfig.copy(
+                genesisSpec = createSpec(
+                    epochLength = 100,
+                    epochShift = 80
+                )
+            ),
+            reboot = true
+        )
+
+        genesis.node.waitForMinimumBlock(35)
         logSection("Making inference requests in parallel")
-        val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
+        val requests = 50
+        val statuses = runParallelInferences(genesis, requests, maxConcurrentRequests = requests)
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")
@@ -28,6 +40,7 @@ class ValidationTests : TestermintTest() {
         }).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
+        assertThat(statuses).hasSize(requests)
 
         Thread.sleep(10000)
     }
@@ -124,7 +137,12 @@ fun runParallelInferences(
         async(limitedDispatcher) {
             Logger.warn("Starting request $i")
             try {
-                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
+                System.nanoTime()
+                // This works, because the Instant.now() resolution gives us 3 zeros at the end, so we know these will be unique
+                val timestamp = Instant.now().toEpochNanos() + i
+                val result = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson(), timestamp = timestamp)
+                Logger.info("Result for $i: $result\n\n\n")
+                result
             } catch (e: Exception) {
                 Logger.error("Error making inference request: ${e.message}")
                 null

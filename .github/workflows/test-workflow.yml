@@ -32,6 +32,54 @@ on:
         description: 'Whether to use matrix strategy for parallel execution'
 
 jobs:
+  # This job dynamically scans for test classes and sets up the matrix for parallel test execution
+  # It replaces the previous hardcoded matrix with a dynamically generated one based on the actual test classes
+  setup-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+
+      # This step uses Gradle tasks to scan for test classes that will actually run tests after filtering
+      # The tasks properly handle both class-level and method-level tags:
+      # 1. Classes with @Tag("exclude") or @Tag("unstable") at the class level are completely excluded
+      # 2. For remaining classes:
+      #    - For run-tests: Lists only classes that have at least one test that doesn't have unstable,exclude tags
+      #    - For run-sanity: Lists only classes that have at least one test with the sanity tag that doesn't have unstable,exclude tags
+      # This ensures we don't create matrix entries for test classes that would have zero tests after filtering,
+      # and properly handles files with multiple classes (like SpecTests.kt)
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          cd testermint
+          if [[ "${{ inputs.test_command }}" == "run-tests" ]]; then
+            echo "Running listAllTestClasses task for integration tests"
+            # This uses the custom Gradle task that scans for all test classes
+            # The actual tag filtering (excluding unstable,exclude) happens at test runtime
+            TEST_CLASSES=$(./gradlew -q listAllTestClasses)
+          elif [[ "${{ inputs.test_command }}" == "run-sanity" ]]; then
+            echo "Running findSanityTestClasses task for sanity tests"
+            # This uses the custom Gradle task that scans for classes containing sanity-tagged tests
+            TEST_CLASSES=$(./gradlew -q findSanityTestClasses)
+          else
+            echo "Unknown test command: ${{ inputs.test_command }}"
+            exit 1
+          fi
+          
+          # Format the output as a JSON array for the matrix
+          echo "matrix={\"test_group\":[${TEST_CLASSES}]}" >> $GITHUB_OUTPUT
+          echo "Generated matrix: {\"test_group\":[${TEST_CLASSES}]}"
+
   build-images:
     runs-on: ubuntu-latest
     steps:
@@ -49,18 +97,18 @@ jobs:
         run: |
           docker --version
           docker compose version
-          
+
       - name: Install Make
         run: |
           sudo apt-get update
           sudo apt-get install -y make
-          
+
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '19'
-          
+
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
@@ -105,29 +153,16 @@ jobs:
           path: public-html/
           retention-days: 1
 
+  # This job runs the tests in parallel using the dynamically generated matrix
+  # It depends on both setup-test-matrix (for the matrix) and build-images (for the Docker images)
   run-tests:
-    needs: build-images
+    needs: [setup-test-matrix, build-images]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        test_group: 
-          - ValidationTests
-          - InferenceAccountingTests
-          - NodeManagementTests
-          - TokenomicsTests
-          - TrainingTests
-          - GovernanceTests
-          - ParticipantTests
-          - ParticipantTests2
-          - StreamingInferenceTests
-          - MultiModelTests
-          - UnitOfComputeTests
-          - NodeAdminStateTests
-          - LargePayloadPocTest
-          - UpgradeTests
-          - KubernetesTests
-          - SchedulingTests
+      # Use the dynamically generated matrix from the setup-test-matrix job
+      # This replaces the previous hardcoded list of test classes
+      matrix: ${{ fromJson(needs.setup-test-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout code
@@ -160,7 +195,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y make
-          
+
       - name: Set up Java
         uses: actions/setup-java@v3
         with:

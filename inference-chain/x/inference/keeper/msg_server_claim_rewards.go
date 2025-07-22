@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -19,48 +20,62 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 		return response, nil
 	}
 
-	err := k.validateClaim(ctx, msg, settleAmount)
+	response, err := k.validateClaim(ctx, msg, settleAmount)
 	if err != nil {
-		return nil, err
+		k.LogError("Claim validation failed", types.Claims, "error", err, "account", msg.Creator)
+		return response, nil
 	}
 	k.LogDebug("Claim verified", types.Claims, "account", msg.Creator, "seed", msg.Seed)
 
-	err = k.payoutClaim(ctx, msg, settleAmount)
+	response, err = k.payoutClaim(ctx, msg, settleAmount)
 	if err != nil {
-		return nil, err
+		k.LogError("Claim payout failed", types.Claims, "error", err, "account", msg.Creator)
+		return response, nil
 	}
 
-	return &types.MsgClaimRewardsResponse{
-		Amount: settleAmount.GetTotalCoins(),
-		Result: "Rewards claimed",
-	}, nil
+	return response, nil
 }
 
-func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {
+func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
+
+	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
-	err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant)
-	if err != nil {
+	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.handleUnderfundedWork(ctx, err, settleAmount)
-			return err
+			return &types.MsgClaimRewardsResponse{
+				Amount: 0,
+				Result: "Insufficient funds for paying participant for work! Unpaid settlement",
+			}, err
 		}
-		ms.LogError("Error paying participant", types.Claims, "error", err)
-		return err
+		ms.LogError("Error paying participant from escrow", types.Claims, "error", err)
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Error paying participant from escrow",
+		}, err
 	}
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
-	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant)
-	if err != nil {
+
+	// Pay rewards from module
+	if err := ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
-			ms.finishSettle(ctx, settleAmount)
-			return err
+		} else {
+			ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
 		}
-		ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
-		return err
+		ms.finishSettle(ctx, settleAmount)
+		return &types.MsgClaimRewardsResponse{
+			Amount: settleAmount.GetWorkCoins(),
+			Result: "Work paid, but rewards failed.",
+		}, err
 	}
+
 	ms.finishSettle(ctx, settleAmount)
-	return nil
+	return &types.MsgClaimRewardsResponse{
+		Amount: settleAmount.GetTotalCoins(),
+		Result: "Rewards claimed successfully",
+	}, nil
 }
 
 func (ms msgServer) handleUnderfundedWork(ctx sdk.Context, err error, settleAmount *types.SettleAmount) {
@@ -116,32 +131,51 @@ func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) 
 	return &settleAmount, nil
 }
 
-func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {
+func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
 	k.LogInfo("Validating claim", types.Claims, "account", msg.Creator, "seed", msg.Seed, "height", msg.PocStartHeight)
-	err := k.validateSeedSignature(ctx, msg, settleAmount)
-	if err != nil {
-		return err
+
+	// Validate the seed signature
+	if err := k.validateSeedSignature(ctx, msg, settleAmount); err != nil {
+		k.LogError("Seed signature validation failed", types.Claims, "error", err)
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Seed signature validation failed",
+		}, err
 	}
 
+	// Check for missed validations
+	if validationMissed, err := k.hasMissedValidations(ctx, msg); err != nil {
+		k.LogError("Failed to check for missed validations", types.Claims, "error", err)
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Failed to check for missed validations",
+		}, err
+	} else if validationMissed {
+		k.LogError("Inference not validated", types.Claims, "account", msg.Creator)
+		// TODO: Report that validator has missed validations
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Inference not validated",
+		}, types.ErrValidationsMissed
+	}
+
+	return nil, nil
+}
+
+func (k msgServer) hasMissedValidations(ctx sdk.Context, msg *types.MsgClaimRewards) (bool, error) {
 	mustBeValidated, err := k.getMustBeValidatedInferences(ctx, msg)
 	if err != nil {
-		return err
+		return false, err
 	}
 	wasValidated := k.getValidatedInferences(ctx, msg)
 
-	validationMissed := false
-
 	for _, inferenceId := range mustBeValidated {
 		if !wasValidated[inferenceId] {
-			k.LogError("Inference not validated", types.Claims, "inference", inferenceId, "account", msg.Creator)
-			validationMissed = true
+			return true, nil
 		}
 	}
-	if validationMissed {
-		return types.ErrValidationsMissed
-	}
 
-	return nil
+	return false, nil
 }
 
 func (ms msgServer) validateSeedSignature(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {

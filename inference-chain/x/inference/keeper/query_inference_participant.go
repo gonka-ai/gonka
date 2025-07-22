@@ -22,6 +22,9 @@ func (k Keeper) InferenceParticipant(goCtx context.Context, req *types.QueryInfe
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid address")
 	}
+
+	balance := k.bankView.SpendableCoin(ctx, addr, types.BaseCoin)
+
 	k.LogDebug("InferenceParticipant address converted", types.Participants, "address", addr.String())
 	acc := k.AccountKeeper.GetAccount(ctx, addr)
 	if acc == nil {
@@ -29,7 +32,6 @@ func (k Keeper) InferenceParticipant(goCtx context.Context, req *types.QueryInfe
 		return nil, status.Error(codes.NotFound, "account not found")
 	}
 	k.LogDebug("InferenceParticipant account found", types.Participants, "address", req.Address)
-	balance := k.bankView.SpendableCoin(ctx, addr, types.BaseCoin)
 
 	k.LogDebug("InferenceParticipant balance", types.Participants, "balance", balance)
 	k.LogDebug("InferenceParticipant pubkey", types.Participants, "pubkey", acc.GetPubKey().Bytes())

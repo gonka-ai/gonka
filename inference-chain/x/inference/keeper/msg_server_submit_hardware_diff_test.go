@@ -25,8 +25,9 @@ func registerTestModels(t *testing.T, k keeper.Keeper, ms types.MsgServer, ctx c
 func TestMsgServer_SubmitHardwareDiff(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
+	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 	registerTestModels(t, k, ms, ctx, "model1", "model2", "model3", "model4")
 
 	// Test adding new hardware nodes
@@ -126,8 +127,9 @@ func TestMsgServer_SubmitHardwareDiff(t *testing.T) {
 func TestMsgServer_SubmitHardwareDiff_NoExistingNodes(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
+	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 
 	// Test adding new hardware nodes when no existing nodes
 	newNode := &types.HardwareNode{
@@ -165,8 +167,9 @@ func TestMsgServer_SubmitHardwareDiff_NoExistingNodes(t *testing.T) {
 func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
+	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 
 	// Add a hardware node
 	newNode := &types.HardwareNode{

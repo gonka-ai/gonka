@@ -2,12 +2,15 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+
+	"sort"
+
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
-	"encoding/json"
-	"fmt"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -305,7 +308,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight))
+	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
+	previousEpochPocStartHeight := uint64(0)
+	if found {
+		previousEpochPocStartHeight = uint64(previousEpoch.PocStartBlockHeight)
+	}
+
+	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight), previousEpochPocStartHeight)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}

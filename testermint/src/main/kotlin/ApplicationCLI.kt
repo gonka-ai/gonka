@@ -123,6 +123,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference"))
     }
 
+    fun getInference(inferenceId: String): InferenceWrapper = wrapLog("getInference", false) {
+        execAndParse(listOf("query", "inference", "show-inference", inferenceId))
+    }
+
     fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
         execAndParse(listOf("query", "inference", "list-inference-timeout"))
     }
@@ -273,13 +277,15 @@ data class ApplicationCLI(
         } ?: error("Could not extract signature from response: $response")
     }
 
-    fun signPayload(payload: String, accountAddress: String? = null): String {
+    fun signPayload(payload: String, accountAddress: String? = null, timestamp: Long? = null, endpointAccount: String? =null): String {
         val parameters = listOfNotNull(
             config.execName,
             "signature",
             "create",
             // Do we need single quotes here?
             payload,
+            timestamp?.let { "--timestamp" }, timestamp?.toString(),
+            endpointAccount?.let { "--endpoint-account" }, endpointAccount,
             accountAddress?.let { "--account-address" },
             accountAddress,
         ) + config.keychainParams
