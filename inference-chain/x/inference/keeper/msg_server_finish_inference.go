@@ -87,10 +87,11 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
 		// Can be deleted in next upgrade
-		EpochId:      currentEpochGroup.GroupData.EpochGroupId,
-		EpochGroupId: currentEpochGroup.GroupData.EpochGroupId,
-		Model:        existingInference.Model,
-		TotalPower:   uint64(modelEpochGroup.GroupData.TotalWeight),
+		EpochId:              currentEpochGroup.GroupData.EpochGroupId,
+		EpochGroupId:         currentEpochGroup.GroupData.EpochGroupId,
+		Model:                existingInference.Model,
+		TotalPower:           uint64(modelEpochGroup.GroupData.TotalWeight),
+		CreatedAtBlockHeight: ctx.BlockHeight(),
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
 		k.LogWarn("Executor Power equals Total Power", types.Validation,

@@ -2,9 +2,9 @@ package validation
 
 import (
 	"bytes"
-	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/completionapi"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
@@ -29,16 +29,19 @@ type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
 	nodeBroker    *broker.Broker
 	configManager *apiconfig.ConfigManager
+	phaseTracker  *chainphase.ChainPhaseTracker
 }
 
 func NewInferenceValidator(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
-	recorder cosmosclient.CosmosMessageClient) *InferenceValidator {
+	recorder cosmosclient.CosmosMessageClient,
+	phaseTracker *chainphase.ChainPhaseTracker) *InferenceValidator {
 	return &InferenceValidator{
 		nodeBroker:    nodeBroker,
 		configManager: configManager,
 		recorder:      recorder,
+		phaseTracker:  phaseTracker,
 	}
 }
 
@@ -161,7 +164,10 @@ func logInferencesToValidate(toValidate []string) {
 }
 
 func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Inference, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
-	valResult, err := s.lockNodeAndValidate(inf)
+	valResult, err := broker.LockNode(s.nodeBroker, inf.Model, inf.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+		return s.validate(inf, node)
+	})
+
 	if err != nil && errors.Is(err, broker.ErrNoNodesAvailable) {
 		logging.Error("Failed to validate inference. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "error", err)
 		valResult = ModelNotSupportedValidationResult{
@@ -187,22 +193,7 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 	logging.Info("Successfully validated inference", types.Validation, "id", inf.InferenceId)
 }
 
-func (s *InferenceValidator) ValidateByInferenceId(id string, node *broker.Node) (ValidationResult, error) {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
-	if err != nil {
-		logging.Error("Failed get inference by id query", types.Validation, "id", id, "error", err)
-	}
-	return s.Validate(r.Inference, node)
-}
-
-func (s *InferenceValidator) lockNodeAndValidate(inference types.Inference) (ValidationResult, error) {
-	return broker.LockNode(s.nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
-		return s.Validate(inference, node)
-	})
-}
-
-func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
+func (s *InferenceValidator) validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {

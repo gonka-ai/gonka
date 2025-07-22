@@ -122,7 +122,7 @@ func main() {
 	training.NewAssigner(recorder, &tendermintClient, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
-	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
+	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
