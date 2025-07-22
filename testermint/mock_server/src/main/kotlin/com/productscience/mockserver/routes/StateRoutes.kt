@@ -10,12 +10,24 @@ import com.productscience.mockserver.model.ModelState
  * Configures routes for state-related endpoints.
  */
 fun Route.stateRoutes() {
-    // GET /api/v1/state - Returns the current state of the model
+    // Original endpoint: GET /api/v1/state - Returns the current state of the model
     get("/api/v1/state") {
-        val currentState = ModelState.getCurrentState()
-        call.respond(
-            HttpStatusCode.OK,
-            mapOf("state" to currentState.name)
-        )
+        handleStateRequest(call)
     }
+    
+    // Versioned endpoint: GET /{version}/api/v1/state - Returns the current state of the model
+    get("/{version}/api/v1/state") {
+        handleStateRequest(call)
+    }
+}
+
+/**
+ * Handles state requests for both versioned and non-versioned endpoints
+ */
+private suspend fun handleStateRequest(call: ApplicationCall) {
+    val currentState = ModelState.getCurrentState()
+    call.respond(
+        HttpStatusCode.OK,
+        mapOf("state" to currentState.name)
+    )
 }

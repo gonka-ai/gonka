@@ -1,4 +1,6 @@
 # Legend 
+Before working with document read project root README.md
+
 We're marking task as:
 - [DONE]: - +/- ready 
 - [WIP]: 
@@ -526,3 +528,84 @@ inferenced tx inference partial-upgrade 12000 "v3.0.8" '{"amd64":"hash1","arm64"
 
 **Core Insight:**
 MLNode's lifecycle constraints (`.stop()` requirement, container size, GPU resources) drive the complexity. The solution addresses these constraints properly rather than fighting them.
+
+---
+
+## 9. Testing Infrastructure: Mock Server Proxy Support
+
+### **Enhanced Mock Server for Upgrade Testing**
+
+The testermint mock server has been enhanced to **fully support the versioned proxy routing system** described in this proposal. This enables comprehensive end-to-end testing of MLNode upgrades without requiring actual MLNode containers.
+
+### **Versioned Routing Implementation**
+
+The mock server now handles all three URL patterns used by the upgrade proxy:
+
+| **URL Pattern** | **Proxy Route** | **Mock Server Support** |
+|---|---|---|
+| `/api/v1/*` | → Old MLNode (backward compatibility) | ✅ `get("/api/v1/state")` |
+| `/v3.0.6/api/v1/*` | → Old MLNode (explicit version) | ✅ `get("/{version}/api/v1/state")` |
+| `/v3.0.8/api/v1/*` | → New MLNode (upgrade target) | ✅ `get("/{version}/api/v1/state")` |
+
+**Complete Coverage:**
+- ✅ **Inference endpoints**: `/v1/chat/completions`, `/tokenize` 
+- ✅ **PoC endpoints**: `/api/v1/pow/*` (status, generate, validate)
+- ✅ **State management**: `/api/v1/state`, `/health`, `/stop`, `/inference/up`
+- ✅ **Training endpoints**: `/api/v1/train/start`
+
+### **Testing Capabilities**
+
+```kotlin
+// Test upgrade scenario in testermint
+cluster.allPairs.forEach {
+    // Configure responses for old version
+    it.mock?.setInferenceResponse(
+        oldResponse, 
+        segment = "/v3.0.6" // Routes to old container
+    )
+    
+    // Configure responses for new version  
+    it.mock?.setInferenceResponse(
+        newResponse,
+        segment = "/v3.0.8" // Routes to new container
+    )
+}
+```
+
+**Test Scenarios Supported:**
+- ✅ **Side-by-side deployment** - Both versions responding simultaneously
+- ✅ **Upgrade transition** - URL routing switches at `upgrade_height`
+- ✅ **Backward compatibility** - Old URLs continue working
+- ✅ **Version isolation** - Different responses per version
+- ✅ **State management** - `.stop()` calls work on versioned endpoints
+
+### **Implementation Changes**
+
+**Files Modified:**
+- `testermint/mock_server/src/main/kotlin/.../routes/HealthRoutes.kt` - Added versioned health endpoints
+- `testermint/mock_server/src/main/kotlin/.../routes/TokenizationRoutes.kt` - Standardized versioned routing  
+- `testermint/mock_server/src/main/kotlin/.../routes/TrainRoutes.kt` - Added versioned training endpoints
+
+**Testing Added:**
+- `testermint/mock_server/src/test/kotlin/.../VersionedRoutingTest.kt` - Comprehensive versioned routing tests
+
+### **Benefits for MLNode Upgrade Testing**
+
+✅ **Complete Proxy Simulation**: Mock server mirrors production proxy behavior exactly
+✅ **Upgrade Flow Testing**: Can test full upgrade sequences without real containers  
+✅ **Rollback Testing**: Can simulate failed upgrades and rollback scenarios
+✅ **Multi-version Testing**: Different responses for different MLNode versions
+✅ **Zero Setup**: No MLNode containers needed for upgrade flow testing
+
+### **Example Usage**
+
+```bash
+# Test the three proxy routing patterns work identically
+curl http://localhost:8080/api/v1/state                 # Old container  
+curl http://localhost:8080/v3.0.6/api/v1/state        # Old container (explicit)
+curl http://localhost:8080/v3.0.8/api/v1/state        # New container
+
+# All return same state, simulating proxy routing
+```
+
+This testing infrastructure ensures the MLNode upgrade system works correctly before deployment to production environments.

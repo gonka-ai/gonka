@@ -17,19 +17,14 @@ import org.slf4j.LoggerFactory
  * Configures routes for inference-related endpoints.
  */
 fun Route.inferenceRoutes(responseService: ResponseService, sseService: SSEService = SSEService()) {
-    // POST /api/v1/inference/up - Transitions to INFERENCE state
+    // Original endpoint: POST /api/v1/inference/up - Transitions to INFERENCE state
     post("/api/v1/inference/up") {
-        // This endpoint requires the state to be STOPPED
-        if (ModelState.getCurrentState() != ModelState.STOPPED) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid state for inference up"))
-            return@post
-        }
-
-        // Update the state to INFERENCE
-        ModelState.updateState(ModelState.INFERENCE)
-
-        // Respond with 200 OK
-        call.respond(HttpStatusCode.OK)
+        handleInferenceUpRequest(call)
+    }
+    
+    // Versioned endpoint: POST /{version}/api/v1/inference/up - Transitions to INFERENCE state
+    post("/{version}/api/v1/inference/up") {
+        handleInferenceUpRequest(call)
     }
 
     // Handle the exact path /v1/chat/completions
@@ -48,6 +43,23 @@ fun Route.inferenceRoutes(responseService: ResponseService, sseService: SSEServi
     post("/{...segments}/v1/chat/completions") {
         handleChatCompletions(call, responseService, sseService)
     }
+}
+
+/**
+ * Handles inference up requests for both versioned and non-versioned endpoints
+ */
+private suspend fun handleInferenceUpRequest(call: ApplicationCall) {
+    // This endpoint requires the state to be STOPPED
+    if (ModelState.getCurrentState() != ModelState.STOPPED) {
+        call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid state for inference up"))
+        return
+    }
+
+    // Update the state to INFERENCE
+    ModelState.updateState(ModelState.INFERENCE)
+
+    // Respond with 200 OK
+    call.respond(HttpStatusCode.OK)
 }
 
 /**

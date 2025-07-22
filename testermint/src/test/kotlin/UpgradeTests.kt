@@ -131,42 +131,44 @@ class UpgradeTests : TestermintTest() {
         logSection("Verifying current inference hits right endpoint")
         val effectiveHeight = genesis.getCurrentBlockHeight() + 40
         val newResponse = "Only a short response"
-        val oldSegment = "/old_version"  // Old versioned endpoint
-        val newSegment = "/new_version"  // New versioned endpoint  
-        val newVersion = "v1"
+        val oldVersion = "v3.0.6"  // Current MLNode version
+        val newVersion = "v3.0.8"  // Upgrade target MLNode version
         
         cluster.allPairs.forEach {
             // Set up OLD response on default endpoint (/v1/chat/completions)
+            // This serves inferences created before upgrade (with empty NodeVersion)
             it.mock?.setInferenceResponse(
                 defaultInferenceResponseObject,
-                segment = "" // Default endpoint for existing inferences
+                segment = "" // Default endpoint: /v1/chat/completions
             )
             
-            // Set up OLD response on versioned old endpoint (/old_version/v1/chat/completions)
+            // Set up OLD response on versioned old endpoint (/v3.0.6/v1/chat/completions)  
+            // This serves inferences created with explicit old version
             it.mock?.setInferenceResponse(
                 defaultInferenceResponseObject,
-                segment = oldSegment // Versioned old endpoint
+                segment = "/v$oldVersion" // Old version endpoint: /v3.0.6/v1/chat/completions
             )
             
-            // Set up NEW response on versioned new endpoint (/new_version/v1/chat/completions)
+            // Set up NEW response on versioned new endpoint (/v3.0.8/v1/chat/completions)
+            // This serves new inferences created after upgrade
             it.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse(newResponse),
-                segment = newSegment // New version endpoint
+                segment = "/v$newVersion" // New version endpoint: /v3.0.8/v1/chat/completions
             )
             
             // Add old version node configuration
             it.api.addNode(
                 validNode.copy(
                     host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
-                    inferenceSegment = oldSegment, version = "v0", id = "oldNode"
+                    inferenceSegment = "/v$oldVersion", version = oldVersion, id = "oldMLNode"
                 )
             )
             
-            // Add new version node configuration
+            // Add new version node configuration  
             it.api.addNode(
                 validNode.copy(
                     host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
-                    inferenceSegment = newSegment, version = newVersion, id = "v1Node"
+                    inferenceSegment = "/v$newVersion", version = newVersion, id = "newMLNode"
                 )
             )
         }
@@ -179,7 +181,7 @@ class UpgradeTests : TestermintTest() {
             cluster,
             CreatePartialUpgrade(
                 height = effectiveHeight.toString(),
-                nodeVersion = newVersion,
+                nodeVersion = newVersion, // "v3.0.8"
                 apiBinariesJson = ""
             )
         )
@@ -189,9 +191,16 @@ class UpgradeTests : TestermintTest() {
         
         logSection("Side-by-side deployment ready - both old and new versions available")
         // At this point we have:
-        // /v1/chat/completions -> OLD (for existing inferences)  
-        // /old_version/v1/chat/completions -> OLD (versioned old endpoint)
-        // /new_version/v1/chat/completions -> NEW (versioned new endpoint)
+        // INFERENCE ENDPOINTS:
+        // /v1/chat/completions -> OLD v3.0.6 (for existing inferences with empty NodeVersion)  
+        // /v3.0.6/v1/chat/completions -> OLD v3.0.6 (for inferences with explicit old version)
+        // /v3.0.8/v1/chat/completions -> NEW v3.0.8 (for new inferences after upgrade)
+        //
+        // API MANAGEMENT ENDPOINTS (all should work with version prefixes):
+        // /api/v1/state + /v3.0.6/api/v1/state + /v3.0.8/api/v1/state
+        // /api/v1/stop + /v3.0.6/api/v1/stop + /v3.0.8/api/v1/stop
+        // /api/v1/inference/up + /v3.0.6/api/v1/inference/up + /v3.0.8/api/v1/inference/up
+        // /api/v1/pow/* + /v3.0.6/api/v1/pow/* + /v3.0.8/api/v1/pow/*
         
         logSection("Verifying new inference hits right endpoint")
         genesis.waitForNextInferenceWindow()

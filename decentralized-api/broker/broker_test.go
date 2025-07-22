@@ -8,11 +8,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/productscience/inference/x/inference/types"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
 )
+
+// Test YAML config with default version for testing
+var testConfigYaml = `
+current_node_version: "3.0.6"
+previous_node_version: ""
+api:
+  port: 8080
+chain_node:
+  url: http://test-node:26657
+  account_name: test
+  keyring_backend: test
+  keyring_dir: /tmp/.test
+`
+
+// createTestConfigManager creates a minimal ConfigManager for testing with proper versioning
+func createTestConfigManager() *apiconfig.ConfigManager {
+	configManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(testConfigYaml)),
+	}
+
+	// Load the config - this sets the internal currentConfig field
+	err := configManager.Load()
+	if err != nil {
+		panic("Failed to load test config: " + err.Error())
+	}
+
+	return configManager
+}
 
 func NewTestBroker() *Broker {
 	participantInfo := participant.CosmosInfo{
@@ -27,7 +56,10 @@ func NewTestBroker() *Broker {
 		true,
 	)
 
-	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), nil)
+	// Create test config manager with proper versioning
+	configManager := createTestConfigManager()
+
+	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), configManager)
 }
 
 func TestSingleNode(t *testing.T) {

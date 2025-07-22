@@ -73,7 +73,6 @@ data class DockerGroup(
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
-        Thread.sleep(Duration.ofSeconds(30L))
         // Just register the log events
         getLocalInferencePairs(config)
     }

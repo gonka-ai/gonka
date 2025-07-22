@@ -33,26 +33,36 @@ data class TokenizationResponse(
 fun Route.tokenizationRoutes(tokenizationService: TokenizationService) {
     val logger = LoggerFactory.getLogger("TokenizationRoutes")
 
-    // POST /tokenize - Tokenizes the provided prompt
-    route("{segment?}") {
-        post("/tokenize") {
-            try {
-                val request = call.receive<TokenizationRequest>()
-                logger.info("Received tokenization request for model: ${request.model}")
+    // Original endpoint: POST /tokenize - Tokenizes the provided prompt
+    post("/tokenize") {
+        handleTokenizationRequest(call, tokenizationService, logger)
+    }
+    
+    // Versioned endpoint: POST /{version}/tokenize - Tokenizes the provided prompt
+    post("/{version}/tokenize") {
+        handleTokenizationRequest(call, tokenizationService, logger)
+    }
+}
 
-                val tokenizationResult = tokenizationService.tokenize(request.model, request.prompt)
+/**
+ * Handles tokenization requests for both versioned and non-versioned endpoints
+ */
+private suspend fun handleTokenizationRequest(call: ApplicationCall, tokenizationService: TokenizationService, logger: org.slf4j.Logger) {
+    try {
+        val request = call.receive<TokenizationRequest>()
+        logger.info("Received tokenization request for model: ${request.model}")
 
-                call.respond(HttpStatusCode.OK, tokenizationResult)
-            } catch (e: Exception) {
-                logger.error("Error processing tokenization request: ${e.message}", e)
-                call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf(
-                        "status" to "error",
-                        "message" to "Failed to tokenize prompt: ${e.message}"
-                    )
-                )
-            }
-        }
+        val tokenizationResult = tokenizationService.tokenize(request.model, request.prompt)
+
+        call.respond(HttpStatusCode.OK, tokenizationResult)
+    } catch (e: Exception) {
+        logger.error("Error processing tokenization request: ${e.message}", e)
+        call.respond(
+            HttpStatusCode.BadRequest,
+            mapOf(
+                "status" to "error",
+                "message" to "Failed to tokenize prompt: ${e.message}"
+            )
+        )
     }
 }

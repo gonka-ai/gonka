@@ -16,12 +16,41 @@ import (
 	"decentralized-api/chainphase"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
+
+// Test YAML config with default version for integration testing
+var integrationTestConfigYaml = `
+current_node_version: "3.0.6"
+previous_node_version: ""
+api:
+  port: 8080
+chain_node:
+  url: http://test-node:26657
+  account_name: test
+  keyring_backend: test
+  keyring_dir: /tmp/.test
+`
+
+// createIntegrationTestConfigManager creates a minimal ConfigManager for integration testing
+func createIntegrationTestConfigManager() *apiconfig.ConfigManager {
+	configManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(integrationTestConfigYaml)),
+	}
+
+	// Load the config - this sets the internal currentConfig field
+	err := configManager.Load()
+	if err != nil {
+		panic("Failed to load integration test config: " + err.Error())
+	}
+
+	return configManager
+}
 
 var defaultEpochParams = types.EpochParams{
 	EpochLength:           100,
@@ -169,7 +198,11 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		Address: "some-address",
 		PubKey:  "some-pub-key",
 	}
-	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, &participantInfo, "http://localhost:8080/poc", mockClientFactory, nil)
+
+	// Create test config manager with proper versioning
+	integrationConfigManager := createIntegrationTestConfigManager()
+
+	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, &participantInfo, "http://localhost:8080/poc", mockClientFactory, integrationConfigManager)
 
 	// Create real PoC orchestrator (not mocked - we want to test the real flow)
 	pocOrchestrator := poc.NewNodePoCOrchestrator(
