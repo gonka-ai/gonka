@@ -17,40 +17,12 @@ func TestGenesis(t *testing.T) {
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 		CosmWasmParams:    baseGenesis.CosmWasmParams,
 
-		InferenceList: []types.Inference{
-			{
-				Index:       "0",
-				InferenceId: "0",
-			},
-			{
-				Index:       "1",
-				InferenceId: "1",
-			},
-		},
 		ParticipantList: []types.Participant{
 			{
 				Index: "0",
 			},
 			{
 				Index: "1",
-			},
-		},
-		SettleAmountList: []types.SettleAmount{
-			{
-				Participant: "0",
-			},
-			{
-				Participant: "1",
-			},
-		},
-		EpochGroupValidationsList: []types.EpochGroupValidations{
-			{
-				Participant:         "0",
-				PocStartBlockHeight: 0,
-			},
-			{
-				Participant:         "1",
-				PocStartBlockHeight: 1,
 			},
 		},
 		TokenomicsData: &types.TokenomicsData{
@@ -65,36 +37,6 @@ func TestGenesis(t *testing.T) {
 			},
 			{
 				Address: "1",
-			},
-		},
-		InferenceTimeoutList: []types.InferenceTimeout{
-			{
-				ExpirationHeight: 0,
-				InferenceId:      "0",
-			},
-			{
-				ExpirationHeight: 1,
-				InferenceId:      "1",
-			},
-		},
-		InferenceValidationDetailsList: []types.InferenceValidationDetails{
-			{
-				EpochId:     0,
-				InferenceId: "0",
-			},
-			{
-				EpochId:     1,
-				InferenceId: "1",
-			},
-		},
-		EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
-			{
-				EpochStartHeight: 0,
-				ParticipantId:    "0",
-			},
-			{
-				EpochStartHeight: 1,
-				ParticipantId:    "1",
 			},
 		},
 		PartialUpgradeList: []types.PartialUpgrade{
@@ -119,16 +61,10 @@ func TestGenesis(t *testing.T) {
 	nullify.Fill(&genesisState)
 	nullify.Fill(got)
 
-	require.ElementsMatch(t, genesisState.InferenceList, got.InferenceList)
 	require.ElementsMatch(t, genesisState.ParticipantList, got.ParticipantList)
 	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
-	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
-	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
 	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	require.ElementsMatch(t, genesisState.TopMinerList, got.TopMinerList)
-	require.ElementsMatch(t, genesisState.InferenceTimeoutList, got.InferenceTimeoutList)
-	require.ElementsMatch(t, genesisState.InferenceValidationDetailsList, got.InferenceValidationDetailsList)
-	require.ElementsMatch(t, genesisState.EpochPerformanceSummaryList, got.EpochPerformanceSummaryList)
 	require.ElementsMatch(t, genesisState.PartialUpgradeList, got.PartialUpgradeList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

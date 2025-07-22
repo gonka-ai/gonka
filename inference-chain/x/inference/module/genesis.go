@@ -25,7 +25,6 @@ var IgnoreDuplicateDenomRegistration bool
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
 	// Observability: start of InitGenesis
 	k.LogInfo("InitGenesis: starting module genesis", types.System,
-		"inferences", len(genState.InferenceList),
 		"participants", len(genState.ParticipantList),
 	)
 	// PRTODO: set active participants here, but how?
@@ -36,21 +35,9 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}*/
 	InitGenesisEpoch(ctx, k)
 
-	// Set all the inference
-	for _, elem := range genState.InferenceList {
-		k.SetInference(ctx, elem)
-	}
 	// Set all the participant
 	for _, elem := range genState.ParticipantList {
 		k.SetParticipant(ctx, elem)
-	}
-	// Set all the settleAmount
-	for _, elem := range genState.SettleAmountList {
-		k.SetSettleAmount(ctx, elem)
-	}
-	// Set all the epochGroupValidations
-	for _, elem := range genState.EpochGroupValidationsList {
-		k.SetEpochGroupValidations(ctx, elem)
 	}
 
 	InitHoldingAccounts(ctx, k, genState)
@@ -67,18 +54,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	// Set all the topMiner
 	for _, elem := range genState.TopMinerList {
 		k.SetTopMiner(ctx, elem)
-	}
-	// Set all the inferenceTimeout
-	for _, elem := range genState.InferenceTimeoutList {
-		k.SetInferenceTimeout(ctx, elem)
-	}
-	// Set all the inferenceValidationDetails
-	for _, elem := range genState.InferenceValidationDetailsList {
-		k.SetInferenceValidationDetails(ctx, elem)
-	}
-	// Set all the epochPerformanceSummary
-	for _, elem := range genState.EpochPerformanceSummaryList {
-		k.SetEpochPerformanceSummary(ctx, elem)
 	}
 	// Set all the partialUpgrade
 	for _, elem := range genState.PartialUpgradeList {
@@ -241,11 +216,8 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := &types.GenesisState{}
 	genesis.Params = k.GetParams(ctx)
 
-	genesis.InferenceList = k.GetAllInference(ctx)
 	genesis.ParticipantList = k.GetAllParticipant(ctx)
 	genesis.EpochGroupDataList = k.GetAllEpochGroupData(ctx)
-	genesis.SettleAmountList = k.GetAllSettleAmount(ctx)
-	genesis.EpochGroupValidationsList = k.GetAllEpochGroupValidations(ctx)
 	// Get all tokenomicsData
 	tokenomicsData, found := k.GetTokenomicsData(ctx)
 	if found {
@@ -261,9 +233,6 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	}
 	genesis.ModelList = getModels(&ctx, &k)
 	genesis.TopMinerList = k.GetAllTopMiner(ctx)
-	genesis.InferenceTimeoutList = k.GetAllInferenceTimeout(ctx)
-	genesis.InferenceValidationDetailsList = k.GetAllInferenceValidationDetails(ctx)
-	genesis.EpochPerformanceSummaryList = k.GetAllEpochPerformanceSummary(ctx)
 	genesis.PartialUpgradeList = k.GetAllPartialUpgrade(ctx)
 	// this line is used by starport scaffolding # genesis/module/export
 
