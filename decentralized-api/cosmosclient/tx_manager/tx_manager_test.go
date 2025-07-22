@@ -1,4 +1,4 @@
-package cosmosclient
+package tx_manager
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"fmt"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
@@ -84,7 +83,8 @@ func TestTxManager_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	fmt.Println(addr)
-	mn, err := NewTxManager(ctx, &cosmoclient, &account, authtypes.AccountRetriever{}, natsConn, addr, 5)
+
+	mn, err := NewTxManager(ctx, &cosmoclient, &account, time.Second*30, natsConn, addr)
 	assert.NoError(t, err)
 
 	err = mn.SendTxs()
@@ -113,13 +113,14 @@ func TestTxManager_Success(t *testing.T) {
 	notExistingTxUuid1 := uuid.NewString()
 	fmt.Printf("notExisstingTxUuid1: %v\n", notExistingTxUuid1)
 
+	now := time.Now()
 	err = mn.putTxToObserve(notExistingTxUuid1, &inference.MsgFinishInference{
 		Creator:              addr,
 		InferenceId:          uuid.NewString(),
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
 		ExecutedBy:           addr,
-	}, notExistingHash1, uint64(mn.highestSequence+1), uint64(blockHeight+1))
+	}, notExistingHash1, now.Add(time.Second*2))
 	assert.NoError(t, err)
 
 	notExistingTxUuid2 := uuid.NewString()
@@ -131,7 +132,7 @@ func TestTxManager_Success(t *testing.T) {
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
 		ExecutedBy:           addr,
-	}, notExistingHash2, uint64(mn.highestSequence+1), uint64(blockHeight+1))
+	}, notExistingHash2, now.Add(time.Second*2))
 	assert.NoError(t, err)
 
 	err = mn.ObserveTxs()
@@ -187,12 +188,15 @@ func TestPack_Unpack_Msg(t *testing.T) {
 	bz, err := client.Context().Codec.MarshalInterfaceJSON(rawTx)
 	assert.NoError(t, err)
 
-	b, err := json.Marshal(&txToSend{TxInfo: txInfo{RawTx: bz}})
+	timeout := getTimestamp(time.Second)
+	b, err := json.Marshal(&txToSend{TxInfo: txInfo{RawTx: bz, Timeout: timeout}})
 	assert.NoError(t, err)
 
 	var tx txToSend
 	err = json.Unmarshal(b, &tx)
 	assert.NoError(t, err)
+
+	assert.Equal(t, timeout, tx.TxInfo.Timeout)
 
 	var unpackedAny codectypes.Any
 	err = client.Context().Codec.UnmarshalJSON(tx.TxInfo.RawTx, &unpackedAny)

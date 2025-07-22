@@ -4,6 +4,7 @@ import (
 	"context"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
+	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
 	"decentralized-api/logging"
 	"errors"
@@ -12,7 +13,6 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/golang/protobuf/proto"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
@@ -27,11 +27,10 @@ import (
 )
 
 type InferenceCosmosClient struct {
-	txFactory *tx.Factory
 	ctx     context.Context
-	address string
 	account *cosmosaccount.Account
-	manager TxManager
+	address string
+	manager tx_manager.TxManager
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -105,7 +104,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
-	mn, err := NewTxManager(ctx, &cosmoclient, &account, authtypes.AccountRetriever{}, natsConn, addr, 5)
+	mn, err := tx_manager.NewTxManager(ctx, &cosmoclient, &account, time.Second*60, natsConn, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +274,7 @@ func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgA
 	}
 
 	msg := &inference.MsgAssignTrainingTaskResponse{}
-	err = ParseMsgResponse(result.TxResult.Data, 0, msg)
+	err = tx_manager.ParseMsgResponse(result.TxResult.Data, 0, msg)
 	if err != nil {
 		logging.Error("Failed to parse message response", types.Messages, "error", err)
 		return nil, err
@@ -295,100 +294,6 @@ func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg) (*s
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
 	return icc.manager.SendTransactionAsyncNoRetry(msg)
-}
-
-var accountRetriever = authtypes.AccountRetriever{}
-
-func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
-	factory, err := c.getFactory()
-	if err != nil {
-		return nil, err
-	}
-	unsignedTx, err := factory.BuildUnsignedTx(msg)
-	if err != nil {
-		return nil, err
-	}
-	txBytes, err := c.getSignedBytes(ctx, unsignedTx, factory)
-	if err != nil {
-		return nil, err
-	}
-	return c.Client.Context().BroadcastTxSync(txBytes)
-}
-
-// TODO: This is likely not as guaranteed to be unique as we want. Will fix
-func getTimestamp() time.Time {
-	// Use the current time in seconds since epoch
-	return time.Now().Add(time.Second * 60) // Adding 60 seconds to ensure the transaction is valid for a while
-}
-
-func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, error) {
-	// Gas is not charged, but without a high gas limit the transactions fail
-	unsignedTx.SetGasLimit(1000000000)
-	unsignedTx.SetFeeAmount(sdk.Coins{})
-	timestamp := getTimestamp()
-	unsignedTx.SetUnordered(true)
-	unsignedTx.SetTimeoutTimestamp(timestamp)
-	name := c.Account.Name
-	logging.Debug("Signing transaction", types.Messages, "name", name)
-	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
-	if err != nil {
-		logging.Error("Failed to sign transaction", types.Messages, "error", err)
-		return nil, err
-	}
-	txBytes, err := c.Client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
-	if err != nil {
-		logging.Error("Failed to encode transaction", types.Messages, "error", err)
-		return nil, err
-	}
-	return txBytes, nil
-}
-
-func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
-	// Now that we don't need the sequence, we only need to create the factory if it doesn't exist
-	if c.TxFactory != nil {
-		return c.TxFactory, nil
-	}
-	address, err := c.Account.Record.GetAddress()
-	if err != nil {
-		logging.Error("Failed to get account address", types.Messages, "error", err)
-		return nil, err
-	}
-	accountNumber, _, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
-	if err != nil {
-		logging.Error("Failed to get account number and sequence", types.Messages, "error", err)
-		return nil, err
-	}
-	factory := c.Client.TxFactory.
-		WithAccountNumber(accountNumber).WithGasAdjustment(10).WithFees("").WithGasPrices("").WithGas(0).WithUnordered(true)
-	c.TxFactory = &factory
-	return &factory, nil
-}
-
-func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error) {
-	// create a guid
-	id := uuid.New().String()
-
-	logging.Debug("Start Broadcast", types.Messages, "id", id)
-	response, err := icc.BroadcastMessage(icc.Context, msg)
-	logging.Debug("Finish broadcast", types.Messages, "id", id)
-	if err != nil {
-		logging.Error("Failed to broadcast transaction", types.Messages, "error", err)
-		return response, err
-	}
-
-	if response == nil {
-		logging.Warn("Broadcast returned nil response, potentially async mode or error", types.Messages, "id", id)
-		return nil, nil
-	}
-
-	logging.Debug("Transaction broadcast raw response", types.Messages, "id", id, "txHash", response.TxHash, "code", response.Code)
-
-	if response.Code != 0 {
-		logging.Error("Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "response", response)
-		return response, NewTransactionErrorFromResponse(response)
-	}
-	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", response.TxHash)
-	return response, nil
 }
 
 func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
@@ -418,7 +323,7 @@ func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.M
 		return err
 	}
 
-	err = ParseMsgResponse(result.TxResult.Data, 0, dstMsg)
+	err = tx_manager.ParseMsgResponse(result.TxResult.Data, 0, dstMsg)
 	if err != nil {
 		logging.Error("Failed to parse message response", types.Messages, "error", err)
 		return err
