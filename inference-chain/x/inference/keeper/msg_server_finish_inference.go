@@ -148,7 +148,6 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
 		EpochId:            effectiveEpoch.Index,
-		EpochGroupId:       currentEpochGroup.GroupData.EpochGroupId,
 		Model:              existingInference.Model,
 		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
 	}
@@ -168,7 +167,6 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		types.Validation,
 		"inference_id", inferenceDetails.InferenceId,
 		"epoch_id", inferenceDetails.EpochId,
-		"epoch_group_id", inferenceDetails.EpochGroupId,
 		"executor_id", inferenceDetails.ExecutorId,
 		"executor_power", inferenceDetails.ExecutorPower,
 		"executor_reputation", inferenceDetails.ExecutorReputation,

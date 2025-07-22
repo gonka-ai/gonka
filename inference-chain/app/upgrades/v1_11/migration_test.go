@@ -13,6 +13,8 @@ import (
 )
 
 func TestEpochMigration(t *testing.T) {
+	t.Skip("Chain was relaunched, code re-written, and migration no longer needed")
+
 	k, sdkCtx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
 	const (
@@ -71,8 +73,8 @@ func TestEpochMigration(t *testing.T) {
 	// 1.d Validation details (EpochGroupId not filled yet)
 	for i := 0; i < validationCount; i++ {
 		vd := types.InferenceValidationDetails{
-			EpochGroupId: uint64(i%rootEGCount + 1),
-			InferenceId:  fmt.Sprintf("inf-%d", i),
+			// EpochGroupId: uint64(i%rootEGCount + 1),
+			InferenceId: fmt.Sprintf("inf-%d", i),
 		}
 		k.SetInferenceValidationDetails(sdkCtx, vd)
 	}
@@ -112,9 +114,10 @@ func TestEpochMigration(t *testing.T) {
 
 	vds := k.GetAllInferenceValidationDetails(sdkCtx)
 	require.Equal(t, validationCount, len(vds))
-	for _, v := range vds {
+	// EpochGroupId was deleted
+	/*	for _, v := range vds {
 		require.Equal(t, v.EpochId, v.EpochGroupId)
-	}
+	}*/
 
 	// Verify that all sub-groups received the correct EpochId
 	allEGs := k.GetAllEpochGroupData(sdkCtx)
