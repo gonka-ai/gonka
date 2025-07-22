@@ -294,7 +294,6 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		return nil, err
 	}
 
-	h.Mocks.ExpectAnyCreateGroupWithPolicyCall()
 	_, err = h.MessageServer.FinishInference(h.context, &types.MsgFinishInference{
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
