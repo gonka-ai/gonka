@@ -373,14 +373,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
-
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
