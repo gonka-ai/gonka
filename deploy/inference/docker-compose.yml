@@ -1,23 +1,4 @@
 services:
-  mlnode-306:
-    image: ghcr.io/product-science/mlnode:3.0.6
-    hostname: mlnode-306
-    volumes:
-      - ${HF_HOME:-${HOME}/.cache}:/root/.cache
-    environment:
-      - HF_HOME=/root/.cache
-      - VLLM_ATTENTION_BACKEND=FLASHINFER
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    ipc: host
-    command: uvicorn api.app:app --host=0.0.0.0 --port=8080
-    restart: always
-
   mlnode-308:
     image: ghcr.io/product-science/mlnode:3.0.8
     hostname: mlnode-308
@@ -26,6 +7,7 @@ services:
     environment:
       - HF_HOME=/root/.cache
       - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - HF_HUB_OFFLINE=true
     deploy:
       resources:
         reservations:
