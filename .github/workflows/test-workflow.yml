@@ -25,11 +25,63 @@ on:
         type: boolean
         default: false
         description: 'Whether to run upgrade builds'
+      use_matrix:
+        required: false
+        type: boolean
+        default: true
+        description: 'Whether to use matrix strategy for parallel execution'
 
 jobs:
-  run-tests:
+  # This job dynamically scans for test classes and sets up the matrix for parallel test execution
+  # It replaces the previous hardcoded matrix with a dynamically generated one based on the actual test classes
+  setup-test-matrix:
     runs-on: ubuntu-latest
-
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+          
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+          
+      # This step uses Gradle tasks to scan for test classes that will actually run tests after filtering
+      # The tasks properly handle both class-level and method-level tags:
+      # 1. Classes with @Tag("exclude") or @Tag("unstable") at the class level are completely excluded
+      # 2. For remaining classes:
+      #    - For run-tests: Lists only classes that have at least one test that doesn't have unstable,exclude tags
+      #    - For run-sanity: Lists only classes that have at least one test with the sanity tag that doesn't have unstable,exclude tags
+      # This ensures we don't create matrix entries for test classes that would have zero tests after filtering,
+      # and properly handles files with multiple classes (like SpecTests.kt)
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          cd testermint
+          if [[ "${{ inputs.test_command }}" == "run-tests" ]]; then
+            echo "Running listAllTestClasses task for integration tests"
+            # This uses the custom Gradle task that scans for all test classes
+            # The actual tag filtering (excluding unstable,exclude) happens at test runtime
+            TEST_CLASSES=$(./gradlew -q listAllTestClasses)
+          elif [[ "${{ inputs.test_command }}" == "run-sanity" ]]; then
+            echo "Running findSanityTestClasses task for sanity tests"
+            # This uses the custom Gradle task that scans for classes containing sanity-tagged tests
+            TEST_CLASSES=$(./gradlew -q findSanityTestClasses)
+          else
+            echo "Unknown test command: ${{ inputs.test_command }}"
+            exit 1
+          fi
+          
+          # Format the output as a JSON array for the matrix
+          echo "matrix={\"test_group\":[${TEST_CLASSES}]}" >> $GITHUB_OUTPUT
+          echo "Generated matrix: {\"test_group\":[${TEST_CLASSES}]}"
+  
+  build-images:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -45,42 +97,320 @@ jobs:
         run: |
           docker --version
           docker compose version
+
       - name: Install Make
         run: |
           sudo apt-get update
           sudo apt-get install -y make
+
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '19'
+
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
-        run: sudo make build-docker
+        run: |
+          sudo make build-docker
+          echo "=== Images immediately after build ==="
+          sudo docker images | head -20
+
+      - name: Save Docker Images
+        run: |
+          mkdir -p docker-images
+          sudo docker save -o docker-images/inference-chain.tar ghcr.io/product-science/inferenced:latest
+          sudo docker save -o docker-images/decentralized-api.tar ghcr.io/product-science/api:latest
+          sudo docker save -o docker-images/inference-mock-server.tar inference-mock-server:latest
+          sudo docker save -o docker-images/proxy.tar ghcr.io/product-science/proxy:latest
+          # Compress images to save storage space
+          sudo gzip docker-images/*.tar
+          # Fix ownership so upload-artifact can access files
+          sudo chown -R $USER:$USER docker-images/
+          echo "=== Created files ==="
+          ls -la docker-images/
+
+      - name: Upload Docker Images
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+          retention-days: 1
 
       - name: Make Upgrade Build
         if: ${{ inputs.enable_upgrades }}
-        run: sudo make build-for-upgrade-tests
+        run: |
+          sudo make build-for-upgrade-tests
+          # Fix ownership of upgrade build files
+          sudo chown -R $USER:$USER public-html/ || true
+
+      - name: Upload Upgrade Build Files
+        if: ${{ inputs.enable_upgrades }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-build-files
+          path: public-html/
+          retention-days: 1
+
+  # This job runs the tests in parallel using the dynamically generated matrix
+  # It depends on both setup-test-matrix (for the matrix) and build-images (for the Docker images)
+  run-tests:
+    needs: [setup-test-matrix, build-images]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Use the dynamically generated matrix from the setup-test-matrix job
+      # This replaces the previous hardcoded list of test classes
+      matrix: ${{ fromJson(needs.setup-test-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+
+      - name: Set up Docker (Latest Version)
+        uses: docker/setup-docker-action@v4
+        with:
+          version: 'latest'
+
+      - name: Download Docker Images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+
+      - name: Load Docker Images
+        run: |
+          # Decompress first
+          sudo gunzip docker-images/*.tar.gz || true
+          # Load images with :latest tags
+          sudo docker load -i docker-images/inference-chain.tar || true
+          sudo docker load -i docker-images/decentralized-api.tar || true
+          sudo docker load -i docker-images/inference-mock-server.tar || true
+          sudo docker load -i docker-images/proxy.tar || true
+
+      - name: Install Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+
+      - name: Download Upgrade Build Files
+        if: ${{ inputs.enable_upgrades }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: upgrade-build-files
+          path: ./
 
       - name: Start test chain
         working-directory: local-test-net
         run: sudo ./launch.sh
 
-      - name: Run Tests
+      - name: Run Tests (Matrix - Integration)
+        if: ${{ inputs.use_matrix && inputs.test_command == 'run-tests' }}
+        run: |
+          echo "Running test group: ${{ matrix.test_group }}"
+          sudo make run-tests TESTS="${{ matrix.test_group }}"
+
+      - name: Run Tests (Matrix - Sanity)
+        if: ${{ inputs.use_matrix && inputs.test_command == 'run-sanity' }}
+        run: |
+          echo "Running sanity test group: ${{ matrix.test_group }}"
+          sudo make run-sanity TESTS="${{ matrix.test_group }}"
+
+      - name: Run Tests (Non-Matrix)
+        if: ${{ !inputs.use_matrix }}
         run: sudo make ${{ inputs.test_command }}
 
       - name: Archive Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-${{ matrix.test_group }}
           path: ./testermint/logs
+          retention-days: 7  # Keep test logs for 1 week only
+
+      - name: Install XML utilities
+        if: always()
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
 
       - name: Publish Test Results
         uses: dorny/test-reporter@v1
         if: always()
+        continue-on-error: true
         with:
-          name: ${{ inputs.test_name }}
+          name: ${{ inputs.test_name }} (${{ matrix.test_group }})
           path: ./testermint/build/test-results/**/*.xml
           reporter: java-junit
+          fail-on-error: false
+
+      - name: Save Test Counts
+        if: always()
+        run: |
+          # Count tests from XML files
+          PASSED=0
+          FAILED=0
+          SKIPPED=0
+          FAILED_TESTS=""
+          
+          if [ -d "./testermint/build/test-results/test" ]; then
+            for xml in ./testermint/build/test-results/test/*.xml; do
+              if [ -f "$xml" ]; then
+                TESTS=$(grep -o 'tests="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
+                FAILURES=$(grep -o 'failures="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
+                SKIPS=$(grep -o 'skipped="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
+                
+                PASSED=$((PASSED + TESTS - FAILURES - SKIPS))
+                FAILED=$((FAILED + FAILURES))
+                SKIPPED=$((SKIPPED + SKIPS))
+                
+                # Extract detailed failed test names
+                if [ "$FAILURES" -gt 0 ]; then
+                  # This is more robust against spaces in test names.
+                  # It extracts the attribute values by replacing quotes with newlines and filtering.
+                  FAILED_CLASSNAMES=$(xmllint --xpath "//testcase[failure]/@classname" "$xml" 2>/dev/null | tr '"' '\n' | grep -v 'classname=' | grep . || echo "")
+                  FAILED_NAMES=$(xmllint --xpath "//testcase[failure]/@name" "$xml" 2>/dev/null | tr '"' '\n' | grep -v 'name=' | grep . || echo "")
+
+                  # Combine them line-by-line, e.g., "com.example.Test > testMethod"
+                  # and then convert to a single comma-separated string.
+                  if [ -n "$FAILED_NAMES" ]; then
+                      FAILED_DETAILS_LINES=$(paste -d ' > ' <(echo "$FAILED_CLASSNAMES") <(echo "$FAILED_NAMES"))
+                      FAILED_FROM_XML=$(echo "$FAILED_DETAILS_LINES" | tr '\n' ',')
+                      
+                      if [ ! -z "$FAILED_FROM_XML" ]; then
+                        if [ -z "$FAILED_TESTS" ];
+                          then FAILED_TESTS="$FAILED_FROM_XML"
+                          else FAILED_TESTS="$FAILED_TESTS$FAILED_FROM_XML"
+                        fi
+                      fi
+                  fi
+                fi
+              fi
+            done
+          fi
+          
+          # Clean up failed tests list (remove trailing comma)
+          FAILED_TESTS=$(echo "$FAILED_TESTS" | sed 's/,$//')
+          
+          # Save to file with unique name
+          {
+            echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped"
+            if [ ! -z "$FAILED_TESTS" ]; then
+              echo "FAILED_TESTS: $FAILED_TESTS"
+            fi
+          } > test-counts-${{ matrix.test_group }}.txt
+          
+          echo "##[debug]${{ matrix.test_group }}: P=$PASSED, F=$FAILED, S=$SKIPPED"
+          if [ ! -z "$FAILED_TESTS" ]; then
+            echo "##[debug]Failed tests: $FAILED_TESTS"
+          fi
+          
+          # Show contents of the generated file for debugging
+          echo "##[debug]Generated file contents:"
+          cat test-counts-${{ matrix.test_group }}.txt
+
+      - name: Upload Test Counts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-counts-${{ matrix.test_group }}
+          path: test-counts-${{ matrix.test_group }}.txt
+          retention-days: 1
+
+  # Simple summary job
+  test-summary:
+    needs: run-tests
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download All Test Counts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-counts-*
+          merge-multiple: true
+
+      - name: Aggregate Results
+        run: |
+          echo "# 📊 Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Group | Passed | Failed | Skipped |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          
+          TOTAL_PASSED=0
+          TOTAL_FAILED=0
+          TOTAL_SKIPPED=0
+          ALL_FAILED_TESTS=""
+          
+          echo "##[debug]Looking for test count files..."
+          ls -la test-counts-*.txt || echo "No test count files found"
+          
+          for file in test-counts-*.txt; do
+            if [ -f "$file" ]; then
+              content=$(cat "$file")
+              echo "Processing: $content"
+              
+              # Extract test group name and numbers from first line
+              first_line=$(echo "$content" | head -n1)
+              TEST_GROUP=$(echo "$first_line" | cut -d':' -f1)
+              PASSED=$(echo "$first_line" | grep -o '[0-9]* passed' | grep -o '[0-9]*')
+              FAILED=$(echo "$first_line" | grep -o '[0-9]* failed' | grep -o '[0-9]*')
+              SKIPPED=$(echo "$first_line" | grep -o '[0-9]* skipped' | grep -o '[0-9]*')
+              
+              # Add to table
+              echo "| $TEST_GROUP | $PASSED | $FAILED | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+              
+              TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
+              TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
+              TOTAL_SKIPPED=$((TOTAL_SKIPPED + SKIPPED))
+              
+              # Extract failed test names if present
+              if grep -q "FAILED_TESTS:" "$file"; then
+                FAILED_TESTS=$(grep "FAILED_TESTS:" "$file" | cut -d':' -f2- | sed 's/^ *//')
+                if [ ! -z "$FAILED_TESTS" ]; then
+                  if [ -z "$ALL_FAILED_TESTS" ]; then
+                    ALL_FAILED_TESTS="**$TEST_GROUP:** $FAILED_TESTS"
+                  else
+                    ALL_FAILED_TESTS="$ALL_FAILED_TESTS\n**$TEST_GROUP:** $FAILED_TESTS"
+                  fi
+                fi
+              fi
+              
+              echo "##[debug]$TEST_GROUP: P=$PASSED, F=$FAILED, S=$SKIPPED"
+            fi
+          done
+          
+          # Add totals row
+          echo "|------------|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **TOTAL** | **$TOTAL_PASSED** | **$TOTAL_FAILED** | **$TOTAL_SKIPPED** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add status indicator
+          if [ $TOTAL_FAILED -eq 0 ]; then
+            echo "## ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
+            echo "**Total tests executed: $((TOTAL_PASSED + TOTAL_SKIPPED))**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
+            echo "**$TOTAL_FAILED test(s) failed out of $((TOTAL_PASSED + TOTAL_FAILED + TOTAL_SKIPPED)) total**" >> $GITHUB_STEP_SUMMARY
+            
+            # Add failed test details
+            if [ ! -z "$ALL_FAILED_TESTS" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 🔍 Failed Tests Details:" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo -e "$ALL_FAILED_TESTS" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Individual test reports are available in the Checks tab above*" >> $GITHUB_STEP_SUMMARY
+          
+          echo "##[debug]FINAL TOTALS: Passed=$TOTAL_PASSED, Failed=$TOTAL_FAILED, Skipped=$TOTAL_SKIPPED"
