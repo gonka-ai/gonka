@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"sort"
-
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"

@@ -96,7 +96,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		t.Fatalf("Failed to advance epoch: %v", err)
 	}
 	require.Equal(t, newBlockHeight, ctx.BlockHeight())
-	StubModelSubgroup(t, ctx, k, mocks, &model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, &model)
 
 	expectedFinished, err := inferenceHelper.FinishInference()
 	require.NoError(t, err)

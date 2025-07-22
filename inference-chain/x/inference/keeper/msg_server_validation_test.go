@@ -18,7 +18,12 @@ const MODEL_ID = "Qwen/QwQ-32B"
 
 func TestMsgServer_Validation(t *testing.T) {
 	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
-	expected, err := inferenceHelper.StartInference("promptPayload", "Qwen/QwQ-32B", 10020220, keeper.DefaultMaxTokens)
+
+	model := &types.Model{Id: MODEL_ID}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", MODEL_ID, 10020220, keeper.DefaultMaxTokens)
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
