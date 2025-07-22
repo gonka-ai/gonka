@@ -12,5 +12,4 @@ message InferenceValidationDetails {
   uint64 executor_power = 6;
   string model = 7;
   uint64 total_power = 8;
-  uint64 epoch_group_id = 10; // The ID of the Group created by the GroupModule!
 }
