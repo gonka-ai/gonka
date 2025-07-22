@@ -1,0 +1,103 @@
+# Pruning Testing Implementation Todo
+
+This document outlines the step-by-step process for implementing the PoC pruning testing functionality as described in the design document (`pruning_testing.md`). Each step is designed to be atomic and executable by an AI agent.
+
+## Implementation Steps
+
+### 1. Scaffold the CountPoCBatchesAtHeight Query
+
+1. Navigate to the inference-chain directory:
+   ```
+   cd inference-chain
+   ```
+
+2. Use Ignite CLI to scaffold the CountPoCBatchesAtHeight query:
+   ```
+   ignite scaffold query countPoCBatchesAtHeight blockHeight:int64 --response count:uint64 --module inference
+   ```
+
+3. Verify that the necessary files have been created or modified in the types and keeper directories.
+
+4. Run unit tests to ensure the basic scaffolding is working correctly.
+
+### 2. Implement the CountPoCBatchesAtHeight Query
+
+1. Locate the newly created query file in the keeper directory.
+
+2. Implement the query function to count PoCBatch objects at the specified block height:
+   - Use the existing keeper methods to retrieve PoCBatch objects
+   - Count the total number of PoCBatch objects
+   - Return the count in the response
+
+3. Run unit tests to verify the implementation works correctly.
+
+### 3. Scaffold the CountPoCValidationsAtHeight Query
+
+1. Use Ignite CLI to scaffold the CountPoCValidationsAtHeight query:
+   ```
+   ignite scaffold query countPoCValidationsAtHeight blockHeight:int64 --response count:uint64 --module inference
+   ```
+
+2. Verify that the necessary files have been created or modified in the types and keeper directories.
+
+3. Run unit tests to ensure the basic scaffolding is working correctly.
+
+### 4. Implement the CountPoCValidationsAtHeight Query
+
+1. Locate the newly created query file in the keeper directory.
+
+2. Implement the query function to count PoCValidation objects at the specified block height:
+   - Use the existing keeper methods to retrieve PoCValidation objects
+   - Count the total number of PoCValidation objects
+   - Return the count in the response
+
+3. Run unit tests to verify the implementation works correctly.
+
+### 5. Regenerate Protocol Buffers
+
+1. Run the Ignite command to regenerate protocol buffer files:
+   ```
+   ignite generate proto-go
+   ```
+
+2. Verify that the protocol buffer files have been regenerated correctly.
+
+3. Run unit tests to ensure the regenerated files work as expected.
+
+### 6. Build and Test the Chain
+
+1. Build the chain using the appropriate make command:
+   ```
+   make local-build
+   ```
+
+2. Start a local chain for testing:
+   ```
+   make run-local
+   ```
+
+3. Verify that the queries return the expected results.
+
+4. Run unit tests to ensure everything is working correctly.
+
+### 7. Write Unit Tests
+
+1. Create unit tests for the CountPoCBatchesAtHeight query:
+   - Test with no PoCBatch objects
+   - Test with multiple PoCBatch objects
+   - Test with invalid block height
+   - Test error handling
+
+2. Create unit tests for the CountPoCValidationsAtHeight query:
+   - Test with no PoCValidation objects
+   - Test with multiple PoCValidation objects
+   - Test with invalid block height
+   - Test error handling
+
+3. Run the unit tests to verify they pass.
+
+## Conclusion
+
+Following these steps will implement the PoC pruning testing functionality as described in the design document. The implementation will provide the necessary queries to enable e2e testing of PoC pruning. Note that the actual e2e tests in the testermint package will be implemented separately.
+
+Remember to run unit tests after each implementation step to catch issues early and ensure the code remains stable throughout the development process.
