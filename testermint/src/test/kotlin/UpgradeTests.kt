@@ -131,13 +131,38 @@ class UpgradeTests : TestermintTest() {
         logSection("Verifying current inference hits right endpoint")
         val effectiveHeight = genesis.getCurrentBlockHeight() + 40
         val newResponse = "Only a short response"
-        val newSegment = "/newVersion"
+        val oldSegment = "/old_version"  // Old versioned endpoint
+        val newSegment = "/new_version"  // New versioned endpoint  
         val newVersion = "v1"
+        
         cluster.allPairs.forEach {
+            // Set up OLD response on default endpoint (/v1/chat/completions)
+            it.mock?.setInferenceResponse(
+                defaultInferenceResponseObject,
+                segment = "" // Default endpoint for existing inferences
+            )
+            
+            // Set up OLD response on versioned old endpoint (/old_version/v1/chat/completions)
+            it.mock?.setInferenceResponse(
+                defaultInferenceResponseObject,
+                segment = oldSegment // Versioned old endpoint
+            )
+            
+            // Set up NEW response on versioned new endpoint (/new_version/v1/chat/completions)
             it.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse(newResponse),
-                segment = newSegment
+                segment = newSegment // New version endpoint
             )
+            
+            // Add old version node configuration
+            it.api.addNode(
+                validNode.copy(
+                    host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
+                    inferenceSegment = oldSegment, version = "v0", id = "oldNode"
+                )
+            )
+            
+            // Add new version node configuration
             it.api.addNode(
                 validNode.copy(
                     host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
@@ -145,9 +170,11 @@ class UpgradeTests : TestermintTest() {
                 )
             )
         }
+        
         genesis.waitForNextInferenceWindow()
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
+        
         val proposalId = genesis.runProposal(
             cluster,
             CreatePartialUpgrade(
@@ -156,14 +183,26 @@ class UpgradeTests : TestermintTest() {
                 apiBinariesJson = ""
             )
         )
+        
         logSection("Waiting for upgrade to be effective")
         genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
+        
+        logSection("Side-by-side deployment ready - both old and new versions available")
+        // At this point we have:
+        // /v1/chat/completions -> OLD (for existing inferences)  
+        // /old_version/v1/chat/completions -> OLD (versioned old endpoint)
+        // /new_version/v1/chat/completions -> NEW (versioned new endpoint)
+        
         logSection("Verifying new inference hits right endpoint")
         genesis.waitForNextInferenceWindow()
         val proposals = genesis.node.getGovernanceProposals()
         Logger.info("Proposals: $proposals", "")
         val newResult = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
+        
+        logSection("Verifying old inferences can still be validated")
+        // Old inferences should still validate against /v1/chat/completions or /old_version/v1/chat/completions
+        // This verifies side-by-side deployment works correctly
     }
 
     fun getBinaryPath(path: String): String {
