@@ -8,13 +8,12 @@ This document outlines a step-by-step approach to implementing the pruning syste
 
 ## Implementation Steps
 
-### Step 1: Define Proto Messages and Parameters
+### Step 1: Define Parameters
 
 **Tasks:**
-1. Add the `InferenceStats` message to `inference-chain/proto/inference/inference/inference.proto`
-2. Add the `inference_pruning_epoch_threshold` parameter to `EpochParams` in `inference-chain/proto/inference/inference/params.proto`
-3. Add the `poc_data_pruning_epoch_threshold` parameter to `PocParams` in `inference-chain/proto/inference/inference/params.proto`
-4. Run `ignite generate proto-go` in the `inference-chain` directory to generate Go code
+1. Add the `inference_pruning_epoch_threshold` parameter to `EpochParams` in `inference-chain/proto/inference/inference/params.proto`
+2. Add the `poc_data_pruning_epoch_threshold` parameter to `PocParams` in `inference-chain/proto/inference/inference/params.proto`
+3. Run `ignite generate proto-go` in the `inference-chain` directory to generate Go code
 
 **Testing:**
 1. Run ALL existing unit tests to ensure the proto changes don't break anything:
@@ -25,62 +24,14 @@ This document outlines a step-by-step approach to implementing the pruning syste
 2. Write new unit tests for the parameter validation in `inference-chain/x/inference/types/params_test.go`
 3. Ensure all tests pass before proceeding
 
-### Step 2: Implement Key Prefixes and Storage Functions
-
-**Tasks:**
-1. Add the `InferenceStatsKeyPrefix` constant to `inference-chain/x/inference/types/key_inference.go`
-2. Implement the `InferenceStatsKey` function in the same file
-3. Update the genesis import/export functions in `inference-chain/x/inference/keeper/genesis.go` to handle `InferenceStats`
-
-**Testing:**
-1. Run ALL existing unit tests to ensure the key changes don't break anything:
-   ```
-   cd inference-chain
-   go test ./...
-   ```
-2. Write new unit tests for the `InferenceStatsKey` function
-3. Ensure all tests pass before proceeding
-
-### Step 3: Implement Inference Stats Conversion Functions
-
-**Tasks:**
-1. Create a new file `inference-chain/x/inference/keeper/inference_stats.go`
-2. Implement the following functions:
-   - `createInferenceStats(inference types.Inference) types.InferenceStats`
-   - `inferenceFromStats(stats types.InferenceStats) types.Inference`
-3. Implement utility functions to check if an inference is eligible for pruning
-
-**Testing:**
-1. Write comprehensive unit tests for the conversion functions in `inference-chain/x/inference/keeper/inference_stats_test.go`
-2. Ensure all tests pass before proceeding
-
-### Step 4: Modify Keeper Methods for Inference Stats
-
-**Tasks:**
-1. Update `SetInference` in `inference-chain/x/inference/keeper/inference.go` to also store the stats version
-2. Update `GetInference` to fall back to stats if full inference is not found
-3. Update `RemoveInference` to add an option to convert to stats-only before removal
-4. Add a new `GetInferenceStats` method to retrieve stats directly
-5. Ensure `GetAllInference` remains unchanged (only returns full inferences)
-
-**Testing:**
-1. Run ALL existing unit tests to ensure basic functionality still works:
-   ```
-   cd inference-chain
-   go test ./...
-   ```
-2. Write new unit tests for the modified keeper methods in `inference-chain/x/inference/keeper/inference_test.go`
-3. Write tests specifically for the fallback behavior in `GetInference`
-4. Ensure all tests pass before proceeding
-
-### Step 5: Implement Inference Pruning Logic
+### Step 2: Implement Inference Pruning Logic
 
 **Tasks:**
 1. Create a new file `inference-chain/x/inference/keeper/pruning.go`
 2. Implement the `PruneInferences` method that:
    - Takes the current epoch and pruning threshold as parameters
    - Scans all inferences
-   - Converts eligible inferences to stats-only
+   - Completely removes eligible inferences
    - Logs pruning activities
 3. Add helper functions to determine if an inference is eligible for pruning
 
@@ -89,7 +40,7 @@ This document outlines a step-by-step approach to implementing the pruning syste
 2. Create test cases for different inference statuses and epoch differences
 3. Ensure all tests pass before proceeding
 
-### Step 6: Implement PoC Data Pruning Logic
+### Step 3: Implement PoC Data Pruning Logic
 
 **Tasks:**
 1. Add the `PrunePoCData` method to `inference-chain/x/inference/keeper/pruning.go` that:
@@ -104,7 +55,7 @@ This document outlines a step-by-step approach to implementing the pruning syste
 2. Create test cases for different PoC record ages
 3. Ensure all tests pass before proceeding
 
-### Step 7: Integrate Pruning with EndBlock
+### Step 4: Integrate Pruning with EndBlock
 
 **Tasks:**
 1. Modify `EndBlock` in `inference-chain/x/inference/module/module.go` to call the pruning functions during the PoC phase
@@ -134,7 +85,7 @@ if pocErr != nil {
 3. Create test cases that simulate multiple epochs and verify pruning occurs correctly
 4. Ensure all tests pass before proceeding
 
-### Step 8: Update Parameter Handling
+### Step 5: Update Parameter Handling
 
 **Tasks:**
 1. Update the parameter validation in `inference-chain/x/inference/types/params.go` to include the new parameters
@@ -152,16 +103,16 @@ if pocErr != nil {
 2. Write new unit tests for the parameter validation in `inference-chain/x/inference/types/params_test.go`
 3. Ensure all tests pass before proceeding
 
-### Step 9: Unit Test the Pruning System
+### Step 6: Unit Test the Pruning System
 
 **Tasks:**
 1. Create a new test file `inference-chain/x/inference/keeper/pruning_system_test.go`
 2. Implement comprehensive unit tests that:
    - Create multiple inferences across different epochs
    - Trigger the pruning process
-   - Verify that eligible inferences are converted to stats-only
+   - Verify that eligible inferences are properly pruned
    - Verify that PoC data is properly pruned
-   - Verify that statistics queries still work correctly
+   - Verify that statistics queries still work correctly using the existing InferenceStats table
 
 **Testing:**
 1. Run ALL existing unit tests:
@@ -171,7 +122,7 @@ if pocErr != nil {
    ```
 2. Ensure all tests pass before proceeding
 
-### Step 10: Update CLI and REST Endpoints
+### Step 7: Update CLI and REST Endpoints
 
 **Tasks:**
 1. Update the CLI commands in `inference-chain/x/inference/client/cli/` to support the new parameters
@@ -187,7 +138,7 @@ if pocErr != nil {
 2. Write new unit tests for the updated CLI commands in `inference-chain/x/inference/client/cli/query_test.go` and `inference-chain/x/inference/client/cli/tx_test.go`
 3. Ensure all tests pass before proceeding
 
-### Step 11: Update Documentation
+### Step 8: Update Documentation
 
 **Tasks:**
 1. Update the module documentation to include information about the pruning system
@@ -198,7 +149,7 @@ if pocErr != nil {
 1. Review the documentation for accuracy and completeness
 2. Ensure all examples are correct and up-to-date
 
-### Step 12: Final Unit Testing
+### Step 9: Final Unit Testing
 
 **Tasks:**
 1. Review all unit tests to ensure comprehensive coverage

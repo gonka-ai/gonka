@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
 import org.tinylog.ThreadContext
@@ -123,8 +124,8 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference"))
     }
 
-    fun getInference(inferenceId: String): InferenceWrapper = wrapLog("getInference", false) {
-        execAndParse(listOf("query", "inference", "show-inference", inferenceId))
+    fun getInference(inferenceId: String): InferenceWrapper? = wrapLog("getInference", false) {
+        execAndParseNullable(listOf("query", "inference", "show-inference", inferenceId))
     }
 
     fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
@@ -222,6 +223,7 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-top-miner"))
     }
 
+
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
         val argsWithJson = listOf(config.execName) +
@@ -230,12 +232,22 @@ data class ApplicationCLI(
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
+
         if (output.contains("inference is not ready; please wait for first block")) {
             throw NotReadyException()
         }
         // Extract JSON payload if output contains gas estimate
         val jsonOutput = output.replace(Regex("^gas estimate: \\d+"), "")
         return cosmosJson.fromJson(jsonOutput, T::class.java)
+    }
+
+    inline fun <reified T> execAndParseNullable(args: List<String>, includeOutputFlag: Boolean = true): T? {
+        return try {
+            execAndParse(args, includeOutputFlag)
+        } catch (e: JsonSyntaxException) {
+            Logger.debug("Failed to parse response: {}", e.message)
+            null
+        }
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types

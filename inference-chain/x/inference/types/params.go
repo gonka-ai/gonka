@@ -42,14 +42,15 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 func DefaultParams() Params {
 	return Params{
 		EpochParams: &EpochParams{
-			EpochLength:               40,
-			EpochMultiplier:           1,
-			EpochShift:                0,
-			DefaultUnitOfComputePrice: 100,
-			PocStageDuration:          10,
-			PocExchangeDuration:       2,
-			PocValidationDelay:        2,
-			PocValidationDuration:     6,
+			EpochLength:                    40,
+			EpochMultiplier:                1,
+			EpochShift:                     0,
+			DefaultUnitOfComputePrice:      100,
+			PocStageDuration:               10,
+			PocExchangeDuration:            2,
+			PocValidationDelay:             2,
+			PocValidationDuration:          6,
+			InferencePruningEpochThreshold: 2, // Default: prune inferences after 2 epochs
 		},
 		ValidationParams: &ValidationParams{
 			FalsePositiveRate:           DecimalFromFloat(0.05),
@@ -68,8 +69,9 @@ func DefaultParams() Params {
 			TimestampAdvance:            30,
 		},
 		PocParams: &PocParams{
-			DefaultDifficulty:    5,
-			ValidationSampleSize: 200,
+			DefaultDifficulty:            5,
+			ValidationSampleSize:         200,
+			PocDataPruningEpochThreshold: 1, // Default: prune PoC data after 1 epoch
 		},
 		TokenomicsParams: &TokenomicsParams{
 			SubsidyReductionInterval: DecimalFromFloat(0.05),

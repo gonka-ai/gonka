@@ -13,54 +13,21 @@ The design addresses two main types of data that consume significant storage spa
 
 ### Problem Statement
 
-Inference records contain large payload fields (prompt and response payloads) that consume significant storage space but are only needed during execution and validation. After a certain number of epochs, these payload fields can be safely removed while preserving the statistical information needed for analytics and reporting.
+Inference records contain large payload fields (prompt and response payloads) that consume significant storage space but are only needed during execution and validation. After a certain number of epochs, these payload fields can be safely removed as the statistical information needed for analytics and reporting is already stored in the existing InferenceStats table.
 
 ### Solution Design
 
-#### InferenceStats Structure
-
-We will create a new `InferenceStats` structure in the chain that contains only the fields used by the statistics system:
-
-```
-message InferenceStats {
-  string index = 1;
-  string inference_id = 2;
-  InferenceStatus status = 3;
-  int64 start_block_timestamp = 4;
-  int64 end_block_timestamp = 5;
-  uint64 epoch_id = 6;
-  uint64 epoch_poc_start_block_height = 7;
-  uint64 prompt_token_count = 8;
-  uint64 completion_token_count = 9;
-  int64 actual_cost = 10;
-  string requested_by = 11;
-  string executed_by = 12;
-  string transferred_by = 13;
-  string model = 14;
-}
-```
-
-#### Storage and Retrieval
-
-The implementation will make the existence of `InferenceStats` transparent to most of the codebase by modifying the keeper methods:
-
-1. **Key Prefix Definition**: Define separate key prefixes for `Inference` and `InferenceStats` records
-2. **SetInference**: Modified to store both the full inference and its stats version
-3. **GetInference**: Modified to fall back to stats if full inference is not found
-4. **RemoveInference**: Enhanced with an option to convert to stats-only before removal
-5. **GetAllInference**: Remains unchanged, returning only full inferences
-
 #### Pruning Process
 
-The pruning process will run during the PoC phase of each epoch:
+The pruning process for inferences will run during the PoC phase of each epoch:
 
 1. Scan all inferences
 2. For each inference, check if:
    - The inference's `EpochId` is at least `inference_pruning_epoch_threshold` epochs older than the current epoch
    - The inference has a status of FINISHED, VALIDATED, INVALIDATED, or EXPIRED
 3. If these conditions are met:
-   - Create an `InferenceStats` record
-   - Remove the full inference record
+   - Completely remove the inference record
+   - The system will rely on the existing InferenceStats table for any statistical data needed
 
 #### Configuration Parameter
 
@@ -115,31 +82,15 @@ The pruning system will be integrated with the existing `EndBlock` function in t
 
 The following keeper methods will need to be modified or added:
 
-1. **SetInference**: Modified to store both the full inference and its stats version
-2. **GetInference**: Modified to fall back to stats if full inference is not found
-3. **RemoveInference**: Enhanced with an option to convert to stats-only before removal
-4. **GetInferenceStats**: New method to retrieve stats directly
-5. **PruneInferences**: New method to handle the inference pruning process
-6. **PrunePoCData**: New method to handle the PoC data pruning process
-
-### Key Prefixes and Storage
-
-New key prefixes will be defined for the `InferenceStats` records:
-
-```
-const (
-    InferenceKeyPrefix = "Inference/value/"
-    InferenceStatsKeyPrefix = "InferenceStats/value/"
-)
-```
+1. **PruneInferences**: New method to handle the inference pruning process
+2. **PrunePoCData**: New method to handle the PoC data pruning process
 
 ### Helper Functions
 
 Helper functions will be implemented for:
 
-1. Converting between `Inference` and `InferenceStats`
-2. Determining if a record is eligible for pruning based on epoch thresholds
-3. Calculating epoch differences
+1. Determining if a record is eligible for pruning based on epoch thresholds
+2. Calculating epoch differences
 
 ## Governance Considerations
 
@@ -154,7 +105,7 @@ When proposing changes to these parameters, validators and stakeholders should c
 ## Benefits
 
 1. **Reduced Storage Requirements**: By pruning unnecessary data, the blockchain's storage footprint will be significantly reduced
-2. **Maintained Functionality**: All statistics and analytics features will continue to work as before, as essential data is preserved in `InferenceStats`
+2. **Maintained Functionality**: All statistics and analytics features will continue to work as before, as essential data is preserved in the existing InferenceStats table
 3. **Configurable Retention**: The configurable epoch thresholds allow the network to adjust retention policies through governance voting
 4. **Improved Performance**: Smaller data structures lead to faster queries and better overall performance
 5. **Sustainable Growth**: The pruning system ensures the blockchain can grow sustainably over time without excessive storage requirements
@@ -163,9 +114,8 @@ When proposing changes to these parameters, validators and stakeholders should c
 
 The pruning system is designed to maintain data integrity while optimizing storage:
 
-1. **Statistical Integrity**: All data needed for statistics and analytics is preserved in `InferenceStats`
-2. **Transparent Access**: The existing API methods continue to work transparently, with fallbacks to stats-only data when full records have been pruned
-3. **Epoch-Based Pruning**: By using epoch-based thresholds rather than time-based ones, the system ensures that pruning decisions are consistent across all nodes in the network
+1. **Statistical Integrity**: All data needed for statistics and analytics is preserved in the existing InferenceStats table
+2. **Epoch-Based Pruning**: By using epoch-based thresholds rather than time-based ones, the system ensures that pruning decisions are consistent across all nodes in the network
 
 ## Future Considerations
 
