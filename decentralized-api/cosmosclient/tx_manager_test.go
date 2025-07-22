@@ -1,152 +1,165 @@
 package cosmosclient
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/client"
 	"decentralized-api/internal/nats/server"
 	"encoding/json"
 	"fmt"
-	"github.com/cometbft/cometbft/libs/bytes"
-	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/google/uuid"
+	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
+	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
 	"github.com/nats-io/nats.go"
 	"github.com/productscience/inference/api/inference/inference"
 	testutil "github.com/productscience/inference/testutil/cosmoclient"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
+	"log/slog"
 	"testing"
 	"time"
 )
 
-/*
-Тесты:
-Sucess case:
-- создать клиент и включить натс-сервер
-- сетапнуть текущий блок в моке
-- создать процедуру, которая будет пушить сигнал "новый блок создан" каждую секунду
-- отправить 2-3 транзакции с таймаутом + 5 блоков
-- ждем
-- проверяем, что, что вторая очередь запросила результат
-- ждем несколько блоков, убеждаемся, что в стриме ничего нет и транзакции не бли отправлены повторно
-*/
-
 func setUpNats(t *testing.T) *nats.Conn {
 	// run streams in memory
 	testNatsConfig := apiconfig.NatsServerConfig{
-		Host:     "localhost",
-		Port:     4222,
-		TestMode: true,
+		Host: "localhost",
+		Port: 4123,
+		//TestMode:   true,
+		StorageDir: "./nats/test",
 	}
 
 	srv := server.NewServer(testNatsConfig)
 	err := srv.Start()
 	assert.NoError(t, err)
 
-	conn, err := client.ConnectToNats(fmt.Sprintf("nats://%v:%v", testNatsConfig.Host, testNatsConfig.Port), "txs-queue-test")
+	conn, err := client.ConnectToNats(testNatsConfig.Host, testNatsConfig.Port, "txs-queue-test")
 	assert.NoError(t, err)
+	js, err := conn.JetStream()
+	_ = js.DeleteConsumer(server.TxsToObserveStream, txObserverConsumer)
 	return conn
 }
 
 func TestTxManager_Success(t *testing.T) {
 	const (
-		network = "cosmos"
-
-		accountName = "cosmosaccount"
-		mnemonic    = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-		passphrase  = "testpass"
-
-		blockTimeout = 3
-
-		accountNumber = 1234
-		txHash1       = "DAE23C7706D30F7AC5483B2D97288F1C7309D31B25903DB8217F05FAA721EE35"
-		txHash2       = "196655D02ABBE76B2400FDE7C7E8571851B9E8785E2E2702BC57A1822914D36F"
+		accountName      = "join1"
+		notExistingHash1 = "8237097132E1E813B6F6DC9A571A049954F33E353C941617B929CB10968F32FD"
+		notExistingHash2 = "4D66F342571F81D5C39404B5B0241AECBE585CDEADFD482AF5CF9F01DA4FF78E"
 	)
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 
-	hashes := []string{txHash1, txHash2}
-	currentBlockHeight := int64(10)
-	highestSequence := int64(0)
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	rpc := mocks.NewRPCClient(t)
-
-	cosmosclient := testutil.NewMockClient(t, rpc, network, accountName, mnemonic, passphrase)
-
-	account, err := cosmosclient.AccountRegistry.GetByName(accountName)
-	assert.NoError(t, err)
-
-	addr, err := account.Address(network)
-	assert.NoError(t, err)
-
-	txs := []sdk.Msg{
-		&inference.MsgStartInference{
-			Creator:     addr,
-			InferenceId: uuid.New().String(),
-		},
-		&inference.MsgStartInference{
-			Creator:     addr,
-			InferenceId: uuid.New().String(),
-		},
+	chainNode := apiconfig.ChainNodeConfig{
+		Url:            "http://localhost:8101",
+		AccountName:    accountName,
+		KeyringBackend: "test",
+		KeyringDir:     "/home/zb/jobs/productai/code/inference-ignite/local-test-net/prod-local/join1",
+		SeedApiUrl:     "http://localhost:9000",
 	}
 
+	ctx := context.Background()
 	natsConn := setUpNats(t)
 
-	rpc.EXPECT().Status(gomock.Any()).Return(&coretypes.ResultStatus{
-		SyncInfo: coretypes.SyncInfo{
-			LatestBlockHeight: currentBlockHeight,
-		},
-	}, nil)
-
-	accountRetriever := sdkclient.MockAccountRetriever{
-		ReturnAccNum: accountNumber,
-		ReturnAccSeq: uint64(highestSequence),
-	}
-
-	ctx := context.TODO()
-	mn, err := NewTxManager(ctx, &cosmosclient, &account, accountRetriever, natsConn, addr, uint64(blockTimeout))
+	cosmoclient, err := cosmosclient.New(
+		ctx,
+		cosmosclient.WithAddressPrefix("gonka"),
+		cosmosclient.WithNodeAddress(chainNode.Url),
+		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(chainNode.KeyringBackend)),
+		cosmosclient.WithKeyringDir(chainNode.KeyringDir),
+		cosmosclient.WithGasPrices("0icoin"),
+		cosmosclient.WithFees("0icoin"),
+		cosmosclient.WithGas("auto"),
+		cosmosclient.WithGasAdjustment(5),
+	)
 	assert.NoError(t, err)
 
-	for i, tx := range txs {
-		hash := bytes.HexBytes{}
-		err = hash.Unmarshal([]byte(hashes[i]))
+	account, err := cosmoclient.AccountRegistry.GetByName(chainNode.AccountName)
+	assert.NoError(t, err)
+
+	addr, err := account.Address("gonka")
+	assert.NoError(t, err)
+
+	fmt.Println(addr)
+	mn, err := NewTxManager(ctx, &cosmoclient, &account, authtypes.AccountRetriever{}, natsConn, addr, 5)
+	assert.NoError(t, err)
+
+	err = mn.SendTxs()
+	assert.NoError(t, err)
+
+	txsHashs := make([]string, 0)
+	for i := 0; i < 3; i++ {
+		txResp, err := mn.SendTransactionAsyncWithRetry(
+			&inference.MsgFinishInference{
+				Creator:              addr,
+				InferenceId:          uuid.NewString(),
+				PromptTokenCount:     10,
+				CompletionTokenCount: 20,
+				ExecutedBy:           addr,
+			})
 		assert.NoError(t, err)
-
-		rpc.EXPECT().Status(ctx).Return(&coretypes.ResultStatus{
-			SyncInfo: coretypes.SyncInfo{
-				LatestBlockHeight: currentBlockHeight,
-			},
-		}, nil)
-
-		address, err := account.Record.GetAddress()
-		assert.NoError(t, err)
-
-		fmt.Printf("TEST tx \n")
-		signedTxBytes, _, err := buildAndSignTx(
-			ctx,
-			tx,
-			&cosmosclient,
-			address,
-			accountRetriever,
-			highestSequence,
-			blockTimeout,
-			account.Name,
-		)
-		fmt.Println("----------------")
-
-		rpc.EXPECT().BroadcastTxSync(context.Background(), cmttypes.Tx(signedTxBytes)).Return(
-			&coretypes.ResultBroadcastTx{Code: 0, Hash: hash}, nil)
-
-		assert.NoError(t, mn.PutTxToSend(tx))
-		highestSequence++
-		break
+		fmt.Printf("sent tx with hash: %v\n", txResp.TxHash)
+		txsHashs = append(txsHashs, txResp.TxHash)
 	}
-	assert.NoError(t, mn.SendTxs())
 
-	time.Sleep(15 * time.Second)
-	// assert.NoError(t, mn.ObserveTxs())
+	blockHeight, err := cosmoclient.LatestBlockHeight(ctx)
+	assert.NoError(t, err)
+
+	fmt.Printf("block height: %v\n", blockHeight)
+
+	notExistingTxUuid1 := uuid.NewString()
+	fmt.Printf("notExisstingTxUuid1: %v\n", notExistingTxUuid1)
+
+	err = mn.putTxToObserve(notExistingTxUuid1, &inference.MsgFinishInference{
+		Creator:              addr,
+		InferenceId:          uuid.NewString(),
+		PromptTokenCount:     10,
+		CompletionTokenCount: 20,
+		ExecutedBy:           addr,
+	}, notExistingHash1, uint64(mn.highestSequence+1), uint64(blockHeight+1))
+	assert.NoError(t, err)
+
+	notExistingTxUuid2 := uuid.NewString()
+	fmt.Printf("notExistingTxUuid2: %v\n", notExistingTxUuid2)
+
+	err = mn.putTxToObserve(notExistingTxUuid2, &inference.MsgFinishInference{
+		Creator:              addr,
+		InferenceId:          uuid.NewString(),
+		PromptTokenCount:     10,
+		CompletionTokenCount: 20,
+		ExecutedBy:           addr,
+	}, notExistingHash2, uint64(mn.highestSequence+1), uint64(blockHeight+1))
+	assert.NoError(t, err)
+
+	err = mn.ObserveTxs()
+	assert.NoError(t, err)
+
+	/*for i := 0; i < 2; i++ {
+		txResp, err := mn.SendTransactionAsyncWithRetry(
+			&inference.MsgFinishInference{
+				Creator:              addr,
+				InferenceId:          uuid.NewString(),
+				PromptTokenCount:     10,
+				CompletionTokenCount: 20,
+				ExecutedBy:           addr,
+			})
+		assert.NoError(t, err)
+		fmt.Printf("sent tx with hash: %v\n", txResp.TxHash)
+		txsHashs = append(txsHashs, txResp.TxHash)
+	}
+
+	for _, hash := range txsHashs {
+		ctxWithTimeput, cancel := context.WithTimeout(ctx, time.Second*30)
+		defer cancel()
+		txResp, err := cosmoclient.WaitForTx(ctxWithTimeput, hash)
+		assert.NoError(t, err)
+		fmt.Printf("test tx found: %v\n", txResp.Hash)
+	}*/
+
+	time.Sleep(time.Second * 60 * 10)
 }
 
 func TestPack_Unpack_Msg(t *testing.T) {
