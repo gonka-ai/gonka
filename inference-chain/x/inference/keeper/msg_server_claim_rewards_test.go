@@ -211,9 +211,13 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	signatureHex := hex.EncodeToString(signature)
 
 	// Create a settle amount for the participant with the signature
+	epoch := types.Epoch{Index: 100, PocStartBlockHeight: 100}
+	k.SetEpoch(ctx, &epoch)
+	k.SetEffectiveEpochIndex(ctx, epoch.Index)
+
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: uint64(epoch.PocStartBlockHeight),
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -221,10 +225,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k.SetSettleAmount(sdkCtx, settleAmount)
 
 	// Setup epoch group data with specific weights
-	epoch := types.Epoch{Index: 100, PocStartBlockHeight: 100}
-	k.SetEpoch(ctx, &epoch)
-	k.SetEffectiveEpochIndex(ctx, epoch.Index)
-
 	epochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
 		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
@@ -396,9 +396,13 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	signatureHex := hex.EncodeToString(signature)
 
 	// Create a settle amount for the participant with the signature
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: 100}
+	k.SetEpoch(ctx, &epoch)
+	k.SetEffectiveEpochIndex(ctx, epoch.Index)
+
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: uint64(epoch.PocStartBlockHeight),
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -407,8 +411,9 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
-		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		EpochId:             epoch.Index,
+		EpochGroupId:        9000, // Can be whatever now, because InferenceValDetails are indexed by EpochId
+		PocStartBlockHeight: uint64(epoch.PocStartBlockHeight),
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -437,21 +442,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
