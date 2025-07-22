@@ -73,6 +73,7 @@ data class DockerGroup(
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
+        Thread.sleep(Duration.ofSeconds(30L))
         // Just register the log events
         getLocalInferencePairs(config)
     }
@@ -265,6 +266,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         // TODO: can we wait here by querying the genesis API?
         Thread.sleep(Duration.ofSeconds(30L))
         joinGroups.forEach { it.init() }
+        Thread.sleep(Duration.ofSeconds(30L))
         return allGroups
     } finally {
         TestState.rebooting = false

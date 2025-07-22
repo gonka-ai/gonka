@@ -6,9 +6,10 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
 	"encoding/json"
-	"github.com/productscience/inference/x/inference/types"
 	"os"
 	"path/filepath"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func ProcessNewBlockEvent(

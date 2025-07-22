@@ -5,6 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"strings"
+	"sync"
+
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
@@ -12,11 +18,6 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"github.com/productscience/inference/x/inference/types"
-	"io"
-	"log"
-	"os"
-	"strings"
-	"sync"
 )
 
 type ConfigManager struct {
@@ -76,7 +77,7 @@ func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
 	return nodes
 }
 
-func (cm *ConfigManager) getConfig() *Config {
+func (cm *ConfigManager) GetConfig() *Config {
 	return &cm.currentConfig
 }
 
@@ -94,8 +95,13 @@ func (cm *ConfigManager) SetHeight(height int64) error {
 	cm.currentConfig.CurrentHeight = height
 	newVersion, found := cm.currentConfig.NodeVersions.PopIf(height)
 	if found {
-		logging.Info("New Node Version!", types.Upgrades, "version", newVersion, "oldVersion", cm.currentConfig.CurrentNodeVersion)
+		// Store old version before updating
+		cm.currentConfig.PreviousNodeVersion = cm.currentConfig.CurrentNodeVersion
 		cm.currentConfig.CurrentNodeVersion = newVersion
+
+		logging.Info("Node version changed", types.Upgrades,
+			"oldVersion", cm.currentConfig.PreviousNodeVersion,
+			"newVersion", newVersion)
 	}
 	logging.Info("Setting height", types.Config, "height", height)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
@@ -103,6 +109,23 @@ func (cm *ConfigManager) SetHeight(height int64) error {
 
 func (cm *ConfigManager) GetCurrentNodeVersion() string {
 	return cm.currentConfig.CurrentNodeVersion
+}
+
+func (cm *ConfigManager) GetPreviousNodeVersion() string {
+	return cm.currentConfig.PreviousNodeVersion
+}
+
+func (cm *ConfigManager) MarkUpgradeComplete(currentVersion string) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+
+	// Set previousVersion = currentVersion to indicate upgrade is complete
+	cm.currentConfig.PreviousNodeVersion = currentVersion
+
+	logging.Info("Marked upgrade as complete", types.Upgrades,
+		"version", currentVersion)
+
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {

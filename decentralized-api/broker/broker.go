@@ -88,6 +88,7 @@ type Broker struct {
 	callbackUrl          string
 	mlNodeClientFactory  mlnodeclient.ClientFactory
 	reconcileTrigger     chan struct{}
+	configManager        *apiconfig.ConfigManager
 }
 
 const (
@@ -239,7 +240,7 @@ type NodeResponse struct {
 	State NodeState `json:"state"`
 }
 
-func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
+func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory, configManager *apiconfig.ConfigManager) *Broker {
 	broker := &Broker{
 		highPriorityCommands: make(chan Command, 100),
 		lowPriorityCommands:  make(chan Command, 10000),
@@ -250,6 +251,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		callbackUrl:          callbackUrl,
 		mlNodeClientFactory:  clientFactory,
 		reconcileTrigger:     make(chan struct{}, 1),
+		configManager:        configManager,
 	}
 
 	// Initialize NodeWorkGroup
@@ -367,7 +369,15 @@ func (b *Broker) QueueMessage(command Command) error {
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(node.Version), node.InferenceUrl(node.Version))
+	// Use the system's current version instead of individual node version
+	var currentVersion string
+	if b.configManager != nil {
+		currentVersion = b.configManager.GetCurrentNodeVersion()
+	} else {
+		// Fallback to node version for tests
+		currentVersion = node.Version
+	}
+	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(currentVersion), node.InferenceUrl(currentVersion))
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
@@ -962,6 +972,13 @@ func nodeStatusQueryWorker(broker *Broker) {
 					Timestamp:  timestamp,
 				})
 			}
+
+			// NEW: Check scheduled version availability
+			err = broker.checkScheduledVersionAvailability(nodeResp.Node)
+			if err != nil {
+				logging.Warn("Scheduled version availability check failed", types.Upgrades,
+					"nodeId", nodeResp.Node.Id, "error", err)
+			}
 		}
 
 		err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
@@ -1026,4 +1043,56 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
+}
+
+// checkScheduledVersionAvailability validates that scheduled MLNode versions are available and responding
+func (b *Broker) checkScheduledVersionAvailability(node Node) error {
+	if b.configManager == nil {
+		return nil // Skip in tests
+	}
+
+	// Get current and next scheduled version
+	currentVersion := b.configManager.GetCurrentNodeVersion()
+
+	// Check if there are any scheduled versions
+	config := b.configManager.GetConfig()
+	if len(config.NodeVersions.Versions) == 0 {
+		return nil // No scheduled versions
+	}
+
+	// Find the next scheduled version (if any)
+	var nextVersion string
+	for _, nv := range config.NodeVersions.Versions {
+		if nv.Version != currentVersion {
+			nextVersion = nv.Version
+			break
+		}
+	}
+
+	if nextVersion == "" {
+		return nil // No different version scheduled
+	}
+
+	// Create client pointing to the scheduled version
+	nextVersionClient := b.mlNodeClientFactory.CreateClient(
+		node.PoCUrl(nextVersion),
+		node.InferenceUrl(nextVersion),
+	)
+
+	// Check if the scheduled version is available
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	state, err := nextVersionClient.NodeState(ctx)
+	if err != nil {
+		return fmt.Errorf("scheduled version %s not available: %w", nextVersion, err)
+	}
+
+	logging.Info("Scheduled version availability confirmed", types.Upgrades,
+		"nodeId", node.Id,
+		"scheduledVersion", nextVersion,
+		"currentVersion", currentVersion,
+		"availableState", state.State)
+
+	return nil
 }

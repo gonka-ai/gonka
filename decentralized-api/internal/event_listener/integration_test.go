@@ -169,7 +169,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		Address: "some-address",
 		PubKey:  "some-pub-key",
 	}
-	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, &participantInfo, "http://localhost:8080/poc", mockClientFactory)
+	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, &participantInfo, "http://localhost:8080/poc", mockClientFactory, nil)
 
 	// Create real PoC orchestrator (not mocked - we want to test the real flow)
 	pocOrchestrator := poc.NewNodePoCOrchestrator(

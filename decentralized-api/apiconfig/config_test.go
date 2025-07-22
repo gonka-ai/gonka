@@ -5,10 +5,11 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/knadh/koanf/providers/rawbytes"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
+
+	"github.com/knadh/koanf/providers/rawbytes"
+	"github.com/stretchr/testify/require"
 )
 
 type version struct {
@@ -119,6 +120,28 @@ func TestNodeVersionStack_PopIf(t *testing.T) {
 }
 
 func TestConfigLoad(t *testing.T) {
+	// Clear environment variables that could interfere with the test
+	originalChainNodeUrl := os.Getenv("DAPI_CHAIN_NODE__URL")
+	originalApiPort := os.Getenv("DAPI_API__PORT")
+	originalKeyName := os.Getenv("KEY_NAME")
+
+	os.Unsetenv("DAPI_CHAIN_NODE__URL")
+	os.Unsetenv("DAPI_API__PORT")
+	os.Unsetenv("KEY_NAME")
+
+	// Restore after test
+	defer func() {
+		if originalChainNodeUrl != "" {
+			os.Setenv("DAPI_CHAIN_NODE__URL", originalChainNodeUrl)
+		}
+		if originalApiPort != "" {
+			os.Setenv("DAPI_API__PORT", originalApiPort)
+		}
+		if originalKeyName != "" {
+			os.Setenv("KEY_NAME", originalKeyName)
+		}
+	}()
+
 	testManager := &apiconfig.ConfigManager{
 		KoanProvider: rawbytes.Provider([]byte(testYaml)),
 	}

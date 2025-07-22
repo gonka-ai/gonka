@@ -27,7 +27,7 @@ func NewTestBroker() *Broker {
 		true,
 	)
 
-	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
+	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), nil)
 }
 
 func TestSingleNode(t *testing.T) {

@@ -1,19 +1,26 @@
 package apiconfig
 
+import (
+	"decentralized-api/logging"
+
+	"github.com/productscience/inference/x/inference/types"
+)
+
 type Config struct {
-	Api                ApiConfig             `koanf:"api"`
-	Nodes              []InferenceNodeConfig `koanf:"nodes"`
-	NodeConfigIsMerged bool                  `koanf:"merged_node_config"`
-	ChainNode          ChainNodeConfig       `koanf:"chain_node"`
-	UpcomingSeed       SeedInfo              `koanf:"upcoming_seed"`
-	CurrentSeed        SeedInfo              `koanf:"current_seed"`
-	PreviousSeed       SeedInfo              `koanf:"previous_seed"`
-	CurrentHeight      int64                 `koanf:"current_height"`
-	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
-	KeyConfig          KeyConfig             `koanf:"key_config"`
-	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
-	CurrentNodeVersion string                `koanf:"current_node_version"`
-	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
+	Api                 ApiConfig             `koanf:"api"`
+	Nodes               []InferenceNodeConfig `koanf:"nodes"`
+	NodeConfigIsMerged  bool                  `koanf:"merged_node_config"`
+	ChainNode           ChainNodeConfig       `koanf:"chain_node"`
+	UpcomingSeed        SeedInfo              `koanf:"upcoming_seed"`
+	CurrentSeed         SeedInfo              `koanf:"current_seed"`
+	PreviousSeed        SeedInfo              `koanf:"previous_seed"`
+	CurrentHeight       int64                 `koanf:"current_height"`
+	UpgradePlan         UpgradePlan           `koanf:"upgrade_plan"`
+	KeyConfig           KeyConfig             `koanf:"key_config"`
+	NodeVersions        NodeVersionStack      `koanf:"node_versions"`
+	CurrentNodeVersion  string                `koanf:"current_node_version"`
+	PreviousNodeVersion string                `koanf:"previous_node_version"`
+	ValidationParams    ValidationParamsCache `koanf:"validation_params"`
 }
 
 type NodeVersionStack struct {
@@ -56,7 +63,13 @@ func (nvs *NodeVersionStack) Insert(height int64, version string) bool {
 			versionsWithInserts = append(versionsWithInserts, newVersion)
 			inserted = true
 		}
+		// Prevent exact duplicates (same height + same version)
 		if newVersion.Version == v.Version && newVersion.Height == v.Height {
+			return false
+		}
+		// Prevent duplicate versions regardless of height
+		if newVersion.Version == v.Version {
+			logging.Info("Skipping duplicate node version", types.Upgrades, "version", version, "existingHeight", v.Height, "newHeight", height)
 			return false
 		}
 		versionsWithInserts = append(versionsWithInserts, v)
