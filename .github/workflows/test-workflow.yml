@@ -48,7 +48,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '19'
+          java-version: '21'
           
       # This step uses Gradle tasks to scan for test classes that will actually run tests after filtering
       # The tasks properly handle both class-level and method-level tags:
