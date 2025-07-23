@@ -3,15 +3,21 @@
 #
 # buf.gen.gogo.yaml
 #
-version: v1
+version: v2
 plugins:
-  - name: gocosmos
+  - local: ["go", "tool", "github.com/cosmos/gogoproto/protoc-gen-gocosmos"]
     out: .
     opt:
       - plugins=grpc
-      - Mgoogle/protobuf/any.proto=github.com/cosmos/cosmos-sdk/codec/types
+      - Mgoogle/protobuf/any.proto=github.com/cosmos/gogoproto/types/any
       - Mcosmos/orm/v1/orm.proto=cosmossdk.io/orm
-  - name: grpc-gateway
+      - Mcosmos/app/v1alpha1/module.proto=cosmossdk.io/api/cosmos/app/v1alpha1
+  - local:
+      [
+        "go",
+        "tool",
+        "github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway",
+      ]
     out: .
     opt:
       - logtostderr=true
