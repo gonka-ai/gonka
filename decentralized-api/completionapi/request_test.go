@@ -93,7 +93,7 @@ func Test(t *testing.T) {
 	if r.OriginalTopLogprobsValue != nil {
 		t.Fatalf("expected nil, got %v", r.OriginalTopLogprobsValue)
 	}
-	log.Printf(string(r.NewBody))
+	log.Printf("%s", string(r.NewBody))
 }
 
 func TestStreamOptions_NoOptions(t *testing.T) {
@@ -107,7 +107,7 @@ func TestStreamOptions_NoOptions(t *testing.T) {
 
 	require.NotNil(t, requestMap["stream_options"])
 	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
-	log.Printf(string(r.NewBody))
+	log.Printf("%s", string(r.NewBody))
 }
 
 func TestStreamOptions_WithOptions(t *testing.T) {
@@ -121,7 +121,7 @@ func TestStreamOptions_WithOptions(t *testing.T) {
 
 	require.NotNil(t, requestMap["stream_options"])
 	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
-	log.Printf(string(r.NewBody))
+	log.Printf("%s", string(r.NewBody))
 }
 
 func TestMaxTokens(t *testing.T) {
