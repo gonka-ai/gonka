@@ -52,12 +52,16 @@ check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
 # Default to running all tests if TESTS is not specified
-TESTS ?= "*"
+TESTS ?= ALL
 
 run-tests:
-	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DexcludeTags=unstable,exclude
+	@cd testermint && if [ "$(TESTS)" = "ALL" ]; then \
+		./gradlew :test -DexcludeTags=unstable,exclude; \
+	else \
+		./gradlew :test --tests "$(TESTS)" -DexcludeTags=unstable,exclude; \
+	fi
 
-run-sanity:
+run-sanity: build-docker
 	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DincludeTags=sanity
 
 test-blockchain: check-docker run-blockchain-tests
