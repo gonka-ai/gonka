@@ -1,6 +1,6 @@
 syntax = "proto3";
-import "inference/inference/participant.proto";
-import "inference/inference/params.proto";
+import "inference/inference/v1/participant.proto";
+import "inference/inference/v1/params.proto";
 package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";

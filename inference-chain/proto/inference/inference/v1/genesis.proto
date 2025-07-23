@@ -4,20 +4,20 @@ package inference.inference;
 
 import "amino/amino.proto";
 import "gogoproto/gogo.proto";
-import "inference/inference/params.proto";
-import "inference/inference/inference.proto";
-import "inference/inference/participant.proto";
-import "inference/inference/epoch_group_data.proto";
-import "inference/inference/settle_amount.proto";
-import "inference/inference/epoch_group_validations.proto";
-import "inference/inference/tokenomics_data.proto";
-import "inference/inference/model.proto";
-import "inference/inference/top_miner.proto";
-import "inference/inference/inference_timeout.proto";
-import "inference/inference/inference_validation_details.proto";
-import "inference/inference/epoch_performance_summary.proto";
-import "inference/inference/partial_upgrade.proto";
-import "inference/inference/contracts.proto";
+import "inference/inference/v1/params.proto";
+import "inference/inference/v1/inference.proto";
+import "inference/inference/v1/participant.proto";
+import "inference/inference/v1/epoch_group_data.proto";
+import "inference/inference/v1/settle_amount.proto";
+import "inference/inference/v1/epoch_group_validations.proto";
+import "inference/inference/v1/tokenomics_data.proto";
+import "inference/inference/v1/model.proto";
+import "inference/inference/v1/top_miner.proto";
+import "inference/inference/v1/inference_timeout.proto";
+import "inference/inference/v1/inference_validation_details.proto";
+import "inference/inference/v1/epoch_performance_summary.proto";
+import "inference/inference/v1/partial_upgrade.proto";
+import "inference/inference/v1/contracts.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 

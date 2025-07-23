@@ -1,5 +1,5 @@
 syntax = "proto3";
-package inference.inference.module;
+package inference.inference.v1.module;
 
 import "cosmos/app/v1alpha1/module.proto";
 
