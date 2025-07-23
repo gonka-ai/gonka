@@ -34,3 +34,5 @@ prod-local/
 /testermint/downloads/
 /testermint/logs/
 balances-*.json
+/docker-images
+/test-count*
