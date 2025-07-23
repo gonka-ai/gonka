@@ -1,0 +1,48 @@
+name: Notify Slack on PR creation with dynamic reviewers
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  notify_slack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract GitHub reviewers and map to Slack
+        id: reviewers
+        run: |
+          echo "GITHUB_REVIEWERS=${{ toJson(github.event.pull_request.requested_reviewers) }}" >> $GITHUB_ENV
+
+          declare -A GITHUB_TO_SLACK=(
+            [0xBECEDA]="<U08AZCWT211>"
+            [DimaOrekhovPS]="<U0388N1H002>"
+            [GLiberman]="<U0385SA8D5K>"
+            [gmorgachev]="<U031GH5PCDC>"
+            [patimen]="<U04NXPV6UR4>"
+          )
+
+          REVIEWERS_JSON=${{ toJson(github.event.pull_request.requested_reviewers) }}
+          echo "$REVIEWERS_JSON" > reviewers.json
+
+          SLACK_REVIEWERS=""
+          for username in $(jq -r '.[].login' reviewers.json); do
+            slack_id=${GITHUB_TO_SLACK[$username]}
+            if [[ -n "$slack_id" ]]; then
+              SLACK_REVIEWERS="$SLACK_REVIEWERS $slack_id"
+            fi
+          done
+
+          echo "SLACK_REVIEWERS=$SLACK_REVIEWERS" >> $GITHUB_ENV
+
+      - name: Send Slack message
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "*New Pull Request от `${{ github.actor }}`*\n"
+                      + "<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>\n"
+                      + "Reviewers: ${{ env.SLACK_REVIEWERS }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
