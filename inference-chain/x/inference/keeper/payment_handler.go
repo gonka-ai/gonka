@@ -24,7 +24,7 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 	if err != nil {
 		k.LogError("Error sending coins to escrow", types.Payments, "error", err)
 		return 0,
-			sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
+			sdkerrors.Wrapf(err, "ERR: %s", types.ErrRequesterCannotPay.Error())
 	}
 	k.LogTransaction(types.ModuleName, payeeAddress.String(), cost, "inferenceId:"+inference.InferenceId)
 	k.LogInfo("Sent coins to escrow", types.Payments, "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
