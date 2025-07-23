@@ -68,3 +68,63 @@ func (k Keeper) GetAllSettleAmount(ctx context.Context) (list []types.SettleAmou
 
 	return
 }
+
+// burnSettleAmount burns coins from a settle amount (internal helper)
+func (k Keeper) burnSettleAmount(ctx context.Context, settleAmount types.SettleAmount, reason string) error {
+	totalCoins := settleAmount.GetTotalCoins()
+	if totalCoins > 0 {
+		err := k.BurnCoins(ctx, int64(totalCoins), reason+":"+settleAmount.Participant)
+		if err != nil {
+			k.LogError("Error burning settle amount coins", types.Settle, "error", err, "participant", settleAmount.Participant, "amount", totalCoins)
+			return err
+		}
+		k.LogInfo("Burned settle amount", types.Settle, "participant", settleAmount.Participant, "amount", totalCoins, "reason", reason)
+	}
+	return nil
+}
+
+// BurnSettleAmount burns coins from a settle amount and removes it from storage
+func (k Keeper) BurnSettleAmount(ctx context.Context, participant string, reason string) error {
+	settleAmount, found := k.GetSettleAmount(ctx, participant)
+	if !found {
+		return nil // Nothing to burn
+	}
+
+	err := k.burnSettleAmount(ctx, settleAmount, reason)
+	if err != nil {
+		return err
+	}
+	k.RemoveSettleAmount(ctx, participant)
+	return nil
+}
+
+// SetSettleAmountWithBurn sets a settle amount, burning any existing unclaimed amount first
+func (k Keeper) SetSettleAmountWithBurn(ctx context.Context, settleAmount types.SettleAmount) error {
+	// Burn existing settle amount if it exists
+	existingSettle, found := k.GetSettleAmount(ctx, settleAmount.Participant)
+	if found {
+		err := k.burnSettleAmount(ctx, existingSettle, "replaced")
+		if err != nil {
+			return err
+		}
+	}
+
+	// Set the new settle amount
+	k.SetSettleAmount(ctx, settleAmount)
+	return nil
+}
+
+// BurnOldSettleAmounts burns and removes all settle amounts older than the specified epoch
+func (k Keeper) BurnOldSettleAmounts(ctx context.Context, beforeEpochHeight uint64) error {
+	allSettleAmounts := k.GetAllSettleAmount(ctx)
+	for _, settleAmount := range allSettleAmounts {
+		if settleAmount.PocStartHeight < beforeEpochHeight {
+			err := k.burnSettleAmount(ctx, settleAmount, "expired")
+			if err != nil {
+				return err
+			}
+			k.RemoveSettleAmount(ctx, settleAmount.Participant)
+		}
+	}
+	return nil
+}
