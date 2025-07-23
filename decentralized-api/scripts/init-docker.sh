@@ -42,6 +42,9 @@ echo "init for cosmovisor"
 mkdir -p /root/.dapi
 mkdir -p /root/.dapi/data
 
+echo "init for nats"
+mkdir -p /root/nats
+
 cosmovisor init /usr/bin/decentralized-api || fail "Failed to initialize cosmovisor"
 
 if [ -n "${DEBUG-}" ]; then

@@ -22,6 +22,7 @@ services:
     image: ghcr.io/product-science/api
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./prod-local/${KEY_NAME}/nats:/root/nats
       - ./${NODE_CONFIG}:/root/node_config.json
     ports:
       - "${PUBLIC_SERVER_PORT}:9000"

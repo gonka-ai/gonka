@@ -229,7 +229,7 @@ func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeou
 }
 
 func (m *manager) sendTxs() error {
-	logging.Info("sending txs: run in background", types.Messages)
+	logging.Info("Tx manager: sending txs: run in background", types.Messages)
 
 	_, err := m.js.Subscribe(server.TxsToSendStream, func(msg *nats.Msg) {
 		var tx txToSend
@@ -278,7 +278,7 @@ func (m *manager) sendTxs() error {
 }
 
 func (m *manager) observeTxs() error {
-	logging.Info("ObserveTxs: starting in background", types.Messages)
+	logging.Info("Tx manager: observeTxs txs: run in background", types.Messages)
 	_, err := m.js.Subscribe(server.TxsToObserveStream, func(msg *nats.Msg) {
 		var tx txInfo
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
