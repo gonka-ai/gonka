@@ -18,10 +18,8 @@ type Config struct {
 }
 
 type NatsServerConfig struct {
-	Host       string `koanf:"host"`
-	Port       int    `koanf:"port"`
-	StorageDir string `koanf:"storage_dir"`
-	TestMode   bool   `koanf:"test_mode"`
+	Host string `koanf:"host"`
+	Port int    `koanf:"port"`
 }
 
 type NodeVersionStack struct {

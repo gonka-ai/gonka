@@ -22,7 +22,7 @@ services:
     image: ghcr.io/product-science/api
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
-      - ./prod-local/${KEY_NAME}/nats:/root/nats
+      - ./prod-local/${KEY_NAME}/.nats:/root/.nats
       - ./${NODE_CONFIG}:/root/node_config.json
     ports:
       - "${PUBLIC_SERVER_PORT}:9000"
@@ -43,7 +43,6 @@ services:
       - NODE_CONFIG_PATH=/root/node_config.json
       - DAPI_NATS__HOST=0.0.0.0
       - DAPI_NATS__PORT=4222
-      - DAPI_NATS__STORAGE_DIR=/root/nats
       - DEBUG=true
     networks:
       - chain-public

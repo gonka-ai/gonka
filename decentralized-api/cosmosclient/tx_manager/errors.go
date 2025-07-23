@@ -11,9 +11,11 @@ var (
 	ErrFailedToEncodeTx   = errors.New("error encoding transaction")
 	ErrAccountNotFound    = errors.New("key not found")
 	ErrTxTooLarge         = errors.New("tx too large")
-	ErrTxNotFound         = errors.New("tx not found")
 	ErrDecodingTxHash     = errors.New("error decoding transaction hash")
 	ErrInvalidAddress     = errors.New("invalid bech32 string")
+
+	ErrTxFailedToBroadcastAndPutOnRetry = errors.New("failed to broadcast and put on retry")
+	ErrTxNotFound                       = errors.New("tx not found")
 )
 
 func isTxErrorCritical(err error) bool {

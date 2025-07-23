@@ -127,10 +127,15 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse,
 		}
 
 		err := m.putOnRetry(id, "", timeout, rawTx, false)
-		return nil, err
+		if err != nil {
+			logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+		}
+		return nil, ErrTxFailedToBroadcastAndPutOnRetry
 	}
-	err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, true)
-	return resp, err
+	if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, true); err != nil {
+		logging.Error("tx broadcasted, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
+	}
+	return resp, nil
 }
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {

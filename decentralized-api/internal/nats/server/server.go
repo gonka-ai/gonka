@@ -13,6 +13,8 @@ import (
 const (
 	TxsToSendStream    = "txs_to_send"
 	TxsToObserveStream = "txs_to_observe"
+
+	storageDir = "/root/.nats"
 )
 
 type NatsServer interface {
@@ -31,23 +33,13 @@ func NewServer(config apiconfig.NatsServerConfig) NatsServer {
 }
 
 func (s *server) Start() error {
-	logging.Info("starting nats server", types2.Messages,
-		"port", s.conf.Port,
-		"host", s.conf.Host,
-		"test_mode", s.conf.TestMode,
-		"storage_dir", s.conf.StorageDir,
-	)
+	logging.Info("starting nats server", types2.Messages, "port", s.conf.Port, "host", s.conf.Host)
 
 	opts := &natssrv.Options{
 		Host:      s.conf.Host,
 		Port:      s.conf.Port,
 		JetStream: true,
-	}
-
-	if s.conf.TestMode {
-		logging.Info("ignore storage dir, nats running in test mode", types2.Messages)
-	} else {
-		opts.StoreDir = s.conf.StorageDir
+		StoreDir:  storageDir,
 	}
 
 	ns, err := natssrv.NewServer(opts)
