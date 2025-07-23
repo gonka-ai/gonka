@@ -56,7 +56,8 @@ To write or debug tests interactively:
 3. From the root of the project, run:
 
    ```bash
-   ./stop-rebuild-launch.sh
+   ./local-test-net/stop.sh
+   make build-docker
    ```
 
    This ensures the necessary Docker containers are built and ready.

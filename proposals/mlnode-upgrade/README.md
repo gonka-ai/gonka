@@ -162,7 +162,7 @@ While this guide focuses on Docker and NGINX, the architecture is portable.
   * Fix: Modified `NodeVersionStack.Insert()` to prevent duplicate versions
   * File: `apiconfig/config.go`
 
-- [DONE]: Fix wrong version used in URLs  
+- [DONE]: Fix wrong version used in URLs
   * Problem: `Broker.NewNodeClient()` used `node.Version` (empty) instead of system version
   * Fix: Use `ConfigManager.GetCurrentNodeVersion()` for all client creation
   * Files: `broker/broker.go`, `main.go`
@@ -271,7 +271,7 @@ currentVersion=v3.0.6 error="version v3.0.8 not responding: connection refused"
 
 ---
 
-### [DONE]: Broker integration for version change notifications ✅ **LOW RISK**  
+### [DONE]: Broker integration for version change notifications ✅ **LOW RISK**
 
 **✅ IMPLEMENTATION COMPLETE:**
 
