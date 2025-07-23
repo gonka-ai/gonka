@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.3
+    image: ghcr.io/product-science/inferenced:0.1.15-alpha2
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -8,7 +8,7 @@ services:
       - SNAPSHOT_INTERVAL=1000
       - SNAPSHOT_KEEP_RECENT=5
       - NODE_CONFIG_PATH=/root/node_config.json
-      - P2P_EXTERNAL_ADDRESS=tcp://195.242.13.239:26656
+      - P2P_EXTERNAL_ADDRESS=tcp://36.189.234.237:19249
       - CONFIG_p2p__allow_duplicate_ip=true
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
@@ -18,33 +18,31 @@ services:
       - /srv/dai/inference:/root/.inference
       - ./genesis-overrides.json:/root/genesis_overrides.json
     ports:
-      - "26656:26656"
+      - "5000:26656"
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.3
+    image: ghcr.io/product-science/api:0.1.15-alpha2
     restart: always
     depends_on:
       - node
     environment:
       - KEY_NAME=genesis
-      - DAPI_API__POC_CALLBACK_URL=http://10.0.0.1:9100
-      - DAPI_API__PUBLIC_URL=http://195.242.13.239:8000
+      - DAPI_API__POC_CALLBACK_URL=http://api:9100
+      - DAPI_API__PUBLIC_URL=http://36.189.234.237:19250
       - DAPI_CHAIN_NODE__IS_GENESIS=true
-      - DAPI_CHAIN_NODE__URL=http://10.0.0.1:26657
+      - DAPI_CHAIN_NODE__URL=http://node:26657
+      - NODE_CONFIG_PATH=/root/node_config.json
       - DAPI_API__PUBLIC_SERVER_PORT=9000
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
-      - NODE_CONFIG_PATH=/root/node_config.json
     volumes:
       - /srv/dai/inference:/root/.inference
+      - /srv/dai/dapi:/root/.dapi
       - ./node-config.json:/root/node_config.json
     ports:
       - "8000:9000"
       - "9100:9100"
       - "9200:9200"
 
-networks:
-  genesis-network:
-    driver: bridge
-    external: true
+

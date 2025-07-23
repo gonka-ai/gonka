@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.0
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.15-alpha2
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.3
+    image: ghcr.io/product-science/inferenced:0.1.15-alpha2
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -24,6 +24,7 @@ services:
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
       - TMKMS_PORT=${TMKMS_PORT:-26658}
+      - REST_API_ACTIVE=true
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
@@ -31,12 +32,14 @@ services:
       - "${TMKMS_PORT:-26658}"
     depends_on:
       - tmkms
+    restart: always
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.3
+    image: ghcr.io/product-science/api:0.1.15-alpha2
     volumes:
       - .inference:/root/.inference
+      - .dapi:/root/.dapi
       - ${NODE_CONFIG:-./node-config.json}:/root/node_config.json
     depends_on:
       - node
@@ -52,32 +55,39 @@ services:
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
     ports:
-      - "${API_PORT}:9000"
       - "9100:9100"
       - "9200:9200"
     restart: always
 
-  inference:
-    image: ghcr.io/product-science/mlnode:3.0.4-alpha2
-    volumes:
-      - ${HF_HOME:-${HOME}/cache}:/root/.cache
+  proxy:
+    container_name: proxy
+    image: ghcr.io/product-science/proxy:0.1.15-alpha2
+    ports:
+      - "${API_PORT:-8000}:80"
     environment:
-      - HF_HOME=/root/.cache
-      - HF_HUB_ENABLE_HF_TRANSFER=true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      - API_PORT=9000
+      - CHAIN_RPC_PORT=26657
+      - CHAIN_API_PORT=1317
+      - CHAIN_GRPC_PORT=9090
+      - DASHBOARD_PORT=5173
+    depends_on:
+      - node
+      - api
+      - explorer
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-    ipc: host
-    command: >
-      uvicorn api.app:app
-      --host=0.0.0.0
-      --port=8080
-    restart: always
+  explorer:
+    container_name: explorer
+    image: ghcr.io/product-science/explorer:latest
+    expose:
+      - "5173"
+    restart: unless-stopped
 
 volumes:
   tmkms_data:
