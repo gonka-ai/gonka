@@ -41,7 +41,7 @@ services:
       - /srv/dai/dapi:/root/.dapi
       - ./node-config.json:/root/node_config.json
     ports:
-      - "8000:9000"
+      - "9000:9000"
       - "9100:9100"
       - "9200:9200"
 
