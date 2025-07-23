@@ -69,7 +69,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	// Check if the validator is in active participants by checking their account
 	acc := k.AccountKeeper.GetAccount(ctx, addr)
 	if acc == nil {
-		k.LogError("Bridge exchange: account not found for validator", types.Messages, "validator", msg.Validator)
+		k.LogError("Bridge exchange: Account not found for validator", types.Messages, "validator", msg.Validator)
 		return nil, fmt.Errorf("account not found for validator")
 	}
 
