@@ -25,8 +25,7 @@ This document outlines the step-by-step process for implementing the PoC pruning
 1. Locate the newly created query file in the keeper directory.
 
 2. Implement the query function to count PoCBatch objects at the specified block height:
-   - Use the existing keeper methods to retrieve PoCBatch objects
-   - Count the total number of PoCBatch objects
+   - For perf reasons, create a new keeper method to only count entries
    - Return the count in the response
 
 3. Run unit tests to verify the implementation works correctly.
@@ -47,8 +46,7 @@ This document outlines the step-by-step process for implementing the PoC pruning
 1. Locate the newly created query file in the keeper directory.
 
 2. Implement the query function to count PoCValidation objects at the specified block height:
-   - Use the existing keeper methods to retrieve PoCValidation objects
-   - Count the total number of PoCValidation objects
+   - For perf reasons, create a new keeper method to only count entries
    - Return the count in the response
 
 3. Run unit tests to verify the implementation works correctly.
@@ -64,23 +62,7 @@ This document outlines the step-by-step process for implementing the PoC pruning
 
 3. Run unit tests to ensure the regenerated files work as expected.
 
-### 6. Build and Test the Chain
-
-1. Build the chain using the appropriate make command:
-   ```
-   make local-build
-   ```
-
-2. Start a local chain for testing:
-   ```
-   make run-local
-   ```
-
-3. Verify that the queries return the expected results.
-
-4. Run unit tests to ensure everything is working correctly.
-
-### 7. Write Unit Tests
+### 6. Write Unit Tests
 
 1. Create unit tests for the CountPoCBatchesAtHeight query:
    - Test with no PoCBatch objects
