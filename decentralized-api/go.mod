@@ -252,7 +252,7 @@ require (
 )
 
 replace (
-	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.53.3-ps1
+	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.53.3-ps4
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/productscience/inference => ../inference-chain
 )

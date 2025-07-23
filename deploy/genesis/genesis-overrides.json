@@ -2,21 +2,21 @@
   "app_state": {
     "gov": {
       "params": {
-        "voting_period": "24h0m0s",
+        "voting_period": "0h10m0s",
         "min_deposit": [
           {
             "denom": "nicoin",
             "amount": "25_000_000"
           }
         ],
-        "expedited_voting_period": "1h0m0s",
+        "expedited_voting_period": "0h5m0s",
         "expedited_min_deposit": [
           {
             "denom": "nicoin",
             "amount": "50_000_000"
           }
         ],
-        "quorum": "0.01000000000000000"
+        "quorum": "0.00100000000000000"
       }
     },
     "inference": {
@@ -24,7 +24,7 @@
         "epochParams": {
         "epoch_length": "1800",
         "epoch_multiplier": "1",
-        "epoch_shift": "1700",
+        "epoch_shift": "1750",
         "poc_stage_duration": "60",
         "poc_exchange_duration": "5",
         "poc_validation_delay": "5",
