@@ -2,14 +2,15 @@ package calculations
 
 import (
 	"context"
-	sdkerrors "cosmossdk.io/errors"
 	"encoding/base64"
 	"errors"
+	"log/slog"
+	"strconv"
+
+	sdkerrors "cosmossdk.io/errors"
 	"github.com/cometbft/cometbft/crypto"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
-	"strconv"
 )
 
 type SignatureType int

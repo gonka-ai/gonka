@@ -2,8 +2,9 @@ package epochgroup
 
 import (
 	"context"
-	"github.com/productscience/inference/x/inference/types"
 	"sort"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type weightedProposal struct {

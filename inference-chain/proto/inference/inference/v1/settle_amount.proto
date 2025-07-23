@@ -10,4 +10,3 @@ message SettleAmount {
   uint64 poc_start_height = 4;
   string seed_signature = 5;
 }
-

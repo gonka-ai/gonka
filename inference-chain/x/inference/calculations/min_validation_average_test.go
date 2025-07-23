@@ -1,10 +1,11 @@
 package calculations
 
 import (
+	"testing"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestMinimumValidationAverage(t *testing.T) {

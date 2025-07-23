@@ -2,13 +2,14 @@ package epochgroup_test
 
 import (
 	"context"
+	"testing"
+
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"testing"
 )
 
 const (

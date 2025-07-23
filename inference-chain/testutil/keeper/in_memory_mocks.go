@@ -4,8 +4,9 @@ package keeper
 import (
 	"context"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"sync"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // InMemoryEpochGroupDataKeeper is an in-memory implementation of EpochGroupDataKeeper.

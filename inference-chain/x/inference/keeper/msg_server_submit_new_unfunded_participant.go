@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"encoding/base64"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"

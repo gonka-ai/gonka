@@ -2,11 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/productscience/inference/internal/rpc"
-	"github.com/spf13/cobra"
 	"net/url"
 	"os"
 	"regexp"
+
+	"github.com/productscience/inference/internal/rpc"
+	"github.com/spf13/cobra"
 )
 
 func SetSeedCommand() *cobra.Command {

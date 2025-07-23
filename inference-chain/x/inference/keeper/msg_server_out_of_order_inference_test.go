@@ -1,10 +1,11 @@
 package keeper_test
 
 import (
+	"testing"
+
 	"github.com/productscience/inference/x/inference/calculations"
 	inference "github.com/productscience/inference/x/inference/module"
 	"go.uber.org/mock/gomock"
-	"testing"
 
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"

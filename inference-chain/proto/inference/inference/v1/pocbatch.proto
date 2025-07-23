@@ -13,8 +13,8 @@ message PoCBatch {
 }
 
 /*
-ignite scaffold message SubmitPocValidation participant_address poc_stage_start_block_height:int nonces:array.int dist:array.int received_dist:array.int r_target:int fraud_threshold:int n_invalid:int probability_honest:int fraud_detected:bool
- */
+   ignite scaffold message SubmitPocValidation participant_address poc_stage_start_block_height:int nonces:array.int dist:array.int received_dist:array.int r_target:int fraud_threshold:int n_invalid:int probability_honest:int fraud_detected:bool
+*/
 message PoCValidation {
   string participant_address = 1;
   string validator_participant_address = 2;
