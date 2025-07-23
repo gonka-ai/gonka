@@ -28,5 +28,6 @@ message GenesisState {
            Params                     params                         =  1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
            GenesisOnlyParams          genesis_only_params            =  2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
   repeated Model                      model_list                     =  3 [(gogoproto.nullable) = false] ;
-           CosmWasmParams             cosm_wasm_params               =  4 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+           TokenomicsData             tokenomics_data                =  4;
+           CosmWasmParams             cosm_wasm_params               =  5 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
