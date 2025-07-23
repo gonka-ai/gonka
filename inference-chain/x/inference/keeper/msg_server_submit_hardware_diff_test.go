@@ -1,10 +1,11 @@
 package keeper_test
 
 import (
+	"testing"
+
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )

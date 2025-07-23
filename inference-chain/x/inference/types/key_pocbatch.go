@@ -2,9 +2,10 @@ package types
 
 import (
 	"fmt"
-	"github.com/google/uuid"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (

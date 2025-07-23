@@ -1,10 +1,11 @@
 package training_test
 
 import (
-	keepertest "github.com/productscience/inference/testutil/keeper"
-	keeper2 "github.com/productscience/inference/x/inference/keeper"
 	"testing"
 	"time"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	keeper2 "github.com/productscience/inference/x/inference/keeper"
 
 	"github.com/productscience/inference/x/inference/training"
 	"github.com/productscience/inference/x/inference/types"

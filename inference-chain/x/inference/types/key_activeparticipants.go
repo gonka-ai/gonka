@@ -1,8 +1,9 @@
 package types
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"strconv"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 const ActiveParticipantsKeyPrefixV1 = "ActiveParticipants/"

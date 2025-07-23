@@ -2,19 +2,20 @@
 package inference
 
 import (
-	_ "cosmossdk.io/api/amino"
 	binary "encoding/binary"
 	fmt "fmt"
+	io "io"
+	math "math"
+	reflect "reflect"
+	sync "sync"
+
+	_ "cosmossdk.io/api/amino"
 	_ "github.com/cosmos/cosmos-proto"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	io "io"
-	math "math"
-	reflect "reflect"
-	sync "sync"
 )
 
 var (

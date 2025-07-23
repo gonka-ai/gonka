@@ -2,8 +2,9 @@ package keeper
 
 import (
 	"context"
-	sdkerrors "cosmossdk.io/errors"
 	"encoding/base64"
+
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"

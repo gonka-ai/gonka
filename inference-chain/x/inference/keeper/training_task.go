@@ -3,10 +3,11 @@ package keeper
 import (
 	"encoding/binary"
 	"fmt"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/types"
 	"strconv"
 	"strings"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // CreateTask creates a new task, storing the full object under /tasks/{taskID}

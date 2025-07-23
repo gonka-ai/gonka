@@ -1,10 +1,11 @@
 package keeper_test
 
 import (
-	keepertest "github.com/productscience/inference/testutil/keeper"
-	"github.com/productscience/inference/x/inference/types"
 	"reflect"
 	"testing"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func TestSetAndGetHardwareNodes(t *testing.T) {

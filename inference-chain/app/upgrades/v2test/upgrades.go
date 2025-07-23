@@ -2,8 +2,9 @@ package v2test
 
 import (
 	"context"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"fmt"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 )
 

@@ -3,14 +3,15 @@ package epochgroup
 import (
 	"context"
 	"encoding/base64"
+	"strconv"
+	"time"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
-	"strconv"
-	"time"
 )
 
 // EpochMember contains all the parameters related to a member in an epoch group

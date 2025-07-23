@@ -2,10 +2,11 @@ package keeper
 
 import (
 	"context"
+	"strings"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/slices"
-	"strings"
 )
 
 func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmitHardwareDiff) (*types.MsgSubmitHardwareDiffResponse, error) {

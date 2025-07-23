@@ -2,12 +2,13 @@ package keeper
 
 import (
 	"context"
-	"cosmossdk.io/store/prefix"
 	"fmt"
-	"github.com/cosmos/cosmos-sdk/runtime"
-	"github.com/productscience/inference/x/inference/types"
 	"strconv"
 	"strings"
+
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {

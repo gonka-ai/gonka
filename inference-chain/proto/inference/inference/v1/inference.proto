@@ -51,4 +51,3 @@ message Inference {
   string execution_signature = 30;
   string original_prompt = 31;
 }
-

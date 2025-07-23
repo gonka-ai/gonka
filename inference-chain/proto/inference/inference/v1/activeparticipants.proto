@@ -1,7 +1,7 @@
 syntax = "proto3";
 package inference.inference;
 
-import "inference/inference/random_seed.proto";
+import "inference/inference/v1/random_seed.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 

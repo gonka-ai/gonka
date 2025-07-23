@@ -3,10 +3,10 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
-message EpochGroupValidations {
+message SettleAmount {
   string participant = 1;
-  uint64 poc_start_block_height = 2;
-  repeated string validated_inferences = 3;
-
+  uint64 reward_coins = 2;
+  uint64 work_coins = 3;
+  uint64 poc_start_height = 4;
+  string seed_signature = 5;
 }
-

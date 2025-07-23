@@ -2,11 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/productscience/inference/internal/rpc"
-	"github.com/spf13/cobra"
 	"os"
 	"regexp"
 	"strconv"
+
+	"github.com/productscience/inference/internal/rpc"
+	"github.com/spf13/cobra"
 )
 
 func SetStateSync() *cobra.Command {

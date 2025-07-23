@@ -4,9 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"math"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
-	"math"
 )
 
 func ShouldValidate(

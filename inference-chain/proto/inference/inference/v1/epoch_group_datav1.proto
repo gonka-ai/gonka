@@ -1,8 +1,9 @@
 syntax = "proto3";
-import "inference/inference/participant.proto";
-import "inference/inference/paramsv1.proto";
-import "inference/inference/epoch_group_data.proto";
 package inference.inference;
+
+import "inference/inference/v1/epoch_group_data.proto";
+import "inference/inference/v1/paramsv1.proto";
+import "inference/inference/v1/participant.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -20,4 +21,3 @@ message EpochGroupDataV1 {
   ValidationParamsV1 validation_params = 12;
   uint64 total_weight = 13;
 }
-

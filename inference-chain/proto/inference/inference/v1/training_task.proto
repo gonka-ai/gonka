@@ -41,5 +41,5 @@ message EpochInfo {
   int32 last_epoch = 1;
   int64 last_epoch_block_height = 2;
   int64 last_epoch_timestamp = 3; // Equals to the block time
-  bool  last_epoch_is_finished = 4;
+  bool last_epoch_is_finished = 4;
 }

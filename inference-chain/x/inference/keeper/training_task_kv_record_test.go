@@ -1,9 +1,10 @@
 package keeper_test
 
 import (
+	"testing"
+
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
-	"testing"
 )
 
 func TestTrainKVRecord(t *testing.T) {

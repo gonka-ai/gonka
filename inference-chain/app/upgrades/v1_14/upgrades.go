@@ -3,6 +3,7 @@ package v1_14
 import (
 	"context"
 	"fmt"
+
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 

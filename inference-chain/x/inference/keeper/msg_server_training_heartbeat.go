@@ -3,8 +3,9 @@ package keeper
 import (
 	"context"
 	"errors"
-	"github.com/productscience/inference/x/inference/training"
 	"strings"
+
+	"github.com/productscience/inference/x/inference/training"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"

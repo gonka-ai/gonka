@@ -1,10 +1,11 @@
 package keeper_test
 
 import (
+	"testing"
+
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	keeper2 "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
-	"testing"
 )
 
 func TestModels(t *testing.T) {
