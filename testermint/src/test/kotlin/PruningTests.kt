@@ -29,8 +29,19 @@ class PruningTests : TestermintTest() {
 
     @Test
     fun `prune PoCs`() {
-        val (_, genesis) = initCluster(reboot = true)
-        genesis.waitForNextInferenceWindow()
-        logSection("Waiting for PoC")
+        val (_, genesis) = initCluster()
+        val epochData = genesis.getEpochData()
+        val currentStartHeight = epochData.latestEpoch.pocStartBlockHeight
+        val currentPocBatchCount = genesis.node.getPocBatchCount(currentStartHeight)
+        val currentPocValidationCount = genesis.node.getPocValidationCount(currentStartHeight)
+        assertThat(currentPocBatchCount).isGreaterThan(0)
+        assertThat(currentPocValidationCount).isGreaterThan(0)
+        logSection("Waiting for next PoC")
+        genesis.waitForStage(EpochStage.START_OF_POC)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        val newPocBatchCount = genesis.node.getPocBatchCount(currentStartHeight)
+        val newValidationBatchCount = genesis.node.getPocgValidationCount(currentStartHeight)
+        assertThat(newPocBatchCount).isZero()
+        assertThat(newValidationBatchCount).isZero()
     }
 }

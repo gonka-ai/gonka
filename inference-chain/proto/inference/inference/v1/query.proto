@@ -269,6 +269,16 @@ service Query {
   rpc EpochInfo(QueryEpochInfoRequest) returns (QueryEpochInfoResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_info";
   }
+
+  // CountPoCbatchesAtHeight Queries a list of CountPoCbatchesAtHeight items.
+  rpc CountPoCbatchesAtHeight(QueryCountPoCbatchesAtHeightRequest) returns (QueryCountPoCbatchesAtHeightResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/v1/count_po_c_batches_at_height/{block_height}";
+  }
+
+  // CountPoCvalidationsAtHeight Queries a list of CountPoCvalidationsAtHeight items.
+  rpc CountPoCvalidationsAtHeight(QueryCountPoCvalidationsAtHeightRequest) returns (QueryCountPoCvalidationsAtHeightResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/v1/count_po_c_validations_at_height/{block_height}";
+  }
 }
 
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -755,4 +765,24 @@ message QueryEpochInfoResponse {
   int64 block_height = 1;
   Params params = 2 [(gogoproto.nullable) = false];
   Epoch latest_epoch = 3 [(gogoproto.nullable) = false];
+}
+
+// QueryCountPoCbatchesAtHeightRequest defines the QueryCountPoCbatchesAtHeightRequest message.
+message QueryCountPoCbatchesAtHeightRequest {
+  int64 block_height = 1;
+}
+
+// QueryCountPoCbatchesAtHeightResponse defines the QueryCountPoCbatchesAtHeightResponse message.
+message QueryCountPoCbatchesAtHeightResponse {
+  uint64 count = 1;
+}
+
+// QueryCountPoCvalidationsAtHeightRequest defines the QueryCountPoCvalidationsAtHeightRequest message.
+message QueryCountPoCvalidationsAtHeightRequest {
+  int64 block_height = 1;
+}
+
+// QueryCountPoCvalidationsAtHeightResponse defines the QueryCountPoCvalidationsAtHeightResponse message.
+message QueryCountPoCvalidationsAtHeightResponse {
+  uint64 count = 1;
 }
