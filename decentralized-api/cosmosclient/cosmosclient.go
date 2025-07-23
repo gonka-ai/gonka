@@ -104,16 +104,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
-	mn, err := tx_manager.NewTxManager(ctx, &cosmoclient, &account, time.Second*60, natsConn, addr)
+	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, &account, time.Second*60, natsConn, addr)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := mn.SendTxs(); err != nil {
-		return nil, err
-	}
-
-	if err := mn.ObserveTxs(); err != nil {
 		return nil, err
 	}
 
@@ -200,7 +192,6 @@ func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgVal
 
 func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
 	transaction.Creator = icc.address
-	// TODO check may be with retry
 	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
 	return err
 }
@@ -213,7 +204,6 @@ func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *infe
 
 func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRewards) error {
 	transaction.Creator = icc.address
-	// TODO check may be with retry
 	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
 	return err
 }

@@ -34,15 +34,13 @@ const (
 )
 
 type TxManager interface {
-	GetClientContext() client.Context
-	SignBytes(seed []byte) ([]byte, error)
-	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
+	GetClientContext() client.Context
+	SignBytes(seed []byte) ([]byte, error)
+	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
-	SendTxs() error
-	ObserveTxs() error
 }
 
 type manager struct {
@@ -57,7 +55,7 @@ type manager struct {
 	js               nats.JetStreamContext
 }
 
-func NewTxManager(
+func StartTxManager(
 	ctx context.Context,
 	client *cosmosclient.Client,
 	account *cosmosaccount.Account,
@@ -70,6 +68,25 @@ func NewTxManager(
 	}
 
 	types.RegisterInterfaces(client.Context().InterfaceRegistry)
+
+	m := &manager{
+		ctx:              ctx,
+		client:           client,
+		address:          address,
+		account:          account,
+		accountRetriever: authtypes.AccountRetriever{},
+		defaultTimeout:   defaultTimeout,
+		nc:               nc,
+		js:               js,
+	}
+
+	if err := m.sendTxs(); err != nil {
+		return nil, err
+	}
+
+	if err := m.observeTxs(); err != nil {
+		return nil, err
+	}
 
 	return &manager{
 		ctx:              ctx,
@@ -131,10 +148,10 @@ func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultT
 		return nil, err
 	}
 
-	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", resp.TxHash)
+	logging.Debug("Transaction broadcast successful", types.Messages, "tx_id", id, "tx_hash", resp.TxHash)
 	result, err := m.WaitForResponse(resp.TxHash)
 	if err != nil {
-		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
+		logging.Error("Failed to wait for transaction", types.Messages, "tx_id", id, "tx_hash", resp.TxHash, "error", err)
 		return nil, err
 	}
 	return result, nil
@@ -211,8 +228,8 @@ func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeou
 	return err
 }
 
-func (m *manager) SendTxs() error {
-	logging.Info("SendTxs: run in background", types.Messages)
+func (m *manager) sendTxs() error {
+	logging.Info("sending txs: run in background", types.Messages)
 
 	_, err := m.js.Subscribe(server.TxsToSendStream, func(msg *nats.Msg) {
 		var tx txToSend
@@ -260,20 +277,19 @@ func (m *manager) SendTxs() error {
 	return err
 }
 
-func (m *manager) ObserveTxs() error {
+func (m *manager) observeTxs() error {
 	logging.Info("ObserveTxs: starting in background", types.Messages)
 	_, err := m.js.Subscribe(server.TxsToObserveStream, func(msg *nats.Msg) {
 		var tx txInfo
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
 			logging.Error("error unmarshaling tx_to_observe", types.Messages, "err", err)
-			msg.Term() // drop malformed
+			msg.Term()
 			return
 		}
 
-		logging.Debug("ObserveTxs: check tx", types.Messages, "tx_id", tx.Id, "txHash", tx.TxHash)
 		rawTx, err := m.unpackTx(tx.RawTx)
 		if err != nil {
-			msg.Term() // drop malformed
+			msg.Term()
 			return
 		}
 
@@ -289,7 +305,7 @@ func (m *manager) ObserveTxs() error {
 
 		found, err := m.checkTxStatus(tx.TxHash)
 		if found {
-			logging.Debug("tx found, remove tx from observer queue", types.Messages, "txHash", tx.TxHash, "tx_id", tx.Id)
+			logging.Debug("tx found, remove tx from observer queue", types.Messages, "tx_id", tx.Id, "txHash", tx.TxHash)
 			if err := msg.Ack(); err != nil {
 				logging.Error("ack error", types.Messages, "tx_id", tx.Id, "err", err)
 			}
@@ -297,7 +313,7 @@ func (m *manager) ObserveTxs() error {
 		}
 
 		if errors.Is(err, ErrDecodingTxHash) {
-			msg.Ack() // malformed, drop
+			msg.Term()
 			return
 		}
 
@@ -307,6 +323,7 @@ func (m *manager) ObserveTxs() error {
 		}
 
 		if time.Now().After(tx.Timeout) {
+			logging.Debug("tx expired", types.Messages, "tx_id", tx.Id, "tx_hash", tx.TxHash)
 			if err := m.putOnRetry(tx.Id, "", time.Time{}, rawTx, false); err != nil {
 				msg.NakWithDelay(defaultObserverNackDelay)
 				return
@@ -315,7 +332,7 @@ func (m *manager) ObserveTxs() error {
 			return
 		}
 
-		logging.Debug("tx is NOT expired, do nothing", types.Messages, "tx_id", tx.Id, "txHash", tx.TxHash)
+		// tx not found, but not expired yet: do nothing
 		msg.NakWithDelay(defaultObserverNackDelay)
 		return
 
