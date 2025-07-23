@@ -1,5 +1,5 @@
 # Use Eclipse Temurin JRE 19 as the base image (using 19 instead of 21 for better compatibility)
-FROM eclipse-temurin:19-jre
+FROM eclipse-temurin:21-jre
 
 # Install necessary dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
