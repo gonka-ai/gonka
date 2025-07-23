@@ -109,7 +109,7 @@ pip install git+https://github.com/product-science/compressa-perf.git
 ```
 
 
-Next command automatically creates a new account on testnet and runs performance testing:
+**Run Performance Test (Preffered):**
 ```bash
 # len of prompt in symbols: 3000
 # tasks to be executed: 200  
