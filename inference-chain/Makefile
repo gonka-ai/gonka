@@ -137,10 +137,46 @@ release: build-docker
 
 build-all:
 	@echo "Building all platforms/architectures..."
-	@$(foreach os,$(PLATFORMS),\
-		$(foreach arch,$(ARCHS),\
-			$(MAKE) --no-print-directory build-$(os)-$(arch);))
+	@echo "Building native Darwin binaries..."
+	@$(MAKE) --no-print-directory build-darwin-amd64 build-darwin-arm64
+	@echo "Building Linux binaries via Docker..."
+	@$(MAKE) --no-print-directory build-linux-docker
+	@echo "Note: Windows builds require additional setup. Use build-windows-docker if needed."
 	@echo "All builds complete."
+
+build-windows-docker:
+	@echo "Building Windows binary using Docker (amd64 only)..."
+	@mkdir -p build/windows/amd64
+	@docker run --rm --platform linux/amd64 \
+		-v "$(PWD)":/workspace \
+		-w /workspace \
+		golang:1.23-bullseye \
+		bash -c '\
+			echo "Installing mingw-w64..." && \
+			apt-get update -qq && apt-get install -y -qq gcc-mingw-w64 && \
+			echo "Building windows/amd64..." && \
+			CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 go build -ldflags "$(ldflags)" -o build/windows/amd64/inferenced.exe ./cmd/inferenced/main.go && \
+			echo "Windows build complete!"'
+
+build-linux-docker:
+	@echo "Building Linux binaries using Docker..."
+	@mkdir -p build/linux/amd64 build/linux/arm64
+	@docker run --rm --platform linux/amd64 \
+		-v "$(PWD)":/workspace \
+		-w /workspace \
+		golang:1.23-bullseye \
+		bash -c '\
+			echo "Installing dependencies..." && \
+			apt-get update -qq && apt-get install -y -qq gcc gcc-aarch64-linux-gnu && \
+			echo "Downloading Go modules..." && \
+			go mod download && \
+			echo "Building linux/amd64..." && \
+			CGO_ENABLED=1 CC=gcc GOOS=linux GOARCH=amd64 go build -ldflags "$(ldflags)" -o build/linux/amd64/inferenced ./cmd/inferenced/main.go && \
+			echo "Building linux/arm64..." && \
+			CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc GOOS=linux GOARCH=arm64 go build -ldflags "$(ldflags)" -o build/linux/arm64/inferenced ./cmd/inferenced/main.go && \
+			echo "Linux builds complete!"'
+
+
 
 build-%:
 	$(eval OS := $(word 1,$(subst -, ,$*)))
@@ -148,9 +184,16 @@ build-%:
 
 	@echo "Building for OS: $(OS), ARCH: $(ARCH)"
 	@mkdir -p build/$(OS)/$(ARCH)
-	@GOOS=$(OS) GOARCH=$(ARCH) go build -ldflags "$(ldflags)" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go
-	@if [ "$(OS)" = "darwin" ]; then \
-		echo "Running codesign for macOS (universal binary build may vary)..."; \
+	@if [ "$(OS)" = "$(shell go env GOOS)" ]; then \
+		echo "Building for native platform $(OS)/$(ARCH) with CGO..."; \
+		CGO_ENABLED=1 GOOS=$(OS) GOARCH=$(ARCH) go build -ldflags "$(ldflags)" -tags "!test" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go; \
+	else \
+		echo "Skipping cross-compilation for $(OS)/$(ARCH) (requires platform-specific setup)"; \
+		echo "Use 'make build-all-docker' for cross-compilation or build on target platform"; \
+		mkdir -p build/$(OS)/$(ARCH) && touch build/$(OS)/$(ARCH)/.skipped; \
+	fi
+	@if [ "$(OS)" = "darwin" ] && [ -f "build/$(OS)/$(ARCH)/inferenced" ]; then \
+		echo "Running codesign for macOS..."; \
 		codesign --remove-signature build/$(OS)/$(ARCH)/inferenced || true; \
 		codesign --force --sign - build/$(OS)/$(ARCH)/inferenced || true; \
 	fi
@@ -160,8 +203,11 @@ package:
 	@mkdir -p release
 	@for os in $(PLATFORMS); do \
 		for arch in $(ARCHS); do \
-			if [ -f build/$$os/$$arch/inferenced ]; then \
+			if [ -f build/$$os/$$arch/inferenced ] && [ ! -f build/$$os/$$arch/.skipped ]; then \
+				echo "Packaging $$os/$$arch..."; \
 				zip -j release/inferenced-$$os-$$arch.zip build/$$os/$$arch/inferenced; \
+			else \
+				echo "Skipping $$os/$$arch (no binary found)"; \
 			fi; \
 		done; \
 	done
