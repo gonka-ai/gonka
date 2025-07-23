@@ -11,7 +11,7 @@ require (
 	github.com/cometbft/cometbft v0.38.17
 	github.com/cosmos/btcutil v1.0.5
 	github.com/cosmos/cosmos-sdk v0.53.3
-	github.com/cosmos/ibc-go/v8 v8.2.0
+	github.com/cosmos/ibc-go/v8 v8.7.0
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
@@ -40,17 +40,17 @@ require (
 	cloud.google.com/go/monitoring v1.21.2 // indirect
 	cloud.google.com/go/storage v1.49.0 // indirect
 	cosmossdk.io/api v0.9.2 // indirect
-	cosmossdk.io/client/v2 v2.0.0-beta.1 // indirect
+	cosmossdk.io/client/v2 v2.0.0-beta.3 // indirect
 	cosmossdk.io/collections v1.2.1 // indirect
 	cosmossdk.io/core v0.11.3 // indirect
 	cosmossdk.io/depinject v1.2.1 // indirect
 	cosmossdk.io/log v1.6.0 // indirect
 	cosmossdk.io/math v1.5.3 // indirect
 	cosmossdk.io/schema v1.1.0 // indirect
-	cosmossdk.io/tools/confix v0.1.1 // indirect
-	cosmossdk.io/x/circuit v0.1.0 // indirect
-	cosmossdk.io/x/evidence v0.1.0 // indirect
-	cosmossdk.io/x/feegrant v0.1.0 // indirect
+	cosmossdk.io/tools/confix v0.1.2 // indirect
+	cosmossdk.io/x/circuit v0.1.1 // indirect
+	cosmossdk.io/x/evidence v0.1.1 // indirect
+	cosmossdk.io/x/feegrant v0.1.1 // indirect
 	cosmossdk.io/x/nft v0.1.0 // indirect
 	cosmossdk.io/x/tx v0.14.0 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
@@ -91,7 +91,7 @@ require (
 	github.com/cosmos/gogogateway v1.2.0 // indirect
 	github.com/cosmos/gogoproto v1.7.0 // indirect
 	github.com/cosmos/iavl v1.2.2 // indirect
-	github.com/cosmos/ibc-go/modules/capability v1.0.0 // indirect
+	github.com/cosmos/ibc-go/modules/capability v1.0.1 // indirect
 	github.com/cosmos/ics23/go v0.11.0 // indirect
 	github.com/cosmos/ledger-cosmos-go v0.14.0 // indirect
 	github.com/creachadair/atomicfile v0.3.1 // indirect
