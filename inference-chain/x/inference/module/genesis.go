@@ -35,10 +35,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	InitHoldingAccounts(ctx, k, genState)
 
-	// Set if defined
-	if genState.TokenomicsData != nil {
-		k.SetTokenomicsData(ctx, *genState.TokenomicsData)
-	}
+	// Init empty TokenomicsData
+	k.SetTokenomicsData(ctx, types.TokenomicsData{})
 
 	k.SetContractsParams(ctx, genState.CosmWasmParams)
 
@@ -201,11 +199,6 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := &types.GenesisState{}
 	genesis.Params = k.GetParams(ctx)
 
-	// Get all tokenomicsData
-	tokenomicsData, found := k.GetTokenomicsData(ctx)
-	if found {
-		genesis.TokenomicsData = &tokenomicsData
-	}
 	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
 	if found {
 		genesis.GenesisOnlyParams = genesisOnlyParams

@@ -22,12 +22,6 @@ func TestGenesisState_Validate(t *testing.T) {
 			desc: "valid genesis state",
 			genState: &types.GenesisState{
 				Params: types.DefaultParams(),
-				TokenomicsData: &types.TokenomicsData{
-					TotalFees:      76,
-					TotalSubsidies: 1,
-					TotalRefunded:  73,
-					TotalBurned:    23,
-				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,

@@ -20,7 +20,6 @@ func GenerateGenesis(mockContracts bool) *GenesisState {
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
 		CosmWasmParams:    contractsParams,
-		TokenomicsData:    &TokenomicsData{},
 	}
 }
 

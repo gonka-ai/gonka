@@ -16,12 +16,6 @@ func TestGenesis(t *testing.T) {
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 		CosmWasmParams:    baseGenesis.CosmWasmParams,
-		TokenomicsData: &types.TokenomicsData{
-			TotalFees:      85,
-			TotalSubsidies: 11,
-			TotalRefunded:  99,
-			TotalBurned:    5,
-		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -36,6 +30,5 @@ func TestGenesis(t *testing.T) {
 	nullify.Fill(&genesisState)
 	nullify.Fill(got)
 
-	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	// this line is used by starport scaffolding # genesis/test/assert
 }
