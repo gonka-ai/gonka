@@ -722,9 +722,58 @@ func (b *Broker) reconcilerLoop() {
 	for {
 		select {
 		case <-b.reconcileTrigger:
-			b.reconcileIfSynced("Reconciliation triggered manually")
+			b.reconcileIfSynced("Manual reconciliation trigger")
 		case <-ticker.C:
-			b.reconcileIfSynced("Reconciliation triggered by timer")
+			b.reconcileIfSynced("Periodic reconciliation")
+			// Check for version changes and refresh clients if needed
+			b.checkAndRefreshClientsIfNeeded()
+		}
+	}
+}
+
+// checkAndRefreshClientsIfNeeded checks if the MLNode version has changed and refreshes all clients if needed
+func (b *Broker) checkAndRefreshClientsIfNeeded() {
+	if b.configManager.ShouldRefreshClients() {
+		currentVersion := b.configManager.GetCurrentNodeVersion()
+		lastUsedVersion := b.configManager.GetLastUsedVersion()
+
+		logging.Info("MLNode version change detected - immediately refreshing all clients", types.Nodes,
+			"oldVersion", lastUsedVersion, "newVersion", currentVersion)
+
+		// Immediately refresh all worker clients (no queuing delay)
+		b.mu.RLock()
+		workerIds := make([]string, 0, len(b.nodes))
+		for nodeId := range b.nodes {
+			workerIds = append(workerIds, nodeId)
+		}
+		b.mu.RUnlock()
+
+		// Immediately refresh all workers
+		refreshedCount := 0
+		for _, nodeId := range workerIds {
+			worker, exists := b.nodeWorkGroup.GetWorker(nodeId)
+			if exists {
+				worker.RefreshClientImmediate(lastUsedVersion, currentVersion)
+				refreshedCount++
+			}
+		}
+
+		logging.Info("Immediately refreshed all MLNode clients", types.Nodes,
+			"oldVersion", lastUsedVersion, "newVersion", currentVersion, "count", refreshedCount)
+
+		// Update last used version (fire and forget - if this fails, we'll retry next cycle)
+		if err := b.configManager.SetLastUsedVersion(currentVersion); err != nil {
+			logging.Warn("Failed to update last used version", types.Config, "error", err)
+		}
+	} else {
+		// Ensure lastUsedVersion is set if it's empty (first time initialization)
+		if b.configManager.GetLastUsedVersion() == "" {
+			currentVersion := b.configManager.GetCurrentNodeVersion()
+			if currentVersion != "" {
+				if err := b.configManager.SetLastUsedVersion(currentVersion); err != nil {
+					logging.Warn("Failed to initialize last used version", types.Config, "error", err)
+				}
+			}
 		}
 	}
 }

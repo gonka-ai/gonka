@@ -12,6 +12,7 @@ type Config struct {
 	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
 	KeyConfig          KeyConfig             `koanf:"key_config"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
+	LastUsedVersion    string                `koanf:"last_used_version"`
 	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 }
 

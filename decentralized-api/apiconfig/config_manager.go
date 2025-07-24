@@ -117,8 +117,12 @@ func (cm *ConfigManager) GetCurrentNodeVersion() string {
 func (cm *ConfigManager) SetCurrentNodeVersion(version string) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
+
+	oldVersion := cm.currentConfig.CurrentNodeVersion
 	cm.currentConfig.CurrentNodeVersion = version
-	logging.Info("Setting current node version", types.Config, "version", version)
+
+	logging.Info("Setting current node version", types.Config, "oldVersion", oldVersion, "newVersion", version)
+
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -170,6 +174,25 @@ func (cm *ConfigManager) GetValidationParams() ValidationParamsCache {
 
 func (cm *ConfigManager) GetHeight() int64 {
 	return cm.currentConfig.CurrentHeight
+}
+
+func (cm *ConfigManager) GetLastUsedVersion() string {
+	return cm.currentConfig.LastUsedVersion
+}
+
+func (cm *ConfigManager) SetLastUsedVersion(version string) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.LastUsedVersion = version
+	logging.Info("Setting last used version", types.Config, "version", version)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+// ShouldRefreshClients returns true if clients need to be refreshed due to version change
+func (cm *ConfigManager) ShouldRefreshClients() bool {
+	currentVersion := cm.GetCurrentNodeVersion()
+	lastUsedVersion := cm.GetLastUsedVersion()
+	return currentVersion != lastUsedVersion && lastUsedVersion != ""
 }
 
 func (cm *ConfigManager) SetPreviousSeed(seed SeedInfo) error {

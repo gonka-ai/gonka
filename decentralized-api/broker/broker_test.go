@@ -397,3 +397,80 @@ func TestVersionedUrls(t *testing.T) {
 	actualVersionedPocUrl := node.PoCUrlWithVersion("v3.0.8")
 	assert.Equal(t, expectedVersionedPocUrl, actualVersionedPocUrl)
 }
+
+func TestImmediateClientRefreshLogic(t *testing.T) {
+	// Test the immediate client refresh logic
+	broker := NewTestBroker()
+
+	// Test case 1: Should not refresh when lastUsedVersion is empty (first time)
+	assert.False(t, broker.configManager.ShouldRefreshClients(), "Should not refresh on first time")
+
+	// Test the RefreshAllClients functionality by registering a node
+	node := apiconfig.InferenceNodeConfig{
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
+		Id:            "node1",
+		MaxConcurrent: 1,
+		Version:       "v3.0.8",
+	}
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
+	// Get the worker and mock client factory
+	worker, exists := broker.nodeWorkGroup.GetWorker("node1")
+	require.True(t, exists, "Worker should exist")
+
+	mockFactory := broker.mlNodeClientFactory.(*mlnodeclient.MockClientFactory)
+
+	// Get the client using the actual key that would be used
+	allClients := mockFactory.GetAllClients()
+	var mockClient *mlnodeclient.MockClient
+	for _, client := range allClients {
+		mockClient = client
+		break // Get the first (and likely only) client
+	}
+	require.NotNil(t, mockClient, "Mock client should exist")
+
+	initialStopCalled := mockClient.StopCalled
+
+	// Test the immediate refresh directly - this should call stop on the old client immediately
+	worker.RefreshClientImmediate("v3.0.8", "v3.1.0")
+
+	// Give some time for the async stop call to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify stop was called on the old client
+	assert.Greater(t, mockClient.StopCalled, initialStopCalled, "Stop should have been called on old client")
+
+	// Test the full immediate refresh flow again
+	previousStopCalled := mockClient.StopCalled
+
+	// Call immediate refresh again with different version
+	worker.RefreshClientImmediate("v3.1.0", "v3.2.0")
+
+	// Give some time for async stop calls to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Should have called stop again
+	assert.Greater(t, mockClient.StopCalled, previousStopCalled, "Stop should have been called again during second refresh")
+}
+
+func TestManualClientRefreshTrigger(t *testing.T) {
+	// Test the manual trigger mechanism
+	broker := NewTestBroker()
+
+	// Test triggering the manual refresh
+	broker.TriggerClientRefresh()
+
+	// Give some time for the trigger to be processed
+	time.Sleep(10 * time.Millisecond)
+
+	// Verify it doesn't block on multiple triggers
+	broker.TriggerClientRefresh()
+	broker.TriggerClientRefresh()
+
+	// Should not hang or panic
+	assert.True(t, true, "Manual triggers should not block or panic")
+}
