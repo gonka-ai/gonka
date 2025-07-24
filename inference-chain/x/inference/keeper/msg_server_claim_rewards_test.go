@@ -31,7 +31,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
-	pocStartBlockHeight := uint64(150)
+	pocStartBlockHeight := uint64(100)
 	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
 	k.SetEpoch(ctx, &epoch)
 	k.SetEffectiveEpochIndex(ctx, epoch.Index)
@@ -224,10 +224,15 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
+	pocStartBlockHeight := uint64(100)
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(sdkCtx, &epoch)
+	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
+
 	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -236,8 +241,9 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
+		EpochId:             epoch.Index,
 		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -257,7 +263,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: 100,
+		EpochStartHeight: pocStartBlockHeight,
 		ParticipantId:    testutil.Creator,
 		Claimed:          false,
 	}
@@ -311,7 +317,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -324,7 +330,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Now let's validate all inferences and try again
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
@@ -353,7 +359,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Call ClaimRewards again - this should succeed now
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -368,7 +374,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.False(t, found)
 
 	// Verify the performance summary was updated
-	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdkCtx, 100, testutil.Creator)
+	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdkCtx, pocStartBlockHeight, testutil.Creator)
 	require.True(t, found)
 	require.True(t, updatedPerfSummary.Claimed)
 }
@@ -402,10 +408,15 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
+	pocStartBlockHeight := uint64(100)
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(sdkCtx, &epoch)
+	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
+
 	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -414,8 +425,9 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
+		EpochId:             epoch.Index,
 		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -435,7 +447,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: 100,
+		EpochStartHeight: pocStartBlockHeight,
 		ParticipantId:    testutil.Creator,
 		Claimed:          false,
 	}
@@ -489,7 +501,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -503,7 +515,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// This should still fail because we need to validate all required inferences
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidatedInferences: []string{"inference2"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
@@ -514,7 +526,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards again - this should still fail
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -546,7 +558,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards with the new seed
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
 	})
 
@@ -585,7 +597,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards again - this should succeed now
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
 	})
 
