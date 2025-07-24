@@ -800,8 +800,45 @@ func TestMsgServer_ClaimRewards_FailedValidationDuringPoC_Available(t *testing.T
 				Weight:        50,
 			},
 		},
+		SubGroupModels: []string{MODEL_ID},
 	}
 	k.SetEpochGroupData(sdkCtx, epochData)
+	modelSubGroup := types.EpochGroupData{
+		EpochId:             epoch.Index,
+		EpochGroupId:        101,
+		PocStartBlockHeight: pocStartBlockHeight,
+		ModelId:             MODEL_ID,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: testutil.Creator, // Claimant
+				Weight:        50,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          25,
+						TimeslotAllocation: []bool{true, true},
+					},
+					{
+						NodeId:             "node2",
+						PocWeight:          25,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
+			},
+			{
+				MemberAddress: "executor1",
+				Weight:        50,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          50,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
+			},
+		},
+	}
+	k.SetEpochGroupData(sdkCtx, modelSubGroup)
 
 	// Performance Summary
 	perfSummary := types.EpochPerformanceSummary{
@@ -822,6 +859,7 @@ func TestMsgServer_ClaimRewards_FailedValidationDuringPoC_Available(t *testing.T
 		ExecutorReputation:   0, // Low reputation to increase validation chance
 		TrafficBasis:         1000,
 		CreatedAtBlockHeight: inferenceCreatedAtHeight,
+		Model:                MODEL_ID,
 	}
 	k.SetInferenceValidationDetails(sdkCtx, inference)
 
