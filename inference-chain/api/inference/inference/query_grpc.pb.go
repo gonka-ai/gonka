@@ -73,8 +73,6 @@ const (
 	Query_TrainingBarrier_FullMethodName                           = "/inference.inference.Query/TrainingBarrier"
 	Query_TrainingAliveNodes_FullMethodName                        = "/inference.inference.Query/TrainingAliveNodes"
 	Query_EpochInfo_FullMethodName                                 = "/inference.inference.Query/EpochInfo"
-	Query_CountPoCbatchesAtHeight_FullMethodName                   = "/inference.inference.Query/CountPoCbatchesAtHeight"
-	Query_CountPoCValidationsAtHeight_FullMethodName               = "/inference.inference.Query/CountPoCValidationsAtHeight"
 )
 
 // QueryClient is the client API for Query service.
@@ -172,10 +170,6 @@ type QueryClient interface {
 	TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error)
 	// Queries a list of EpochInfo items.
 	EpochInfo(ctx context.Context, in *QueryEpochInfoRequest, opts ...grpc.CallOption) (*QueryEpochInfoResponse, error)
-	// Queries a list of CountPoCbatchesAtHeight items.
-	CountPoCbatchesAtHeight(ctx context.Context, in *QueryCountPoCbatchesAtHeightRequest, opts ...grpc.CallOption) (*QueryCountPoCbatchesAtHeightResponse, error)
-	// Queries a list of CountPoCValidationsAtHeight items.
-	CountPoCValidationsAtHeight(ctx context.Context, in *QueryCountPoCValidationsAtHeightRequest, opts ...grpc.CallOption) (*QueryCountPoCValidationsAtHeightResponse, error)
 }
 
 type queryClient struct {
@@ -672,24 +666,6 @@ func (c *queryClient) EpochInfo(ctx context.Context, in *QueryEpochInfoRequest, 
 	return out, nil
 }
 
-func (c *queryClient) CountPoCbatchesAtHeight(ctx context.Context, in *QueryCountPoCbatchesAtHeightRequest, opts ...grpc.CallOption) (*QueryCountPoCbatchesAtHeightResponse, error) {
-	out := new(QueryCountPoCbatchesAtHeightResponse)
-	err := c.cc.Invoke(ctx, Query_CountPoCbatchesAtHeight_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) CountPoCValidationsAtHeight(ctx context.Context, in *QueryCountPoCValidationsAtHeightRequest, opts ...grpc.CallOption) (*QueryCountPoCValidationsAtHeightResponse, error) {
-	out := new(QueryCountPoCValidationsAtHeightResponse)
-	err := c.cc.Invoke(ctx, Query_CountPoCValidationsAtHeight_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -785,10 +761,6 @@ type QueryServer interface {
 	TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error)
 	// Queries a list of EpochInfo items.
 	EpochInfo(context.Context, *QueryEpochInfoRequest) (*QueryEpochInfoResponse, error)
-	// Queries a list of CountPoCbatchesAtHeight items.
-	CountPoCbatchesAtHeight(context.Context, *QueryCountPoCbatchesAtHeightRequest) (*QueryCountPoCbatchesAtHeightResponse, error)
-	// Queries a list of CountPoCValidationsAtHeight items.
-	CountPoCValidationsAtHeight(context.Context, *QueryCountPoCValidationsAtHeightRequest) (*QueryCountPoCValidationsAtHeightResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -957,12 +929,6 @@ func (UnimplementedQueryServer) TrainingAliveNodes(context.Context, *QueryTraini
 }
 func (UnimplementedQueryServer) EpochInfo(context.Context, *QueryEpochInfoRequest) (*QueryEpochInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochInfo not implemented")
-}
-func (UnimplementedQueryServer) CountPoCbatchesAtHeight(context.Context, *QueryCountPoCbatchesAtHeightRequest) (*QueryCountPoCbatchesAtHeightResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CountPoCbatchesAtHeight not implemented")
-}
-func (UnimplementedQueryServer) CountPoCValidationsAtHeight(context.Context, *QueryCountPoCValidationsAtHeightRequest) (*QueryCountPoCValidationsAtHeightResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CountPoCValidationsAtHeight not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1949,42 +1915,6 @@ func _Query_EpochInfo_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_CountPoCbatchesAtHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryCountPoCbatchesAtHeightRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).CountPoCbatchesAtHeight(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_CountPoCbatchesAtHeight_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).CountPoCbatchesAtHeight(ctx, req.(*QueryCountPoCbatchesAtHeightRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_CountPoCValidationsAtHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryCountPoCValidationsAtHeightRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).CountPoCValidationsAtHeight(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_CountPoCValidationsAtHeight_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).CountPoCValidationsAtHeight(ctx, req.(*QueryCountPoCValidationsAtHeightRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2207,14 +2137,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochInfo",
 			Handler:    _Query_EpochInfo_Handler,
-		},
-		{
-			MethodName: "CountPoCbatchesAtHeight",
-			Handler:    _Query_CountPoCbatchesAtHeight_Handler,
-		},
-		{
-			MethodName: "CountPoCValidationsAtHeight",
-			Handler:    _Query_CountPoCValidationsAtHeight_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -262,13 +262,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}},
 				},
 
-				{
-					RpcMethod: "CountPoCbatchesAtHeight",
-					Use: "count-po-c-batches-at-height [block-height]",
-					Short: "Query countPoCBatchesAtHeight",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"},},
-				},
-
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
