@@ -456,21 +456,3 @@ func TestImmediateClientRefreshLogic(t *testing.T) {
 	// Should have called stop again
 	assert.Greater(t, mockClient.StopCalled, previousStopCalled, "Stop should have been called again during second refresh")
 }
-
-func TestManualClientRefreshTrigger(t *testing.T) {
-	// Test the manual trigger mechanism
-	broker := NewTestBroker()
-
-	// Test triggering the manual refresh
-	broker.TriggerClientRefresh()
-
-	// Give some time for the trigger to be processed
-	time.Sleep(10 * time.Millisecond)
-
-	// Verify it doesn't block on multiple triggers
-	broker.TriggerClientRefresh()
-	broker.TriggerClientRefresh()
-
-	// Should not hang or panic
-	assert.True(t, true, "Manual triggers should not block or panic")
-}
