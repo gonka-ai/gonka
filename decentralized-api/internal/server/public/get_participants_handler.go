@@ -235,6 +235,12 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 		"epoch", epoch,
 		"value_bytes", len(result.Response.Value))
 
+	if len(result.Response.Value) == 0 {
+		logging.Error("Active participants query returned empty value", types.Participants, "epoch", epoch)
+		return nil, echo.NewHTTPError(http.StatusNotFound, "No active participants found for the specified epoch. "+
+			"Looks like PoC failed!")
+	}
+
 	var activeParticipants types.ActiveParticipants
 	if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
 		logging.Error("Failed to unmarshal active participant. Req 1", types.Participants, "error", err)
