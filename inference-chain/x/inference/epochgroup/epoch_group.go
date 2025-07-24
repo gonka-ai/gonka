@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -360,10 +361,17 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 		// The VALIDATOR key, never to be confused with the account key (which is a sekp256k1 key)
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
+		accAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
+		if err != nil {
+			eg.Logger.LogError("Error decoding account address", types.EpochGroup, "error", err)
+			continue
+		}
+		valOperatorAddr := sdk.ValAddress(accAddr).String()
+
 		computeResults = append(computeResults, keeper.ComputeResult{
 			Power:           getWeight(member),
 			ValidatorPubKey: &pubKey,
-			OperatorAddress: member.Member.Address,
+			OperatorAddress: valOperatorAddr,
 		})
 	}
 

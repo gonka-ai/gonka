@@ -275,5 +275,5 @@ tasks.test {
     systemProperty("java.net.preferIPv6Addresses", "true")
 }
 kotlin {
-    jvmToolchain(19)
+    jvmToolchain(21)
 }
