@@ -608,176 +608,24 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	require.Equal(t, "Rewards claimed successfully", resp.Result)
 }
 
-// TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_NotAvailable tests that a validator
-// can still claim rewards if they miss a validation for an inference that occurred
-// during the PoC phase, provided they were not available.
 func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_NotAvailable(t *testing.T) {
-	// 1. Setup
-	k, ms, ctx, mocks := setupKeeperWithMocks(t)
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-
-	// Participants
-	mockCreator := NewMockAccount(testutil.Creator) // This is the claimant/validator
-	mockExecutor := NewMockAccount("executor1")
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor)
-
-	// Private key for signing
-	privKey := secp256k1.GenPrivKey()
-	pubKey := privKey.PubKey()
-
-	// Seed & Signature
-	seed := uint64(12345)
-	seedBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(seedBytes, seed)
-	signature, err := privKey.Sign(seedBytes)
-	require.NoError(t, err)
-	signatureHex := hex.EncodeToString(signature)
-
-	// Epoch and Params
-	pocStartBlockHeight := uint64(100)
-	epochLength := int64(200)
-	inferenceValidationCutoff := int64(20)
-
-	epoch := types.Epoch{Index: 1, PocStartBlockHeight: int64(pocStartBlockHeight)}
-	k.SetEpoch(sdkCtx, &epoch)
-	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
-
-	params := types.DefaultParams()
-	params.EpochParams.EpochLength = epochLength
-	params.EpochParams.InferenceValidationCutoff = inferenceValidationCutoff
-	// Ensure ShouldValidate returns true for our test case
-	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
-	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
-	err = k.SetParams(sdkCtx, params)
-	require.NoError(t, err)
-
-	// Settle Amount
-	settleAmount := types.SettleAmount{
-		Participant:    testutil.Creator,
-		PocStartHeight: pocStartBlockHeight,
-		WorkCoins:      1000,
-		RewardCoins:    500,
-		SeedSignature:  signatureHex,
-	}
-	k.SetSettleAmount(sdkCtx, settleAmount)
-
-	// Epoch Group Data with claimant as NOT available
-	epochData := types.EpochGroupData{
-		EpochId:             epoch.Index,
-		EpochGroupId:        100,
-		PocStartBlockHeight: pocStartBlockHeight,
-		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: testutil.Creator, // Claimant
-				Weight:        50,
-			},
-			{
-				MemberAddress: "executor1",
-				Weight:        50,
-			},
-		},
-		SubGroupModels: []string{MODEL_ID},
-	}
-	k.SetEpochGroupData(sdkCtx, epochData)
-	modelSubGroup := types.EpochGroupData{
-		EpochId:             epoch.Index,
-		EpochGroupId:        101,
-		PocStartBlockHeight: pocStartBlockHeight,
-		ModelId:             MODEL_ID,
-		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: testutil.Creator, // Claimant
-				Weight:        50,
-				MlNodes: []*types.MLNodeInfo{
-					{
-						NodeId:             "node1",
-						PocWeight:          50,
-						TimeslotAllocation: []bool{true, false},
-					},
-				},
-			},
-			{
-				MemberAddress: "executor1",
-				Weight:        50,
-				MlNodes: []*types.MLNodeInfo{
-					{
-						NodeId:             "node1",
-						PocWeight:          50,
-						TimeslotAllocation: []bool{true, false},
-					},
-				},
-			},
-		},
-	}
-	k.SetEpochGroupData(sdkCtx, modelSubGroup)
-
-	// Performance Summary
-	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: pocStartBlockHeight,
-		ParticipantId:    testutil.Creator,
-		Claimed:          false,
-	}
-	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
-
-	// This inference needs validation and must happen during the PoC phase cutoff.
-	// Cutoff = (pocStartBlockHeight + epochLength) - inferenceValidationCutoff
-	// Cutoff = (100 + 200) - 20 = 280
-	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
-	inferenceCreatedAtHeight := epochContext.InferenceValidationCutoff()
-
-	inference := types.InferenceValidationDetails{
-		EpochGroupId:         100,
-		InferenceId:          "inference-during-poc",
-		ExecutorId:           "executor1",
-		ExecutorReputation:   0, // Low reputation to increase validation chance
-		TrafficBasis:         1000,
-		CreatedAtBlockHeight: inferenceCreatedAtHeight,
-	}
-	k.SetInferenceValidationDetails(sdkCtx, inference)
-
-	// No validations are submitted by the claimant to simulate the miss.
-
-	// Mocks for account and bank
-	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
-	require.NoError(t, err)
-	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
-	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
-	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins).Return(nil)
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins).Return(nil)
-
-	// 2. Action
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
-		Creator:        testutil.Creator,
-		PocStartHeight: pocStartBlockHeight,
-		Seed:           int64(seed),
-	})
-
-	// 3. Assertion
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, uint64(1500), resp.Amount)
-	require.Equal(t, "Rewards claimed successfully", resp.Result)
+	pocAvailabilityTest(t, false)
 }
 
-// TestMsgServer_ClaimRewards_FailedValidationDuringPoC_Available tests that a validator
-// CANNOT claim rewards if they miss a validation for an inference that occurred
-// during the PoC phase if they were available at the time.
-func TestMsgServer_ClaimRewards_FailedValidationDuringPoC_Available(t *testing.T) {
+func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_Available(t *testing.T) {
+	pocAvailabilityTest(t, true)
+}
+
+func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// 1. Setup
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	// Participants
-	mockCreator := NewMockAccount(testutil.Creator) // This is the claimant/validator
+	// Participants & Keys
+	mockCreator := NewMockAccount(testutil.Creator)
 	mockExecutor := NewMockAccount("executor1")
 	MustAddParticipant(t, ms, ctx, *mockCreator)
 	MustAddParticipant(t, ms, ctx, *mockExecutor)
-
-	// Private key for signing
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
 
@@ -793,19 +641,15 @@ func TestMsgServer_ClaimRewards_FailedValidationDuringPoC_Available(t *testing.T
 	pocStartBlockHeight := uint64(100)
 	epochLength := int64(200)
 	inferenceValidationCutoff := int64(20)
-
 	epoch := types.Epoch{Index: 1, PocStartBlockHeight: int64(pocStartBlockHeight)}
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
-
 	params := types.DefaultParams()
 	params.EpochParams.EpochLength = epochLength
 	params.EpochParams.InferenceValidationCutoff = inferenceValidationCutoff
-	// Ensure ShouldValidate returns true for our test case
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
-	err = k.SetParams(sdkCtx, params)
-	require.NoError(t, err)
+	k.SetParams(sdkCtx, params)
 
 	// Settle Amount
 	settleAmount := types.SettleAmount{
@@ -817,104 +661,95 @@ func TestMsgServer_ClaimRewards_FailedValidationDuringPoC_Available(t *testing.T
 	}
 	k.SetSettleAmount(sdkCtx, settleAmount)
 
-	// Epoch Group Data with claimant as AVAILABLE
-	epochData := types.EpochGroupData{
+	// Epoch Group Data (Main and Sub-group)
+	// Claimant has two nodes, one with full availability
+	mainEpochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
 		EpochGroupId:        100,
 		PocStartBlockHeight: pocStartBlockHeight,
-		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: testutil.Creator, // Claimant
-				Weight:        50,
-			},
-			{
-				MemberAddress: "executor1",
-				Weight:        50,
-			},
-		},
-		SubGroupModels: []string{MODEL_ID},
+		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: "executor1", Weight: 50}},
+		SubGroupModels:      []string{MODEL_ID},
 	}
-	k.SetEpochGroupData(sdkCtx, epochData)
+	k.SetEpochGroupData(sdkCtx, mainEpochData)
+
+	var validatorWeight *types.ValidationWeight
+	if validatorIsAvailableDuringPoC {
+		validatorWeight = &types.ValidationWeight{
+			MemberAddress: testutil.Creator,
+			Weight:        50,
+			MlNodes: []*types.MLNodeInfo{
+				{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, true}},
+				{NodeId: "node2", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+			},
+		}
+	} else {
+		validatorWeight = &types.ValidationWeight{
+			MemberAddress: testutil.Creator,
+			Weight:        50,
+			MlNodes: []*types.MLNodeInfo{
+				{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+			},
+		}
+	}
+
 	modelSubGroup := types.EpochGroupData{
 		EpochId:             epoch.Index,
 		EpochGroupId:        101,
 		PocStartBlockHeight: pocStartBlockHeight,
 		ModelId:             MODEL_ID,
 		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: testutil.Creator, // Claimant
-				Weight:        50,
-				MlNodes: []*types.MLNodeInfo{
-					{
-						NodeId:             "node1",
-						PocWeight:          25,
-						TimeslotAllocation: []bool{true, true},
-					},
-					{
-						NodeId:             "node2",
-						PocWeight:          25,
-						TimeslotAllocation: []bool{true, false},
-					},
-				},
-			},
+			validatorWeight,
 			{
 				MemberAddress: "executor1",
 				Weight:        50,
-				MlNodes: []*types.MLNodeInfo{
-					{
-						NodeId:             "node1",
-						PocWeight:          50,
-						TimeslotAllocation: []bool{true, false},
-					},
-				},
+				MlNodes:       []*types.MLNodeInfo{{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, false}}},
 			},
 		},
 	}
 	k.SetEpochGroupData(sdkCtx, modelSubGroup)
 
 	// Performance Summary
-	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: pocStartBlockHeight,
-		ParticipantId:    testutil.Creator,
-		Claimed:          false,
-	}
+	perfSummary := types.EpochPerformanceSummary{EpochStartHeight: pocStartBlockHeight, ParticipantId: testutil.Creator, Claimed: false}
 	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
 
-	// This inference needs validation and must happen during the PoC phase cutoff.
+	// Inference occurring during PoC cutoff
 	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
-	inferenceCreatedAtHeight := epochContext.InferenceValidationCutoff()
-
 	inference := types.InferenceValidationDetails{
 		EpochGroupId:         100,
 		InferenceId:          "inference-during-poc",
 		ExecutorId:           "executor1",
-		ExecutorReputation:   0, // Low reputation to increase validation chance
+		ExecutorReputation:   0,
 		TrafficBasis:         1000,
-		CreatedAtBlockHeight: inferenceCreatedAtHeight,
+		CreatedAtBlockHeight: epochContext.InferenceValidationCutoff(),
 		Model:                MODEL_ID,
 	}
 	k.SetInferenceValidationDetails(sdkCtx, inference)
 
-	// No validations are submitted by the claimant to simulate the miss.
-
-	// Mocks for account
+	// Mocks
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	if !validatorIsAvailableDuringPoC {
+		workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
+		rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins).Return(nil)
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins).Return(nil)
+	}
 
-	// No BankKeeper mocks needed as the claim should fail before payment.
-
-	// 2. Action
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
-		Creator:        testutil.Creator,
-		PocStartHeight: pocStartBlockHeight,
-		Seed:           int64(seed),
-	})
-
-	// 3. Assertion
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, uint64(0), resp.Amount)
-	require.Equal(t, "Inference not validated", resp.Result)
+	if validatorIsAvailableDuringPoC {
+		// Validator was available, but did not validate the inference, expect 0 rewards
+		resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{Creator: testutil.Creator, PocStartHeight: pocStartBlockHeight, Seed: int64(seed)})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(0), resp.Amount)
+		require.Equal(t, "Inference not validated", resp.Result)
+	} else {
+		// Validator wasn't available, expect them to receive their reward even if they didn't validate all inferences
+		resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{Creator: testutil.Creator, PocStartHeight: pocStartBlockHeight, Seed: int64(seed)})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(1500), resp.Amount)
+		require.Equal(t, "Rewards claimed successfully", resp.Result)
+	}
 }
