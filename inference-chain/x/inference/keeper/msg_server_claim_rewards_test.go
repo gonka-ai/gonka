@@ -677,6 +677,7 @@ func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_NotAvailable(t *testi
 				Weight:        50,
 			},
 		},
+		SubGroupModels: []string{MODEL_ID},
 	}
 	k.SetEpochGroupData(sdkCtx, epochData)
 	modelSubGroup := types.EpochGroupData{
