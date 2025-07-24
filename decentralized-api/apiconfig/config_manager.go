@@ -1,6 +1,7 @@
 package apiconfig
 
 import (
+	"context"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/knadh/koanf/parsers/yaml"
@@ -18,7 +20,11 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc"
 )
+
+// Default MLNode version used as fallback
+const DefaultMLNodeVersion = "v3.0.8"
 
 type ConfigManager struct {
 	currentConfig  Config
@@ -77,27 +83,29 @@ func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
 	return nodes
 }
 
-func (cm *ConfigManager) getConfig() *Config {
-	return &cm.currentConfig
+func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
+	return cm.currentConfig.UpgradePlan
 }
 
+// ShouldCheckUpgradeAtHeight returns true if we should check for version update at this exact height
+func (cm *ConfigManager) ShouldCheckUpgradeAtHeight(height int64) bool {
+	plan := cm.currentConfig.UpgradePlan
+	return plan.Name != "" && plan.Height > 0 && height == plan.Height
+}
+
+// Setters - these need mutex protection since they write to disk
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	cm.currentConfig.UpgradePlan = plan
 	logging.Info("Setting upgrade plan", types.Config, "plan", plan)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
-func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
-	return cm.currentConfig.UpgradePlan
-}
-
 func (cm *ConfigManager) SetHeight(height int64) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	cm.currentConfig.CurrentHeight = height
-	newVersion, found := cm.currentConfig.NodeVersions.PopIf(height)
-	if found {
-		logging.Info("New Node Version!", types.Upgrades, "version", newVersion, "oldVersion", cm.currentConfig.CurrentNodeVersion)
-		cm.currentConfig.CurrentNodeVersion = newVersion
-	}
 	logging.Info("Setting height", types.Config, "height", height)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
@@ -106,24 +114,58 @@ func (cm *ConfigManager) GetCurrentNodeVersion() string {
 	return cm.currentConfig.CurrentNodeVersion
 }
 
+func (cm *ConfigManager) SetCurrentNodeVersion(version string) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.CurrentNodeVersion = version
+	logging.Info("Setting current node version", types.Config, "version", version)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+// SyncVersionFromChain queries the current version from chain and updates config if needed
+// This should be called on app startup to catch up if we missed an upgrade
+func (cm *ConfigManager) SyncVersionFromChain(cosmosClient CosmosQueryClient) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := cosmosClient.MLNodeVersion(ctx, &types.QueryGetMLNodeVersionRequest{})
+	if err != nil {
+		logging.Warn("Failed to sync MLNode version from chain on startup, keeping current version",
+			types.Config, "error", err)
+		return err
+	}
+
+	chainVersion := resp.MlnodeVersion.CurrentVersion
+	if chainVersion == "" {
+		chainVersion = DefaultMLNodeVersion
+	}
+
+	currentVersion := cm.GetCurrentNodeVersion()
+	if chainVersion != currentVersion {
+		logging.Info("Version mismatch detected on startup - updating from chain", types.Config,
+			"currentVersion", currentVersion, "chainVersion", chainVersion)
+		return cm.SetCurrentNodeVersion(chainVersion)
+	}
+
+	logging.Info("Version sync complete - no changes needed", types.Config, "version", currentVersion)
+	return nil
+}
+
+// CosmosQueryClient defines interface for querying version from cosmos
+type CosmosQueryClient interface {
+	MLNodeVersion(ctx context.Context, req *types.QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*types.QueryGetMLNodeVersionResponse, error)
+}
+
 func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	cm.currentConfig.ValidationParams = params
 	logging.Info("Setting validation params", types.Config, "params", params)
-	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+	return cm.Write()
 }
 
 func (cm *ConfigManager) GetValidationParams() ValidationParamsCache {
 	return cm.currentConfig.ValidationParams
-}
-
-func (cm *ConfigManager) AddNodeVersion(height int64, version string) error {
-	if !cm.currentConfig.NodeVersions.Insert(height, version) {
-		return nil
-	}
-	logging.Info("Adding node version", types.Upgrades, "height", height, "version", version)
-	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) GetHeight() int64 {
@@ -240,7 +282,7 @@ func readConfig(provider koanf.Provider) (Config, error) {
 
 	// Set default current node version if not already set
 	if config.CurrentNodeVersion == "" {
-		config.CurrentNodeVersion = "v3.0.8"
+		config.CurrentNodeVersion = DefaultMLNodeVersion
 	}
 
 	return config, nil

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message MLNodeVersion {
+  string current_version = 1;
+} 

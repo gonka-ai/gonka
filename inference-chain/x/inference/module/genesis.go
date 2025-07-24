@@ -60,6 +60,14 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetTokenomicsData(ctx, *genState.TokenomicsData)
 	}
 
+	// Set MLNode version with default if not defined
+	if genState.MlnodeVersion != nil {
+		k.SetMLNodeVersion(ctx, *genState.MlnodeVersion)
+	} else {
+		// Set default MLNode version
+		k.SetMLNodeVersion(ctx, types.MLNodeVersion{CurrentVersion: "v3.0.8"})
+	}
+
 	k.SetContractsParams(ctx, genState.CosmWasmParams)
 
 	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
@@ -250,6 +258,11 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	tokenomicsData, found := k.GetTokenomicsData(ctx)
 	if found {
 		genesis.TokenomicsData = &tokenomicsData
+	}
+	// Get MLNode version
+	mlnodeVersion, found := k.GetMLNodeVersion(ctx)
+	if found {
+		genesis.MlnodeVersion = &mlnodeVersion
 	}
 	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
 	if found {

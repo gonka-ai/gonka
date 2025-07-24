@@ -25,4 +25,5 @@ func KeyPrefix(p string) []byte {
 const (
 	TokenomicsDataKey  = "TokenomicsData/value/"
 	GenesisOnlyDataKey = "GenesisOnlyData/value/"
+	MLNodeVersionKey   = "MLNodeVersion/value/"
 )

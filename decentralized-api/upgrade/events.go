@@ -6,9 +6,10 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
 	"encoding/json"
-	"github.com/productscience/inference/x/inference/types"
 	"os"
 	"path/filepath"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func ProcessNewBlockEvent(
@@ -32,13 +33,6 @@ func checkForPartialUpgrades(transactionRecorder cosmosclient.InferenceCosmosCli
 		return
 	}
 	for _, upgrade := range partialUpgrades.PartialUpgrade {
-		if upgrade.NodeVersion != "" {
-			err = configManager.AddNodeVersion(int64(upgrade.Height), upgrade.NodeVersion)
-			if err != nil {
-				logging.Error("Error adding node version", types.Upgrades, "error", err)
-				continue
-			}
-		}
 		if upgrade.ApiBinariesJson != "" {
 			var planInfo UpgradeInfoInput
 			if err := json.Unmarshal([]byte(upgrade.ApiBinariesJson), &planInfo); err != nil {
@@ -53,9 +47,10 @@ func checkForPartialUpgrades(transactionRecorder cosmosclient.InferenceCosmosCli
 				continue
 			}
 			err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
-				Name:     upgrade.Name,
-				Height:   int64(upgrade.Height),
-				Binaries: planInfo.Binaries,
+				Name:        upgrade.Name,
+				Height:      int64(upgrade.Height),
+				Binaries:    planInfo.Binaries,
+				NodeVersion: planInfo.NodeVersion, // Store the known version
 			})
 			if err != nil {
 				logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
@@ -87,22 +82,18 @@ func checkForFullUpgrades(transactionRecorder cosmosclient.InferenceCosmosClient
 			return
 		}
 		err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
-			Name:     upgradePlan.Plan.Name,
-			Height:   upgradePlan.Plan.Height,
-			Binaries: planInfo.Binaries,
+			Name:        upgradePlan.Plan.Name,
+			Height:      upgradePlan.Plan.Height,
+			Binaries:    planInfo.Binaries,
+			NodeVersion: planInfo.NodeVersion,
 		})
 		if err != nil {
 			logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
 			return
 		}
 
-		if planInfo.NodeVersion != "" {
-			err = configManager.AddNodeVersion(upgradePlan.Plan.Height, planInfo.NodeVersion)
-			if err != nil {
-				logging.Error("Error adding node version", types.Upgrades, "error", err)
-				return
-			}
-		}
+		// Note: NodeVersion updates now handled by chain EndBlock during partial upgrades
+		// No need for local version tracking since chain is source of truth
 	}
 }
 
@@ -115,7 +106,26 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 
 	if configManager.GetHeight() >= upgradePlan.Height-1 {
 		logging.Info("Upgrade height reached", types.Upgrades, "height", upgradePlan.Height)
-		// Upgrade
+
+		// MLNode version switching using known version from upgrade plan
+		if upgradePlan.NodeVersion != "" {
+			oldVersion := configManager.GetCurrentNodeVersion()
+			if upgradePlan.NodeVersion != oldVersion {
+				// Update version in config using the known target version
+				err := configManager.SetCurrentNodeVersion(upgradePlan.NodeVersion)
+				if err != nil {
+					logging.Error("Failed to update MLNode version in config", types.Upgrades, "error", err)
+				} else {
+					logging.Info("MLNode version updated during upgrade using known target version", types.Upgrades,
+						"oldVersion", oldVersion, "newVersion", upgradePlan.NodeVersion,
+						"upgradeName", upgradePlan.Name, "height", upgradePlan.Height)
+				}
+			}
+		} else {
+			logging.Warn("No NodeVersion specified in upgrade plan", types.Upgrades, "upgradeName", upgradePlan.Name)
+		}
+
+		// Existing upgrade logic for Cosmovisor
 		// Write out upgrade-info.json
 		path := getUpgradeInfoPath()
 		upgradeInfo := UpgradeInfoOutput{

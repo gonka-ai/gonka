@@ -73,6 +73,7 @@ const (
 	Query_TrainingBarrier_FullMethodName                           = "/inference.inference.Query/TrainingBarrier"
 	Query_TrainingAliveNodes_FullMethodName                        = "/inference.inference.Query/TrainingAliveNodes"
 	Query_EpochInfo_FullMethodName                                 = "/inference.inference.Query/EpochInfo"
+	Query_MLNodeVersion_FullMethodName                             = "/inference.inference.Query/MLNodeVersion"
 )
 
 // QueryClient is the client API for Query service.
@@ -170,6 +171,8 @@ type QueryClient interface {
 	TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error)
 	// Queries a list of EpochInfo items.
 	EpochInfo(ctx context.Context, in *QueryEpochInfoRequest, opts ...grpc.CallOption) (*QueryEpochInfoResponse, error)
+	// Queries the current MLNode version.
+	MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*QueryGetMLNodeVersionResponse, error)
 }
 
 type queryClient struct {
@@ -666,6 +669,15 @@ func (c *queryClient) EpochInfo(ctx context.Context, in *QueryEpochInfoRequest, 
 	return out, nil
 }
 
+func (c *queryClient) MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*QueryGetMLNodeVersionResponse, error) {
+	out := new(QueryGetMLNodeVersionResponse)
+	err := c.cc.Invoke(ctx, Query_MLNodeVersion_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -761,6 +773,8 @@ type QueryServer interface {
 	TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error)
 	// Queries a list of EpochInfo items.
 	EpochInfo(context.Context, *QueryEpochInfoRequest) (*QueryEpochInfoResponse, error)
+	// Queries the current MLNode version.
+	MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -929,6 +943,9 @@ func (UnimplementedQueryServer) TrainingAliveNodes(context.Context, *QueryTraini
 }
 func (UnimplementedQueryServer) EpochInfo(context.Context, *QueryEpochInfoRequest) (*QueryEpochInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochInfo not implemented")
+}
+func (UnimplementedQueryServer) MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MLNodeVersion not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1915,6 +1932,24 @@ func _Query_EpochInfo_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_MLNodeVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetMLNodeVersionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MLNodeVersion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MLNodeVersion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MLNodeVersion(ctx, req.(*QueryGetMLNodeVersionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2137,6 +2172,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochInfo",
 			Handler:    _Query_EpochInfo_Handler,
+		},
+		{
+			MethodName: "MLNodeVersion",
+			Handler:    _Query_MLNodeVersion_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -71,6 +71,12 @@ func main() {
 		panic(err)
 	}
 
+	// Sync MLNode version from chain on startup to catch up if we missed an upgrade
+	queryClient := recorder.NewInferenceQueryClient()
+	if err := config.SyncVersionFromChain(queryClient); err != nil {
+		logging.Warn("Failed to sync version from chain on startup", types.Config, "error", err)
+	}
+
 	chainPhaseTracker := chainphase.NewChainPhaseTracker()
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
