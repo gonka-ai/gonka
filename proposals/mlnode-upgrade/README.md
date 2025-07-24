@@ -1,5 +1,10 @@
 # Legend 
-THAT DOCUMENT IS WORKING PLAN FROM WIP PR
+Before working with document read project root README.md
+
+We're marking task as:
+- [DONE]: - +/- ready 
+- [WIP]: 
+- [TODO]:
 
 # MLNode Upgrade Proposal
 
@@ -140,31 +145,31 @@ While this guide focuses on Docker and NGINX, the architecture is portable.
 
 ## 5. Task List
 
-- [TODO]: Docker compose configuration for version switching (3.0.6 → 3.0.8)
+- [DONE]: Docker compose configuration for version switching (3.0.6 → 3.0.8)
   * Created `deploy/inference/docker-compose.yml`
   * Fixed NGINX version in configuration
   * Verified container orchestration works
 
-- [TODO]: URL versioning system
+- [DONE]: URL versioning system
   * `Node.InferenceUrl(version)` - supports `/v{version}/v1/chat/completions`  
   * `Node.PoCUrl(version)` - supports `/v{version}/api/v1/pow/*`
   * Updated all call sites to use `ConfigManager.GetCurrentNodeVersion()`
   * Maintains backward compatibility
   * Files: `broker/broker.go`, `post_chat_handler.go`, `inference_validation.go`
 
-- [TODO]: Fix duplicate version scheduling
+- [DONE]: Fix duplicate version scheduling
   * Problem: Both `checkForPartialUpgrades()` and `checkForFullUpgrades()` scheduled same version
   * Fix: Modified `NodeVersionStack.Insert()` to prevent duplicate versions
   * File: `apiconfig/config.go`
 
-- [TODO]: Fix wrong version used in URLs  
+- [DONE]: Fix wrong version used in URLs
   * Problem: `Broker.NewNodeClient()` used `node.Version` (empty) instead of system version
   * Fix: Use `ConfigManager.GetCurrentNodeVersion()` for all client creation
   * Files: `broker/broker.go`, `main.go`
 
 ## 6. TODO Implementation Analysis & Recommendations
 
-### [TODO]: Version change detection & persistence ✅ **LOW RISK**
+### [DONE]: Version change detection & persistence ✅ **LOW RISK**
 
 **Why This is Needed:**
 MLNode upgrade involves a critical sequence:
@@ -234,7 +239,7 @@ func (cm *ConfigManager) SetHeight(height int64) error {
 
 ---
 
-### [TODO]: Client invalidation in NodeWorker ✅ **LOW RISK**
+### [DONE]: Client invalidation in NodeWorker ✅ **LOW RISK**
 
 **Why This is Needed:**
 When URLs switch from `http://mlnode/v3.0.6/api/...` to `http://mlnode/v3.0.8/api/...`, existing HTTP clients in NodeWorker still point to old URLs. Without client refresh:
@@ -266,7 +271,7 @@ currentVersion=v3.0.6 error="version v3.0.8 not responding: connection refused"
 
 ---
 
-### [TODO]: Broker integration for version change notifications ✅ **LOW RISK**  
+### [DONE]: Broker integration for version change notifications ✅ **LOW RISK**
 
 **✅ IMPLEMENTATION COMPLETE:**
 
