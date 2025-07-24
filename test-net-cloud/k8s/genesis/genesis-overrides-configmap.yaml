@@ -31,7 +31,7 @@ data:
               "epoch_length": "250",
               "epoch_multiplier": "1",
               "epoch_shift": "230",
-              "inferenceValidationCutoff": "25",
+              "inference_validation_cutoff": "25",
               "poc_stage_duration": "35",
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
