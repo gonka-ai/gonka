@@ -679,6 +679,37 @@ func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_NotAvailable(t *testi
 		},
 	}
 	k.SetEpochGroupData(sdkCtx, epochData)
+	modelSubGroup := types.EpochGroupData{
+		EpochId:             epoch.Index,
+		EpochGroupId:        101,
+		PocStartBlockHeight: pocStartBlockHeight,
+		ModelId:             MODEL_ID,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: testutil.Creator, // Claimant
+				Weight:        50,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          50,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
+			},
+			{
+				MemberAddress: "executor1",
+				Weight:        50,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          50,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
+			},
+		},
+	}
+	k.SetEpochGroupData(sdkCtx, modelSubGroup)
 
 	// Performance Summary
 	perfSummary := types.EpochPerformanceSummary{
