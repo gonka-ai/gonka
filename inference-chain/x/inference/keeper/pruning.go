@@ -40,7 +40,8 @@ func (k Keeper) PruneInferences(ctx context.Context, currentEpochIndex uint64, p
 
 // isInferenceEligibleForPruning checks if inference can be pruned based on age
 func isInferenceEligibleForPruning(inference types.Inference, currentEpochIndex uint64, pruningThreshold uint64) bool {
-	return currentEpochIndex < inference.EpochId+pruningThreshold
+	cutoff := currentEpochIndex - pruningThreshold
+	return inference.EpochId <= cutoff
 }
 
 // PrunePoCData removes old PoC data within limited range for performance

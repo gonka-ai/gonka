@@ -21,7 +21,7 @@ class PruningTests : TestermintTest() {
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Checking after one epoch")
         val inferenceState2 = genesis.node.getInference(inferenceResult.id)
-        assertNotNull(inferenceState1, "Inference not in chain")
+        assertNotNull(inferenceState2, "Inference not in chain")
         genesis.waitForNextInferenceWindow()
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Checking after two epochs")
