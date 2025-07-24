@@ -32,8 +32,32 @@ fun Route.inferenceRoutes(responseService: ResponseService, sseService: SSEServi
         call.respond(HttpStatusCode.OK)
     }
 
+    // Versioned POST /{version}/api/v1/inference/up - Transitions to INFERENCE state
+    post("/{version}/api/v1/inference/up") {
+        val version = call.parameters["version"]
+        val logger = LoggerFactory.getLogger("InferenceRoutes")
+        logger.info("Received versioned inference/up request for version: $version")
+
+        // This endpoint requires the state to be STOPPED
+        if (ModelState.getCurrentState() != ModelState.STOPPED) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid state for inference up"))
+            return@post
+        }
+
+        // Update the state to INFERENCE
+        ModelState.updateState(ModelState.INFERENCE)
+
+        // Respond with 200 OK
+        call.respond(HttpStatusCode.OK)
+    }
+
     // Handle the exact path /v1/chat/completions
     post("/v1/chat/completions") {
+        handleChatCompletions(call, responseService, sseService)
+    }
+
+    // Handle versioned path /{version}/v1/chat/completions
+    post("/{version}/v1/chat/completions") {
         handleChatCompletions(call, responseService, sseService)
     }
 

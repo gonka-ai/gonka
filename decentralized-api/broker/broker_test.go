@@ -10,6 +10,7 @@ import (
 
 	"github.com/productscience/inference/x/inference/types"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
 )
@@ -27,7 +28,9 @@ func NewTestBroker() *Broker {
 		true,
 	)
 
-	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
+	// Create a mock config manager with default version
+	mockConfigManager := &apiconfig.ConfigManager{}
+	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager)
 }
 
 func TestSingleNode(t *testing.T) {
@@ -355,4 +358,42 @@ func TestNodeShouldBeOperationalTest(t *testing.T) {
 	require.False(t, ShouldBeOperational(adminState, 12, types.PoCValidatePhase))
 	require.False(t, ShouldBeOperational(adminState, 12, types.PoCValidateWindDownPhase))
 	require.False(t, ShouldBeOperational(adminState, 12, types.InferencePhase))
+}
+
+func TestVersionedUrls(t *testing.T) {
+	node := Node{
+		Host:             "example.com",
+		InferencePort:    8080,
+		InferenceSegment: "/api/v1",
+		PoCPort:          9090,
+		PoCSegment:       "/api/v1",
+	}
+
+	// Test InferenceUrl without version (backward compatibility)
+	expectedInferenceUrl := "http://example.com:8080/api/v1"
+	actualInferenceUrl := node.InferenceUrl()
+	assert.Equal(t, expectedInferenceUrl, actualInferenceUrl)
+
+	// Test InferenceUrlWithVersion with empty version (should fall back to non-versioned)
+	actualInferenceUrlEmpty := node.InferenceUrlWithVersion("")
+	assert.Equal(t, expectedInferenceUrl, actualInferenceUrlEmpty)
+
+	// Test InferenceUrlWithVersion with version
+	expectedVersionedInferenceUrl := "http://example.com:8080/v3.0.8/api/v1"
+	actualVersionedInferenceUrl := node.InferenceUrlWithVersion("v3.0.8")
+	assert.Equal(t, expectedVersionedInferenceUrl, actualVersionedInferenceUrl)
+
+	// Test PoCUrl without version (backward compatibility)
+	expectedPocUrl := "http://example.com:9090/api/v1"
+	actualPocUrl := node.PoCUrl()
+	assert.Equal(t, expectedPocUrl, actualPocUrl)
+
+	// Test PoCUrlWithVersion with empty version (should fall back to non-versioned)
+	actualPocUrlEmpty := node.PoCUrlWithVersion("")
+	assert.Equal(t, expectedPocUrl, actualPocUrlEmpty)
+
+	// Test PoCUrlWithVersion with version
+	expectedVersionedPocUrl := "http://example.com:9090/v3.0.8/api/v1"
+	actualVersionedPocUrl := node.PoCUrlWithVersion("v3.0.8")
+	assert.Equal(t, expectedVersionedPocUrl, actualVersionedPocUrl)
 }

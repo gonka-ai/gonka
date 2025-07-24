@@ -67,8 +67,12 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
     inference_port/VERSION/tokenize
     inference_port/VERSION/health
 
-[WIP]: Update call sites for version support
+[DONE]: Update call sites for version support
     Update all call sites to use `ConfigManager.GetCurrentNodeVersion()`, upgdate InferenceUrl(), PoCURL() accordingly to get versoin
+    Default current version should be `v3.0.8`
+
+[TODO]: Where do current nodeVersion saved? can it be obtained from chain? Or only local config?
+
 
 [TODO]: Maintain proto field compatibility
     Don't change any proto fields - maintain existing proto structure

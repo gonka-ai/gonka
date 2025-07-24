@@ -7,5 +7,8 @@ inference-chain/build/
 .github/
 .DS_Store
 **/.DS_Store
+prod-local/
+public-html/
+demo/
 
 **/*.env

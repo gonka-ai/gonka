@@ -5,10 +5,11 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/knadh/koanf/providers/rawbytes"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
+
+	"github.com/knadh/koanf/providers/rawbytes"
+	"github.com/stretchr/testify/require"
 )
 
 type version struct {
@@ -138,12 +139,12 @@ func TestNodeVersion(t *testing.T) {
 	}
 	err := testManager.Load()
 	require.NoError(t, err)
-	require.Equal(t, testManager.GetCurrentNodeVersion(), "")
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "v3.0.8")
 	err = testManager.AddNodeVersion(50, "v2")
 	require.NoError(t, err)
 	err = testManager.AddNodeVersion(60, "v3")
 	require.NoError(t, err)
-	require.Equal(t, testManager.GetCurrentNodeVersion(), "")
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "v3.0.8")
 	err = testManager.SetHeight(50)
 	require.NoError(t, err)
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "v2")

@@ -88,6 +88,7 @@ type Broker struct {
 	callbackUrl          string
 	mlNodeClientFactory  mlnodeclient.ClientFactory
 	reconcileTrigger     chan struct{}
+	configManager        *apiconfig.ConfigManager
 }
 
 const (
@@ -126,8 +127,22 @@ func (n *Node) InferenceUrl() string {
 	return fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
 }
 
+func (n *Node) InferenceUrlWithVersion(version string) string {
+	if version == "" {
+		return n.InferenceUrl()
+	}
+	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.InferencePort, version, n.InferenceSegment)
+}
+
 func (n *Node) PoCUrl() string {
 	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+}
+
+func (n *Node) PoCUrlWithVersion(version string) string {
+	if version == "" {
+		return n.PoCUrl()
+	}
+	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
 }
 
 type NodeWithState struct {
@@ -231,7 +246,7 @@ type NodeResponse struct {
 	State NodeState `json:"state"`
 }
 
-func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
+func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory, configManager *apiconfig.ConfigManager) *Broker {
 	broker := &Broker{
 		highPriorityCommands: make(chan Command, 100),
 		lowPriorityCommands:  make(chan Command, 10000),
@@ -242,6 +257,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		callbackUrl:          callbackUrl,
 		mlNodeClientFactory:  clientFactory,
 		reconcileTrigger:     make(chan struct{}, 1),
+		configManager:        configManager,
 	}
 
 	// Initialize NodeWorkGroup
@@ -359,7 +375,8 @@ func (b *Broker) QueueMessage(command Command) error {
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(), node.InferenceUrl())
+	version := b.configManager.GetCurrentNodeVersion()
+	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {

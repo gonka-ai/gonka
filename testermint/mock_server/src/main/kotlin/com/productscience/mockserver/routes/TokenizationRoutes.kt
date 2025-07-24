@@ -34,25 +34,43 @@ fun Route.tokenizationRoutes(tokenizationService: TokenizationService) {
     val logger = LoggerFactory.getLogger("TokenizationRoutes")
 
     // POST /tokenize - Tokenizes the provided prompt
+    post("/tokenize") {
+        handleTokenization(call, tokenizationService, logger)
+    }
+
+    // Versioned POST /{version}/tokenize - Tokenizes the provided prompt
+    post("/{version}/tokenize") {
+        val version = call.parameters["version"]
+        logger.info("Received versioned tokenization request for version: $version")
+        handleTokenization(call, tokenizationService, logger)
+    }
+
+    // Legacy route with optional segment for backwards compatibility
     route("{segment?}") {
         post("/tokenize") {
-            try {
-                val request = call.receive<TokenizationRequest>()
-                logger.info("Received tokenization request for model: ${request.model}")
-
-                val tokenizationResult = tokenizationService.tokenize(request.model, request.prompt)
-
-                call.respond(HttpStatusCode.OK, tokenizationResult)
-            } catch (e: Exception) {
-                logger.error("Error processing tokenization request: ${e.message}", e)
-                call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf(
-                        "status" to "error",
-                        "message" to "Failed to tokenize prompt: ${e.message}"
-                    )
-                )
-            }
+            handleTokenization(call, tokenizationService, logger)
         }
+    }
+}
+
+/**
+ * Handles tokenization requests.
+ */
+private suspend fun handleTokenization(call: ApplicationCall, tokenizationService: TokenizationService, logger: org.slf4j.Logger) {
+    try {
+        val request = call.receive<TokenizationRequest>()
+        logger.info("Received tokenization request for model: ${request.model}")
+
+        val tokenizationResult = tokenizationService.tokenize(request.model, request.prompt)
+
+        call.respond(HttpStatusCode.OK, tokenizationResult)
+    } catch (e: Exception) {
+        logger.error("Error processing tokenization request: ${e.message}", e)
+        call.respond(
+            HttpStatusCode.BadRequest,
+            mapOf(
+                "error" to "Invalid request format or processing error"
+            )
+        )
     }
 }
