@@ -128,39 +128,3 @@ func (k Keeper) GetPoCValidationByStage(ctx context.Context, pocStageStartBlockH
 
 	return validations, nil
 }
-
-// CountPoCBatchesAtHeight counts the number of PoCBatch objects at the specified block height
-func (k Keeper) CountPoCBatchesAtHeight(ctx context.Context, blockHeight int64) (uint64, error) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	prefixKey := append(types.KeyPrefix(types.PocBatchKeyPrefix), []byte(strconv.FormatInt(blockHeight, 10)+"/")...)
-
-	store := prefix.NewStore(storeAdapter, prefixKey)
-	iterator := store.Iterator(nil, nil)
-	defer iterator.Close()
-
-	var count uint64 = 0
-
-	for ; iterator.Valid(); iterator.Next() {
-		count++
-	}
-
-	return count, nil
-}
-
-// CountPoCValidationsAtHeight counts the number of PoCValidation objects at the specified block height
-func (k Keeper) CountPoCValidationsAtHeight(ctx context.Context, blockHeight int64) (uint64, error) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	prefixKey := append(types.KeyPrefix(types.PocValidationPrefix), []byte(strconv.FormatInt(blockHeight, 10)+"/")...)
-
-	store := prefix.NewStore(storeAdapter, prefixKey)
-	iterator := store.Iterator(nil, nil)
-	defer iterator.Close()
-
-	var count uint64 = 0
-
-	for ; iterator.Valid(); iterator.Next() {
-		count++
-	}
-
-	return count, nil
-}

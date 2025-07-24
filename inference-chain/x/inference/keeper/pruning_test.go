@@ -49,7 +49,7 @@ func TestPruneInferences(t *testing.T) {
 		EpochId:     4,
 	}
 
-	// Inference 5: STARTED, epoch 1 - should be pruned as well, inference status is irrelevant (won't change)
+	// Inference 5: STARTED, epoch 1 - should not be pruned (not terminal status)
 	inference5 := types.Inference{
 		Index:       "inference5",
 		InferenceId: uuid.New().String(),
@@ -74,26 +74,28 @@ func TestPruneInferences(t *testing.T) {
 
 	// Verify only the expected inferences remain
 	remainingInferences := k.GetAllInference(ctx)
-	require.Len(t, remainingInferences, 1)
+	require.Len(t, remainingInferences, 2)
 
-	// Check that inference4 remains
-	var foundInference4 bool
+	// Check that inference4 and inference5 remain
+	var foundInference4, foundInference5 bool
 	for _, inf := range remainingInferences {
 		if inf.Index == "inference4" {
 			foundInference4 = true
 		}
+		if inf.Index == "inference5" {
+			foundInference5 = true
+		}
 	}
 	require.True(t, foundInference4, "Inference4 should not be pruned")
+	require.True(t, foundInference5, "Inference5 should not be pruned")
 
 	// Check that inference1, inference2, and inference3 are pruned
 	_, found1 := k.GetInference(ctx, "inference1")
 	_, found2 := k.GetInference(ctx, "inference2")
 	_, found3 := k.GetInference(ctx, "inference3")
-	_, found5 := k.GetInference(ctx, "inference5")
 	require.False(t, found1, "Inference1 should be pruned")
 	require.False(t, found2, "Inference2 should be pruned")
 	require.False(t, found3, "Inference3 should be pruned")
-	require.False(t, found5, "Inference5 should be pruned")
 }
 
 func TestPruneInferencesWithZeroThreshold(t *testing.T) {

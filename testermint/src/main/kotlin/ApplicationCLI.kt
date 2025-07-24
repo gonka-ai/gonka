@@ -388,16 +388,6 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "gov", "proposals"))
     }
 
-    fun getPocBatchCount(currentStartHeight: Long): Long {
-        val result = exec(listOf(config.execName, "query", "inference", "get-poc-batch-count", "--start-height", currentStartHeight.toString()))
-        return result.first().toLong()
-    }
-
-    fun getPocValidationCount(currentStartHeight: Long): Long {
-        val result = exec(listOf(config.execName, "query", "inference", "get-poc-validation-count", "--start-height", currentStartHeight.toString()))
-        return result.first().toLong()
-    }
-
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)
