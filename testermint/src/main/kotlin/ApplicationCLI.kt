@@ -73,9 +73,9 @@ data class ApplicationCLI(
     }
 
     fun waitForState(
-        check: (status: NodeInfoResponse) -> Boolean,
         description: String,
         staleTimeout: Duration = Duration.ofSeconds(20),
+        check: (status: NodeInfoResponse) -> Boolean,
     ): NodeInfoResponse {
         return wrapLog("waitForState", false) {
             Logger.info("Waiting for state: {}", description)
@@ -107,8 +107,8 @@ data class ApplicationCLI(
     fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
         return wrapLog("waitForMinimumBlock", false) {
             waitForState(
-                { it.syncInfo.latestBlockHeight >= minBlockHeight },
-                "$waitingFor:block height $minBlockHeight"
+                "$waitingFor:block height $minBlockHeight",
+                check = { it.syncInfo.latestBlockHeight >= minBlockHeight }
             )
         }.syncInfo.latestBlockHeight
     }

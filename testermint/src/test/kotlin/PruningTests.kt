@@ -4,6 +4,8 @@ import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.tinylog.kotlin.Logger
+import java.time.Duration
 import kotlin.test.assertNotNull
 
 class PruningTests : TestermintTest() {
@@ -30,6 +32,11 @@ class PruningTests : TestermintTest() {
     @Test
     fun `prune PoCs`() {
         val (_, genesis) = initCluster()
+        logSection("Waiting for non-zero epoch")
+        // Zero epoch has no PoCs
+        genesis.node.waitForState("non-zero epoch", staleTimeout = Duration.ofSeconds(60)){
+            genesis.getEpochData().latestEpoch.pocStartBlockHeight != 0L
+        }
         logSection("Getting PoC counts")
         val startEpoch = genesis.getEpochData().latestEpoch.pocStartBlockHeight
         val startBatchCount = genesis.node.getPocBatchCount(startEpoch)
@@ -42,7 +49,15 @@ class PruningTests : TestermintTest() {
         logSection("Getting PoC counts after epoch")
         val afterBatchCount = genesis.node.getPocBatchCount(startEpoch)
         val afterValidationCount = genesis.node.getPocValidationCount(startEpoch)
-        assertThat(afterBatchCount).isZero()
-        assertThat(afterValidationCount).isZero()
+        Logger.info("After one: $afterBatchCount, $afterValidationCount")
+        logSection("Waiting for next epoch")
+        genesis.waitForStage(EpochStage.START_OF_POC)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Getting PoC counts after epoch")
+        val afterBatchCount2 = genesis.node.getPocBatchCount(startEpoch)
+        val afterValidationCount2 = genesis.node.getPocValidationCount(startEpoch)
+        Logger.info("After one: $afterBatchCount2, $afterValidationCount2")
+        assertThat(afterBatchCount2).isZero()
+        assertThat(afterValidationCount2).isZero()
     }
 }
