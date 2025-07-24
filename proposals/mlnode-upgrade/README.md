@@ -145,31 +145,31 @@ While this guide focuses on Docker and NGINX, the architecture is portable.
 
 ## 5. Task List
 
-- [DONE]: Docker compose configuration for version switching (3.0.6 → 3.0.8)
+- [TODO]: Docker compose configuration for version switching (3.0.6 → 3.0.8)
   * Created `deploy/inference/docker-compose.yml`
   * Fixed NGINX version in configuration
   * Verified container orchestration works
 
-- [DONE]: URL versioning system
+- [TODO]: URL versioning system
   * `Node.InferenceUrl(version)` - supports `/v{version}/v1/chat/completions`  
   * `Node.PoCUrl(version)` - supports `/v{version}/api/v1/pow/*`
   * Updated all call sites to use `ConfigManager.GetCurrentNodeVersion()`
   * Maintains backward compatibility
   * Files: `broker/broker.go`, `post_chat_handler.go`, `inference_validation.go`
 
-- [DONE]: Fix duplicate version scheduling
+- [TODO]: Fix duplicate version scheduling
   * Problem: Both `checkForPartialUpgrades()` and `checkForFullUpgrades()` scheduled same version
   * Fix: Modified `NodeVersionStack.Insert()` to prevent duplicate versions
   * File: `apiconfig/config.go`
 
-- [DONE]: Fix wrong version used in URLs
+- [TODO]: Fix wrong version used in URLs
   * Problem: `Broker.NewNodeClient()` used `node.Version` (empty) instead of system version
   * Fix: Use `ConfigManager.GetCurrentNodeVersion()` for all client creation
   * Files: `broker/broker.go`, `main.go`
 
 ## 6. TODO Implementation Analysis & Recommendations
 
-### [DONE]: Version change detection & persistence ✅ **LOW RISK**
+### [TODO]: Version change detection & persistence ✅ **LOW RISK**
 
 **Why This is Needed:**
 MLNode upgrade involves a critical sequence:
@@ -239,7 +239,7 @@ func (cm *ConfigManager) SetHeight(height int64) error {
 
 ---
 
-### [DONE]: Client invalidation in NodeWorker ✅ **LOW RISK**
+### [TODO]: Client invalidation in NodeWorker ✅ **LOW RISK**
 
 **Why This is Needed:**
 When URLs switch from `http://mlnode/v3.0.6/api/...` to `http://mlnode/v3.0.8/api/...`, existing HTTP clients in NodeWorker still point to old URLs. Without client refresh:
@@ -271,7 +271,7 @@ currentVersion=v3.0.6 error="version v3.0.8 not responding: connection refused"
 
 ---
 
-### [DONE]: Broker integration for version change notifications ✅ **LOW RISK**
+### [TODO]: Broker integration for version change notifications ✅ **LOW RISK**
 
 **✅ IMPLEMENTATION COMPLETE:**
 
