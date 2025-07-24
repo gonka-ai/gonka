@@ -51,6 +51,7 @@ func DefaultParams() Params {
 			PocValidationDelay:        2,
 			PocValidationDuration:     6,
 			SetNewValidatorsDelay:     1,
+			InferenceValidationCutoff: 0,
 		},
 		ValidationParams: &ValidationParams{
 			FalsePositiveRate:           DecimalFromFloat(0.05),
