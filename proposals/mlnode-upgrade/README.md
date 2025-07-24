@@ -15,6 +15,24 @@ You can work only at the task marked [WIP]. You need to solve this task in clear
 
 All tasks implementation should not break tests.
 
+## Quick Start Examples
+
+### 1. Build Project
+```bash
+make build-docker    # Build all Docker containers
+make local-build     # Build binaries locally  
+./local-test-net/stop.sh # Clean old containers
+```
+
+### 2. Run Tests
+```bash
+cd testermint && ./gradlew :test -DexcludeTags=unstable,exclude          # Stable tests only
+cd testermint && ./gradlew :test --tests "TestClass" -DexcludeTags=unstable,exclude  # Specific class, stable only
+cd testermint && ./gradlew :test --tests "TestClass.test method name"    # Specific test method
+```
+
+NEVER RUN MANY TESTERMINT TESTS AT ONCE
+
 ----
 # MLNode Upgrade
 
