@@ -105,12 +105,38 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
 
 ## What's TODO 📋
 
+[DONE]: Connection Stability & Version Sync
+    **Issue**: Early version sync during startup caused EOF errors that broke ALL blockchain queries throughout the entire application (30+ critical systems)
+    **Root Cause**: Single gRPC connection shared by all query clients - one EOF error corrupted connection for entire app
+    **Solution**: Moved version sync to block processing loop when blockchain is ready and connections are stable
+    **Impact**: Prevents startup EOF errors from breaking training, API endpoints, validation, broker, event processing
+
+[TODO]: Connection Pool with Auto-Healing
+    **Why**: Current single gRPC connection architecture is fragile - one EOF error breaks all 30+ blockchain query systems
+    **What**: Implement connection pool with auto-healing for cosmos client in `decentralized-api/cosmosclient/cosmosclient.go`
+    - Create connection pool structure and configuration within InferenceCosmosClient to manage multiple cosmos SDK connections
+    - Implement health check mechanism to monitor connection status and detect failed connections automatically  
+    - Add auto-healing functionality to replace failed connections with new healthy ones in the background
+    - Implement simple round-robin or random selection for distributing requests across healthy connections in the pool
+    - Ensure graceful degradation when pool connections are reduced, with fallback to single connection mode
+    **Key Implementation Advice**:
+    - Add `pool []*cosmosclient.Client`, `mu sync.Mutex`, `next int` fields to InferenceCosmosClient struct
+    - Use thread-safe round-robin selection: `next = (next + 1) % len(pool)` with mutex protection
+    - Continue pool initialization even if some connections fail - graceful degradation is critical
+    - Modify `NewInferenceQueryClient()` and `NewCometQueryClient()` to call `getClient()` from pool at client creation time (not per-request)
+    - `getClient()` must verify connection health before returning - test with simple ping/status check
+    - Add background goroutine with ticker (30s interval) for continuous health monitoring and connection replacement
+    - CRITICAL: `getClient()` must try multiple connections if first is unhealthy - don't just return a failed connection
+    - Keep existing method signatures unchanged to avoid breaking 30+ call sites across the application
+    **Impact**: Eliminates single point of failure for blockchain queries, improves system resilience
+
 [WIP]: Testing Infrastructure
     **Why**: Need comprehensive testing for upgrade scenarios to ensure reliability
     **What**: 
     - Enhanced mock server with complete versioned routing support (COMPLETED)
     - All MLNode endpoints support version-specific responses (COMPLETED)
     - Basic versioned routing tests implemented (COMPLETED)
+    - Connection stability improvements (COMPLETED)
     - Implement full proxy simulation for end-to-end upgrade testing
     - Add advanced upgrade scenario tests (version switching, rollback, client refresh)
     **Where**: `testermint/` test framework and mock servers
@@ -225,6 +251,46 @@ docker stop mlnode-v306 && docker rm mlnode-v306
 - Atomic network-wide switches at governance-defined heights
 - Handles MLNode lifecycle constraints properly
 - Resource efficient (only one version uses GPU)
+
+---
+
+## Connection Architecture Issue (For Future Discussion)
+
+### The Problem
+All blockchain queries share a **single gRPC connection**:
+
+```go
+func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
+    return types.NewQueryClient(icc.Client.Context())  // Same connection always
+}
+```
+
+### Why It's Problematic
+**Single Point of Failure:** One EOF error breaks **all 30+ systems**:
+- Training system, API endpoints, validation, broker, event processing
+- All use `recorder.NewInferenceQueryClient()` → same underlying connection
+- If connection corrupted → entire application can't query blockchain
+
+### Example
+```go
+// Startup: EOF during version sync
+queryClient := recorder.NewInferenceQueryClient() // Connection corrupted
+config.SyncVersionFromChain(queryClient)          // EOF error
+
+// Later: All systems broken
+trainingClient := recorder.NewInferenceQueryClient() // Same corrupted connection  
+apiClient := recorder.NewInferenceQueryClient()      // Same corrupted connection
+validationClient := recorder.NewInferenceQueryClient() // Same corrupted connection
+// All fail with connection errors
+```
+
+### Current Status
+**Fixed by timing** - version sync moved to when blockchain is stable. But architecture remains fragile.
+
+**Future Options:**
+- Connection pool with auto-healing
+- Fresh connection per critical operation  
+- Retry wrapper around query clients
 
 ---
 

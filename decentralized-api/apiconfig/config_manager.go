@@ -127,14 +127,14 @@ func (cm *ConfigManager) SetCurrentNodeVersion(version string) error {
 }
 
 // SyncVersionFromChain queries the current version from chain and updates config if needed
-// This should be called on app startup to catch up if we missed an upgrade
+// This should be called when the blockchain is ready and connections are stable
 func (cm *ConfigManager) SyncVersionFromChain(cosmosClient CosmosQueryClient) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	resp, err := cosmosClient.MLNodeVersion(ctx, &types.QueryGetMLNodeVersionRequest{})
 	if err != nil {
-		logging.Warn("Failed to sync MLNode version from chain on startup, keeping current version",
+		logging.Warn("Failed to sync MLNode version from chain, keeping current version",
 			types.Config, "error", err)
 		return err
 	}
@@ -146,7 +146,7 @@ func (cm *ConfigManager) SyncVersionFromChain(cosmosClient CosmosQueryClient) er
 
 	currentVersion := cm.GetCurrentNodeVersion()
 	if chainVersion != currentVersion {
-		logging.Info("Version mismatch detected on startup - updating from chain", types.Config,
+		logging.Info("Version mismatch detected - updating from chain", types.Config,
 			"currentVersion", currentVersion, "chainVersion", chainVersion)
 		return cm.SetCurrentNodeVersion(chainVersion)
 	}

@@ -71,11 +71,8 @@ func main() {
 		panic(err)
 	}
 
-	// Sync MLNode version from chain on startup to catch up if we missed an upgrade
-	queryClient := recorder.NewInferenceQueryClient()
-	if err := config.SyncVersionFromChain(queryClient); err != nil {
-		logging.Warn("Failed to sync version from chain on startup", types.Config, "error", err)
-	}
+	// Version sync is handled later in the event processing loop when blockchain is fully ready
+	// This prevents EOF errors during startup from breaking the entire application
 
 	chainPhaseTracker := chainphase.NewChainPhaseTracker()
 

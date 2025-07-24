@@ -227,6 +227,7 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 
 func (el *EventListener) startSyncStatusChecker() {
 	chainNodeUrl := el.configManager.GetChainNodeConfig().Url
+	hasTriedVersionSync := false
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -239,7 +240,22 @@ func (el *EventListener) startSyncStatusChecker() {
 		}
 		// The node is "synced" if it's NOT catching up.
 		isSynced := !status.SyncInfo.CatchingUp
+		wasAlreadySynced := el.isNodeSynced()
 		el.updateNodeSyncStatus(isSynced)
+
+		// One-time version sync when blockchain first becomes ready
+		if isSynced && !wasAlreadySynced && !hasTriedVersionSync {
+			hasTriedVersionSync = true
+			go func() {
+				queryClient := el.transactionRecorder.NewInferenceQueryClient()
+				if err := el.configManager.SyncVersionFromChain(queryClient); err != nil {
+					logging.Debug("MLNode version sync failed after blockchain ready", types.Config, "error", err)
+				} else {
+					logging.Info("MLNode version synced successfully after blockchain ready", types.Config)
+				}
+			}()
+		}
+
 		// Note: Sync status is now handled by the dispatcher during block processing
 		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", isSynced, "height", status.SyncInfo.LatestBlockHeight)
 	}
