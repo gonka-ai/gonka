@@ -31,11 +31,12 @@ data:
               "epoch_length": "250",
               "epoch_multiplier": "1",
               "epoch_shift": "230",
-              "poc_stage_duration": "50",
+              "inferenceValidationCutoff": "25",
+              "poc_stage_duration": "35",
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
               "poc_validation_duration": "20",
-              "set_new_validators_delay": "5",
+              "set_new_validators_delay": "25",
               "default_unit_of_compute_price": "100"
             },
             "tokenomicsParams": {
