@@ -31,10 +31,15 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
+	pocStartBlockHeight := uint64(150)
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(ctx, &epoch)
+	k.SetEffectiveEpochIndex(ctx, epoch.Index)
+
 	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -43,8 +48,9 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 
 	// Setup epoch group data
 	epochData := types.EpochGroupData{
+		EpochId:             epoch.Index,
 		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -56,7 +62,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: 100,
+		EpochStartHeight: pocStartBlockHeight,
 		ParticipantId:    testutil.Creator,
 		Claimed:          false,
 	}
@@ -65,7 +71,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Setup validations
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidatedInferences: []string{"inference1"},
 	}
 	k.SetEpochGroupValidations(sdk.UnwrapSDKContext(ctx), validations)
@@ -98,7 +104,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           1,
 	})
 
@@ -113,7 +119,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.False(t, found)
 
 	// Verify the performance summary was updated
-	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdk.UnwrapSDKContext(ctx), 100, testutil.Creator)
+	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdk.UnwrapSDKContext(ctx), pocStartBlockHeight, testutil.Creator)
 	require.True(t, found)
 	require.True(t, updatedPerfSummary.Claimed)
 }
