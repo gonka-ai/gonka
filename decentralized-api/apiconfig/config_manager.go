@@ -95,16 +95,12 @@ func (cm *ConfigManager) ShouldCheckUpgradeAtHeight(height int64) bool {
 
 // Setters - these need mutex protection since they write to disk
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
 	cm.currentConfig.UpgradePlan = plan
 	logging.Info("Setting upgrade plan", types.Config, "plan", plan)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) SetHeight(height int64) error {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
 	cm.currentConfig.CurrentHeight = height
 	logging.Info("Setting height", types.Config, "height", height)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
@@ -115,9 +111,6 @@ func (cm *ConfigManager) GetCurrentNodeVersion() string {
 }
 
 func (cm *ConfigManager) SetCurrentNodeVersion(version string) error {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
-
 	oldVersion := cm.currentConfig.CurrentNodeVersion
 	cm.currentConfig.CurrentNodeVersion = version
 
@@ -161,8 +154,6 @@ type CosmosQueryClient interface {
 }
 
 func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
 	cm.currentConfig.ValidationParams = params
 	logging.Info("Setting validation params", types.Config, "params", params)
 	return cm.Write()
@@ -181,11 +172,9 @@ func (cm *ConfigManager) GetLastUsedVersion() string {
 }
 
 func (cm *ConfigManager) SetLastUsedVersion(version string) error {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
 	cm.currentConfig.LastUsedVersion = version
 	logging.Info("Setting last used version", types.Config, "version", version)
-	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+	return cm.Write()
 }
 
 // ShouldRefreshClients returns true if clients need to be refreshed due to version change
@@ -198,7 +187,7 @@ func (cm *ConfigManager) ShouldRefreshClients() bool {
 func (cm *ConfigManager) SetPreviousSeed(seed SeedInfo) error {
 	cm.currentConfig.PreviousSeed = seed
 	logging.Info("Setting previous seed", types.Config, "seed", seed)
-	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+	return cm.Write()
 }
 
 func (cm *ConfigManager) GetPreviousSeed() SeedInfo {
@@ -208,7 +197,7 @@ func (cm *ConfigManager) GetPreviousSeed() SeedInfo {
 func (cm *ConfigManager) SetCurrentSeed(seed SeedInfo) error {
 	cm.currentConfig.CurrentSeed = seed
 	logging.Info("Setting current seed", types.Config, "seed", seed)
-	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+	return cm.Write()
 }
 
 func (cm *ConfigManager) GetCurrentSeed() SeedInfo {
