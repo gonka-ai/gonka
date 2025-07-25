@@ -52,6 +52,12 @@ func CreateUpgradeHandler(
 				return nil, fmt.Errorf("failed to register migration: %w", err)
 			}
 
+			// For some reason, the capability module doesn't have a version set, but it DOES exist, causing
+			// the `InitGenesis` to panic.
+			if _, ok := vm["capability"]; !ok {
+				vm["capability"] = mm.Modules["capability"].(module.HasConsensusVersion).ConsensusVersion()
+			}
+
 			return mm.RunMigrations(ctx, configurator, vm)
 		}
 	}
