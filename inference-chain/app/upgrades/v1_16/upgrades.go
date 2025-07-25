@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	inferenceValidationCutoff = 25
-	setNewValidatorsDelay     = 25
+	inferenceValidationCutoff = 50
+	setNewValidatorsDelay     = 120
 )
 
 func CreateUpgradeHandler(
