@@ -110,23 +110,45 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 	for _, seedSig := range data.MemberSeedSignatures {
 		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
 	}
-	settleParameters := k.GetSettleParameters(ctx)
-	k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
-	amounts, subsidyResult, err := GetSettleAmounts(participants.Participant, settleParameters)
-	if err != nil {
-		k.LogError("Error getting settle amounts", types.Settle, "error", err)
-		return err
+
+	// Check governance flag to determine which reward system to use
+	params := k.GetParams(ctx)
+	var amounts []*SettleResult
+	var rewardAmount int64
+
+	if params.BitcoinRewardParams.UseBitcoinRewards {
+		// Use Bitcoin-style fixed reward system with its own parameters
+		k.LogInfo("Using Bitcoin-style reward system", types.Settle)
+		var bitcoinResult BitcoinResult
+		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(participants.Participant, &data, params.BitcoinRewardParams)
+		if err != nil {
+			k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
+		}
+		rewardAmount = bitcoinResult.Amount
+	} else {
+		// Use current WorkCoins-based variable reward system with its own parameters
+		k.LogInfo("Using current WorkCoins-based reward system", types.Settle)
+		settleParameters := k.GetSettleParameters(ctx)
+		k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
+		var subsidyResult SubsidyResult
+		amounts, subsidyResult, err = GetSettleAmounts(participants.Participant, settleParameters)
+		if err != nil {
+			k.LogError("Error getting settle amounts", types.Settle, "error", err)
+		}
+		rewardAmount = subsidyResult.Amount
+		// Handle cutoff logic internally for current system
+		if subsidyResult.CrossedCutoff {
+			k.LogInfo("Crossed subsidy cutoff", types.Settle, "amount", subsidyResult.Amount)
+			k.ReduceSubsidyPercentage(ctx)
+		}
 	}
-	err = k.MintRewardCoins(ctx, subsidyResult.Amount, "subsidy")
+
+	err = k.MintRewardCoins(ctx, rewardAmount, "reward_distribution")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
 		return err
 	}
-	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(subsidyResult.Amount)})
-	if subsidyResult.CrossedCutoff {
-		k.LogInfo("Crossed subsidy cutoff", types.Settle, "amount", subsidyResult.Amount)
-		k.ReduceSubsidyPercentage(ctx)
-	}
+	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(participants.Participant))
 	for _, participant := range participants.Participant {

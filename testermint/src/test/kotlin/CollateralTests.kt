@@ -11,6 +11,8 @@ import com.productscience.logSection
 import com.productscience.makeInferenceRequest
 import com.productscience.inferenceRequest
 import com.productscience.inferenceConfig
+import com.productscience.getRewardCalculationEpochIndex
+import com.productscience.calculateExpectedChangeFromEpochRewards
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -46,6 +48,7 @@ class CollateralTests : TestermintTest() {
 
         logSection("Withdrawing $depositAmount nicoin from ${participant.name}")
         val epochBeforeWithdraw = participant.api.getLatestEpoch().latestEpoch.index
+        val startLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
         val params = participant.node.queryCollateralParams()
         val unbondingPeriod = params.params.unbondingPeriodEpochs.toLong()
         val expectedCompletionEpoch = epochBeforeWithdraw + unbondingPeriod
@@ -68,12 +71,25 @@ class CollateralTests : TestermintTest() {
 
         logSection("Waiting for unbonding period to pass (${unbondingPeriod + 1} epochs)")
         repeat((unbondingPeriod + 1).toInt()) {
-            genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+            genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         }
 
         logSection("Verifying balance is restored and queue is empty")
         val finalBalance = participant.getBalance(participantAddress)
-        assertThat(finalBalance).isEqualTo(initialBalance)
+        
+        // Calculate expected balance including any epoch rewards accumulated during unbonding
+        val endLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
+        val participantRewards = calculateExpectedChangeFromEpochRewards(
+            participant,
+            participantAddress,
+            startLastRewardedEpoch,
+            endLastRewardedEpoch,
+            failureEpoch = null  // No excluded epochs for collateral test
+        )
+        val expectedFinalBalance = initialBalance + participantRewards
+        
+        logSection("Expected final balance: $initialBalance (initial) + $participantRewards (epoch rewards) = $expectedFinalBalance")
+        assertThat(finalBalance).isEqualTo(expectedFinalBalance)
 
         val finalUnbondingQueue = participant.node.queryUnbondingCollateral(participantAddress)
         assertThat(finalUnbondingQueue.unbondings).isNullOrEmpty()
@@ -97,7 +113,6 @@ class CollateralTests : TestermintTest() {
         )
 
         val (cluster, genesis) = initCluster(config = fastExpirationConfig, reboot = true)
-        genesis.markNeedsReboot()
         val genesisAddress = genesis.node.getAddress()
         val depositAmount = 1000L
 
@@ -177,6 +192,9 @@ class CollateralTests : TestermintTest() {
         assertThat(finalUnbondingQueue.unbondings!!.first().amount.amount).isEqualTo(expectedFinalUnbonding)
 
         logSection("Proportional slashing verified: Active ($activeAmount -> $expectedFinalActive), Unbonding ($withdrawAmount -> $expectedFinalUnbonding)")
+        
+        // Mark for reboot to reset parameters for subsequent tests
+        genesis.markNeedsReboot()
     }
 
 }

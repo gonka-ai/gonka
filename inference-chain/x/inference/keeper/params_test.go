@@ -286,6 +286,15 @@ func TestParamsValidateNilChecks(t *testing.T) {
 			expectedErrMsg: "collateral params cannot be nil",
 		},
 		{
+			name: "nil BitcoinRewardParams",
+			setupParams: func() types.Params {
+				params := types.DefaultParams()
+				params.BitcoinRewardParams = nil
+				return params
+			},
+			expectedErrMsg: "bitcoin reward params cannot be nil",
+		},
+		{
 			name: "all params valid",
 			setupParams: func() types.Params {
 				return types.DefaultParams()
@@ -403,6 +412,299 @@ func TestTokenomicsParamsNilFieldChecks(t *testing.T) {
 			name: "valid TokenomicsParams",
 			setupParams: func() *types.TokenomicsParams {
 				return types.DefaultTokenomicsParams()
+			},
+			expectedErrMsg: "", // No error expected
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			params := tc.setupParams()
+			err := params.Validate()
+
+			if tc.expectedErrMsg == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErrMsg)
+			}
+		})
+	}
+}
+
+func TestBitcoinRewardParamsGovernance(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	wctx := sdk.UnwrapSDKContext(ctx)
+
+	// Test setting initial parameters
+	params := types.DefaultParams()
+	require.NoError(t, k.SetParams(ctx, params))
+
+	// Test updating Bitcoin reward parameters through governance
+	testCases := []struct {
+		name                       string
+		initialEpochReward         uint64
+		decayRate                  float64
+		genesisEpoch               uint64
+		utilizationBonusFactor     float64
+		fullCoverageBonusFactor    float64
+		partialCoverageBonusFactor float64
+	}{
+		{
+			name:                       "default Bitcoin reward parameters",
+			initialEpochReward:         285000,
+			decayRate:                  -0.000475,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+		},
+		{
+			name:                       "modified Bitcoin reward parameters",
+			initialEpochReward:         500000,
+			decayRate:                  -0.0001,
+			genesisEpoch:               100,
+			utilizationBonusFactor:     0.3,
+			fullCoverageBonusFactor:    1.5,
+			partialCoverageBonusFactor: 0.2,
+		},
+		{
+			name:                       "minimal Bitcoin reward parameters",
+			initialEpochReward:         1000,
+			decayRate:                  -0.00001,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.0,
+			fullCoverageBonusFactor:    1.0,
+			partialCoverageBonusFactor: 0.0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Update parameters
+			updatedParams := params
+			updatedParams.BitcoinRewardParams.InitialEpochReward = tc.initialEpochReward
+			updatedParams.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(tc.decayRate)
+			updatedParams.BitcoinRewardParams.GenesisEpoch = tc.genesisEpoch
+			updatedParams.BitcoinRewardParams.UtilizationBonusFactor = types.DecimalFromFloat(tc.utilizationBonusFactor)
+			updatedParams.BitcoinRewardParams.FullCoverageBonusFactor = types.DecimalFromFloat(tc.fullCoverageBonusFactor)
+			updatedParams.BitcoinRewardParams.PartialCoverageBonusFactor = types.DecimalFromFloat(tc.partialCoverageBonusFactor)
+
+			// Set the updated parameters
+			require.NoError(t, k.SetParams(ctx, updatedParams))
+
+			// Retrieve and verify the parameters
+			retrievedParams := k.GetParams(wctx)
+			require.Equal(t, tc.initialEpochReward, retrievedParams.BitcoinRewardParams.InitialEpochReward)
+			require.Equal(t, tc.decayRate, retrievedParams.BitcoinRewardParams.DecayRate.ToFloat())
+			require.Equal(t, tc.genesisEpoch, retrievedParams.BitcoinRewardParams.GenesisEpoch)
+			require.Equal(t, tc.utilizationBonusFactor, retrievedParams.BitcoinRewardParams.UtilizationBonusFactor.ToFloat())
+			require.Equal(t, tc.fullCoverageBonusFactor, retrievedParams.BitcoinRewardParams.FullCoverageBonusFactor.ToFloat())
+			require.Equal(t, tc.partialCoverageBonusFactor, retrievedParams.BitcoinRewardParams.PartialCoverageBonusFactor.ToFloat())
+		})
+	}
+}
+
+func TestBitcoinRewardParamsParamSetPairs(t *testing.T) {
+	params := *types.DefaultBitcoinRewardParams()
+
+	// Test that ParamSetPairs returns the correct number of pairs
+	pairs := params.ParamSetPairs()
+	require.Len(t, pairs, 7, "BitcoinRewardParams should have 7 parameter pairs")
+
+	// Verify the parameter keys are correctly set
+	expectedKeys := [][]byte{
+		types.KeyUseBitcoinRewards,
+		types.KeyInitialEpochReward,
+		types.KeyDecayRate,
+		types.KeyGenesisEpoch,
+		types.KeyUtilizationBonusFactor,
+		types.KeyFullCoverageBonusFactor,
+		types.KeyPartialCoverageBonusFactor,
+	}
+
+	for i, pair := range pairs {
+		require.Equal(t, expectedKeys[i], pair.Key, "Parameter key mismatch for pair %d", i)
+	}
+}
+
+func TestBitcoinRewardParamsValidate(t *testing.T) {
+	testCases := []struct {
+		name                       string
+		useBitcoinRewards          bool
+		initialEpochReward         uint64
+		decayRate                  float64
+		genesisEpoch               uint64
+		utilizationBonusFactor     float64
+		fullCoverageBonusFactor    float64
+		partialCoverageBonusFactor float64
+		expectedError              bool
+		expectedErrMsg             string
+	}{
+		{
+			name:                       "valid Bitcoin reward parameters",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000,
+			decayRate:                  -0.000475,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              false,
+		},
+		{
+			name:                       "valid parameters with zero bonus factors",
+			useBitcoinRewards:          true,
+			initialEpochReward:         100000,
+			decayRate:                  -0.0001,
+			genesisEpoch:               100,
+			utilizationBonusFactor:     0.0,
+			fullCoverageBonusFactor:    1.0,
+			partialCoverageBonusFactor: 0.0,
+			expectedError:              false,
+		},
+		{
+			name:                       "valid parameters with Bitcoin rewards disabled",
+			useBitcoinRewards:          false,
+			initialEpochReward:         285000,
+			decayRate:                  -0.000475,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              false,
+		},
+		{
+			name:                       "invalid decay rate (positive)",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000,
+			decayRate:                  0.000475, // Positive - should be negative
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              true,
+			expectedErrMsg:             "decay rate must be negative",
+		},
+		{
+			name:                       "invalid decay rate (too extreme)",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000,
+			decayRate:                  -0.02, // Too extreme (less than -0.01)
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              true,
+			expectedErrMsg:             "decay rate too extreme",
+		},
+		{
+			name:                       "invalid utilization bonus factor (negative)",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000,
+			decayRate:                  -0.000475,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     -0.1, // Negative - should be non-negative
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              true,
+			expectedErrMsg:             "bonus factor cannot be negative",
+		},
+		{
+			name:                       "invalid full coverage bonus factor (negative)",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000,
+			decayRate:                  -0.000475,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    -1.2, // Negative - should be non-negative
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              true,
+			expectedErrMsg:             "bonus factor cannot be negative",
+		},
+		{
+			name:                       "invalid partial coverage bonus factor (negative)",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000,
+			decayRate:                  -0.000475,
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: -0.1, // Negative - should be non-negative
+			expectedError:              true,
+			expectedErrMsg:             "bonus factor cannot be negative",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			params := *types.DefaultBitcoinRewardParams()
+			params.UseBitcoinRewards = tc.useBitcoinRewards
+			params.InitialEpochReward = tc.initialEpochReward
+			params.DecayRate = types.DecimalFromFloat(tc.decayRate)
+			params.GenesisEpoch = tc.genesisEpoch
+			params.UtilizationBonusFactor = types.DecimalFromFloat(tc.utilizationBonusFactor)
+			params.FullCoverageBonusFactor = types.DecimalFromFloat(tc.fullCoverageBonusFactor)
+			params.PartialCoverageBonusFactor = types.DecimalFromFloat(tc.partialCoverageBonusFactor)
+
+			err := params.Validate()
+
+			if tc.expectedError {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErrMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBitcoinRewardParamsNilFieldChecks(t *testing.T) {
+	testCases := []struct {
+		name           string
+		setupParams    func() *types.BitcoinRewardParams
+		expectedErrMsg string
+	}{
+		{
+			name: "nil DecayRate",
+			setupParams: func() *types.BitcoinRewardParams {
+				params := types.DefaultBitcoinRewardParams()
+				params.DecayRate = nil
+				return params
+			},
+			expectedErrMsg: "decay rate cannot be nil",
+		},
+		{
+			name: "nil UtilizationBonusFactor",
+			setupParams: func() *types.BitcoinRewardParams {
+				params := types.DefaultBitcoinRewardParams()
+				params.UtilizationBonusFactor = nil
+				return params
+			},
+			expectedErrMsg: "utilization bonus factor cannot be nil",
+		},
+		{
+			name: "nil FullCoverageBonusFactor",
+			setupParams: func() *types.BitcoinRewardParams {
+				params := types.DefaultBitcoinRewardParams()
+				params.FullCoverageBonusFactor = nil
+				return params
+			},
+			expectedErrMsg: "full coverage bonus factor cannot be nil",
+		},
+		{
+			name: "nil PartialCoverageBonusFactor",
+			setupParams: func() *types.BitcoinRewardParams {
+				params := types.DefaultBitcoinRewardParams()
+				params.PartialCoverageBonusFactor = nil
+				return params
+			},
+			expectedErrMsg: "partial coverage bonus factor cannot be nil",
+		},
+		{
+			name: "valid BitcoinRewardParams",
+			setupParams: func() *types.BitcoinRewardParams {
+				return types.DefaultBitcoinRewardParams()
 			},
 			expectedErrMsg: "", // No error expected
 		},

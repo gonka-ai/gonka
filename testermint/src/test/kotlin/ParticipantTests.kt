@@ -4,12 +4,12 @@ import com.productscience.createSpec
 import com.productscience.data.EpochPhase
 import com.productscience.data.StakeValidator
 import com.productscience.data.StakeValidatorStatus
-import com.productscience.data.UpdateParams
 import com.productscience.data.spec
 import com.productscience.getNextStage
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
+import com.productscience.runParallelInferences
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger

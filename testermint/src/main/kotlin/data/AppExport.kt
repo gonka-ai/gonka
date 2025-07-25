@@ -59,6 +59,8 @@ data class InferenceParams(
     val pocParams: PocParams,
     val tokenomicsParams: TokenomicsParams,
     val collateralParams: CollateralParams,
+    @SerializedName("bitcoin_reward_params")
+    val bitcoinRewardParams: BitcoinRewardParams? = null,
 )
 
 data class TokenomicsParams(
@@ -72,7 +74,24 @@ data class TokenomicsParams(
     @SerializedName("reward_vesting_period") 
     val rewardVestingPeriod: Long? = null,
     @SerializedName("top_miner_vesting_period")
-    val topMinerVestingPeriod: Long? = null
+    val topMinerVestingPeriod: Long? = null,
+)
+
+data class BitcoinRewardParams(
+    @SerializedName("use_bitcoin_rewards")
+    val useBitcoinRewards: Boolean,
+    @SerializedName("initial_epoch_reward")
+    val initialEpochReward: Long,
+    @SerializedName("decay_rate")
+    val decayRate: Decimal,
+    @SerializedName("genesis_epoch")
+    val genesisEpoch: Long,
+    @SerializedName("utilization_bonus_factor")
+    val utilizationBonusFactor: Decimal,
+    @SerializedName("full_coverage_bonus_factor") 
+    val fullCoverageBonusFactor: Decimal,
+    @SerializedName("partial_coverage_bonus_factor")
+    val partialCoverageBonusFactor: Decimal
 )
 
 data class EpochParams(

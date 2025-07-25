@@ -16,6 +16,7 @@ message Params {
   PocParams poc_params = 3;
   TokenomicsParams tokenomics_params = 4;
   CollateralParams collateral_params = 5;
+  BitcoinRewardParams bitcoin_reward_params = 6;
 }
 
 message GenesisOnlyParams {
@@ -106,4 +107,30 @@ message CollateralParams {
 
   // CollateralPerWeightUnit is the amount of collateral required per unit of weight
   Decimal collateral_per_weight_unit = 6;
+}
+
+// BitcoinRewardParams defines the parameters for Bitcoin-style reward system.
+message BitcoinRewardParams {
+  option (gogoproto.equal) = true;
+
+  // use_bitcoin_rewards enables/disables the Bitcoin-style reward system (default: true for production, false for safe deployment)
+  bool use_bitcoin_rewards = 1;
+
+  // initial_epoch_reward is the base reward amount per epoch (in native tokens)
+  uint64 initial_epoch_reward = 2;
+
+  // decay_rate is the exponential decay rate per epoch for reward halving
+  Decimal decay_rate = 3;
+
+  // genesis_epoch is the starting epoch for Bitcoin-style calculations
+  uint64 genesis_epoch = 4;
+
+  // utilization_bonus_factor controls bonus multipliers for high-demand models (Phase 2)
+  Decimal utilization_bonus_factor = 5;
+
+  // full_coverage_bonus_factor is the multiplier for participants supporting all governance models (Phase 2)
+  Decimal full_coverage_bonus_factor = 6;
+
+  // partial_coverage_bonus_factor is the scaling factor for partial model coverage (Phase 2)
+  Decimal partial_coverage_bonus_factor = 7;
 }

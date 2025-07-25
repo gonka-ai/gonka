@@ -3,6 +3,7 @@ import com.productscience.data.spec
 import com.productscience.data.AppState
 import com.productscience.data.InferenceState
 import com.productscience.data.InferenceParams
+import com.productscience.data.BitcoinRewardParams
 import com.productscience.data.TokenomicsParams
 import com.productscience.initCluster
 import com.productscience.logSection
@@ -10,13 +11,20 @@ import com.productscience.makeInferenceRequest
 import com.productscience.inferenceRequest
 import com.productscience.inferenceConfig
 import com.productscience.getInferenceResult
+import com.productscience.getRewardCalculationEpochIndex
+import com.productscience.calculateVestingScheduleChanges
+import com.productscience.isBitcoinRewardsEnabled
+import com.productscience.LocalCluster
+import com.productscience.LocalInferencePair
+import com.productscience.defaultInferenceResponseObject
+import java.time.Duration
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 class StreamVestingTests : TestermintTest() {
 
     @Test
-    fun `comprehensive vesting test with 2-epoch periods`() {
+    fun `comprehensive vesting test with automatic reward system detection`() {
         // Configure genesis with 2-epoch vesting periods for fast testing
         val fastVestingSpec = spec {
             this[AppState::inference] = spec<InferenceState> {
@@ -35,10 +43,41 @@ class StreamVestingTests : TestermintTest() {
         )
 
         val (cluster, genesis) = initCluster(config = fastVestingConfig, reboot = true)
+
+        val params = genesis.node.getInferenceParams().params
+        val isBitcoinEnabled = isBitcoinRewardsEnabled(params.bitcoinRewardParams)
+        
+        logSection("=== VESTING TEST WITH AUTOMATIC REWARD SYSTEM DETECTION ===")
+        if (isBitcoinEnabled) {
+            logSection("✅ Bitcoin Rewards System DETECTED - Running Bitcoin vesting test")
+            logSection("  • Fixed epoch rewards based on PoC weight")
+            logSection("  • No immediate RewardCoins bonuses per inference") 
+            logSection("  • Epoch rewards distributed at CLAIM_REWARDS stage")
+            testBitcoinRewardSystemVesting(cluster, genesis)
+        } else {
+            logSection("✅ Legacy Rewards System DETECTED - Running legacy vesting test")
+            logSection("  • Variable subsidies based on total network work")
+            logSection("  • Immediate RewardCoins bonuses per inference")
+            logSection("  • All rewards subject to vesting periods")
+            testLegacyRewardSystemVesting(cluster, genesis)
+        }
+        
+        // Mark for reboot to reset parameters back to defaults for subsequent tests
+        logSection("🧹 Cleaning up: Marking cluster for reboot to reset parameters")
         genesis.markNeedsReboot()
+        logSection("✅ Next test will get fresh cluster with default parameters")
+    }
+
+    private fun testLegacyRewardSystemVesting(cluster: LocalCluster, genesis: LocalInferencePair) {
         val participant = genesis
         val participantAddress = participant.node.getAddress()
 
+        logSection("=== LEGACY REWARD SYSTEM VESTING TEST ===")
+        logSection("Testing comprehensive vesting with legacy variable reward system")
+        logSection("  • Variable subsidies based on total network work")
+        logSection("  • Immediate RewardCoins bonuses per inference")
+        logSection("  • All rewards subject to vesting periods")
+        
         logSection("Waiting for system to be ready for inferences")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
 
@@ -195,11 +234,138 @@ class StreamVestingTests : TestermintTest() {
         // TODO: unfortunatelly, it's not true, because we can't guarantee that the rewards are equal each time to the same validator
         // assertThat(aggregatedTotalAmount).isGreaterThan(totalVestingAmount)
 
-        logSection("=== VESTING TEST COMPLETED SUCCESSFULLY ===")
-        logSection("All scenarios verified:")
+        logSection("=== LEGACY REWARD SYSTEM VESTING TEST COMPLETED ===")
+        logSection("All scenarios verified for legacy variable reward system:")
         logSection("✅ Reward vesting - rewards vest over 2 epochs instead of immediate payment")
         logSection("✅ Epoch unlocking - tokens unlock progressively over 2 epochs")  
         logSection("✅ Reward aggregation - multiple rewards aggregate into same 2-epoch schedule")
+        logSection("✅ Legacy system compatibility - immediate RewardCoins bonuses work with vesting")
+    }
+
+    private fun testBitcoinRewardSystemVesting(cluster: LocalCluster, genesis: LocalInferencePair) {
+        val participant = genesis
+        val participantAddress = participant.node.getAddress()
+
+        logSection("=== BITCOIN REWARD SYSTEM VESTING TEST ===")
+        logSection("Testing vesting aggregation with Bitcoin-style fixed reward system")
+        logSection("  • Fixed epoch rewards based on PoC weight")
+        logSection("  • No immediate RewardCoins bonuses per inference")
+        logSection("  • Epoch rewards distributed at CLAIM_REWARDS stage")
+        logSection("  • All rewards subject to vesting periods")
+        
+        logSection("Waiting for system to be ready for inferences")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+
+        logSection("=== SCENARIO 1: Test Reward Vesting Aggregation ===")
+        logSection("Querying initial participant state")
+        val initialBalance = participant.getBalance(participantAddress)
+        val startLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
+        
+        // Query initial vesting schedule (may have existing vesting from epoch rewards)
+        val initialVestingSchedule = participant.node.queryVestingSchedule(participantAddress)
+        val initialTotalVesting = initialVestingSchedule.vestingSchedule?.epochAmounts?.sumOf { 
+            it.coins.sumOf { coin -> coin.amount } 
+        } ?: 0
+        // Only the first epoch should unlock during this claim rewards cycle
+        val initialFirstEpochUnlock = initialVestingSchedule.vestingSchedule?.epochAmounts?.firstOrNull()?.coins?.sumOf { coin -> coin.amount } ?: 0
+        val initialSecondEpoch = initialVestingSchedule.vestingSchedule?.epochAmounts?.getOrNull(1)?.coins?.sumOf { coin -> coin.amount } ?: 0
+        logSection("Initial balance: $initialBalance nicoin, start epoch: $startLastRewardedEpoch")
+        logSection("Initial vesting - Total: $initialTotalVesting, First unlock: $initialFirstEpochUnlock, Second remaining: $initialSecondEpoch")
+
+        logSection("Making 20 parallel inference requests to earn rewards")
+        val futures = (1..20).map { i ->
+            java.util.concurrent.CompletableFuture.supplyAsync {
+                logSection("Starting inference request $i")
+                getInferenceResult(participant)
+            }
+        }
+        
+        val allResults = futures.map { it.get() }
+        logSection("Completed 20 inference requests")
+        
+        val participantInferences = allResults.filter { it.inference.assignedTo == participantAddress }
+        logSection("Found ${participantInferences.size} inferences assigned to participant ($participantAddress)")
+        
+        allResults.forEachIndexed { index, result ->
+            logSection("Inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
+        }
+        
+        require(participantInferences.isNotEmpty()) { "No inference was assigned to participant $participantAddress" }
+
+        logSection("Waiting for next claim reward cycle to process rewards and vesting")
+        participant.waitForStage(EpochStage.CLAIM_REWARDS)
+        participant.node.waitForNextBlock()
+
+        // Re-query all inferences to get their final settled status and accurate costs
+        logSection("Re-querying all inferences to get final settled status")
+        val settledInferences = allResults.map { participant.api.getInference(it.inference.inferenceId) }
+        logSection("Settled ${settledInferences.size} inferences with updated status and costs")
+
+        // Calculate expected vesting schedule from this reward cycle
+        val inferencePayloads = settledInferences  // Use fresh settled data instead of original
+        val participants = participant.api.getParticipants()
+        val currentLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
+        
+        val expectedVestingSchedule = calculateVestingScheduleChanges(
+            inferencePayloads,
+            participant.node.getInferenceParams().params,
+            participants,
+            startLastRewardedEpoch,
+            currentLastRewardedEpoch,
+            vestingPeriod = 2  // 2-epoch vesting period
+        )
+        val expectedSchedule = expectedVestingSchedule[participantAddress] ?: LongArray(3) { 0L }
+        val expectedCosts = expectedSchedule[0]  // Immediate costs (negative)
+        val expectedFirstVesting = expectedSchedule[1]  // First epoch from new rewards
+        val expectedSecondVesting = expectedSchedule[2]  // Second epoch from new rewards
+        val expectedNewVesting = expectedFirstVesting + expectedSecondVesting  // Total new vesting
+
+        logSection("Verifying balance and vesting changes after claim rewards")
+        val balanceAfterReward = participant.getBalance(participantAddress)
+        logSection("Balance after reward: $balanceAfterReward nicoin")
+        
+        // Balance change = -inference_costs + unlocked_initial_vesting (first epoch only)
+        val actualBalanceChange = balanceAfterReward - initialBalance
+        logSection("Actual balance change: $actualBalanceChange nicoin")
+        logSection("Expected components: ${expectedCosts} (costs) + $initialFirstEpochUnlock (first epoch unlock)")
+        val expectedBalanceChange = expectedCosts + initialFirstEpochUnlock  // expectedCosts is negative
+        
+        // Balance should change by costs paid plus any initial vesting unlocked
+        assertThat(actualBalanceChange).isEqualTo(expectedBalanceChange)
+
+        logSection("Verifying new vesting schedule aggregation")
+        val vestingScheduleAfterReward = participant.node.queryVestingSchedule(participantAddress)
+        val newFirstEpoch = vestingScheduleAfterReward.vestingSchedule?.epochAmounts?.getOrNull(0)?.coins?.sumOf { coin -> coin.amount } ?: 0
+        val newSecondEpoch = vestingScheduleAfterReward.vestingSchedule?.epochAmounts?.getOrNull(1)?.coins?.sumOf { coin -> coin.amount } ?: 0
+        val newTotalVesting = newFirstEpoch + newSecondEpoch
+        
+        logSection("New vesting structure:")
+        logSection("  First epoch: $newFirstEpoch nicoin")
+        logSection("  Second epoch: $newSecondEpoch nicoin")
+        logSection("  Total: $newTotalVesting nicoin")
+        
+        // Expected aggregation:
+        // First epoch = initial second epoch + new first epoch
+        // Second epoch = new second epoch
+        val expectedNewFirstEpoch = initialSecondEpoch + expectedFirstVesting
+        val expectedNewSecondEpoch = expectedSecondVesting
+        
+        logSection("Expected vesting structure:")
+        logSection("  First epoch: $expectedNewFirstEpoch nicoin (initial second: $initialSecondEpoch + new first: $expectedFirstVesting)")
+        logSection("  Second epoch: $expectedNewSecondEpoch nicoin (new second: $expectedSecondVesting)")
+        
+        // Verify epoch-by-epoch aggregation
+        assertThat(newFirstEpoch).isEqualTo(expectedNewFirstEpoch)
+        assertThat(newSecondEpoch).isEqualTo(expectedNewSecondEpoch)
+
+        logSection("=== BITCOIN REWARD SYSTEM VESTING TEST COMPLETED ===")
+        logSection("✅ Balance changed correctly: paid costs + unlocked first epoch of initial vesting")
+        logSection("✅ Vesting structure aggregated correctly:")
+        logSection("    • First epoch = initial second epoch + new first epoch")
+        logSection("    • Second epoch = new second epoch")
+        logSection("✅ Initial first epoch was properly unlocked during claim rewards cycle")
+        logSection("✅ Bitcoin system compatibility: epoch rewards work correctly with vesting aggregation")
+        logSection("✅ Fixed reward distribution: Bitcoin-style epoch rewards properly vest over 2 epochs")
     }
     
 } 

@@ -20,6 +20,14 @@ var (
 	KeyWorkVestingPeriod     = []byte("WorkVestingPeriod")
 	KeyRewardVestingPeriod   = []byte("RewardVestingPeriod")
 	KeyTopMinerVestingPeriod = []byte("TopMinerVestingPeriod")
+	// Bitcoin reward parameter keys
+	KeyUseBitcoinRewards          = []byte("UseBitcoinRewards")
+	KeyInitialEpochReward         = []byte("InitialEpochReward")
+	KeyDecayRate                  = []byte("DecayRate")
+	KeyGenesisEpoch               = []byte("GenesisEpoch")
+	KeyUtilizationBonusFactor     = []byte("UtilizationBonusFactor")
+	KeyFullCoverageBonusFactor    = []byte("FullCoverageBonusFactor")
+	KeyPartialCoverageBonusFactor = []byte("PartialCoverageBonusFactor")
 )
 
 var _ paramtypes.ParamSet = (*Params)(nil)
@@ -56,11 +64,12 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 // DefaultParams returns a default set of parameters
 func DefaultParams() Params {
 	return Params{
-		EpochParams:      DefaultEpochParams(),
-		ValidationParams: DefaultValidationParams(),
-		PocParams:        DefaultPocParams(),
-		TokenomicsParams: DefaultTokenomicsParams(),
-		CollateralParams: DefaultCollateralParams(),
+		EpochParams:         DefaultEpochParams(),
+		ValidationParams:    DefaultValidationParams(),
+		PocParams:           DefaultPocParams(),
+		TokenomicsParams:    DefaultTokenomicsParams(),
+		CollateralParams:    DefaultCollateralParams(),
+		BitcoinRewardParams: DefaultBitcoinRewardParams(),
 	}
 }
 
@@ -127,6 +136,18 @@ func DefaultCollateralParams() *CollateralParams {
 	}
 }
 
+func DefaultBitcoinRewardParams() *BitcoinRewardParams {
+	return &BitcoinRewardParams{
+		UseBitcoinRewards:          true,
+		InitialEpochReward:         285000,                      // 285,000 gonka coins per epoch
+		DecayRate:                  DecimalFromFloat(-0.000475), // Exponential decay rate per epoch
+		GenesisEpoch:               0,                           // Starting epoch for Bitcoin-style calculations
+		UtilizationBonusFactor:     DecimalFromFloat(0.5),       // Multiplier for utilization bonuses (Phase 2)
+		FullCoverageBonusFactor:    DecimalFromFloat(1.2),       // 20% bonus for complete model coverage (Phase 2)
+		PartialCoverageBonusFactor: DecimalFromFloat(0.1),       // Scaling factor for partial coverage (Phase 2)
+	}
+}
+
 // ParamSetPairs get the params.ParamSet: Pretty sure this is deprecated
 func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 	return paramtypes.ParamSetPairs{}
@@ -153,6 +174,19 @@ func (p *TokenomicsParams) ParamSetPairs() paramtypes.ParamSetPairs {
 	}
 }
 
+// ParamSetPairs gets the params for the Bitcoin reward system
+func (p *BitcoinRewardParams) ParamSetPairs() paramtypes.ParamSetPairs {
+	return paramtypes.ParamSetPairs{
+		paramtypes.NewParamSetPair(KeyUseBitcoinRewards, &p.UseBitcoinRewards, validateUseBitcoinRewards),
+		paramtypes.NewParamSetPair(KeyInitialEpochReward, &p.InitialEpochReward, validateInitialEpochReward),
+		paramtypes.NewParamSetPair(KeyDecayRate, &p.DecayRate, validateDecayRate),
+		paramtypes.NewParamSetPair(KeyGenesisEpoch, &p.GenesisEpoch, validateEpoch),
+		paramtypes.NewParamSetPair(KeyUtilizationBonusFactor, &p.UtilizationBonusFactor, validateBonusFactor),
+		paramtypes.NewParamSetPair(KeyFullCoverageBonusFactor, &p.FullCoverageBonusFactor, validateBonusFactor),
+		paramtypes.NewParamSetPair(KeyPartialCoverageBonusFactor, &p.PartialCoverageBonusFactor, validateBonusFactor),
+	}
+}
+
 func validateEpochParams(i interface{}) error {
 	return nil
 }
@@ -169,6 +203,9 @@ func (p Params) Validate() error {
 	if p.CollateralParams == nil {
 		return fmt.Errorf("collateral params cannot be nil")
 	}
+	if p.BitcoinRewardParams == nil {
+		return fmt.Errorf("bitcoin reward params cannot be nil")
+	}
 	if p.EpochParams == nil {
 		return fmt.Errorf("epoch params cannot be nil")
 	}
@@ -179,6 +216,9 @@ func (p Params) Validate() error {
 		return err
 	}
 	if err := p.TokenomicsParams.Validate(); err != nil {
+		return err
+	}
+	if err := p.BitcoinRewardParams.Validate(); err != nil {
 		return err
 	}
 	// TODO: Uncomment this when we have a way to validate the params
@@ -278,6 +318,44 @@ func (p *CollateralParams) Validate() error {
 	return nil
 }
 
+func (p *BitcoinRewardParams) Validate() error {
+	// Check for nil Decimal fields first
+	if p.DecayRate == nil {
+		return fmt.Errorf("decay rate cannot be nil")
+	}
+	if p.UtilizationBonusFactor == nil {
+		return fmt.Errorf("utilization bonus factor cannot be nil")
+	}
+	if p.FullCoverageBonusFactor == nil {
+		return fmt.Errorf("full coverage bonus factor cannot be nil")
+	}
+	if p.PartialCoverageBonusFactor == nil {
+		return fmt.Errorf("partial coverage bonus factor cannot be nil")
+	}
+
+	// Validate parameters
+	if err := validateInitialEpochReward(p.InitialEpochReward); err != nil {
+		return errors.Wrap(err, "invalid initial_epoch_reward")
+	}
+	if err := validateDecayRate(p.DecayRate); err != nil {
+		return errors.Wrap(err, "invalid decay_rate")
+	}
+	if err := validateEpoch(p.GenesisEpoch); err != nil {
+		return errors.Wrap(err, "invalid genesis_epoch")
+	}
+	if err := validateBonusFactor(p.UtilizationBonusFactor); err != nil {
+		return errors.Wrap(err, "invalid utilization_bonus_factor")
+	}
+	if err := validateBonusFactor(p.FullCoverageBonusFactor); err != nil {
+		return errors.Wrap(err, "invalid full_coverage_bonus_factor")
+	}
+	if err := validateBonusFactor(p.PartialCoverageBonusFactor); err != nil {
+		return errors.Wrap(err, "invalid partial_coverage_bonus_factor")
+	}
+
+	return nil
+}
+
 func validateSlashFraction(i interface{}) error {
 	v, ok := i.(*Decimal)
 	if !ok {
@@ -370,6 +448,57 @@ func validatePercentage(i interface{}) error {
 
 func validateEpoch(i interface{}) error {
 	_, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	return nil
+}
+
+func validateInitialEpochReward(i interface{}) error {
+	_, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	return nil
+}
+
+func validateDecayRate(i interface{}) error {
+	v, ok := i.(*Decimal)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	legacyDec, err := v.ToLegacyDec()
+	if err != nil {
+		return err
+	}
+	// Decay rate should be negative for gradual reduction
+	if legacyDec.IsPositive() {
+		return fmt.Errorf("decay rate must be negative for reward reduction, but is %s", legacyDec.String())
+	}
+	// Reasonable bounds for decay rate (not too extreme)
+	if legacyDec.LT(math.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
+		return fmt.Errorf("decay rate too extreme (less than -0.01): %s", legacyDec.String())
+	}
+	return nil
+}
+
+func validateBonusFactor(i interface{}) error {
+	v, ok := i.(*Decimal)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	legacyDec, err := v.ToLegacyDec()
+	if err != nil {
+		return err
+	}
+	if legacyDec.IsNegative() {
+		return fmt.Errorf("bonus factor cannot be negative: %s", legacyDec.String())
+	}
+	return nil
+}
+
+func validateUseBitcoinRewards(i interface{}) error {
+	_, ok := i.(bool)
 	if !ok {
 		return fmt.Errorf("invalid parameter type: %T", i)
 	}
