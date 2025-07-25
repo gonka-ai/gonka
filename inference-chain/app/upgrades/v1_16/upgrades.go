@@ -80,6 +80,7 @@ func SetGenesisModels(ctx context.Context, k keeper.Keeper) {
 func SetInferenceCutoffDefault(ctx context.Context, k keeper.Keeper) error {
 	params := k.GetParams(ctx)
 	params.EpochParams.InferenceValidationCutoff = 25
+	params.EpochParams.SetNewValidatorsDelay = 25
 	err := k.SetParams(ctx, params)
 	if err != nil {
 		k.LogError("Failed to set params during upgrade: %v", types.Upgrades, "error", err)
