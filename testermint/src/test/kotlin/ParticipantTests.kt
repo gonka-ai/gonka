@@ -14,6 +14,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
+import kotlin.test.assertNotNull
 
 class ParticipantTests : TestermintTest() {
     @Test
@@ -28,8 +29,10 @@ class ParticipantTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
         logSection("verifying reputation increase")
         val endStats = genesis.node.getParticipantCurrentStats()
+        val startParticipants = startStats.participantCurrentStats!!
+        val endParticipants = endStats.participantCurrentStats!!
 
-        val statsPairs = startStats.participantCurrentStats.zip(endStats.participantCurrentStats)
+        val statsPairs = startParticipants.zip(endParticipants)
         statsPairs.forEach { (start, end) ->
             assertThat(end.participantId).isEqualTo(start.participantId)
             assertThat(end.reputation).isGreaterThan(start.reputation)

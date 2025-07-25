@@ -60,7 +60,7 @@ This approach ensures a smooth transition from GitHub-based governance to comple
 
 Before opening a PR, run unit tests and integration tests:
 ```
-make local-build
+make local-build build-docker
 make run-tests
 ```
 
@@ -98,3 +98,63 @@ We use Cosmovisor for managing binary upgrades, in coordination with the Cosmos 
 - **`Chain` and `api` node binaries** are upgraded simultaneously to avoid compatibility issues.
 - **`Api` node** continuously tracks the block height and listens for upgrade events, coordinating restarts to avoid interrupting long-running processes.
 - **`Ml` node** maintains versioned APIs and employs a dual-version rollout strategy. When an `api` node update introduces a new API version, both the old and new `ml` node versions must be deployed concurrently. `Api`node then automatically switches to the new container.
+
+
+## Stress Testing
+
+We use fork of [compressa-perf](https://github.com/product-science/compressa-perf) for stress testing. 
+It can be installed with `pip`:
+```
+pip install git+https://github.com/product-science/compressa-perf.git
+```
+
+
+**Run Performance Test (Preffered):**
+```bash
+# len of prompt in symbols: 3000
+# tasks to be executed: 200  
+# total parallel workers: 100
+compressa-perf \
+	measure \
+	--node_url http://36.189.234.237:19252/ \
+	--model_name Qwen/Qwen2.5-7B-Instruct \
+	--create-account-testnet \
+	--inferenced-path ./inferenced \
+	--experiment_name test \
+	--generate_prompts \
+	--num_prompts 3000 \
+	--prompt_length 3000 \
+	--num_tasks 200 \
+	--num_runners 100 \
+	--max_tokens 100
+```
+
+`--node_url` right now all requests going through that Transfer Agent.
+
+**To view performance measurements:**
+```
+compressa-perf list --show-metrics --show-parameters
+```
+
+**To check balances for all nodes:**
+```
+compressa-perf check-balances --node_url http://36.189.234.237:19252
+```
+
+**Run long term performance test:**
+```
+compressa-perf \
+	stress \
+	--node_url http://36.189.234.237:19252 \
+	--model_name Qwen/Qwen2.5-7B-Instruct \
+	--create-account-testnet \
+	--inferenced-path ./inferenced \
+	--experiment_name "stress_test" \
+	--generate_prompts \
+	--num_prompts 200 \
+	--prompt_length 1000 \
+	--num_runners 20 \
+	--max_tokens 300 \
+	--report_freq_min 1 \
+	--account-pool-size 4
+```

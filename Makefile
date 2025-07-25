@@ -17,7 +17,7 @@ mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
 	@cd testermint/mock_server && ./gradlew clean && ./gradlew shadowJar
 	@echo "Building mock-server docker image..."
-	@docker build -t inference-mock-server -f testermint/Dockerfile testermint
+	@DOCKER_BUILDKIT=1 docker build --load -t inference-mock-server -f testermint/Dockerfile testermint
 
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
@@ -49,11 +49,18 @@ proxy-release:
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
-run-tests:
-	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
+# Default to running all tests if TESTS is not specified
+TESTS ?= ALL
 
-run-sanity:
-	@cd testermint && ./gradlew test --tests "*" -DincludeTags=sanity
+run-tests:
+	@cd testermint && if [ "$(TESTS)" = "ALL" ]; then \
+		./gradlew :test -DexcludeTags=unstable,exclude; \
+	else \
+		./gradlew :test --tests "$(TESTS)" -DexcludeTags=unstable,exclude; \
+	fi
+
+run-sanity: build-docker
+	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DincludeTags=sanity
 
 test-blockchain: check-docker run-blockchain-tests
 
