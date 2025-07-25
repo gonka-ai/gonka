@@ -11,6 +11,11 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 )
 
+const (
+	inferenceValidationCutoff = 25
+	setNewValidatorsDelay     = 25
+)
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
@@ -79,8 +84,8 @@ func SetGenesisModels(ctx context.Context, k keeper.Keeper) {
 
 func SetInferenceCutoffDefault(ctx context.Context, k keeper.Keeper) error {
 	params := k.GetParams(ctx)
-	params.EpochParams.InferenceValidationCutoff = 25
-	params.EpochParams.SetNewValidatorsDelay = 25
+	params.EpochParams.InferenceValidationCutoff = inferenceValidationCutoff
+	params.EpochParams.SetNewValidatorsDelay = setNewValidatorsDelay
 	err := k.SetParams(ctx, params)
 	if err != nil {
 		k.LogError("Failed to set params during upgrade: %v", types.Upgrades, "error", err)
