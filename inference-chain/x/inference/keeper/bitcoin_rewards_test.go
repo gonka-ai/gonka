@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -10,7 +11,7 @@ import (
 
 func TestCalculateFixedEpochReward(t *testing.T) {
 	// Test parameters matching Bitcoin proposal defaults
-	initialReward := uint64(285000)
+	initialReward := uint64(285000000000000)
 	decayRate := types.DecimalFromFloat(-0.000475) // Halving every ~1460 epochs (4 years)
 
 	t.Run("Zero epochs returns initial reward", func(t *testing.T) {
@@ -52,8 +53,10 @@ func TestCalculateFixedEpochReward(t *testing.T) {
 	t.Run("Edge case: very large epochs", func(t *testing.T) {
 		// After many epochs, reward should approach 0
 		result := CalculateFixedEpochReward(10000, initialReward, decayRate)
-		require.Less(t, result, uint64(3000), "After 10000 epochs, reward should be very small")
-		require.Greater(t, result, uint64(2000), "But should still have some value due to gradual decay")
+		// After 10,000 epochs: exp(-0.000475 * 10000) ≈ 0.0086
+		// Expected: 285,000,000,000,000 * 0.0086 ≈ 2,451,000,000,000
+		require.Less(t, result, uint64(3000000000000), "After 10000 epochs, reward should be very small relative to initial")
+		require.Greater(t, result, uint64(2000000000000), "But should still have some value due to gradual decay")
 	})
 
 	t.Run("Positive decay rate increases reward", func(t *testing.T) {
@@ -135,7 +138,7 @@ func TestGetParticipantPoCWeight(t *testing.T) {
 func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 	// Setup test data
 	bitcoinParams := &types.BitcoinRewardParams{
-		InitialEpochReward: 285000,
+		InitialEpochReward: 285000000000000,
 		DecayRate:          types.DecimalFromFloat(-0.000475),
 		GenesisEpoch:       0,
 	}
@@ -194,7 +197,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		// Calculate expected rewards
 		// Total PoC weight: 1000 + 2000 + 1000 = 4000
 		// Fixed epoch reward (at epoch 100 with decay): calculated by CalculateFixedEpochReward
-		expectedEpochReward := CalculateFixedEpochReward(100, 285000, bitcoinParams.DecayRate)
+		expectedEpochReward := CalculateFixedEpochReward(100, 285000000000000, bitcoinParams.DecayRate)
 		require.Equal(t, int64(expectedEpochReward), bitcoinResult.Amount)
 
 		totalPoCWeight := uint64(4000)
@@ -378,15 +381,15 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.Equal(t, 1, len(results))
 
 		// At genesis, reward should be initial amount
-		require.Equal(t, int64(285000), bitcoinResult.Amount)
+		require.Equal(t, int64(285000000000000), bitcoinResult.Amount)
 		require.Equal(t, uint64(0), bitcoinResult.EpochNumber)
 		require.False(t, bitcoinResult.DecayApplied) // No decay at genesis
 
 		// Participant gets full reward
 		p1Result := results[0]
 		require.NoError(t, p1Result.Error)
-		require.Equal(t, uint64(500), p1Result.Settle.WorkCoins)      // WorkCoins preserved
-		require.Equal(t, uint64(285000), p1Result.Settle.RewardCoins) // Full epoch reward
+		require.Equal(t, uint64(500), p1Result.Settle.WorkCoins)               // WorkCoins preserved
+		require.Equal(t, uint64(285000000000000), p1Result.Settle.RewardCoins) // Full epoch reward
 	})
 
 	t.Run("Complete epoch reward distribution with remainder", func(t *testing.T) {
@@ -471,9 +474,15 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 func TestGetBitcoinSettleAmounts(t *testing.T) {
 	// Setup test data - same as previous tests to ensure consistency
 	bitcoinParams := &types.BitcoinRewardParams{
-		InitialEpochReward: 285000,
+		InitialEpochReward: 285000000000000,
 		DecayRate:          types.DecimalFromFloat(-0.000475),
 		GenesisEpoch:       0,
+	}
+
+	// Setup settle parameters for supply cap checking
+	settleParams := &SettleParameters{
+		TotalSubsidyPaid:   1000000,            // Already paid 1M coins
+		TotalSubsidySupply: 600000000000000000, // 600M total supply cap (600 * 10^15)
 	}
 
 	epochGroupData := &types.EpochGroupData{
@@ -507,7 +516,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 
 	t.Run("Main entry point function works correctly", func(t *testing.T) {
 		// Call the main entry point function
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, settleParams)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -539,19 +548,77 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 
 	t.Run("Parameter validation in main entry point", func(t *testing.T) {
 		// Nil participants
-		_, _, err := GetBitcoinSettleAmounts(nil, epochGroupData, bitcoinParams)
+		_, _, err := GetBitcoinSettleAmounts(nil, epochGroupData, bitcoinParams, settleParams)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "participants cannot be nil")
 
 		// Nil epoch group data
-		_, _, err = GetBitcoinSettleAmounts(participants, nil, bitcoinParams)
+		_, _, err = GetBitcoinSettleAmounts(participants, nil, bitcoinParams, settleParams)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "epochGroupData cannot be nil")
 
 		// Nil bitcoin params
-		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, nil)
+		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, nil, settleParams)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "bitcoinParams cannot be nil")
+
+		// Nil settle params
+		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "settleParams cannot be nil")
+	})
+
+	t.Run("Supply cap enforcement with remainder distribution", func(t *testing.T) {
+		// Test scenario where we're approaching supply cap and need proportional reduction
+		supplyCappedParams := &SettleParameters{
+			TotalSubsidyPaid:   600000000000000000 - 100000, // Very close to cap (100K remaining)
+			TotalSubsidySupply: 600000000000000000,          // 600M total supply cap
+		}
+
+		// Call with supply cap constraints
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, supplyCappedParams)
+		require.NoError(t, err)
+
+		// Verify the amount was reduced to fit within cap
+		require.Equal(t, int64(100000), bitcoinResult.Amount, "Should mint only remaining supply")
+
+		// Verify total distributed rewards exactly match the available amount
+		var totalDistributed uint64 = 0
+		for _, result := range results {
+			if result.Error == nil && result.Settle != nil {
+				totalDistributed += result.Settle.RewardCoins
+			}
+		}
+		require.Equal(t, uint64(100000), totalDistributed, "Total distributed should exactly match available supply")
+
+		// Verify participants still received proportional rewards (reduced but fair)
+		require.Greater(t, results[0].Settle.RewardCoins, uint64(0), "Participant 1 should get some rewards")
+		require.Greater(t, results[1].Settle.RewardCoins, uint64(0), "Participant 2 should get some rewards")
+		require.Greater(t, results[1].Settle.RewardCoins, results[0].Settle.RewardCoins, "Participant 2 should get more (higher PoC weight)")
+	})
+
+	t.Run("Supply cap already reached - zero rewards", func(t *testing.T) {
+		// Test scenario where supply cap is already reached
+		capReachedParams := &SettleParameters{
+			TotalSubsidyPaid:   600000000000000000, // Already at cap
+			TotalSubsidySupply: 600000000000000000, // 600M total supply cap
+		}
+
+		// Call with supply cap already reached
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, capReachedParams)
+		require.NoError(t, err)
+
+		// Verify no rewards are minted
+		require.Equal(t, int64(0), bitcoinResult.Amount, "Should mint zero when cap reached")
+
+		// Verify all participant rewards are zero
+		for _, result := range results {
+			if result.Error == nil && result.Settle != nil {
+				require.Equal(t, uint64(0), result.Settle.RewardCoins, "All RewardCoins should be zero when cap reached")
+				// WorkCoins should still be preserved
+				require.Greater(t, result.Settle.WorkCoins, uint64(0), "WorkCoins should still be preserved")
+			}
+		}
 	})
 }
 
@@ -730,9 +797,9 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		require.Greater(t, result, largeReward/2, "Result should still be close to original with small decay")
 
 		// Test with very large epochs but reasonable initial reward
-		result2 := CalculateFixedEpochReward(1000000, 285000, decayRate)
+		result2 := CalculateFixedEpochReward(1000000, 285000000000000, decayRate)
 		require.Greater(t, result2, uint64(0), "Should not underflow to zero")
-		require.Less(t, result2, uint64(285000), "Should be reduced due to decay")
+		require.Less(t, result2, uint64(285000000000000), "Should be reduced due to decay")
 
 		// Test mathematical limits - should not panic or overflow
 		result3 := CalculateFixedEpochReward(100000, 100000000, types.DecimalFromFloat(-0.0001))
@@ -765,7 +832,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		}
 
 		bitcoinParams := &types.BitcoinRewardParams{
-			InitialEpochReward: 285000,
+			InitialEpochReward: 285000000000000,
 			DecayRate:          types.DecimalFromFloat(-0.000475),
 			GenesisEpoch:       0,
 		}
@@ -825,7 +892,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		}
 
 		bitcoinParams := &types.BitcoinRewardParams{
-			InitialEpochReward: 285000,
+			InitialEpochReward: 285000000000000,
 			DecayRate:          types.DecimalFromFloat(0), // No decay for predictability
 			GenesisEpoch:       0,
 		}
@@ -857,7 +924,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 func TestMathematicalPrecision(t *testing.T) {
 	t.Run("Decay calculation precision", func(t *testing.T) {
 		// Test precision of exponential decay calculations
-		initialReward := uint64(285000)
+		initialReward := uint64(285000000000000)
 		decayRate := types.DecimalFromFloat(-0.000475)
 
 		// Test known values for precision verification
@@ -875,7 +942,15 @@ func TestMathematicalPrecision(t *testing.T) {
 
 		// Verify exponential property: if f(x) = initial * e^(rate*x), then f(2x) ≈ [f(x)]^2 / initial
 		// This is approximate due to discrete calculations and rounding
-		expectedApprox := (result1460 * result1460) / initialReward
+		// Use big.Int to prevent overflow with large numbers
+		result1460Big := new(big.Int).SetUint64(result1460)
+		initialRewardBig := new(big.Int).SetUint64(initialReward)
+
+		// Calculate: (result1460 * result1460) / initialReward using big integers
+		expectedApproxBig := new(big.Int).Mul(result1460Big, result1460Big)
+		expectedApproxBig = expectedApproxBig.Div(expectedApproxBig, initialRewardBig)
+
+		expectedApprox := expectedApproxBig.Uint64()
 		require.InDelta(t, expectedApprox, result2920, float64(expectedApprox)/5, "Exponential decay property should hold approximately with 20% tolerance")
 	})
 

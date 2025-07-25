@@ -262,6 +262,11 @@ func TestActualSettle(t *testing.T) {
 		CurrentEpochStats: &types.CurrentEpochStats{},
 	}
 	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
+
+	// Configure to use legacy reward system for this test
+	params := keeper.GetParams(ctx)
+	params.BitcoinRewardParams.UseBitcoinRewards = false
+	keeper.SetParams(ctx, params)
 	keeper.SetParticipant(ctx, participant1)
 	keeper.SetParticipant(ctx, participant2)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{

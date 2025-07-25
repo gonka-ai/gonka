@@ -3,6 +3,7 @@ package keeper
 import (
 	"fmt"
 	"math"
+	"math/big"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
@@ -18,7 +19,7 @@ type BitcoinResult struct {
 
 // GetBitcoinSettleAmounts is the main entry point for Bitcoin-style reward calculation.
 // It replaces GetSettleAmounts() while preserving WorkCoins and only changing RewardCoins calculation.
-func GetBitcoinSettleAmounts(participants []types.Participant, epochGroupData *types.EpochGroupData, bitcoinParams *types.BitcoinRewardParams) ([]*SettleResult, BitcoinResult, error) {
+func GetBitcoinSettleAmounts(participants []types.Participant, epochGroupData *types.EpochGroupData, bitcoinParams *types.BitcoinRewardParams, settleParams *SettleParameters) ([]*SettleResult, BitcoinResult, error) {
 	if participants == nil {
 		return nil, BitcoinResult{Amount: 0}, fmt.Errorf("participants cannot be nil")
 	}
@@ -27,6 +28,9 @@ func GetBitcoinSettleAmounts(participants []types.Participant, epochGroupData *t
 	}
 	if bitcoinParams == nil {
 		return nil, BitcoinResult{Amount: 0}, fmt.Errorf("bitcoinParams cannot be nil")
+	}
+	if settleParams == nil {
+		return nil, BitcoinResult{Amount: 0}, fmt.Errorf("settleParams cannot be nil")
 	}
 
 	// Delegate to the main Bitcoin reward calculation function
@@ -37,6 +41,54 @@ func GetBitcoinSettleAmounts(participants []types.Participant, epochGroupData *t
 	// 4. Invalid participant handling
 	// 5. Error management
 	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams)
+	if err != nil {
+		return settleResults, bitcoinResult, err
+	}
+
+	// Check supply cap to prevent exceeding StandardRewardAmount (same logic as legacy system)
+	if settleParams.TotalSubsidyPaid >= settleParams.TotalSubsidySupply {
+		// Supply cap already reached - stop all minting
+		bitcoinResult.Amount = 0
+		// Zero out all participant reward amounts since no rewards can be minted
+		for _, amount := range settleResults {
+			if amount.Settle != nil {
+				amount.Settle.RewardCoins = 0
+			}
+		}
+	} else if settleParams.TotalSubsidyPaid+bitcoinResult.Amount > settleParams.TotalSubsidySupply {
+		// Approaching supply cap - mint only remaining amount and proportionally reduce rewards
+		originalAmount := bitcoinResult.Amount
+		bitcoinResult.Amount = settleParams.TotalSubsidySupply - settleParams.TotalSubsidyPaid
+
+		// Proportionally reduce all participant rewards with proper remainder handling
+		if originalAmount > 0 {
+			reductionRatio := float64(bitcoinResult.Amount) / float64(originalAmount)
+			var totalDistributed uint64 = 0
+
+			// Apply proportional reduction to each participant
+			for _, amount := range settleResults {
+				if amount.Settle != nil && amount.Error == nil {
+					reducedReward := uint64(float64(amount.Settle.RewardCoins) * reductionRatio)
+					amount.Settle.RewardCoins = reducedReward
+					totalDistributed += reducedReward
+				}
+			}
+
+			// Distribute any remainder due to integer division truncation
+			// This ensures the exact available supply amount is distributed
+			remainder := uint64(bitcoinResult.Amount) - totalDistributed
+			if remainder > 0 && len(settleResults) > 0 {
+				// Assign undistributed coins to first participant with valid rewards
+				for i, result := range settleResults {
+					if result.Error == nil && result.Settle != nil && result.Settle.RewardCoins > 0 {
+						settleResults[i].Settle.RewardCoins += remainder
+						break
+					}
+				}
+			}
+		}
+	}
+	// If under cap, no adjustment needed - use full amount
 
 	return settleResults, bitcoinResult, err
 }
@@ -215,8 +267,23 @@ func CalculateParticipantBitcoinRewards(participants []types.Participant, epochG
 		if participant.Status != types.ParticipantStatus_INVALID && totalPoCWeight > 0 {
 			participantWeight := participantWeights[participant.Address]
 			if participantWeight > 0 {
+				// Use big.Int to prevent overflow with large numbers
 				// Proportional distribution: (participant_weight / total_weight) × fixed_epoch_reward
-				rewardCoins = (participantWeight * fixedEpochReward) / totalPoCWeight
+				participantBig := new(big.Int).SetUint64(participantWeight)
+				rewardBig := new(big.Int).SetUint64(fixedEpochReward)
+				totalWeightBig := new(big.Int).SetUint64(totalPoCWeight)
+
+				// Calculate: (participantWeight * fixedEpochReward) / totalPoCWeight
+				result := new(big.Int).Mul(participantBig, rewardBig)
+				result = result.Div(result, totalWeightBig)
+
+				// Convert back to uint64 (should be safe after division)
+				if result.IsUint64() {
+					rewardCoins = result.Uint64()
+				} else {
+					// If still too large, participant gets maximum possible uint64
+					rewardCoins = ^uint64(0) // Max uint64
+				}
 				totalDistributed += rewardCoins
 			}
 		}

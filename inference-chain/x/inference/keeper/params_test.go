@@ -452,7 +452,7 @@ func TestBitcoinRewardParamsGovernance(t *testing.T) {
 	}{
 		{
 			name:                       "default Bitcoin reward parameters",
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.000475,
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,
@@ -544,7 +544,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "valid Bitcoin reward parameters",
 			useBitcoinRewards:          true,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.000475,
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,
@@ -566,7 +566,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "valid parameters with Bitcoin rewards disabled",
 			useBitcoinRewards:          false,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.000475,
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,
@@ -577,7 +577,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "invalid decay rate (positive)",
 			useBitcoinRewards:          true,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  0.000475, // Positive - should be negative
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,
@@ -589,7 +589,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "invalid decay rate (too extreme)",
 			useBitcoinRewards:          true,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.02, // Too extreme (less than -0.01)
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,
@@ -601,7 +601,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "invalid utilization bonus factor (negative)",
 			useBitcoinRewards:          true,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.000475,
 			genesisEpoch:               0,
 			utilizationBonusFactor:     -0.1, // Negative - should be non-negative
@@ -613,7 +613,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "invalid full coverage bonus factor (negative)",
 			useBitcoinRewards:          true,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.000475,
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,
@@ -625,7 +625,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		{
 			name:                       "invalid partial coverage bonus factor (negative)",
 			useBitcoinRewards:          true,
-			initialEpochReward:         285000,
+			initialEpochReward:         285000000000000,
 			decayRate:                  -0.000475,
 			genesisEpoch:               0,
 			utilizationBonusFactor:     0.5,

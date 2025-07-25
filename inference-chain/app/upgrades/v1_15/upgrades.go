@@ -42,6 +42,16 @@ func CreateUpgradeHandler(
 		params.TokenomicsParams.RewardVestingPeriod = 0   // No vesting initially
 		params.TokenomicsParams.TopMinerVestingPeriod = 0 // No vesting initially
 
+		// Initialize Bitcoin reward parameters in the inference module
+		k.LogInfo(fmt.Sprintf("%s - Initializing Bitcoin reward parameters", UpgradeName), types.Upgrades)
+		params.BitcoinRewardParams.UseBitcoinRewards = true                                 // Enable Bitcoin reward system
+		params.BitcoinRewardParams.InitialEpochReward = 285000000000000                     // 285,000 gonka coins per epoch (285,000 * 1,000,000,000 nicoins)
+		params.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(-0.000475)            // Exponential decay rate (~4 year halving)
+		params.BitcoinRewardParams.GenesisEpoch = 0                                         // Start from epoch 0
+		params.BitcoinRewardParams.UtilizationBonusFactor = types.DecimalFromFloat(0.5)     // 50% utilization bonus factor
+		params.BitcoinRewardParams.FullCoverageBonusFactor = types.DecimalFromFloat(1.2)    // 20% bonus for full model coverage
+		params.BitcoinRewardParams.PartialCoverageBonusFactor = types.DecimalFromFloat(0.1) // 10% bonus scaling for partial coverage
+
 		// Set the updated parameters
 		err := k.SetParams(ctx, params)
 		if err != nil {
@@ -61,6 +71,13 @@ func CreateUpgradeHandler(
 			"WorkVestingPeriod", updatedParams.TokenomicsParams.WorkVestingPeriod,
 			"RewardVestingPeriod", updatedParams.TokenomicsParams.RewardVestingPeriod,
 			"TopMinerVestingPeriod", updatedParams.TokenomicsParams.TopMinerVestingPeriod,
+			"UseBitcoinRewards", updatedParams.BitcoinRewardParams.UseBitcoinRewards,
+			"InitialEpochReward", updatedParams.BitcoinRewardParams.InitialEpochReward,
+			"DecayRate", updatedParams.BitcoinRewardParams.DecayRate.String(),
+			"GenesisEpoch", updatedParams.BitcoinRewardParams.GenesisEpoch,
+			"UtilizationBonusFactor", updatedParams.BitcoinRewardParams.UtilizationBonusFactor.String(),
+			"FullCoverageBonusFactor", updatedParams.BitcoinRewardParams.FullCoverageBonusFactor.String(),
+			"PartialCoverageBonusFactor", updatedParams.BitcoinRewardParams.PartialCoverageBonusFactor.String(),
 		)
 
 		// Handle capability module version issue (from existing upgrade patterns)
@@ -80,6 +97,7 @@ func CreateUpgradeHandler(
 		k.LogInfo(fmt.Sprintf("%s - Tokenomics V2 upgrade completed successfully", UpgradeName), types.Upgrades,
 			"collateralModuleAdded", true,
 			"streamvestingModuleAdded", true,
+			"bitcoinRewardParametersInitialized", true,
 			"parametersInitialized", true)
 
 		return migratedVm, nil

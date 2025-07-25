@@ -55,7 +55,7 @@ func TestBitcoinRewardIntegration_ParameterValidation(t *testing.T) {
 	// Test that module accepts valid Bitcoin reward parameters
 	params := types.DefaultParams()
 	params.BitcoinRewardParams.UseBitcoinRewards = true
-	params.BitcoinRewardParams.InitialEpochReward = 285000
+	params.BitcoinRewardParams.InitialEpochReward = 285000000000000 // 285,000 gonka coins (285,000 * 1,000,000,000 nicoins)
 	params.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(-0.000475)
 	params.BitcoinRewardParams.GenesisEpoch = 0
 	params.BitcoinRewardParams.UtilizationBonusFactor = types.DecimalFromFloat(0.5)
@@ -69,7 +69,7 @@ func TestBitcoinRewardIntegration_ParameterValidation(t *testing.T) {
 	// Retrieve and verify parameters
 	retrievedParams := k.GetParams(ctx)
 	require.True(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards)
-	require.Equal(t, uint64(285000), retrievedParams.BitcoinRewardParams.InitialEpochReward)
+	require.Equal(t, uint64(285000000000000), retrievedParams.BitcoinRewardParams.InitialEpochReward)
 	decayRateLegacy, err := retrievedParams.BitcoinRewardParams.DecayRate.ToLegacyDec()
 	require.NoError(t, err)
 	require.InDelta(t, -0.000475, decayRateLegacy.MustFloat64(), 0.000001, "Decay rate should match")
@@ -175,8 +175,14 @@ func TestBitcoinRewardIntegration_DistributionLogic(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, params))
 
 	t.Run("Test Bitcoin reward distribution calculation", func(t *testing.T) {
+		// Create settle parameters for supply cap checking
+		settleParams := &keeper.SettleParameters{
+			TotalSubsidyPaid:   100000,             // Already paid 100K coins
+			TotalSubsidySupply: 600000000000000000, // 600M total supply cap (600 * 10^15)
+		}
+
 		// Test GetBitcoinSettleAmounts function
-		settleResults, bitcoinResult, err := keeper.GetBitcoinSettleAmounts(participants, epochGroupData, params.BitcoinRewardParams)
+		settleResults, bitcoinResult, err := keeper.GetBitcoinSettleAmounts(participants, epochGroupData, params.BitcoinRewardParams, settleParams)
 		require.NoError(t, err, "Bitcoin settle amounts calculation should succeed")
 		require.Len(t, settleResults, 2, "Should have settle results for both participants")
 
@@ -223,8 +229,8 @@ func TestBitcoinRewardIntegration_DefaultParameters(t *testing.T) {
 	bitcoinParams := retrievedParams.BitcoinRewardParams
 
 	// Test the default values match our specifications
-	require.False(t, bitcoinParams.UseBitcoinRewards, "Bitcoin rewards should be disabled by default for safe deployment")
-	require.Equal(t, uint64(285000), bitcoinParams.InitialEpochReward, "Default initial epoch reward should be 285,000")
+	require.True(t, bitcoinParams.UseBitcoinRewards, "Bitcoin rewards should be enabled by default")
+	require.Equal(t, uint64(285000000000000), bitcoinParams.InitialEpochReward, "Default initial epoch reward should be 285,000")
 
 	decayRateLegacy, err := bitcoinParams.DecayRate.ToLegacyDec()
 	require.NoError(t, err)

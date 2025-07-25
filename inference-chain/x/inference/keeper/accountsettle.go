@@ -115,12 +115,14 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 	params := k.GetParams(ctx)
 	var amounts []*SettleResult
 	var rewardAmount int64
+	settleParameters := k.GetSettleParameters(ctx)
+	k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
 
 	if params.BitcoinRewardParams.UseBitcoinRewards {
 		// Use Bitcoin-style fixed reward system with its own parameters
 		k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 		var bitcoinResult BitcoinResult
-		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(participants.Participant, &data, params.BitcoinRewardParams)
+		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(participants.Participant, &data, params.BitcoinRewardParams, settleParameters)
 		if err != nil {
 			k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
 		}
@@ -128,8 +130,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 	} else {
 		// Use current WorkCoins-based variable reward system with its own parameters
 		k.LogInfo("Using current WorkCoins-based reward system", types.Settle)
-		settleParameters := k.GetSettleParameters(ctx)
-		k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
 		var subsidyResult SubsidyResult
 		amounts, subsidyResult, err = GetSettleAmounts(participants.Participant, settleParameters)
 		if err != nil {

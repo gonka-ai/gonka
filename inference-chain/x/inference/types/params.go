@@ -139,7 +139,7 @@ func DefaultCollateralParams() *CollateralParams {
 func DefaultBitcoinRewardParams() *BitcoinRewardParams {
 	return &BitcoinRewardParams{
 		UseBitcoinRewards:          true,
-		InitialEpochReward:         285000,                      // 285,000 gonka coins per epoch
+		InitialEpochReward:         285000000000000,             // 285,000 gonka coins per epoch (285,000 * 1,000,000,000 nicoins)
 		DecayRate:                  DecimalFromFloat(-0.000475), // Exponential decay rate per epoch
 		GenesisEpoch:               0,                           // Starting epoch for Bitcoin-style calculations
 		UtilizationBonusFactor:     DecimalFromFloat(0.5),       // Multiplier for utilization bonuses (Phase 2)
