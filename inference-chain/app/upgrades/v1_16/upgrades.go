@@ -22,7 +22,23 @@ func CreateUpgradeHandler(
 			}
 			fmt.Printf("OrderMigrations: %v\n", mm.OrderMigrations)
 
-			err := configurator.RegisterMigration("inference", 3, func(ctx sdk.Context) error {
+			var inferenceModuleFound bool
+			for _, name := range mm.ModuleNames() {
+				fmt.Printf("Module Name: %s\n", name)
+				if name == types.ModuleName {
+					inferenceModuleFound = true
+					break
+				}
+			}
+
+			// Mostly for debugging,
+			// because we're using this approach with RegisterMigration for the first time
+			if !inferenceModuleFound {
+				k.LogError("Inference module not found in module manager during upgrade: %v", types.Upgrades)
+				return nil, fmt.Errorf("inference module not found in module manager")
+			}
+
+			err := configurator.RegisterMigration(types.ModuleName, 3, func(ctx sdk.Context) error {
 				SetGenesisModels(ctx, k)
 				return SetInferenceCutoffDefault(ctx, k)
 			})
