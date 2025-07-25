@@ -2,8 +2,9 @@ package calculations
 
 import (
 	"fmt"
-	"github.com/shopspring/decimal"
 	"testing"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"

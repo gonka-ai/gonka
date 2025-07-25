@@ -1,10 +1,11 @@
 package keeper_test
 
 import (
+	"testing"
+
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestTrainNodeActivity(t *testing.T) {

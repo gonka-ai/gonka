@@ -1,11 +1,12 @@
 package keeper
 
 import (
+	"testing"
+
 	"github.com/google/uuid"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 const (

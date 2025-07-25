@@ -1,0 +1,31 @@
+breaking:
+    except:
+        - EXTENSION_NO_DELETE
+        - FIELD_SAME_DEFAULT
+    use:
+        - FILE
+deps:
+    - buf.build/cosmos/cosmos-proto
+    - buf.build/cosmos/cosmos-sdk
+    - buf.build/cosmos/gogo-proto
+    - buf.build/cosmos/ics23
+    - buf.build/googleapis/googleapis
+    - buf.build/protocolbuffers/wellknowntypes
+    - buf.build/cosmos/ibc
+    - buf.build/cosmwasm/wasmd
+lint:
+    disallow_comment_ignores: true
+    except:
+        - COMMENT_FIELD
+        - RPC_REQUEST_STANDARD_NAME
+        - RPC_RESPONSE_STANDARD_NAME
+        - SERVICE_SUFFIX
+    ignore:
+        - proto/tendermint
+    use:
+        - COMMENTS
+        - STANDARD
+        - FILE_LOWER_SNAKE_CASE
+modules:
+    - path: proto
+version: v2

@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/spf13/cobra"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/pelletier/go-toml"
 )

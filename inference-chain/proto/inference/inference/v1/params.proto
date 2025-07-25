@@ -2,8 +2,8 @@ syntax = "proto3";
 package inference.inference;
 
 import "amino/amino.proto";
-import "gogoproto/gogo.proto";
 import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -55,19 +55,19 @@ message EpochParams {
 message ValidationParams {
   option (gogoproto.equal) = true;
   Decimal false_positive_rate = 1;
-  int32  min_ramp_up_measurements = 2;
+  int32 min_ramp_up_measurements = 2;
   Decimal pass_value = 3;
   Decimal min_validation_average = 4;
   Decimal max_validation_average = 5;
-  int64  expiration_blocks = 6;
-  int64  epochs_to_max = 7;
-  int64  full_validation_traffic_cutoff = 8;
-  Decimal  min_validation_halfway = 9;
-  int64  min_validation_traffic_cutoff = 10;
+  int64 expiration_blocks = 6;
+  int64 epochs_to_max = 7;
+  int64 full_validation_traffic_cutoff = 8;
+  Decimal min_validation_halfway = 9;
+  int64 min_validation_traffic_cutoff = 10;
   Decimal miss_percentage_cutoff = 11;
   Decimal miss_requests_penalty = 12;
-  int64  timestamp_expiration = 13;  // Max time in seconds until timestamps are "too old"
-  int64  timestamp_advance = 14;     // Max time in seconds until timestamps are "in the future"
+  int64 timestamp_expiration = 13; // Max time in seconds until timestamps are "too old"
+  int64 timestamp_advance = 14; // Max time in seconds until timestamps are "in the future"
 }
 
 message PocParams {

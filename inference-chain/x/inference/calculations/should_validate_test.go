@@ -2,9 +2,10 @@ package calculations
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestShouldValidate(t *testing.T) {

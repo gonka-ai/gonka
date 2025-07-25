@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"fmt"
+
 	"github.com/productscience/inference/app/upgrades/v1_14"
 
 	storetypes "cosmossdk.io/store/types"

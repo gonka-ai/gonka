@@ -2,9 +2,10 @@ package types_test
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestZeroEpoch(t *testing.T) {

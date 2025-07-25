@@ -5,16 +5,17 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/spf13/cobra"
-	"io"
-	"net/http"
-	"os"
-	"strings"
 )
 
 const (

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"github.com/productscience/inference/x/inference/utils"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"

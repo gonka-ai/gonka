@@ -3,6 +3,8 @@ package keeper_test
 import (
 	"context"
 	"encoding/base64"
+	"testing"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -12,7 +14,6 @@ import (
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
 	"go.uber.org/mock/gomock"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 

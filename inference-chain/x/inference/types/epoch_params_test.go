@@ -1,8 +1,9 @@
 package types_test
 
 import (
-	"github.com/productscience/inference/x/inference/types"
 	"testing"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func TestEpochParamsStages(t *testing.T) {

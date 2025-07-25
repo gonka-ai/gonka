@@ -2,6 +2,9 @@ package keeper_test
 
 import (
 	"context"
+	"log"
+	"testing"
+
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
 	keeper2 "github.com/productscience/inference/testutil/keeper"
@@ -9,8 +12,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"log"
-	"testing"
 )
 
 const INFERENCE_ID = "inferenceId"

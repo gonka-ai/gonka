@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/productscience/inference/internal/rpc"
 	"os"
+
+	"github.com/productscience/inference/internal/rpc"
 
 	"github.com/spf13/cobra"
 )

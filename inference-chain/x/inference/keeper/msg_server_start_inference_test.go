@@ -1,9 +1,10 @@
 package keeper_test
 
 import (
+	"testing"
+
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 

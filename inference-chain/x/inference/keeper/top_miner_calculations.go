@@ -1,9 +1,10 @@
 package keeper
 
 import (
+	"sort"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
-	"sort"
 )
 
 type TopMinerFactors struct {
