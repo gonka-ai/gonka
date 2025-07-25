@@ -17,3 +17,11 @@ spec:
     port: 26657
     targetPort: 26657
     nodePort: 30002
+  - name: rest-api
+    port: 1317
+    targetPort: 1317
+    nodePort: 30003
+  - name: grpc
+    port: 9090
+    targetPort: 9090
+    nodePort: 30004
