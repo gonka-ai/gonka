@@ -71,7 +71,7 @@ func SetGenesisModels(ctx context.Context, k keeper.Keeper) {
 		HfRepo:                 "Qwen/Qwen2.5-7B-Instruct",
 		HfCommit:               "a09a35458c702b33eeacc393d103063234e8bc28",
 		ModelArgs:              []string{"--quantization", "fp8"},
-		VRam:                   16,
+		VRam:                   24,
 		ThroughputPerNonce:     10000,
 	}
 	k.SetModel(ctx, &qwen7BModel)
@@ -82,7 +82,7 @@ func SetGenesisModels(ctx context.Context, k keeper.Keeper) {
 		HfRepo:                 "Qwen/QwQ-32B",
 		HfCommit:               "976055f8c83f394f35dbd3ab09a285a984907bd0",
 		ModelArgs:              []string{"--quantization", "fp8", "-kv-cache-dtype", "fp8"},
-		VRam:                   32,
+		VRam:                   80,
 		ThroughputPerNonce:     1000,
 	}
 	k.SetModel(ctx, &qwq32BModel)
