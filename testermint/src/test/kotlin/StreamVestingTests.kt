@@ -35,6 +35,7 @@ class StreamVestingTests : TestermintTest() {
         )
 
         val (cluster, genesis) = initCluster(config = fastVestingConfig, reboot = true)
+        genesis.markNeedsReboot()
         val participant = genesis
         val participantAddress = participant.node.getAddress()
 

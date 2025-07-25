@@ -56,6 +56,10 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 	if err != nil {
 		return err
 	}
+	if amount == 0 {
+		k.LogInfo("No amount to pay", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)
+		return nil
+	}
 
 	vestingEpochs := vestingPeriods
 	k.LogInfo("Paying participant", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)

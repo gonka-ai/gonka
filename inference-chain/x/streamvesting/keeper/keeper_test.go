@@ -307,12 +307,11 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_InvalidInputs() {
 	suite.Require().Error(err)
 	suite.Require().Contains(err.Error(), "vesting epochs cannot be zero")
 
-	// Test with empty amount
+	// Test with empty amount - should succeed (no-op)
 	emptyAmount := sdk.NewCoins()
 	vestingEpochs = uint64(5)
 	err = suite.keeper.AddVestedRewards(suite.ctx, participant, emptyAmount, &vestingEpochs)
-	suite.Require().Error(err)
-	suite.Require().Contains(err.Error(), "amount cannot be empty")
+	suite.Require().NoError(err) // Should not error, just do nothing
 
 	// Test with invalid participant address
 	invalidParticipant := "invalid-address"

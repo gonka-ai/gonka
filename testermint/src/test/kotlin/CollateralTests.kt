@@ -97,6 +97,7 @@ class CollateralTests : TestermintTest() {
         )
 
         val (cluster, genesis) = initCluster(config = fastExpirationConfig, reboot = true)
+        genesis.markNeedsReboot()
         val genesisAddress = genesis.node.getAddress()
         val depositAmount = 1000L
 

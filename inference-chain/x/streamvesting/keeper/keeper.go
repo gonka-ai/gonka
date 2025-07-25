@@ -84,7 +84,7 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 	}
 
 	if amount.IsZero() {
-		return fmt.Errorf("amount cannot be empty")
+		return nil // Nothing to vest, return successfully
 	}
 
 	// Validate participant address
