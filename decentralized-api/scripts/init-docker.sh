@@ -43,7 +43,7 @@ mkdir -p /root/.dapi
 mkdir -p /root/.dapi/data
 
 echo "init for nats"
-mkdir -p /root/.nats
+mkdir -p /root/.dapi/.nats
 
 cosmovisor init /usr/bin/decentralized-api || fail "Failed to initialize cosmovisor"
 

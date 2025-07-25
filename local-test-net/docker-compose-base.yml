@@ -41,8 +41,6 @@ services:
       - DAPI_API__ML_GRPC_SERVER_PORT=9300
       - DAPI_API__TEST_MODE=true
       - NODE_CONFIG_PATH=/root/node_config.json
-      - DAPI_NATS__HOST=0.0.0.0
-      - DAPI_NATS__PORT=4222
       - DEBUG=true
     networks:
       - chain-public

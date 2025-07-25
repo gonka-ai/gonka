@@ -51,8 +51,8 @@ type manager struct {
 	accountRetriever client.AccountRetriever
 	address          string
 	defaultTimeout   time.Duration
-	nc               *nats.Conn
-	js               nats.JetStreamContext
+	natsConnection   *nats.Conn
+	natsJetStream    nats.JetStreamContext
 }
 
 func StartTxManager(
@@ -60,9 +60,9 @@ func StartTxManager(
 	client *cosmosclient.Client,
 	account *cosmosaccount.Account,
 	defaultTimeout time.Duration,
-	nc *nats.Conn,
+	natsConnection *nats.Conn,
 	address string) (*manager, error) {
-	js, err := nc.JetStream()
+	js, err := natsConnection.JetStream()
 	if err != nil {
 		return nil, err
 	}
@@ -76,8 +76,8 @@ func StartTxManager(
 		account:          account,
 		accountRetriever: authtypes.AccountRetriever{},
 		defaultTimeout:   defaultTimeout,
-		nc:               nc,
-		js:               js,
+		natsConnection:   natsConnection,
+		natsJetStream:    js,
 	}
 
 	if err := m.sendTxs(); err != nil {
@@ -95,8 +95,8 @@ func StartTxManager(
 		account:          account,
 		accountRetriever: authtypes.AccountRetriever{},
 		defaultTimeout:   defaultTimeout,
-		nc:               nc,
-		js:               js,
+		natsConnection:   natsConnection,
+		natsJetStream:    js,
 	}, nil
 }
 
@@ -133,7 +133,7 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse,
 		return nil, ErrTxFailedToBroadcastAndPutOnRetry
 	}
 	if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, true); err != nil {
-		logging.Error("tx broadcasted, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
+		logging.Error("tx broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
 	}
 	return resp, nil
 }
@@ -164,7 +164,6 @@ func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultT
 
 func (m *manager) SignBytes(seed []byte) ([]byte, error) {
 	name := m.account.Name
-	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
 	bytes, _, err := m.client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
 	if err != nil {
 		return nil, err
@@ -204,7 +203,7 @@ func (m *manager) putOnRetry(
 	if err != nil {
 		return err
 	}
-	_, err = m.js.Publish(server.TxsToSendStream, b)
+	_, err = m.natsJetStream.Publish(server.TxsToSendStream, b)
 	return err
 }
 
@@ -229,14 +228,14 @@ func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeou
 	if err != nil {
 		return err
 	}
-	_, err = m.js.Publish(server.TxsToObserveStream, b)
+	_, err = m.natsJetStream.Publish(server.TxsToObserveStream, b)
 	return err
 }
 
 func (m *manager) sendTxs() error {
 	logging.Info("Tx manager: sending txs: run in background", types.Messages)
 
-	_, err := m.js.Subscribe(server.TxsToSendStream, func(msg *nats.Msg) {
+	_, err := m.natsJetStream.Subscribe(server.TxsToSendStream, func(msg *nats.Msg) {
 		var tx txToSend
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
 			logging.Error("error unmarshaling tx_to_send", types.Messages, "err", err)
@@ -270,7 +269,7 @@ func (m *manager) sendTxs() error {
 			tx.Sent = true
 		}
 
-		logging.Debug("tx broadcasted, put to observe", types.Messages, "id", tx.TxInfo.Id, "tx_hash", tx.TxInfo.TxHash, "timeout", tx.TxInfo.Timeout.String())
+		logging.Debug("tx broadcast, put to observe", types.Messages, "id", tx.TxInfo.Id, "tx_hash", tx.TxInfo.TxHash, "timeout", tx.TxInfo.Timeout.String())
 
 		if err := m.putTxToObserve(tx.TxInfo.Id, rawTx, tx.TxInfo.TxHash, tx.TxInfo.Timeout); err != nil {
 			logging.Error("error pushing to observe queue", types.Messages, "id", tx.TxInfo.Id, "err", err)
@@ -284,7 +283,7 @@ func (m *manager) sendTxs() error {
 
 func (m *manager) observeTxs() error {
 	logging.Info("Tx manager: observeTxs txs: run in background", types.Messages)
-	_, err := m.js.Subscribe(server.TxsToObserveStream, func(msg *nats.Msg) {
+	_, err := m.natsJetStream.Subscribe(server.TxsToObserveStream, func(msg *nats.Msg) {
 		var tx txInfo
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
 			logging.Error("error unmarshaling tx_to_observe", types.Messages, "err", err)
@@ -322,25 +321,20 @@ func (m *manager) observeTxs() error {
 			return
 		}
 
-		if !errors.Is(err, ErrTxNotFound) {
-			msg.NakWithDelay(defaultObserverNackDelay)
-			return
-		}
-
-		if time.Now().After(tx.Timeout) {
-			logging.Debug("tx expired", types.Messages, "tx_id", tx.Id, "tx_hash", tx.TxHash)
-			if err := m.putOnRetry(tx.Id, "", time.Time{}, rawTx, false); err != nil {
-				msg.NakWithDelay(defaultObserverNackDelay)
+		if errors.Is(err, ErrTxNotFound) {
+			if time.Now().After(tx.Timeout) {
+				logging.Debug("tx expired", types.Messages, "tx_id", tx.Id, "tx_hash", tx.TxHash)
+				if err := m.putOnRetry(tx.Id, "", time.Time{}, rawTx, false); err != nil {
+					msg.NakWithDelay(defaultObserverNackDelay)
+					return
+				}
+				msg.Ack()
 				return
 			}
-			msg.Ack()
-			return
 		}
 
-		// tx not found, but not expired yet: do nothing
 		msg.NakWithDelay(defaultObserverNackDelay)
 		return
-
 	}, nats.Durable(txObserverConsumer), nats.ManualAck())
 	return err
 }
