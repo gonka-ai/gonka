@@ -143,8 +143,11 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		return nil, err
 	}
 
+	// we need to verify proof from block N using hash from N+1,
+	// because hash of block N is made after Commit() and stored in
+	// header of block N+1. It works so to make each block 'link' to previous and have chain of blocks.
 	if result.Response.ProofOps != nil {
-		s.verifyProof(epoch, result, block)
+		s.verifyProof(epoch, result, blockP1)
 	}
 
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
@@ -176,12 +179,12 @@ func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, bl
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
 	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
 	if err != nil {
-		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
+		logging.Error("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
 	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
 	if err != nil {
-		logging.Info("VerifyUsingMerkleProof failed", types.Participants, "error", err)
+		logging.Error("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
 }
 
@@ -250,16 +253,15 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	// 1. Data migration happened, and we can't validate pre-migration records recursively;
 	//    they are now signed by the validators active during the epoch.
 	// 2. The implemented proof system has a bug anyway and needs to be revisited
-	return result, nil
 
-	/*	blockHeight := activeParticipants.CreatedAtBlockHeight
-		result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
-		if err != nil {
-			logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
-			return nil, err
-		}
+	blockHeight := activeParticipants.CreatedAtBlockHeight
+	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
+	if err != nil {
+		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
+		return nil, err
+	}
 
-		return result, err*/
+	return result, err
 }
 
 func pubKeyToAddress3(pubKey string) (string, error) {
