@@ -47,7 +47,7 @@ func TestSingleNode(t *testing.T) {
 	registerNodeAndSetInferenceStatus(t, broker, node)
 
 	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
 		t.Fatalf("expected node1, got nil")
@@ -55,7 +55,7 @@ func TestSingleNode(t *testing.T) {
 	if runningNode.Id != node.Id {
 		t.Fatalf("expected node1, got: " + runningNode.Id)
 	}
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	if <-availableNode != nil {
 		t.Fatalf("expected nil, got " + runningNode.Id)
 	}
@@ -106,7 +106,7 @@ func TestNodeRemoval(t *testing.T) {
 	registerNodeAndSetInferenceStatus(t, broker, node)
 
 	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
 		t.Fatalf("expected node1, got nil")
@@ -119,7 +119,7 @@ func TestNodeRemoval(t *testing.T) {
 	if !<-release {
 		t.Fatalf("expected true, got false")
 	}
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	if <-availableNode != nil {
 		t.Fatalf("expected nil, got node")
 	}
@@ -139,7 +139,7 @@ func TestModelMismatch(t *testing.T) {
 	registerNodeAndSetInferenceStatus(t, broker, node)
 
 	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model2", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model2", availableNode})
 	if <-availableNode != nil {
 		t.Fatalf("expected nil, got node1")
 	}
@@ -160,50 +160,11 @@ func TestHighConcurrency(t *testing.T) {
 
 	availableNode := make(chan *Node, 2)
 	for i := 0; i < 100; i++ {
-		queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+		queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 		if <-availableNode == nil {
 			t.Fatalf("expected node1, got nil")
 		}
 	}
-}
-
-func TestVersionFiltering(t *testing.T) {
-	broker := NewTestBroker()
-	v1node := apiconfig.InferenceNodeConfig{
-		Host:          "localhost",
-		InferencePort: 8080,
-		PoCPort:       5000,
-		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
-		Id:            "v1node",
-		MaxConcurrent: 1000,
-		Version:       "v1",
-	}
-	novNode := apiconfig.InferenceNodeConfig{
-		Host:          "localhost",
-		InferencePort: 8080,
-		PoCPort:       5000,
-		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
-		Id:            "novNode",
-		MaxConcurrent: 1000,
-		Version:       "",
-	}
-	registerNodeAndSetInferenceStatus(t, broker, v1node)
-	registerNodeAndSetInferenceStatus(t, broker, novNode)
-
-	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model1", "v1", false, availableNode})
-	node := <-availableNode
-	require.NotNil(t, node)
-	require.Equal(t, "v1node", node.Id)
-	queueMessage(t, broker, LockAvailableNode{"model1", "v1", false, availableNode})
-	node = <-availableNode
-	require.NotNil(t, node)
-	require.Equal(t, "v1node", node.Id)
-	queueMessage(t, broker, LockAvailableNode{"model1", "v2", false, availableNode})
-	require.Nil(t, <-availableNode)
-	queueMessage(t, broker, LockAvailableNode{"model1", "v2", true, availableNode})
-	node = <-availableNode
-	require.NotNil(t, node)
 }
 
 func TestMultipleNodes(t *testing.T) {
@@ -228,7 +189,7 @@ func TestMultipleNodes(t *testing.T) {
 	registerNodeAndSetInferenceStatus(t, broker, node2)
 
 	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	firstNode := <-availableNode
 	if firstNode == nil {
 		t.Fatalf("expected node1 or node2, got nil")
@@ -237,7 +198,7 @@ func TestMultipleNodes(t *testing.T) {
 	if firstNode.Id != node1.Id && firstNode.Id != node2.Id {
 		t.Fatalf("expected node1 or node2, got: " + firstNode.Id)
 	}
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	secondNode := <-availableNode
 	if secondNode == nil {
 		t.Fatalf("expected another node, got nil")
@@ -268,7 +229,7 @@ func TestReleaseNode(t *testing.T) {
 	registerNodeAndSetInferenceStatus(t, broker, node)
 
 	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
 		t.Fatalf("expected node1, got nil")
@@ -281,7 +242,7 @@ func TestReleaseNode(t *testing.T) {
 	if !<-release {
 		t.Fatalf("expected true, got false")
 	}
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	if <-availableNode == nil {
 		t.Fatalf("expected node1, got nil")
 	}
@@ -303,7 +264,7 @@ func TestRoundTripSegment(t *testing.T) {
 	registerNodeAndSetInferenceStatus(t, broker, node)
 
 	availableNode := make(chan *Node, 2)
-	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
 		t.Fatalf("expected node1, got nil")
@@ -413,7 +374,6 @@ func TestImmediateClientRefreshLogic(t *testing.T) {
 		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
-		Version:       "v3.0.8",
 	}
 
 	registerNodeAndSetInferenceStatus(t, broker, node)

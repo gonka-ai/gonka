@@ -120,7 +120,6 @@ type Node struct {
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
 	Hardware         []apiconfig.Hardware `json:"hardware"`
-	Version          string               `json:"version"`
 }
 
 func (n *Node) InferenceUrl() string {
@@ -387,17 +386,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	}
 	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
 	if leastBusyNode == nil {
-		if command.AcceptEarlierVersion {
-			b.lockAvailableNode(
-				LockAvailableNode{
-					Model:                command.Model,
-					Response:             command.Response,
-					AcceptEarlierVersion: false,
-				},
-			)
-		} else {
-			command.Response <- nil
-		}
+		command.Response <- nil
 	} else {
 		command.Response <- &leastBusyNode.Node
 	}
@@ -416,7 +405,7 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 	var leastBusyNode *NodeWithState = nil
 	for _, node := range b.nodes {
 		// TODO: log some kind of a reason as to why the node is not available
-		if available, reason := b.nodeAvailable(node, command.Model, command.Version, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
+		if available, reason := b.nodeAvailable(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
@@ -430,7 +419,7 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 
 type NodeNotAvailableReason = string
 
-func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
+func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
 	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
 		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
 	}
@@ -446,10 +435,6 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version 
 	// Check admin state using provided epoch and phase
 	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
 		return false, fmt.Sprintf("Node is administratively disabled: currentEpoch=%v, currentPhase=%s, adminState = %v", currentEpoch, currentPhase, node.State.AdminState)
-	}
-
-	if version != "" && node.Node.Version != version {
-		return false, fmt.Sprintf("Node version mismatch: expected %s, got %s", version, node.Node.Version)
 	}
 
 	_, found := node.Node.Models[neededModel]
@@ -488,17 +473,14 @@ var ErrNoNodesAvailable = errors.New("no nodes available for inference")
 func LockNode[T any](
 	b *Broker,
 	model string,
-	version string,
 	action func(node *Node) (T, error),
 ) (T, error) {
 	var zero T
 
 	nodeChan := make(chan *Node, 2)
 	err := b.QueueMessage(LockAvailableNode{
-		Model:                model,
-		Response:             nodeChan,
-		Version:              version,
-		AcceptEarlierVersion: true,
+		Model:    model,
+		Response: nodeChan,
 	})
 	if err != nil {
 		return zero, err

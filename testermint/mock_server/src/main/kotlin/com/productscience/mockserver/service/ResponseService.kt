@@ -15,7 +15,7 @@ class ResponseService {
         .registerKotlinModule()
         .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE)
 
-    // Store for inference responses by endpoint path: response body, delay, stream_delay
+    // Store for inference responses by endpoint path and model: response body, delay, stream_delay
     private val inferenceResponses = ConcurrentHashMap<String, Triple<String, Int, Long>>()
 
     // Store for POC responses
@@ -23,6 +23,13 @@ class ResponseService {
 
     // Store for the last inference request
     private val lastInferenceRequest = AtomicReference<String?>(null)
+
+    /**
+     * Creates a key for storing responses, combining endpoint and model.
+     */
+    private fun createResponseKey(endpoint: String, model: String?): String {
+        return if (model != null) "$endpoint::$model" else endpoint
+    }
 
     /**
      * Sets the response for the inference endpoint.
@@ -35,8 +42,12 @@ class ResponseService {
      * @return The endpoint path where the response is set
      */
     fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): String {
-        val endpoint = "$segment/v1/chat/completions"
-        inferenceResponses[endpoint] = Triple(response, delay, streamDelay)
+        val endpoint = "/v1/chat/completions"
+        val key = createResponseKey(endpoint, model)
+        inferenceResponses[key] = Triple(response, delay, streamDelay)
+        println("DEBUG: Stored response for endpoint='$endpoint', model='$model', key='$key'")
+        println("DEBUG: Response preview: ${response.take(50)}...")
+        println("DEBUG: Current keys in store: ${inferenceResponses.keys}")
         return endpoint
     }
 
@@ -65,9 +76,26 @@ class ResponseService {
      * Gets the response for the inference endpoint.
      * 
      * @param endpoint The endpoint path
+     * @param model Optional model name to filter responses by
      * @return Triple of response body, delay, and stream delay, or null if not found
      */
-    fun getInferenceResponse(endpoint: String): Triple<String, Int, Long>? {
+    fun getInferenceResponse(endpoint: String, model: String? = null): Triple<String, Int, Long>? {
+        // First try to get model-specific response
+        println("DEBUG: Getting inference response for endpoint='$endpoint', model='$model'")
+        if (model != null) {
+            val modelSpecificKey = createResponseKey(endpoint, model)
+            println("DEBUG: Checking for model-specific response with key='$modelSpecificKey'")
+            inferenceResponses.forEach {
+                println("DEBUG: Available key: ${it.key}, Model: ${it.key.split("::").getOrNull(1)}")
+            }
+            val modelSpecificResponse = inferenceResponses[modelSpecificKey]
+            if (modelSpecificResponse != null) {
+                println("DEBUG: Found model-specific response for key='$modelSpecificKey'")
+                return modelSpecificResponse
+            }
+        }
+        
+        // Fall back to generic response for the endpoint
         return inferenceResponses[endpoint]
     }
 

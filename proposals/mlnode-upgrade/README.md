@@ -105,13 +105,7 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
 
 ## What's TODO 📋
 
-[DONE]: Connection Stability & Version Sync
-    **Issue**: Early version sync during startup caused EOF errors that broke ALL blockchain queries throughout the entire application (30+ critical systems)
-    **Root Cause**: Single gRPC connection shared by all query clients - one EOF error corrupted connection for entire app
-    **Solution**: Moved version sync to block processing loop when blockchain is ready and connections are stable
-    **Impact**: Prevents startup EOF errors from breaking training, API endpoints, validation, broker, event processing
-
-[TODO]: Connection Pool with Auto-Healing
+[WIP]: Connection Pool with Auto-Healing
     **Why**: Current single gRPC connection architecture is fragile - one EOF error breaks all 30+ blockchain query systems
     **What**: Implement connection pool with auto-healing for cosmos client in `decentralized-api/cosmosclient/cosmosclient.go`
     - Create connection pool structure and configuration within InferenceCosmosClient to manage multiple cosmos SDK connections
@@ -130,15 +124,16 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
     - Keep existing method signatures unchanged to avoid breaking 30+ call sites across the application
     **Impact**: Eliminates single point of failure for blockchain queries, improves system resilience
 
-[WIP]: Testing Infrastructure
+[DONE]: Test Cleanup After Simplification
+    **What**: Cleaned up broker tests after removing Version and AcceptEarlierVersion parameters
+    - Removed obsolete TestVersionFiltering test (version filtering no longer exists)
+    - Updated all LockAvailableNode calls to use simplified 2-parameter structure
+    - Removed version-related node configuration from test setup
+    - All broker tests now pass with simplified system
+    
+[TODO]: Integration Testing for Version Switching
     **Why**: Need comprehensive testing for upgrade scenarios to ensure reliability
-    **What**: 
-    - Enhanced mock server with complete versioned routing support (COMPLETED)
-    - All MLNode endpoints support version-specific responses (COMPLETED)
-    - Basic versioned routing tests implemented (COMPLETED)
-    - Connection stability improvements (COMPLETED)
-    - Implement full proxy simulation for end-to-end upgrade testing
-    - Add advanced upgrade scenario tests (version switching, rollback, client refresh)
+    **What**: Write testermint test which test change version from v0.3.8 to v0.3.9 and to v0.3.10 and confirming that after each change - requests are going to new version for both api and inference
     **Where**: `testermint/` test framework and mock servers
 
 ## Node Operator Guide

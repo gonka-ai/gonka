@@ -4,8 +4,9 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type RegisterNode struct {
@@ -37,7 +38,6 @@ func (c RegisterNode) Execute(b *Broker) {
 		MaxConcurrent:    c.Node.MaxConcurrent,
 		NodeNum:          curNum,
 		Hardware:         c.Node.Hardware,
-		Version:          c.Node.Version,
 	}
 
 	var currentEpoch uint64

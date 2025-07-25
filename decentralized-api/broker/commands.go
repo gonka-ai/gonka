@@ -12,10 +12,8 @@ type Command interface {
 }
 
 type LockAvailableNode struct {
-	Model                string
-	Version              string
-	AcceptEarlierVersion bool
-	Response             chan *Node
+	Model    string
+	Response chan *Node
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {

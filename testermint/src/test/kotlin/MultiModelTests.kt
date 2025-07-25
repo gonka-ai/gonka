@@ -16,7 +16,8 @@ class MultiModelTests : TestermintTest() {
         logSection("Checking for nodes being updated")
         secondModelPairs.forEach {
             it.api.getNodes().forEach {
-                Logger.info("Node: ${it.node.id} has model: ${it.node.models}", "")
+                val modelNames = it.node.models.keys.joinToString(", ")
+                Logger.info("Node: ${it.node.id} has models: $modelNames", "no")
             }
         }
         logSection("Making inference request")

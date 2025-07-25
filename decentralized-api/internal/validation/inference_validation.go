@@ -197,7 +197,7 @@ func (s *InferenceValidator) ValidateByInferenceId(id string, node *broker.Node)
 }
 
 func (s *InferenceValidator) lockNodeAndValidate(inference types.Inference) (ValidationResult, error) {
-	return broker.LockNode(s.nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+	return broker.LockNode(s.nodeBroker, inference.Model, func(node *broker.Node) (ValidationResult, error) {
 		return s.Validate(inference, node)
 	})
 }

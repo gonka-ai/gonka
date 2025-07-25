@@ -329,7 +329,7 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 		TokenCount int `json:"count"`
 	}
 
-	response, err := broker.LockNode(s.nodeBroker, model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
+	response, err := broker.LockNode(s.nodeBroker, model, func(node *broker.Node) (*http.Response, error) {
 		tokenizeUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "/tokenize")
 		if err != nil {
 			return nil, err
@@ -403,7 +403,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
-	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, func(node *broker.Node) (*http.Response, error) {
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
 			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()))
 
