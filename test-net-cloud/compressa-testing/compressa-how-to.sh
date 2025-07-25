@@ -19,7 +19,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address "$NODE_URL"
 
-export GONKA_ADDRESS="gonka1ludt2p62t4l7ehndqshhqlmemqnmhgusk5zsdy"
+export GONKA_ADDRESS="gonka1882w24wal855ljcdj8s53l27hz5mcgcgtk2w2e"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -76,7 +76,7 @@ kubectl port-forward -n join-k8s-worker-2 svc/api 9200:9200
 compressa-perf \
 	measure \
 	--node_url "$PLAIN_NODE_URL" \
-	--model_name Qwen/Qwen2.5-7B-Instruct \
+	--model_name Qwen/Qwen2.5-1.5B-Instruct \
 	--create-account-testnet \
 	--inferenced-path "$INFERENCED_BINARY" \
 	--experiment_name test \
