@@ -15,7 +15,13 @@ import org.apache.tuweni.bytes.Bytes.segment
 import java.time.Duration
 
 interface IInferenceMock {
-    fun setInferenceResponse(response: String, delay: Duration = Duration.ZERO, streamDelay: Duration = Duration.ZERO, segment: String = "", model: String? = null): StubMapping?
+    fun setInferenceResponse(
+        response: String,
+        delay: Duration = Duration.ZERO,
+        streamDelay: Duration = Duration.ZERO,
+        segment: String = "v3.0.8",
+        model: String? = null
+    ): StubMapping?
     fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
         delay: Duration = Duration.ZERO,
