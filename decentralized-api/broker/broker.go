@@ -115,6 +115,7 @@ type Broker struct {
 	reconcileTrigger     chan struct{}
 	lastEpochIndex       uint64
 	lastEpochPhase       types.EpochPhase
+	statusQueryTrigger   chan struct{}
 }
 
 const (
@@ -289,6 +290,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		callbackUrl:          callbackUrl,
 		mlNodeClientFactory:  clientFactory,
 		reconcileTrigger:     make(chan struct{}, 1),
+		statusQueryTrigger:   make(chan struct{}, 1),
 	}
 
 	// Initialize NodeWorkGroup
@@ -301,6 +303,13 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	go nodeStatusQueryWorker(broker)
 	go broker.reconcilerLoop()
 	return broker
+}
+
+func (b *Broker) TriggerStatusQuery() {
+	select {
+	case b.statusQueryTrigger <- struct{}{}:
+	default: // Non-blocking send
+	}
 }
 
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan *apiconfig.InferenceNodeConfig {
@@ -991,7 +1000,14 @@ func nodeStatusQueryWorker(broker *Broker) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ticker.C:
+			logging.Debug("nodeStatusQueryWorker triggered by ticker", types.Nodes)
+		case <-broker.statusQueryTrigger:
+			logging.Debug("nodeStatusQueryWorker triggered manually", types.Nodes)
+		}
+
 		nodes, err := broker.GetNodes()
 		if err != nil {
 			logging.Error("nodeStatusQueryWorker. Failed to get nodes for status query", types.Nodes, "error", err)
@@ -1001,6 +1017,11 @@ func nodeStatusQueryWorker(broker *Broker) {
 		statusUpdates := make([]StatusUpdate, 0)
 
 		for _, nodeResp := range nodes {
+			// Only check nodes that are UNKNOWN or haven't been checked in a while.
+			if nodeResp.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN && time.Since(nodeResp.State.StatusTimestamp) < 60*time.Second {
+				continue
+			}
+
 			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node, nodeResp.State)
 			timestamp := time.Now()
 			if err != nil {
@@ -1024,10 +1045,12 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 		}
 
-		err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
-		if err != nil {
-			logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
-			continue
+		if len(statusUpdates) > 0 {
+			err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
+			if err != nil {
+				logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
+				continue
+			}
 		}
 	}
 }
