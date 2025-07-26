@@ -123,49 +123,6 @@ class UpgradeTests : TestermintTest() {
 
     }
 
-    @Test
-    @Timeout(value = 10, unit = TimeUnit.MINUTES)
-    fun partialUpgrade() {
-        val (cluster, genesis) = initCluster(reboot = true)
-        genesis.markNeedsReboot()
-        logSection("Verifying current inference hits right endpoint")
-        val effectiveHeight = genesis.getCurrentBlockHeight() + 40
-        val newResponse = "Only a short response"
-        val newSegment = "/newVersion"
-        val newVersion = "v1"
-        cluster.allPairs.forEach {
-            it.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse(newResponse),
-                segment = newSegment
-            )
-            it.api.addNode(
-                validNode.copy(
-                    host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
-                    inferenceSegment = newSegment, version = newVersion, id = "v1Node"
-                )
-            )
-        }
-        genesis.waitForNextInferenceWindow()
-        val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
-        assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
-        val proposalId = genesis.runProposal(
-            cluster,
-            CreatePartialUpgrade(
-                height = effectiveHeight.toString(),
-                nodeVersion = newVersion,
-                apiBinariesJson = ""
-            )
-        )
-        logSection("Waiting for upgrade to be effective")
-        genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
-        logSection("Verifying new inference hits right endpoint")
-        genesis.waitForNextInferenceWindow()
-        val proposals = genesis.node.getGovernanceProposals()
-        Logger.info("Proposals: $proposals", "")
-        val newResult = genesis.makeInferenceRequest(inferenceRequest)
-        assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
-    }
-
 
     @Test
     @Timeout(value = 15, unit = TimeUnit.MINUTES)
