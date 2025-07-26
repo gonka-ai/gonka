@@ -222,7 +222,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
 		if pu.Height == uint64(blockHeight) {
-			// Upgrade is happening now - update current MLNode version
 			if pu.NodeVersion != "" {
 				am.LogInfo("PartialUpgradeActive - updating current MLNode version", types.Upgrades,
 					"partialUpgradeHeight", pu.Height, "blockHeight", blockHeight, "nodeVersion", pu.NodeVersion)

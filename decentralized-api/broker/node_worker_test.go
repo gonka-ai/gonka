@@ -112,38 +112,28 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 	defer worker.Shutdown()
 
-	// Use a sync channel to block execution until we're ready
-	startChan := make(chan struct{})
-	var commandsStarted int32
-	var successes int32
-
-	// Try to submit 11 commands rapidly (queue size is 10)
-	// The queue can hold 10 buffered commands, but the worker immediately starts processing
-	// So we expect: 10 successful submissions, 1 failure
-	for i := 0; i < 11; i++ {
+	// Fill the queue with slow commands
+	slowCmdSubmitted := 0
+	for i := 0; i < 10; i++ { // Queue size is 10
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
-				atomic.AddInt32(&commandsStarted, 1)
-				<-startChan // Block here until we release them
+				time.Sleep(100 * time.Millisecond)
 				return NodeResult{Succeeded: true}
 			},
 		}
 		success := worker.Submit(context.Background(), cmd)
 		if success {
-			atomic.AddInt32(&successes, 1)
+			slowCmdSubmitted++
 		}
 	}
 
-	// We should have exactly 10 successful submissions (1 executing + 9 queued)
-	assert.Equal(t, int32(10), atomic.LoadInt32(&successes), "Should submit exactly 10 commands")
+	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
 
-	// Wait for one command to start
-	for atomic.LoadInt32(&commandsStarted) == 0 {
-		time.Sleep(1 * time.Millisecond)
-	}
+	// Try to submit one more - should fail
+	cmd := &TestCommand{ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult { return NodeResult{Succeeded: true} }}
+	success := worker.Submit(context.Background(), cmd)
 
-	// Release the blocking commands to let test complete cleanly
-	close(startChan)
+	assert.False(t, success, "Command submission should fail when queue is full")
 }
 
 func TestNodeWorker_GracefulShutdown(t *testing.T) {

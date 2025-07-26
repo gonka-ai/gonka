@@ -155,7 +155,7 @@ private suspend fun handlePowStatus(call: ApplicationCall, logger: org.slf4j.Log
         HttpStatusCode.OK,
         mapOf(
             "status" to PowState.getCurrentState(),
-            "updated_time" to System.currentTimeMillis()
+            "is_model_initialized" to false // FIXME: hardcoded for now, should be replaced with actual logic
         )
     )
 }

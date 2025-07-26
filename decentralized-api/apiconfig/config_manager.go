@@ -176,7 +176,6 @@ func (cm *ConfigManager) SetLastUsedVersion(version string) error {
 	return cm.Write()
 }
 
-// ShouldRefreshClients returns true if clients need to be refreshed due to version change
 func (cm *ConfigManager) ShouldRefreshClients() bool {
 	currentVersion := cm.GetCurrentNodeVersion()
 	lastUsedVersion := cm.GetLastUsedVersion()
@@ -291,7 +290,6 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		log.Fatalf("error loading node config: %v", err)
 	}
 
-	// Set default current node version if not already set
 	if config.CurrentNodeVersion == "" {
 		config.CurrentNodeVersion = DefaultMLNodeVersion
 	}

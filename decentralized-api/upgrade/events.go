@@ -156,7 +156,6 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 			return successfullyUpgraded
 		}
 
-		// Existing upgrade logic for Cosmovisor
 		// Write out upgrade-info.json
 		path := getUpgradeInfoPath()
 		upgradeInfo := UpgradeInfoOutput{

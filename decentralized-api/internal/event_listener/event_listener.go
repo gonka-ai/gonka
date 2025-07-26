@@ -243,7 +243,6 @@ func (el *EventListener) startSyncStatusChecker() {
 		wasAlreadySynced := el.isNodeSynced()
 		el.updateNodeSyncStatus(isSynced)
 
-		// One-time version sync when blockchain first becomes ready
 		if isSynced && !wasAlreadySynced && !hasTriedVersionSync {
 			hasTriedVersionSync = true
 			go func() {

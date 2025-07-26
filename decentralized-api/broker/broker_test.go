@@ -28,7 +28,6 @@ func NewTestBroker() *Broker {
 		true,
 	)
 
-	// Create a mock config manager with default version
 	mockConfigManager := &apiconfig.ConfigManager{}
 	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager)
 }

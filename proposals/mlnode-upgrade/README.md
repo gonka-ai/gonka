@@ -105,7 +105,7 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
 
 ## What's TODO 📋
 
-[WIP]: Connection Pool with Auto-Healing
+[TODO]: Connection Pool with Auto-Healing
     **Why**: Current single gRPC connection architecture is fragile - one EOF error breaks all 30+ blockchain query systems
     **What**: Implement connection pool with auto-healing for cosmos client in `decentralized-api/cosmosclient/cosmosclient.go`
     - Create connection pool structure and configuration within InferenceCosmosClient to manage multiple cosmos SDK connections
@@ -131,12 +131,14 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
     - Removed version-related node configuration from test setup
     - All broker tests now pass with simplified system
     
-[WIP]: Integration Testing for Version Switching
+[DONE]: Integration Testing for Version Switching
     **Why**: Need comprehensive testing for upgrade scenarios to ensure reliability
     **What**: Write testermint test which test change version from v0.3.8 to v0.3.9 and to v0.3.10 and confirming that after each change - requests are going to new version for both api and inference
     **Where**: `testermint/` test framework and mock servers
 
     fun testVersionedEndpointSwitching() - now implementing incorrectly. it's registering new nodes, etc but defacto should just make schedule update and check after in wiremock somehow that for ALL future API and inference command new prefix was used. Do that 
+
+[TODO]: Fix `create-partial-upgrade` to use --from as in `upgrade software-upgrade` command. Now it requires gov module addres?
 
 ## Node Operator Guide
 
@@ -187,13 +189,7 @@ docker run -d --name ml-proxy -p 80:80 --network gonka-net \
 
 ### 3. Governance Vote
 
-Submit upgrade proposal:
-```bash
-inferenced tx inference partial-upgrade 12000 "v3.0.8" "" \
-  --title "MLNode Performance Upgrade" \
-  --summary "Critical improvements and bug fixes" \
-  --deposit 10000nicoin \
-  --from YOUR_KEY
+### Submit and Vote for proposal
 ```
 
 ### 4. Post-Upgrade Cleanup

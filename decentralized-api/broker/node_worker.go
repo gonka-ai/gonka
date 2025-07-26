@@ -20,7 +20,7 @@ type NodeWorker struct {
 	nodeId   string
 	node     *NodeWithState
 	mlClient mlnodeclient.MLNodeClient
-	clientMu sync.RWMutex // Protects mlClient access
+	clientMu sync.RWMutex
 	broker   *Broker
 	commands chan commandWithContext
 	shutdown chan struct{}
@@ -99,15 +99,12 @@ func (w *NodeWorker) Shutdown() {
 	w.wg.Wait() // Wait for all pending commands to complete
 }
 
-// RefreshClientImmediate performs immediate client refresh with thread safety
-// This swaps the client immediately and stops the old one asynchronously
 func (w *NodeWorker) RefreshClientImmediate(oldVersion, newVersion string) {
 	w.clientMu.Lock()
 	oldClient := w.mlClient
 	w.mlClient = w.broker.NewNodeClient(&w.node.Node)
 	w.clientMu.Unlock()
 
-	// Call stop on old client immediately (fire-and-forget for reliability)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -124,7 +121,6 @@ func (w *NodeWorker) RefreshClientImmediate(oldVersion, newVersion string) {
 		"node_id", w.nodeId, "oldVersion", oldVersion, "newVersion", newVersion)
 }
 
-// GetClient returns the current MLNode client with read lock protection
 func (w *NodeWorker) GetClient() mlnodeclient.MLNodeClient {
 	w.clientMu.RLock()
 	defer w.clientMu.RUnlock()
