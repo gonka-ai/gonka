@@ -335,6 +335,33 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
         }
     }
 
+    // Wait for nodes to be ready for Inference
+    if (resetMlNodes) {
+        pairs.forEach { pair ->
+            var i = 0
+            val maxWaitAttempts = 10
+            val sleepTimeMillis = 5_000L
+            while (true) {
+                val nodesResponse = pair.api.getNodes()
+                val node = nodesResponse.firstOrNull()
+                    ?.takeIf { n -> n.state.currentStatus != "UNKNOWN" }
+                if (node != null) {
+                    break
+                }
+
+                i++
+                if (i >= maxWaitAttempts) {
+                    error("Waited for ${sleepTimeMillis * 10} ms for ml node to be ready, but it never was." +
+                            " Check if the mock server is running. pairName = ${pair.name}. node = $node")
+                }
+
+                Thread.sleep(sleepTimeMillis)
+            }
+        }
+    }
+
+    pairs.first().waitForNextInferenceWindow(2)
+
     return highestFunded
 }
 
