@@ -12,7 +12,9 @@ import java.time.Instant
 class InferenceTests : TestermintTest() {
     @Test
     fun `valid inference`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(
@@ -29,7 +31,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `wrong TA address`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(
@@ -166,6 +170,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `old timestamp`() {
         val params = genesis.getParams()
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
@@ -179,6 +184,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `repeated request rejected`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
@@ -195,7 +201,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `valid direct executor request`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -227,6 +235,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor validates dev signature`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
@@ -290,7 +299,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor rejects duplicate requests`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
