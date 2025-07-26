@@ -313,6 +313,7 @@ fun initCluster(
     cluster.allPairs.forEach {
         Logger.info("${it.name} has account ${it.node.getAddress()}", "")
     }
+    cluster.waitForMlNodesToLoad()
     return cluster to cluster.genesis
 }
 
@@ -387,6 +388,11 @@ data class LocalCluster(
         }
     }
 
+    fun waitForMlNodesToLoad() {
+        Logger.info("Waiting for ML nodes to load", "")
+        allPairs.forEach { pair -> pair.waitForMlNodesToLoad() }
+        error("Timeout waiting for ML nodes to load")
+    }
 }
 
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
