@@ -409,6 +409,9 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
 		}
+		if p.Seed == nil {
+			am.LogWarn("onSetNewValidatorsStage: Participant seed is nil", types.EpochGroup, "participantIndex", p.Index)
+		}
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {

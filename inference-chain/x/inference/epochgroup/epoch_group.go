@@ -27,6 +27,10 @@ type EpochMember struct {
 }
 
 func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
+	/*	seedSignature := ""
+		if p.Seed != nil {
+			seedSignature = p.Seed.Signature
+		}*/
 	return EpochMember{
 		Address:       p.Index,
 		Weight:        p.Weight,
