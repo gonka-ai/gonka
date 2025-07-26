@@ -87,14 +87,15 @@ func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
 	return cm.currentConfig.UpgradePlan
 }
 
-func (cm *ConfigManager) ShouldCheckUpgradeAtHeight(height int64) bool {
-	plan := cm.currentConfig.UpgradePlan
-	return plan.Name != "" && plan.Height > 0 && height == plan.Height
-}
-
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
 	cm.currentConfig.UpgradePlan = plan
 	logging.Info("Setting upgrade plan", types.Config, "plan", plan)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+func (cm *ConfigManager) ClearUpgradePlan() error {
+	cm.currentConfig.UpgradePlan = UpgradePlan{}
+	logging.Info("Clearing upgrade plan", types.Config)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 

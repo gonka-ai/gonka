@@ -36,6 +36,7 @@ func checkForPartialUpgradesScheduled(transactionRecorder cosmosclient.Inference
 	}
 	logging.Info("checkForPartialUpgrades. Partial upgrades", types.Upgrades, "partialUpgrades", partialUpgrades)
 	for _, upgrade := range partialUpgrades.PartialUpgrade {
+		// If Binaries are provided, we set everything
 		if upgrade.ApiBinariesJson != "" {
 			var planInfo UpgradeInfoInput
 			if err := json.Unmarshal([]byte(upgrade.ApiBinariesJson), &planInfo); err != nil {
@@ -61,6 +62,7 @@ func checkForPartialUpgradesScheduled(transactionRecorder cosmosclient.Inference
 			}
 			continue
 		}
+		// If Binaries are not provided but NodeVersion is, we set the NodeVersion, ignoring conflicts
 		if upgrade.NodeVersion != "" {
 			err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
 				Name:        upgrade.Name,
@@ -119,21 +121,17 @@ func checkForVersionSwitch(configManager *apiconfig.ConfigManager) {
 	}
 
 	if configManager.GetHeight() >= upgradePlan.Height-1 {
-		logging.Info("checkForVersionSwitch. Height reached", types.Upgrades, "height", configManager.GetHeight(), "upgradeHeight", upgradePlan.Height)
 		if upgradePlan.NodeVersion != "" {
-			logging.Info("checkForVersionSwitch. Node version is not empty", types.Upgrades, "nodeVersion", upgradePlan.NodeVersion)
 			oldVersion := configManager.GetCurrentNodeVersion()
-			logging.Info("checkForVersionSwitch. Old version", types.Upgrades, "oldVersion", oldVersion)
 			if upgradePlan.NodeVersion != oldVersion {
-				logging.Info("checkForVersionSwitch. Node version is different from old version", types.Upgrades, "oldVersion", oldVersion, "newVersion", upgradePlan.NodeVersion)
 				err := configManager.SetCurrentNodeVersion(upgradePlan.NodeVersion)
-				logging.Info("checkForVersionSwitch. Setting new version", types.Upgrades, "newVersion", upgradePlan.NodeVersion)
 				if err != nil {
 					logging.Error("checkForVersionSwitch. Failed to update MLNode version in config", types.Upgrades, "error", err)
-				} else {
-					logging.Info("MLNode version updated during upgrade using known target version", types.Upgrades,
-						"oldVersion", oldVersion, "newVersion", upgradePlan.NodeVersion,
-						"upgradeName", upgradePlan.Name, "height", upgradePlan.Height)
+					return
+				}
+				logging.Info("MLNode version updated during upgrade using known target version", types.Upgrades, "oldVersion", oldVersion, "newVersion", upgradePlan.NodeVersion)
+				if len(upgradePlan.Binaries) == 0 {
+					configManager.ClearUpgradePlan()
 				}
 			}
 		} else {
@@ -193,7 +191,8 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 			logging.Error("Error writing output to file", types.Upgrades, "path", path, "error", err)
 			return false
 		}
-		logging.Info("Upgrade output written to file", types.Upgrades, "path", path)
+		logging.Info("Upgrade output written to file, clearing upgrade plan", types.Upgrades, "path", path)
+		configManager.ClearUpgradePlan()
 		return true
 	}
 
