@@ -222,9 +222,13 @@ func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStat
 }
 
 func (s *NodeState) UpdateStatusWithPocStatusNow(status types.HardwareNodeStatus, pocStatus PocStatus) {
+	s.UpdateStatusWithPocStatusAt(time.Now(), status, pocStatus)
+}
+
+func (s *NodeState) UpdateStatusWithPocStatusAt(time time.Time, status types.HardwareNodeStatus, pocStatus PocStatus) {
 	s.CurrentStatus = status
 	s.PocCurrentStatus = pocStatus
-	s.StatusTimestamp = time.Now()
+	s.StatusTimestamp = time
 }
 
 func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
