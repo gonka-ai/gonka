@@ -298,7 +298,7 @@ fun initCluster(
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs, resetMlNodesTo = resetMlNodes)
+        initialize(cluster.allPairs, resetMlNodes = resetMlNodes)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {
