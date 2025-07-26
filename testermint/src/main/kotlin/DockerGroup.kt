@@ -313,7 +313,6 @@ fun initCluster(
     cluster.allPairs.forEach {
         Logger.info("${it.name} has account ${it.node.getAddress()}", "")
     }
-    cluster.waitForMlNodesToLoad()
     return cluster to cluster.genesis
 }
 
