@@ -431,6 +431,9 @@ class InferenceTests : TestermintTest() {
         @BeforeAll
         fun getCluster(): Unit {
             val (clus, gen) = initCluster()
+            clus.allPairs.forEach { pair ->
+                pair.waitForMlNodesToLoad()
+            }
             cluster = clus
             genesis = gen
         }

@@ -352,6 +352,25 @@ data class LocalInferencePair(
         submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
     }
 
+    fun waitForMlNodesToLoad(maxWaitAttempts: Int = 10, sleepTimeMillis: Long = 5_000L) {
+        var i = 0
+        while (true) {
+            val nodes = api.getNodes()
+            if (nodes.isNotEmpty() && nodes.all { n -> n.state.currentStatus != "UNKNOWN" }) {
+                Logger.info("All nodes are loaded and ready. numNodes = ${nodes.size}. nodes = $nodes")
+                break
+            }
+
+            i++
+            if (i >= maxWaitAttempts) {
+                error("Waited for ${sleepTimeMillis * 10} ms for ml node to be ready, but it never was." +
+                        " Check if the mock server is running. pairName = ${name}. nodes = $nodes")
+            }
+
+            Thread.sleep(sleepTimeMillis)
+        }
+    }
+
 
     fun submitTransaction(json: String, waitForProcessed: Boolean = true): TxResponse {
         val start = Instant.now()
