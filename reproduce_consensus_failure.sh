@@ -47,28 +47,17 @@ read
 # We will disconnect the node corresponding to the 'join-k8s-worker-3' namespace.
 TARGET_NAMESPACE="join-k8s-worker-3"
 
-echo "### Step 3: Disconnect node in namespace '$TARGET_NAMESPACE' ###"
-echo "This is done by deleting all its Kubernetes resources, including the persistent volume claim."
-echo ""
+# Step 3: Disconnect node in namespace '$TARGET_NAMESPACE' ###"
+# This is done by deleting all its Kubernetes resources, including the persistent volume claim."
 
-echo "# Delete all resources (Deployments, Services, Pods, etc.) in the namespace."
-echo "kubectl delete all --all -n $TARGET_NAMESPACE"
-echo ""
+# Delete all resources (Deployments, Services, Pods, etc.) in the namespace
+kubectl delete all --all -n $TARGET_NAMESPACE
+kubectl delete pvc tmkms-data-pvc -n $TARGET_NAMESPACE --ignore-not-found=true
 
-echo "# Delete the PersistentVolumeClaim for tmkms, as seen in the GitHub workflow."
-echo "kubectl delete pvc tmkms-data-pvc -n $TARGET_NAMESPACE --ignore-not-found=true"
-echo ""
-
-echo "Wait a few seconds for resources to be terminated."
+# Wait a few seconds for resources to be terminated
 sleep 15
-echo "Verify that the resources are gone:"
-echo "kubectl get all -n $TARGET_NAMESPACE"
-echo ""
-echo "At this point, the chain should continue to run with the remaining 2 nodes."
-echo "You can verify this by checking the logs of another node (e.g., in join-k8s-worker-2)."
-echo ""
-echo "Press enter to continue to the next step..."
-read
+# Verify that the resources are gone:"
+kubectl get all -n $TARGET_NAMESPACE
 
 # --- Step 4: Simulate a New Node Joining ---
 
@@ -77,7 +66,7 @@ echo "This is done by re-applying the kustomization for that node."
 echo "This simulates a fresh node joining the network as a new participant."
 echo ""
 echo "# Note: We assume you are running this from the root of the 'inference-ignite' repository."
-echo "kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-3 -n $TARGET_NAMESPACE"
+kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-3 -n $TARGET_NAMESPACE
 echo ""
 echo "Wait for the new pod to be created and start running."
 echo "You can monitor its status with:"
