@@ -46,6 +46,9 @@ read
 
 # We will disconnect the node corresponding to the 'join-k8s-worker-3' namespace.
 TARGET_NAMESPACE="join-k8s-worker-3"
+K8S_WORKER_NAME="k8s-worker-3"
+GCE_ZONE="us-central1-a"
+GCE_PROJECT_ID="decentralized-ai"
 
 # Step 3: Disconnect node in namespace '$TARGET_NAMESPACE' ###"
 # This is done by deleting all its Kubernetes resources, including the persistent volume claim."
@@ -53,6 +56,7 @@ TARGET_NAMESPACE="join-k8s-worker-3"
 # Delete all resources (Deployments, Services, Pods, etc.) in the namespace
 kubectl delete all --all -n $TARGET_NAMESPACE
 kubectl delete pvc tmkms-data-pvc -n $TARGET_NAMESPACE --ignore-not-found=true
+gcloud compute ssh ${K8S_WORKER_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
 
 # Wait a few seconds for resources to be terminated
 sleep 15
@@ -66,6 +70,10 @@ echo "This is done by re-applying the kustomization for that node."
 echo "This simulates a fresh node joining the network as a new participant."
 echo ""
 echo "# Note: We assume you are running this from the root of the 'inference-ignite' repository."
+# WARNING
+# Change version in image-versions/kustomization.yaml
+# Look for recent releases here if you deployed via GitHub Actions workflow:
+# https://github.com/product-science/pivot-deploy/pkgs/container/inferenced
 kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-3 -n $TARGET_NAMESPACE
 echo ""
 echo "Wait for the new pod to be created and start running."
