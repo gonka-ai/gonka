@@ -299,9 +299,7 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
         it.waitForFirstValidators()
 
         if (resetMlNodes) {
-            // Can't reset nodes during PoC
-            it.waitForNextInferenceWindow(windowSizeInBlocks = 5)
-            it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080))
+            resetMlNodesToDefault(it)
         }
 
         it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
@@ -343,6 +341,29 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
     }
 
     return highestFunded
+}
+
+private fun resetMlNodesToDefault(pair: LocalInferencePair) {
+    val defaultNode = validNode.copy(host = "${pair.name.trim('/')}-mock-server")
+
+    // We're not really supposed to change nodes in the middle of an epoch
+    // This optimization might help avoid unnecessary changes
+    val actualNodes = pair.api.getNodes()
+    if (actualNodes.size == 1) {
+        val currentNode = actualNodes.first()
+        if (currentNode.node.host == defaultNode.host
+            && currentNode.node.pocPort == defaultNode.pocPort
+            && currentNode.node.inferencePort == defaultNode.inferencePort
+            && currentNode.node.models == defaultNode.models
+            && currentNode.node.id == defaultNode.id
+            && currentNode.node.maxConcurrent == defaultNode.maxConcurrent) {
+            Logger.info("Node already set to default: {}", currentNode.node.host)
+            return
+        }
+    }
+
+    pair.waitForNextInferenceWindow(windowSizeInBlocks = 5)
+    pair.api.setNodesTo(defaultNode)
 }
 
 private fun addUnfundedDirectly(
@@ -535,8 +556,8 @@ const val defaultModel = "Qwen/Qwen2.5-7B-Instruct"
 
 val validNode = InferenceNode(
     host = "36.189.234.237:19009/",
-    pocPort = 19009,
-    inferencePort = 19009,
+    pocPort = 8080,
+    inferencePort = 8080,
     models = mapOf(
         defaultModel to ModelConfig(
             args = emptyList()
@@ -545,10 +566,6 @@ val validNode = InferenceNode(
     id = "wiremock2",
     maxConcurrent = 1000
 )
-
-fun InferenceNode.withMockServerPorts(): InferenceNode {
-    return copy(pocPort = 8080, inferencePort = 8080)
-}
 
 val defaultInferenceResponse = """
     {
