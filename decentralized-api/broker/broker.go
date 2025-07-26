@@ -997,7 +997,8 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
-	ticker := time.NewTicker(60 * time.Second)
+	checkInterval := 60 * time.Second
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
 	for {
@@ -1019,7 +1020,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 		for _, nodeResp := range nodes {
 			// Only check nodes that are UNKNOWN or haven't been checked in a while.
 			sinceLastStatusCheck := time.Since(nodeResp.State.StatusTimestamp)
-			if nodeResp.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN && sinceLastStatusCheck < 60*time.Second {
+			if nodeResp.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN && sinceLastStatusCheck < checkInterval {
 				logging.Info("nodeStatusQueryWorker skipping status query for node", types.Nodes,
 					"nodeId", nodeResp.Node.Id,
 					"currentStatus", nodeResp.State.CurrentStatus.String(),
