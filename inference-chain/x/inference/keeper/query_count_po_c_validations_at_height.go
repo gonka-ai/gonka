@@ -16,9 +16,6 @@ func (k Keeper) CountPoCvalidationsAtHeight(goCtx context.Context, req *types.Qu
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
-
 	count, err := k.GetPocValidationCountByStage(ctx, int64(req.BlockHeight))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get PoC validation count: %v", err)

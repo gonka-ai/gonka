@@ -16,9 +16,6 @@ func (k Keeper) CountPoCbatchesAtHeight(goCtx context.Context, req *types.QueryC
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
-
 	count, err := k.GetPoCBatchesCountByStage(ctx, int64(req.BlockHeight))
 	if err != nil {
 		return nil, err
