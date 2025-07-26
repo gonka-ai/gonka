@@ -1018,7 +1018,12 @@ func nodeStatusQueryWorker(broker *Broker) {
 
 		for _, nodeResp := range nodes {
 			// Only check nodes that are UNKNOWN or haven't been checked in a while.
-			if nodeResp.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN && time.Since(nodeResp.State.StatusTimestamp) < 60*time.Second {
+			sinceLastStatusCheck := time.Since(nodeResp.State.StatusTimestamp)
+			if nodeResp.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN && sinceLastStatusCheck < 60*time.Second {
+				logging.Info("nodeStatusQueryWorker skipping status query for node", types.Nodes,
+					"nodeId", nodeResp.Node.Id,
+					"currentStatus", nodeResp.State.CurrentStatus.String(),
+					"sinceLastStatusCheck", sinceLastStatusCheck)
 				continue
 			}
 
@@ -1047,6 +1052,8 @@ func nodeStatusQueryWorker(broker *Broker) {
 
 		if len(statusUpdates) > 0 {
 			err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
+			logging.Info("nodeStatusQueryWorker. Queued status updates submitted", types.Nodes,
+				"len(statusUpdates)", len(statusUpdates))
 			if err != nil {
 				logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
 				continue
