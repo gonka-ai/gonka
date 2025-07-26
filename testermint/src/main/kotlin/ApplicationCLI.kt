@@ -396,6 +396,11 @@ data class ApplicationCLI(
         execAndParse<Count>(listOf("query", "inference", "count-po-c-validations-at-height", epochStartHeight.toString())).count
     }
 
+    fun getPrivateKey(): String = wrapLog("getPrivateKey", infoLevel = false) {
+        val accountName = this.getAccountName()
+        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex")).first()
+    }
+
     data class Count(
         val count: Long = 0
     )

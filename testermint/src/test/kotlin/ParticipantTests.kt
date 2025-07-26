@@ -15,8 +15,29 @@ import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import kotlin.test.assertNotNull
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 
 class ParticipantTests : TestermintTest() {
+    @Test
+    @Tag("excluded")
+    fun `print out gonka values`() {
+        // useful for testing gonka client
+        val (cluster, genesis) = initCluster()
+        val addresses = cluster.allPairs.map {
+            it.api.getPublicUrl() + ";" + it.node.getAddress()
+        }
+        val clipboardContent = buildString {
+            appendLine("GONKA_ENDPOINTS=" + addresses.joinToString(separator = ","))
+            appendLine("GONKA_ADDRESS=" + genesis.node.getAddress())
+            appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getPrivateKey())
+        }
+
+        Logger.warn(clipboardContent)
+        val selection = StringSelection(clipboardContent)
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
+    }
+
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
