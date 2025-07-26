@@ -1140,7 +1140,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	parentEpochData := parentGroupResp.GetEpochGroupData()
 
-	b.ClearNodeEpochData()
+	b.clearNodeEpochData()
 
 	// 2. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
@@ -1173,7 +1173,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 	return nil
 }
 
-func (b *Broker) ClearNodeEpochData() {
+func (b *Broker) clearNodeEpochData() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
