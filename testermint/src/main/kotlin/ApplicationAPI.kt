@@ -159,6 +159,12 @@ data class ApplicationAPI(
         addNode(node)
     }
 
+    fun setNodesTo(nodes: List<InferenceNode>) {
+        val existingNodes = getNodes()
+        existingNodes.forEach { removeNode(it.node.id) }
+        addNodes(nodes)
+    }
+
     fun getNodes(): List<NodeResponse> =
         wrapLog("getNodes", false) {
             val url = urlFor(SERVER_TYPE_ADMIN)

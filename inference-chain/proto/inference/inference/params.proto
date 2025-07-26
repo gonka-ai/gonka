@@ -50,6 +50,8 @@ message EpochParams {
   int64 poc_exchange_duration = 6;
   int64 poc_validation_delay = 7;
   int64 poc_validation_duration = 8;
+  int64 set_new_validators_delay = 9;
+  int64 inference_validation_cutoff = 10;
 }
 
 message ValidationParams {

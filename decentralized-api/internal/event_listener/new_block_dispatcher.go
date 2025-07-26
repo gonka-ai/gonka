@@ -269,6 +269,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
 
+	// Sync broker node state with the latest epoch data at the start of a transition check
+	if err := d.nodeBroker.UpdateNodeWithEpochData(&epochState); err != nil {
+		logging.Error("Failed to update node with epoch data, skipping phase transitions.", types.Stages, "error", err)
+		return
+	}
+
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)

@@ -45,6 +45,14 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 	return ctx, nil
 }
 
+func StubModelSubgroup(t *testing.T, ctx context.Context, k keeper.Keeper, mocks *keeper2.InferenceMocks, model *types.Model) {
+	eg, err := k.GetCurrentEpochGroup(ctx)
+	require.NoError(t, err)
+	mocks.ExpectAnyCreateGroupWithPolicyCall()
+	_, err = eg.CreateSubGroup(ctx, model)
+	require.NoError(t, err)
+}
+
 func TestMsgServer_FinishInference(t *testing.T) {
 	const (
 		epochId  = 1
@@ -61,9 +69,13 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	}
 	require.Equal(t, initialBlockHeight, ctx.BlockHeight())
 
+	modelId := "model1"
+	model := types.Model{Id: modelId}
+	k.SetModel(ctx, &model)
+
 	expected, err := inferenceHelper.StartInference(
 		"promptPayload",
-		"model1",
+		modelId,
 		requestTimestamp,
 		keeper.DefaultMaxTokens)
 	require.NoError(t, err)
@@ -84,6 +96,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		t.Fatalf("Failed to advance epoch: %v", err)
 	}
 	require.Equal(t, newBlockHeight, ctx.BlockHeight())
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, &model)
 
 	expectedFinished, err := inferenceHelper.FinishInference()
 	require.NoError(t, err)
@@ -281,7 +294,6 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		return nil, err
 	}
 
-	h.Mocks.ExpectAnyCreateGroupWithPolicyCall()
 	_, err = h.MessageServer.FinishInference(h.context, &types.MsgFinishInference{
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",

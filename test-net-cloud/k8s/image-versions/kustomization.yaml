@@ -4,10 +4,10 @@ kind: Component
 images:
 - name: api
   newName: ghcr.io/product-science/api
-  newTag: 0.1.2
+  newTag: 0.1.15
 - name: node
   newName: ghcr.io/product-science/inferenced
-  newTag: 0.1.2
+  newTag: 0.1.15
 - name: inference
   newName: ghcr.io/product-science/mlnode
   newTag: 3.0.8

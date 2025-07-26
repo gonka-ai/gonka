@@ -28,13 +28,15 @@ data:
         "inference": {
           "params": {
             "epochParams": {
-              "epoch_length": "200",
+              "epoch_length": "250",
               "epoch_multiplier": "1",
-              "epoch_shift": "180",
-              "poc_stage_duration": "30",
+              "epoch_shift": "230",
+              "inference_validation_cutoff": "25",
+              "poc_stage_duration": "50",
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
-              "poc_validation_duration": "10",
+              "poc_validation_duration": "20",
+              "set_new_validators_delay": "25",
               "default_unit_of_compute_price": "100"
             },
             "tokenomicsParams": {
@@ -57,6 +59,31 @@ data:
               "top_miner_poc_qualification": "10"
             }
           },
+          "model_list": [
+            {
+              "proposed_by": "genesis",
+              "id": "Qwen/Qwen2.5-1.5B-Instruct",
+              "units_of_compute_per_token": "75",
+              "hf_repo": "Qwen/Qwen2.5-1.5B-Instruct",
+              "hf_commit": "976055f8c83f394f35dbd3ab09a285a984907bd0",
+              "model_args": [],
+              "v_ram": "16",
+              "throughput_per_nonce": "10000"
+            },
+            {
+              "proposed_by": "genesis",
+              "id": "Qwen/Qwen2.5-7B-Instruct",
+              "units_of_compute_per_token": "100",
+              "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
+              "hf_commit": "a09a35458c702b33eeacc393d103063234e8bc28",
+              "model_args": [
+                "--quantization",
+                "fp8"
+              ],
+              "v_ram": "16",
+              "throughput_per_nonce": "10000"
+            }
+          ],
           "genesis_only_params": {
             "total_supply": "1000",
             "originator_supply": "160",

@@ -72,7 +72,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
 }
 
 private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
-    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "0.0.0.0"
+    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "localhost"
     return "http://$privateUrl:${portMap[privatePort]?.publicPort}"
 }
 
@@ -142,7 +142,7 @@ fun attachDockerLogs(
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
-    val mock: IInferenceMock?,
+    val mock: IInferenceMock?, // FIXME: technically it's a list
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null,
@@ -255,8 +255,8 @@ data class LocalInferencePair(
                     "currentPhase=$currentPhase"
         }
 
-        if (getEpochData().phase != EpochPhase.Inference ||
-            startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
+        if (epochData.phase != EpochPhase.Inference ||
+            startOfNextPoc - currentBlockHeight < windowSizeInBlocks) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
             waitForStage(EpochStage.SET_NEW_VALIDATORS)
         } else {
@@ -535,7 +535,9 @@ data class ApplicationConfig(
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
     // execName accommodates upgraded chains.
-    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName"
+    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
+    val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
+    val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

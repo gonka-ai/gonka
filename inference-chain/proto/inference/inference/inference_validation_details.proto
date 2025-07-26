@@ -15,4 +15,5 @@ message InferenceValidationDetails {
   string model = 7;
   uint64 total_power = 8;
   uint64 epoch_group_id = 10; // The ID of the Group created by the GroupModule!
+  int64 created_at_block_height = 11; // Should be the same as block_finished for the inference
 }
