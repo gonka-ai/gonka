@@ -297,7 +297,10 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
     pairs.forEach {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
+
         if (resetMlNodes) {
+            // Can't reset nodes during PoC
+            it.waitForNextInferenceWindow(windowSizeInBlocks = 3)
             it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080))
         }
 
