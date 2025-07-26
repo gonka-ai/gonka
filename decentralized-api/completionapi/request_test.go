@@ -11,7 +11,7 @@ import (
 const (
 	jsonBody = `{
         "temperature": 0.8,
-        "model": "unsloth/llama-3-8b-Instruct",
+        "model": "Qwen/Qwen2.5-7B-Instruct",
         "messages": [{
             "role": "system",
             "content": "Regardless of the language of the question, answer in english"
@@ -24,7 +24,7 @@ const (
 
 	jsonBodyNullLogprobs = `{
         "temperature": 0.8,
-        "model": "unsloth/llama-3-8b-Instruct",
+        "model": "Qwen/Qwen2.5-7B-Instruct",
         "messages": [{
             "role": "system",
             "content": "Regardless of the language of the question, answer in english"

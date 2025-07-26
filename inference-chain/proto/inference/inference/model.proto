@@ -11,4 +11,10 @@ message Model {
   string quantization               = 5;
   uint64 coins_per_input_token      = 6;
   uint64 coins_per_output_token     = 7;
+  string hf_repo = 8;
+  string hf_commit = 9;
+  repeated string model_args = 10;
+  uint64 v_ram = 11;
+  uint64 throughput_per_nonce = 12;
+  float validation_threshold = 13;
 }

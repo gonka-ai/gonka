@@ -23,6 +23,7 @@ type EpochMember struct {
 	SeedSignature string
 	Reputation    int64
 	Models        []string
+	MlNodes       []*types.ModelMLNodes
 }
 
 func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
@@ -33,6 +34,7 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		SeedSignature: p.Seed.Signature,
 		Reputation:    reputation,
 		Models:        p.Models,
+		MlNodes:       p.MlNodes,
 	}
 }
 
@@ -60,12 +62,14 @@ func NewEpochMemberFromStakingValidator(
 }
 
 type EpochGroup struct {
-	GroupKeeper       types.GroupMessageKeeper
-	ParticipantKeeper types.ParticipantKeeper
-	Authority         string
-	Logger            types.InferenceLogger
-	GroupDataKeeper   types.EpochGroupDataKeeper
-	GroupData         *types.EpochGroupData
+	GroupKeeper        types.GroupMessageKeeper
+	ParticipantKeeper  types.ParticipantKeeper
+	ModelKeeper        types.ModelKeeper
+	HardwareNodeKeeper types.HardwareNodeKeeper
+	Authority          string
+	Logger             types.InferenceLogger
+	GroupDataKeeper    types.EpochGroupDataKeeper
+	GroupData          *types.EpochGroupData
 	// In-memory map to find sub-groups by model ID
 	// This is not serialized in the chain state
 	subGroups map[string]*EpochGroup
@@ -74,19 +78,23 @@ type EpochGroup struct {
 func NewEpochGroup(
 	group types.GroupMessageKeeper,
 	participant types.ParticipantKeeper,
+	modelKeeper types.ModelKeeper,
+	hardwareNodeKeeper types.HardwareNodeKeeper,
 	authority string,
 	logger types.InferenceLogger,
 	groupDataKeeper types.EpochGroupDataKeeper,
 	groupData *types.EpochGroupData,
 ) *EpochGroup {
 	return &EpochGroup{
-		GroupKeeper:       group,
-		ParticipantKeeper: participant,
-		Authority:         authority,
-		Logger:            logger,
-		GroupDataKeeper:   groupDataKeeper,
-		GroupData:         groupData,
-		subGroups:         make(map[string]*EpochGroup),
+		GroupKeeper:        group,
+		ParticipantKeeper:  participant,
+		ModelKeeper:        modelKeeper,
+		HardwareNodeKeeper: hardwareNodeKeeper,
+		Authority:          authority,
+		Logger:             logger,
+		GroupDataKeeper:    groupDataKeeper,
+		GroupData:          groupData,
+		subGroups:          make(map[string]*EpochGroup),
 	}
 }
 
@@ -160,31 +168,84 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 		MemberAddress: member.Address,
 		Signature:     member.SeedSignature,
 	})
+
+	mlNodes := eg.storeMLNodeInfo(member, eg.GroupData.ModelId)
+
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
 		MemberAddress: member.Address,
 		Weight:        int64(member.Weight),
 		Reputation:    int32(member.Reputation),
+		MlNodes:       mlNodes,
 	})
 	eg.GroupData.TotalWeight += member.Weight
+
+	totalThroughput := int64(0)
+	for _, node := range mlNodes {
+		totalThroughput += node.Throughput
+	}
+	eg.GroupData.TotalThroughput += totalThroughput
+
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 }
 
+func (eg *EpochGroup) storeMLNodeInfo(member EpochMember, modelId string) []*types.MLNodeInfo {
+	if modelId == "" {
+		return nil // Do not store ML nodes in the parent group
+	}
+
+	// Find the index of the modelId in member.Models
+	modelIndex := -1
+	for i, model := range member.Models {
+		if model == modelId {
+			modelIndex = i
+			break
+		}
+	}
+
+	// Return the MLNodeInfo objects from the corresponding model index array
+	if modelIndex >= 0 && modelIndex < len(member.MlNodes) {
+		modelMLNodes := member.MlNodes[modelIndex]
+		return modelMLNodes.MlNodes
+	}
+
+	return nil
+}
+
 func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
-	for _, model := range member.Models {
-		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", model, "address", member.Address)
-		subGroup, err := eg.GetSubGroup(ctx, model)
+	for _, modelId := range member.Models {
+		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", modelId, "address", member.Address)
+
+		subGroup, err := eg.getOrCreateSubGroup(ctx, modelId)
 		if err != nil {
-			eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", model)
+			eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", modelId)
 			continue
 		}
 
 		// Add the member to the sub-group with the same weight, pubkey, etc.
 		// We're explicitly passing only this model to prevent further recursion
+		// TODO: Check if this recursion prevention logic is still needed since there should be no recursion risk
 		subMember := member
-		subMember.Models = []string{model}
+		subMember.Models = []string{modelId}
+
+		// Find the model index and copy the corresponding MLNode array
+		modelIndex := -1
+		for i, model := range member.Models {
+			if model == modelId {
+				modelIndex = i
+				break
+			}
+		}
+
+		// Copy only the MLNode array for this specific model
+		if modelIndex >= 0 && modelIndex < len(member.MlNodes) {
+			subMember.MlNodes = []*types.ModelMLNodes{member.MlNodes[modelIndex]}
+		} else {
+			subMember.MlNodes = []*types.ModelMLNodes{}
+		}
+
 		err = subGroup.AddMember(ctx, subMember)
 		if err != nil {
-			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", model)
+			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", modelId)
 		}
 	}
 }
@@ -329,30 +390,30 @@ func (eg *EpochGroup) GetGroupMembers(ctx context.Context) ([]*group.GroupMember
 }
 
 // CreateSubGroup creates a new sub-group for a specific model
-func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+func (eg *EpochGroup) CreateSubGroup(ctx context.Context, model *types.Model) (*EpochGroup, error) {
 	// Check if this is already a sub-group
 	if eg.GroupData.IsModelGroup() {
 		return nil, types.ErrCannotCreateSubGroupFromSubGroup
 	}
 
-	epochGroup := eg.getGroupFromMemory(modelId)
+	epochGroup := eg.getGroupFromMemory(model.Id)
 	if epochGroup != nil {
 		return epochGroup, nil
 	}
 
-	epochGroup = eg.getGroupFromState(ctx, modelId)
+	epochGroup = eg.getGroupFromState(ctx, model.Id)
 	if epochGroup != nil {
 		return epochGroup, nil
 	}
 
-	return eg.createNewEpochSubGroup(ctx, modelId)
+	return eg.createNewEpochSubGroup(ctx, model)
 }
 
-// BOOKMARK: new epoch group creation. Do we need to set epochId here?
-func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, model *types.Model) (*EpochGroup, error) {
 	subGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
-		ModelId:             modelId,
+		ModelId:             model.Id,
+		ModelSnapshot:       model,
 		EpochGroupId:        eg.GroupData.EpochGroupId,
 		EpochId:             eg.GroupData.EpochId,
 	}
@@ -361,6 +422,8 @@ func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string
 	subGroup := NewEpochGroup(
 		eg.GroupKeeper,
 		eg.ParticipantKeeper,
+		eg.ModelKeeper,
+		eg.HardwareNodeKeeper,
 		eg.Authority,
 		eg.Logger,
 		eg.GroupDataKeeper,
@@ -374,13 +437,13 @@ func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string
 	}
 
 	// Add the sub-group to the parent's list of sub-groups
-	eg.GroupData.SubGroupModels = append(eg.GroupData.SubGroupModels, modelId)
+	eg.GroupData.SubGroupModels = append(eg.GroupData.SubGroupModels, model.Id)
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 
 	// Add the sub-group to the in-memory map
-	eg.subGroups[modelId] = subGroup
+	eg.subGroups[model.Id] = subGroup
 
-	eg.Logger.LogInfo("Created sub-group", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", eg.GroupData.PocStartBlockHeight)
+	eg.Logger.LogInfo("Created sub-group", types.EpochGroup, "modelId", model.Id, "groupID", subGroupData.EpochGroupId, "height", eg.GroupData.PocStartBlockHeight)
 	return subGroup, nil
 }
 
@@ -401,6 +464,8 @@ func (eg *EpochGroup) getGroupFromState(ctx context.Context, modelId string) *Ep
 				subGroup := NewEpochGroup(
 					eg.GroupKeeper,
 					eg.ParticipantKeeper,
+					eg.ModelKeeper,
+					eg.HardwareNodeKeeper,
 					eg.Authority,
 					eg.Logger,
 					eg.GroupDataKeeper,
@@ -415,14 +480,44 @@ func (eg *EpochGroup) getGroupFromState(ctx context.Context, modelId string) *Ep
 	return nil
 }
 
-// GetSubGroup gets a sub-group for a specific model, creating it if it doesn't exist
+// GetSubGroup gets a sub-group for a specific model, but does not create it if it doesn't exist.
 func (eg *EpochGroup) GetSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	// Check if this is already a sub-group
 	if eg.GroupData.GetModelId() != "" {
 		return nil, types.ErrCannotGetSubGroupFromSubGroup
 	}
 
-	// Use CreateSubGroup which now handles checking for existing sub-groups
-	// and creates a new one only if needed
-	return eg.CreateSubGroup(ctx, modelId)
+	epochGroup := eg.getGroupFromMemory(modelId)
+	if epochGroup != nil {
+		return epochGroup, nil
+	}
+
+	epochGroup = eg.getGroupFromState(ctx, modelId)
+	if epochGroup != nil {
+		return epochGroup, nil
+	}
+
+	return nil, types.ErrEpochGroupDataNotFound
+}
+
+// getOrCreateSubGroup gets a sub-group for a specific model, creating it if it doesn't exist
+func (eg *EpochGroup) getOrCreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+	subGroup, err := eg.GetSubGroup(ctx, modelId)
+	if err == nil {
+		return subGroup, nil
+	}
+
+	// If the error is anything other than not found, return the error
+	if err != types.ErrEpochGroupDataNotFound {
+		return nil, err
+	}
+
+	// The subgroup was not found, so we create it
+	model, found := eg.ModelKeeper.GetGovernanceModel(ctx, modelId)
+	if !found {
+		eg.Logger.LogError("Error getting model for sub-group", types.EpochGroup, "error", "model not found", "model", modelId)
+		return nil, types.ErrInvalidModel
+	}
+
+	return eg.CreateSubGroup(ctx, model)
 }

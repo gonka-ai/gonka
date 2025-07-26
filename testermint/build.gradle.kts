@@ -1,3 +1,7 @@
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestResult
+import groovy.lang.Closure
+
 plugins {
     kotlin("jvm") version "2.0.10"
 }
@@ -248,7 +252,15 @@ dependencies {
     implementation("org.wiremock:wiremock:3.10.0")
 }
 
+tasks.withType<JavaExec>().configureEach {
+    systemProperty("java.net.preferIPv6Addresses", "true")
+}
+
 tasks.test {
+    filter {
+        isFailOnNoMatchingTests = false
+    }
+    
     outputs.upToDateWhen { false }
     useJUnitPlatform {
         val includeTags = System.getProperty("includeTags")
@@ -260,7 +272,7 @@ tasks.test {
             excludeTags(*excludeTags.split(",").toTypedArray())
         }
     }
-
+    systemProperty("java.net.preferIPv6Addresses", "true")
 }
 kotlin {
     jvmToolchain(21)

@@ -35,6 +35,8 @@ func createTestNodeWithStatus(id string, status types.HardwareNodeStatus) *NodeW
 				Enabled: true,
 				Epoch:   0,
 			},
+			EpochModels:  make(map[string]types.Model),
+			EpochMLNodes: make(map[string]types.MLNodeInfo),
 		},
 	}
 }
@@ -230,6 +232,11 @@ func TestNodeWorker_MLClientInteraction(t *testing.T) {
 	// Test InferenceUp operation
 	node.Node.Models = map[string]ModelArgs{
 		"test-model": {Args: []string{"--arg1", "--arg2"}},
+	}
+	// Manually populate the EpochModels for this test, as suggested.
+	node.State.EpochModels["test-model"] = types.Model{Id: "test-model", ModelArgs: []string{"--arg1", "--arg2"}}
+	node.State.EpochMLNodes["test-model"] = types.MLNodeInfo{
+		NodeId: "test-node-1",
 	}
 	inferenceCmd := InferenceUpNodeCommand{}
 	worker.Submit(context.Background(), &inferenceCmd)

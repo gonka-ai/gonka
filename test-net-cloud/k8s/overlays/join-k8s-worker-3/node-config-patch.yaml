@@ -13,10 +13,7 @@ data:
         "max_concurrent": 500,
         "models": {
           "Qwen/Qwen2.5-1.5B-Instruct": {
-            "args": [
-              "--quantization",
-              "fp8"
-            ]
+            "args": []
           }
         },
         "hardware": [

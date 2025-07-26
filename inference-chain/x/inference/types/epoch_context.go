@@ -181,6 +181,10 @@ func (ec *EpochContext) ClaimMoney() int64 {
 	return ec.getPocAnchor() + ec.EpochParams.GetClaimMoneyStage()
 }
 
+func (ec *EpochContext) InferenceValidationCutoff() int64 {
+	return ec.NextPoCStart() - ec.EpochParams.InferenceValidationCutoff
+}
+
 func (ec *EpochContext) NextPoCStart() int64 {
 	if ec.EpochIndex == 0 {
 		return -ec.EpochParams.EpochShift + ec.EpochParams.EpochLength
@@ -207,8 +211,8 @@ func (ec *EpochContext) ValidationExchangeWindow() EpochExchangeWindow {
 	}
 
 	return EpochExchangeWindow{
-		Start: ec.StartOfPoCValidation() + 1, // closed interval [start, end]
-		End:   ec.SetNewValidators(),
+		Start: ec.StartOfPoCValidation() + 1,
+		End:   ec.EndOfPoCValidation(),
 	}
 }
 

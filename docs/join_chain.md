@@ -32,7 +32,7 @@ This is a json file that defines the endpoints of the inference servers that wil
         "url": "http://35.76.234.56:8080/",  
         "max_concurrent": 10,  
         "models": [  
-            "unsloth/llama-3-8b-Instruct"  
+            "Qwen/Qwen2.5-7B-Instruct"  
         ]  
     }  
 ]

@@ -16,7 +16,9 @@ import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
+import kotlin.io.path.exists
 
+const val GENESIS_KEY_NAME = "genesis"
 const val LOCAL_TEST_NET_DIR = "local-test-net"
 val BASE_COMPOSE_FILES = listOf(
     "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
@@ -51,7 +53,17 @@ data class DockerGroup(
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
 ) {
-    val composeFiles = if (isGenesis) GENESIS_COMPOSE_FILES else NODE_COMPOSE_FILES
+    val composeFiles = when (isGenesis) {
+        true -> GENESIS_COMPOSE_FILES
+        false -> NODE_COMPOSE_FILES
+    }.let { baseFiles: List<String> ->
+        val additionalFiles = config.additionalDockerFilesByKeyName[keyName] ?: emptyList()
+        baseFiles + additionalFiles.map { "$LOCAL_TEST_NET_DIR/$it" }
+    }.onEach { file: String ->
+        if (!Path.of(workingDirectory, file).exists()) {
+            error("A docker file doesn't exist: $file")
+        }
+    }
 
     fun dockerProcess(vararg args: String): ProcessBuilder {
         val envMap = this.getCommonEnvMap(useSnapshots)
@@ -75,6 +87,7 @@ data class DockerGroup(
         process.waitFor()
         // Just register the log events
         getLocalInferencePairs(config)
+        print("Genesis overrides file: $genesisOverridesFile | content: ${Files.readString(Path.of(workingDirectory, genesisOverridesFile))}")
     }
 
     fun tearDownExisting() {
@@ -192,8 +205,10 @@ fun createDockerGroup(
     config: ApplicationConfig,
     useSnapshots: Boolean
 ): DockerGroup {
-    val keyName = if (iteration == 0) "genesis" else "join$joinIter"
-    val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_mock-server_$keyName.json"
+    val keyName = if (iteration == 0) GENESIS_KEY_NAME else "join$joinIter"
+    val nodeConfigFile = config.nodeConfigFileByKeyName[keyName]
+        .let { fileOrNull: String? -> fileOrNull ?: "node_payload_mock-server_$keyName.json" }
+        .let { file: String -> "$LOCAL_TEST_NET_DIR/$file" }
     val repoRoot = getRepoRoot()
 
     val nodeFile = Path.of(repoRoot, nodeConfigFile)
@@ -208,7 +223,7 @@ fun createDockerGroup(
                 "poc_port": 8080,
                 "max_concurrent": 10,
                 "models": [
-                  "unsloth/llama-3-8b-Instruct"
+                  "Qwen/Qwen2.5-7B-Instruct"
                 ]
               }
             ]
@@ -275,6 +290,7 @@ fun initCluster(
     joinCount: Int = 2,
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
+    resetMlNodes: Boolean = true,
 ): Pair<LocalCluster, LocalInferencePair> {
     logSection("Cluster Discovery")
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
@@ -282,7 +298,7 @@ fun initCluster(
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs)
+        initialize(cluster.allPairs, resetMlNodesTo = resetMlNodes)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {

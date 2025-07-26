@@ -8,7 +8,7 @@ nodes:
     inference_port: 2020
     max_concurrent: 1
     models:
-      - unsloth/llama-3-8b-Instruct
+      - Qwen/Qwen2.5-7B-Instruct
 chain_node:
   url: http://localhost:26657
   account_name: "alice"

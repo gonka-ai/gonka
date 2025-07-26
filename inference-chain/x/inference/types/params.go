@@ -50,6 +50,8 @@ func DefaultParams() Params {
 			PocExchangeDuration:            2,
 			PocValidationDelay:             2,
 			PocValidationDuration:          6,
+			SetNewValidatorsDelay:     1,
+			InferenceValidationCutoff: 0,
 			InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
 		},
 		ValidationParams: &ValidationParams{

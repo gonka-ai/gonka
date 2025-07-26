@@ -293,11 +293,20 @@ fun makeInterruptedStreamingInferenceRequest(
     return inference ?: InferencePayload.empty()
 }
 
-fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
+fun initialize(pairs: List<LocalInferencePair>, resetMlNodesTo: Boolean = true): LocalInferencePair {
     pairs.forEach {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
-        it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080))
+        it.waitForNextInferenceWindow(windowSizeInBlocks = 2)
+        if (resetMlNodesTo) {
+            val nodes = listOf(
+                validNode.copy(
+                    host = "${it.name.trim('/')}-mock-server",
+                ).withMockServerPorts()
+            )
+            it.api.setNodesTo(nodes)
+        }
+
         it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
         it.getParams()
         it.node.getAddress()
@@ -316,7 +325,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     val currentParticipants = highestFunded.api.getParticipants()
     for (pair in funded) {
         if (currentParticipants.none { it.id == pair.node.getAddress() }) {
-            pair.addSelfAsParticipant(listOf("unsloth/llama-3-8b-Instruct"))
+            pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
         }
     }
     addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
@@ -350,7 +359,7 @@ private fun addUnfundedDirectly(
             highestFunded.api.addUnfundedInferenceParticipant(
                 UnfundedInferenceParticipant(
                     url = "http://${pair.name}-api:8080",
-                    models = listOf("unsloth/llama-3-8b-Instruct"),
+                    models = listOf("Qwen/Qwen2.5-7B-Instruct"),
                     validatorKey = valPubKey.value,
                     pubKey = selfKey.pubkey.key,
                     address = selfKey.address,
@@ -440,6 +449,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[EpochParams::pocExchangeDuration] = 1L
                 this[EpochParams::pocValidationDelay] = 1L
                 this[EpochParams::pocValidationDuration] = 2L
+                this[EpochParams::setNewValidatorsDelay] = 1L
                 this[EpochParams::epochShift] = epochShift
             }
             this[InferenceParams::validationParams] = spec<ValidationParams> {
@@ -454,6 +464,28 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
             this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
         }
+        this[InferenceState::modelList] = listOf(
+            ModelListItem(
+                proposedBy = "genesis",
+                id = "Qwen/QwQ-32B",
+                unitsOfComputePerToken = "1000",
+                hfRepo = "Qwen/QwQ-32B",
+                hfCommit = "976055f8c83f394f35dbd3ab09a285a984907bd0",
+                modelArgs = listOf("--quantization", "fp8", "-kv-cache-dtype", "fp8"),
+                vRam = "32",
+                throughputPerNonce = "1000"
+            ),
+            ModelListItem(
+                proposedBy = "genesis",
+                id = "Qwen/Qwen2.5-7B-Instruct",
+                unitsOfComputePerToken = "100",
+                hfRepo = "Qwen/Qwen2.5-7B-Instruct",
+                hfCommit = "a09a35458c702b33eeacc393d103063234e8bc28",
+                modelArgs = listOf("--quantization", "fp8"),
+                vRam = "16",
+                throughputPerNonce = "10000"
+            )
+        )
     }
 }
 
@@ -484,7 +516,7 @@ data class InferenceRequestPayload(
     }
 }
 val inferenceRequestObject = InferenceRequestPayload(
-    model = "unsloth/llama-3-8b-Instruct",
+    model = "Qwen/Qwen2.5-7B-Instruct",
     temperature = 0.8,
     messages = listOf(
         ChatMessage("system", "Regardless of the language of the question, answer in english"),
@@ -498,7 +530,7 @@ val inferenceRequest = cosmosJson.toJson(inferenceRequestObject)
 val inferenceRequestStreamObject = inferenceRequestObject.copy(stream = true)
 val inferenceRequestStream = cosmosJson.toJson(inferenceRequestStreamObject)
 
-const val defaultModel = "unsloth/llama-3-8b-Instruct"
+const val defaultModel = "Qwen/Qwen2.5-7B-Instruct"
 
 val validNode = InferenceNode(
     host = "36.189.234.237:19009/",
@@ -513,12 +545,16 @@ val validNode = InferenceNode(
     maxConcurrent = 1000
 )
 
+fun InferenceNode.withMockServerPorts(): InferenceNode {
+    return copy(pocPort = 8080, inferencePort = 8080)
+}
+
 val defaultInferenceResponse = """
     {
         "id": "cmpl-1c7b769de9b0494694eeee854da0a014",
         "object": "chat.completion",
         "created": 1736220740,
-        "model": "unsloth/llama-3-8b-Instruct",
+        "model": "Qwen/Qwen2.5-7B-Instruct",
         "choices": [
             {
                 "index": 0,

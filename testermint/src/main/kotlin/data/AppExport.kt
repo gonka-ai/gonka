@@ -25,6 +25,7 @@ data class InferenceState(
     val params: InferenceParams,
     val genesisOnlyParams: GenesisOnlyParams,
     val tokenomicsData: TokenomicsData,
+    val modelList: List<ModelListItem>,
 )
 
 data class TokenomicsData(
@@ -76,6 +77,7 @@ data class EpochParams(
     val pocExchangeDuration: Long,
     val pocValidationDelay: Long,
     val pocValidationDuration: Long,
+    val setNewValidatorsDelay: Long,
 )
 
 data class Decimal(
@@ -195,4 +197,15 @@ data class DenomMetadata(
 data class DenomUnit(
     val denom: String,
     val exponent: Int,
+)
+
+data class ModelListItem(
+    val proposedBy: String,
+    val id: String,
+    val unitsOfComputePerToken: String,
+    val hfRepo: String,
+    val hfCommit: String,
+    val modelArgs: List<String>,
+    val vRam: String,
+    val throughputPerNonce: String,
 )

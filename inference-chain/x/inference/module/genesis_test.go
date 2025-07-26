@@ -17,6 +17,19 @@ func TestGenesis(t *testing.T) {
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 		CosmWasmParams:    baseGenesis.CosmWasmParams,
 
+		ModelList: []types.Model{
+			{
+				ProposedBy:             "genesis",
+				Id:                     "model-1",
+				UnitsOfComputePerToken: 10,
+				HfRepo:                 "repo1",
+				HfCommit:               "commit1",
+				ModelArgs:              []string{"--arg1"},
+				VRam:                   16,
+				ThroughputPerNonce:     100,
+			},
+		},
+
 		InferenceList: []types.Inference{
 			{
 				Index:       "0",
@@ -119,6 +132,7 @@ func TestGenesis(t *testing.T) {
 	nullify.Fill(&genesisState)
 	nullify.Fill(got)
 
+	require.ElementsMatch(t, genesisState.ModelList, got.ModelList)
 	require.ElementsMatch(t, genesisState.InferenceList, got.InferenceList)
 	require.ElementsMatch(t, genesisState.ParticipantList, got.ParticipantList)
 	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
