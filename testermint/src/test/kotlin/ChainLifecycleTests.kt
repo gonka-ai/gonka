@@ -11,10 +11,10 @@ class ChainLifecycleTests : TestermintTest() {
 
     @Test
     fun `reproduce consensus failure on node reconnect`() {
-        val (cluster, genesis) = initCluster(joinCount = 2)
+        val (cluster, genesis) = initCluster(joinCount = 2, reboot = true)
 
-        logSection("Waiting for first PoC to be over")
-        genesis.waitForNextInferenceWindow()
+        // Make sure the chain doesn't die after the node is killed
+        genesis.changePoc(30)
 
         val nodeToDisconnect = cluster.joinPairs.last()
         logSection("Disconnecting node ${nodeToDisconnect.name}")
