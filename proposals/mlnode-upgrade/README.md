@@ -131,10 +131,12 @@ This proposal outlines a reliable, zero-downtime upgrade process for MLNode comp
     - Removed version-related node configuration from test setup
     - All broker tests now pass with simplified system
     
-[TODO]: Integration Testing for Version Switching
+[WIP]: Integration Testing for Version Switching
     **Why**: Need comprehensive testing for upgrade scenarios to ensure reliability
     **What**: Write testermint test which test change version from v0.3.8 to v0.3.9 and to v0.3.10 and confirming that after each change - requests are going to new version for both api and inference
     **Where**: `testermint/` test framework and mock servers
+
+    fun testVersionedEndpointSwitching() - now implementing incorrectly. it's registering new nodes, etc but defacto should just make schedule update and check after in wiremock somehow that for ALL future API and inference command new prefix was used. Do that 
 
 ## Node Operator Guide
 

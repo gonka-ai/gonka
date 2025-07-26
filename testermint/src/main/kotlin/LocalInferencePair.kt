@@ -259,6 +259,8 @@ data class LocalInferencePair(
             startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
             waitForStage(EpochStage.SET_NEW_VALIDATORS)
+            val currentHeight = getCurrentBlockHeight()
+            waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
         } else {
             Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
         }

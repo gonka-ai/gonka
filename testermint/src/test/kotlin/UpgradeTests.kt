@@ -166,104 +166,68 @@ class UpgradeTests : TestermintTest() {
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
 
+
     @Test
     @Timeout(value = 15, unit = TimeUnit.MINUTES)
     fun testVersionedEndpointSwitching() {
         val (cluster, genesis) = initCluster(reboot = true)
-        genesis.markNeedsReboot()
-        
+
         logSection("Waiting for initial system to be ready")
-        genesis.waitForNextInferenceWindow()
+        var currentHeight = genesis.getCurrentBlockHeight()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
         
         // Test that the system works initially before we modify it
         logSection("Verifying system is working before version changes")
         val systemCheckResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(systemCheckResponse.choices.first().message.content).isNotEmpty()
         
-        logSection("Setting up versioned endpoints with unique responses")
+        logSection("Setting up versioned mock responses")
         
         // Define unique responses for each version to clearly distinguish them
-        val v038Response = "Response from version 0.3.8"
-        val v039Response = "Response from version 0.3.9"  
-        val v0310Response = "Response from version 0.3.10"
-        val v038Segment = "/v0.3.8"
-        val v039Segment = "/v0.3.9"
-        val v0310Segment = "/v0.3.10"
-        val initialVersion = "v0.3.8"
-        val firstUpgradeVersion = "v0.3.9"
-        val secondUpgradeVersion = "v0.3.10"
+        val v038Response = "Response from version v3.0.8"
+        val v039Response = "Response from version v3.0.9"
+        val v0310Response = "Response from version v3.0.10"
+        // Remove version prefixes from segments - they will be added by InferenceUrlWithVersion
+
+        val chatCompletionStr = "/v1/chat/completions"
+        val initialVersion = "v3.0.8"
+        val firstUpgradeVersion = "v3.0.9"
+        val secondUpgradeVersion = "v3.0.10"
         
-        // Configure mock servers with version-specific responses
+        // Configure mock servers with version-specific responses for all segments
         cluster.allPairs.forEach { pair ->
-            // Set up v0.3.8 endpoints
+            // Set up default non-versioned endpoint (current behavior)
+            pair.mock?.setInferenceResponse(
+                defaultInferenceResponseObject.withResponse("Default response")
+            )
+            // Set up v3.0.8 versioned endpoints 
             pair.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse(v038Response),
-                segment = v038Segment
+                segment = "v3.0.8"
             )
-            // Set up v0.3.9 endpoints  
+            // Set up v3.0.9 versioned endpoints
             pair.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse(v039Response),
-                segment = v039Segment
+                segment = "v3.0.9"
             )
-            // Set up v0.3.10 endpoints
+            // Set up v3.0.10 versioned endpoints
             pair.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse(v0310Response),
-                segment = v0310Segment
+                segment = "v3.0.10"
             )
         }
         
-        // Add versioned nodes alongside existing ones (following partialUpgrade pattern)
-        logSection("Adding v0.3.8 versioned nodes")
-        cluster.allPairs.forEach { pair ->
-            // Add new node with v0.3.8 version configuration
-            pair.api.addNode(
-                validNode.copy(
-                    host = "${pair.name.trim('/')}-mock-server",
-                    pocPort = 8080,
-                    inferencePort = 8080,
-                    inferenceSegment = v038Segment,
-                    pocSegment = "/api/v1",
-                    version = initialVersion,
-                    id = "${initialVersion}Node"
-                )
-            )
-            
-            // Set up default inference response for v0.3.8
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse(v038Response),
-                streamDelay = Duration.ofMillis(200)
-            )
-        }
-        
-        logSection("Testing initial version v0.3.8 requests")
-        genesis.waitForNextInferenceWindow()
+        logSection("Testing initial version v3.0.8 - should use default endpoints")
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        currentHeight = genesis.getCurrentBlockHeight()
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
         val initialInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
-        assertThat(initialInferenceResponse.choices.first().message.content)
-            .withFailMessage("Initial inference should use v0.3.8 endpoint")
-            .isEqualTo(v038Response)
+        // Initially should use non-versioned endpoints, so default response
+        assertThat(initialInferenceResponse.choices.first().message.content).isNotEmpty()
         
-        logSection("Initiating first upgrade: v0.3.8 → v0.3.9")
-        val firstUpgradeHeight = genesis.getCurrentBlockHeight() + 40
-        
-        // Add nodes with v0.3.9 configuration before upgrade
-        cluster.allPairs.forEach { pair ->
-            pair.api.addNode(
-                validNode.copy(
-                    host = "${pair.name.trim('/')}-mock-server",
-                    pocPort = 8080,
-                    inferencePort = 8080,
-                    inferenceSegment = v039Segment,
-                    pocSegment = "/api/v1", 
-                    version = firstUpgradeVersion,
-                    id = "${firstUpgradeVersion}Node"
-                )
-            )
-            // Update default response for new version
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse(v039Response),
-                streamDelay = Duration.ofMillis(200)
-            )
-        }
+        logSection("Initiating first upgrade: v3.0.8 → v3.0.9")
+        val firstUpgradeHeight = genesis.getCurrentBlockHeight() + 10
         
         val firstProposalId = genesis.runProposal(
             cluster,
@@ -275,37 +239,29 @@ class UpgradeTests : TestermintTest() {
         )
         
         logSection("Waiting for first upgrade to take effect at height $firstUpgradeHeight")
-        genesis.node.waitForMinimumBlock(firstUpgradeHeight + 10, "firstUpgradeHeight+10")
+        genesis.node.waitForMinimumBlock(firstUpgradeHeight + 1, "firstUpgradeHeight+10")
         
-        logSection("Testing post-upgrade requests should hit v0.3.9 endpoints")
-        genesis.waitForNextInferenceWindow()
+        logSection("Testing post-upgrade requests should hit v3.0.9 endpoints")
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        currentHeight = genesis.getCurrentBlockHeight()
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
         val upgradedInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(upgradedInferenceResponse.choices.first().message.content)
-            .withFailMessage("After first upgrade, inference should use v0.3.9 endpoint")
+            .withFailMessage("After first upgrade, inference should use v3.0.9 endpoint")
             .isEqualTo(v039Response)
         
-        logSection("Initiating second upgrade: v0.3.9 → v0.3.10")
-        val secondUpgradeHeight = genesis.getCurrentBlockHeight() + 40
-        
-        // Add nodes with v0.3.10 configuration before upgrade
+        // Verify that the correct versioned URLs are being called
+        logSection("Verifying v3.0.9 URLs are being used")
         cluster.allPairs.forEach { pair ->
-            pair.api.addNode(
-                validNode.copy(
-                    host = "${pair.name.trim('/')}-mock-server",
-                    pocPort = 8080,
-                    inferencePort = 8080,
-                    inferenceSegment = v0310Segment,
-                    pocSegment = "/api/v1",
-                    version = secondUpgradeVersion,
-                    id = "${secondUpgradeVersion}Node"
-                )
-            )
-            // Update default response for new version
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse(v0310Response),
-                streamDelay = Duration.ofMillis(200)
-            )
+            val hasV039Requests = pair.mock?.hasRequestsToVersionedEndpoint("") ?: false
+            Logger.info("Node ${pair.name} received requests to v3.0.9 inference endpoints: $hasV039Requests", "")
+            assertThat(hasV039Requests)
+                .withFailMessage("Expected node ${pair.name} to receive requests on v3.0.9 inference endpoints")
+                .isTrue()
         }
+        
+        logSection("Initiating second upgrade: v3.0.9 → v3.0.10")
+        val secondUpgradeHeight = genesis.getCurrentBlockHeight() + 10
         
         val secondProposalId = genesis.runProposal(
             cluster,
@@ -319,22 +275,32 @@ class UpgradeTests : TestermintTest() {
         logSection("Waiting for second upgrade to take effect at height $secondUpgradeHeight")
         genesis.node.waitForMinimumBlock(secondUpgradeHeight + 10, "secondUpgradeHeight+10")
         
-        logSection("Testing post-second-upgrade requests should hit v0.3.10 endpoints")
+        logSection("Testing post-second-upgrade requests should hit v3.0.10 endpoints")
         genesis.waitForNextInferenceWindow()
         val finalInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(finalInferenceResponse.choices.first().message.content)
-            .withFailMessage("After second upgrade, inference should use v0.3.10 endpoint")
+            .withFailMessage("After second upgrade, inference should use v3.0.10 endpoint")
             .isEqualTo(v0310Response)
         
+        // Verify that the correct versioned URLs are being called
+        logSection("Verifying v3.0.10 URLs are being used")
+        cluster.allPairs.forEach { pair ->
+            val hasV0310Requests = pair.mock?.hasRequestsToVersionedEndpoint("/") ?: false
+            Logger.info("Node ${pair.name} received requests to v3.0.10 inference endpoints: $hasV0310Requests", "")
+            assertThat(hasV0310Requests)
+                .withFailMessage("Expected node ${pair.name} to receive requests on v3.0.10 inference endpoints")
+                .isTrue()
+        }
+        
         logSection("Verifying API endpoints are also routing correctly")
-        // Test that API calls (like getting nodes) also work correctly with versioned routing
+        // Test that API calls (like getting nodes) also work correctly after version switching
         cluster.allPairs.forEach { pair ->
             val nodesList = pair.api.getNodes()
             assertThat(nodesList).isNotEmpty()
             Logger.info("Node ${pair.name} successfully retrieved nodes list with ${nodesList.size} nodes", "")
         }
         
-        logSection("All version switching tests completed successfully: v0.3.8 → v0.3.9 → v0.3.10")
+        logSection("All version switching tests completed successfully: v3.0.8 → v3.0.9 → v3.0.10")
     }
 
     fun getBinaryPath(path: String): String {

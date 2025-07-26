@@ -22,16 +22,19 @@ func ProcessNewBlockEvent(
 		return
 	}
 
-	checkForPartialUpgrades(transactionRecorder, configManager)
-	checkForFullUpgrades(transactionRecorder, configManager)
+	checkForPartialUpgradesScheduled(transactionRecorder, configManager)
+	checkForFullUpgradesScheduled(transactionRecorder, configManager)
+
+	checkForVersionSwitch(configManager)
 }
 
-func checkForPartialUpgrades(transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
+func checkForPartialUpgradesScheduled(transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
 	partialUpgrades, err := transactionRecorder.GetPartialUpgrades()
 	if err != nil {
 		logging.Error("Error getting partial upgrades", types.Upgrades, "error", err)
 		return
 	}
+	logging.Info("checkForPartialUpgrades. Partial upgrades", types.Upgrades, "partialUpgrades", partialUpgrades)
 	for _, upgrade := range partialUpgrades.PartialUpgrade {
 		if upgrade.ApiBinariesJson != "" {
 			var planInfo UpgradeInfoInput
@@ -53,14 +56,27 @@ func checkForPartialUpgrades(transactionRecorder cosmosclient.InferenceCosmosCli
 				NodeVersion: planInfo.NodeVersion, // Store the known version
 			})
 			if err != nil {
-				logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
+				logging.Error("Error setting upgrade with binaries", types.Upgrades, "error", err)
 				continue
 			}
+			continue
+		}
+		if upgrade.NodeVersion != "" {
+			err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
+				Name:        upgrade.Name,
+				Height:      int64(upgrade.Height),
+				NodeVersion: upgrade.NodeVersion,
+			})
+			if err != nil {
+				logging.Error("Error setting upgrade plan for node version", types.Upgrades, "error", err)
+				continue
+			}
+			continue
 		}
 	}
 }
 
-func checkForFullUpgrades(transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
+func checkForFullUpgradesScheduled(transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
 	upgradePlan, err := transactionRecorder.GetUpgradePlan()
 	if err != nil {
 		logging.Error("Error getting upgrade plan", types.Upgrades, "error", err)
@@ -91,30 +107,29 @@ func checkForFullUpgrades(transactionRecorder cosmosclient.InferenceCosmosClient
 			logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
 			return
 		}
-
-		// Note: NodeVersion updates now handled by chain EndBlock during partial upgrades
-		// No need for local version tracking since chain is source of truth
 	}
 }
 
-func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
+func checkForVersionSwitch(configManager *apiconfig.ConfigManager) {
 	upgradePlan := configManager.GetUpgradePlan()
+
 	if upgradePlan.Name == "" {
-		logging.Warn("Websocket closed with no upgrade", types.Upgrades)
-		return false
+		logging.Warn("checkForVersionSwitch. Websocket closed with no upgrade (name is empty)", types.Upgrades)
+		return
 	}
 
 	if configManager.GetHeight() >= upgradePlan.Height-1 {
-		logging.Info("Upgrade height reached", types.Upgrades, "height", upgradePlan.Height)
-
-		// MLNode version switching using known version from upgrade plan
+		logging.Info("checkForVersionSwitch. Height reached", types.Upgrades, "height", configManager.GetHeight(), "upgradeHeight", upgradePlan.Height)
 		if upgradePlan.NodeVersion != "" {
+			logging.Info("checkForVersionSwitch. Node version is not empty", types.Upgrades, "nodeVersion", upgradePlan.NodeVersion)
 			oldVersion := configManager.GetCurrentNodeVersion()
+			logging.Info("checkForVersionSwitch. Old version", types.Upgrades, "oldVersion", oldVersion)
 			if upgradePlan.NodeVersion != oldVersion {
-				// Update version in config using the known target version
+				logging.Info("checkForVersionSwitch. Node version is different from old version", types.Upgrades, "oldVersion", oldVersion, "newVersion", upgradePlan.NodeVersion)
 				err := configManager.SetCurrentNodeVersion(upgradePlan.NodeVersion)
+				logging.Info("checkForVersionSwitch. Setting new version", types.Upgrades, "newVersion", upgradePlan.NodeVersion)
 				if err != nil {
-					logging.Error("Failed to update MLNode version in config", types.Upgrades, "error", err)
+					logging.Error("checkForVersionSwitch. Failed to update MLNode version in config", types.Upgrades, "error", err)
 				} else {
 					logging.Info("MLNode version updated during upgrade using known target version", types.Upgrades,
 						"oldVersion", oldVersion, "newVersion", upgradePlan.NodeVersion,
@@ -123,6 +138,24 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 			}
 		} else {
 			logging.Warn("No NodeVersion specified in upgrade plan", types.Upgrades, "upgradeName", upgradePlan.Name)
+		}
+	}
+}
+
+func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
+	upgradePlan := configManager.GetUpgradePlan()
+	if upgradePlan.Name == "" {
+		logging.Warn("CheckForUpgrade. Websocket closed with no upgrade (name is empty)", types.Upgrades)
+		return false
+	}
+
+	successfullyUpgraded := false
+	if configManager.GetHeight() >= upgradePlan.Height-1 {
+		logging.Info("CheckForUpgrade. Upgrade height reached", types.Upgrades, "height", upgradePlan.Height)
+
+		checkForVersionSwitch(configManager)
+		if len(upgradePlan.Binaries) == 0 {
+			return successfullyUpgraded
 		}
 
 		// Existing upgrade logic for Cosmovisor

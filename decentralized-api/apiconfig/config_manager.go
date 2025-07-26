@@ -87,13 +87,11 @@ func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
 	return cm.currentConfig.UpgradePlan
 }
 
-// ShouldCheckUpgradeAtHeight returns true if we should check for version update at this exact height
 func (cm *ConfigManager) ShouldCheckUpgradeAtHeight(height int64) bool {
 	plan := cm.currentConfig.UpgradePlan
 	return plan.Name != "" && plan.Height > 0 && height == plan.Height
 }
 
-// Setters - these need mutex protection since they write to disk
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
 	cm.currentConfig.UpgradePlan = plan
 	logging.Info("Setting upgrade plan", types.Config, "plan", plan)

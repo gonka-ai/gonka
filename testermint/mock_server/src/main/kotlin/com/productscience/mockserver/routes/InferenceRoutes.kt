@@ -103,7 +103,7 @@ private suspend fun handleChatCompletions(call: ApplicationCall, responseService
     logger.info("Streaming requested: $isStreaming")
 
     // Get the endpoint path
-    val path = "/v1/chat/completions"
+    val path = call.request.path()
 
     // Get the response from the ResponseService, considering the model
     val responseData = responseService.getInferenceResponse(path, model)

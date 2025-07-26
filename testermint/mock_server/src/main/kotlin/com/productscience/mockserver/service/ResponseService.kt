@@ -42,7 +42,9 @@ class ResponseService {
      * @return The endpoint path where the response is set
      */
     fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): String {
-        val endpoint = "/v1/chat/completions"
+        val cleanedSegment = segment.trim('/').takeIf { it.isNotEmpty() }
+        val segment1 = if (cleanedSegment != null) "/$cleanedSegment" else ""
+        val endpoint = "$segment1/v1/chat/completions"
         val key = createResponseKey(endpoint, model)
         inferenceResponses[key] = Triple(response, delay, streamDelay)
         println("DEBUG: Stored response for endpoint='$endpoint', model='$model', key='$key'")

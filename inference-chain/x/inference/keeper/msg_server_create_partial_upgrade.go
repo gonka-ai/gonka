@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"context"
+	"strconv"
+
 	errorsmod "cosmossdk.io/errors"
 	"github.com/productscience/inference/x/inference/types"
 
@@ -19,6 +21,7 @@ func (k msgServer) CreatePartialUpgrade(goCtx context.Context, msg *types.MsgCre
 		Height:          msg.Height,
 		NodeVersion:     msg.NodeVersion,
 		ApiBinariesJson: msg.ApiBinariesJson,
+		Name:            "PartialUpgrade at height " + strconv.FormatUint(msg.Height, 10) + " for node version " + msg.NodeVersion,
 	})
 
 	return &types.MsgCreatePartialUpgradeResponse{}, nil
