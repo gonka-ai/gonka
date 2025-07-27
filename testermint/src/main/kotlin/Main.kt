@@ -481,6 +481,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[ValidationParams::fullValidationTrafficCutoff] = 100L
                 this[ValidationParams::minValidationHalfway] = Decimal.fromDouble(0.05)
                 this[ValidationParams::minValidationTrafficCutoff] = 10L
+                this[ValidationParams::expirationBlocks] = 7L
             }
         }
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {

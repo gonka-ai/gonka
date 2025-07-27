@@ -4,6 +4,7 @@ import com.productscience.InferenceRequestPayload
 import com.productscience.InferenceResult
 import com.productscience.LocalCluster
 import com.productscience.LocalInferencePair
+import com.productscience.createSpec
 import com.productscience.data.Content
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferencePayload
@@ -11,8 +12,10 @@ import com.productscience.data.InferenceStatus
 import com.productscience.data.Logprobs
 import com.productscience.data.Participant
 import com.productscience.data.Usage
+import com.productscience.data.spec
 import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
+import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.inferenceRequestObject
 import com.productscience.initCluster
@@ -283,6 +286,7 @@ class InferenceAccountingTests : TestermintTest() {
         Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp1.joinToString("\n") }
         assertThat(newTimeouts).hasSize(1)
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
+        Logger.info { "EXPIRATION BLOCKS: ${expirationBlocks - 1}" }
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
         genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
         genesis.waitForStage(EpochStage.START_OF_POC)
