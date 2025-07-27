@@ -410,8 +410,9 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			reputation = 0
 		}
 		if p.Seed == nil {
-			am.LogError("onSetNewValidatorsStage: ILLEGAL STATE. Participant seed is nil", types.EpochGroup,
+			am.LogError("onSetNewValidatorsStage: addEpochMembers. ILLEGAL STATE. Participant seed is nil. Skipping this participant", types.EpochGroup,
 				"participantIndex", p.Index)
+			continue
 		}
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
 		err = upcomingEg.AddMember(ctx, member)
