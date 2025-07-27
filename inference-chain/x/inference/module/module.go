@@ -257,6 +257,18 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+
+		// Prune old inferences
+		pruneErr := am.keeper.PruneInferences(ctx, currentEpoch.Index, am.keeper.GetParams(ctx).EpochParams.InferencePruningEpochThreshold)
+		if pruneErr != nil {
+			am.LogError("Error pruning inferences", types.Inferences, "error", pruneErr)
+		}
+
+		// Prune old PoC data
+		pocErr := am.keeper.PrunePoCData(ctx, currentEpoch.Index, am.keeper.GetParams(ctx).PocParams.PocDataPruningEpochThreshold)
+		if pocErr != nil {
+			am.LogError("Error pruning PoC data", types.PoC, "error", pocErr)
+		}
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {

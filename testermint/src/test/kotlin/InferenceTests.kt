@@ -8,6 +8,7 @@ import org.assertj.core.api.SoftAssertions
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import kotlin.test.assertNotNull
 
 class InferenceTests : TestermintTest() {
     @Test
@@ -76,6 +77,7 @@ class InferenceTests : TestermintTest() {
         assertThat(response.code).isZero()
         println(response)
         val inference = genesis.node.getInference(signature)
+        assertNotNull(inference)
         assertThat(inference.inference.inferenceId).isEqualTo(signature)
         assertThat(inference.inference.requestTimestamp).isEqualTo(timestamp)
         assertThat(inference.inference.transferredBy).isEqualTo(genesisAddress)
@@ -213,7 +215,8 @@ class InferenceTests : TestermintTest() {
         assertThat(valid.model).isEqualTo(inferenceRequestObject.model)
         assertThat(valid.choices).hasSize(1)
         genesis.node.waitForNextBlock()
-        val inference = genesis.node.getInference(valid.id).inference
+        val inference = genesis.node.getInference(valid.id)?.inference
+        assertNotNull(inference)
         softly {
             assertThat(inference.inferenceId).isEqualTo(signature)
             assertThat(inference.requestTimestamp).isEqualTo(timestamp)

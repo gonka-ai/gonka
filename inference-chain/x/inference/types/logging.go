@@ -24,6 +24,7 @@ const (
 	Stages          = 18
 	Balances        = 19
 	Stat            = 20
+	Pruning         = 21
 	Testing         = 255
 )
 
