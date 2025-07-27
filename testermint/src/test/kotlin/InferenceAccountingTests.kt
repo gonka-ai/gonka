@@ -279,12 +279,16 @@ class InferenceAccountingTests : TestermintTest() {
         val balanceBeforeSettle = genesis.node.getSelfBalance()
         val timeouts = genesis.node.getInferenceTimeouts()
         val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
+        val queryResp1 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
+        Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp1.joinToString("\n") }
         assertThat(newTimeouts).hasSize(1)
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
         genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
         genesis.waitForStage(EpochStage.START_OF_POC)
         logSection("Verifying inference was expired and refunded")
+        val queryResp2 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
+        Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp2.joinToString("\n") }
         val canceledInference =
             localCluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
         assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
