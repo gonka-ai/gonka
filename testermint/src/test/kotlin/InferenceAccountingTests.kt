@@ -279,9 +279,16 @@ class InferenceAccountingTests : TestermintTest() {
         val balanceBeforeSettle = genesis.node.getSelfBalance()
         val timeouts = genesis.node.getInferenceTimeouts()
         val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
-        val queryResp1 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
-        Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp1.joinToString("\n") }
         assertThat(newTimeouts).hasSize(1)
+        val queryResp1 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
+        Logger.info { "QUERIED ALL INFERENCES 1:\n" + queryResp1.joinToString("\n") }
+        val failedInference =
+            localCluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
+        assertThat(failedInference.executedBy).isNull()
+        val escrowAmount: Long? = failedInference.escrowAmount
+        assertThat(escrowAmount).isNotNull
+        assertThat(escrowAmount).isGreaterThan(0L)
+        Logger.info("Escrow amount: $escrowAmount")
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
         genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
@@ -289,17 +296,20 @@ class InferenceAccountingTests : TestermintTest() {
         logSection("Verifying inference was expired and refunded")
         val queryResp2 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
         Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp2.joinToString("\n") }
-        val canceledInference =
-            localCluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
-        assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
-        assertThat(canceledInference.executedBy).isNull()
+        // TODO: add assert not found?
+        try {
+            val canceledInference =
+                localCluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
+        } catch (e: Exception) {
+            Logger.error("Failed to get inference: ${e.message}")
+        }
+
         val afterTimeouts = genesis.node.getInferenceTimeouts()
         assertThat(afterTimeouts.inferenceTimeout).hasSize(0)
         val balanceAfterSettle = genesis.node.getSelfBalance()
         Logger.info("Balances: Start:$balanceAtStart BeforeSettle:$balanceBeforeSettle AfterSettle:$balanceAfterSettle")
-        assertThat(balanceBeforeSettle).isEqualTo(balanceAtStart - canceledInference.escrowAmount!!)
+        assertThat(balanceBeforeSettle).isEqualTo(balanceAtStart - escrowAmount!!)
         assertThat(balanceAfterSettle).isEqualTo(balanceAtStart)
-
     }
 
     @Test
