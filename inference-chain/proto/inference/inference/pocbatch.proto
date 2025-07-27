@@ -10,6 +10,7 @@ message PoCBatch {
   repeated int64 nonces = 4;
   repeated double dist = 5;
   string batch_id = 6;
+  string node_id = 7;
 }
 
 /*

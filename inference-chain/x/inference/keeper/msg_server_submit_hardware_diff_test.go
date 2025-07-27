@@ -1,13 +1,26 @@
 package keeper_test
 
 import (
+	"context"
+	"testing"
+
 	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
+
+func registerTestModels(t *testing.T, k keeper.Keeper, ms types.MsgServer, ctx context.Context, models ...string) {
+	for _, model := range models {
+		_, err := ms.RegisterModel(ctx, &types.MsgRegisterModel{
+			Authority: k.GetAuthority(),
+			Id:        model,
+		})
+		require.NoError(t, err)
+	}
+}
 
 func TestMsgServer_SubmitHardwareDiff(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
@@ -15,6 +28,7 @@ func TestMsgServer_SubmitHardwareDiff(t *testing.T) {
 	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
 	MustAddParticipant(t, ms, ctx, *mockCreator)
+	registerTestModels(t, k, ms, ctx, "model1", "model2", "model3", "model4")
 
 	// Test adding new hardware nodes
 	newNode1 := &types.HardwareNode{
@@ -132,6 +146,8 @@ func TestMsgServer_SubmitHardwareDiff_NoExistingNodes(t *testing.T) {
 		Port: "8080",
 	}
 
+	registerTestModels(t, k, ms, sdk.UnwrapSDKContext(ctx), "model1", "model2")
+
 	// Submit new hardware node
 	_, err := ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
 		Creator:       testutil.Creator,
@@ -169,6 +185,8 @@ func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 		Host: "localhost",
 		Port: "8080",
 	}
+
+	registerTestModels(t, k, ms, sdk.UnwrapSDKContext(ctx), "model1", "model2")
 
 	// Submit new hardware node
 	_, err := ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{

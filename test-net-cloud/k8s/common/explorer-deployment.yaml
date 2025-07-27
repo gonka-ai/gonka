@@ -25,20 +25,20 @@ spec:
           name: http
         resources:
           requests:
-            memory: "128Mi"
+            memory: "512Mi"
             cpu: "100m"
           limits:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "1Gi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /
             port: 5173
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /
             port: 5173
-          initialDelaySeconds: 10
-          periodSeconds: 10 
+          initialDelaySeconds: 30
+          periodSeconds: 10

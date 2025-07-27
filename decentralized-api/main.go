@@ -78,6 +78,13 @@ func main() {
 	}
 
 	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+	// NOTE: getParams is waiting for rpc to be ready, don't add request before it
+	params, err := getParams(context.Background(), *recorder)
+	if err != nil {
+		logging.Error("Failed to get params", types.System, "error", err)
+		return
+	}
+	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
 	if err != nil {
@@ -90,13 +97,6 @@ func main() {
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
 	}
-
-	params, err := getParams(context.Background(), *recorder)
-	if err != nil {
-		logging.Error("Failed to get params", types.System, "error", err)
-		return
-	}
-	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
 
 	if err := participant.RegisterParticipantIfNeeded(recorder, config); err != nil {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
@@ -128,7 +128,7 @@ func main() {
 	training.NewAssigner(recorder, &tendermintClient, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
-	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
+	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
@@ -144,7 +144,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
-	mlServer := mlserver.NewServer(recorder)
+	mlServer := mlserver.NewServer(recorder, nodeBroker)
 	mlServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)

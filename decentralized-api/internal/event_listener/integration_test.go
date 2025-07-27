@@ -7,6 +7,7 @@ import (
 	"decentralized-api/participant"
 	"errors"
 	"fmt"
+	"github.com/productscience/inference/testutil/keeper"
 	"strconv"
 	"testing"
 	"time"
@@ -95,7 +96,7 @@ func (m *MockBrokerChainBridge) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryHardwareNodesResponse), args.Error(1)
+	return args.Get(0).(*types.QueryHardwareNodesResponse), nil
 }
 
 func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
@@ -105,6 +106,30 @@ func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardware
 
 func (m *MockBrokerChainBridge) GetBlockHash(height int64) (string, error) {
 	return "block-hash-" + strconv.FormatInt(height, 10), nil
+}
+
+func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	args := m.Called(pocHeight, modelId)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
 type MockRandomSeedManager struct {
@@ -200,6 +225,36 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
+	mockChainBridge.On("GetGovernanceModels").Return(&types.QueryModelsAllResponse{
+		Model: keeper.GenesisModelsTestList(),
+	}, nil)
+	mockChainBridge.On("GetCurrentEpochGroupData").Return(&types.QueryCurrentEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "test-model").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			ModelSnapshot: &types.Model{Id: "test-model"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "some-address",
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-1"},
+						{NodeId: "node-2"},
+					},
+				},
+			},
+		},
+	}, nil)
+
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: paramsToReturn,
@@ -269,7 +324,7 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 		PoCPort:          port, // Use different ports to distinguish nodes
 		MaxConcurrent:    1,
 		Models: map[string]apiconfig.ModelConfig{
-			"test-model": {Args: []string{}},
+			keeper.GenesisModelsTest_QWQ: {Args: []string{}},
 		},
 		Hardware: []apiconfig.Hardware{
 			{Type: "GPU", Count: 1},

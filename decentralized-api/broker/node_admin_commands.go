@@ -4,8 +4,9 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type RegisterNode struct {
@@ -18,6 +19,27 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
+	govModels, err := b.chainBridge.GetGovernanceModels()
+	if err != nil {
+		logging.Error("RegisterNode. Failed to get governance models", types.Nodes, "error", err)
+		c.Response <- nil
+		return
+	}
+
+	modelMap := make(map[string]struct{})
+	for _, model := range govModels.Model {
+		logging.Info("RegisterNode. Governance model", types.Nodes, "model_id", model.Id)
+		modelMap[model.Id] = struct{}{}
+	}
+
+	for modelId := range c.Node.Models {
+		if _, ok := modelMap[modelId]; !ok {
+			logging.Error("RegisterNode. Model is not a valid governance model", types.Nodes, "model_id", modelId)
+			c.Response <- nil
+			return
+		}
+	}
+
 	b.curMaxNodesNum.Add(1)
 	curNum := b.curMaxNodesNum.Load()
 
@@ -65,6 +87,8 @@ func (c RegisterNode) Execute(b *Broker) {
 				Enabled: true,
 				Epoch:   currentEpoch,
 			},
+			EpochModels:  make(map[string]types.Model),
+			EpochMLNodes: make(map[string]types.MLNodeInfo),
 		},
 	}
 
@@ -79,7 +103,7 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
-	logging.Debug("Registered node", types.Nodes, "node", c.Node)
+	logging.Info("RegisterNode. Registered node", types.Nodes, "node", c.Node)
 	c.Response <- &c.Node
 }
 

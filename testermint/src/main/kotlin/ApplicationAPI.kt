@@ -30,6 +30,8 @@ data class ApplicationAPI(
     private fun urlFor(type: String): String =
         urls[type] ?: error("URL for type \"$type\" not found in ApplicationAPI")
 
+    fun getPublicUrl() = urlFor(SERVER_TYPE_PUBLIC)
+
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         val resp = Fuel.get("$url/v1/participants")
@@ -157,6 +159,12 @@ data class ApplicationAPI(
         val nodes = getNodes()
         nodes.forEach { removeNode(it.node.id) }
         addNode(node)
+    }
+
+    fun setNodesTo(nodes: List<InferenceNode>) {
+        val existingNodes = getNodes()
+        existingNodes.forEach { removeNode(it.node.id) }
+        addNodes(nodes)
     }
 
     fun getNodes(): List<NodeResponse> =

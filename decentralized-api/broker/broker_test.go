@@ -9,10 +9,54 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
 )
+
+type MockBrokerChainBridge struct {
+	mock.Mock
+}
+
+func (m *MockBrokerChainBridge) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
+	args := m.Called()
+	return args.Get(0).(*types.QueryHardwareNodesResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
+	args := m.Called(diff)
+	return args.Error(0)
+}
+
+func (m *MockBrokerChainBridge) GetBlockHash(height int64) (string, error) {
+	args := m.Called(height)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	args := m.Called(pocHeight, modelId)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
+}
 
 func NewTestBroker() *Broker {
 	participantInfo := participant.CosmosInfo{
@@ -27,7 +71,39 @@ func NewTestBroker() *Broker {
 		true,
 	)
 
-	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
+	mockChainBridge := &MockBrokerChainBridge{}
+	mockChainBridge.On("GetGovernanceModels").Return(&types.QueryModelsAllResponse{
+		Model: []types.Model{
+			{Id: "model1"},
+		},
+	}, nil)
+
+	// Setup meaningful mock responses for epoch data
+	parentEpochData := &types.QueryCurrentEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"model1"},
+		},
+	}
+	model1EpochData := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			ModelSnapshot:       &types.Model{Id: "model1"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "cosmos1dummyaddress",
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "test-node-1"},
+					},
+				},
+			},
+		},
+	}
+
+	mockChainBridge.On("GetCurrentEpochGroupData").Return(parentEpochData, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model1").Return(model1EpochData, nil)
+
+	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
 }
 
 func TestSingleNode(t *testing.T) {
@@ -65,6 +141,26 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	// Wait for the 1st command to be propagated,
 	// so our set status timestamp comes after the initial registration timestamp
 	_ = <-nodeIsRegistered
+
+	mlNode := types.MLNodeInfo{
+		NodeId:             node.Id,
+		Throughput:         0,
+		PocWeight:          10,
+		TimeslotAllocation: []bool{true, false},
+	}
+
+	var modelId string
+	for m, _ := range node.Models {
+		modelId = m
+		break
+	}
+	if modelId == "" {
+		t.Fatalf("expected modelId, got empty string")
+	}
+	model := types.Model{
+		Id: modelId,
+	}
+	broker.UpdateNodeEpochData([]*types.MLNodeInfo{&mlNode}, modelId, model)
 
 	inferenceUpCommand := NewInferenceUpAllCommand()
 	queueMessage(t, broker, inferenceUpCommand)

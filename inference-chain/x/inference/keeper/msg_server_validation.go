@@ -16,17 +16,22 @@ const (
 )
 
 var ModelToPassValue = map[string]float64{
-	"Qwen/Qwen2.5-7B-Instruct":    0.85,
-	"Qwen/QwQ-32B":                0.85,
-	"unsloth/llama-3-8b-Instruct": 0.85,
+	"Qwen/Qwen2.5-7B-Instruct":   0.85,
+	"Qwen/Qwen2.5-1.5B-Instruct": 0.85,
+	"Qwen/QwQ-32B":               0.85,
 }
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
+	k.LogInfo("Received MsgValidation", types.Validation,
+		"msg.Creator", msg.Creator,
+		"inferenceId", msg.InferenceId)
+
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	params := k.Keeper.GetParams(ctx)
 	inference, found := k.GetInference(ctx, msg.InferenceId)
 	if !found {
+		k.LogError("Inference not found", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, types.ErrInferenceNotFound
 	}
 
@@ -45,10 +50,12 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
 	if !found {
+		k.LogError("Executor participant not found", types.Validation, "participantId", inference.ExecutedBy)
 		return nil, types.ErrParticipantNotFound
 	}
 
 	if executor.Address == msg.Creator && !msg.Revalidation {
+		k.LogError("Participant cannot validate own inference", types.Validation, "participant", msg.Creator, "inferenceId", msg.InferenceId)
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
@@ -70,6 +77,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
+		k.LogError("Failed to get current epoch group", types.Validation, "error", err)
 		return nil, err
 	}
 

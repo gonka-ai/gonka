@@ -98,12 +98,6 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
 	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 	epochState := o.phaseTracker.GetCurrentEpochState()
-	if epochState == nil {
-		logging.Error("ValidateReceivedBatches. Current epoch state is nil", types.PoC,
-			"startOfValStageHeight", startOfValStageHeight)
-		return
-	}
-
 	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
 	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
 	logging.Info("ValidateReceivedBatches. Current epoch state.", types.PoC,
@@ -144,6 +138,8 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		return
 	}
 	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "startOfValStageHeight", startOfValStageHeight, "numNodes", len(nodes))
+	nodes = filterNodes(nodes)
+	logging.Info("ValidateReceivedBatches. Filtered nodes available for PoC validation.", types.PoC, "numNodes", len(nodes))
 
 	if len(nodes) == 0 {
 		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight)
@@ -220,4 +216,14 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		"totalBatches", len(batches.PocBatch),
 		"successfulValidations", successfulValidations,
 		"failedValidations", failedValidations)
+}
+
+func filterNodes(nodes []broker.NodeResponse) []broker.NodeResponse {
+	filtered := make([]broker.NodeResponse, 0, len(nodes))
+	for _, node := range nodes {
+		if node.State.CurrentStatus == types.HardwareNodeStatus_POC && node.State.PocCurrentStatus == broker.PocStatusValidating {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
 }
