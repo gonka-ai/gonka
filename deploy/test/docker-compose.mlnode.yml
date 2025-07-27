@@ -1,0 +1,52 @@
+services:
+  mlnode-308:
+    image: ghcr.io/product-science/mlnode:3.0.8
+    hostname: mlnode-308
+    volumes:
+      - ${HF_HOME:-${HOME}/.cache}:/root/.cache
+    environment:
+      - HF_HOME=/root/.cache
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - HF_HUB_OFFLINE=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ipc: host
+    command: uvicorn api.app:app --host=0.0.0.0 --port=8080
+    restart: always
+
+  mlnode-309:
+    image: ghcr.io/product-science/mlnode:3.0.8
+    hostname: mlnode-309
+    volumes:
+      - ${HF_HOME:-${HOME}/.cache}:/root/.cache
+    environment:
+      - HF_HOME=/root/.cache
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - HF_HUB_OFFLINE=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ipc: host
+    command: uvicorn api.app:app --host=0.0.0.0 --port=8080
+    restart: always
+
+
+  inference:
+    image: nginx:1.28.0
+    hostname: inference
+    ports:
+      - "${PORT:-8080}:8080"
+      - "${INFERENCE_PORT:-5050}:5000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: always
+
