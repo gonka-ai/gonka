@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -214,8 +213,8 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}
 
 	seed := rand.Int31()
-	inferenceUUID := strings.Replace(request.AuthKey, "/", "-", -1)
-	inferenceRequest, err := createInferenceStartRequest(s, request, seed, inferenceUUID, executor, s.configManager.GetCurrentNodeVersion(), promptTokenCount)
+	inferenceUUID := request.AuthKey
+	inferenceRequest, err := createInferenceStartRequest(s, request, seed, request.AuthKey, executor, s.configManager.GetCurrentNodeVersion(), promptTokenCount)
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		return err
