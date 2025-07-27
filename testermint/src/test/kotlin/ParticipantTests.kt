@@ -11,6 +11,7 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
