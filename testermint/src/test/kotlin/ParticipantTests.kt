@@ -47,7 +47,7 @@ class ParticipantTests : TestermintTest() {
         logSection("Running inferences")
         runParallelInferences(genesis, 10)
         logSection("Waiting for next epoch")
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         logSection("verifying reputation increase")
         val endStats = genesis.node.getParticipantCurrentStats()
         val startParticipants = startStats.participantCurrentStats!!
