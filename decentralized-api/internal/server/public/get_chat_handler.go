@@ -2,16 +2,25 @@ package public
 
 import (
 	"decentralized-api/logging"
+	"net/http"
+	"net/url"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 func (s *Server) getChatById(ctx echo.Context) error {
 	logging.Debug("GetCompletion received", types.Inferences)
-	id := ctx.Param("id")
-	if id == "" {
+	encodedId := ctx.Param("id")
+	if encodedId == "" {
 		return ErrIdRequired
+	}
+
+	// URL decode the inference ID
+	id, err := url.QueryUnescape(encodedId)
+	if err != nil {
+		logging.Error("Failed to decode inference ID", types.Inferences, "encodedId", encodedId, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid inference ID")
 	}
 
 	logging.Debug("GET inference", types.Inferences, "id", id)
