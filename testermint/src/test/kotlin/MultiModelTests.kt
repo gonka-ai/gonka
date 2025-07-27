@@ -50,6 +50,7 @@ class MultiModelTests : TestermintTest() {
                 model = newModelName
             )
         }
+        genesis.node.waitForNextBlock(3)
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         return Pair(newModelName, secondModelPairs)
