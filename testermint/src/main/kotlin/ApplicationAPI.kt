@@ -17,6 +17,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 const val SERVER_TYPE_PUBLIC = "public"
 const val SERVER_TYPE_ML = "ml"
@@ -68,7 +69,8 @@ data class ApplicationAPI(
 
     fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
-        val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
+        val encodedInferenceId = URLEncoder.encode(inferenceId, "UTF-8")
+        val response = Fuel.get("$url/v1/chat/completions/$encodedInferenceId")
             .responseObject<InferencePayload>(gsonDeserializer(cosmosJson))
         logResponse(response)
         response.third.get()
