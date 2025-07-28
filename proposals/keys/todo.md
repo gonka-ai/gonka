@@ -135,6 +135,8 @@ IN code look only in inferene-chain and decentralized-api dirs
     - Create `AI Operational Key` (from server) and grant all needed permission to it from outside of server
     - Check that `AI Operational Key` has all this permissions granted
     **Implementation**: Minimal copy-pastable examples in `proposals/keys/minimal-example.md`
+
+
 - [TODO]: Modify `docker-init.sh` to work with provided Public Key for `Operator Key` and Key Pair for `AI Operational Key`
     - Q: Which data structures should we modify minimally
 - [TODO]: Make sure we can vote with `Operator Key` from outside of server

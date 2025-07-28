@@ -76,16 +76,45 @@ At the launch we have:
 # UserFlow
 
 ## Join Node
-1. Create Operator Key and Save Private Key Outside of server:
-    - Q: How to achieve that private key never touches container? 
 
-2. Create Key-Pair for AI Operational Key, grant permissions via `/grants`:
-    - Q: Can it be done BEFORE node is registered? Or only after?
+### Step 1: Initialize Node Environment
+1. Operator starts the `node` container
+2. Inside the node container, generate and export the validator consensus key:
+   ```
+   # Export validator key for later use in participant registration
+   inferenced export-validator-key
+   ```
 
-3. Create Validator Key via TMKMS, register as Validator using pub key:
-    - Create inside TMKMS
-    - `tmkms show-pubkey`
-    - Run create via this key
+### Step 2: Create Operator Key (Outside Container)
+3. **Security Critical**: Create the Operator Key outside of any server/container environment:
+   - Generate a new SECP256K1 key pair using a secure offline method
+   - Store the private key securely (hardware wallet, encrypted storage, etc.)
+   - **Never allow the private key to touch any container or server**
+   - Record the public key and address for the next step
 
-    - Q: Can it be created only inside TMKMS? How to make UX comfortable? 
+### Step 3: Register Participant
+4. Using the Operator Key (from outside the server), submit the participant registration:
+   ```
+   inferenced tx inference submit-new-unfunded-participant \
+     [operator-address] \
+     [node-url] \
+     [operator-public-key] \
+     [validator-consensus-key] \
+     --from [operator-key] \
+     --chain-id [chain-id]
+   ```
+
+### Step 4: Setup AI Operational Key
+5. Generate an AI Operational Key pair (can be done on server since it's a hot wallet)
+6. Grant necessary permissions to the AI Operational Key using `authz`:
+   ```
+   inferenced tx authz grant [ai-operational-address] generic \
+     --msg-type /inference.inference.MsgStartInference \
+     --from [operator-key]
+   ```
+   (Repeat for other AI operation message types)
+
+### Step 5: Launch API Services
+7. Configure and start the API node with the AI Operational Key
+8. Verify the node is properly connected to the network and can perform AI operations
 

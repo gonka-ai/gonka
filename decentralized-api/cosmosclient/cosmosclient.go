@@ -2,12 +2,18 @@ package cosmosclient
 
 import (
 	"context"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"time"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -18,11 +24,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
-	"log"
-	"os/user"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/productscience/inference/x/inference/types"
