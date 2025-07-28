@@ -4,6 +4,7 @@ import (
 	"decentralized-api/logging"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
@@ -28,6 +29,13 @@ func (s *Server) getChatById(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	response, err := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
+		// return 404
+		if strings.Contains(err.Error(), "code = NotFound") || strings.Contains(err.Error(), "not found") {
+			logging.Debug("Inference not found", types.Inferences, "id", id, "error", err)
+			return ErrInferenceNotFound
+		}
+
+		// return 500
 		logging.Error("Failed to get inference", types.Inferences, "id", id, "error", err)
 		return err
 	}
