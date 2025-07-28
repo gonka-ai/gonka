@@ -117,7 +117,9 @@ func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pru
 		"upcoming_epoch_index", upcomingEpochIndex)
 	for _, epoch := range epochsToCheck {
 		k.LogInfo("Pruning epoch", types.Pruning,
+			"epoch_index", epoch.Index,
 			"poc_start_block_height", epoch.PocStartBlockHeight)
+
 		prunedBatchCount += k.prunePoCBatchesForEpoch(ctx, epoch.PocStartBlockHeight)
 		prunedValidationCount += k.prunePoCValidationsForEpoch(ctx, epoch.PocStartBlockHeight)
 	}
