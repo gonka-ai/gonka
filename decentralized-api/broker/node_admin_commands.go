@@ -103,6 +103,9 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
+	// Trigger a status check for the newly added node.
+	b.TriggerStatusQuery()
+
 	logging.Info("RegisterNode. Registered node", types.Nodes, "node", c.Node)
 	c.Response <- &c.Node
 }

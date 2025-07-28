@@ -75,8 +75,8 @@ type SyncInfo struct {
 
 var DefaultReconciliationConfig = MlNodeReconciliationConfig{
 	Inference: &MlNodeStageReconciliationConfig{
-		BlockInterval: 10,
-		TimeInterval:  60 * time.Second,
+		BlockInterval: 5,
+		TimeInterval:  30 * time.Second,
 	},
 	PoC: &MlNodeStageReconciliationConfig{
 		BlockInterval: 1,

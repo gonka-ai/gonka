@@ -345,9 +345,15 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 			continue
 		}
 
+		logging.Info("Setting actual status for node", types.Nodes,
+			"node_id", nodeId,
+			"update.status", update.NewStatus.String(),
+			"update.prev_status", update.PrevStatus.String(),
+			"update.timestamp", update.Timestamp,
+			"node.State.CurrentStatus", node.State.CurrentStatus,
+			"node.State.StatusTimestamp", node.State.StatusTimestamp)
+
 		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
-		logging.Info("Set actual status for node", types.Nodes,
-			"node_id", nodeId, "status", update.NewStatus.String())
 	}
 
 	c.Response <- true
