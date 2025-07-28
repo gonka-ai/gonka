@@ -45,7 +45,7 @@ class PruningTests : TestermintTest() {
         assertThat(startBatchCount).isNotZero()
         assertThat(startValidationCount).isNotZero()
 
-        logSection("Waiting for next epoch. epoch.Index = ${startEpoch.index + 1}")
+        logSection("Waiting for next (+1) epoch. epoch.Index = ${startEpoch.index + 1}")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
 
@@ -57,7 +57,7 @@ class PruningTests : TestermintTest() {
         assertThat(startBatchCount).isNotZero()
         assertThat(startValidationCount).isNotZero()
 
-        logSection("Waiting for next epoch. epoch.Index = ${epoch2.index + 1}")
+        logSection("Waiting for next (+2) epoch. epoch.Index = ${epoch2.index + 1}")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
 
