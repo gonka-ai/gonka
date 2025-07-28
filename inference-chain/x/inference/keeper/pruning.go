@@ -12,14 +12,14 @@ func (k Keeper) PruneInferences(ctx context.Context, currentEpochIndex uint64, p
 	inferences := k.GetAllInference(ctx)
 	prunedCount := 0
 
-	k.LogDebug("Starting inference pruning iteration", types.Pruning,
+	k.LogInfo("Starting inference pruning iteration", types.Pruning,
 		"total_inferences", len(inferences),
 		"current_epoch", currentEpochIndex,
 		"threshold", pruningThreshold)
 
 	for _, inference := range inferences {
 		if isInferenceEligibleForPruning(inference, currentEpochIndex, pruningThreshold) {
-			k.LogDebug("Pruning inference", types.Pruning,
+			k.LogInfo("Pruning inference", types.Pruning,
 				"inference_index", inference.Index,
 				"inference_epoch", inference.EpochId,
 				"current_epoch", currentEpochIndex)
@@ -34,6 +34,10 @@ func (k Keeper) PruneInferences(ctx context.Context, currentEpochIndex uint64, p
 
 // isInferenceEligibleForPruning checks if inference can be pruned based on age
 func isInferenceEligibleForPruning(inference types.Inference, currentEpochIndex uint64, pruningThreshold uint64) bool {
+	if pruningThreshold > currentEpochIndex {
+		return false
+	}
+
 	cutoff := currentEpochIndex - pruningThreshold
 	return inference.EpochId <= cutoff
 }
