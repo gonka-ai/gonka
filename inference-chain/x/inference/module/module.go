@@ -259,13 +259,13 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 
 		// Prune old inferences
-		pruneErr := am.keeper.PruneInferences(ctx, currentEpoch.Index, am.keeper.GetParams(ctx).EpochParams.InferencePruningEpochThreshold)
+		pruneErr := am.keeper.PruneInferences(ctx, upcomingEpoch.Index, am.keeper.GetParams(ctx).EpochParams.InferencePruningEpochThreshold)
 		if pruneErr != nil {
 			am.LogError("Error pruning inferences", types.Inferences, "error", pruneErr)
 		}
 
 		// Prune old PoC data
-		pocErr := am.keeper.PrunePoCData(ctx, currentEpoch.Index, am.keeper.GetParams(ctx).PocParams.PocDataPruningEpochThreshold)
+		pocErr := am.keeper.PrunePoCData(ctx, upcomingEpoch.Index, am.keeper.GetParams(ctx).PocParams.PocDataPruningEpochThreshold)
 		if pocErr != nil {
 			am.LogError("Error pruning PoC data", types.PoC, "error", pocErr)
 		}

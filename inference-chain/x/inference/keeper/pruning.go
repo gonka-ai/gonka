@@ -8,47 +8,47 @@ import (
 )
 
 // PruneInferences removes old inference records based on threshold and status
-func (k Keeper) PruneInferences(ctx context.Context, currentEpochIndex uint64, pruningThreshold uint64) error {
+func (k Keeper) PruneInferences(ctx context.Context, upcomingEpochIndex uint64, pruningThreshold uint64) error {
 	inferences := k.GetAllInference(ctx)
 	prunedCount := 0
 
 	k.LogInfo("Starting inference pruning iteration", types.Pruning,
 		"total_inferences", len(inferences),
-		"current_epoch", currentEpochIndex,
+		"upcoming_epoch_index", upcomingEpochIndex,
 		"threshold", pruningThreshold)
 
 	for _, inference := range inferences {
-		if isInferenceEligibleForPruning(inference, currentEpochIndex, pruningThreshold) {
+		if isInferenceEligibleForPruning(inference, upcomingEpochIndex, pruningThreshold) {
 			k.LogInfo("Pruning inference", types.Pruning,
 				"inference_index", inference.Index,
 				"inference_epoch", inference.EpochId,
-				"current_epoch", currentEpochIndex)
+				"upcoming_epoch_index", upcomingEpochIndex)
 			k.RemoveInference(ctx, inference.Index)
 			prunedCount++
 		}
 	}
-	k.LogInfo("Pruned inferences", types.Pruning, "count", prunedCount, "current_epoch", currentEpochIndex, "threshold", pruningThreshold)
+	k.LogInfo("Pruned inferences", types.Pruning, "count", prunedCount, "upcoming_epoch_index", upcomingEpochIndex, "threshold", pruningThreshold)
 
 	return nil
 }
 
 // isInferenceEligibleForPruning checks if inference can be pruned based on age
-func isInferenceEligibleForPruning(inference types.Inference, currentEpochIndex uint64, pruningThreshold uint64) bool {
-	if pruningThreshold > currentEpochIndex {
+func isInferenceEligibleForPruning(inference types.Inference, upcomingEpochIndex uint64, pruningThreshold uint64) bool {
+	if pruningThreshold > upcomingEpochIndex {
 		return false
 	}
 
-	cutoff := currentEpochIndex - pruningThreshold
+	cutoff := upcomingEpochIndex - pruningThreshold
 	return inference.EpochId <= cutoff
 }
 
 var lookbackMultiplier = uint64(5)
 
 // PrunePoCData removes old PoC data within limited range for performance
-func (k Keeper) PrunePoCData(ctx context.Context, currentEpochIndex uint64, pruningThreshold uint64) error {
-	_, found := k.GetEpoch(ctx, currentEpochIndex)
+func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pruningThreshold uint64) error {
+	_, found := k.GetEpoch(ctx, upcomingEpochIndex)
 	if !found {
-		k.LogError("Failed to get current epoch", types.Pruning, "epoch_index", currentEpochIndex)
+		k.LogError("Failed to get upcoming epoch", types.Pruning, "upcoming_epoch_index", upcomingEpochIndex)
 		return types.ErrEffectiveEpochNotFound
 	}
 
@@ -56,21 +56,21 @@ func (k Keeper) PrunePoCData(ctx context.Context, currentEpochIndex uint64, prun
 	maxEpochsToCheck := pruningThreshold * lookbackMultiplier
 	k.LogInfo("Starting PoC data pruning", types.Pruning,
 		"max_epochs_to_check", maxEpochsToCheck,
-		"current_epoch", currentEpochIndex,
+		"upcoming_epoch_index", upcomingEpochIndex,
 		"threshold", pruningThreshold)
 
 	var startEpochIndex uint64
 
-	if currentEpochIndex <= pruningThreshold {
+	if upcomingEpochIndex <= pruningThreshold {
 		// Chain too young - nothing to prune
-		k.LogDebug("No epochs old enough to prune", types.Pruning, "current_epoch", currentEpochIndex, "threshold", pruningThreshold)
+		k.LogDebug("No epochs old enough to prune", types.Pruning, "upcoming_epoch_index", upcomingEpochIndex, "threshold", pruningThreshold)
 		return nil
-	} else if currentEpochIndex <= maxEpochsToCheck+pruningThreshold {
+	} else if upcomingEpochIndex <= maxEpochsToCheck+pruningThreshold {
 		// Young chain - start from beginning
 		startEpochIndex = 0
 	} else {
 		// Mature chain - apply optimization limit
-		startEpochIndex = currentEpochIndex - maxEpochsToCheck
+		startEpochIndex = upcomingEpochIndex - maxEpochsToCheck
 	}
 
 	// Collect epochs that are eligible for pruning, limited by maxEpochsToCheck
@@ -79,11 +79,11 @@ func (k Keeper) PrunePoCData(ctx context.Context, currentEpochIndex uint64, prun
 	epochsChecked := uint64(0)
 	k.LogDebug("Starting epoch collection", types.Pruning,
 		"start_epoch_index", startEpochIndex,
-		"current_epoch", currentEpochIndex,
+		"upcoming_epoch_index", upcomingEpochIndex,
 		"max_epochs_to_check", maxEpochsToCheck)
 
-	for i := startEpochIndex; i < currentEpochIndex && epochsChecked < maxEpochsToCheck; i++ {
-		epochAge := currentEpochIndex - i
+	for i := startEpochIndex; i < upcomingEpochIndex && epochsChecked < maxEpochsToCheck; i++ {
+		epochAge := upcomingEpochIndex - i
 		if epochAge < pruningThreshold {
 			k.LogDebug("Skipping epoch - not old enough", types.Pruning,
 				"epoch_index", i,
@@ -114,7 +114,7 @@ func (k Keeper) PrunePoCData(ctx context.Context, currentEpochIndex uint64, prun
 
 	k.LogDebug("Starting pruning process", types.Pruning,
 		"epochs_to_process", len(epochsToCheck),
-		"current_epoch", currentEpochIndex)
+		"upcoming_epoch_index", upcomingEpochIndex)
 	for _, epoch := range epochsToCheck {
 		k.LogInfo("Pruning epoch", types.Pruning,
 			"poc_start_block_height", epoch.PocStartBlockHeight)
@@ -125,7 +125,7 @@ func (k Keeper) PrunePoCData(ctx context.Context, currentEpochIndex uint64, prun
 	k.LogInfo("Pruned PoC data", types.Pruning,
 		"batch_count", prunedBatchCount,
 		"validation_count", prunedValidationCount,
-		"current_epoch", currentEpochIndex,
+		"upcoming_epoch_index", upcomingEpochIndex,
 		"threshold", pruningThreshold)
 
 	return nil
