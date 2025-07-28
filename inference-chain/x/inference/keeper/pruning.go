@@ -63,7 +63,7 @@ func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pru
 
 	if upcomingEpochIndex <= pruningThreshold {
 		// Chain too young - nothing to prune
-		k.LogDebug("No epochs old enough to prune", types.Pruning, "upcoming_epoch_index", upcomingEpochIndex, "threshold", pruningThreshold)
+		k.LogInfo("No epochs old enough to prune", types.Pruning, "upcoming_epoch_index", upcomingEpochIndex, "threshold", pruningThreshold)
 		return nil
 	} else if upcomingEpochIndex <= maxEpochsToCheck+pruningThreshold {
 		// Young chain - start from beginning
@@ -77,7 +77,7 @@ func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pru
 	// We'll only collect epochs that are older than the pruning threshold
 	var epochsToCheck []types.Epoch
 	epochsChecked := uint64(0)
-	k.LogDebug("Starting epoch collection", types.Pruning,
+	k.LogInfo("Starting epoch collection", types.Pruning,
 		"start_epoch_index", startEpochIndex,
 		"upcoming_epoch_index", upcomingEpochIndex,
 		"max_epochs_to_check", maxEpochsToCheck)
@@ -85,13 +85,13 @@ func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pru
 	for i := startEpochIndex; i < upcomingEpochIndex && epochsChecked < maxEpochsToCheck; i++ {
 		epochAge := upcomingEpochIndex - i
 		if epochAge < pruningThreshold {
-			k.LogDebug("Skipping epoch - not old enough", types.Pruning,
+			k.LogInfo("Skipping epoch - not old enough", types.Pruning,
 				"epoch_index", i,
 				"epoch_age", epochAge,
 				"threshold", pruningThreshold)
 			continue
 		}
-		k.LogDebug("Checking epoch for pruning", types.Pruning,
+		k.LogInfo("Checking epoch for pruning", types.Pruning,
 			"epoch_index", i,
 			"epoch_age", epochAge,
 			"threshold", pruningThreshold)
@@ -101,7 +101,7 @@ func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pru
 			k.LogInfo("Epoch not found - skipping", types.Pruning, "epoch_index", i)
 			continue
 		}
-		k.LogDebug("Found epoch to process", types.Pruning,
+		k.LogInfo("Found epoch to process", types.Pruning,
 			"epoch_index", i,
 			"poc_start_block_height", epoch.PocStartBlockHeight)
 
@@ -112,7 +112,7 @@ func (k Keeper) PrunePoCData(ctx context.Context, upcomingEpochIndex uint64, pru
 	prunedBatchCount := 0
 	prunedValidationCount := 0
 
-	k.LogDebug("Starting pruning process", types.Pruning,
+	k.LogInfo("Starting pruning process", types.Pruning,
 		"epochs_to_process", len(epochsToCheck),
 		"upcoming_epoch_index", upcomingEpochIndex)
 	for _, epoch := range epochsToCheck {
