@@ -7,6 +7,7 @@ import (
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
+	comettypes "github.com/cometbft/cometbft/types"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/labstack/echo/v4"
@@ -131,12 +131,6 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		logging.Error("Failed to get block + 1", types.Participants, "error", err)
 	}
 
-	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
-	blockM1, err := rpcClient.Block(context.Background(), &heightM1)
-	if err != nil || blockM1 == nil {
-		logging.Error("Failed to get block - 1", types.Participants, "error", err)
-	}
-
 	vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 	if err != nil || vals == nil {
 		logging.Error("Failed to get validators", types.Participants, "error", err)
@@ -160,13 +154,18 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		}
 	}
 
+	var returnBlock *comettypes.Block
+	if blockP1 != nil {
+		returnBlock = blockP1.Block
+	}
+
 	return &ActiveParticipantWithProof{
 		ActiveParticipants:      activeParticipants,
 		Addresses:               addresses,
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                result.Response.ProofOps,
 		Validators:              vals.Validators,
-		Block:                   []*comettypes.Block{block.Block, blockM1.Block, blockP1.Block},
+		Block:                   returnBlock,
 	}, nil
 }
 
