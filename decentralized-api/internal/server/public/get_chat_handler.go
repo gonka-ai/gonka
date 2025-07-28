@@ -2,12 +2,12 @@ package public
 
 import (
 	"decentralized-api/logging"
-	"net/http"
-	"net/url"
-	"strings"
-
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"net/http"
+	"net/url"
 )
 
 func (s *Server) getChatById(ctx echo.Context) error {
@@ -29,8 +29,7 @@ func (s *Server) getChatById(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	response, err := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
-		// return 404
-		if strings.Contains(err.Error(), "code = NotFound") || strings.Contains(err.Error(), "not found") {
+		if grpcStatus, ok := status.FromError(err); ok && grpcStatus.Code() == codes.NotFound {
 			logging.Debug("Inference not found", types.Inferences, "id", id, "error", err)
 			return ErrInferenceNotFound
 		}
