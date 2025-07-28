@@ -13,10 +13,10 @@ images:
   newTag: 3.0.8
 - name: tmkms
   newName: ghcr.io/product-science/tmkms-softsign-with-keygen
-  newTag: 0.1.15
+  newTag: 0.1.16
 - name: proxy
   newName: ghcr.io/product-science/proxy
-  newTag: 0.1.15
+  newTag: 0.1.16
 - name: explorer
   newName: ghcr.io/product-science/explorer
   newTag: latest
