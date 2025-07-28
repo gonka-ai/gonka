@@ -78,6 +78,7 @@ data class EpochParams(
     val pocValidationDelay: Long,
     val pocValidationDuration: Long,
     val setNewValidatorsDelay: Long,
+    val inferencePruningEpochThreshold: Long
 )
 
 data class Decimal(

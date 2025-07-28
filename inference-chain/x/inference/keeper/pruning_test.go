@@ -87,6 +87,51 @@ func TestPruningEpochThreshold(t *testing.T) {
 	require.True(t, found, "Inference from epoch 4 should not be pruned")
 }
 
+// TestPruningStatusPreservation tests that inferences with VOTING and STARTED status are not pruned
+func TestPruningStatusPreservation(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+
+	// Create inferences with different statuses
+	inferences := []types.Inference{
+		{
+			Index:   "inference-voting",
+			EpochId: 1,
+			Status:  types.InferenceStatus_VOTING,
+		},
+		{
+			Index:   "inference-started",
+			EpochId: 1,
+			Status:  types.InferenceStatus_STARTED,
+		},
+		{
+			Index:   "inference-finished",
+			EpochId: 1,
+			Status:  types.InferenceStatus_FINISHED,
+		},
+	}
+
+	// Add inferences to the store
+	for _, inf := range inferences {
+		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+	}
+
+	// Run pruning with threshold that should prune old inferences
+	err := k.PruneInferences(ctx, 4, 2) // Current epoch 4, threshold 2
+	require.NoError(t, err)
+
+	// Verify VOTING inference was not pruned
+	_, found := k.GetInference(ctx, "inference-voting")
+	require.True(t, found, "Inference with VOTING status should not be pruned")
+
+	// Verify STARTED inference was not pruned
+	_, found = k.GetInference(ctx, "inference-started")
+	require.True(t, found, "Inference with STARTED status should not be pruned")
+
+	// Verify FINISHED inference was pruned
+	_, found = k.GetInference(ctx, "inference-finished")
+	require.False(t, found, "Inference with FINISHED status should be pruned")
+}
+
 // TestPruningMultipleEpochs tests pruning behavior over 10 epochs
 func TestPruningMultipleEpochs(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)

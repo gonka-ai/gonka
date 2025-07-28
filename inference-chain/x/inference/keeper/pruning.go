@@ -34,6 +34,10 @@ func (k Keeper) PruneInferences(ctx context.Context, upcomingEpochIndex uint64, 
 
 // isInferenceEligibleForPruning checks if inference can be pruned based on age
 func isInferenceEligibleForPruning(inference types.Inference, upcomingEpochIndex uint64, pruningThreshold uint64) bool {
+	if inference.Status == types.InferenceStatus_STARTED || inference.Status == types.InferenceStatus_VOTING {
+		// pending activity
+		return false
+	}
 	if pruningThreshold > upcomingEpochIndex {
 		return false
 	}

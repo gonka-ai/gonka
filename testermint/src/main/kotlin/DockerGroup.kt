@@ -3,6 +3,8 @@ package com.productscience
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.Consumer.Companion.create
+import com.productscience.data.AppState
+import com.productscience.data.Spec
 import com.productscience.data.UnfundedInferenceParticipant
 import org.tinylog.Logger
 import java.io.File
@@ -87,7 +89,16 @@ data class DockerGroup(
         process.waitFor()
         // Just register the log events
         getLocalInferencePairs(config)
-        print("Genesis overrides file: $genesisOverridesFile | content: ${Files.readString(Path.of(workingDirectory, genesisOverridesFile))}")
+        print(
+            "Genesis overrides file: $genesisOverridesFile | content: ${
+                Files.readString(
+                    Path.of(
+                        workingDirectory,
+                        genesisOverridesFile
+                    )
+                )
+            }"
+        )
     }
 
     fun tearDownExisting() {
@@ -193,6 +204,7 @@ data class DockerGroup(
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
         Logger.info("Setup files for keyName={}", keyName)
     }
+
     init {
         require(isGenesis || genesisGroup != null) { "Genesis group must be provided" }
     }
@@ -266,7 +278,13 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         if (joinSize > joinCount) {
             (joinCount until joinSize).mapIndexed { _, index ->
                 val actualIndex = (index + 1) * 10
-                createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
+                createDockerGroup(
+                    index + 1,
+                    actualIndex,
+                    GenesisUrls(genesisGroup.keyName.trimStart('/')),
+                    config,
+                    false
+                )
             }.forEach { it.tearDownExisting() }
         }
         val joinGroups = (1..joinCount).mapIndexed { index, _ ->
@@ -291,10 +309,14 @@ fun initCluster(
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
     resetMlNodes: Boolean = true,
+    mergeSpec: Spec<AppState>? = null,
 ): Pair<LocalCluster, LocalInferencePair> {
     logSection("Cluster Discovery")
+    val finalConfig = mergeSpec?.let {
+        config.copy(genesisSpec = config.genesisSpec?.merge(mergeSpec))
+    } ?: config
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
-    val cluster = setupLocalCluster(joinCount, config, reboot || rebootFlagOn)
+    val cluster = setupLocalCluster(joinCount, finalConfig, reboot || rebootFlagOn)
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
@@ -307,7 +329,7 @@ fun initCluster(
         }
         Logger.error(e, "Error initializing cluser, retrying")
         logSection("Exception during cluster initialization, retrying")
-        return initCluster(joinCount, config, reboot = true)
+        return initCluster(joinCount, finalConfig, reboot = true)
     }
     logSection("Cluster Initialized")
     cluster.allPairs.forEach {
