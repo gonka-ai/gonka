@@ -10,13 +10,13 @@ images:
   newTag: 0.1.2
 - name: inference
   newName: ghcr.io/product-science/mlnode
-  newTag: 3.0.4-alpha2-bcstore-test-0.2
+  newTag: 3.0.8
 - name: tmkms
   newName: ghcr.io/product-science/tmkms-softsign-with-keygen
-  newTag: 32165a2
+  newTag: 0.1.15
 - name: proxy
   newName: ghcr.io/product-science/proxy
-  newTag: 1.1.2
+  newTag: 0.1.15
 - name: explorer
   newName: ghcr.io/product-science/explorer
   newTag: latest
