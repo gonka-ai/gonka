@@ -43,8 +43,8 @@ var (
 )
 
 const (
-	defaultInferencePruningThreshold = 5
-	defaultPocPruningThreshold       = 3
+	defaultInferencePruningThreshold = 4
+	defaultPocPruningThreshold       = 4
 )
 
 // ----------------------------------------------------------------------------
