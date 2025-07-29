@@ -31,10 +31,11 @@ func (s *KeeperTestSuite) TestSlashing_Proportional() {
 
 	// Expect the total slashed amount to be burned from the module account
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins) error {
+		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(types.ModuleName, moduleName)
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral slashed", memo)
 			return nil
 		}).
 		Times(1)
@@ -72,9 +73,10 @@ func (s *KeeperTestSuite) TestSlashing_ActiveOnly() {
 
 	// Expect the total slashed amount to be burned
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins) error {
+		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral slashed", memo)
 			return nil
 		}).
 		Times(1)
@@ -110,9 +112,10 @@ func (s *KeeperTestSuite) TestSlashing_UnbondingOnly() {
 
 	// Expect the total slashed amount to be burned
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins) error {
+		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral slashed", memo)
 			return nil
 		}).
 		Times(1)

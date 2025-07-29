@@ -73,7 +73,7 @@ func (k Keeper) GetAllSettleAmount(ctx context.Context) (list []types.SettleAmou
 func (k Keeper) burnSettleAmount(ctx context.Context, settleAmount types.SettleAmount, reason string) error {
 	totalCoins := settleAmount.GetTotalCoins()
 	if totalCoins > 0 {
-		err := k.BurnCoins(ctx, int64(totalCoins), reason+":"+settleAmount.Participant)
+		err := k.BurnModuleCoins(ctx, int64(totalCoins), reason+":"+settleAmount.Participant)
 		if err != nil {
 			k.LogError("Error burning settle amount coins", types.Settle, "error", err, "participant", settleAmount.Participant, "amount", totalCoins)
 			return err

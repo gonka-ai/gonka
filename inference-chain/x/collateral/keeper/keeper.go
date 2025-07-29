@@ -28,8 +28,8 @@ type (
 		// should be the x/gov module account.
 		authority string
 
-		bankKeeper       types.BankKeeper
-		bankEscrowKeeper types.BankEscrowKeeper
+		bankKeeper            types.BankKeeper
+		bookkeepingBankKeeper types.BookkeepingBankKeeper
 	}
 )
 
@@ -40,7 +40,7 @@ func NewKeeper(
 	authority string,
 
 	bankKeeper types.BankKeeper,
-	bankEscrowKeeper types.BankEscrowKeeper,
+	bookkeepingBankKeeper types.BookkeepingBankKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -52,8 +52,8 @@ func NewKeeper(
 		authority:    authority,
 		logger:       logger,
 
-		bankKeeper:       bankKeeper,
-		bankEscrowKeeper: bankEscrowKeeper,
+		bankKeeper:            bankKeeper,
+		bookkeepingBankKeeper: bookkeepingBankKeeper,
 	}
 }
 
@@ -310,12 +310,13 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) {
 		}
 
 		// Send funds from the module account back to the participant
-		err = k.bankEscrowKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, sdk.NewCoins(entry.Amount))
+		err = k.bookkeepingBankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, sdk.NewCoins(entry.Amount), "collateral unbonded")
 		if err != nil {
 			// This is a critical error, as it implies the module account is underfunded
 			// which should not happen if logic is correct.
 			panic(fmt.Sprintf("failed to release unbonding collateral for %s: %v", entry.Participant, err))
 		}
+		k.bookkeepingBankKeeper.LogSubAccountTransaction(entry.Participant, types.ModuleName, types.SubAccountUnbonding, entry.Amount, "collateral unbonded")
 
 		// Emit event for successful withdrawal processing
 		ctx.EventManager().EmitEvents(sdk.Events{
@@ -457,7 +458,7 @@ func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, sl
 
 	// 3. Burn the total slashed amount from the module account
 	if !totalSlashedAmount.IsZero() {
-		err := k.bankEscrowKeeper.BurnCoins(sdkCtx, types.ModuleName, sdk.NewCoins(totalSlashedAmount))
+		err := k.bookkeepingBankKeeper.BurnCoins(sdkCtx, types.ModuleName, sdk.NewCoins(totalSlashedAmount), "collateral slashed")
 		if err != nil {
 			// This is a critical error, indicating an issue with the module account or supply
 			return sdk.Coin{}, fmt.Errorf("failed to burn slashed coins: %w", err)

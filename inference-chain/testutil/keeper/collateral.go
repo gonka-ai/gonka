@@ -24,12 +24,12 @@ import (
 
 // CollateralMocks holds all the mock keepers for testing
 type CollateralMocks struct {
-	BankKeeper *MockBankEscrowKeeper
+	BankKeeper *MockBookkeepingBankKeeper
 }
 
 func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
-	bankKeeper := NewMockBankEscrowKeeper(ctrl)
+	bankKeeper := NewMockBookkeepingBankKeeper(ctrl)
 	// StakingKeeper and InferenceKeeper can be nil for basic tests
 	k, ctx := CollateralKeeperWithMock(t, bankKeeper)
 
@@ -38,7 +38,7 @@ func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 
 func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, CollateralMocks) {
 	ctrl := gomock.NewController(t)
-	bankKeeper := NewMockBankEscrowKeeper(ctrl)
+	bankKeeper := NewMockBookkeepingBankKeeper(ctrl)
 
 	k, ctx := CollateralKeeperWithMock(t, bankKeeper)
 
@@ -51,7 +51,7 @@ func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, C
 
 func CollateralKeeperWithMock(
 	t testing.TB,
-	bankKeeper *MockBankEscrowKeeper,
+	bankKeeper *MockBookkeepingBankKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 

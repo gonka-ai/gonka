@@ -94,7 +94,10 @@ func (k Keeper) Logger() log.Logger {
 }
 
 func (k Keeper) LogTransaction(to string, from string, amount int64, memo string) {
-	k.Logger().Info("TransactionAudit", "to", to, "from", from, "amount", amount, "memo", memo)
+	// YES, "debit" means an account goes up, and "credit" means an account goes down.
+	// That's how accounting works.
+	k.Logger().Info("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "memo", memo, "signedAmount", amount)
+	k.Logger().Info("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "memo", memo, "signedAmount", -amount)
 }
 
 func (k Keeper) LogBalance(address string, change int64, result int64, memo string) {
@@ -120,4 +123,22 @@ func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyVals ...inter
 // Codec returns the binary codec used by the keeper.
 func (k Keeper) Codec() codec.BinaryCodec {
 	return k.cdc
+}
+
+type EntryType int
+
+const (
+	Debit EntryType = iota
+	Credit
+)
+
+func (e EntryType) String() string {
+	switch e {
+	case Debit:
+		return "debit"
+	case Credit:
+		return "credit"
+	default:
+		return "unknown"
+	}
 }

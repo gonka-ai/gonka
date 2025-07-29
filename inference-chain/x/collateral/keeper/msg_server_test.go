@@ -37,13 +37,18 @@ func (s *KeeperTestSuite) TestMsgDepositCollateral_Success() {
 	deposit := sdk.NewInt64Coin(inftypes.BaseCoin, 100)
 
 	s.bankKeeper.EXPECT().
-		SendCoinsFromAccountToModule(s.ctx, participant, types.ModuleName, gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error {
+		SendCoinsFromAccountToModule(s.ctx, participant, types.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(types.ModuleName, recipientModule)
 			s.Require().Equal(participant, senderAddr)
 			s.Require().Equal(deposit.Amount, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral deposit", memo)
 			return nil
 		}).
+		Times(1)
+
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountCollateral, deposit, "collateral deposit").
 		Times(1)
 
 	msg := &types.MsgDepositCollateral{
@@ -73,8 +78,12 @@ func (s *KeeperTestSuite) TestMsgDepositCollateral_Aggregation() {
 	secondDeposit := sdk.NewInt64Coin(inftypes.BaseCoin, secondDepositAmount)
 
 	s.bankKeeper.EXPECT().
-		SendCoinsFromAccountToModule(s.ctx, participant, types.ModuleName, gomock.Any()).
+		SendCoinsFromAccountToModule(s.ctx, participant, types.ModuleName, gomock.Any(), gomock.Any()).
 		Return(nil).
+		Times(1)
+
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountCollateral, secondDeposit, "collateral deposit").
 		Times(1)
 
 	msg := &types.MsgDepositCollateral{
@@ -123,6 +132,16 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_Success() {
 
 	// Withdraw a portion
 	withdrawCoin := sdk.NewInt64Coin(inftypes.BaseCoin, withdrawAmount)
+
+	// Expect LogSubAccountTransaction calls
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, withdrawCoin, "collateral to unbonding").
+		Times(1)
+
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, withdrawCoin, "collateral to unbonding").
+		Times(1)
+
 	msg := &types.MsgWithdrawCollateral{
 		Participant: participantStr,
 		Amount:      withdrawCoin,
@@ -185,6 +204,15 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_FullWithdrawal() {
 	// Set current epoch
 	s.k.SetCurrentEpoch(s.ctx, 20)
 
+	// Expect LogSubAccountTransaction calls
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, initialCollateral, "collateral to unbonding").
+		Times(1)
+
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, initialCollateral, "collateral to unbonding").
+		Times(1)
+
 	// Withdraw all collateral
 	msg := &types.MsgWithdrawCollateral{
 		Participant: participantStr,
@@ -229,6 +257,16 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_UnbondingAggregation() {
 
 	// First withdrawal
 	firstWithdrawCoin := sdk.NewInt64Coin(inftypes.BaseCoin, firstWithdrawAmount)
+
+	// Expect LogSubAccountTransaction calls for first withdrawal
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, firstWithdrawCoin, "collateral to unbonding").
+		Times(1)
+
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, firstWithdrawCoin, "collateral to unbonding").
+		Times(1)
+
 	msg1 := &types.MsgWithdrawCollateral{
 		Participant: participantStr,
 		Amount:      firstWithdrawCoin,
@@ -238,6 +276,16 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_UnbondingAggregation() {
 
 	// Second withdrawal in the same epoch
 	secondWithdrawCoin := sdk.NewInt64Coin(inftypes.BaseCoin, secondWithdrawAmount)
+
+	// Expect LogSubAccountTransaction calls for second withdrawal
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, secondWithdrawCoin, "collateral to unbonding").
+		Times(1)
+
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, secondWithdrawCoin, "collateral to unbonding").
+		Times(1)
+
 	msg2 := &types.MsgWithdrawCollateral{
 		Participant: participantStr,
 		Amount:      secondWithdrawCoin,

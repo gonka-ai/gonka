@@ -89,7 +89,7 @@ type CollateralKeeper interface {
 
 // StreamVestingKeeper defines the expected interface for the StreamVesting module.
 type StreamVestingKeeper interface {
-	AddVestedRewards(ctx context.Context, participantAddress string, amount sdk.Coins, vestingEpochs *uint64) error
+	AddVestedRewards(ctx context.Context, participantAddress string, fundingModule string, amount sdk.Coins, vestingEpochs *uint64, memo string) error
 	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
 }
 
@@ -107,4 +107,14 @@ type EpochGroupDataKeeper interface {
 	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val EpochGroupData, found bool)
 	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string)
 	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
+}
+
+type BookkeepingBankKeeper interface {
+	SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins, memo string) error
+	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error
+	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins, memo string) error
+	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins, memo string) error
+	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins, memo string) error
+	// For logging transactions to tracking accounts, like vesting holds
+	LogSubAccountTransaction(recipient string, sender string, subAccount string, amt sdk.Coin, memo string)
 }

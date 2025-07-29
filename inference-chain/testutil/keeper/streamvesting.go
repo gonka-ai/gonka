@@ -24,12 +24,12 @@ import (
 
 // StreamVestingMocks holds all the mock keepers for testing
 type StreamVestingMocks struct {
-	BankKeeper *MockBankEscrowKeeper
+	BankKeeper *MockBookkeepingBankKeeper
 }
 
 func StreamvestingKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
-	bankEscrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	bankEscrowKeeper := NewMockBookkeepingBankKeeper(ctrl)
 	// BankEscrowKeeper can be nil for basic tests
 	k, ctx := StreamVestingKeeperWithMock(t, bankEscrowKeeper)
 
@@ -38,7 +38,7 @@ func StreamvestingKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 
 func StreamVestingKeeperWithMocks(t testing.TB) (keeper.Keeper, sdk.Context, StreamVestingMocks) {
 	ctrl := gomock.NewController(t)
-	bankEscrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	bankEscrowKeeper := NewMockBookkeepingBankKeeper(ctrl)
 
 	k, ctx := StreamVestingKeeperWithMock(t, bankEscrowKeeper)
 
@@ -51,7 +51,7 @@ func StreamVestingKeeperWithMocks(t testing.TB) (keeper.Keeper, sdk.Context, Str
 
 func StreamVestingKeeperWithMock(
 	t testing.TB,
-	bankEscrowKeeper *MockBankEscrowKeeper,
+	bankEscrowKeeper *MockBookkeepingBankKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 

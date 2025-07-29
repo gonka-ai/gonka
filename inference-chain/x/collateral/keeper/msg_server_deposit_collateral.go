@@ -24,7 +24,7 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 	}
 
 	// Transfer tokens from the participant to the module account
-	err = k.bankEscrowKeeper.SendCoinsFromAccountToModule(ctx, participantAddr, types.ModuleName, sdk.NewCoins(msg.Amount))
+	err = k.bookkeepingBankKeeper.SendCoinsFromAccountToModule(ctx, participantAddr, types.ModuleName, sdk.NewCoins(msg.Amount), "collateral deposit")
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +38,8 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 		// First deposit
 		currentCollateral = msg.Amount
 	}
+
+	k.bookkeepingBankKeeper.LogSubAccountTransaction(types.ModuleName, msg.Participant, types.SubAccountCollateral, msg.Amount, "collateral deposit")
 
 	// Store the updated collateral
 	k.SetCollateral(ctx, participantAddr, currentCollateral)

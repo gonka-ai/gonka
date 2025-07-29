@@ -525,9 +525,10 @@ type ModuleInputs struct {
 type ModuleOutputs struct {
 	depinject.Out
 
-	InferenceKeeper keeper.Keeper
-	Module          appmodule.AppModule
-	Hooks           stakingtypes.StakingHooksWrapper
+	InferenceKeeper   keeper.Keeper
+	Module            appmodule.AppModule
+	Hooks             stakingtypes.StakingHooksWrapper
+	BookkeepingKeeper types.BookkeepingBankKeeper
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -563,9 +564,10 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	)
 
 	return ModuleOutputs{
-		InferenceKeeper: k,
-		Module:          m,
-		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
+		InferenceKeeper:   k,
+		Module:            m,
+		Hooks:             stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
+		BookkeepingKeeper: &k,
 	}
 }
 

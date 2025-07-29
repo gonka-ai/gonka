@@ -28,9 +28,10 @@ func (s *KeeperTestSuite) TestStakingHooks_BeforeValidatorSlashed() {
 
 	// The hook will trigger our Slash function, which in turn will call BurnCoins
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins) error {
+		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral slashed", memo)
 			return nil
 		}).
 		Times(1)

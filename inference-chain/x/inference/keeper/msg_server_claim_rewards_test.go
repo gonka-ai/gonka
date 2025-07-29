@@ -107,8 +107,10 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
 		gomock.Any(),
 		testutil.Creator,
+		gomock.Any(),
 		workCoins,
 		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
@@ -121,8 +123,10 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
 		gomock.Any(),
 		testutil.Creator,
+		gomock.Any(),
 		rewardCoins,
 		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards
@@ -386,8 +390,10 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
 		gomock.Any(),
 		testutil.Creator,
+		gomock.Any(),
 		workCoins,
 		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
@@ -400,8 +406,10 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
 		gomock.Any(),
 		testutil.Creator,
+		gomock.Any(),
 		rewardCoins,
 		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
@@ -648,8 +656,10 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
 		gomock.Any(),
 		testutil.Creator,
+		gomock.Any(),
 		workCoins,
 		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
@@ -662,8 +672,10 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
 		gomock.Any(),
 		testutil.Creator,
+		gomock.Any(),
 		rewardCoins,
 		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now

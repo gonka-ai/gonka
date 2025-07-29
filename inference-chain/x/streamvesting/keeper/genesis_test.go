@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"go.uber.org/mock/gomock"
 
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/testutil/sample"
@@ -96,9 +97,12 @@ func (suite *KeeperTestSuite) TestGenesis_RoundTrip() {
 	participant := testutil.Creator
 
 	// Add some vesting rewards using the keeper
-	amount := sdk.NewCoins(sdk.NewInt64Coin(inftypes.BaseCoin, 1000))
+	coin := sdk.NewInt64Coin(inftypes.BaseCoin, 1000)
+	amount := sdk.NewCoins(coin)
 	vestingEpochs := uint64(4)
-	err := suite.keeper.AddVestedRewards(suite.ctx, participant, amount, &vestingEpochs)
+	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(suite.ctx, inftypes.ModuleName, types.ModuleName, amount, "memo").Return(nil)
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "memo")
 	suite.Require().NoError(err)
 
 	// Update parameters

@@ -1,6 +1,7 @@
 package app
 
 import (
+	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 	"time"
 
 	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
@@ -56,7 +57,6 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
-	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
 	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
 	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
@@ -101,8 +101,8 @@ var (
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
 		// chain modules
-		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
@@ -321,12 +321,12 @@ var (
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
 			},
 			{
-				Name:   collateralmoduletypes.ModuleName,
-				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
-			},
-			{
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
+			},
+			{
+				Name:   collateralmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
 			},
 			{
 				Name:   streamvestingmoduletypes.ModuleName,

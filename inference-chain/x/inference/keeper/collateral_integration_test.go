@@ -55,6 +55,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
 	bankKeeper := keepertest.NewMockBankEscrowKeeper(ctrl)
+	bookkepingBankKeeper := keepertest.NewMockBookkeepingBankKeeper(ctrl)
 	accountKeeper := keepertest.NewMockAccountKeeper(ctrl)
 	validatorSet := keepertest.NewMockValidatorSet(ctrl)
 	groupMock := keepertest.NewMockGroupMessageKeeper(ctrl)
@@ -67,8 +68,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		runtime.NewKVStoreService(collateralStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		nil,        // bank keeper
-		bankKeeper, // bank escrow keeper
+		nil,                  // bank keeper
+		bookkepingBankKeeper, // bank escrow keeper
 	)
 
 	inferenceKeeper := keeper.NewKeeper(
@@ -95,10 +96,10 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 	collateralMsgSrv := collateralKeeper.NewMsgServerImpl(cKeeper)
 
 	// Mock necessary bank calls
-	bankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-	bankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-	bankKeeper.EXPECT().BurnCoins(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-
+	bookkepingBankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkepingBankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkepingBankKeeper.EXPECT().BurnCoins(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkepingBankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	return ctx, inferenceKeeper, cKeeper, inferenceMsgSrv, collateralMsgSrv
 }
 

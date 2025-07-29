@@ -99,7 +99,7 @@ type AppModule struct {
 	keeper           keeper.Keeper
 	accountKeeper    types.AccountKeeper
 	bankKeeper       types.BankKeeper
-	bankEscrowKeeper types.BankEscrowKeeper
+	bankEscrowKeeper types.BookkeepingBankKeeper
 }
 
 func NewAppModule(
@@ -107,7 +107,7 @@ func NewAppModule(
 	keeper keeper.Keeper,
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
-	bankEscrowKeeper types.BankEscrowKeeper,
+	bankEscrowKeeper types.BookkeepingBankKeeper,
 ) AppModule {
 	return AppModule{
 		AppModuleBasic:   NewAppModuleBasic(cdc),
@@ -186,7 +186,7 @@ type ModuleInputs struct {
 
 	AccountKeeper    types.AccountKeeper
 	BankKeeper       types.BankKeeper
-	BankEscrowKeeper types.BankEscrowKeeper
+	BankEscrowKeeper types.BookkeepingBankKeeper
 }
 
 type ModuleOutputs struct {
