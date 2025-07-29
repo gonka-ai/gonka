@@ -5,14 +5,7 @@ import com.productscience.InferenceResult
 import com.productscience.LocalCluster
 import com.productscience.LocalInferencePair
 import com.productscience.createSpec
-import com.productscience.data.Content
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferencePayload
-import com.productscience.data.InferenceStatus
-import com.productscience.data.Logprobs
-import com.productscience.data.Participant
-import com.productscience.data.Usage
-import com.productscience.data.spec
+import com.productscience.data.*
 import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
 import com.productscience.inferenceConfig
@@ -288,11 +281,10 @@ class InferenceAccountingTests : TestermintTest() {
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
         Logger.info { "EXPIRATION BLOCKS: ${expirationBlocks - 1}" }
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-        genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
-        genesis.waitForStage(EpochStage.START_OF_POC)
+        genesis.node.waitForMinimumBlock(expirationBlock + 1, "inferenceExpiration")
         logSection("Verifying inference was expired and refunded")
         val queryResp2 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
-        Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp2.joinToString("\n") }
+        Logger.info { "QUERIED ALL INFERENCES 2 (again):\n" + queryResp2.joinToString("\n") }
         val canceledInference =
             localCluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
         assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
@@ -314,6 +306,7 @@ class InferenceAccountingTests : TestermintTest() {
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+            val timeoutsAtStart = genesis.node.getInferenceTimeouts()
             localCluster.joinPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
@@ -329,10 +322,13 @@ class InferenceAccountingTests : TestermintTest() {
                 )
             } catch(e: com.github.kittinunf.fuel.core.FuelError) {
                 failure = e
-                val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-                val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-                logSection("Waiting for inference to expire")
-                genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+                genesis.node.waitForNextBlock()
+                val timeouts = genesis.node.getInferenceTimeouts()
+                val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
+                assertThat(newTimeouts).hasSize(1)
+                val expirationHeight = newTimeouts.first().expirationHeight.toLong()
+                logSection("Waiting for inference to expire. expirationHeight = $expirationHeight")
+                genesis.node.waitForMinimumBlock(expirationHeight + 1, "inferenceExpiration")
                 logSection("Verifying inference was expired and refunded")
                 val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
                 val changes = startBalance - balanceAfterSettle
