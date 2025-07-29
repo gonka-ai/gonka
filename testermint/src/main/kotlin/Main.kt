@@ -362,6 +362,7 @@ private fun resetMlNodesToDefault(pair: LocalInferencePair) {
         }
     }
 
+    Logger.info { "Resetting ml nodes" }
     pair.waitForNextInferenceWindow(windowSizeInBlocks = 5)
     pair.api.setNodesTo(defaultNode)
 }

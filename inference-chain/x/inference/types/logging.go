@@ -72,6 +72,8 @@ func (s SubSystem) String() string {
 		return "Stat"
 	case Testing:
 		return "Testing"
+	case Pruning:
+		return "Pruning"
 	default:
 		return "Unknown"
 	}

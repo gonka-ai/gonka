@@ -11,6 +11,7 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
@@ -21,7 +22,7 @@ import java.awt.datatransfer.StringSelection
 
 class ParticipantTests : TestermintTest() {
     @Test
-    @Tag("excluded")
+    @Tag("exclude")
     fun `print out gonka values`() {
         // useful for testing gonka client
         val (cluster, genesis) = initCluster()
@@ -42,7 +43,8 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForMlNodesToLoad()
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
