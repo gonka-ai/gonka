@@ -17,6 +17,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/client/tx"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -30,11 +31,11 @@ import (
 )
 
 type InferenceCosmosClient struct {
-	Client    *cosmosclient.Client
-	Account   *cosmosaccount.Account
-	Address   string
-	Context   context.Context
-	TxFactory *tx.Factory
+	Client     *cosmosclient.Client
+	ApiAccount *apiconfig.ApiAccount
+	Address    string
+	Context    context.Context
+	TxFactory  *tx.Factory
 }
 
 func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.ConfigManager) (*InferenceCosmosClient, error) {
@@ -88,21 +89,16 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
-	account, err := client.AccountRegistry.GetByName(nodeConfig.AccountName)
-	if err != nil {
-		return nil, err
-	}
-
-	addr, err := account.Address(addressPrefix)
+	apiAccount, err := apiconfig.NewApiAccount(ctx, addressPrefix, nodeConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	return &InferenceCosmosClient{
-		Client:  &client,
-		Account: &account,
-		Address: addr,
-		Context: ctx,
+		Client:     &client,
+		ApiAccount: apiAccount,
+		Address:    apiAccount.AccountAddress(),
+		Context:    ctx,
 	}, nil
 }
 
@@ -127,8 +123,8 @@ type CosmosMessageClient interface {
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error)
 	GetContext() *context.Context
-	GetAddress() string
-	GetAccount() *cosmosaccount.Account
+	GetAccountAddress() string
+	GetAccountPubKey() cryptotypes.PubKey
 	GetCosmosClient() *cosmosclient.Client
 }
 
@@ -136,12 +132,12 @@ func (icc *InferenceCosmosClient) GetContext() *context.Context {
 	return &icc.Context
 }
 
-func (icc *InferenceCosmosClient) GetAddress() string {
-	return icc.Address
+func (icc *InferenceCosmosClient) GetAccountAddress() string {
+	return icc.ApiAccount.AccountAddress()
 }
 
-func (icc *InferenceCosmosClient) GetAccount() *cosmosaccount.Account {
-	return icc.Account
+func (icc *InferenceCosmosClient) GetAccountPubKey() cryptotypes.PubKey {
+	return icc.ApiAccount.AccountKey
 }
 
 func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
@@ -149,7 +145,7 @@ func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
-	name := icc.Account.Name
+	name := icc.ApiAccount.SignerAccount.Name
 	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
 	bytes, _, err := icc.Client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
 	if err != nil {
@@ -311,7 +307,7 @@ func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx c
 	timestamp := getTimestamp()
 	unsignedTx.SetUnordered(true)
 	unsignedTx.SetTimeoutTimestamp(timestamp)
-	name := c.Account.Name
+	name := c.ApiAccount.SignerAccount.Name
 	logging.Debug("Signing transaction", types.Messages, "name", name)
 	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
 	if err != nil {
@@ -331,7 +327,7 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 	if c.TxFactory != nil {
 		return c.TxFactory, nil
 	}
-	address, err := c.Account.Record.GetAddress()
+	address, err := c.ApiAccount.SignerAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "error", err)
 		return nil, err

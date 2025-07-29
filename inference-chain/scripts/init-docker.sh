@@ -101,8 +101,8 @@ if $FIRST_RUN; then
   echo "$output" | filter_cw20_code
 
 
-  # run "$APP_NAME" keys add "$KEY_NAME" \
-  #      --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR"
+  run "$APP_NAME" keys add "$KEY_NAME" \
+       --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR"
 fi
 
 ###############################################################################

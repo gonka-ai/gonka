@@ -2,10 +2,11 @@ package admin
 
 import (
 	"decentralized-api/cosmosclient"
-	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/api/inference/inference"
 	"net/http"
 	"strconv"
+
+	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/api/inference/inference"
 )
 
 type CreateDummyTrainingTaskDto struct {
@@ -28,10 +29,10 @@ func (s *Server) postDummyTrainingTask(ctx echo.Context) error {
 	}
 
 	msg := &inference.MsgCreateDummyTrainingTask{
-		Creator: s.recorder.GetAddress(),
+		Creator: s.recorder.GetAccountAddress(),
 		Task: &inference.TrainingTask{
 			Id:          body.TaskId,
-			RequestedBy: s.recorder.GetAddress(),
+			RequestedBy: s.recorder.GetAccountAddress(),
 			Assignees:   assignees,
 		},
 	}

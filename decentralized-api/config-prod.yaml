@@ -4,8 +4,9 @@ api:
   public_url: http://localhost:8080
 nodes:
 chain_node:
-  url: http://node:26657
-  account_name: "alice"
+  url: http://localhost:26657
+  ml_ops_key_name: "alice"
+  account_public_key: ""
   keyring_backend: "test"
   keyring_dir: "/root/.inference"
   is_genesis: false

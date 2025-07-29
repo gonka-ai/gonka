@@ -171,8 +171,8 @@ func (cm *ConfigManager) CreateWorkerKey() (string, error) {
 	workerPublicKeyString := base64.StdEncoding.EncodeToString(workerPublicKey.Bytes())
 	workerPrivateKey := workerKey.Bytes()
 	workerPrivateKeyString := base64.StdEncoding.EncodeToString(workerPrivateKey)
-	cm.currentConfig.KeyConfig.WorkerPrivateKey = workerPrivateKeyString
-	cm.currentConfig.KeyConfig.WorkerPublicKey = workerPublicKeyString
+	cm.currentConfig.MLNodeKeyConfig.WorkerPrivateKey = workerPrivateKeyString
+	cm.currentConfig.MLNodeKeyConfig.WorkerPublicKey = workerPublicKeyString
 	err := cm.Write()
 	if err != nil {
 		return "", err
@@ -230,7 +230,7 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		log.Fatalf("error unmarshalling config: %v", err)
 	}
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
-		config.ChainNode.AccountName = keyName
+		config.ChainNode.SignerKeyName = keyName
 	}
 
 	if err := loadNodeConfig(&config); err != nil {

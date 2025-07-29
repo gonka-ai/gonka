@@ -6,10 +6,11 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"errors"
-	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"sort"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const logTagExecutor = "[training-task-executor] "
@@ -72,7 +73,7 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 
 	myNodes := make([]string, 0)
 	for _, a := range resp.Task.Assignees {
-		if a.Participant != e.cosmosClient.GetAddress() {
+		if a.Participant != e.cosmosClient.GetAccountAddress() {
 			continue
 		}
 		logging.Info(logTagExecutor+"Found task assigned to me", types.Training, "taskId", taskId)
@@ -107,7 +108,7 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 
 	nodeRanks := make(map[string]int)
 	for i, n := range rankedNodes {
-		if n.participant == e.cosmosClient.GetAddress() {
+		if n.participant == e.cosmosClient.GetAccountAddress() {
 			nodeRanks[n.nodeId] = i
 		}
 	}
@@ -225,7 +226,7 @@ func (e *Executor) checkInProgressTasksOnChain() {
 			continue
 		}
 		for _, a := range t.Assignees {
-			if a.Participant == e.cosmosClient.GetAddress() {
+			if a.Participant == e.cosmosClient.GetAccountAddress() {
 				tasks = append(tasks, t)
 				break
 			}

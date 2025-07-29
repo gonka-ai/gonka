@@ -4,10 +4,11 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"fmt"
+	"net/http"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 func (s *Server) registerModel(ctx echo.Context) error {
@@ -20,7 +21,7 @@ func (s *Server) registerModel(ctx echo.Context) error {
 	logging.Info("RegisterModel", types.Inferences, "authority", authority)
 	msg := &inference.MsgRegisterModel{
 		Authority:              authority,
-		ProposedBy:             s.recorder.GetAddress(),
+		ProposedBy:             s.recorder.GetAccountAddress(),
 		Id:                     body.Id,
 		UnitsOfComputePerToken: body.UnitsOfComputePerToken,
 	}

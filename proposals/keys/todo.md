@@ -139,7 +139,7 @@ IN code look only in inferene-chain and decentralized-api dirs
     - WorkerKey field left empty as per todo instruction "Fully Ignore Worker Key for now"
     - Includes proper error handling and user-friendly output
 
-- [WIP]: Create new command received granted and grantee account and grants permissions. Code is in @permissions.go
+- [DONE]: Create new command received granted and grantee account and grants permissions. Code is in @permissions.go
     Command should be minimalistic and used `inferenced tx grant-ml-ops-permissions FROM TO`
     
     **Implementation Details:**
@@ -148,6 +148,8 @@ IN code look only in inferene-chain and decentralized-api dirs
     - Integrated with main CLI in `inference-chain/cmd/inferenced/cmd/commands.go`
     - Uses existing `inference.GrantOperationKeyPermissionsToAccount()` function
     - Supports all standard transaction flags (fees, gas, keyring, etc.) 
+
+- [WIP]: Class to manage AccountKey and Operational Key
 
 **Total: 5 manual authorization message types**
 

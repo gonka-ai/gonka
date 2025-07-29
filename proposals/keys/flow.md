@@ -69,8 +69,8 @@ We are implementing a role-based key management system. This architecture separa
 
 At the launch we have:
 
-- **Operator Key** - Cold Wallet - used for Gov, Trease, Consensus Key rotation and AI Operational Key rotation 
-- **AI Operational Key** - Hot Wallet - used for all AI related
+- **Account Key** - Cold Wallet - used for Gov, Trease, Consensus Key rotation and AI Operational Key rotation 
+- **ML Operational Key** - Hot Wallet - used for all AI related
 - **Validator / Consensus / Tendermint Key** - TMKSM with Secure Storage
 
 # UserFlow
@@ -104,7 +104,7 @@ At the launch we have:
      --chain-id [chain-id]
    ```
 
-### Step 4: Setup AI Operational Key
+### Step 4: Setup ML Operational Key
 5. Generate an AI Operational Key pair (can be done on server since it's a hot wallet)
 6. Grant necessary permissions to the AI Operational Key using `authz`:
    ```

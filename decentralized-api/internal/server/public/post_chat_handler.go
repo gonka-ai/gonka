@@ -149,7 +149,7 @@ func cleanupExpiredAuthKeys(currentBlockHeight int64) {
 func (s *Server) postChat(ctx echo.Context) error {
 	logging.Debug("PostChat. Received request", types.Inferences, "path", ctx.Request().URL.Path)
 
-	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAddress())
+	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAccountAddress())
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 		request.InferenceId = inferenceUUID
 		request.Seed = strconv.Itoa(int(seed))
-		request.TransferAddress = s.recorder.GetAddress()
+		request.TransferAddress = s.recorder.GetAccountAddress()
 		request.TransferSignature = inferenceRequest.TransferSignature
 
 		logging.Info("Execute request on same node, fill request with extra data", types.Inferences, "inferenceId", request.InferenceId, "seed", request.Seed)
@@ -447,7 +447,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAddress(), request)
+	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
@@ -475,7 +475,7 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
 	}
 
-	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAddress(), request.TransferSignature); err != nil {
+	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAccountAddress(), request.TransferSignature); err != nil {
 		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
 	}
@@ -562,9 +562,9 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 		ExecutorAddress: executorAddress,
 	}
 
-	address, err := sdk.AccAddressFromBech32(s.recorder.GetAddress())
+	address, err := sdk.AccAddressFromBech32(s.recorder.GetAccountAddress())
 	if err != nil {
-		logging.Error("Failed to parse address", types.Inferences, "address", s.recorder.GetAddress(), "error", err)
+		logging.Error("Failed to parse address", types.Inferences, "address", s.recorder.GetAccountAddress(), "error", err)
 		return "", err
 	}
 
