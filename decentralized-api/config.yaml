@@ -10,9 +10,9 @@ nodes:
     models:
       - Qwen/Qwen2.5-7B-Instruct
 chain_node:
-  url: http://join1-node:26657
-  ml_ops_key_name: "alice"
+  url: http://localhost:26657
   account_public_key: ""
+  signer_key_name: "alice"
   keyring_backend: "test"
-  keyring_dir: "/root/.inference"
+  keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root
   is_genesis: false

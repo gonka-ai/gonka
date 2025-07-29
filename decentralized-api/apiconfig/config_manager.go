@@ -5,6 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"strings"
+	"sync"
+
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
@@ -12,11 +18,6 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"github.com/productscience/inference/x/inference/types"
-	"io"
-	"log"
-	"os"
-	"strings"
-	"sync"
 )
 
 type ConfigManager struct {
@@ -231,6 +232,12 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	}
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
 		config.ChainNode.SignerKeyName = keyName
+		log.Printf("Loaded KEY_NAME: %+v", keyName)
+	}
+
+	if accountPubKey, found := os.LookupEnv("ACCOUNT_PUBKEY"); found {
+		config.ChainNode.AccountPublicKey = accountPubKey
+		log.Printf("Loaded ACCOUNT_PUBKEY: %+v", accountPubKey)
 	}
 
 	if err := loadNodeConfig(&config); err != nil {

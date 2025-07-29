@@ -1,6 +1,7 @@
 package apiconfig
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -22,6 +23,7 @@ func NewApiAccount(ctx context.Context, addressPrefix string, nodeConfig ChainNo
 	client, err := cosmosclient.New(
 		ctx,
 		cosmosclient.WithAddressPrefix(addressPrefix),
+		cosmosclient.WithNodeAddress(nodeConfig.Url),
 		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
 		cosmosclient.WithKeyringDir(nodeConfig.KeyringDir),
 	)
@@ -39,7 +41,6 @@ func NewApiAccount(ctx context.Context, addressPrefix string, nodeConfig ChainNo
 		return nil, fmt.Errorf("failed to decode account public key: %w", err)
 	}
 	accountKey := secp256k1.PubKey{Key: pubKeyBytes}
-
 	return &ApiAccount{
 		AccountKey:    &accountKey,
 		SignerAccount: &signer,
@@ -47,22 +48,43 @@ func NewApiAccount(ctx context.Context, addressPrefix string, nodeConfig ChainNo
 	}, nil
 }
 
-// AccountAddress returns the bech32 address of the main account (cold wallet).
-func (a *ApiAccount) AccountAddress() string {
-	// A PubKey's address is deterministic, so this cannot fail.
-	return types.AccAddress(a.AccountKey.Address()).String()
-}
-
-// SignerAddress returns the bech32 address of the signer account (hot wallet).
-func (a *ApiAccount) SignerAddress() (types.AccAddress, error) {
-	address, err := a.SignerAccount.Address(a.AddressPrefix)
+func (a *ApiAccount) AccountAddressBech32() (string, error) {
+	addr, err := types.Bech32ifyAddressBytes(a.AddressPrefix, a.AccountKey.Address())
 	if err != nil {
-		return types.AccAddress{}, fmt.Errorf("could not get signer address: %w", err)
+		return "", fmt.Errorf("failed to Bech32-encode address: %w", err)
 	}
-	return types.AccAddress(address), nil
+	return addr, nil
 }
 
-// IsSignerTheMainAccount checks if the signer key is the same as the main account key.
+func (a *ApiAccount) AccountAddress() (types.AccAddress, error) {
+	return types.AccAddress(a.AccountKey.Address()), nil
+}
+
+func (a *ApiAccount) SignerAddressBech32() (string, error) {
+	pubKey, err := a.SignerAccount.Record.GetPubKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to get signer public key: %w", err)
+	}
+	addr, err := types.Bech32ifyAddressBytes(a.AddressPrefix, pubKey.Address())
+	if err != nil {
+		return "", fmt.Errorf("failed to Bech32-encode address: %w", err)
+	}
+	return addr, nil
+}
+
+func (a *ApiAccount) SignerAddress() (types.AccAddress, error) {
+	pubKey, err := a.SignerAccount.Record.GetPubKey()
+	if err != nil {
+		return types.AccAddress{}, fmt.Errorf("failed to get signer public key: %w", err)
+	}
+	return types.AccAddress(pubKey.Address()), nil
+}
+
 func (a *ApiAccount) IsSignerTheMainAccount() bool {
-	return a.SignerAccount.Record.PubKey.Equal(a.AccountKey)
+	signerPubKey, err := a.SignerAccount.Record.GetPubKey()
+	if err != nil {
+		return false
+	}
+
+	return bytes.Equal(signerPubKey.Bytes(), a.AccountKey.Bytes())
 }

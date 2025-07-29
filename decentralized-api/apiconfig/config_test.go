@@ -297,7 +297,7 @@ api:
     port: 8080
 chain_node:
     url: http://join1-node:26657
-    ml_ops_key_name: join1
+    signer_key_name: join1
     account_public_key: ""
     keyring_backend: test
     keyring_dir: /root/.inference

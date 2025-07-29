@@ -44,6 +44,7 @@ IN code look only in inferene-chain and decentralized-api dirs
 # Phase 0 / Launch
 
 - [DONE]: Find all places where we use private key when init new node and list them
+    **Identified two key usage patterns**: (1) Account Keys (SECP256K1) for transactions - stored in `~/.inference/`, used for validator registration via POST `/v1/participants`, runtime AI operations, and transaction signing. (2) Consensus Keys (ED25519) for block validation - generated via TMKMS, stored in `priv_validator_key.json`, used for consensus participation.
 
 ## Private Key Usage During Node Initialization
 
@@ -78,16 +79,10 @@ IN code look only in inferene-chain and decentralized-api dirs
 - **Security**: Can use TMKMS for secure key management
 
 - [DONE]: Define how flow changes when AI Operational Key - Hot Wallet added
-    **Key Changes:**
-    - **Pre-Registration Setup**: Operator Key (cold) and AI Operational Key (hot) created before participant registration
-    - **Permission Granting**: Operator Key grants authz permissions to AI Operational Key for all AI operations (`MsgStartInference`, `MsgFinishInference`, `MsgClaimRewards`, `MsgReportValidation`, etc.)
-    - **Runtime Split**: 
-      - AI Operations → AI Operational Key (automated, on-node via authz)
-      - Admin Operations → Operator Key (manual, off-node)
-    - **Participant Association**: NO direct association needed - AI Operational Key works via authz grants from Operator Key
-    - **Address vs PubKey**: Only address needed for authz grants; AI Operational Key stored encrypted in node keyring 
+    **Defined key separation architecture**: Operator Key (cold) created offline for admin operations; AI Operational Key (hot) created on-server with authz permissions granted by Operator Key for automated AI operations. No direct participant association needed - AI Operational Key works via authz grants from Operator Key.
 
 - [DONE]: Create Full list of permission to be granted to Warm Key. INCLUDING AI OPERATION AND WHEN SEED CREATES NEW PARTICIPANT
+    **Created comprehensive permission list**: Documented 18 AI Operational Key message types (MsgStartInference, MsgFinishInference, MsgClaimRewards, etc.) and 5 future Governance Key message types. All permissions defined in `inference.InferenceOperationKeyPerms` array for automated ML operations.
 
 ## Full Permission List by Key Type
 
@@ -125,35 +120,33 @@ IN code look only in inferene-chain and decentralized-api dirs
 - `MsgCreateTrainingTask` - Create new training tasks (operators/admins)
 
 - [DONE]: Add command in inferenced CLI which register new participant with seed's `g.POST("participants", s.submitNewParticipantHandler)`
-    Command should be minimalistic and used `inferenced register-new-participant [operator-address] \
-     [node-url] \
-     [operator-public-key] \
-     [validator-consensus-key] \
-     --node-address http://genesis-node:8080
-
-    **Implementation Details:**
-    - Created `RegisterNewParticipantCommand()` in `inference-chain/cmd/inferenced/cmd/register_participant_command.go`
-    - Added command to main CLI in `inference-chain/cmd/inferenced/cmd/commands.go`
-    - Command sends HTTP POST request to seed node's `/v1/participants` endpoint
-    - Uses `SubmitUnfundedNewParticipantDto` structure for request body
-    - WorkerKey field left empty as per todo instruction "Fully Ignore Worker Key for now"
-    - Includes proper error handling and user-friendly output
+    **Implemented CLI participant registration**: Created `inferenced register-new-participant` command in `register_participant_command.go` that sends HTTP POST to seed node's `/v1/participants` endpoint. Command takes operator-address, node-url, operator-public-key, validator-consensus-key arguments and --node-address flag.
 
 - [DONE]: Create new command received granted and grantee account and grants permissions. Code is in @permissions.go
-    Command should be minimalistic and used `inferenced tx grant-ml-ops-permissions FROM TO`
-    
-    **Implementation Details:**
-    - Created `GetTxCmd()` function in `inference-chain/x/inference/module/module.go`
-    - Added `GrantMLOpsPermissionsCmd()` CLI command with usage: `inferenced tx inference grant-ml-ops-permissions [operator-key-name] [ai-operational-address]`
-    - Integrated with main CLI in `inference-chain/cmd/inferenced/cmd/commands.go`
-    - Uses existing `inference.GrantOperationKeyPermissionsToAccount()` function
-    - Supports all standard transaction flags (fees, gas, keyring, etc.) 
+    **Implemented permission granting CLI**: Created `inferenced tx inference grant-ml-ops-permissions` command in `module.go` that grants all 18 AI operation permissions from operator key to AI operational key using authz. Integrated with main CLI and supports standard transaction flags.
 
-- [WIP]: Class to manage AccountKey and Operational Key
+- [DONE]: Class to manage AccountKey and Operational Key
+    **Built account management infrastructure**: Created `ApiAccount` struct in `accounts.go` with AccountKey/SignerAccount fields, implemented address methods, integrated keyring backend support, established `InferenceOperationKeyPerms` array, and added CLI integration for participant registration.
+
+- [WIP]: Creating Account Key in API for tests
+    **Implemented key creation in decentralized-api for test pipeline:**
+    
+    1. **Key Creation**: `decentralized-api/scripts/init-docker.sh` creates keys when `CREATE_KEY=true` using `inferenced keys add` with keyring-backend=test, keyring-dir=/root/.inference
+    
+    2. **Public Key Export**: Extracts ACCOUNT_PUBKEY via `inferenced keys show --pubkey` and exports as environment variable
+    
+    3. **Config Loading**: `decentralized-api/apiconfig/config_manager.go` requires both KEY_NAME and ACCOUNT_PUBKEY environment variables, loads into SignerKeyName and AccountPublicKey fields
+    
+    4. **Error Handling**: Script exits if CREATE_KEY=false and ACCOUNT_PUBKEY not provided, config loading fails if either env var missing
+    
+    **Usage**: Set `CREATE_KEY=true` for test nodes, `CREATE_KEY=false` with provided `ACCOUNT_PUBKEY` for production nodes
+
+    5. [WIP] Make sure that approach works with api for genesis node
+     **Implemented genesis key reuse for decentralized-api**: Modified `decentralized-api/scripts/init-docker.sh` to automatically extract `ACCOUNT_PUBKEY` from existing keys when neither `CREATE_KEY=true` nor `ACCOUNT_PUBKEY` is provided, with warning messages for production safety. Enhanced `decentralized-api/apiconfig/config_manager.go` to optionally use `ACCOUNT_PUBKEY` environment variable when provided. Genesis flow works in local-test-net: (1) `inference-chain/scripts/init-docker-genesis.sh` creates "genesis" key in shared `./prod-local/genesis:/root/.inference` volume, (2) decentralized-api detects existing "genesis" key and extracts public key with warnings, (3) both containers share keyring access for transaction signing. Volume sharing enables seamless key reuse in local development environments while maintaining backward compatibility.
 
 **Total: 5 manual authorization message types**
 
-- [DONE]: Create a pre-init step when we:
+- [TODO]: Create a pre-init step when we:
     - Create `Operator Key`
     - Create `AI Operational Key` (from server) and grant all needed permission to it from outside of server
     - Check that `AI Operational Key` has all this permissions granted

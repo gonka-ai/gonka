@@ -94,10 +94,15 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
+	accAddress, err := apiAccount.AccountAddressBech32()
+	if err != nil {
+		return nil, err
+	}
+
 	return &InferenceCosmosClient{
 		Client:     &client,
 		ApiAccount: apiAccount,
-		Address:    apiAccount.AccountAddress(),
+		Address:    accAddress,
 		Context:    ctx,
 	}, nil
 }
@@ -133,7 +138,12 @@ func (icc *InferenceCosmosClient) GetContext() *context.Context {
 }
 
 func (icc *InferenceCosmosClient) GetAccountAddress() string {
-	return icc.ApiAccount.AccountAddress()
+	address, err := icc.ApiAccount.AccountAddressBech32()
+	if err != nil {
+		logging.Error("Failed to get account address", types.Messages, "error", err)
+		return ""
+	}
+	return address
 }
 
 func (icc *InferenceCosmosClient) GetAccountPubKey() cryptotypes.PubKey {

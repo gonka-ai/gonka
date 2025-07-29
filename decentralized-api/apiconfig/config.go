@@ -104,7 +104,7 @@ type ChainNodeConfig struct {
 	IsGenesis        bool   `koanf:"is_genesis"`
 	SeedApiUrl       string `koanf:"seed_api_url"`
 	AccountPublicKey string `koanf:"account_public_key"`
-	SignerKeyName    string `koanf:"ml_ops_key_name"`
+	SignerKeyName    string `koanf:"signer_key_name"`
 	KeyringBackend   string `koanf:"keyring_backend"`
 	KeyringDir       string `koanf:"keyring_dir"`
 }
