@@ -306,6 +306,7 @@ class InferenceAccountingTests : TestermintTest() {
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+            val timeoutsAtStart = genesis.node.getInferenceTimeouts()
             localCluster.joinPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
@@ -321,10 +322,13 @@ class InferenceAccountingTests : TestermintTest() {
                 )
             } catch(e: com.github.kittinunf.fuel.core.FuelError) {
                 failure = e
-                val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-                val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-                logSection("Waiting for inference to expire")
-                genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+                genesis.node.waitForNextBlock()
+                val timeouts = genesis.node.getInferenceTimeouts()
+                val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
+                assertThat(newTimeouts).hasSize(1)
+                val expirationHeight = newTimeouts.first().expirationHeight.toLong()
+                logSection("Waiting for inference to expire. expirationHeight = $expirationHeight")
+                genesis.node.waitForMinimumBlock(expirationHeight + 1, "inferenceExpiration")
                 logSection("Verifying inference was expired and refunded")
                 val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
                 val changes = startBalance - balanceAfterSettle
