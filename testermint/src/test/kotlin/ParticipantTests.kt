@@ -43,7 +43,8 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForMlNodesToLoad()
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
