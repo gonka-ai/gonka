@@ -303,7 +303,7 @@ fun initCluster(
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs, resetMlNodesTo = resetMlNodes)
+        initialize(cluster.allPairs, resetMlNodes = resetMlNodes)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {
@@ -392,6 +392,11 @@ data class LocalCluster(
         }
     }
 
+    fun waitForMlNodesToLoad() {
+        Logger.info("Waiting for ML nodes to load", "")
+        allPairs.forEach { pair -> pair.waitForMlNodesToLoad() }
+        error("Timeout waiting for ML nodes to load")
+    }
 }
 
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {

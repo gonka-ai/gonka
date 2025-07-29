@@ -11,6 +11,7 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
@@ -47,7 +48,7 @@ class ParticipantTests : TestermintTest() {
         logSection("Running inferences")
         runParallelInferences(genesis, 10)
         logSection("Waiting for next epoch")
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         logSection("verifying reputation increase")
         val endStats = genesis.node.getParticipantCurrentStats()
         val startParticipants = startStats.participantCurrentStats!!

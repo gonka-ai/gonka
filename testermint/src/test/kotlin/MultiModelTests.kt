@@ -38,7 +38,7 @@ class MultiModelTests : TestermintTest() {
         logSection("Setting nodes for new model")
         secondModelPairs.forEach {
             val newNode = validNode.copy(
-                host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080, models = mapOf(
+                host = "${it.name.trim('/')}-mock-server", models = mapOf(
                     newModelName to ModelConfig(
                         args = emptyList()
                     ), defaultModel to ModelConfig(args = emptyList())
