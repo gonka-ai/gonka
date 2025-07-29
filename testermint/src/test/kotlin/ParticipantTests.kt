@@ -11,22 +11,46 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Disabled
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import kotlin.test.assertNotNull
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 
 class ParticipantTests : TestermintTest() {
     @Test
+    @Tag("exclude")
+    fun `print out gonka values`() {
+        // useful for testing gonka client
+        val (cluster, genesis) = initCluster()
+        val addresses = cluster.allPairs.map {
+            it.api.getPublicUrl() + ";" + it.node.getAddress()
+        }
+        val clipboardContent = buildString {
+            appendLine("GONKA_ENDPOINTS=" + addresses.joinToString(separator = ","))
+            appendLine("GONKA_ADDRESS=" + genesis.node.getAddress())
+            appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getPrivateKey())
+        }
+
+        Logger.warn(clipboardContent)
+        val selection = StringSelection(clipboardContent)
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
+    }
+
+    @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForMlNodesToLoad()
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
         runParallelInferences(genesis, 10)
         logSection("Waiting for next epoch")
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         logSection("verifying reputation increase")
         val endStats = genesis.node.getParticipantCurrentStats()
         val startParticipants = startStats.participantCurrentStats!!

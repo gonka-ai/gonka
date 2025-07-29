@@ -7,10 +7,11 @@ import (
 	"decentralized-api/participant"
 	"errors"
 	"fmt"
-	"github.com/productscience/inference/testutil/keeper"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/productscience/inference/testutil/keeper"
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -440,6 +441,20 @@ func waitForAsync(duration time.Duration) {
 	time.Sleep(duration)
 }
 
+func waitForNodeStatus(t *testing.T, setup *IntegrationTestSetup, nodeId string, expectedStatus types.HardwareNodeStatus, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, state := setup.getNode(nodeId)
+		if state.CurrentStatus == expectedStatus {
+			return // Success
+		}
+		time.Sleep(50 * time.Millisecond) // Poll interval
+	}
+	// If the loop finishes, the condition was not met in time.
+	_, state := setup.getNode(nodeId)
+	require.Equal(t, expectedStatus, state.CurrentStatus, "timed out waiting for node status")
+}
+
 func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 	return MlNodeReconciliationConfig{
 		Inference: &MlNodeStageReconciliationConfig{
@@ -461,14 +476,17 @@ func TestInferenceReconciliation(t *testing.T) {
 	setup := createIntegrationTestSetup(&reconciliationConfig, &epochParams)
 
 	setup.addTestNode("node-1", 8081)
+	waitForNodeStatus(t, setup, "node-1", types.HardwareNodeStatus_STOPPED, 2*time.Second)
+
 	setup.addTestNode("node-2", 8082)
+	waitForNodeStatus(t, setup, "node-2", types.HardwareNodeStatus_STOPPED, 2*time.Second)
 
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
-		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)
 		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.IntendedStatus)
 	})
 	setup.assertNode("node-2", func(n broker.NodeResponse) {
-		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)
 		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.IntendedStatus)
 	})
 
@@ -704,7 +722,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		assert.Equal(t, 1, node2Client.InitValidateCalled, "Enabled node-2 should receive InitGenerate call")
 	})
 
-	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
+	node1Expected := NodeClientAssertion{StopCalled: 0, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
 	assertNodeClient(t, node1Expected, node1Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)

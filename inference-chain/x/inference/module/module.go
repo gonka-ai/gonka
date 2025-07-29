@@ -46,6 +46,11 @@ var (
 	_ appmodule.HasEndBlocker   = (*AppModule)(nil)
 )
 
+const (
+	defaultInferencePruningThreshold = 4
+	defaultPocPruningThreshold       = 4
+)
+
 // ----------------------------------------------------------------------------
 // AppModuleBasic
 // ----------------------------------------------------------------------------
@@ -261,6 +266,28 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+
+		// Prune old inferences
+		inferencePruningThreshold := am.keeper.GetParams(ctx).EpochParams.InferencePruningEpochThreshold
+		if inferencePruningThreshold == 0 {
+			am.LogInfo("Inference pruning threshold is 0, using default", types.Inferences, "threshold", defaultInferencePruningThreshold)
+			inferencePruningThreshold = defaultInferencePruningThreshold
+		}
+		pruneErr := am.keeper.PruneInferences(ctx, upcomingEpoch.Index, inferencePruningThreshold)
+		if pruneErr != nil {
+			am.LogError("Error pruning inferences", types.Inferences, "error", pruneErr)
+		}
+
+		// Prune old PoC data
+		pocPruningThreshold := am.keeper.GetParams(ctx).PocParams.PocDataPruningEpochThreshold
+		if pocPruningThreshold == 0 {
+			am.LogInfo("PoC pruning threshold is 0, using default", types.PoC, "threshold", defaultPocPruningThreshold)
+			pocPruningThreshold = defaultPocPruningThreshold
+		}
+		pocErr := am.keeper.PrunePoCData(ctx, upcomingEpoch.Index, pocPruningThreshold)
+		if pocErr != nil {
+			am.LogError("Error pruning PoC data", types.PoC, "error", pocErr)
+		}
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
@@ -412,6 +439,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
+		}
+		if p.Seed == nil {
+			am.LogError("onSetNewValidatorsStage: addEpochMembers. ILLEGAL STATE. Participant seed is nil. Skipping this participant", types.EpochGroup,
+				"participantIndex", p.Index)
+			continue
 		}
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
 		err = upcomingEg.AddMember(ctx, member)

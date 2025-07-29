@@ -52,6 +52,7 @@ message EpochParams {
   int64 poc_validation_duration = 8;
   int64 set_new_validators_delay = 9;
   int64 inference_validation_cutoff = 10;
+  uint64 inference_pruning_epoch_threshold = 11;
 }
 
 message ValidationParams {
@@ -76,6 +77,7 @@ message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
+uint64 poc_data_pruning_epoch_threshold = 3;
 }
 
 message Decimal {
