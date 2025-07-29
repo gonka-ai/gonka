@@ -49,6 +49,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return nil, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired")
 	}
 
+	// Record the current price only if this is the first message (StartInference not processed yet)
+	// This ensures consistent pricing regardless of message arrival order
+	if !existingInference.StartProcessed() {
+		k.RecordInferencePrice(goCtx, &existingInference)
+	}
+
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),

@@ -157,7 +157,15 @@ func (AppModule) ConsensusVersion() uint64 { return 3 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
-func (am AppModule) BeginBlock(_ context.Context) error {
+func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Update dynamic pricing for all models at the start of each block
+	// This ensures consistent pricing for all inferences processed in this block
+	err := am.keeper.UpdateDynamicPricing(ctx)
+	if err != nil {
+		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
+		// Don't return error - allow block processing to continue even if pricing update fails
+	}
+
 	return nil
 }
 
@@ -364,6 +372,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	}
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+
+	// Cache model capacities for the new epoch to enable fast dynamic pricing calculations
+	err = am.keeper.CacheAllModelCapacities(ctx)
+	if err != nil {
+		am.LogError("Failed to cache model capacities for new epoch", types.Pricing, "error", err, "blockHeight", blockHeight)
+		// Don't return error - epoch transition should continue even if capacity caching fails
+	}
 
 	unitOfComputePrice, err := am.computePrice(ctx, *upcomingEpoch, upcomingEg)
 	if err != nil {

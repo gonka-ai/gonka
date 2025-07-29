@@ -93,7 +93,7 @@ class MultiModelTests : TestermintTest() {
         
         logSection("making inferences")
         val models = listOf(defaultModel, newModelName)
-        val inferences = runParallelInferencesWithResults(genesis, 30, models = models)
+        val inferences = runParallelInferencesWithResults(genesis, 30, models = models, maxConcurrentRequests = 30)
         logSection("Completed ${inferences.size} inferences")
         
         logSection("Waiting for settlement and claims")

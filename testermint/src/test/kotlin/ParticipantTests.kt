@@ -24,7 +24,7 @@ class ParticipantTests : TestermintTest() {
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
-        runParallelInferences(genesis, 10)
+        runParallelInferences(genesis, 10, maxConcurrentRequests = 10)
         logSection("Waiting for next epoch")
         genesis.waitForNextInferenceWindow()
         logSection("verifying reputation increase")
@@ -72,7 +72,7 @@ class ParticipantTests : TestermintTest() {
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Running inferences")
-        runParallelInferences(genesis, 50, waitForBlocks = 1)
+        runParallelInferences(genesis, 50, waitForBlocks = 1, maxConcurrentRequests = 50)
         genesis.waitForBlock(2) {
             it.node.getMinimumValidationAverage().minimumValidationAverage < startMin.minimumValidationAverage
         }

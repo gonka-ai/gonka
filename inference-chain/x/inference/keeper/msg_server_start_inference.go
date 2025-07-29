@@ -3,8 +3,9 @@ package keeper
 import (
 	"context"
 
-	sdkerrors "cosmossdk.io/errors"
 	"encoding/base64"
+
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -35,6 +36,12 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
+
+	// Record the current price only if this is the first message (FinishInference not processed yet)
+	// This ensures consistent pricing regardless of message arrival order
+	if !existingInference.FinishedProcessed() {
+		k.RecordInferencePrice(goCtx, &existingInference)
+	}
 
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),

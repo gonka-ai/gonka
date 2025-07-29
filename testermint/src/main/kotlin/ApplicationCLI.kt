@@ -420,6 +420,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "gov", "proposals"))
     }
 
+    fun getModelPerTokenPrice(modelId: String): ModelPerTokenPriceResponse = wrapLog("getModelPerTokenPrice", false) {
+        execAndParse(listOf("query", "inference", "model-per-token-price", modelId))
+    }
+
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)

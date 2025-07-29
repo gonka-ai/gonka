@@ -17,6 +17,7 @@ message Params {
   TokenomicsParams tokenomics_params = 4;
   CollateralParams collateral_params = 5;
   BitcoinRewardParams bitcoin_reward_params = 6;
+  DynamicPricingParams dynamic_pricing_params = 7;
 }
 
 message GenesisOnlyParams {
@@ -133,4 +134,32 @@ message BitcoinRewardParams {
 
   // partial_coverage_bonus_factor is the scaling factor for partial model coverage (Phase 2)
   Decimal partial_coverage_bonus_factor = 7;
+}
+
+// DynamicPricingParams defines the parameters for the dynamic pricing system.
+message DynamicPricingParams {
+  option (gogoproto.equal) = true;
+
+  // stability_zone_lower_bound is the lower bound of the stability zone where price doesn't change (0-1)
+  Decimal stability_zone_lower_bound = 1;
+
+  // stability_zone_upper_bound is the upper bound of the stability zone where price doesn't change (0-1)
+  Decimal stability_zone_upper_bound = 2;
+
+  // price_elasticity controls price adjustment magnitude - determines maximum change at maximum utilization deviation (0-1)
+  Decimal price_elasticity = 3;
+
+  // utilization_window_duration is the time window in seconds for utilization calculation
+  uint64 utilization_window_duration = 4;
+
+  // min_per_token_price is the minimum per-token price floor to prevent zero pricing (in native token units)
+  uint64 min_per_token_price = 5;
+
+  // base_per_token_price is the initial per-token price after grace period (in native token units)
+  uint64 base_per_token_price = 6;
+
+  // grace_period_end_epoch is the epoch when free inference period ends
+  uint64 grace_period_end_epoch = 7;
+  // grace_period_per_token_price is the per-token price during grace period (default 0 for free)
+  uint64 grace_period_per_token_price = 8;
 }

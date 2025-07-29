@@ -326,6 +326,27 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_info";
 
   }
+
+  // Dynamic pricing queries (Task 7.1)
+  rpc GetModelPerTokenPrice (QueryGetModelPerTokenPriceRequest) returns (QueryGetModelPerTokenPriceResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/model_per_token_price/{model_id}";
+
+  }
+
+  rpc GetAllModelPerTokenPrices (QueryGetAllModelPerTokenPricesRequest) returns (QueryGetAllModelPerTokenPricesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_model_per_token_prices";
+
+  }
+
+  rpc GetModelCapacity (QueryGetModelCapacityRequest) returns (QueryGetModelCapacityResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/model_capacity/{model_id}";
+
+  }
+
+  rpc GetAllModelCapacities (QueryGetAllModelCapacitiesRequest) returns (QueryGetAllModelCapacitiesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_model_capacities";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -808,4 +829,45 @@ message QueryEpochInfoResponse {
   int64 block_height = 1;
   Params params = 2 [(gogoproto.nullable) = false];
   Epoch latest_epoch = 3 [(gogoproto.nullable) = false];
+}
+
+// Dynamic pricing query messages
+message QueryGetModelPerTokenPriceRequest {
+  string model_id = 1;
+}
+
+message QueryGetModelPerTokenPriceResponse {
+  uint64 price = 1;
+  bool found = 2;
+}
+
+message QueryGetAllModelPerTokenPricesRequest {}
+
+message ModelPrice {
+  string model_id = 1;
+  uint64 price = 2;
+}
+
+message QueryGetAllModelPerTokenPricesResponse {
+  repeated ModelPrice model_prices = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryGetModelCapacityRequest {
+  string model_id = 1;
+}
+
+message QueryGetModelCapacityResponse {
+  uint64 capacity = 1;
+  bool found = 2;
+}
+
+message QueryGetAllModelCapacitiesRequest {}
+
+message QueryGetAllModelCapacitiesResponse {
+  repeated ModelCapacity model_capacities = 1 [(gogoproto.nullable) = false];
+}
+
+message ModelCapacity {
+  string model_id = 1;
+  uint64 capacity = 2;
 }

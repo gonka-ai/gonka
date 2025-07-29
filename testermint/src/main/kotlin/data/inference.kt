@@ -26,6 +26,7 @@ data class InferencePayload(
     val requestTimestamp: Long? = null,
     val transferSignature: String? = null,
     val executionSignature: String? = null,
+    val perTokenPrice: Long? = null,
 ) {
     companion object {
         fun empty() = InferencePayload(
@@ -49,7 +50,8 @@ data class InferencePayload(
             actualCost = null,
             escrowAmount = null,
             assignedTo = null,
-            validatedBy = listOf()
+            validatedBy = listOf(),
+            perTokenPrice = null,
         )
 
     }

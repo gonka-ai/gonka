@@ -73,6 +73,10 @@ const (
 	Query_TrainingBarrier_FullMethodName                           = "/inference.inference.Query/TrainingBarrier"
 	Query_TrainingAliveNodes_FullMethodName                        = "/inference.inference.Query/TrainingAliveNodes"
 	Query_EpochInfo_FullMethodName                                 = "/inference.inference.Query/EpochInfo"
+	Query_GetModelPerTokenPrice_FullMethodName                     = "/inference.inference.Query/GetModelPerTokenPrice"
+	Query_GetAllModelPerTokenPrices_FullMethodName                 = "/inference.inference.Query/GetAllModelPerTokenPrices"
+	Query_GetModelCapacity_FullMethodName                          = "/inference.inference.Query/GetModelCapacity"
+	Query_GetAllModelCapacities_FullMethodName                     = "/inference.inference.Query/GetAllModelCapacities"
 )
 
 // QueryClient is the client API for Query service.
@@ -170,6 +174,11 @@ type QueryClient interface {
 	TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error)
 	// Queries a list of EpochInfo items.
 	EpochInfo(ctx context.Context, in *QueryEpochInfoRequest, opts ...grpc.CallOption) (*QueryEpochInfoResponse, error)
+	// Dynamic pricing queries (Task 7.1)
+	GetModelPerTokenPrice(ctx context.Context, in *QueryGetModelPerTokenPriceRequest, opts ...grpc.CallOption) (*QueryGetModelPerTokenPriceResponse, error)
+	GetAllModelPerTokenPrices(ctx context.Context, in *QueryGetAllModelPerTokenPricesRequest, opts ...grpc.CallOption) (*QueryGetAllModelPerTokenPricesResponse, error)
+	GetModelCapacity(ctx context.Context, in *QueryGetModelCapacityRequest, opts ...grpc.CallOption) (*QueryGetModelCapacityResponse, error)
+	GetAllModelCapacities(ctx context.Context, in *QueryGetAllModelCapacitiesRequest, opts ...grpc.CallOption) (*QueryGetAllModelCapacitiesResponse, error)
 }
 
 type queryClient struct {
@@ -666,6 +675,42 @@ func (c *queryClient) EpochInfo(ctx context.Context, in *QueryEpochInfoRequest, 
 	return out, nil
 }
 
+func (c *queryClient) GetModelPerTokenPrice(ctx context.Context, in *QueryGetModelPerTokenPriceRequest, opts ...grpc.CallOption) (*QueryGetModelPerTokenPriceResponse, error) {
+	out := new(QueryGetModelPerTokenPriceResponse)
+	err := c.cc.Invoke(ctx, Query_GetModelPerTokenPrice_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetAllModelPerTokenPrices(ctx context.Context, in *QueryGetAllModelPerTokenPricesRequest, opts ...grpc.CallOption) (*QueryGetAllModelPerTokenPricesResponse, error) {
+	out := new(QueryGetAllModelPerTokenPricesResponse)
+	err := c.cc.Invoke(ctx, Query_GetAllModelPerTokenPrices_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetModelCapacity(ctx context.Context, in *QueryGetModelCapacityRequest, opts ...grpc.CallOption) (*QueryGetModelCapacityResponse, error) {
+	out := new(QueryGetModelCapacityResponse)
+	err := c.cc.Invoke(ctx, Query_GetModelCapacity_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetAllModelCapacities(ctx context.Context, in *QueryGetAllModelCapacitiesRequest, opts ...grpc.CallOption) (*QueryGetAllModelCapacitiesResponse, error) {
+	out := new(QueryGetAllModelCapacitiesResponse)
+	err := c.cc.Invoke(ctx, Query_GetAllModelCapacities_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -761,6 +806,11 @@ type QueryServer interface {
 	TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error)
 	// Queries a list of EpochInfo items.
 	EpochInfo(context.Context, *QueryEpochInfoRequest) (*QueryEpochInfoResponse, error)
+	// Dynamic pricing queries (Task 7.1)
+	GetModelPerTokenPrice(context.Context, *QueryGetModelPerTokenPriceRequest) (*QueryGetModelPerTokenPriceResponse, error)
+	GetAllModelPerTokenPrices(context.Context, *QueryGetAllModelPerTokenPricesRequest) (*QueryGetAllModelPerTokenPricesResponse, error)
+	GetModelCapacity(context.Context, *QueryGetModelCapacityRequest) (*QueryGetModelCapacityResponse, error)
+	GetAllModelCapacities(context.Context, *QueryGetAllModelCapacitiesRequest) (*QueryGetAllModelCapacitiesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -929,6 +979,18 @@ func (UnimplementedQueryServer) TrainingAliveNodes(context.Context, *QueryTraini
 }
 func (UnimplementedQueryServer) EpochInfo(context.Context, *QueryEpochInfoRequest) (*QueryEpochInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochInfo not implemented")
+}
+func (UnimplementedQueryServer) GetModelPerTokenPrice(context.Context, *QueryGetModelPerTokenPriceRequest) (*QueryGetModelPerTokenPriceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetModelPerTokenPrice not implemented")
+}
+func (UnimplementedQueryServer) GetAllModelPerTokenPrices(context.Context, *QueryGetAllModelPerTokenPricesRequest) (*QueryGetAllModelPerTokenPricesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAllModelPerTokenPrices not implemented")
+}
+func (UnimplementedQueryServer) GetModelCapacity(context.Context, *QueryGetModelCapacityRequest) (*QueryGetModelCapacityResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetModelCapacity not implemented")
+}
+func (UnimplementedQueryServer) GetAllModelCapacities(context.Context, *QueryGetAllModelCapacitiesRequest) (*QueryGetAllModelCapacitiesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAllModelCapacities not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1915,6 +1977,78 @@ func _Query_EpochInfo_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetModelPerTokenPrice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetModelPerTokenPriceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetModelPerTokenPrice(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetModelPerTokenPrice_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetModelPerTokenPrice(ctx, req.(*QueryGetModelPerTokenPriceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetAllModelPerTokenPrices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetAllModelPerTokenPricesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetAllModelPerTokenPrices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetAllModelPerTokenPrices_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetAllModelPerTokenPrices(ctx, req.(*QueryGetAllModelPerTokenPricesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetModelCapacity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetModelCapacityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetModelCapacity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetModelCapacity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetModelCapacity(ctx, req.(*QueryGetModelCapacityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetAllModelCapacities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetAllModelCapacitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetAllModelCapacities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetAllModelCapacities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetAllModelCapacities(ctx, req.(*QueryGetAllModelCapacitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2137,6 +2271,22 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochInfo",
 			Handler:    _Query_EpochInfo_Handler,
+		},
+		{
+			MethodName: "GetModelPerTokenPrice",
+			Handler:    _Query_GetModelPerTokenPrice_Handler,
+		},
+		{
+			MethodName: "GetAllModelPerTokenPrices",
+			Handler:    _Query_GetAllModelPerTokenPrices_Handler,
+		},
+		{
+			MethodName: "GetModelCapacity",
+			Handler:    _Query_GetModelCapacity_Handler,
+		},
+		{
+			MethodName: "GetAllModelCapacities",
+			Handler:    _Query_GetAllModelCapacities_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

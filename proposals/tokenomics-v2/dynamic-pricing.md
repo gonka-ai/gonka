@@ -10,7 +10,7 @@ The existing Unit of Compute system and weighted median calculation mechanism in
 
 ## 2. Implementation Details
 
-A new dynamic pricing module will be integrated into the existing `x/inference` module. The `x/inference` module will be enhanced with new pricing calculation logic that executes during block processing in the `EndBlocker` function within `inference-chain/x/inference/module/module.go`.
+A new dynamic pricing module will be integrated into the existing `x/inference` module. The `x/inference` module will be enhanced with new pricing calculation logic that executes at the beginning of each block in the `BeginBlocker` function within `inference-chain/x/inference/module/module.go`.
 
 ### 2.1. Price Adjustment Algorithm
 
@@ -75,61 +75,53 @@ This logic will be implemented in new functions:
 
 **In `inference-chain/x/inference/keeper/dynamic_pricing.go`:**
 - `CalculateModelDynamicPrice(modelId string)` - implements the price adjustment algorithm
-- `GetModelUtilization(modelId string)` - aggregates utilization over the window
 - `CacheModelCapacity(modelId string, capacity int64)` - stores capacity in KV storage
 - `GetCachedModelCapacity(modelId string)` - retrieves cached capacity from KV storage
 - `CacheAllModelCapacities()` - caches capacity for all active models during epoch activation
-- `UpdateDynamicPricing()` - main function called from EndBlocker to update all model prices
+- `UpdateDynamicPricing()` - main function called from BeginBlocker to update all model prices
 
-**In `inference-chain/x/inference/keeper/utilization_tracker.go`:**
-- `UpdateModelUtilization(modelId string, blockHeight uint64, totalTokens int64)` - records utilization data
+**Utilization data will be retrieved from existing stats infrastructure:**
+- `GetSummaryByModelAndTime(from, to int64)` - leverages existing stats aggregation for per-model token usage over time windows
 
 #### 2.1.3. KV Storage Structure for Dynamic Pricing Data
 
-The system will use efficient KV storage for real-time tracking of utilization, pricing, and cached capacity:
+The system will use simplified KV storage for calculated prices and cached capacity:
 
 ```
-// Per-model utilization tracking
-Key Pattern: utilization/{model_id}/{block_height}
-Value: total_tokens_processed (int64)
-
 // Current per-token pricing per model  
-Key Pattern: pricing/{model_id}
+Key Pattern: pricing/current/{model_id}
 Value: current_per_token_price (uint64)
 
 // Cached model capacity (copied from epoch group at epoch start)
-Key Pattern: capacity/{model_id}
+Key Pattern: pricing/capacity/{model_id}
 Value: total_throughput (int64)
 
 Examples:
-utilization/Qwen2.5-7B-Instruct/12345 → 150000
-pricing/Qwen2.5-7B-Instruct → 75
-capacity/Qwen2.5-7B-Instruct → 1000000
+pricing/current/Qwen2.5-7B-Instruct → 75
+pricing/capacity/Qwen2.5-7B-Instruct → 1000000
 ```
 
 This structure allows:
-- **Fast access**: Direct lookup during inference processing
-- **Efficient aggregation**: Sum utilization values over the window for each model
+- **Fast price lookup**: Direct access during inference processing
 - **Cached capacity**: Avoid reading large epoch group objects repeatedly
 - **Independent pricing**: Each model maintains its own current price
-- **Automatic cleanup**: Old utilization entries beyond the window can be pruned
-- **Model isolation**: All data is tracked independently per model
+- **Leverages existing infrastructure**: Utilization data comes from proven stats system
 
 ### 2.2. Network Utilization Measurement
 
-The system will track network utilization through metrics collected during block processing. The utilization calculation will be based on real-time inference activity and network capacity metrics maintained in the module state.
+The system will calculate network utilization by leveraging the existing stats infrastructure. The utilization calculation will be based on aggregated inference activity from the proven `GetSummaryByModelAndTime()` function and cached capacity metrics.
 
 #### 2.2.1. Per-Model Utilization Metrics
 
 The following metrics will be used to calculate per-model network utilization:
 
-1. **Per-Model Token Processing**: Total tokens processed (prompt + completion) from completed inferences for each specific model in the current block and a rolling window of recent blocks, stored separately for each model.
+1. **Per-Model Token Processing**: Total tokens processed (prompt + completion) from completed inferences for each specific model within a time window, retrieved using the existing `GetSummaryByModelAndTime()` function from the stats infrastructure.
 
-2. **Model-Specific Capacity Access**: Retrieved from cached `capacity/{model_id}` KV storage, representing the total token processing capacity available for that specific model (copied from epoch group data at epoch start).
+2. **Model-Specific Capacity Access**: Retrieved from cached `pricing/capacity/{model_id}` KV storage, representing the total token processing capacity available for that specific model (copied from epoch group data at epoch start).
 
-3. **Model Token Load Tracking**: Real-time measurement of actual computational work performed per model, providing accurate feedback on true resource consumption for each AI model separately.
+3. **Time-Based Utilization Windows**: Utilization calculated over configurable time windows (e.g., 60 seconds) using real block timestamps from the existing stats system, providing accurate feedback on true resource consumption patterns.
 
-The utilization calculation logic will be implemented in `GetModelUtilization` function within `inference-chain/x/inference/keeper/utilization_tracker.go`, with per-model data stored in efficient KV storage for rapid access during inference processing.
+The utilization calculation will leverage the proven `GetSummaryByModelAndTime()` function from `inference-chain/x/inference/keeper/developer_stats_aggregation.go`, ensuring consistency with existing analytics and reporting systems.
 
 #### 2.2.2. Price Recording vs. Utilization Measurement
 
@@ -162,8 +154,8 @@ To handle the complex inference lifecycle where messages can arrive out-of-order
 **Price Storage in Inference Entity**: Each inference will store its locked-in per-token price, ensuring consistent pricing regardless of message arrival order.
 
 **Price Recording Function**: A new function `RecordInferencePrice()` will be called at the beginning of both `ProcessStartInference` and `ProcessFinishInference` to:
-- In `ProcessStartInference`: if `!finishedProcessed(inference)` then this is the first message, so read current price from `pricing/{model_id}` KV storage and store it
-- In `ProcessFinishInference`: if `!startProcessed(inference)` then this is the first message, so read current price from `pricing/{model_id}` KV storage and store it
+- In `ProcessStartInference`: if `!finishedProcessed(inference)` then this is the first message, so read current price from `pricing/current/{model_id}` KV storage and store it
+- In `ProcessFinishInference`: if `!startProcessed(inference)` then this is the first message, so read current price from `pricing/current/{model_id}` KV storage and store it
 - This reuses the existing state-checking logic to determine if the inference record already existed
 
 **Modified Cost Calculation Functions**: 
@@ -206,7 +198,7 @@ The dynamic pricing system will introduce several new governance-configurable pa
 - `StabilityZoneLowerBound`: Lower bound of stability zone where price doesn't change (default: 0.40)
 - `StabilityZoneUpperBound`: Upper bound of stability zone where price doesn't change (default: 0.60)
 - `PriceElasticity`: Controls price adjustment magnitude - determines maximum change at maximum utilization deviation (default: 0.05)
-- `UtilizationWindowBlocks`: Number of blocks to consider for utilization calculation (default: 10)
+- `UtilizationWindowDuration`: Time window in seconds for utilization calculation (default: 60)
 - `MinPerTokenPrice`: Minimum per-token price floor to prevent zero pricing (default: 1 nicoin)
 - `BasePerTokenPrice`: Initial per-token price after grace period (default: 100)
 - `GracePeriodEndEpoch`: Epoch when free inference period ends (default: 90)
@@ -235,17 +227,18 @@ The dynamic pricing mechanism will integrate seamlessly with existing tokenomics
 
 The dynamic pricing system will integrate at multiple points in the inference lifecycle:
 
-**Price Recording**: In both `inference-chain/x/inference/keeper/msg_server_start_inference.go` and `inference-chain/x/inference/keeper/msg_server_finish_inference.go`, the system will check if this is the first message for a given inference (by checking if the inference entity exists and whether a price has already been recorded). Whichever handler processes the first message will read the current price from `pricing/{model_id}` KV storage and lock it for that specific inference.
+**Price Recording**: In both `inference-chain/x/inference/keeper/msg_server_start_inference.go` and `inference-chain/x/inference/keeper/msg_server_finish_inference.go`, the system will check if this is the first message for a given inference (by checking if the inference entity exists and whether a price has already been recorded). Whichever handler processes the first message will read the current price from `pricing/current/{model_id}` KV storage and lock it for that specific inference.
 
-**Per-Model Utilization Updates**: In `inference-chain/x/inference/keeper/msg_server_finish_inference.go`, the completed inference's actual token count will be added to the per-model utilization tracking system by calling `UpdateModelUtilization(modelId, blockHeight, totalTokens)` function within `inference-chain/x/inference/keeper/utilization_tracker.go` using efficient KV storage with keys like `utilization/{model_id}/{block_height}` for rapid access during inference processing.
+**Price Calculation Using Existing Stats**: The system leverages the existing stats infrastructure to calculate utilization. Completed inferences automatically contribute to the stats system via the existing `SetDeveloperStats()` mechanism, which stores per-model token data using real block timestamps.
 
-**Model Utilization Aggregation**: During each block's end processing in `inference-chain/x/inference/module/module.go`, specifically in the `EndBlocker` function, the system will call `UpdateDynamicPricing()` from `inference-chain/x/inference/keeper/dynamic_pricing.go` which will:
-- Aggregate per-model utilization data from the KV store over the rolling window
-- Read cached model capacity from `capacity/{model_id}` KV storage  
-- Recalculate per-token price for each active model based on model-specific utilization metrics
-- Update the current price in `pricing/{model_id}` KV storage
+**Model Price Updates**: During each block's beginning in `inference-chain/x/inference/module/module.go`, specifically in the `BeginBlocker` function, the system will call `UpdateDynamicPricing()` from `inference-chain/x/inference/keeper/dynamic_pricing.go` which will:
+- Calculate time window boundaries using `UtilizationWindowDuration` parameter
+- Call existing `GetSummaryByModelAndTime()` to get per-model token usage from proven stats infrastructure
+- Read cached model capacity from `pricing/capacity/{model_id}` KV storage  
+- Recalculate per-token price for each active model based on utilization vs capacity
+- Update the current price in `pricing/current/{model_id}` KV storage
 
-**Capacity Caching Integration**: During epoch activation in `inference-chain/x/inference/module/module.go`, specifically in the `onSetNewValidatorsStage` function immediately after the `moveUpcomingToEffectiveGroup` call, the system will call `CacheAllModelCapacities()` from `inference-chain/x/inference/keeper/dynamic_pricing.go` to copy `total_throughput` values from each model's epoch group data to the `capacity/{model_id}` KV store for fast access during the epoch.
+**Capacity Caching Integration**: During epoch activation in `inference-chain/x/inference/module/module.go`, specifically in the `onSetNewValidatorsStage` function immediately after the `moveUpcomingToEffectiveGroup` call, the system will call `CacheAllModelCapacities()` from `inference-chain/x/inference/keeper/dynamic_pricing.go` to copy `total_throughput` values from each model's epoch group data to the `pricing/capacity/{model_id}` KV store for fast access during the epoch.
 
 **Inference Message Handler Updates**: In both `inference-chain/x/inference/keeper/msg_server_start_inference.go` and `inference-chain/x/inference/keeper/msg_server_finish_inference.go`:
 - Call `RecordInferencePrice()` function at the beginning of each handler
@@ -262,7 +255,7 @@ The dynamic pricing system will integrate at multiple points in the inference li
 
 #### 2.6.2. Pricing API Updates
 
-The existing pricing API in `decentralized-api/internal/server/public/get_pricing_handler.go` will be enhanced to provide per-model dynamic pricing information by querying the `pricing/{model_id}` KV storage for current prices, along with utilization metrics, price trends, and capacity data for each active model.
+The existing pricing API in `decentralized-api/internal/server/public/get_pricing_handler.go` will be enhanced to provide per-model dynamic pricing information by querying the `pricing/current/{model_id}` KV storage for current prices, along with utilization metrics from existing stats functions, and capacity data for each active model.
 
 #### 2.6.3. API Query Changes for Fund Verification
 
@@ -281,7 +274,7 @@ Cost = Tokens × Model.PerTokenPrice
 **Key API Changes**:
 
 **Fund Verification in Chat Handler**: In `decentralized-api/internal/server/public/post_chat_handler.go`, the cost calculation logic will be updated to:
-- Query the current per-token price from `pricing/{model_id}` KV storage via the chain client
+- Query the current per-token price from `pricing/current/{model_id}` KV storage via the chain client
 - Calculate escrow amount as: `(PromptTokens + MaxCompletionTokens) × PerTokenPrice`
 - Remove references to `UnitsOfComputePerToken` and `UnitOfComputePrice`
 
