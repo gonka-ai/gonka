@@ -101,11 +101,12 @@ type ApiConfig struct {
 
 type ChainNodeConfig struct {
 	Url            string `koanf:"url"`
-	AccountName    string `koanf:"account_name"`
 	KeyringBackend string `koanf:"keyring_backend"`
 	KeyringDir     string `koanf:"keyring_dir"`
 	IsGenesis      bool   `koanf:"is_genesis"`
 	SeedApiUrl     string `koanf:"seed_api_url"`
+	OperatorPublicKey
+	HotKeyName string `koanf:"hot_key_name"`
 }
 
 type KeyConfig struct {

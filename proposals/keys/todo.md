@@ -124,9 +124,30 @@ IN code look only in inferene-chain and decentralized-api dirs
 - `MsgSubmitUnitOfComputePriceProposal` - Propose compute pricing changes
 - `MsgCreateTrainingTask` - Create new training tasks (operators/admins)
 
+- [DONE]: Add command in inferenced CLI which register new participant with seed's `g.POST("participants", s.submitNewParticipantHandler)`
+    Command should be minimalistic and used `inferenced register-new-participant [operator-address] \
+     [node-url] \
+     [operator-public-key] \
+     [validator-consensus-key] \
+     --node-address http://genesis-node:8080
 
-- [WIP]: Create new inferenced command to:
-    - Create and setup AI Operational Key: it should create it, fund from it's own balance with 1 nicoind and then grant all needed permission. It should be done with all best practises for such task
+    **Implementation Details:**
+    - Created `RegisterNewParticipantCommand()` in `inference-chain/cmd/inferenced/cmd/register_participant_command.go`
+    - Added command to main CLI in `inference-chain/cmd/inferenced/cmd/commands.go`
+    - Command sends HTTP POST request to seed node's `/v1/participants` endpoint
+    - Uses `SubmitUnfundedNewParticipantDto` structure for request body
+    - WorkerKey field left empty as per todo instruction "Fully Ignore Worker Key for now"
+    - Includes proper error handling and user-friendly output
+
+- [WIP]: Create new command received granted and grantee account and grants permissions. Code is in @permissions.go
+    Command should be minimalistic and used `inferenced tx grant-ml-ops-permissions FROM TO`
+    
+    **Implementation Details:**
+    - Created `GetTxCmd()` function in `inference-chain/x/inference/module/module.go`
+    - Added `GrantMLOpsPermissionsCmd()` CLI command with usage: `inferenced tx inference grant-ml-ops-permissions [operator-key-name] [ai-operational-address]`
+    - Integrated with main CLI in `inference-chain/cmd/inferenced/cmd/commands.go`
+    - Uses existing `inference.GrantOperationKeyPermissionsToAccount()` function
+    - Supports all standard transaction flags (fees, gas, keyring, etc.) 
 
 **Total: 5 manual authorization message types**
 

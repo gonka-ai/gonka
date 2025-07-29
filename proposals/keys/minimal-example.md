@@ -1,7 +1,7 @@
 # Minimal Pre-Init Key Setup
 
 ```
-inferenced query inference list-participant --limit 50 --node http://genesis-node:26657  --chain-id gonka-testnet-4
+inferenced query inference list-participant --node http://genesis-node:26657  --chain-id gonka-testnet-4
 ```
 
 Copy-paste these commands to test the two-key system:
@@ -48,3 +48,48 @@ inferenced keys export genesis-ai-ops --keyring-backend file > ai-ops.json
 Done! Now AI ops key can execute operations via authz on behalf of operator key without any account pre-creation.
 
 **Key Insight:** Cosmos SDK accounts exist as addresses before public keys are revealed. The public key is only stored on-chain when the first transaction is signed by that key. 
+
+
+
+----
+
+`node`:
+❯ docker exec -it join1-node /bin/sh
+~ # inferenced keys add operational-keys --keyring-dir .inference/
+
+- address: gonka1m7r8uzf7wpc784kyaetdqw9zuguy9k44v5whva
+  name: operational-keys
+  pubkey: '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"AlwABUIJmpS9EHCzXs6x+xRBimLLAhUvyqY6ZTk5RRKq"}'
+  type: local
+
+~ # inferenced tendermint show-validator
+{"@type":"/cosmos.crypto.ed25519.PubKey","key":"rt+sDTuxGw94CVovABa6f4PqWclhZ0LjHLqKAEG/g/A="}
+
+`outside`
+~ # inferenced register-new-participant \
+    gonka1ukeep7fwutyu826tuywjtryx8tkh88clvunydg \
+    "http://join-1-api:8080" \
+    "At7CoNxKqoeH96761IMR8p1sPNyOFdVjoMNREFGw3KGS" \
+    "rt+sDTuxGw94CVovABa6f4PqWclhZ0LjHLqKAEG/g/A=" \
+     --node-address http://genesis-api:9000
+
+
+~ # inferenced keys list
+Enter keyring passphrase (attempt 1/3):
+password must be at least 8 characters
+Enter keyring passphrase (attempt 2/3):
+- address: gonka1ukeep7fwutyu826tuywjtryx8tkh88clvunydg
+  name: account-key
+  pubkey: '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"At7CoNxKqoeH96761IMR8p1sPNyOFdVjoMNREFGw3KGS"}'
+  type: local
+
+
+inferenced tx inference grant-ml-ops-permissions \
+    account-key gonka1m7r8uzf7wpc784kyaetdqw9zuguy9k44v5whva \
+    --node http://genesis-node:26657 \
+    --unordered --timeout-duration 1m \
+    --from account-key \
+    --chain-id gonka-testnet-4 \
+    --gas auto
+
+inferenced query tx 5B157B0A881F7A152C3A3B3C3FAFBBE443049B3A87355498DE2C6AC70C728F25 --node http://genesis-node:26657

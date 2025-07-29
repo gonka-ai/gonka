@@ -11,6 +11,8 @@ import (
 	"cosmossdk.io/log"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -19,9 +21,11 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/productscience/inference/x/inference"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
+	"github.com/spf13/cobra"
 
 	// this line is used by starport scaffolding # 1
 
@@ -516,6 +520,66 @@ func (am AppModule) IsOnePerModuleType() {}
 
 // IsAppModule implements the appmodule.AppModule interface.
 func (am AppModule) IsAppModule() {}
+
+// GetTxCmd returns the transaction commands for this module
+func GetTxCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                        "inference",
+		Short:                      "Inference transaction subcommands",
+		DisableFlagParsing:         true,
+		SuggestionsMinimumDistance: 2,
+		RunE:                       client.ValidateCmd,
+	}
+
+	cmd.AddCommand(GrantMLOpsPermissionsCmd())
+
+	return cmd
+}
+
+// GrantMLOpsPermissionsCmd returns a CLI command for granting ML operations permissions
+func GrantMLOpsPermissionsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "grant-ml-ops-permissions [operator-key-name] [ai-operational-address]",
+		Short: "Grant ML operations permissions from operator key to AI operational key",
+		Long: `Grant all ML operations permissions from operator key to AI operational key.
+This allows the AI operational key to perform automated ML operations on behalf of the operator key.
+
+Example:
+$ inferenced tx inference grant-ml-ops-permissions operator ai-ops-key1abc...`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientCtx, err := client.GetClientTxContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			operatorKeyName := args[0]
+			aiOperationalAddressStr := args[1]
+
+			aiOperationalAddress, err := sdk.AccAddressFromBech32(aiOperationalAddressStr)
+			if err != nil {
+				return fmt.Errorf("invalid ai operational address: %w", err)
+			}
+
+			txFactory, err := tx.NewFactoryCLI(clientCtx, cmd.Flags())
+			if err != nil {
+				return err
+			}
+
+			return inference.GrantOperationKeyPermissionsToAccount(
+				cmd.Context(),
+				clientCtx,
+				txFactory,
+				operatorKeyName,
+				aiOperationalAddress,
+				nil, // Use default expiration (1 year)
+			)
+		},
+	}
+
+	flags.AddTxFlagsToCmd(cmd)
+	return cmd
+}
 
 // ----------------------------------------------------------------------------
 // App Wiring Setup
