@@ -15,106 +15,100 @@ if [ -z "${KEY_NAME-}" ]; then
   exit 1
 fi
 
-##### TEST ONLY - For production, provide ACCOUNT_PUBKEY explicitly #####
-##### Register participant with cold wallet #####
-if [ "${CREATE_KEY:-false}" = "true" ]; then
-  echo "Creating 2 keys for role-based key management..."
-  
-  # Create Operator Key (Account Key) - Cold Wallet for central control
-  OPERATOR_KEY_NAME="${KEY_NAME}-operator"
-  echo "Creating operator key (cold wallet): $OPERATOR_KEY_NAME"
-  inferenced keys add "$OPERATOR_KEY_NAME" \
-    --keyring-backend test \
-    --keyring-dir /root/.inference
-  
-  ACCOUNT_PUBKEY=$(inferenced keys show "$OPERATOR_KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
-  export ACCOUNT_PUBKEY
+################################################################################################
+############      TEST ONLY - For production, provide ACCOUNT_PUBKEY explicitly     ############
+
+KEYRING_BACKEND="test"
+KEYRING_DIR="/root/.inference"
+
+get_key_address() {
+  local key_name="$1"
+  inferenced keys show "$key_name" --address --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_DIR" 2>/dev/null || fail "Could not get address for key '$key_name'."
+}
+
+get_key_pubkey() {
+  local key_name="$1"
+  inferenced keys show "$key_name" --pubkey --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_DIR" | jq -r '.key' || fail "Could not get pubkey for key '$key_name'."
+}
+
+get_validator_key() {
+  local node_url="$1"
+  for _ in $(seq 1 25); do
+    key=$(curl -s "$node_url/status" | jq -r '.result.validator_info.pub_key.value // empty' 2>/dev/null)
+    if [ -n "$key" ]; then
+      echo "$key"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Timed out waiting for validator key from node status."
+}
+
+
+create_and_register_keys() {
+  # Test join node:
+  # 1. Create cold wallet inside container
+  # 2. Register participant with cold wallet
+  # 3. Create warm wallet inside container
+  # 4. Grant ML ops permissions to warm wallet
+  # All these steps are done externally in real environment.
+  echo "Creating operator and AI operational keys..."
+  local operator_key_name="${KEY_NAME}-operator"
+
+  inferenced keys add "$operator_key_name" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_DIR" || fail "Failed to create operator key."
+  inferenced keys add "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_DIR" || fail "Failed to create AI operational key."
+
+  export ACCOUNT_PUBKEY=$(get_key_pubkey "$operator_key_name")
   echo "Generated ACCOUNT_PUBKEY: $ACCOUNT_PUBKEY"
-  
-  # Create AI Operational Key - Hot Wallet for automated AI workload transactions  
-  echo "Creating AI operational key (hot wallet): $KEY_NAME"
-  inferenced keys add "$KEY_NAME" \
-    --keyring-backend test \
-    --keyring-dir /root/.inference
-  
-  echo "Generated KEY_NAME: $KEY_NAME"
-  
-  # Phase 2: Register participant with cold wallet (if DAPI_CHAIN_NODE__SEED_API_URL provided)
+
   if [ -n "${DAPI_CHAIN_NODE__SEED_API_URL-}" ]; then
-    echo "Registering participant using cold wallet: $OPERATOR_KEY_NAME"
-    sleep 4
-    
-    # Get validator consensus key from chain node RPC status endpoint (works with TMKMS)
-    CHAIN_NODE_URL="${DAPI_CHAIN_NODE__URL}"
-    echo "Fetching validator consensus key from chain node: $CHAIN_NODE_URL"
-    VALIDATOR_CONSENSUS_KEY=$(curl -s "$CHAIN_NODE_URL/status" | jq -r '.result.validator_info.pub_key.value // empty' 2>/dev/null || echo "")
-    
-    if [ -z "$VALIDATOR_CONSENSUS_KEY" ]; then
-      fail "Could not retrieve validator consensus key automatically"
-    else
-      OPERATOR_ADDRESS=$(inferenced keys show "$OPERATOR_KEY_NAME" --address --keyring-backend test --keyring-dir /root/.inference)
-      
-      echo "Operator Address: $OPERATOR_ADDRESS"
-      echo "Node URL: ${DAPI_API__PUBLIC_URL}"
-      echo "Operator Public Key: $ACCOUNT_PUBKEY"
-      echo "Validator Consensus Key: $VALIDATOR_CONSENSUS_KEY"
-      echo "Seed API URL: $DAPI_CHAIN_NODE__SEED_API_URL"
-      
-      inferenced register-new-participant \
-        "$OPERATOR_ADDRESS" \
+    echo "Registering participant..."
+
+    # Get all required data for registration
+    local operator_address=$(get_key_address "$operator_key_name")
+    local validator_key=$(get_validator_key "${DAPI_CHAIN_NODE__URL}")
+
+    inferenced register-new-participant \
+        "$operator_address" \
         "${DAPI_API__PUBLIC_URL}" \
         "$ACCOUNT_PUBKEY" \
-        "$VALIDATOR_CONSENSUS_KEY" \
-        --node-address "$DAPI_CHAIN_NODE__SEED_API_URL" || fail "Participant registration failed. This may be normal if seed node is not yet accessible."
-      sleep 4
-    fi
+        "$validator_key" \
+        --node-address "$DAPI_CHAIN_NODE__SEED_API_URL" || fail "Participant registration failed"
   else
-    echo "DAPI_CHAIN_NODE__SEED_API_URL not provided, skipping participant registration"
-    echo "To register participant manually later, use:"
-    echo "inferenced register-new-participant [operator-address] [node-url] [operator-public-key] [validator-consensus-key] --node-address [seed-node-url]"
+    echo "Skipping participant registration: DAPI_CHAIN_NODE__SEED_API_URL not set."
   fi
-  
-  # Phase 3: Grant ML operations permissions from operator key to AI operational key
-  echo "Granting ML operations permissions from operator key to AI operational key..."
-  AI_OPERATIONAL_ADDRESS=$(inferenced keys show "$KEY_NAME" --address --keyring-backend test --keyring-dir /root/.inference)
-  
-  echo "AI Operational Address: $AI_OPERATIONAL_ADDRESS"
-  echo "Granting permissions from $OPERATOR_KEY_NAME to $AI_OPERATIONAL_ADDRESS"
-  echo "DAPI_CHAIN_NODE__URL: $DAPI_CHAIN_NODE__URL"
-  
-  inferenced tx inference grant-ml-ops-permissions \
-    "$OPERATOR_KEY_NAME" \
-    "$AI_OPERATIONAL_ADDRESS" \
-    --node "$DAPI_CHAIN_NODE__URL" \
-    --from "$OPERATOR_KEY_NAME" \
-    --keyring-backend test \
-    --keyring-dir /root/.inference \
-    --gas auto \
-    --gas-adjustment 1.5 \
-    --yes || {
-    echo "Warning: Permission granting failed. This may be normal if node is not yet connected to the network."
-    echo "Permissions can be granted manually later using:"
-    echo "inferenced tx inference grant-ml-ops-permissions $OPERATOR_KEY_NAME $AI_OPERATIONAL_ADDRESS --from $OPERATOR_KEY_NAME"
-  }
-fi
-##### END TEST ONLY #####
 
-##### TEST ONLY - ACCOUNT_PUBKEY fallback extraction #####
-# Genesis => single key
-if [ "${DAPI_CHAIN_NODE__IS_GENESIS-}" = "true" ]; then
+  echo "Granting ML operations permissions..."
+  local ai_op_address=$(get_key_address "$KEY_NAME")
+  inferenced tx inference grant-ml-ops-permissions \
+    "$operator_key_name" \
+    "$ai_op_address" \
+    --node "$DAPI_CHAIN_NODE__URL" \
+    --from "$operator_key_name" \
+    --keyring-backend "$KEYRING_BACKEND" \
+    --keyring-dir "$KEYRING_DIR" \
+    --gas 2000000 \
+    --yes \
+    || fail "Warning: Permission granting failed"
+}
+
+handle_genesis_key() {
   sleep 10
-  # Check if the key exists before trying to show it
-  if inferenced keys show "$KEY_NAME" --keyring-backend test --keyring-dir /root/.inference >/dev/null 2>&1; then
-    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
-    export ACCOUNT_PUBKEY
-    echo "Extracted ACCOUNT_PUBKEY from existing key: $KEY_NAME"
-  else
-    echo "Warning: Key '$KEY_NAME' not found in keyring. Available keys:"
-    inferenced keys list --keyring-backend test --keyring-dir /root/.inference || true
-    echo "Please ensure the genesis key exists or provide ACCOUNT_PUBKEY explicitly."
-  fi
+  echo "Genesis node detected. Extracting pubkey from existing key: $KEY_NAME"
+  export ACCOUNT_PUBKEY=$(get_key_pubkey "$KEY_NAME")
+  echo "Extracted ACCOUNT_PUBKEY: $ACCOUNT_PUBKEY"
+}
+
+if [ "${CREATE_KEY:-false}" = "true" ]; then
+  create_and_register_keys
 fi
+
+if [ "${DAPI_CHAIN_NODE__IS_GENESIS-}" = "true" ]; then
+  handle_genesis_key
+fi
+
 ##### END TEST ONLY #####
+################################################################################################
 
 if [ -z "${ACCOUNT_PUBKEY-}" ]; then
   echo "Error: ACCOUNT_PUBKEY is required."

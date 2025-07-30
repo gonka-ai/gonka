@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -18,6 +19,11 @@ type RegisterParticipantDto struct {
 	ValidatorKey string `json:"validator_key"`
 	PubKey       string `json:"pub_key"`
 	WorkerKey    string `json:"worker_key"`
+}
+
+type InferenceParticipantResponse struct {
+	Pubkey  string `json:"pubkey"`
+	Balance int64  `json:"balance"`
 }
 
 func RegisterNewParticipantCommand() *cobra.Command {
@@ -107,7 +113,68 @@ func sendRegisterNewParticipantRequest(cmd *cobra.Command, nodeAddress string, b
 	}
 
 	cmd.Printf("✅ Participant registration successful!\n")
-	cmd.Printf("You can check your participant at %s/v1/participants/%s\n", nodeAddress, body.Address)
+	cmd.Printf("Waiting for participant to be available (timeout: 30 seconds)...\n")
+
+	participantURL := fmt.Sprintf("%s/v1/participants/%s", nodeAddress, body.Address)
+	if err := waitForParticipantAvailable(cmd, participantURL, 30*time.Second); err != nil {
+		cmd.Printf("⚠️  Warning: %v\n", err)
+		cmd.Printf("You can manually check your participant at %s\n", participantURL)
+	} else {
+		cmd.Printf("✅ Participant is now available at %s\n", participantURL)
+	}
+	time.Sleep(1 * time.Second)
 
 	return nil
+}
+
+// waitForParticipantAvailable polls the participant endpoint until it's available or timeout is reached
+func waitForParticipantAvailable(cmd *cobra.Command, participantURL string, timeout time.Duration) error {
+	httpClient := &http.Client{
+		Timeout: 5 * time.Second, // 5 second timeout per request
+	}
+
+	ticker := time.NewTicker(2 * time.Second) // Check every 2 seconds
+	defer ticker.Stop()
+
+	timeoutCh := time.After(timeout)
+
+	for {
+		select {
+		case <-timeoutCh:
+			return fmt.Errorf("timeout after %v waiting for participant to be available", timeout)
+
+		case <-ticker.C:
+			cmd.Printf(".")
+
+			resp, err := httpClient.Get(participantURL)
+			if err != nil {
+				// Continue polling on error
+				continue
+			}
+
+			if resp.StatusCode == http.StatusOK {
+				bodyBytes, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+
+				if err != nil {
+					continue
+				}
+
+				var participant InferenceParticipantResponse
+				if err := json.Unmarshal(bodyBytes, &participant); err != nil {
+					// Continue polling on unmarshal error
+					continue
+				}
+
+				if participant.Pubkey != "" {
+					cmd.Printf("\n")
+					cmd.Printf("✅ Found participant with pubkey: %s (balance: %d)\n", participant.Pubkey, participant.Balance)
+					return nil
+				}
+			} else {
+				resp.Body.Close()
+			}
+
+		}
+	}
 }
