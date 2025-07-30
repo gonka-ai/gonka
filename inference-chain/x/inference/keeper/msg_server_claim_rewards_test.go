@@ -219,11 +219,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
 
-	// Create a settle amount for the participant with the signature
-	epoch := types.Epoch{Index: 100, PocStartBlockHeight: 100}
-	k.SetEpoch(ctx, &epoch)
-	k.SetEffectiveEpochIndex(ctx, epoch.Index)
-
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
@@ -235,7 +230,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
-		EpochId:             epoch.Index,
+		EpochId:      epoch.Index,
 		EpochGroupId: 9000, // can be whatever now, because InferenceValDetails are indexed by EpochId		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
@@ -399,11 +394,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
-
-	// Create a settle amount for the participant with the signature
-	epoch := types.Epoch{Index: 15, PocStartBlockHeight: 100}
-	k.SetEpoch(ctx, &epoch)
-	k.SetEffectiveEpochIndex(ctx, epoch.Index)
 
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
