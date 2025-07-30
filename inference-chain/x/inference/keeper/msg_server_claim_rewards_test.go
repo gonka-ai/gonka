@@ -230,8 +230,9 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
-		EpochId:      epoch.Index,
-		EpochGroupId: 9000, // can be whatever now, because InferenceValDetails are indexed by EpochId		PocStartBlockHeight: pocStartBlockHeight,
+		EpochId:             epoch.Index,
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
