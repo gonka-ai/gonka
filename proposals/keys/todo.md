@@ -128,7 +128,7 @@ IN code look only in inferene-chain and decentralized-api dirs
 - [DONE]: Class to manage AccountKey and Operational Key
     **Built account management infrastructure**: Created `ApiAccount` struct in `accounts.go` with AccountKey/SignerAccount fields, implemented address methods, integrated keyring backend support, established `InferenceOperationKeyPerms` array, and added CLI integration for participant registration.
 
-- [WIP]: Creating Account Key in API for tests
+- [DONE]: Creating Account Key in API for tests
     **Implemented key creation in decentralized-api for test pipeline:**
     
     1. **Key Creation**: `decentralized-api/scripts/init-docker.sh` creates keys when `CREATE_KEY=true` using `inferenced keys add` with keyring-backend=test, keyring-dir=/root/.inference

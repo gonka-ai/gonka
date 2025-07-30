@@ -18,17 +18,11 @@ fi
 if [ "${CREATE_KEY:-false}" = "true" ]; then
   echo "Creating account key: $KEY_NAME"
   
-  if command -v inferenced >/dev/null 2>&1; then
-    APP_NAME="inferenced"
-  else
-    APP_NAME="decentralized-api"
-  fi
-  
-  $APP_NAME keys add "$KEY_NAME" \
+  inferenced keys add "$KEY_NAME" \
     --keyring-backend test \
     --keyring-dir /root/.inference
   
-  ACCOUNT_PUBKEY=$($APP_NAME keys show "$KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
+  ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
   export ACCOUNT_PUBKEY
   echo "Generated ACCOUNT_PUBKEY: $ACCOUNT_PUBKEY"
 fi
