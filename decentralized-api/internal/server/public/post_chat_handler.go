@@ -470,6 +470,18 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return err
 	}
 
+	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: request.TransferAddress,
+		MessageTypeUrl: "/inference.inference.MsgStartInference",
+	})
+	if err != nil {
+		logging.Error("Failed to query authz grantees for MsgStartInference", types.Inferences,
+			"granter", request.TransferAddress, "message_type", "/inference.inference.MsgStartInference", "error", err)
+	} else {
+		logging.Info("Found authz grantees for MsgStartInference", types.Inferences,
+			"granter", request.TransferAddress, "grantee_count", len(grantees.GranteeAddresses), "grantees", grantees.GranteeAddresses)
+	}
+
 	if err := validateTransferRequest(request, dev.Pubkey); err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
@@ -480,14 +492,14 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
 	}
 
-	err = s.validateTimestampNonce(err, request)
+	err = s.validateTimestampNonce(request)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *Server) validateTimestampNonce(err error, request *ChatRequest) error {
+func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 	status, err := s.recorder.GetCosmosClient().Status(context.Background())
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)

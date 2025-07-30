@@ -22,6 +22,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
@@ -37,7 +38,9 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	validatorSetMock := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock)
+	// For now, use nil for authz keeper since our current implementation doesn't use it
+	var authzKeeper authzkeeper.Keeper
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, authzKeeper)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
@@ -116,7 +119,9 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	validatorSet := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock)
+	// For now, use nil for authz keeper since our current implementation doesn't use it
+	var authzKeeper authzkeeper.Keeper
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, authzKeeper)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
 	keep.SetGenesisOnlyParams(context, &genesisParams)
@@ -136,6 +141,7 @@ func InferenceKeeperWithMock(
 	validatorSet types.ValidatorSet,
 	groupMock types.GroupMessageKeeper,
 	stakingKeeper types.StakingKeeper,
+	authzKeeper authzkeeper.Keeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -159,6 +165,7 @@ func InferenceKeeperWithMock(
 		validatorSet,
 		stakingKeeper,
 		accountKeeper,
+		authzKeeper,
 		nil,
 	)
 

@@ -336,6 +336,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/count_po_c_validations_at_height/{blockHeight}";
   
   }
+
+  // Queries all authz grantees with specific message type for an account
+  rpc GranteesByMessageType (QueryGranteesByMessageTypeRequest) returns (QueryGranteesByMessageTypeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -835,5 +841,14 @@ message QueryCountPoCvalidationsAtHeightRequest {
 
 message QueryCountPoCvalidationsAtHeightResponse {
   uint64 count = 1;
+}
+
+message QueryGranteesByMessageTypeRequest {
+  string granter_address   = 1;
+  string message_type_url  = 2;
+}
+
+message QueryGranteesByMessageTypeResponse {
+  repeated string grantee_addresses = 1;
 }
 

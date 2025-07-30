@@ -18,6 +18,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
@@ -638,6 +639,7 @@ type ModuleInputs struct {
 	ValidatorSet     types.ValidatorSet
 	StakingKeeper    types.StakingKeeper
 	GroupServer      types.GroupMessageKeeper
+	AuthzKeeper      authzkeeper.Keeper
 	GetWasmKeeper    func() wasmkeeper.Keeper `optional:"true"`
 }
 
@@ -667,6 +669,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ValidatorSet,
 		in.StakingKeeper,
 		in.AccountKeeper,
+		in.AuthzKeeper,
 		in.GetWasmKeeper,
 	)
 
