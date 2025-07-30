@@ -28,7 +28,7 @@ echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 KEY_NAME="genesis"
 APP_NAME="inferenced"
-CHAIN_ID="gonka-testnet-4"
+CHAIN_ID="gonka-testnet-5"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 
