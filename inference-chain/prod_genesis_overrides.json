@@ -38,11 +38,15 @@
           "model_args": [
             "--quantization",
             "fp8",
-            "-kv-cache-dtype",
+            "--kv-cache-dtype",
             "fp8"
           ],
           "v_ram": "32",
-          "throughput_per_nonce": "1000"
+          "throughput_per_nonce": "1000",
+          "validation_threshold": {
+            "value": "0.85",
+            "exponent": "-2"
+          }
         },
         {
           "proposed_by": "genesis",
@@ -55,7 +59,11 @@
             "fp8"
           ],
           "v_ram": "16",
-          "throughput_per_nonce": "10000"
+          "throughput_per_nonce": "10000",
+          "validation_threshold": {
+            "value": "0.85",
+            "exponent": "-2"
+          }
         }
       ],
       "genesis_only_params": {
