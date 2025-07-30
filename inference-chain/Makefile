@@ -64,8 +64,9 @@ define DOCKER_BUILD
 
 
 	@echo "Creating minimal build context..."
-	@rm -rf .docker-context && mkdir -p .docker-context
-	@cp -r . .docker-context/inference-chain/
+	@rm -rf .docker-context && mkdir -p .docker-context/inference-chain
+	@cp -r * .docker-context/inference-chain/ 2>/dev/null || true
+	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
 	@DOCKER_BUILDKIT=1 \
 	docker build \
@@ -90,8 +91,9 @@ define DOCKER_BUILD_UPGRADE
 	@echo "TAGS:      $(if $(filter 1,$(TESTS)),upgraded,not set)"
 
 	@echo "Creating minimal build context for upgrade..."
-	@rm -rf .docker-context && mkdir -p .docker-context
-	@cp -r . .docker-context/inference-chain/
+	@rm -rf .docker-context && mkdir -p .docker-context/inference-chain
+	@cp -r * .docker-context/inference-chain/ 2>/dev/null || true
+	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
 	@DOCKER_BUILDKIT=1 \
 	docker build \
