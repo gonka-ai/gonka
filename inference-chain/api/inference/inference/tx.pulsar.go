@@ -14742,8 +14742,8 @@ func (x *fastReflection_MsgRegisterModel) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
-	if x.ValidationThreshold != float32(0) || math.Signbit(float64(x.ValidationThreshold)) {
-		value := protoreflect.ValueOfFloat32(x.ValidationThreshold)
+	if x.ValidationThreshold != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.ValidationThreshold)
 		if !f(fd_MsgRegisterModel_validation_threshold, value) {
 			return
 		}
@@ -14782,7 +14782,7 @@ func (x *fastReflection_MsgRegisterModel) Has(fd protoreflect.FieldDescriptor) b
 	case "inference.inference.MsgRegisterModel.throughput_per_nonce":
 		return x.ThroughputPerNonce != uint64(0)
 	case "inference.inference.MsgRegisterModel.validation_threshold":
-		return x.ValidationThreshold != float32(0) || math.Signbit(float64(x.ValidationThreshold))
+		return x.ValidationThreshold != uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
@@ -14818,7 +14818,7 @@ func (x *fastReflection_MsgRegisterModel) Clear(fd protoreflect.FieldDescriptor)
 	case "inference.inference.MsgRegisterModel.throughput_per_nonce":
 		x.ThroughputPerNonce = uint64(0)
 	case "inference.inference.MsgRegisterModel.validation_threshold":
-		x.ValidationThreshold = float32(0)
+		x.ValidationThreshold = uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
@@ -14867,7 +14867,7 @@ func (x *fastReflection_MsgRegisterModel) Get(descriptor protoreflect.FieldDescr
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.MsgRegisterModel.validation_threshold":
 		value := x.ValidationThreshold
-		return protoreflect.ValueOfFloat32(value)
+		return protoreflect.ValueOfUint32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
@@ -14909,7 +14909,7 @@ func (x *fastReflection_MsgRegisterModel) Set(fd protoreflect.FieldDescriptor, v
 	case "inference.inference.MsgRegisterModel.throughput_per_nonce":
 		x.ThroughputPerNonce = value.Uint()
 	case "inference.inference.MsgRegisterModel.validation_threshold":
-		x.ValidationThreshold = float32(value.Float())
+		x.ValidationThreshold = uint32(value.Uint())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
@@ -14987,7 +14987,7 @@ func (x *fastReflection_MsgRegisterModel) NewField(fd protoreflect.FieldDescript
 	case "inference.inference.MsgRegisterModel.throughput_per_nonce":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.MsgRegisterModel.validation_threshold":
-		return protoreflect.ValueOfFloat32(float32(0))
+		return protoreflect.ValueOfUint32(uint32(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
@@ -15092,8 +15092,8 @@ func (x *fastReflection_MsgRegisterModel) ProtoMethods() *protoiface.Methods {
 		if x.ThroughputPerNonce != 0 {
 			n += 1 + runtime.Sov(uint64(x.ThroughputPerNonce))
 		}
-		if x.ValidationThreshold != 0 || math.Signbit(float64(x.ValidationThreshold)) {
-			n += 5
+		if x.ValidationThreshold != 0 {
+			n += 1 + runtime.Sov(uint64(x.ValidationThreshold))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -15124,11 +15124,10 @@ func (x *fastReflection_MsgRegisterModel) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.ValidationThreshold != 0 || math.Signbit(float64(x.ValidationThreshold)) {
-			i -= 4
-			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.ValidationThreshold))))
+		if x.ValidationThreshold != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidationThreshold))
 			i--
-			dAtA[i] = 0x55
+			dAtA[i] = 0x50
 		}
 		if x.ThroughputPerNonce != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.ThroughputPerNonce))
@@ -15488,16 +15487,24 @@ func (x *fastReflection_MsgRegisterModel) ProtoMethods() *protoiface.Methods {
 					}
 				}
 			case 10:
-				if wireType != 5 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidationThreshold", wireType)
 				}
-				var v uint32
-				if (iNdEx + 4) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				x.ValidationThreshold = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ValidationThreshold |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
-				iNdEx += 4
-				x.ValidationThreshold = float32(math.Float32frombits(v))
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -29154,7 +29161,7 @@ type MsgRegisterModel struct {
 	ModelArgs              []string `protobuf:"bytes,7,rep,name=model_args,json=modelArgs,proto3" json:"model_args,omitempty"`
 	VRam                   uint64   `protobuf:"varint,8,opt,name=v_ram,json=vRam,proto3" json:"v_ram,omitempty"`
 	ThroughputPerNonce     uint64   `protobuf:"varint,9,opt,name=throughput_per_nonce,json=throughputPerNonce,proto3" json:"throughput_per_nonce,omitempty"`
-	ValidationThreshold    float32  `protobuf:"fixed32,10,opt,name=validation_threshold,json=validationThreshold,proto3" json:"validation_threshold,omitempty"`
+	ValidationThreshold    uint32   `protobuf:"varint,10,opt,name=validation_threshold,json=validationThreshold,proto3" json:"validation_threshold,omitempty"`
 }
 
 func (x *MsgRegisterModel) Reset() {
@@ -29240,7 +29247,7 @@ func (x *MsgRegisterModel) GetThroughputPerNonce() uint64 {
 	return 0
 }
 
-func (x *MsgRegisterModel) GetValidationThreshold() float32 {
+func (x *MsgRegisterModel) GetValidationThreshold() uint32 {
 	if x != nil {
 		return x.ValidationThreshold
 	}
@@ -30563,7 +30570,7 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x74, 0x68,
 	0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x50, 0x65, 0x72, 0x4e, 0x6f, 0x6e, 0x63, 0x65,
 	0x12, 0x31, 0x0a, 0x14, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74,
-	0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x02, 0x52, 0x13,
+	0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x13,
 	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68,
 	0x6f, 0x6c, 0x64, 0x3a, 0x0e, 0x82, 0xe7, 0xb0, 0x2a, 0x09, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72,
 	0x69, 0x74, 0x79, 0x22, 0x1a, 0x0a, 0x18, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74,

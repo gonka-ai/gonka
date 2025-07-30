@@ -60,9 +60,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			"error", err)
 		return nil, err
 	}
-	passValue := model.ValidationThreshold
+	passValue := float64(model.ValidationThreshold) * 0.01
 
-	passed := msg.Value > float64(passValue)
+	passed := msg.Value > passValue
 	k.LogInfo(
 		"Validation details", types.Validation,
 		"passValue", passValue,

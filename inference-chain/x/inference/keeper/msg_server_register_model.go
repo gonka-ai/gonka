@@ -16,6 +16,10 @@ func (k msgServer) RegisterModel(goCtx context.Context, msg *types.MsgRegisterMo
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	if msg.ValidationThreshold < 0 || msg.ValidationThreshold > 100 {
+		return nil, errorsmod.Wrapf(types.ErrInvalidValidationThreshold, "MsgRegisterModel. validation threshold must be in [0, 100], got %f", msg.ValidationThreshold)
+	}
+
 	k.SetModel(ctx, &types.Model{
 		ProposedBy:             msg.ProposedBy,
 		Id:                     msg.Id,
