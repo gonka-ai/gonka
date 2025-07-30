@@ -189,6 +189,14 @@ type UpdateNodeResultCommand struct {
 	Response chan bool
 }
 
+func NewUpdateNodeResultCommand(nodeId string, result NodeResult) UpdateNodeResultCommand {
+	return UpdateNodeResultCommand{
+		NodeId:   nodeId,
+		Result:   result,
+		Response: make(chan bool, 2),
+	}
+}
+
 func (c UpdateNodeResultCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }

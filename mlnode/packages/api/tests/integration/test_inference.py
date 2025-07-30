@@ -34,7 +34,7 @@ def session_identifiers() -> tuple[str, str, str]:
 @pytest.fixture(scope="session")
 def model_setup(inference_client: InferenceClient, urls: tuple[str, str]) -> str:
     _, vllm_url = urls
-    model_name = "unsloth/llama-3-8b-Instruct"
+    model_name = "Qwen/Qwen2.5-7B-Instruct"
     inference_client.inference_setup(model_name, "bfloat16")
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     return model_name

@@ -271,7 +271,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 }
 
 func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {
-	models, err := k.GetAllModels(ctx)
+	models, err := k.GetGovernanceModels(ctx)
 	if err != nil {
 		panic(err)
 	}

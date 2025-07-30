@@ -1,9 +1,16 @@
 syntax = "proto3";
 import "inference/inference/participant.proto";
 import "inference/inference/params.proto";
+import "inference/inference/model.proto";
 package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
+
+// Enum for timeslot types
+enum TimeslotType {
+  PRE_POC_SLOT = 0;
+  POC_SLOT = 1;
+}
 
 // These top two values are uint64s because they are IDs, not numerical values.
 message EpochGroupData {
@@ -25,15 +32,27 @@ message EpochGroupData {
   // List of model IDs for sub EpochGroups, only used in parent EpochGroup
   repeated string sub_group_models = 15;
   uint64 epoch_id = 16;
+  Model model_snapshot = 17;
+  int64 total_throughput = 18;
 }
 
 message ValidationWeight {
   string member_address = 1;
   int64 weight = 2;
   int32 reputation = 3;
+  // We may decide to move ml_nodes directly to EpochGroupData,
+  // but for now, this is a good solution.
+  repeated MLNodeInfo ml_nodes = 4;
 }
 
 message SeedSignature {
   string member_address = 1;
   string signature = 2;
+}
+
+message MLNodeInfo {
+  string node_id = 1;
+  int64 throughput = 2;
+  int64 poc_weight = 3;
+  repeated bool timeslot_allocation = 4;
 }

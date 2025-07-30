@@ -23,40 +23,63 @@ fun runParallelInferencesWithResults(
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
     models: List<String> = listOf(defaultModel),
+    inferenceRequest: InferenceRequestPayload = inferenceRequestObject,  // Allow custom request
 ): List<InferencePayload> = runBlocking {
+    val overallStartTime = System.currentTimeMillis()
+    
     // Launch coroutines with async and collect the deferred results
-
     val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
+    
+    val requestStartTime = System.currentTimeMillis()
+    
     val requests = List(count) { i ->
         async(limitedDispatcher) {
-            Logger.warn("Starting request $i")
+            val requestStart = System.currentTimeMillis()
             try {
                 System.nanoTime()
                 // This works, because the Instant.now() resolution gives us 3 zeros at the end, so we know these will be unique
                 val timestamp = Instant.now().toEpochNanos() + i
-                val result = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson(), timestamp = timestamp)
-                Logger.info("Result for $i: $result\n\n\n")
+                val result = genesis.makeInferenceRequest(inferenceRequest.copy(model = models.random()).toJson(), timestamp = timestamp)
                 result
             } catch (e: Exception) {
-                Logger.error("Error making inference request: ${e.message}")
                 null
-            } finally {
-                Logger.warn("Finished request $i")
             }
         }
     }
 
     // Wait for all requests to complete and collect their results
+    val requestCollectionStart = System.currentTimeMillis()
+    
     val results = requests.map { it.await() }
+    val requestCollectionEnd = System.currentTimeMillis()
+    val requestPhaseTotal = requestCollectionEnd - requestStartTime
+    
+    val successfulRequests = results.filterNotNull()
 
+    val blockWaitStart = System.currentTimeMillis()
     genesis.node.waitForNextBlock(waitForBlocks)
+    val blockWaitEnd = System.currentTimeMillis()
+    val blockWaitDuration = blockWaitEnd - blockWaitStart
 
     // Return actual inference objects
-    results.mapNotNull { result ->
+    val inferenceRetrievalStart = System.currentTimeMillis()
+    
+    val inferences = results.mapNotNull { result ->
         result?.let {
-            genesis.api.getInference(result.id)
+            try {
+                val retrievalStart = System.currentTimeMillis()
+                val inference = genesis.api.getInference(result.id)
+                inference
+            } catch (e: Exception) {
+                null
+            }
         }
     }
+    
+    val overallEndTime = System.currentTimeMillis()
+    val totalDuration = overallEndTime - overallStartTime
+    
+    inferences
 }
 
 /**
@@ -69,8 +92,9 @@ fun runParallelInferences(
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
     models: List<String> = listOf(defaultModel),
+    inferenceRequest: InferenceRequestPayload = inferenceRequestObject,  // Allow custom request
 ): List<Int> {
     // Use the new function and extract statuses for backward compatibility
-    val inferences = runParallelInferencesWithResults(genesis, count, waitForBlocks, maxConcurrentRequests, models)
+    val inferences = runParallelInferencesWithResults(genesis, count, waitForBlocks, maxConcurrentRequests, models, inferenceRequest)
     return inferences.map { it.status }
 } 

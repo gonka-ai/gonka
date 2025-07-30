@@ -28,6 +28,15 @@ var (
 	KeyUtilizationBonusFactor     = []byte("UtilizationBonusFactor")
 	KeyFullCoverageBonusFactor    = []byte("FullCoverageBonusFactor")
 	KeyPartialCoverageBonusFactor = []byte("PartialCoverageBonusFactor")
+	// Dynamic pricing parameter keys
+	KeyStabilityZoneLowerBound   = []byte("StabilityZoneLowerBound")
+	KeyStabilityZoneUpperBound   = []byte("StabilityZoneUpperBound")
+	KeyPriceElasticity           = []byte("PriceElasticity")
+	KeyUtilizationWindowDuration = []byte("UtilizationWindowDuration")
+	KeyMinPerTokenPrice          = []byte("MinPerTokenPrice")
+	KeyBasePerTokenPrice         = []byte("BasePerTokenPrice")
+	KeyGracePeriodEndEpochDP     = []byte("GracePeriodEndEpochDP")
+	KeyGracePeriodPerTokenPrice  = []byte("GracePeriodPerTokenPrice")
 )
 
 var _ paramtypes.ParamSet = (*Params)(nil)
@@ -64,25 +73,29 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 // DefaultParams returns a default set of parameters
 func DefaultParams() Params {
 	return Params{
-		EpochParams:         DefaultEpochParams(),
-		ValidationParams:    DefaultValidationParams(),
-		PocParams:           DefaultPocParams(),
-		TokenomicsParams:    DefaultTokenomicsParams(),
-		CollateralParams:    DefaultCollateralParams(),
-		BitcoinRewardParams: DefaultBitcoinRewardParams(),
+		EpochParams:          DefaultEpochParams(),
+		ValidationParams:     DefaultValidationParams(),
+		PocParams:            DefaultPocParams(),
+		TokenomicsParams:     DefaultTokenomicsParams(),
+		CollateralParams:     DefaultCollateralParams(),
+		BitcoinRewardParams:  DefaultBitcoinRewardParams(),
+		DynamicPricingParams: DefaultDynamicPricingParams(),
 	}
 }
 
 func DefaultEpochParams() *EpochParams {
 	return &EpochParams{
-		EpochLength:               40,
-		EpochMultiplier:           1,
-		EpochShift:                0,
-		DefaultUnitOfComputePrice: 100,
-		PocStageDuration:          10,
-		PocExchangeDuration:       2,
-		PocValidationDelay:        2,
-		PocValidationDuration:     6,
+		EpochLength:                    40,
+		EpochMultiplier:                1,
+		EpochShift:                     0,
+		DefaultUnitOfComputePrice:      100,
+		PocStageDuration:               10,
+		PocExchangeDuration:            2,
+		PocValidationDelay:             2,
+		PocValidationDuration:          6,
+		SetNewValidatorsDelay:          1,
+		InferenceValidationCutoff:      0,
+		InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
 	}
 }
 
@@ -107,8 +120,9 @@ func DefaultValidationParams() *ValidationParams {
 
 func DefaultPocParams() *PocParams {
 	return &PocParams{
-		DefaultDifficulty:    5,
-		ValidationSampleSize: 200,
+		DefaultDifficulty:            5,
+		ValidationSampleSize:         200,
+		PocDataPruningEpochThreshold: 1, // Number of epochs after which PoC data can be pruned
 	}
 }
 
@@ -145,6 +159,19 @@ func DefaultBitcoinRewardParams() *BitcoinRewardParams {
 		UtilizationBonusFactor:     DecimalFromFloat(0.5),       // Multiplier for utilization bonuses (Phase 2)
 		FullCoverageBonusFactor:    DecimalFromFloat(1.2),       // 20% bonus for complete model coverage (Phase 2)
 		PartialCoverageBonusFactor: DecimalFromFloat(0.1),       // Scaling factor for partial coverage (Phase 2)
+	}
+}
+
+func DefaultDynamicPricingParams() *DynamicPricingParams {
+	return &DynamicPricingParams{
+		StabilityZoneLowerBound:   DecimalFromFloat(0.40), // Lower bound of stability zone (40%)
+		StabilityZoneUpperBound:   DecimalFromFloat(0.60), // Upper bound of stability zone (60%)
+		PriceElasticity:           DecimalFromFloat(0.05), // Price elasticity factor (5% max change)
+		UtilizationWindowDuration: 60,                     // Utilization calculation window (60 seconds)
+		MinPerTokenPrice:          1,                      // Minimum per-token price floor (1 nicoin)
+		BasePerTokenPrice:         100,                    // Initial per-token price after grace period (100 nicoins)
+		GracePeriodEndEpoch:       90,                     // Grace period ends at epoch 90
+		GracePeriodPerTokenPrice:  0,                      // Free inference during grace period (0 nicoins)
 	}
 }
 
@@ -187,7 +214,56 @@ func (p *BitcoinRewardParams) ParamSetPairs() paramtypes.ParamSetPairs {
 	}
 }
 
+// ParamSetPairs gets the params for the dynamic pricing system
+func (p *DynamicPricingParams) ParamSetPairs() paramtypes.ParamSetPairs {
+	return paramtypes.ParamSetPairs{
+		paramtypes.NewParamSetPair(KeyStabilityZoneLowerBound, &p.StabilityZoneLowerBound, validateStabilityZoneBound),
+		paramtypes.NewParamSetPair(KeyStabilityZoneUpperBound, &p.StabilityZoneUpperBound, validateStabilityZoneBound),
+		paramtypes.NewParamSetPair(KeyPriceElasticity, &p.PriceElasticity, validatePriceElasticity),
+		paramtypes.NewParamSetPair(KeyUtilizationWindowDuration, &p.UtilizationWindowDuration, validateUtilizationWindowDuration),
+		paramtypes.NewParamSetPair(KeyMinPerTokenPrice, &p.MinPerTokenPrice, validatePerTokenPrice),
+		paramtypes.NewParamSetPair(KeyBasePerTokenPrice, &p.BasePerTokenPrice, validatePerTokenPrice),
+		paramtypes.NewParamSetPair(KeyGracePeriodEndEpochDP, &p.GracePeriodEndEpoch, validateEpoch),
+		paramtypes.NewParamSetPair(KeyGracePeriodPerTokenPrice, &p.GracePeriodPerTokenPrice, validateGracePeriodPerTokenPrice),
+	}
+}
+
 func validateEpochParams(i interface{}) error {
+	return nil
+}
+
+// Validate validates the EpochParams
+func (p *EpochParams) Validate() error {
+	if p.EpochLength <= 0 {
+		return fmt.Errorf("epoch length must be positive")
+	}
+	if p.EpochMultiplier <= 0 {
+		return fmt.Errorf("epoch multiplier must be positive")
+	}
+	if p.DefaultUnitOfComputePrice < 0 {
+		return fmt.Errorf("default unit of compute price cannot be negative")
+	}
+	if p.PocStageDuration <= 0 {
+		return fmt.Errorf("poc stage duration must be positive")
+	}
+	if p.PocExchangeDuration <= 0 {
+		return fmt.Errorf("poc exchange duration must be positive")
+	}
+	if p.PocValidationDelay < 0 {
+		return fmt.Errorf("poc validation delay cannot be negative")
+	}
+	if p.PocValidationDuration <= 0 {
+		return fmt.Errorf("poc validation duration must be positive")
+	}
+	if p.SetNewValidatorsDelay < 0 {
+		return fmt.Errorf("set new validators delay cannot be negative")
+	}
+	if p.InferenceValidationCutoff < 0 {
+		return fmt.Errorf("inference validation cutoff cannot be negative")
+	}
+	if p.InferencePruningEpochThreshold < 1 {
+		return fmt.Errorf("inference pruning epoch threshold must be at least 1")
+	}
 	return nil
 }
 
@@ -221,14 +297,16 @@ func (p Params) Validate() error {
 	if err := p.BitcoinRewardParams.Validate(); err != nil {
 		return err
 	}
-	// TODO: Uncomment this when we have a way to validate the params
-	// if err := p.EpochParams.Validate(); err != nil {
-	// 	return err
-	// }
+	if err := p.EpochParams.Validate(); err != nil {
+		return err
+	}
 	// if err := p.PocParams.Validate(); err != nil {
 	// 	return err
 	// }
 	if err := p.CollateralParams.Validate(); err != nil {
+		return err
+	}
+	if err := p.DynamicPricingParams.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -351,6 +429,54 @@ func (p *BitcoinRewardParams) Validate() error {
 	}
 	if err := validateBonusFactor(p.PartialCoverageBonusFactor); err != nil {
 		return errors.Wrap(err, "invalid partial_coverage_bonus_factor")
+	}
+
+	return nil
+}
+
+func (p *DynamicPricingParams) Validate() error {
+	// Check for nil Decimal fields first
+	if p.StabilityZoneLowerBound == nil {
+		return fmt.Errorf("stability zone lower bound cannot be nil")
+	}
+	if p.StabilityZoneUpperBound == nil {
+		return fmt.Errorf("stability zone upper bound cannot be nil")
+	}
+	if p.PriceElasticity == nil {
+		return fmt.Errorf("price elasticity cannot be nil")
+	}
+
+	// Validate parameters
+	if err := validateStabilityZoneBound(p.StabilityZoneLowerBound); err != nil {
+		return errors.Wrap(err, "invalid stability_zone_lower_bound")
+	}
+	if err := validateStabilityZoneBound(p.StabilityZoneUpperBound); err != nil {
+		return errors.Wrap(err, "invalid stability_zone_upper_bound")
+	}
+	if err := validatePriceElasticity(p.PriceElasticity); err != nil {
+		return errors.Wrap(err, "invalid price_elasticity")
+	}
+	if err := validateUtilizationWindowDuration(p.UtilizationWindowDuration); err != nil {
+		return errors.Wrap(err, "invalid utilization_window_duration")
+	}
+	if err := validatePerTokenPrice(p.MinPerTokenPrice); err != nil {
+		return errors.Wrap(err, "invalid min_per_token_price")
+	}
+	if err := validatePerTokenPrice(p.BasePerTokenPrice); err != nil {
+		return errors.Wrap(err, "invalid base_per_token_price")
+	}
+	if err := validateGracePeriodPerTokenPrice(p.GracePeriodPerTokenPrice); err != nil {
+		return errors.Wrap(err, "invalid grace_period_per_token_price")
+	}
+	if err := validateEpoch(p.GracePeriodEndEpoch); err != nil {
+		return errors.Wrap(err, "invalid grace_period_end_epoch")
+	}
+
+	// Validate stability zone bounds are logically consistent
+	lowerBound := p.StabilityZoneLowerBound.ToFloat()
+	upperBound := p.StabilityZoneUpperBound.ToFloat()
+	if lowerBound >= upperBound {
+		return fmt.Errorf("stability zone lower bound (%f) must be less than upper bound (%f)", lowerBound, upperBound)
 	}
 
 	return nil
@@ -501,6 +627,106 @@ func validateUseBitcoinRewards(i interface{}) error {
 	_, ok := i.(bool)
 	if !ok {
 		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	return nil
+}
+
+// Dynamic pricing validation functions
+func validateStabilityZoneBound(i interface{}) error {
+	bound, ok := i.(*Decimal)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if bound == nil {
+		return fmt.Errorf("stability zone bound cannot be nil")
+	}
+
+	value := bound.ToFloat()
+	if value < 0.0 || value > 1.0 {
+		return fmt.Errorf("stability zone bound must be between 0.0 and 1.0, got: %f", value)
+	}
+	return nil
+}
+
+func validatePriceElasticity(i interface{}) error {
+	elasticity, ok := i.(*Decimal)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if elasticity == nil {
+		return fmt.Errorf("price elasticity cannot be nil")
+	}
+
+	value := elasticity.ToFloat()
+	if value <= 0.0 || value > 1.0 {
+		return fmt.Errorf("price elasticity must be between 0.0 and 1.0, got: %f", value)
+	}
+	return nil
+}
+
+func validateUtilizationWindowDuration(i interface{}) error {
+	duration, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if duration == 0 {
+		return fmt.Errorf("utilization window duration must be greater than 0")
+	}
+	if duration > 3600 { // Max 1 hour
+		return fmt.Errorf("utilization window duration must not exceed 3600 seconds (1 hour), got: %d", duration)
+	}
+	return nil
+}
+
+func validatePerTokenPrice(i interface{}) error {
+	price, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if price == 0 {
+		return fmt.Errorf("per-token price must be greater than 0")
+	}
+	return nil
+}
+
+func validateGracePeriodPerTokenPrice(i interface{}) error {
+	_, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	// Grace period price can be 0 (free inference) or any positive value
+	return nil
+}
+
+func validateSetNewValidatorsDelay(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v < 0 {
+		return fmt.Errorf("set new validators delay cannot be negative")
+	}
+	return nil
+}
+
+func validateInferenceValidationCutoff(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v < 0 {
+		return fmt.Errorf("inference validation cutoff cannot be negative")
+	}
+	return nil
+}
+
+func validateInferencePruningEpochThreshold(i interface{}) error {
+	v, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v < 1 {
+		return fmt.Errorf("inference pruning epoch threshold must be at least 1")
 	}
 	return nil
 }

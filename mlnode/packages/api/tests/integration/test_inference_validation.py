@@ -33,7 +33,7 @@ def inference_client(urls: tuple[str, str]) -> InferenceClient:
 @pytest.fixture(scope="session")
 def model_setup_big(inference_client: InferenceClient, urls: tuple[str, str]) -> str:
     _, vllm_url = urls
-    model_name = "unsloth/llama-3-8b-Instruct"
+    model_name = "Qwen/Qwen2.5-7B-Instruct"
     inference_client.inference_setup(model_name, "bfloat16")
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     return model_name
@@ -152,11 +152,11 @@ def test_different_models_inference_validation(
     inference_response = run_inference_request(vllm_url, "unsloth/Llama-3.2-1B-Instruct", test_prompt)
     
     # Set up the big model and run validation
-    inference_client.inference_setup("unsloth/llama-3-8b-Instruct", "bfloat16")
+    inference_client.inference_setup("Qwen/Qwen2.5-7B-Instruct", "bfloat16")
     # Wait for the server to be ready with the new model
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     validation_response = run_validation_request(
-        vllm_url, "unsloth/llama-3-8b-Instruct", test_prompt, enforced_str
+        vllm_url, "Qwen/Qwen2.5-7B-Instruct", test_prompt, enforced_str
     )
     
     inference_sequence = TopLogProbsSequence.from_json(inference_response)

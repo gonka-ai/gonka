@@ -72,7 +72,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	if err == nil && state.State == mlnodeclient.MlNodeState_POW {
 		powStatus, powErr := worker.mlClient.GetPowStatus(ctx)
 		if powErr == nil && powStatus.Status == mlnodeclient.POW_GENERATING {
-			logging.Info("Node already in PoC generating state", types.PoC, "node_id", worker.nodeId)
+			logging.Info("[StartPoCNodeCommand] Node already in PoC generating state", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true
 			result.FinalStatus = types.HardwareNodeStatus_POC
 			result.FinalPocStatus = PocStatusGenerating
@@ -83,7 +83,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	// Stop node if needed
 	if state != nil && state.State != mlnodeclient.MlNodeState_STOPPED {
 		if err := worker.mlClient.Stop(ctx); err != nil {
-			logging.Error("Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
+			logging.Error("[StartPoCNodeCommand] Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 			result.Succeeded = false
 			result.Error = err.Error()
 			result.FinalStatus = types.HardwareNodeStatus_FAILED
@@ -94,10 +94,10 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	// Start PoC
 	dto := mlnodeclient.BuildInitDto(
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
-		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
+		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
 	)
 	if err := worker.mlClient.InitGenerate(ctx, dto); err != nil {
-		logging.Error("Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
+		logging.Error("[StartPoCNodeCommand] Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
@@ -105,7 +105,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_POC
 		result.FinalPocStatus = PocStatusGenerating
-		logging.Info("Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
+		logging.Info("[StartPoCNodeCommand] Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
 	}
 	return result
 }
@@ -158,7 +158,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 
 	dto := mlnodeclient.BuildInitDto(
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
-		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
+		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
 	)
 
 	if err := worker.mlClient.InitValidate(ctx, dto); err != nil {
@@ -213,31 +213,38 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	// Start inference
-	if len(worker.node.Node.Models) == 0 {
+	if len(worker.node.State.EpochModels) == 0 {
 		result.Succeeded = false
-		result.Error = "No models available"
+		result.Error = "No epoch models available for this node"
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
 		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
 		return result
 	}
 
-	var model string
-	var modelArgs []string
-	for modelName, args := range worker.node.Node.Models {
-		model = modelName
-		modelArgs = args.Args
+	var modelId string
+	var epochModel types.Model
+	for id, m := range worker.node.State.EpochModels {
+		modelId = id
+		epochModel = m
 		break
 	}
 
-	if model == "" {
+	if modelId == "" {
 		result.Succeeded = false
-		result.Error = "No inference model set in config"
+		result.Error = "Could not select a model from epoch models"
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
 		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
 		return result
 	}
 
-	if err := worker.mlClient.InferenceUp(ctx, model, modelArgs); err != nil {
+	// Merge epoch model args with local ones
+	localArgs := []string{}
+	if localModelConfig, ok := worker.node.Node.Models[modelId]; ok {
+		localArgs = localModelConfig.Args
+	}
+	mergedArgs := worker.broker.MergeModelArgs(epochModel.ModelArgs, localArgs)
+
+	if err := worker.mlClient.InferenceUp(ctx, epochModel.Id, mergedArgs); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()

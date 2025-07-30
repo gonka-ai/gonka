@@ -47,11 +47,7 @@ func (w *NodeWorker) run() {
 			result := item.cmd.Execute(item.ctx, w)
 
 			// Queue a command back to the broker to update the state
-			updateCmd := UpdateNodeResultCommand{
-				NodeId:   w.nodeId,
-				Result:   result,
-				Response: make(chan bool, 1),
-			}
+			updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
 			if err := w.broker.QueueMessage(updateCmd); err != nil {
 				logging.Error("Failed to queue node result update command", types.Nodes,
 					"node_id", w.nodeId, "error", err)
@@ -63,11 +59,7 @@ func (w *NodeWorker) run() {
 			close(w.commands)
 			for item := range w.commands {
 				result := item.cmd.Execute(item.ctx, w)
-				updateCmd := UpdateNodeResultCommand{
-					NodeId:   w.nodeId,
-					Result:   result,
-					Response: make(chan bool, 1),
-				}
+				updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
 				if err := w.broker.QueueMessage(updateCmd); err != nil {
 					logging.Error("Failed to queue node result update command during shutdown", types.Nodes,
 						"node_id", w.nodeId, "error", err)

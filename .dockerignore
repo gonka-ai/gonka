@@ -7,5 +7,7 @@ inference-chain/build/
 .github/
 .DS_Store
 **/.DS_Store
+mlnode/
+**/.venv
 
 **/*.env

@@ -94,6 +94,10 @@ type ParticipantKeeper interface {
 	ParticipantAll(ctx context.Context, req *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
 }
 
+type HardwareNodeKeeper interface {
+	GetHardwareNodes(ctx context.Context, address string) (*HardwareNodes, bool)
+}
+
 type EpochGroupDataKeeper interface {
 	SetEpochGroupData(ctx context.Context, epochGroupData EpochGroupData)
 	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val EpochGroupData, found bool)
@@ -109,4 +113,9 @@ type BookkeepingBankKeeper interface {
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins, memo string) error
 	// For logging transactions to tracking accounts, like vesting holds
 	LogSubAccountTransaction(recipient string, sender string, subAccount string, amt sdk.Coin, memo string)
+}
+
+type ModelKeeper interface {
+	GetGovernanceModel(ctx context.Context, id string) (val *Model, found bool)
+	GetGovernanceModels(ctx context.Context) (list []*Model, err error)
 }

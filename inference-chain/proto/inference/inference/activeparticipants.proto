@@ -2,9 +2,16 @@ syntax = "proto3";
 package inference.inference;
 
 import "inference/inference/random_seed.proto";
+import "inference/inference/epoch_group_data.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+// Wrapper message to enable double repeated structure for model-based MLNode organization
+message ModelMLNodes {
+  repeated MLNodeInfo ml_nodes = 1;
+}
+
+// Not added to the Genesis, because at genesis it's constructed based on Participants
 message ActiveParticipants {
   repeated ActiveParticipant participants = 1;
   uint64 epoch_group_id = 2; // DEPRECATED: the id of the group entity. Previously the key of the ActiveParticipants entity
@@ -21,4 +28,5 @@ message ActiveParticipant {
   string inference_url = 4;
   repeated string models = 5;
   RandomSeed seed = 6;
+  repeated ModelMLNodes ml_nodes = 7;
 }

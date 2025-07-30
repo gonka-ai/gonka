@@ -4,17 +4,8 @@ import com.productscience.InferenceRequestPayload
 import com.productscience.InferenceResult
 import com.productscience.LocalCluster
 import com.productscience.LocalInferencePair
-import com.productscience.data.AppState
-import com.productscience.data.Content
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferencePayload
-import com.productscience.data.InferenceState
-import com.productscience.data.InferenceStatus
-import com.productscience.data.Logprobs
-import com.productscience.data.Participant
-import com.productscience.data.Usage
-import com.productscience.data.ValidationParams
-import com.productscience.data.spec
+import com.productscience.createSpec
+import com.productscience.data.*
 import com.productscience.defaultInferenceResponseObject
 import com.productscience.expectedCoinBalanceChanges
 import com.productscience.getInferenceResult
@@ -41,6 +32,7 @@ import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.random.Random
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.runBlocking
 
 const val DELAY_SEED = 8675309
 
@@ -49,29 +41,52 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test with maximum tokens`() {
+        logSection("=== STARTING TEST: test with maximum tokens ===")
         val (cluster, genesis) = initCluster()
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        
         val maxCompletionTokens = 100
+        
+        // Test 1: maxCompletionTokens parameter
+        logSection("=== TEST 1: Testing maxCompletionTokens = $maxCompletionTokens ===")
+        val expectedCost1 = (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
+        logSection("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost1")
         verifyEscrow(
             cluster,
             inferenceRequestObject.copy(maxCompletionTokens = maxCompletionTokens),
-            (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            expectedCost1,
             maxCompletionTokens
         )
+        
+        logSection("=== TEST 1 COMPLETED ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        
+        // Test 2: maxTokens parameter  
+        logSection("=== TEST 2: Testing maxTokens = $maxCompletionTokens ===")
+        val expectedCost2 = (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
+        logSection("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost2")
         verifyEscrow(
             cluster,
             inferenceRequestObject.copy(maxTokens = maxCompletionTokens),
-            (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            expectedCost2,
             maxCompletionTokens
         )
+        
+        logSection("=== TEST 2 COMPLETED ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        
+        // Test 3: Default tokens
+        logSection("=== TEST 3: Testing default tokens = $DEFAULT_TOKENS ===")
+        val expectedCost3 = (DEFAULT_TOKENS + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
+        logSection("Expected cost: ($DEFAULT_TOKENS + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost3")
         verifyEscrow(
             cluster,
             inferenceRequestObject,
-            (DEFAULT_TOKENS + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            expectedCost3,
             DEFAULT_TOKENS.toInt()
         )
+        
+        logSection("=== ALL TESTS COMPLETED SUCCESSFULLY ===")
     }
 
     private fun verifyEscrow(
@@ -87,8 +102,10 @@ class InferenceAccountingTests : TestermintTest() {
         }
         val seed = Random.nextInt()
 
-        CoroutineScope(Dispatchers.Default).launch {
-            genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        var inferenceId: String? = null
+        runBlocking {
+            val response = genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+            inferenceId = response.id
         }
 
         var lastRequest: InferenceRequestPayload? = null
@@ -99,16 +116,47 @@ class InferenceAccountingTests : TestermintTest() {
             lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
         }
 
+        // Mock verification
         assertThat(lastRequest).isNotNull
         assertThat(lastRequest?.maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
         assertThat(lastRequest?.maxCompletionTokens).withFailMessage { "Max completion tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxCompletionTokens).isEqualTo(expectedMaxTokens)
+        
+        // Per-token price verification  
+        lastRequest?.let { request ->
+            inferenceId?.let { id ->
+                Thread.sleep(Duration.ofSeconds(2))
+                
+                try {
+                    val chainInference = genesis.api.getInference(id)
+                    
+                    logSection("Per-token price verification: ${chainInference.perTokenPrice} (expected: $DEFAULT_TOKEN_COST)")
+                    
+                    assertThat(chainInference.perTokenPrice).withFailMessage {
+                        "Per-token price in inference should not be null"
+                    }.isNotNull()
+                    
+                    assertThat(chainInference.perTokenPrice).withFailMessage {
+                        "Per-token price in inference (${chainInference.perTokenPrice}) should equal DEFAULT_TOKEN_COST ($DEFAULT_TOKEN_COST)"
+                    }.isEqualTo(DEFAULT_TOKEN_COST)
+                    
+                } catch (e: Exception) {
+                    logSection("⚠️ Could not verify per-token price: ${e.message}")
+                }
+            }
+        }
+        
+        // Balance verification
         val difference = (0..100).asSequence().map {
             Thread.sleep(100)
-            startBalance - genesis.node.getSelfBalance()
+            val currentBalance = genesis.node.getSelfBalance()
+            startBalance - currentBalance
         }.filter { it != 0L }.first()
+        
+        logSection("Balance verification: deducted $difference nicoin (expected: $expectedEscrow)")
         assertThat(difference).isEqualTo(expectedEscrow)
+        logSection("✅ Escrow verification completed successfully")
     }
 
     @Test
@@ -291,12 +339,16 @@ class InferenceAccountingTests : TestermintTest() {
         val balanceBeforeSettle = genesis.node.getSelfBalance()
         val timeouts = genesis.node.getInferenceTimeouts()
         val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
+        val queryResp1 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
+        Logger.info { "QUERIED ALL INFERENCES 2:\n" + queryResp1.joinToString("\n") }
         assertThat(newTimeouts).hasSize(1)
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
+        Logger.info { "EXPIRATION BLOCKS: ${expirationBlocks - 1}" }
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-        genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
-        genesis.waitForStage(EpochStage.START_OF_POC)
+        genesis.node.waitForMinimumBlock(expirationBlock + 1, "inferenceExpiration")
         logSection("Verifying inference was expired and refunded")
+        val queryResp2 = genesis.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
+        Logger.info { "QUERIED ALL INFERENCES 2 (again):\n" + queryResp2.joinToString("\n") }
         val canceledInference =
             cluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
         assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
@@ -335,6 +387,7 @@ class InferenceAccountingTests : TestermintTest() {
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+            val timeoutsAtStart = genesis.node.getInferenceTimeouts()
             localCluster.joinPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
@@ -350,10 +403,13 @@ class InferenceAccountingTests : TestermintTest() {
                 )
             } catch(e: com.github.kittinunf.fuel.core.FuelError) {
                 failure = e
-                val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-                val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-                logSection("Waiting for inference to expire")
-                genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+                genesis.node.waitForNextBlock()
+                val timeouts = genesis.node.getInferenceTimeouts()
+                val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
+                assertThat(newTimeouts).hasSize(1)
+                val expirationHeight = newTimeouts.first().expirationHeight.toLong()
+                logSection("Waiting for inference to expire. expirationHeight = $expirationHeight")
+                genesis.node.waitForMinimumBlock(expirationHeight + 1, "inferenceExpiration")
                 logSection("Verifying inference was expired and refunded")
                 val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
                 // NOTE: We don't need to add epoch rewards here as genesis node fails to claim rewards due to signature error

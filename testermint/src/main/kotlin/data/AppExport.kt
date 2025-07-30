@@ -26,6 +26,7 @@ data class InferenceState(
     val params: InferenceParams,
     val genesisOnlyParams: GenesisOnlyParams,
     val tokenomicsData: TokenomicsData,
+    val modelList: List<ModelListItem>,
 )
 
 data class TokenomicsData(
@@ -61,6 +62,8 @@ data class InferenceParams(
     val collateralParams: CollateralParams,
     @SerializedName("bitcoin_reward_params")
     val bitcoinRewardParams: BitcoinRewardParams? = null,
+    @SerializedName("dynamic_pricing_params")
+    val dynamicPricingParams: DynamicPricingParams? = null,
 )
 
 data class TokenomicsParams(
@@ -94,6 +97,25 @@ data class BitcoinRewardParams(
     val partialCoverageBonusFactor: Decimal
 )
 
+data class DynamicPricingParams(
+    @SerializedName("stability_zone_lower_bound")
+    val stabilityZoneLowerBound: Decimal,
+    @SerializedName("stability_zone_upper_bound")
+    val stabilityZoneUpperBound: Decimal,
+    @SerializedName("price_elasticity")
+    val priceElasticity: Decimal,
+    @SerializedName("utilization_window_duration")
+    val utilizationWindowDuration: Long,
+    @SerializedName("min_per_token_price")
+    val minPerTokenPrice: Long,
+    @SerializedName("base_per_token_price")
+    val basePerTokenPrice: Long,
+    @SerializedName("grace_period_end_epoch")
+    val gracePeriodEndEpoch: Long,
+    @SerializedName("grace_period_per_token_price")
+    val gracePeriodPerTokenPrice: Long,
+)
+
 data class EpochParams(
     val epochLength: Long,
     val epochMultiplier: Int,
@@ -103,6 +125,8 @@ data class EpochParams(
     val pocExchangeDuration: Long,
     val pocValidationDelay: Long,
     val pocValidationDuration: Long,
+    val setNewValidatorsDelay: Long,
+    val inferencePruningEpochThreshold: Long
 )
 
 data class Decimal(
@@ -222,4 +246,15 @@ data class DenomMetadata(
 data class DenomUnit(
     val denom: String,
     val exponent: Int,
+)
+
+data class ModelListItem(
+    val proposedBy: String,
+    val id: String,
+    val unitsOfComputePerToken: String,
+    val hfRepo: String,
+    val hfCommit: String,
+    val modelArgs: List<String>,
+    val vRam: String,
+    val throughputPerNonce: String,
 )
