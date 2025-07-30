@@ -1,6 +1,7 @@
 package mlnode
 
 import (
+	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 
@@ -10,10 +11,11 @@ import (
 type Server struct {
 	e        *echo.Echo
 	recorder cosmos_client.CosmosMessageClient
+	broker   *broker.Broker
 }
 
 // TODO breacking changes: url path, support on mlnode side
-func NewServer(recorder cosmos_client.CosmosMessageClient) *Server {
+func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker) *Server {
 	e := echo.New()
 
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
@@ -24,6 +26,7 @@ func NewServer(recorder cosmos_client.CosmosMessageClient) *Server {
 	s := &Server{
 		e:        e,
 		recorder: recorder,
+		broker:   broker,
 	}
 
 	// keep old paths too for backward compatibility

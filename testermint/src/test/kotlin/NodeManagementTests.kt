@@ -1,9 +1,6 @@
 import com.productscience.data.InferenceNode
 import com.productscience.data.ModelConfig
-import com.productscience.getLocalInferencePairs
-import com.productscience.inferenceConfig
 import com.productscience.initCluster
-import com.productscience.initialize
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -23,7 +20,7 @@ class NodeManagementTests : TestermintTest() {
         val node = genesis.api.addNode(InferenceNode(
             host = "http://localhost:8080",
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),
@@ -45,7 +42,7 @@ class NodeManagementTests : TestermintTest() {
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),
@@ -71,7 +68,7 @@ class NodeManagementTests : TestermintTest() {
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),
@@ -82,7 +79,7 @@ class NodeManagementTests : TestermintTest() {
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),

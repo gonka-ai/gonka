@@ -105,6 +105,7 @@ func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {
 	return types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
+		ModelList:         GenesisModelsTestList(),
 	}
 }
 

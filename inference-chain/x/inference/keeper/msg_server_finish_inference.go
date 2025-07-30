@@ -137,7 +137,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 
 	modelEpochGroup, err := currentEpochGroup.GetSubGroup(ctx, existingInference.Model)
 	if err != nil {
-		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
+		k.LogError("Unable to get model Epoch Group", types.EpochGroup, "err", err)
 		return err
 	}
 
@@ -150,6 +150,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		EpochId:            effectiveEpoch.Index,
 		Model:              existingInference.Model,
 		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
+		CreatedAtBlockHeight: ctx.BlockHeight(),
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
 		k.LogWarn("Executor Power equals Total Power", types.Validation,

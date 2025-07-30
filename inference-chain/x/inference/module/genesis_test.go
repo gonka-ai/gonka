@@ -16,6 +16,18 @@ func TestGenesis(t *testing.T) {
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 		CosmWasmParams:    baseGenesis.CosmWasmParams,
+		ModelList: []types.Model{
+			{
+				ProposedBy:             "genesis",
+				Id:                     "model-1",
+				UnitsOfComputePerToken: 10,
+				HfRepo:                 "repo1",
+				HfCommit:               "commit1",
+				ModelArgs:              []string{"--arg1"},
+				VRam:                   16,
+				ThroughputPerNonce:     100,
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -30,5 +42,6 @@ func TestGenesis(t *testing.T) {
 	nullify.Fill(&genesisState)
 	nullify.Fill(got)
 
+	require.ElementsMatch(t, genesisState.ModelList, got.ModelList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

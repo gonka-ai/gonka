@@ -133,6 +133,7 @@ When working with this codebase, AI Agents should:
 7. **Use appropriate Ignite commands** - Follow the patterns established in the ignite_cheat_sheet.md for scaffolding new and modifying existing components. Components only need to be added using ignite if they are to be stored in the actual state of the blockchain, however.
 
 8. **Add new files to Git** - Use `git add` on the CLI to add newly created files to Github.
+9. **NEVER COMMIT FILES** - AI Agents should never commit files directly. Instead, they should provide the necessary changes and explanations, which can then be reviewed and committed by a human developer.
 
 By following these guidelines, AI Agents can contribute effectively to the Inference-Ignite project while maintaining the integrity and stability of the system.
 

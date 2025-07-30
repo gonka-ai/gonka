@@ -20,3 +20,11 @@ spec:
   - name: tmkms
     port: 26658
     targetPort: 26658
+  - name: rest-api
+    port: 1317
+    targetPort: 1317
+    nodePort: 30013
+  - name: grpc
+    port: 9090
+    targetPort: 9090
+    nodePort: 30014

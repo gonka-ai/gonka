@@ -191,7 +191,7 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 				continue
 			}
 
-			logging.Debug("Raw websocket message received", types.EventProcessing, "raw_message_bytes", string(message))
+			// logging.Debug("Raw websocket message received", types.EventProcessing, "raw_message_bytes", string(message))
 
 			var event chainevents.JSONRPCResponse
 			if err = json.Unmarshal(message, &event); err != nil {

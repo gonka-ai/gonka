@@ -75,8 +75,8 @@ type SyncInfo struct {
 
 var DefaultReconciliationConfig = MlNodeReconciliationConfig{
 	Inference: &MlNodeStageReconciliationConfig{
-		BlockInterval: 10,
-		TimeInterval:  60 * time.Second,
+		BlockInterval: 5,
+		TimeInterval:  30 * time.Second,
 	},
 	PoC: &MlNodeStageReconciliationConfig{
 		BlockInterval: 1,
@@ -268,6 +268,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	epochContext := epochState.LatestEpoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
+
+	// Sync broker node state with the latest epoch data at the start of a transition check
+	if err := d.nodeBroker.UpdateNodeWithEpochData(&epochState); err != nil {
+		logging.Error("Failed to update node with epoch data, skipping phase transitions.", types.Stages, "error", err)
+		return
+	}
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {

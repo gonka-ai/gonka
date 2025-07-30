@@ -2,15 +2,63 @@
 package inference
 
 import (
+	binary "encoding/binary"
 	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
+	math "math"
 	reflect "reflect"
 	sync "sync"
 )
+
+var _ protoreflect.List = (*_Model_10_list)(nil)
+
+type _Model_10_list struct {
+	list *[]string
+}
+
+func (x *_Model_10_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_Model_10_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfString((*x.list)[i])
+}
+
+func (x *_Model_10_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_Model_10_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_Model_10_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message Model at list field ModelArgs as it is not of Message kind"))
+}
+
+func (x *_Model_10_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_Model_10_list) NewElement() protoreflect.Value {
+	v := ""
+	return protoreflect.ValueOfString(v)
+}
+
+func (x *_Model_10_list) IsValid() bool {
+	return x.list != nil
+}
 
 var (
 	md_Model                            protoreflect.MessageDescriptor
@@ -21,6 +69,12 @@ var (
 	fd_Model_quantization               protoreflect.FieldDescriptor
 	fd_Model_coins_per_input_token      protoreflect.FieldDescriptor
 	fd_Model_coins_per_output_token     protoreflect.FieldDescriptor
+	fd_Model_hf_repo                    protoreflect.FieldDescriptor
+	fd_Model_hf_commit                  protoreflect.FieldDescriptor
+	fd_Model_model_args                 protoreflect.FieldDescriptor
+	fd_Model_v_ram                      protoreflect.FieldDescriptor
+	fd_Model_throughput_per_nonce       protoreflect.FieldDescriptor
+	fd_Model_validation_threshold       protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -33,6 +87,12 @@ func init() {
 	fd_Model_quantization = md_Model.Fields().ByName("quantization")
 	fd_Model_coins_per_input_token = md_Model.Fields().ByName("coins_per_input_token")
 	fd_Model_coins_per_output_token = md_Model.Fields().ByName("coins_per_output_token")
+	fd_Model_hf_repo = md_Model.Fields().ByName("hf_repo")
+	fd_Model_hf_commit = md_Model.Fields().ByName("hf_commit")
+	fd_Model_model_args = md_Model.Fields().ByName("model_args")
+	fd_Model_v_ram = md_Model.Fields().ByName("v_ram")
+	fd_Model_throughput_per_nonce = md_Model.Fields().ByName("throughput_per_nonce")
+	fd_Model_validation_threshold = md_Model.Fields().ByName("validation_threshold")
 }
 
 var _ protoreflect.Message = (*fastReflection_Model)(nil)
@@ -142,6 +202,42 @@ func (x *fastReflection_Model) Range(f func(protoreflect.FieldDescriptor, protor
 			return
 		}
 	}
+	if x.HfRepo != "" {
+		value := protoreflect.ValueOfString(x.HfRepo)
+		if !f(fd_Model_hf_repo, value) {
+			return
+		}
+	}
+	if x.HfCommit != "" {
+		value := protoreflect.ValueOfString(x.HfCommit)
+		if !f(fd_Model_hf_commit, value) {
+			return
+		}
+	}
+	if len(x.ModelArgs) != 0 {
+		value := protoreflect.ValueOfList(&_Model_10_list{list: &x.ModelArgs})
+		if !f(fd_Model_model_args, value) {
+			return
+		}
+	}
+	if x.VRam != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.VRam)
+		if !f(fd_Model_v_ram, value) {
+			return
+		}
+	}
+	if x.ThroughputPerNonce != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.ThroughputPerNonce)
+		if !f(fd_Model_throughput_per_nonce, value) {
+			return
+		}
+	}
+	if x.ValidationThreshold != float32(0) || math.Signbit(float64(x.ValidationThreshold)) {
+		value := protoreflect.ValueOfFloat32(x.ValidationThreshold)
+		if !f(fd_Model_validation_threshold, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -171,6 +267,18 @@ func (x *fastReflection_Model) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.CoinsPerInputToken != uint64(0)
 	case "inference.inference.Model.coins_per_output_token":
 		return x.CoinsPerOutputToken != uint64(0)
+	case "inference.inference.Model.hf_repo":
+		return x.HfRepo != ""
+	case "inference.inference.Model.hf_commit":
+		return x.HfCommit != ""
+	case "inference.inference.Model.model_args":
+		return len(x.ModelArgs) != 0
+	case "inference.inference.Model.v_ram":
+		return x.VRam != uint64(0)
+	case "inference.inference.Model.throughput_per_nonce":
+		return x.ThroughputPerNonce != uint64(0)
+	case "inference.inference.Model.validation_threshold":
+		return x.ValidationThreshold != float32(0) || math.Signbit(float64(x.ValidationThreshold))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -201,6 +309,18 @@ func (x *fastReflection_Model) Clear(fd protoreflect.FieldDescriptor) {
 		x.CoinsPerInputToken = uint64(0)
 	case "inference.inference.Model.coins_per_output_token":
 		x.CoinsPerOutputToken = uint64(0)
+	case "inference.inference.Model.hf_repo":
+		x.HfRepo = ""
+	case "inference.inference.Model.hf_commit":
+		x.HfCommit = ""
+	case "inference.inference.Model.model_args":
+		x.ModelArgs = nil
+	case "inference.inference.Model.v_ram":
+		x.VRam = uint64(0)
+	case "inference.inference.Model.throughput_per_nonce":
+		x.ThroughputPerNonce = uint64(0)
+	case "inference.inference.Model.validation_threshold":
+		x.ValidationThreshold = float32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -238,6 +358,27 @@ func (x *fastReflection_Model) Get(descriptor protoreflect.FieldDescriptor) prot
 	case "inference.inference.Model.coins_per_output_token":
 		value := x.CoinsPerOutputToken
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Model.hf_repo":
+		value := x.HfRepo
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.Model.hf_commit":
+		value := x.HfCommit
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.Model.model_args":
+		if len(x.ModelArgs) == 0 {
+			return protoreflect.ValueOfList(&_Model_10_list{})
+		}
+		listValue := &_Model_10_list{list: &x.ModelArgs}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.Model.v_ram":
+		value := x.VRam
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Model.throughput_per_nonce":
+		value := x.ThroughputPerNonce
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Model.validation_threshold":
+		value := x.ValidationThreshold
+		return protoreflect.ValueOfFloat32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -272,6 +413,20 @@ func (x *fastReflection_Model) Set(fd protoreflect.FieldDescriptor, value protor
 		x.CoinsPerInputToken = value.Uint()
 	case "inference.inference.Model.coins_per_output_token":
 		x.CoinsPerOutputToken = value.Uint()
+	case "inference.inference.Model.hf_repo":
+		x.HfRepo = value.Interface().(string)
+	case "inference.inference.Model.hf_commit":
+		x.HfCommit = value.Interface().(string)
+	case "inference.inference.Model.model_args":
+		lv := value.List()
+		clv := lv.(*_Model_10_list)
+		x.ModelArgs = *clv.list
+	case "inference.inference.Model.v_ram":
+		x.VRam = value.Uint()
+	case "inference.inference.Model.throughput_per_nonce":
+		x.ThroughputPerNonce = value.Uint()
+	case "inference.inference.Model.validation_threshold":
+		x.ValidationThreshold = float32(value.Float())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -292,6 +447,12 @@ func (x *fastReflection_Model) Set(fd protoreflect.FieldDescriptor, value protor
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_Model) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.Model.model_args":
+		if x.ModelArgs == nil {
+			x.ModelArgs = []string{}
+		}
+		value := &_Model_10_list{list: &x.ModelArgs}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.Model.proposed_by":
 		panic(fmt.Errorf("field proposed_by of message inference.inference.Model is not mutable"))
 	case "inference.inference.Model.id":
@@ -306,6 +467,16 @@ func (x *fastReflection_Model) Mutable(fd protoreflect.FieldDescriptor) protoref
 		panic(fmt.Errorf("field coins_per_input_token of message inference.inference.Model is not mutable"))
 	case "inference.inference.Model.coins_per_output_token":
 		panic(fmt.Errorf("field coins_per_output_token of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.hf_repo":
+		panic(fmt.Errorf("field hf_repo of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.hf_commit":
+		panic(fmt.Errorf("field hf_commit of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.v_ram":
+		panic(fmt.Errorf("field v_ram of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.throughput_per_nonce":
+		panic(fmt.Errorf("field throughput_per_nonce of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.validation_threshold":
+		panic(fmt.Errorf("field validation_threshold of message inference.inference.Model is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -333,6 +504,19 @@ func (x *fastReflection_Model) NewField(fd protoreflect.FieldDescriptor) protore
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.Model.coins_per_output_token":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Model.hf_repo":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.Model.hf_commit":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.Model.model_args":
+		list := []string{}
+		return protoreflect.ValueOfList(&_Model_10_list{list: &list})
+	case "inference.inference.Model.v_ram":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Model.throughput_per_nonce":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Model.validation_threshold":
+		return protoreflect.ValueOfFloat32(float32(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -426,6 +610,29 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 		if x.CoinsPerOutputToken != 0 {
 			n += 1 + runtime.Sov(uint64(x.CoinsPerOutputToken))
 		}
+		l = len(x.HfRepo)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.HfCommit)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if len(x.ModelArgs) > 0 {
+			for _, s := range x.ModelArgs {
+				l = len(s)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if x.VRam != 0 {
+			n += 1 + runtime.Sov(uint64(x.VRam))
+		}
+		if x.ThroughputPerNonce != 0 {
+			n += 1 + runtime.Sov(uint64(x.ThroughputPerNonce))
+		}
+		if x.ValidationThreshold != 0 || math.Signbit(float64(x.ValidationThreshold)) {
+			n += 5
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -454,6 +661,45 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ValidationThreshold != 0 || math.Signbit(float64(x.ValidationThreshold)) {
+			i -= 4
+			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.ValidationThreshold))))
+			i--
+			dAtA[i] = 0x6d
+		}
+		if x.ThroughputPerNonce != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ThroughputPerNonce))
+			i--
+			dAtA[i] = 0x60
+		}
+		if x.VRam != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.VRam))
+			i--
+			dAtA[i] = 0x58
+		}
+		if len(x.ModelArgs) > 0 {
+			for iNdEx := len(x.ModelArgs) - 1; iNdEx >= 0; iNdEx-- {
+				i -= len(x.ModelArgs[iNdEx])
+				copy(dAtA[i:], x.ModelArgs[iNdEx])
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ModelArgs[iNdEx])))
+				i--
+				dAtA[i] = 0x52
+			}
+		}
+		if len(x.HfCommit) > 0 {
+			i -= len(x.HfCommit)
+			copy(dAtA[i:], x.HfCommit)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.HfCommit)))
+			i--
+			dAtA[i] = 0x4a
+		}
+		if len(x.HfRepo) > 0 {
+			i -= len(x.HfRepo)
+			copy(dAtA[i:], x.HfRepo)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.HfRepo)))
+			i--
+			dAtA[i] = 0x42
 		}
 		if x.CoinsPerOutputToken != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.CoinsPerOutputToken))
@@ -717,6 +963,151 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 8:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field HfRepo", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.HfRepo = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 9:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field HfCommit", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.HfCommit = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 10:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelArgs", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ModelArgs = append(x.ModelArgs, string(dAtA[iNdEx:postIndex]))
+				iNdEx = postIndex
+			case 11:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field VRam", wireType)
+				}
+				x.VRam = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.VRam |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 12:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ThroughputPerNonce", wireType)
+				}
+				x.ThroughputPerNonce = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ThroughputPerNonce |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 13:
+				if wireType != 5 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidationThreshold", wireType)
+				}
+				var v uint32
+				if (iNdEx + 4) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+				iNdEx += 4
+				x.ValidationThreshold = float32(math.Float32frombits(v))
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -770,13 +1161,19 @@ type Model struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ProposedBy             string `protobuf:"bytes,1,opt,name=proposed_by,json=proposedBy,proto3" json:"proposed_by,omitempty"`
-	Id                     string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
-	UnitsOfComputePerToken uint64 `protobuf:"varint,3,opt,name=units_of_compute_per_token,json=unitsOfComputePerToken,proto3" json:"units_of_compute_per_token,omitempty"`
-	ContextWindow          uint64 `protobuf:"varint,4,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
-	Quantization           string `protobuf:"bytes,5,opt,name=quantization,proto3" json:"quantization,omitempty"`
-	CoinsPerInputToken     uint64 `protobuf:"varint,6,opt,name=coins_per_input_token,json=coinsPerInputToken,proto3" json:"coins_per_input_token,omitempty"`
-	CoinsPerOutputToken    uint64 `protobuf:"varint,7,opt,name=coins_per_output_token,json=coinsPerOutputToken,proto3" json:"coins_per_output_token,omitempty"`
+	ProposedBy             string   `protobuf:"bytes,1,opt,name=proposed_by,json=proposedBy,proto3" json:"proposed_by,omitempty"`
+	Id                     string   `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	UnitsOfComputePerToken uint64   `protobuf:"varint,3,opt,name=units_of_compute_per_token,json=unitsOfComputePerToken,proto3" json:"units_of_compute_per_token,omitempty"`
+	ContextWindow          uint64   `protobuf:"varint,4,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
+	Quantization           string   `protobuf:"bytes,5,opt,name=quantization,proto3" json:"quantization,omitempty"`
+	CoinsPerInputToken     uint64   `protobuf:"varint,6,opt,name=coins_per_input_token,json=coinsPerInputToken,proto3" json:"coins_per_input_token,omitempty"`
+	CoinsPerOutputToken    uint64   `protobuf:"varint,7,opt,name=coins_per_output_token,json=coinsPerOutputToken,proto3" json:"coins_per_output_token,omitempty"`
+	HfRepo                 string   `protobuf:"bytes,8,opt,name=hf_repo,json=hfRepo,proto3" json:"hf_repo,omitempty"`
+	HfCommit               string   `protobuf:"bytes,9,opt,name=hf_commit,json=hfCommit,proto3" json:"hf_commit,omitempty"`
+	ModelArgs              []string `protobuf:"bytes,10,rep,name=model_args,json=modelArgs,proto3" json:"model_args,omitempty"`
+	VRam                   uint64   `protobuf:"varint,11,opt,name=v_ram,json=vRam,proto3" json:"v_ram,omitempty"`
+	ThroughputPerNonce     uint64   `protobuf:"varint,12,opt,name=throughput_per_nonce,json=throughputPerNonce,proto3" json:"throughput_per_nonce,omitempty"`
+	ValidationThreshold    float32  `protobuf:"fixed32,13,opt,name=validation_threshold,json=validationThreshold,proto3" json:"validation_threshold,omitempty"`
 }
 
 func (x *Model) Reset() {
@@ -848,13 +1245,55 @@ func (x *Model) GetCoinsPerOutputToken() uint64 {
 	return 0
 }
 
+func (x *Model) GetHfRepo() string {
+	if x != nil {
+		return x.HfRepo
+	}
+	return ""
+}
+
+func (x *Model) GetHfCommit() string {
+	if x != nil {
+		return x.HfCommit
+	}
+	return ""
+}
+
+func (x *Model) GetModelArgs() []string {
+	if x != nil {
+		return x.ModelArgs
+	}
+	return nil
+}
+
+func (x *Model) GetVRam() uint64 {
+	if x != nil {
+		return x.VRam
+	}
+	return 0
+}
+
+func (x *Model) GetThroughputPerNonce() uint64 {
+	if x != nil {
+		return x.ThroughputPerNonce
+	}
+	return 0
+}
+
+func (x *Model) GetValidationThreshold() float32 {
+	if x != nil {
+		return x.ValidationThreshold
+	}
+	return 0
+}
+
 var File_inference_inference_model_proto protoreflect.FileDescriptor
 
 var file_inference_inference_model_proto_rawDesc = []byte{
 	0x0a, 0x1f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72, 0x6f, 0x74,
 	0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xa7, 0x02, 0x0a, 0x05, 0x4d, 0x6f, 0x64, 0x65, 0x6c,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xf6, 0x03, 0x0a, 0x05, 0x4d, 0x6f, 0x64, 0x65, 0x6c,
 	0x12, 0x1f, 0x0a, 0x0b, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x64, 0x42,
 	0x79, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69,
@@ -873,19 +1312,32 @@ var file_inference_inference_model_proto_rawDesc = []byte{
 	0x6f, 0x69, 0x6e, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6f, 0x75, 0x74, 0x70, 0x75, 0x74, 0x5f,
 	0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x63, 0x6f, 0x69,
 	0x6e, 0x73, 0x50, 0x65, 0x72, 0x4f, 0x75, 0x74, 0x70, 0x75, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e,
-	0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x4d, 0x6f,
-	0x64, 0x65, 0x6c, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
-	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x33,
+	0x12, 0x17, 0x0a, 0x07, 0x68, 0x66, 0x5f, 0x72, 0x65, 0x70, 0x6f, 0x18, 0x08, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x06, 0x68, 0x66, 0x52, 0x65, 0x70, 0x6f, 0x12, 0x1b, 0x0a, 0x09, 0x68, 0x66, 0x5f,
+	0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x68, 0x66,
+	0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f,
+	0x61, 0x72, 0x67, 0x73, 0x18, 0x0a, 0x20, 0x03, 0x28, 0x09, 0x52, 0x09, 0x6d, 0x6f, 0x64, 0x65,
+	0x6c, 0x41, 0x72, 0x67, 0x73, 0x12, 0x13, 0x0a, 0x05, 0x76, 0x5f, 0x72, 0x61, 0x6d, 0x18, 0x0b,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x04, 0x76, 0x52, 0x61, 0x6d, 0x12, 0x30, 0x0a, 0x14, 0x74, 0x68,
+	0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6e, 0x6f, 0x6e,
+	0x63, 0x65, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67,
+	0x68, 0x70, 0x75, 0x74, 0x50, 0x65, 0x72, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x31, 0x0a, 0x14,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x68, 0x72, 0x65, 0x73,
+	0x68, 0x6f, 0x6c, 0x64, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x02, 0x52, 0x13, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x42,
+	0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x4d, 0x6f, 0x64,
+	0x65, 0x6c, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
+	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2,
+	0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64,
+	0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a,
+	0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
+	0x6f, 0x33,
 }
 
 var (

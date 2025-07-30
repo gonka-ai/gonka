@@ -28,17 +28,12 @@ type InitDto struct {
 	RTarget        float64 `json:"r_target"`
 	FraudThreshold float64 `json:"fraud_threshold"`
 	Params         *Params `json:"params"`
-	NodeNum        int64   `json:"node_id"`
+	NodeNum        uint64  `json:"node_id"`
 	TotalNodes     int64   `json:"node_count"`
 	URL            string  `json:"url"`
 }
 
-func BuildInitDto(
-	blockHeight int64,
-	pubKey string,
-	totalNodes, nodeNum int64,
-	blockHash, callbackUrl string,
-) InitDto {
+func BuildInitDto(blockHeight int64, pubKey string, totalNodes int64, nodeNum uint64, blockHash, callbackUrl string) InitDto {
 	return InitDto{
 		BlockHeight:    blockHeight,
 		BlockHash:      blockHash,
@@ -115,6 +110,7 @@ type ProofBatch struct {
 	BlockHeight int64     `json:"block_height"`
 	Nonces      []int64   `json:"nonces"`
 	Dist        []float64 `json:"dist"`
+	NodeNum     uint64    `json:"node_id"`
 }
 
 type ValidatedBatch struct {

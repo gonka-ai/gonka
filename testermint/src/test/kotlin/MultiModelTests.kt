@@ -28,15 +28,17 @@ class MultiModelTests : TestermintTest() {
     private fun setSecondModel(
         cluster: LocalCluster,
         genesis: LocalInferencePair,
-        newModelName: String = "Qwen/Qwen2.5-7B-Instruct",
+        newModelName: String = "Qwen/QwQ-32B",
         joinModels: Int = 2,
     ): Pair<String, List<LocalInferencePair>> {
+        genesis.waitForNextInferenceWindow()
+
         val secondModelPairs = cluster.joinPairs.take(joinModels) + genesis
 
         logSection("Setting nodes for new model")
         secondModelPairs.forEach {
             val newNode = validNode.copy(
-                host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080, models = mapOf(
+                host = "${it.name.trim('/')}-mock-server", models = mapOf(
                     newModelName to ModelConfig(
                         args = emptyList()
                     ), defaultModel to ModelConfig(args = emptyList())
@@ -48,6 +50,7 @@ class MultiModelTests : TestermintTest() {
                 model = newModelName
             )
         }
+        genesis.node.waitForNextBlock(3)
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         return Pair(newModelName, secondModelPairs)
@@ -68,6 +71,7 @@ class MultiModelTests : TestermintTest() {
         var newState: InferencePayload
         do {
             logSection("Trying to get invalid inference. Tries left: $tries")
+            genesis.waitForNextInferenceWindow(5)
             newState = getInferenceValidationState(genesis, oddPair, newModelName)
         } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
         logSection("Verifying invalidation")

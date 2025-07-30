@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,9 @@ type BrokerChainBridge interface {
 	GetHardwareNodes() (*types.QueryHardwareNodesResponse, error)
 	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
 	GetBlockHash(height int64) (string, error)
+	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
+	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
+	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -75,6 +79,27 @@ func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
 	return block.Block.Hash().String(), err
 }
 
+func (b *BrokerChainBridgeImpl) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryModelsAllRequest{}
+	return queryClient.ModelsAll(*b.client.GetContext(), req)
+}
+
+func (b *BrokerChainBridgeImpl) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryCurrentEpochGroupDataRequest{}
+	return queryClient.CurrentEpochGroupData(*b.client.GetContext(), req)
+}
+
+func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryGetEpochGroupDataRequest{
+		PocStartBlockHeight: pocHeight,
+		ModelId:             modelId,
+	}
+	return queryClient.EpochGroupData(*b.client.GetContext(), req)
+}
+
 type Broker struct {
 	highPriorityCommands chan Command
 	lowPriorityCommands  chan Command
@@ -88,6 +113,9 @@ type Broker struct {
 	callbackUrl          string
 	mlNodeClientFactory  mlnodeclient.ClientFactory
 	reconcileTrigger     chan struct{}
+	lastEpochIndex       uint64
+	lastEpochPhase       types.EpochPhase
+	statusQueryTrigger   chan struct{}
 }
 
 const (
@@ -156,6 +184,10 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+
+	// Epoch-specific data, populated from the chain
+	EpochModels  map[string]types.Model      `json:"epoch_models"`
+	EpochMLNodes map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -190,9 +222,13 @@ func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStat
 }
 
 func (s *NodeState) UpdateStatusWithPocStatusNow(status types.HardwareNodeStatus, pocStatus PocStatus) {
+	s.UpdateStatusWithPocStatusAt(time.Now(), status, pocStatus)
+}
+
+func (s *NodeState) UpdateStatusWithPocStatusAt(time time.Time, status types.HardwareNodeStatus, pocStatus PocStatus) {
 	s.CurrentStatus = status
 	s.PocCurrentStatus = pocStatus
-	s.StatusTimestamp = time.Now()
+	s.StatusTimestamp = time
 }
 
 func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
@@ -212,6 +248,22 @@ func (s *NodeState) IsOperational() bool {
 // ShouldBeOperational checks if node should be operational based on admin state and current epoch
 func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.EpochPhase) bool {
 	return ShouldBeOperational(s.AdminState, latestEpoch, currentPhase)
+}
+
+// ShouldContinueInference checks if node should continue inference service
+// based on its POC_SLOT timeslot allocation. Returns true if POC_SLOT is set to true
+// for any model supported by this node.
+func (s *NodeState) ShouldContinueInference() bool {
+	// Check if any MLNode for this node has POC_SLOT set to true
+	for modelId, mlNodeInfo := range s.EpochMLNodes {
+		if len(mlNodeInfo.TimeslotAllocation) > 1 && mlNodeInfo.TimeslotAllocation[1] { // index 1 = POC_SLOT
+			logging.Debug("Node should continue inference service based on POC_SLOT allocation", types.PoC,
+				"model_id", modelId,
+				"poc_slot", mlNodeInfo.TimeslotAllocation[1])
+			return true
+		}
+	}
+	return false
 }
 
 func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
@@ -242,6 +294,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		callbackUrl:          callbackUrl,
 		mlNodeClientFactory:  clientFactory,
 		reconcileTrigger:     make(chan struct{}, 1),
+		statusQueryTrigger:   make(chan struct{}, 1),
 	}
 
 	// Initialize NodeWorkGroup
@@ -256,6 +309,13 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	return broker
 }
 
+func (b *Broker) TriggerStatusQuery() {
+	select {
+	case b.statusQueryTrigger <- struct{}{}:
+	default: // Non-blocking send
+	}
+}
+
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan *apiconfig.InferenceNodeConfig {
 	if node == nil {
 		return nil
@@ -267,10 +327,10 @@ func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan *api
 		Response: responseChan,
 	})
 	if err != nil {
-		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
+		logging.Error("Error loading node to broker", types.Nodes, "error", err)
 		panic(err)
+		// return nil
 	}
-
 	return responseChan
 }
 
@@ -392,7 +452,6 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 		logging.Error("getLeastBusyNode. Cannot get least busy node, epoch state is empty", types.Nodes)
 		return nil
 	}
-
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -414,22 +473,31 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 type NodeNotAvailableReason = string
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
+	if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+		return false, fmt.Sprintf("Node is not intended for INFERENCE at the moment: %s", node.State.IntendedStatus)
+	}
+	logging.Info("nodeAvailable. Node is intended for INFERENCE", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus)
+
 	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
 		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
 	}
+	logging.Info("nodeAvailable. Node is in INFERENCE state", types.Nodes, "nodeId", node.Node.Id)
 
 	if node.State.ReconcileInfo != nil {
 		return false, fmt.Sprintf("Node is currently reconciling: %s", node.State.ReconcileInfo.Status)
 	}
+	logging.Info("nodeAvailable. Node is not being reconciled, ReconcileInfo == nil", types.Nodes, "nodeId", node.Node.Id)
 
 	if node.State.LockCount >= node.Node.MaxConcurrent {
 		return false, fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
 	}
+	logging.Info("nodeAvailable. Node is not locked too many times", types.Nodes, "nodeId", node.Node.Id, "lockCount", node.State.LockCount, "maxConcurrent", node.Node.MaxConcurrent)
 
 	// Check admin state using provided epoch and phase
 	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
 		return false, fmt.Sprintf("Node is administratively disabled: currentEpoch=%v, currentPhase=%s, adminState = %v", currentEpoch, currentPhase, node.State.AdminState)
 	}
+	logging.Info("nodeAvailable. Node is not administratively enabled", types.Nodes, "nodeId", node.Node.Id, "adminState", node.State.AdminState)
 
 	if version != "" && node.Node.Version != version {
 		return false, fmt.Sprintf("Node version mismatch: expected %s, got %s", version, node.Node.Version)
@@ -524,6 +592,19 @@ func (b *Broker) GetNodes() ([]NodeResponse, error) {
 	return nodes, nil
 }
 
+func (b *Broker) GetNodeByNodeNum(nodeNum uint64) (*Node, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for _, nodeWithState := range b.nodes {
+		if nodeWithState.Node.NodeNum == nodeNum {
+			return &nodeWithState.Node, true
+		}
+	}
+
+	return nil, false
+}
+
 func (b *Broker) syncNodes() {
 	resp, err := b.chainBridge.GetHardwareNodes()
 	if err != nil {
@@ -586,7 +667,7 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	// TODO: implement
+	// PRTODO: implement
 	command.Response <- true
 }
 
@@ -920,10 +1001,18 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
-	ticker := time.NewTicker(60 * time.Second)
+	checkInterval := 60 * time.Second
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ticker.C:
+			logging.Debug("nodeStatusQueryWorker triggered by ticker", types.Nodes)
+		case <-broker.statusQueryTrigger:
+			logging.Debug("nodeStatusQueryWorker triggered manually", types.Nodes)
+		}
+
 		nodes, err := broker.GetNodes()
 		if err != nil {
 			logging.Error("nodeStatusQueryWorker. Failed to get nodes for status query", types.Nodes, "error", err)
@@ -933,6 +1022,16 @@ func nodeStatusQueryWorker(broker *Broker) {
 		statusUpdates := make([]StatusUpdate, 0)
 
 		for _, nodeResp := range nodes {
+			// Only check nodes that are UNKNOWN or haven't been checked in a while.
+			sinceLastStatusCheck := time.Since(nodeResp.State.StatusTimestamp)
+			if nodeResp.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN && sinceLastStatusCheck < checkInterval {
+				logging.Info("nodeStatusQueryWorker skipping status query for node", types.Nodes,
+					"nodeId", nodeResp.Node.Id,
+					"currentStatus", nodeResp.State.CurrentStatus.String(),
+					"sinceLastStatusCheck", sinceLastStatusCheck)
+				continue
+			}
+
 			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node, nodeResp.State)
 			timestamp := time.Now()
 			if err != nil {
@@ -956,10 +1055,14 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 		}
 
-		err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
-		if err != nil {
-			logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
-			continue
+		if len(statusUpdates) > 0 {
+			err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
+			logging.Info("nodeStatusQueryWorker. Queued status updates submitted", types.Nodes,
+				"len(statusUpdates)", len(statusUpdates))
+			if err != nil {
+				logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
+				continue
+			}
 		}
 	}
 }
@@ -1018,4 +1121,154 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
+}
+
+// UpdateNodeWithEpochData queries the current epoch group data from the chain
+// and populates the NodeState with the epoch-specific model and MLNode info.
+// It only performs the update if the epoch index or phase has changed.
+func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) error {
+	if epochState.LatestEpoch.EpochIndex <= b.lastEpochIndex && epochState.CurrentPhase == b.lastEpochPhase {
+		return nil // No change, no need to update
+	}
+
+	// Update the broker's last known state
+	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
+	b.lastEpochPhase = epochState.CurrentPhase
+
+	logging.Info("Epoch or phase change detected, updating node data with epoch info.", types.Nodes,
+		"old_epoch", b.lastEpochIndex, "new_epoch", epochState.LatestEpoch.EpochIndex,
+		"old_phase", b.lastEpochPhase, "new_phase", epochState.CurrentPhase)
+
+	// 1. Get the parent epoch group to find all subgroup models
+	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(uint64(epochState.LatestEpoch.PocStartBlockHeight), "")
+	if err != nil {
+		logging.Error("Failed to get parent epoch group", types.Nodes, "error", err)
+		return err
+	}
+	if parentGroupResp == nil {
+		logging.Error("Parent epoch group data is nil", types.Nodes, "epoch_index", epochState.LatestEpoch.EpochIndex, "epoch_poc_start_block_height", epochState.LatestEpoch.PocStartBlockHeight, "epoch_group_data_poc_start_block_height")
+		return nil
+	}
+	if parentGroupResp.EpochGroupData.SubGroupModels == nil || len(parentGroupResp.EpochGroupData.SubGroupModels) == 0 {
+		logging.Warn("Parent epoch group SubGroupModels are empty", types.Nodes, "epoch_index", epochState.LatestEpoch.EpochIndex, "epoch_poc_start_block_height", epochState.LatestEpoch.PocStartBlockHeight, "epoch_group_data_poc_start_block_height", parentGroupResp.EpochGroupData.PocStartBlockHeight)
+		return nil
+	}
+
+	parentEpochData := parentGroupResp.GetEpochGroupData()
+
+	b.clearNodeEpochData()
+
+	// 2. Iterate through each model subgroup
+	for _, modelId := range parentEpochData.SubGroupModels {
+		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.PocStartBlockHeight, modelId)
+		if err != nil {
+			logging.Error("Failed to get subgroup epoch data", types.Nodes, "model_id", modelId, "error", err)
+			continue
+		}
+		if subgroupResp == nil {
+			logging.Warn("Subgroup epoch data response is nil", types.Nodes, "model_id", modelId)
+			continue
+		}
+
+		subgroup := subgroupResp.EpochGroupData
+		if subgroup.ModelSnapshot == nil {
+			logging.Error("ModelSnapshot is nil in subgroup", types.Nodes, "model_id", modelId)
+			continue
+		}
+
+		// 3. Iterate through participants in the subgroup
+		for _, weightInfo := range subgroup.ValidationWeights {
+			// Check if the participant is the one this broker is managing
+			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+				// 4. Iterate through the ML nodes for this participant in the epoch data
+				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (b *Broker) clearNodeEpochData() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	logging.Info("Clearing node epoch data", types.Nodes)
+	for _, node := range b.nodes {
+		node.State.EpochModels = make(map[string]types.Model)
+		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+	}
+}
+
+func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string, modelSnapshot types.Model) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, mlNodeInfo := range mlNodes {
+		if node, ok := b.nodes[mlNodeInfo.NodeId]; ok {
+			node.State.EpochModels[modelId] = modelSnapshot
+			node.State.EpochMLNodes[modelId] = *mlNodeInfo
+			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
+		}
+	}
+}
+
+// MergeModelArgs combines model arguments from the epoch snapshot with locally
+// configured arguments, with epoch arguments taking precedence.
+// It understands arguments as --key or --key value pairs.
+func (b *Broker) MergeModelArgs(epochArgs []string, localArgs []string) []string {
+	// The final merged arguments, preserving the order from epochArgs, then localArgs.
+	mergedArgs := make([]string, 0, len(epochArgs)+len(localArgs))
+	// A set to store the keys from epochArgs to check for precedence.
+	epochKeys := make(map[string]struct{})
+
+	// 1. Process epochArgs first. They all go into the result and populate epochKeys.
+	for i := 0; i < len(epochArgs); i++ {
+		arg := epochArgs[i]
+		if strings.HasPrefix(arg, "--") {
+			key := arg
+			epochKeys[key] = struct{}{}
+			mergedArgs = append(mergedArgs, key)
+
+			// Check if the next element is a value for this key.
+			if i+1 < len(epochArgs) && !strings.HasPrefix(epochArgs[i+1], "--") {
+				// It's a value, add it to mergedArgs and skip it in the next iteration.
+				mergedArgs = append(mergedArgs, epochArgs[i+1])
+				i++
+			}
+		} else {
+			// This case handles a value without a preceding key in epochArgs,
+			// which is unlikely but we add it to be safe.
+			mergedArgs = append(mergedArgs, arg)
+		}
+	}
+
+	// 2. Process localArgs and add only the ones with keys not present in epochArgs.
+	for i := 0; i < len(localArgs); i++ {
+		arg := localArgs[i]
+		if strings.HasPrefix(arg, "--") {
+			key := arg
+			if _, exists := epochKeys[key]; !exists {
+				// This key is not in epochArgs, so we can add it.
+				mergedArgs = append(mergedArgs, key)
+
+				// Check if it has a value.
+				if i+1 < len(localArgs) && !strings.HasPrefix(localArgs[i+1], "--") {
+					// It has a value, add it and skip.
+					mergedArgs = append(mergedArgs, localArgs[i+1])
+					i++
+				}
+			} else {
+				// Key already exists in epoch args, so we skip it.
+				// If it has a value, we need to skip that too.
+				if i+1 < len(localArgs) && !strings.HasPrefix(localArgs[i+1], "--") {
+					i++ // Skip the value of the overridden key.
+				}
+			}
+		}
+		// Non-key arguments are ignored here as they are considered values
+		// of keys, which are handled within the loop.
+	}
+
+	return mergedArgs
 }

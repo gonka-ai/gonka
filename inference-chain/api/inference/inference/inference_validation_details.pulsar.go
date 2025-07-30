@@ -13,15 +13,17 @@ import (
 )
 
 var (
-	md_InferenceValidationDetails                     protoreflect.MessageDescriptor
-	fd_InferenceValidationDetails_epoch_id            protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_inference_id        protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_executor_id         protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_executor_reputation protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_traffic_basis       protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_executor_power      protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_model               protoreflect.FieldDescriptor
-	fd_InferenceValidationDetails_total_power         protoreflect.FieldDescriptor
+	md_InferenceValidationDetails                         protoreflect.MessageDescriptor
+	fd_InferenceValidationDetails_epoch_id                protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_inference_id            protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_executor_id             protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_executor_reputation     protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_traffic_basis           protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_executor_power          protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_model                   protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_total_power             protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_epoch_group_id          protoreflect.FieldDescriptor
+	fd_InferenceValidationDetails_created_at_block_height protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -35,6 +37,8 @@ func init() {
 	fd_InferenceValidationDetails_executor_power = md_InferenceValidationDetails.Fields().ByName("executor_power")
 	fd_InferenceValidationDetails_model = md_InferenceValidationDetails.Fields().ByName("model")
 	fd_InferenceValidationDetails_total_power = md_InferenceValidationDetails.Fields().ByName("total_power")
+	fd_InferenceValidationDetails_epoch_group_id = md_InferenceValidationDetails.Fields().ByName("epoch_group_id")
+	fd_InferenceValidationDetails_created_at_block_height = md_InferenceValidationDetails.Fields().ByName("created_at_block_height")
 }
 
 var _ protoreflect.Message = (*fastReflection_InferenceValidationDetails)(nil)
@@ -150,6 +154,18 @@ func (x *fastReflection_InferenceValidationDetails) Range(f func(protoreflect.Fi
 			return
 		}
 	}
+	if x.EpochGroupId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochGroupId)
+		if !f(fd_InferenceValidationDetails_epoch_group_id, value) {
+			return
+		}
+	}
+	if x.CreatedAtBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.CreatedAtBlockHeight)
+		if !f(fd_InferenceValidationDetails_created_at_block_height, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -181,6 +197,10 @@ func (x *fastReflection_InferenceValidationDetails) Has(fd protoreflect.FieldDes
 		return x.Model != ""
 	case "inference.inference.InferenceValidationDetails.total_power":
 		return x.TotalPower != uint64(0)
+	case "inference.inference.InferenceValidationDetails.epoch_group_id":
+		return x.EpochGroupId != uint64(0)
+	case "inference.inference.InferenceValidationDetails.created_at_block_height":
+		return x.CreatedAtBlockHeight != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceValidationDetails"))
@@ -213,6 +233,10 @@ func (x *fastReflection_InferenceValidationDetails) Clear(fd protoreflect.FieldD
 		x.Model = ""
 	case "inference.inference.InferenceValidationDetails.total_power":
 		x.TotalPower = uint64(0)
+	case "inference.inference.InferenceValidationDetails.epoch_group_id":
+		x.EpochGroupId = uint64(0)
+	case "inference.inference.InferenceValidationDetails.created_at_block_height":
+		x.CreatedAtBlockHeight = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceValidationDetails"))
@@ -253,6 +277,12 @@ func (x *fastReflection_InferenceValidationDetails) Get(descriptor protoreflect.
 	case "inference.inference.InferenceValidationDetails.total_power":
 		value := x.TotalPower
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.InferenceValidationDetails.epoch_group_id":
+		value := x.EpochGroupId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.InferenceValidationDetails.created_at_block_height":
+		value := x.CreatedAtBlockHeight
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceValidationDetails"))
@@ -289,6 +319,10 @@ func (x *fastReflection_InferenceValidationDetails) Set(fd protoreflect.FieldDes
 		x.Model = value.Interface().(string)
 	case "inference.inference.InferenceValidationDetails.total_power":
 		x.TotalPower = value.Uint()
+	case "inference.inference.InferenceValidationDetails.epoch_group_id":
+		x.EpochGroupId = value.Uint()
+	case "inference.inference.InferenceValidationDetails.created_at_block_height":
+		x.CreatedAtBlockHeight = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceValidationDetails"))
@@ -325,6 +359,10 @@ func (x *fastReflection_InferenceValidationDetails) Mutable(fd protoreflect.Fiel
 		panic(fmt.Errorf("field model of message inference.inference.InferenceValidationDetails is not mutable"))
 	case "inference.inference.InferenceValidationDetails.total_power":
 		panic(fmt.Errorf("field total_power of message inference.inference.InferenceValidationDetails is not mutable"))
+	case "inference.inference.InferenceValidationDetails.epoch_group_id":
+		panic(fmt.Errorf("field epoch_group_id of message inference.inference.InferenceValidationDetails is not mutable"))
+	case "inference.inference.InferenceValidationDetails.created_at_block_height":
+		panic(fmt.Errorf("field created_at_block_height of message inference.inference.InferenceValidationDetails is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceValidationDetails"))
@@ -354,6 +392,10 @@ func (x *fastReflection_InferenceValidationDetails) NewField(fd protoreflect.Fie
 		return protoreflect.ValueOfString("")
 	case "inference.inference.InferenceValidationDetails.total_power":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.InferenceValidationDetails.epoch_group_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.InferenceValidationDetails.created_at_block_height":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceValidationDetails"))
@@ -450,6 +492,12 @@ func (x *fastReflection_InferenceValidationDetails) ProtoMethods() *protoiface.M
 		if x.TotalPower != 0 {
 			n += 1 + runtime.Sov(uint64(x.TotalPower))
 		}
+		if x.EpochGroupId != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochGroupId))
+		}
+		if x.CreatedAtBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.CreatedAtBlockHeight))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -478,6 +526,16 @@ func (x *fastReflection_InferenceValidationDetails) ProtoMethods() *protoiface.M
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.CreatedAtBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CreatedAtBlockHeight))
+			i--
+			dAtA[i] = 0x58
+		}
+		if x.EpochGroupId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochGroupId))
+			i--
+			dAtA[i] = 0x50
 		}
 		if x.TotalPower != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.TotalPower))
@@ -765,6 +823,44 @@ func (x *fastReflection_InferenceValidationDetails) ProtoMethods() *protoiface.M
 						break
 					}
 				}
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupId", wireType)
+				}
+				x.EpochGroupId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochGroupId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 11:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CreatedAtBlockHeight", wireType)
+				}
+				x.CreatedAtBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CreatedAtBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -813,19 +909,24 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// TODO [CHAIN-RELAUNCH]: probably epoch_id should now contain the actual epoch ID
+//
+//	and we should use it as part of the key
 type InferenceValidationDetails struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	EpochId            uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"` // The ID of the epoch!
-	InferenceId        string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	ExecutorId         string `protobuf:"bytes,3,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	ExecutorReputation int32  `protobuf:"varint,4,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
-	TrafficBasis       uint64 `protobuf:"varint,5,opt,name=traffic_basis,json=trafficBasis,proto3" json:"traffic_basis,omitempty"`
-	ExecutorPower      uint64 `protobuf:"varint,6,opt,name=executor_power,json=executorPower,proto3" json:"executor_power,omitempty"`
-	Model              string `protobuf:"bytes,7,opt,name=model,proto3" json:"model,omitempty"`
-	TotalPower         uint64 `protobuf:"varint,8,opt,name=total_power,json=totalPower,proto3" json:"total_power,omitempty"`
+	EpochId              uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"` // DEPRECATED: same as #10, renamed to better reflect what it is
+	InferenceId          string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ExecutorId           string `protobuf:"bytes,3,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
+	ExecutorReputation   int32  `protobuf:"varint,4,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
+	TrafficBasis         uint64 `protobuf:"varint,5,opt,name=traffic_basis,json=trafficBasis,proto3" json:"traffic_basis,omitempty"`
+	ExecutorPower        uint64 `protobuf:"varint,6,opt,name=executor_power,json=executorPower,proto3" json:"executor_power,omitempty"`
+	Model                string `protobuf:"bytes,7,opt,name=model,proto3" json:"model,omitempty"`
+	TotalPower           uint64 `protobuf:"varint,8,opt,name=total_power,json=totalPower,proto3" json:"total_power,omitempty"`
+	EpochGroupId         uint64 `protobuf:"varint,10,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`                           // The ID of the Group created by the GroupModule!
+	CreatedAtBlockHeight int64  `protobuf:"varint,11,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"` // Should be the same as block_finished for the inference
 }
 
 func (x *InferenceValidationDetails) Reset() {
@@ -904,6 +1005,20 @@ func (x *InferenceValidationDetails) GetTotalPower() uint64 {
 	return 0
 }
 
+func (x *InferenceValidationDetails) GetEpochGroupId() uint64 {
+	if x != nil {
+		return x.EpochGroupId
+	}
+	return 0
+}
+
+func (x *InferenceValidationDetails) GetCreatedAtBlockHeight() int64 {
+	if x != nil {
+		return x.CreatedAtBlockHeight
+	}
+	return 0
+}
+
 var File_inference_inference_inference_validation_details_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_validation_details_proto_rawDesc = []byte{
@@ -911,7 +1026,7 @@ var file_inference_inference_inference_validation_details_proto_rawDesc = []byte
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f,
 	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x64, 0x65, 0x74, 0x61, 0x69,
 	0x6c, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xaf, 0x02,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x8c, 0x03,
 	0x0a, 0x1a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64,
 	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x12, 0x19, 0x0a, 0x08,
 	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07,
@@ -930,21 +1045,27 @@ var file_inference_inference_inference_validation_details_proto_rawDesc = []byte
 	0x74, 0x6f, 0x72, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x12, 0x14, 0x0a, 0x05, 0x6d, 0x6f, 0x64, 0x65,
 	0x6c, 0x18, 0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x12, 0x1f,
 	0x0a, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x18, 0x08, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x0a, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x42,
-	0xcd, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x1f, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24,
-	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42,
-	0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62,
-	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x01, 0x28, 0x04, 0x52, 0x0a, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x12,
+	0x24, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x69,
+	0x64, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72,
+	0x6f, 0x75, 0x70, 0x49, 0x64, 0x12, 0x35, 0x0a, 0x17, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64,
+	0x5f, 0x61, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x18, 0x0b, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x41,
+	0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xcd, 0x01, 0x0a,
+	0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x74,
+	0x61, 0x69, 0x6c, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

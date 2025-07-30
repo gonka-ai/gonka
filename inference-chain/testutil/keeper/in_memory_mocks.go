@@ -4,8 +4,9 @@ package keeper
 import (
 	"context"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"sync"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // InMemoryEpochGroupDataKeeper is an in-memory implementation of EpochGroupDataKeeper.
@@ -183,4 +184,50 @@ func (l *MockLogger) LogWarn(msg string, subSystem types.SubSystem, keyvals ...i
 
 func (l *MockLogger) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	l.logs = append(l.logs, Log{Msg: msg, Level: "debug", Keyvals: keyvals})
+}
+
+type InMemoryHardwareNodeKeeper struct {
+	nodes map[string]*types.HardwareNodes
+}
+
+func NewInMemoryHardwareNodeKeeper() types.HardwareNodeKeeper {
+	return &InMemoryHardwareNodeKeeper{
+		nodes: make(map[string]*types.HardwareNodes),
+	}
+}
+
+func (k *InMemoryHardwareNodeKeeper) GetHardwareNodes(ctx context.Context, address string) (*types.HardwareNodes, bool) {
+	nodes, ok := k.nodes[address]
+	return nodes, ok
+}
+
+func (k *InMemoryHardwareNodeKeeper) SetHardwareNodes(address string, nodes *types.HardwareNodes) {
+	k.nodes[address] = nodes
+}
+
+type InMemoryModelKeeper struct {
+	models map[string]*types.Model
+}
+
+func NewInMemoryModelKeeper() types.ModelKeeper {
+	return &InMemoryModelKeeper{
+		models: make(map[string]*types.Model),
+	}
+}
+
+func (k *InMemoryModelKeeper) GetGovernanceModel(ctx context.Context, id string) (*types.Model, bool) {
+	model, ok := k.models[id]
+	return model, ok
+}
+
+func (k *InMemoryModelKeeper) GetGovernanceModels(ctx context.Context) ([]*types.Model, error) {
+	var modelList []*types.Model
+	for _, model := range k.models {
+		modelList = append(modelList, model)
+	}
+	return modelList, nil
+}
+
+func (k *InMemoryModelKeeper) SetModel(model *types.Model) {
+	k.models[model.Id] = model
 }
