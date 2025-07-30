@@ -307,7 +307,7 @@ class InferenceAccountingTests : TestermintTest() {
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             val timeoutsAtStart = genesis.node.getInferenceTimeouts()
-            localCluster.joinPairs.forEach {
+            localCluster.allPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
             Thread.sleep(5000)
