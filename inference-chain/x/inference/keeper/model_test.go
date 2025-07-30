@@ -30,6 +30,7 @@ func TestSetDeleteSetModel(t *testing.T) {
 		ModelArgs:              []string{"--quantization", "fp8"},
 		VRam:                   24,
 		ThroughputPerNonce:     10000,
+		ValidationThreshold:    &types.Decimal{Value: 85, Exponent: -2},
 	}
 	k.SetModel(ctx, &qwen7BModel)
 	qwq32BModel := types.Model{
@@ -41,6 +42,7 @@ func TestSetDeleteSetModel(t *testing.T) {
 		ModelArgs:              []string{"--quantization", "fp8", "--kv-cache-dtype", "fp8"},
 		VRam:                   80,
 		ThroughputPerNonce:     1000,
+		ValidationThreshold:    &types.Decimal{Value: 75, Exponent: -2},
 	}
 	k.SetModel(ctx, &qwq32BModel)
 

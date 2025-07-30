@@ -26,6 +26,7 @@ func TestGenesis(t *testing.T) {
 				ModelArgs:              []string{"--arg1"},
 				VRam:                   16,
 				ThroughputPerNonce:     100,
+				ValidationThreshold:    &types.Decimal{Value: 99, Exponent: -2},
 			},
 		},
 		// this line is used by starport scaffolding # genesis/test/state
