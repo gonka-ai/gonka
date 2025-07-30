@@ -323,8 +323,6 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
             pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
         }
     }
-    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
-//    fundUnfunded(unfunded, highestFunded)
 
     highestFunded.node.waitForNextBlock()
     pairs.forEach { pair ->
@@ -365,31 +363,6 @@ private fun resetMlNodesToDefault(pair: LocalInferencePair) {
     Logger.info { "Resetting ml nodes" }
     pair.waitForNextInferenceWindow(windowSizeInBlocks = 5)
     pair.api.setNodesTo(defaultNode)
-}
-
-private fun addUnfundedDirectly(
-    unfunded: List<LocalInferencePair>,
-    currentParticipants: List<Participant>,
-    highestFunded: LocalInferencePair,
-) {
-    for (pair in unfunded) {
-        if (currentParticipants.none { it.id == pair.node.getAddress() }) {
-            val selfKey = pair.node.getKeys()[0]
-            val status = pair.node.getStatus()
-            val validatorInfo = status.validatorInfo
-            val valPubKey: PubKey = validatorInfo.pubKey
-            Logger.debug("PubKey extracted pubkey={}", selfKey.pubkey)
-            highestFunded.api.addUnfundedInferenceParticipant(
-                UnfundedInferenceParticipant(
-                    url = "http://${pair.name}-api:8080",
-                    models = listOf("Qwen/Qwen2.5-7B-Instruct"),
-                    validatorKey = valPubKey.value,
-                    pubKey = selfKey.pubkey.key,
-                    address = selfKey.address,
-                )
-            )
-        }
-    }
 }
 
 private fun TxResponse.assertSuccess() {
