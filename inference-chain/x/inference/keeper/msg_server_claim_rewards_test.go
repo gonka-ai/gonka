@@ -647,7 +647,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// Claimant has two nodes, one with full availability
 	mainEpochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100,
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: "executor1", Weight: 50}},
 		SubGroupModels:      []string{MODEL_ID},
@@ -676,7 +676,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 
 	modelSubGroup := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        101,
+		EpochGroupId:        9001,
 		PocStartBlockHeight: pocStartBlockHeight,
 		ModelId:             MODEL_ID,
 		ValidationWeights: []*types.ValidationWeight{
@@ -697,7 +697,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// Inference occurring during PoC cutoff
 	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
 	inference := types.InferenceValidationDetails{
-		EpochGroupId:         100,
+		EpochId:              epoch.Index,
 		InferenceId:          "inference-during-poc",
 		ExecutorId:           "executor1",
 		ExecutorReputation:   0,
