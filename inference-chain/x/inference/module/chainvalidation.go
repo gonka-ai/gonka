@@ -638,11 +638,7 @@ func calculateParticipantWeight(batches []types.PoCBatch) ([]nodeWeight, int64) 
 		nodeWeightsSlice = append(nodeWeightsSlice, nodeWeight{nodeId: nodeId, weight: weight})
 	}
 	sort.Slice(nodeWeightsSlice, func(i, j int) bool {
-		if nodeWeightsSlice[i].weight == nodeWeightsSlice[j].weight {
-			// If weights are equal, sort by nodeId to ensure consistent order
-			return nodeWeightsSlice[i].nodeId < nodeWeightsSlice[j].nodeId
-		}
-		return nodeWeightsSlice[i].weight > nodeWeightsSlice[j].weight
+		return nodeWeightsSlice[i].nodeId < nodeWeightsSlice[j].nodeId
 	})
 
 	return nodeWeightsSlice, totalWeight
