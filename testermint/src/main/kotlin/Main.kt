@@ -498,7 +498,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 modelArgs = listOf("--quantization", "fp8", "--kv-cache-dtype", "fp8"),
                 vRam = "32",
                 throughputPerNonce = "1000",
-                validationThreshold = "85",
+                validationThreshold = Decimal.fromDouble(0.85),
             ),
             ModelListItem(
                 proposedBy = "genesis",
@@ -509,7 +509,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 modelArgs = listOf("--quantization", "fp8"),
                 vRam = "16",
                 throughputPerNonce = "10000",
-                validationThreshold = "85"
+                validationThreshold = Decimal.fromDouble(0.85),
             )
         )
     }
