@@ -41,7 +41,7 @@
             "--kv-cache-dtype",
             "fp8"
           ],
-          "v_ram": "32",
+          "v_ram": "80",
           "throughput_per_nonce": "1000",
           "validation_threshold": {
             "value": "0.85",
@@ -58,7 +58,7 @@
             "--quantization",
             "fp8"
           ],
-          "v_ram": "16",
+          "v_ram": "24",
           "throughput_per_nonce": "10000",
           "validation_threshold": {
             "value": "0.85",
