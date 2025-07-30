@@ -88,6 +88,11 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 }
 
 func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, previousEpochPocStartHeight uint64) error {
+	if pocBlockHeight == 0 {
+		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "pocBlockHeight", pocBlockHeight, "skipping")
+		return nil
+	}
+
 	k.LogInfo("SettleAccounts", types.Settle, "pocBlockHeight", pocBlockHeight)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()

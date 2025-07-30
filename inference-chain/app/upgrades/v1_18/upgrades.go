@@ -49,7 +49,7 @@ func CreateUpgradeHandler(
 		params.BitcoinRewardParams.UseBitcoinRewards = true                                 // Enable Bitcoin reward system
 		params.BitcoinRewardParams.InitialEpochReward = 285000000000000                     // 285,000 gonka coins per epoch (285,000 * 1,000,000,000 nicoins)
 		params.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(-0.000475)            // Exponential decay rate (~4 year halving)
-		params.BitcoinRewardParams.GenesisEpoch = 0                                         // Start from epoch 0
+		params.BitcoinRewardParams.GenesisEpoch = 1                                         // Start from epoch 0
 		params.BitcoinRewardParams.UtilizationBonusFactor = types.DecimalFromFloat(0.5)     // 50% utilization bonus factor
 		params.BitcoinRewardParams.FullCoverageBonusFactor = types.DecimalFromFloat(1.2)    // 20% bonus for full model coverage
 		params.BitcoinRewardParams.PartialCoverageBonusFactor = types.DecimalFromFloat(0.1) // 10% bonus scaling for partial coverage

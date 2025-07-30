@@ -48,7 +48,7 @@ Each task includes:
 - **What**: Add new governance-configurable parameters to the `x/inference` module's `params.proto` and implement them in `params.go`. Group them under a `BitcoinRewardParams` message for better organization:
   - `InitialEpochReward`: Base reward amount per epoch (default: 285,000 gonka coins)
   - `DecayRate`: Exponential decay rate per epoch (default: -0.000475)
-  - `GenesisEpoch`: Starting epoch for Bitcoin-style calculations (default: 0)
+  - `GenesisEpoch`: Starting epoch for Bitcoin-style calculations (default: 1, since epoch 0 is skipped)
   - `UtilizationBonusFactor`: Multiplier for utilization bonuses (default: 0.5, for Phase 2)
   - `FullCoverageBonusFactor`: Multiplier for complete model coverage (default: 1.2, for Phase 2)
   - `PartialCoverageBonusFactor`: Multiplier for partial model coverage (default: 0.1, for Phase 2)
