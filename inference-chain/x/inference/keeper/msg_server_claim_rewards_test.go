@@ -87,6 +87,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		types.ModuleName,
 		addr,
 		workCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
@@ -94,6 +95,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		types.ModuleName,
 		addr,
 		rewardCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
@@ -102,6 +104,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		types.ModuleName, // escrow payment from inference module
 		"streamvesting",
 		workCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
@@ -118,6 +121,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		types.ModuleName, // reward payment from inference module
 		"streamvesting",
 		rewardCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
@@ -370,6 +374,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		types.ModuleName,
 		addr,
 		workCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
@@ -377,6 +382,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		types.ModuleName,
 		addr,
 		rewardCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
@@ -385,6 +391,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		types.ModuleName, // escrow payment from inference module
 		"streamvesting",
 		workCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
@@ -401,6 +408,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		types.ModuleName, // reward payment from inference module
 		"streamvesting",
 		rewardCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
@@ -636,6 +644,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		types.ModuleName,
 		addr,
 		workCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
@@ -643,6 +652,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		types.ModuleName,
 		addr,
 		rewardCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
@@ -651,6 +661,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		types.ModuleName, // escrow payment from inference module
 		"streamvesting",
 		workCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
@@ -667,6 +678,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		types.ModuleName, // reward payment from inference module
 		"streamvesting",
 		rewardCoins,
+		gomock.Any(),
 	).Return(nil).AnyTimes()
 
 	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(

@@ -137,6 +137,21 @@ func (m *MockBankKeeper) EXPECT() *MockBankKeeperMockRecorder {
 	return m.recorder
 }
 
+// GetDenomMetaData mocks base method.
+func (m *MockBankKeeper) GetDenomMetaData(ctx context.Context, denom string) (types0.Metadata, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDenomMetaData", ctx, denom)
+	ret0, _ := ret[0].(types0.Metadata)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetDenomMetaData indicates an expected call of GetDenomMetaData.
+func (mr *MockBankKeeperMockRecorder) GetDenomMetaData(ctx, denom any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDenomMetaData", reflect.TypeOf((*MockBankKeeper)(nil).GetDenomMetaData), ctx, denom)
+}
+
 // SpendableCoin mocks base method.
 func (m *MockBankKeeper) SpendableCoin(ctx context.Context, addr types.AccAddress, denom string) types.Coin {
 	m.ctrl.T.Helper()
@@ -163,114 +178,6 @@ func (m *MockBankKeeper) SpendableCoins(arg0 context.Context, arg1 types.AccAddr
 func (mr *MockBankKeeperMockRecorder) SpendableCoins(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SpendableCoins", reflect.TypeOf((*MockBankKeeper)(nil).SpendableCoins), arg0, arg1)
-}
-
-// MockBankEscrowKeeper is a mock of BankEscrowKeeper interface.
-type MockBankEscrowKeeper struct {
-	ctrl     *gomock.Controller
-	recorder *MockBankEscrowKeeperMockRecorder
-}
-
-// MockBankEscrowKeeperMockRecorder is the mock recorder for MockBankEscrowKeeper.
-type MockBankEscrowKeeperMockRecorder struct {
-	mock *MockBankEscrowKeeper
-}
-
-// NewMockBankEscrowKeeper creates a new mock instance.
-func NewMockBankEscrowKeeper(ctrl *gomock.Controller) *MockBankEscrowKeeper {
-	mock := &MockBankEscrowKeeper{ctrl: ctrl}
-	mock.recorder = &MockBankEscrowKeeperMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockBankEscrowKeeper) EXPECT() *MockBankEscrowKeeperMockRecorder {
-	return m.recorder
-}
-
-// BurnCoins mocks base method.
-func (m *MockBankEscrowKeeper) BurnCoins(ctx context.Context, moduleName string, amt types.Coins) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "BurnCoins", ctx, moduleName, amt)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// BurnCoins indicates an expected call of BurnCoins.
-func (mr *MockBankEscrowKeeperMockRecorder) BurnCoins(ctx, moduleName, amt any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BurnCoins", reflect.TypeOf((*MockBankEscrowKeeper)(nil).BurnCoins), ctx, moduleName, amt)
-}
-
-// GetDenomMetaData mocks base method.
-func (m *MockBankEscrowKeeper) GetDenomMetaData(ctx context.Context, denom string) (types0.Metadata, bool) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDenomMetaData", ctx, denom)
-	ret0, _ := ret[0].(types0.Metadata)
-	ret1, _ := ret[1].(bool)
-	return ret0, ret1
-}
-
-// GetDenomMetaData indicates an expected call of GetDenomMetaData.
-func (mr *MockBankEscrowKeeperMockRecorder) GetDenomMetaData(ctx, denom any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDenomMetaData", reflect.TypeOf((*MockBankEscrowKeeper)(nil).GetDenomMetaData), ctx, denom)
-}
-
-// MintCoins mocks base method.
-func (m *MockBankEscrowKeeper) MintCoins(ctx context.Context, moduleName string, amt types.Coins) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MintCoins", ctx, moduleName, amt)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MintCoins indicates an expected call of MintCoins.
-func (mr *MockBankEscrowKeeperMockRecorder) MintCoins(ctx, moduleName, amt any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MintCoins", reflect.TypeOf((*MockBankEscrowKeeper)(nil).MintCoins), ctx, moduleName, amt)
-}
-
-// SendCoinsFromAccountToModule mocks base method.
-func (m *MockBankEscrowKeeper) SendCoinsFromAccountToModule(ctx context.Context, senderAddr types.AccAddress, recipientModule string, amt types.Coins) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendCoinsFromAccountToModule", ctx, senderAddr, recipientModule, amt)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SendCoinsFromAccountToModule indicates an expected call of SendCoinsFromAccountToModule.
-func (mr *MockBankEscrowKeeperMockRecorder) SendCoinsFromAccountToModule(ctx, senderAddr, recipientModule, amt any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendCoinsFromAccountToModule", reflect.TypeOf((*MockBankEscrowKeeper)(nil).SendCoinsFromAccountToModule), ctx, senderAddr, recipientModule, amt)
-}
-
-// SendCoinsFromModuleToAccount mocks base method.
-func (m *MockBankEscrowKeeper) SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr types.AccAddress, amt types.Coins) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendCoinsFromModuleToAccount", ctx, senderModule, recipientAddr, amt)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SendCoinsFromModuleToAccount indicates an expected call of SendCoinsFromModuleToAccount.
-func (mr *MockBankEscrowKeeperMockRecorder) SendCoinsFromModuleToAccount(ctx, senderModule, recipientAddr, amt any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendCoinsFromModuleToAccount", reflect.TypeOf((*MockBankEscrowKeeper)(nil).SendCoinsFromModuleToAccount), ctx, senderModule, recipientAddr, amt)
-}
-
-// SendCoinsFromModuleToModule mocks base method.
-func (m *MockBankEscrowKeeper) SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt types.Coins) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendCoinsFromModuleToModule", ctx, senderModule, recipientModule, amt)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SendCoinsFromModuleToModule indicates an expected call of SendCoinsFromModuleToModule.
-func (mr *MockBankEscrowKeeperMockRecorder) SendCoinsFromModuleToModule(ctx, senderModule, recipientModule, amt any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendCoinsFromModuleToModule", reflect.TypeOf((*MockBankEscrowKeeper)(nil).SendCoinsFromModuleToModule), ctx, senderModule, recipientModule, amt)
 }
 
 // MockGroupMessageKeeper is a mock of GroupMessageKeeper interface.

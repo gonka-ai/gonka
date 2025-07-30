@@ -1,8 +1,10 @@
 package app
 
 import (
-	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
+	bookkeepermodulev1 "github.com/productscience/inference/api/inference/bookkeeper/module"
 	"time"
+
+	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 
 	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
 	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
@@ -58,6 +60,8 @@ import (
 
 	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
 	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
+	_ "github.com/productscience/inference/x/bookkeeper/module" // import for side-effects
+	bookkeepermoduletypes "github.com/productscience/inference/x/bookkeeper/types"
 	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
 	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
@@ -101,6 +105,7 @@ var (
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
@@ -129,6 +134,7 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
@@ -151,6 +157,7 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
@@ -176,6 +183,7 @@ var (
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: ibcfeetypes.ModuleName},
 		{Account: icatypes.ModuleName},
+		{Account: bookkeepermoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter}},
 		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
@@ -319,6 +327,10 @@ var (
 			{
 				Name:   circuittypes.ModuleName,
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
+			},
+			{
+				Name:   bookkeepermoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&bookkeepermodulev1.Module{}),
 			},
 			{
 				Name:   inferencemoduletypes.ModuleName,

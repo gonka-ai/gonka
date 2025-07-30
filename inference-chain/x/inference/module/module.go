@@ -446,6 +446,7 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 	}
 
 	reputation := calculations.CalculateReputation(&reputationContext)
+	am.LogInfo("ReputationCalculated", types.EpochGroup, "participantIndex", p.Index, "reputation", reputation)
 
 	return reputation, nil
 }
@@ -513,7 +514,7 @@ type ModuleInputs struct {
 
 	AccountKeeper       types.AccountKeeper
 	BankKeeper          types.BankKeeper
-	BankEscrowKeeper    types.BankEscrowKeeper
+	BankEscrowKeeper    types.BookkeepingBankKeeper
 	ValidatorSet        types.ValidatorSet
 	StakingKeeper       types.StakingKeeper
 	GroupServer         types.GroupMessageKeeper
@@ -525,10 +526,9 @@ type ModuleInputs struct {
 type ModuleOutputs struct {
 	depinject.Out
 
-	InferenceKeeper   keeper.Keeper
-	Module            appmodule.AppModule
-	Hooks             stakingtypes.StakingHooksWrapper
-	BookkeepingKeeper types.BookkeepingBankKeeper
+	InferenceKeeper keeper.Keeper
+	Module          appmodule.AppModule
+	Hooks           stakingtypes.StakingHooksWrapper
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -564,10 +564,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	)
 
 	return ModuleOutputs{
-		InferenceKeeper:   k,
-		Module:            m,
-		Hooks:             stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
-		BookkeepingKeeper: &k,
+		InferenceKeeper: k,
+		Module:          m,
+		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
 	}
 }
 

@@ -2,10 +2,10 @@ package types
 
 import (
 	"context"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -25,16 +25,8 @@ type AccountKeeper interface {
 type BankKeeper interface {
 	SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins
 	SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
-	// Methods imported from bank should be defined here
-}
-
-type BankEscrowKeeper interface {
-	SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
-	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
-	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
-	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
-	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 	GetDenomMetaData(ctx context.Context, denom string) (banktypes.Metadata, bool)
+	// Methods imported from bank should be defined here
 }
 
 type GroupMessageKeeper interface {

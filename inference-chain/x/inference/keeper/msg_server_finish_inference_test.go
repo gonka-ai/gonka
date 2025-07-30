@@ -3,6 +3,8 @@ package keeper_test
 import (
 	"context"
 	"encoding/base64"
+	"testing"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -12,7 +14,6 @@ import (
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
 	"go.uber.org/mock/gomock"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 
@@ -197,7 +198,7 @@ func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, 
 
 func (h *MockInferenceHelper) StartInference(
 	promptPayload string, model string, requestTimestamp int64, maxTokens uint64) (*types.Inference, error) {
-	h.Mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any())
+	h.Mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockRequester.GetBechAddress()).Return(h.MockRequester)
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockTransferAgent.GetBechAddress()).Return(h.MockTransferAgent)
 
@@ -256,7 +257,7 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 	if h.previousInference == nil {
 		return nil, types.ErrInferenceNotFound
 	}
-	h.Mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
+	h.Mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockRequester.GetBechAddress()).Return(h.MockRequester)
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockTransferAgent.GetBechAddress()).Return(h.MockTransferAgent)

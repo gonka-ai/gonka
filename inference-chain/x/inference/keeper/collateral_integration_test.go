@@ -54,8 +54,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
-	bankKeeper := keepertest.NewMockBankEscrowKeeper(ctrl)
 	bookkepingBankKeeper := keepertest.NewMockBookkeepingBankKeeper(ctrl)
+	bankViewKeeper := keepertest.NewMockBankKeeper(ctrl)
 	accountKeeper := keepertest.NewMockAccountKeeper(ctrl)
 	validatorSet := keepertest.NewMockValidatorSet(ctrl)
 	groupMock := keepertest.NewMockGroupMessageKeeper(ctrl)
@@ -77,8 +77,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		runtime.NewKVStoreService(inferenceStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		bankKeeper,
-		nil, // authz
+		bookkepingBankKeeper,
+		bankViewKeeper, // authz
 		groupMock,
 		validatorSet,
 		stakingKeeper,
@@ -226,7 +226,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	k.SetParticipant(ctx, types.Participant{Index: authority, Address: authority, CurrentEpochStats: &types.CurrentEpochStats{}})
 
 	// Mock bank keeper for the refund logic, even though cost is 0
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	// Setup the inference object that will be invalidated
 	inferenceId := "test-inference-to-trigger-invalid"

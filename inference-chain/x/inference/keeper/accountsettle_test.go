@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	keeper2 "github.com/productscience/inference/testutil/keeper"
@@ -274,7 +275,7 @@ func TestActualSettle(t *testing.T) {
 	})
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
 
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin)).Return(nil)
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin), gomock.Any()).Return(nil)
 	err := keeper.SettleAccounts(ctx, 10, 0)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)

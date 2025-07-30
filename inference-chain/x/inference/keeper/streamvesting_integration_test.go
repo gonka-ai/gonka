@@ -51,8 +51,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
-	bankKeeper := keepertest.NewMockBankEscrowKeeper(ctrl)
 	bookkeepingBankKeeper := keepertest.NewMockBookkeepingBankKeeper(ctrl)
+	bankViewKeeper := keepertest.NewMockBankKeeper(ctrl)
 	accountKeeper := keepertest.NewMockAccountKeeper(ctrl)
 	validatorSet := keepertest.NewMockValidatorSet(ctrl)
 	groupMock := keepertest.NewMockGroupMessageKeeper(ctrl)
@@ -74,8 +74,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		runtime.NewKVStoreService(inferenceStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		bankKeeper,
-		nil, // authz
+		bookkeepingBankKeeper,
+		bankViewKeeper, // authz
 		groupMock,
 		validatorSet,
 		stakingKeeper,
@@ -163,7 +163,7 @@ func TestVestingIntegration_DirectPayment(t *testing.T) {
 	// Mock expectation for direct payment (no vesting)
 
 	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(ctx, types.TopRewardPoolAccName, participantAddr, expectedCoins).
+		SendCoinsFromModuleToAccount(ctx, types.TopRewardPoolAccName, participantAddr, expectedCoins, gomock.Any()).
 		Return(nil)
 
 	// No vesting keeper calls should be made
@@ -249,7 +249,7 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 
 	expectedWorkCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(workAmount)))
 	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, expectedWorkCoins).
+		SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, expectedWorkCoins, gomock.Any()).
 		Return(nil)
 
 	err = k.PayParticipantFromEscrow(ctx, participantAddrStr, workAmount, "work-payment", &workVestingPeriod)
