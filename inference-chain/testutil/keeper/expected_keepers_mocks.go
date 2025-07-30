@@ -959,15 +959,15 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) BurnCoins(ctx, moduleName, amt,
 }
 
 // LogSubAccountTransaction mocks base method.
-func (m *MockBookkeepingBankKeeper) LogSubAccountTransaction(recipient, sender, subAccount string, amt types.Coin, memo string) {
+func (m *MockBookkeepingBankKeeper) LogSubAccountTransaction(ctx context.Context, recipient, sender, subAccount string, amt types.Coin, memo string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "LogSubAccountTransaction", recipient, sender, subAccount, amt, memo)
+	m.ctrl.Call(m, "LogSubAccountTransaction", ctx, recipient, sender, subAccount, amt, memo)
 }
 
 // LogSubAccountTransaction indicates an expected call of LogSubAccountTransaction.
-func (mr *MockBookkeepingBankKeeperMockRecorder) LogSubAccountTransaction(recipient, sender, subAccount, amt, memo any) *gomock.Call {
+func (mr *MockBookkeepingBankKeeperMockRecorder) LogSubAccountTransaction(ctx, recipient, sender, subAccount, amt, memo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogSubAccountTransaction", reflect.TypeOf((*MockBookkeepingBankKeeper)(nil).LogSubAccountTransaction), recipient, sender, subAccount, amt, memo)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogSubAccountTransaction", reflect.TypeOf((*MockBookkeepingBankKeeper)(nil).LogSubAccountTransaction), ctx, recipient, sender, subAccount, amt, memo)
 }
 
 // MintCoins mocks base method.

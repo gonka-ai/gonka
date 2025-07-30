@@ -48,7 +48,7 @@ func (s *KeeperTestSuite) TestMsgDepositCollateral_Success() {
 		Times(1)
 
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountCollateral, deposit, "collateral deposit").
+		LogSubAccountTransaction(s.ctx, types.ModuleName, participantStr, types.SubAccountCollateral, deposit, "collateral deposit").
 		Times(1)
 
 	msg := &types.MsgDepositCollateral{
@@ -83,7 +83,7 @@ func (s *KeeperTestSuite) TestMsgDepositCollateral_Aggregation() {
 		Times(1)
 
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountCollateral, secondDeposit, "collateral deposit").
+		LogSubAccountTransaction(s.ctx, types.ModuleName, participantStr, types.SubAccountCollateral, secondDeposit, "collateral deposit").
 		Times(1)
 
 	msg := &types.MsgDepositCollateral{
@@ -135,11 +135,11 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_Success() {
 
 	// Expect LogSubAccountTransaction calls
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, withdrawCoin, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, participantStr, types.ModuleName, types.SubAccountCollateral, withdrawCoin, "collateral to unbonding").
 		Times(1)
 
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, withdrawCoin, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, types.ModuleName, participantStr, types.SubAccountUnbonding, withdrawCoin, "collateral to unbonding").
 		Times(1)
 
 	msg := &types.MsgWithdrawCollateral{
@@ -206,11 +206,11 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_FullWithdrawal() {
 
 	// Expect LogSubAccountTransaction calls
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, initialCollateral, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, participantStr, types.ModuleName, types.SubAccountCollateral, initialCollateral, "collateral to unbonding").
 		Times(1)
 
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, initialCollateral, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, types.ModuleName, participantStr, types.SubAccountUnbonding, initialCollateral, "collateral to unbonding").
 		Times(1)
 
 	// Withdraw all collateral
@@ -260,11 +260,11 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_UnbondingAggregation() {
 
 	// Expect LogSubAccountTransaction calls for first withdrawal
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, firstWithdrawCoin, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, participantStr, types.ModuleName, types.SubAccountCollateral, firstWithdrawCoin, "collateral to unbonding").
 		Times(1)
 
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, firstWithdrawCoin, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, types.ModuleName, participantStr, types.SubAccountUnbonding, firstWithdrawCoin, "collateral to unbonding").
 		Times(1)
 
 	msg1 := &types.MsgWithdrawCollateral{
@@ -279,11 +279,11 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_UnbondingAggregation() {
 
 	// Expect LogSubAccountTransaction calls for second withdrawal
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(participantStr, types.ModuleName, types.SubAccountCollateral, secondWithdrawCoin, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, participantStr, types.ModuleName, types.SubAccountCollateral, secondWithdrawCoin, "collateral to unbonding").
 		Times(1)
 
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(types.ModuleName, participantStr, types.SubAccountUnbonding, secondWithdrawCoin, "collateral to unbonding").
+		LogSubAccountTransaction(s.ctx, types.ModuleName, participantStr, types.SubAccountUnbonding, secondWithdrawCoin, "collateral to unbonding").
 		Times(1)
 
 	msg2 := &types.MsgWithdrawCollateral{

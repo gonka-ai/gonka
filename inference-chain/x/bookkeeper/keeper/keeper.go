@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
@@ -64,7 +65,7 @@ func (k Keeper) SendCoinsFromModuleToAccount(ctx context.Context, senderModule s
 		return err
 	}
 	for _, coin := range amt {
-		k.LogTransaction(recipientAddr.String(), senderModule, coin, memo)
+		k.logTransaction(ctx, recipientAddr.String(), senderModule, coin, memo)
 	}
 	return nil
 }
@@ -75,7 +76,7 @@ func (k Keeper) SendCoinsFromModuleToModule(ctx context.Context, senderModule, r
 		return err
 	}
 	for _, coin := range amt {
-		k.LogTransaction(recipientModule, senderModule, coin, memo)
+		k.logTransaction(ctx, recipientModule, senderModule, coin, memo)
 	}
 	return nil
 }
@@ -85,7 +86,7 @@ func (k Keeper) SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk
 		return err
 	}
 	for _, coin := range amt {
-		k.LogTransaction(recipientModule, senderAddr.String(), coin, memo)
+		k.logTransaction(ctx, recipientModule, senderAddr.String(), coin, memo)
 	}
 	return nil
 }
@@ -99,7 +100,7 @@ func (k Keeper) MintCoins(ctx context.Context, moduleName string, amt sdk.Coins,
 		return err
 	}
 	for _, coin := range amt {
-		k.LogTransaction(moduleName, "supply", coin, memo)
+		k.logTransaction(ctx, moduleName, "supply", coin, memo)
 	}
 	return nil
 }
@@ -109,22 +110,38 @@ func (k Keeper) BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins,
 		k.Logger().Info("No coins to burn")
 		return nil
 	}
-	err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, amt)
+	err := k.bankKeeper.BurnCoins(ctx, moduleName, amt)
 	if err != nil {
 		return err
 	}
 	for _, coin := range amt {
-		k.LogTransaction("supply", types.ModuleName, coin, memo)
+		k.logTransaction(ctx, "supply", moduleName, coin, memo)
 	}
 	return nil
 }
 
-func (k Keeper) LogSubAccountTransaction(recipient string, sender string, subAccount string, amt sdk.Coin, memo string) {
-	k.LogTransaction(recipient+"_"+subAccount, sender+"_"+subAccount, amt, memo)
+func (k Keeper) LogSubAccountTransaction(ctx context.Context, recipient string, sender string, subAccount string, amt sdk.Coin, memo string) {
+	k.logTransaction(ctx, recipient+"_"+subAccount, sender+"_"+subAccount, amt, memo)
 }
 
-func (k Keeper) LogTransaction(to string, from string, coin sdk.Coin, memo string) {
+func (k Keeper) logTransaction(ctx context.Context, to string, from string, coin sdk.Coin, memo string) {
+	params := k.GetParams(ctx)
+
 	amount := coin.Amount.Int64()
-	k.Logger().Info("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount)
-	k.Logger().Info("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount)
+	if params.DoubleEntry {
+		k.Logger().Info("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount)
+		k.Logger().Info("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount)
+	}
+	if params.SimpleEntry {
+		amountString := fmt.Sprintf("%d", amount)
+		k.Logger().Info("TransactionEntry", "to", fixedSize(to, 64), "from", fixedSize(from, 64), "amount", fixedSize(amountString, 20), "denom", fixedSize(coin.Denom, 10), "memo", memo)
+	}
+}
+
+func fixedSize(to string, size int) string {
+	if len(to) > size {
+		return to[:size]
+	} else {
+		return to + strings.Repeat(" ", size-len(to))
+	}
 }

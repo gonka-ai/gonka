@@ -40,13 +40,13 @@ func (s *KeeperTestSuite) TestEpochProcessing_ProcessUnbondingQueue() {
 		Return(nil).
 		Times(1)
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(participant1.String(), types.ModuleName, types.SubAccountUnbonding, gomock.Eq(unbondingAmount1Coin), gomock.Any())
+		LogSubAccountTransaction(s.ctx, participant1.String(), types.ModuleName, types.SubAccountUnbonding, gomock.Eq(unbondingAmount1Coin), gomock.Any())
 	s.bankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(s.ctx, types.ModuleName, participant2, gomock.Eq(sdk.NewCoins(unbondingAmount2Coin)), gomock.Any()).
 		Return(nil).
 		Times(1)
 	s.bankKeeper.EXPECT().
-		LogSubAccountTransaction(participant2.String(), types.ModuleName, types.SubAccountUnbonding, gomock.Eq(unbondingAmount2Coin), gomock.Any())
+		LogSubAccountTransaction(s.ctx, participant2.String(), types.ModuleName, types.SubAccountUnbonding, gomock.Eq(unbondingAmount2Coin), gomock.Any())
 
 	// Run the epoch processing
 	s.k.AdvanceEpoch(s.ctx, completedEpoch)

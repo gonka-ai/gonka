@@ -24,7 +24,7 @@ type BookkeepingBankKeeper interface {
 	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins, memo string) error
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins, memo string) error
 	// For logging transactions to tracking accounts, like vesting holds
-	LogSubAccountTransaction(recipient string, sender string, subAccount string, amt sdk.Coin, memo string)
+	LogSubAccountTransaction(ctx context.Context, recipient string, sender string, subAccount string, amt sdk.Coin, memo string)
 }
 
 // ParamSubspace defines the expected Subspace interface for parameters.

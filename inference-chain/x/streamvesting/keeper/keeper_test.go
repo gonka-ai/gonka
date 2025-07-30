@@ -40,7 +40,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_SingleReward() {
 	// Add the first reward
 	coin := sdk.NewInt64Coin("nicoin", 1000)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -67,7 +67,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_WithRemainder() {
 
 	coin := sdk.NewInt64Coin("nicoin", 1003)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -94,14 +94,14 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_Aggregation() {
 	coin := sdk.NewInt64Coin("nicoin", 900)
 	amount1 := sdk.NewCoins(coin)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount1, "memo")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount1, &vestingEpochs, "memo")
 	suite.Require().NoError(err)
 
 	// Add second reward of 600 coins (200 per epoch)
 	amount2 := sdk.NewCoins(sdk.NewInt64Coin("nicoin", 600))
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount2, "mem")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", sdk.NewInt64Coin("nicoin", 600), gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", sdk.NewInt64Coin("nicoin", 600), gomock.Any())
 	err = suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount2, &vestingEpochs, "mem")
 	suite.Require().NoError(err)
 
@@ -127,7 +127,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_ArrayExtension() {
 	vestingEpochs1 := uint64(2)
 	coin1 := sdk.NewInt64Coin("nicoin", 600)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount1, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin1, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin1, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount1, &vestingEpochs1, "")
 	suite.Require().NoError(err)
 
@@ -136,7 +136,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_ArrayExtension() {
 	vestingEpochs2 := uint64(4)
 	coin2 := sdk.NewInt64Coin("nicoin", 800)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount2, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin2, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin2, gomock.Any())
 	err = suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount2, &vestingEpochs2, "")
 	suite.Require().NoError(err)
 
@@ -164,7 +164,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_DefaultVestingPeriod() {
 	// Don't specify vesting epochs (should use default parameter)
 	coin := sdk.NewInt64Coin("nicoin", 1800)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, nil, "")
 	suite.Require().NoError(err)
 
@@ -196,13 +196,13 @@ func (suite *KeeperTestSuite) TestProcessEpochUnlocks_MultipleParticipants() {
 
 	aliceCoin := sdk.NewInt64Coin("nicoin", 500)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, aliceAmount, gomock.Any())
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, alice, "vesting", aliceCoin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, alice, "vesting", aliceCoin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, alice, "inference", aliceAmount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
 	bobCoin := sdk.NewInt64Coin("nicoin", 300)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, bobAmount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, bob, "vesting", bobCoin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, bob, "vesting", bobCoin, gomock.Any())
 	err = suite.keeper.AddVestedRewards(suite.ctx, bob, "inference", bobAmount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -216,11 +216,11 @@ func (suite *KeeperTestSuite) TestProcessEpochUnlocks_MultipleParticipants() {
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		suite.ctx, types.ModuleName, aliceAddr, aliceUnlockAmount, "vesting payment",
 	).Return(nil)
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(alice, types.ModuleName, "vesting", sdk.NewInt64Coin("nicoin", 168), gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, alice, types.ModuleName, "vesting", sdk.NewInt64Coin("nicoin", 168), gomock.Any())
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		suite.ctx, types.ModuleName, bobAddr, bobUnlockAmount, gomock.Any(),
 	).Return(nil)
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(bob, types.ModuleName, "vesting", sdk.NewInt64Coin("nicoin", 100), gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, bob, types.ModuleName, "vesting", sdk.NewInt64Coin("nicoin", 100), gomock.Any())
 
 	// Process epoch unlocks
 	err = suite.keeper.ProcessEpochUnlocks(suite.ctx)
@@ -245,7 +245,7 @@ func (suite *KeeperTestSuite) TestProcessEpochUnlocks_Debug() {
 	// Add vesting schedule
 	coin := sdk.NewInt64Coin("nicoin", 300)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -260,7 +260,7 @@ func (suite *KeeperTestSuite) TestProcessEpochUnlocks_Debug() {
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		suite.ctx, types.ModuleName, addr, unlockAmount, "vesting payment",
 	).Return(nil)
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(participant, types.ModuleName, "vesting", sdk.NewInt64Coin("nicoin", 150), gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, participant, types.ModuleName, "vesting", sdk.NewInt64Coin("nicoin", 150), gomock.Any())
 
 	// Process unlocks
 	err = suite.keeper.ProcessEpochUnlocks(suite.ctx)
@@ -280,7 +280,7 @@ func (suite *KeeperTestSuite) TestProcessEpochUnlocks_EmptyScheduleCleanup() {
 
 	coin := sdk.NewInt64Coin("nicoin", 100)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -289,7 +289,7 @@ func (suite *KeeperTestSuite) TestProcessEpochUnlocks_EmptyScheduleCleanup() {
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		suite.ctx, types.ModuleName, addr, amount, "vesting payment",
 	).Return(nil)
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(participant, types.ModuleName, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, participant, types.ModuleName, "vesting", coin, gomock.Any())
 
 	// Process the only epoch
 	err = suite.keeper.ProcessEpochUnlocks(suite.ctx)
@@ -315,7 +315,7 @@ func (suite *KeeperTestSuite) TestAdvanceEpoch() {
 
 	coin := sdk.NewInt64Coin("nicoin", 300)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, gomock.Any())
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -329,7 +329,7 @@ func (suite *KeeperTestSuite) TestAdvanceEpoch() {
 
 	// Call AdvanceEpoch
 	completedEpoch := uint64(100)
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(participant, types.ModuleName, "vesting", paidCoin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, participant, types.ModuleName, "vesting", paidCoin, gomock.Any())
 	err = suite.keeper.AdvanceEpoch(suite.ctx, completedEpoch)
 	suite.Require().NoError(err)
 
@@ -348,7 +348,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_InvalidInputs() {
 	vestingEpochs := uint64(0)
 	coin := sdk.NewInt64Coin("nicoin", 100)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "").AnyTimes()
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any()).AnyTimes()
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any()).AnyTimes()
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().Error(err)
 	suite.Require().Contains(err.Error(), "vesting epochs cannot be zero")
@@ -366,7 +366,7 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_InvalidInputs() {
 	validAmount := sdk.NewCoins(sdk.NewInt64Coin("nicoin", 100))
 	validCoin := sdk.NewInt64Coin("nicoin", 100)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, validAmount, "").AnyTimes()
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, invalidParticipant, "vesting", validCoin, gomock.Any()).AnyTimes()
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, invalidParticipant, "vesting", validCoin, gomock.Any()).AnyTimes()
 	err = suite.keeper.AddVestedRewards(suite.ctx, invalidParticipant, "inference", validAmount, &vestingEpochs, "")
 	suite.Require().Error(err)
 	suite.Require().Contains(err.Error(), "invalid participant address")
@@ -384,13 +384,13 @@ func (suite *KeeperTestSuite) TestGetAllVestingSchedules() {
 
 	aliceCoin := sdk.NewInt64Coin("nicoin", 400)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, aliceAmount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, alice, "vesting", aliceCoin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, alice, "vesting", aliceCoin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, alice, "inference", aliceAmount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
 	bobCoin := sdk.NewInt64Coin("nicoin", 600)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, bobAmount, "")
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, bob, "vesting", bobCoin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, bob, "vesting", bobCoin, gomock.Any())
 	err = suite.keeper.AddVestedRewards(suite.ctx, bob, "inference", bobAmount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 
@@ -421,8 +421,8 @@ func (suite *KeeperTestSuite) TestAddVestedRewards_MultiCoin() {
 	stake := sdk.NewInt64Coin("stake", 300)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", types.ModuleName, amount, "")
 	// We need to mock for each coin in the amount
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", nicoin, gomock.Any())
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", stake, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", nicoin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", stake, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "")
 	suite.Require().NoError(err)
 

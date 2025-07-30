@@ -56,8 +56,8 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 		k.SetCollateral(ctx, participantAddr, newCollateral)
 	}
 
-	k.bookkeepingBankKeeper.LogSubAccountTransaction(msg.Participant, types.ModuleName, types.SubAccountCollateral, msg.Amount, "collateral to unbonding")
-	k.bookkeepingBankKeeper.LogSubAccountTransaction(types.ModuleName, msg.Participant, types.SubAccountUnbonding, msg.Amount, "collateral to unbonding")
+	k.bookkeepingBankKeeper.LogSubAccountTransaction(goCtx, msg.Participant, types.ModuleName, types.SubAccountCollateral, msg.Amount, "collateral to unbonding")
+	k.bookkeepingBankKeeper.LogSubAccountTransaction(goCtx, types.ModuleName, msg.Participant, types.SubAccountUnbonding, msg.Amount, "collateral to unbonding")
 
 	// Emit withdrawal event
 	ctx.EventManager().EmitEvents(sdk.Events{

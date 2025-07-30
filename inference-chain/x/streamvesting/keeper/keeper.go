@@ -76,7 +76,7 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 
 	err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(ctx, fundingModule, types.ModuleName, amount, memo)
 	for _, coin := range amount {
-		k.bookkeepingBankKeeper.LogSubAccountTransaction(types.ModuleName, participantAddress, HoldingSubAccount,
+		k.bookkeepingBankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, participantAddress, HoldingSubAccount,
 			coin, "vesting started for "+participantAddress)
 	}
 
@@ -236,7 +236,7 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 		}
 		for _, coin := range coinsToUnlock {
 			k.bookkeepingBankKeeper.LogSubAccountTransaction(
-				schedule.ParticipantAddress, types.ModuleName, HoldingSubAccount, coin, "coins vested for"+schedule.ParticipantAddress)
+				ctx, schedule.ParticipantAddress, types.ModuleName, HoldingSubAccount, coin, "coins vested for "+schedule.ParticipantAddress)
 		}
 
 		// Add to totals

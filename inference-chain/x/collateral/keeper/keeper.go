@@ -316,7 +316,7 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) {
 			// which should not happen if logic is correct.
 			panic(fmt.Sprintf("failed to release unbonding collateral for %s: %v", entry.Participant, err))
 		}
-		k.bookkeepingBankKeeper.LogSubAccountTransaction(entry.Participant, types.ModuleName, types.SubAccountUnbonding, entry.Amount, "collateral unbonded")
+		k.bookkeepingBankKeeper.LogSubAccountTransaction(ctx, entry.Participant, types.ModuleName, types.SubAccountUnbonding, entry.Amount, "collateral unbonded")
 
 		// Emit event for successful withdrawal processing
 		ctx.EventManager().EmitEvents(sdk.Events{

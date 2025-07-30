@@ -101,7 +101,7 @@ func (suite *KeeperTestSuite) TestGenesis_RoundTrip() {
 	amount := sdk.NewCoins(coin)
 	vestingEpochs := uint64(4)
 	suite.mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(suite.ctx, inftypes.ModuleName, types.ModuleName, amount, "memo").Return(nil)
-	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(types.ModuleName, participant, "vesting", coin, gomock.Any())
+	suite.mocks.BankKeeper.EXPECT().LogSubAccountTransaction(suite.ctx, types.ModuleName, participant, "vesting", coin, gomock.Any())
 	err := suite.keeper.AddVestedRewards(suite.ctx, participant, "inference", amount, &vestingEpochs, "memo")
 	suite.Require().NoError(err)
 

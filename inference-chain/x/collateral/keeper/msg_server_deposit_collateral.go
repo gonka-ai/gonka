@@ -39,7 +39,7 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 		currentCollateral = msg.Amount
 	}
 
-	k.bookkeepingBankKeeper.LogSubAccountTransaction(types.ModuleName, msg.Participant, types.SubAccountCollateral, msg.Amount, "collateral deposit")
+	k.bookkeepingBankKeeper.LogSubAccountTransaction(goCtx, types.ModuleName, msg.Participant, types.SubAccountCollateral, msg.Amount, "collateral deposit")
 
 	// Store the updated collateral
 	k.SetCollateral(ctx, participantAddr, currentCollateral)

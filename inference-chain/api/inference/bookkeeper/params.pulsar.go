@@ -2,26 +2,29 @@
 package bookkeeper
 
 import (
-	fmt "fmt"
-	io "io"
-	reflect "reflect"
-	sync "sync"
-
 	_ "cosmossdk.io/api/amino"
+	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	io "io"
+	reflect "reflect"
+	sync "sync"
 )
 
 var (
-	md_Params protoreflect.MessageDescriptor
+	md_Params              protoreflect.MessageDescriptor
+	fd_Params_double_entry protoreflect.FieldDescriptor
+	fd_Params_simple_entry protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bookkeeper_params_proto_init()
 	md_Params = File_inference_bookkeeper_params_proto.Messages().ByName("Params")
+	fd_Params_double_entry = md_Params.Fields().ByName("double_entry")
+	fd_Params_simple_entry = md_Params.Fields().ByName("simple_entry")
 }
 
 var _ protoreflect.Message = (*fastReflection_Params)(nil)
@@ -89,6 +92,18 @@ func (x *fastReflection_Params) Interface() protoreflect.ProtoMessage {
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_Params) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.DoubleEntry != false {
+		value := protoreflect.ValueOfBool(x.DoubleEntry)
+		if !f(fd_Params_double_entry, value) {
+			return
+		}
+	}
+	if x.SimpleEntry != false {
+		value := protoreflect.ValueOfBool(x.SimpleEntry)
+		if !f(fd_Params_simple_entry, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -104,6 +119,10 @@ func (x *fastReflection_Params) Range(f func(protoreflect.FieldDescriptor, proto
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_Params) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
+	case "inference.bookkeeper.Params.double_entry":
+		return x.DoubleEntry != false
+	case "inference.bookkeeper.Params.simple_entry":
+		return x.SimpleEntry != false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bookkeeper.Params"))
@@ -120,6 +139,10 @@ func (x *fastReflection_Params) Has(fd protoreflect.FieldDescriptor) bool {
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_Params) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
+	case "inference.bookkeeper.Params.double_entry":
+		x.DoubleEntry = false
+	case "inference.bookkeeper.Params.simple_entry":
+		x.SimpleEntry = false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bookkeeper.Params"))
@@ -136,6 +159,12 @@ func (x *fastReflection_Params) Clear(fd protoreflect.FieldDescriptor) {
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_Params) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
+	case "inference.bookkeeper.Params.double_entry":
+		value := x.DoubleEntry
+		return protoreflect.ValueOfBool(value)
+	case "inference.bookkeeper.Params.simple_entry":
+		value := x.SimpleEntry
+		return protoreflect.ValueOfBool(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bookkeeper.Params"))
@@ -156,6 +185,10 @@ func (x *fastReflection_Params) Get(descriptor protoreflect.FieldDescriptor) pro
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_Params) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
+	case "inference.bookkeeper.Params.double_entry":
+		x.DoubleEntry = value.Bool()
+	case "inference.bookkeeper.Params.simple_entry":
+		x.SimpleEntry = value.Bool()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bookkeeper.Params"))
@@ -176,6 +209,10 @@ func (x *fastReflection_Params) Set(fd protoreflect.FieldDescriptor, value proto
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_Params) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.bookkeeper.Params.double_entry":
+		panic(fmt.Errorf("field double_entry of message inference.bookkeeper.Params is not mutable"))
+	case "inference.bookkeeper.Params.simple_entry":
+		panic(fmt.Errorf("field simple_entry of message inference.bookkeeper.Params is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bookkeeper.Params"))
@@ -189,6 +226,10 @@ func (x *fastReflection_Params) Mutable(fd protoreflect.FieldDescriptor) protore
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_Params) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.bookkeeper.Params.double_entry":
+		return protoreflect.ValueOfBool(false)
+	case "inference.bookkeeper.Params.simple_entry":
+		return protoreflect.ValueOfBool(false)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bookkeeper.Params"))
@@ -258,6 +299,12 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
+		if x.DoubleEntry {
+			n += 2
+		}
+		if x.SimpleEntry {
+			n += 2
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -286,6 +333,26 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.SimpleEntry {
+			i--
+			if x.SimpleEntry {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
+			}
+			i--
+			dAtA[i] = 0x10
+		}
+		if x.DoubleEntry {
+			i--
+			if x.DoubleEntry {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
+			}
+			i--
+			dAtA[i] = 0x8
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -336,6 +403,46 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: Params: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DoubleEntry", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.DoubleEntry = bool(v != 0)
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SimpleEntry", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.SimpleEntry = bool(v != 0)
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -389,6 +496,11 @@ type Params struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
+
+	// DoubleEntry is official bookkeeping approach.
+	DoubleEntry bool `protobuf:"varint,1,opt,name=double_entry,json=doubleEntry,proto3" json:"double_entry,omitempty"`
+	// SimpleEntry is for scanning logs, columnar formatted
+	SimpleEntry bool `protobuf:"varint,2,opt,name=simple_entry,json=simpleEntry,proto3" json:"simple_entry,omitempty"`
 }
 
 func (x *Params) Reset() {
@@ -411,6 +523,20 @@ func (*Params) Descriptor() ([]byte, []int) {
 	return file_inference_bookkeeper_params_proto_rawDescGZIP(), []int{0}
 }
 
+func (x *Params) GetDoubleEntry() bool {
+	if x != nil {
+		return x.DoubleEntry
+	}
+	return false
+}
+
+func (x *Params) GetSimpleEntry() bool {
+	if x != nil {
+		return x.SimpleEntry
+	}
+	return false
+}
+
 var File_inference_bookkeeper_params_proto protoreflect.FileDescriptor
 
 var file_inference_bookkeeper_params_proto_rawDesc = []byte{
@@ -420,22 +546,27 @@ var file_inference_bookkeeper_params_proto_rawDesc = []byte{
 	0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0x1a, 0x11, 0x61, 0x6d, 0x69, 0x6e, 0x6f,
 	0x2f, 0x61, 0x6d, 0x69, 0x6e, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x14, 0x67, 0x6f,
 	0x67, 0x6f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x22, 0x30, 0x0a, 0x06, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x3a, 0x26, 0xe8, 0xa0,
-	0x1f, 0x01, 0x8a, 0xe7, 0xb0, 0x2a, 0x1d, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2f, 0x78, 0x2f, 0x62, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0x2f, 0x50, 0x61,
-	0x72, 0x61, 0x6d, 0x73, 0x42, 0xbf, 0x01, 0x0a, 0x18, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65,
-	0x72, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
-	0x5a, 0x25, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
-	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6f, 0x6f,
-	0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa, 0x02, 0x14,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x6f, 0x6f, 0x6b, 0x6b, 0x65,
-	0x65, 0x70, 0x65, 0x72, 0xca, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x5c, 0x42, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0xe2, 0x02, 0x20, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70,
-	0x65, 0x72, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02,
-	0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42, 0x6f, 0x6f, 0x6b,
-	0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x74, 0x6f, 0x22, 0x76, 0x0a, 0x06, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x21, 0x0a, 0x0c,
+	0x64, 0x6f, 0x75, 0x62, 0x6c, 0x65, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x79, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x08, 0x52, 0x0b, 0x64, 0x6f, 0x75, 0x62, 0x6c, 0x65, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x12,
+	0x21, 0x0a, 0x0c, 0x73, 0x69, 0x6d, 0x70, 0x6c, 0x65, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x79, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0b, 0x73, 0x69, 0x6d, 0x70, 0x6c, 0x65, 0x45, 0x6e, 0x74,
+	0x72, 0x79, 0x3a, 0x26, 0xe8, 0xa0, 0x1f, 0x01, 0x8a, 0xe7, 0xb0, 0x2a, 0x1d, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f, 0x62, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65,
+	0x70, 0x65, 0x72, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0xbf, 0x01, 0x0a, 0x18, 0x63,
+	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6f, 0x6f,
+	0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x25, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
+	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x62, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0xa2, 0x02, 0x03,
+	0x49, 0x42, 0x58, 0xaa, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x42, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0xca, 0x02, 0x14, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65,
+	0x72, 0xe2, 0x02, 0x20, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6f,
+	0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
+	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x3a, 0x3a, 0x42, 0x6f, 0x6f, 0x6b, 0x6b, 0x65, 0x65, 0x70, 0x65, 0x72, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

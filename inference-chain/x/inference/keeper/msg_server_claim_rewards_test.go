@@ -847,8 +847,8 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	if !validatorIsAvailableDuringPoC {
 		workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 		rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
-		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins).Return(nil)
-		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins).Return(nil)
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins, gomock.Any()).Return(nil)
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins, gomock.Any()).Return(nil)
 	}
 
 	if validatorIsAvailableDuringPoC {

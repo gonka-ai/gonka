@@ -11,5 +11,10 @@ message Params {
   option (amino.name) = "inference/x/bookkeeper/Params";
   option (gogoproto.equal) = true;
 
+  // DoubleEntry is official bookkeeping approach.
+  bool double_entry = 1;
+  // SimpleEntry is for scanning logs, columnar formatted
+  bool simple_entry = 2;
+
   
 }
