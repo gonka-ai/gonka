@@ -300,9 +300,9 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelTotalWeights[subModelId] = subTotalWeight
 	}
 
+	skipped := 0
 	mustBeValidated := make([]string, 0)
-	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochGroupId)
-	var skipped int
+	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochId)
 	for _, inference := range finishedInferences {
 		if inference.ExecutorId == msg.Creator {
 			continue

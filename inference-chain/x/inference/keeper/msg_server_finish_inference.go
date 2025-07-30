@@ -147,11 +147,9 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		ExecutorReputation: executorReputation,
 		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
-		// Can be deleted in next upgrade
-		EpochId:              currentEpochGroup.GroupData.EpochGroupId,
-		EpochGroupId:         currentEpochGroup.GroupData.EpochGroupId,
-		Model:                existingInference.Model,
-		TotalPower:           uint64(modelEpochGroup.GroupData.TotalWeight),
+		EpochId:            effectiveEpoch.Index,
+		Model:              existingInference.Model,
+		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
 		CreatedAtBlockHeight: ctx.BlockHeight(),
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
@@ -169,7 +167,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"Adding Inference Validation Details",
 		types.Validation,
 		"inference_id", inferenceDetails.InferenceId,
-		"epoch_group_id", inferenceDetails.EpochGroupId,
+		"epoch_id", inferenceDetails.EpochId,
 		"executor_id", inferenceDetails.ExecutorId,
 		"executor_power", inferenceDetails.ExecutorPower,
 		"executor_reputation", inferenceDetails.ExecutorReputation,
