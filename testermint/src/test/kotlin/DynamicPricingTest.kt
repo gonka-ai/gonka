@@ -48,28 +48,28 @@ class DynamicPricingTest : TestermintTest() {
         logSection("DPTEST: === PHASE 1: INITIAL STATE VERIFICATION ===")
         
         // Check initial price (should be MinPerTokenPrice = 1000)
-        val initialPrice = getCurrentModelPrice(genesis, "unsloth/llama-3-8b-Instruct")
-        logSection("DPTEST: INITIAL_PRICE - model=unsloth/llama-3-8b-Instruct, price=$initialPrice")
+        val initialPrice = getCurrentModelPrice(genesis, "Qwen/Qwen2.5-7B-Instruct")
+        logSection("DPTEST: INITIAL_PRICE - model=Qwen/Qwen2.5-7B-Instruct, price=$initialPrice")
         assertTrue(initialPrice == 1000L, "Expected initial price 1000, got $initialPrice")
 
         logSection("DPTEST: === PHASE 2: LOAD GENERATION & PRICE INCREASE ===")
         
         // Generate high load to trigger price increase using regular inference requests
-        // Strategy: Single batch of 12 regular inferences for moderate utilization testing
-        // Regular requests generate ~85 tokens each (12 × 85 = 1,020 tokens vs 1,200 capacity = 85% utilization)
+        // Strategy: Single batch of 20 regular inferences for high utilization testing
+        // Regular requests generate ~85 tokens each (20 × 85 = 1,700 tokens vs 1,800 capacity = 94% utilization)
         val loadGenerationStart = System.currentTimeMillis()
-        logSection("DPTEST: LOAD_START - Generating 12 regular parallel inferences for 85% utilization")
+        logSection("DPTEST: LOAD_START - Generating 20 regular parallel inferences for 94% utilization")
         
         val allLoadResults = runParallelInferencesWithResults(
             genesis = genesis, 
-            count = 12,  // 12 inferences for 85% utilization (moderate overload)
+            count = 20,  // 20 inferences for 94% utilization (high overload)
             waitForBlocks = 4,  // Optimized from performance test
             maxConcurrentRequests = 200,  // Proven working configuration
             inferenceRequest = inferenceRequestObject  // Back to regular size requests
         )
         
         val loadGenerationEnd = System.currentTimeMillis()
-        logSection("DPTEST: LOAD_COMPLETE - Generated ${allLoadResults.size}/12 regular inferences in ${loadGenerationEnd - loadGenerationStart}ms")
+        logSection("DPTEST: LOAD_COMPLETE - Generated ${allLoadResults.size}/20 regular inferences in ${loadGenerationEnd - loadGenerationStart}ms")
         
         val successfulLoadResults = allLoadResults.filter { it.actualCost != null }
         logSection("DPTEST: LOAD_SUCCESS - ${successfulLoadResults.size} successful inferences")
@@ -83,7 +83,7 @@ class DynamicPricingTest : TestermintTest() {
         Thread.sleep(Duration.ofSeconds(20))
         
         // Check price after high load
-        val priceAfterLoad = getCurrentModelPrice(genesis, "unsloth/llama-3-8b-Instruct")
+        val priceAfterLoad = getCurrentModelPrice(genesis, "Qwen/Qwen2.5-7B-Instruct")
         logSection("DPTEST: PRICE_AFTER_LOAD - price=$priceAfterLoad, initial_price=$initialPrice, increase=${priceAfterLoad - initialPrice}")
         
         // Verify price increased due to high utilization
@@ -120,7 +120,7 @@ class DynamicPricingTest : TestermintTest() {
         logSection("DPTEST: WAIT_COMPLETE - Wait finished, duration=${(waitEndTime - waitStartTime) / 1000}s")
         
         // Check price after utilization window reset
-        val priceAfterWait = getCurrentModelPrice(genesis, "unsloth/llama-3-8b-Instruct")
+        val priceAfterWait = getCurrentModelPrice(genesis, "Qwen/Qwen2.5-7B-Instruct")
         logSection("DPTEST: PRICE_AFTER_WAIT - price=$priceAfterWait, price_after_load=$priceAfterLoad, change=${priceAfterWait - priceAfterLoad}")
         
         // Verify price started decreasing (should be less than peak or moving toward 1000)
@@ -261,9 +261,9 @@ class DynamicPricingTest : TestermintTest() {
         logSection("DPTEST: PRICE_CALC_START - calculating expected price range for total_tokens=$totalTokens")
         
         // Based on regular requests: ~85 tokens per inference average
-        // With 12 regular inferences: ~1,020 tokens expected (85% utilization vs 1,200 capacity)
+        // With 20 regular inferences: ~1,700 tokens expected (94% utilization vs 1,800 capacity)
         // Utilization = tokens_processed_in_60s_window / capacity
-        val capacity = 1200L  // 20 tokens/sec × 60 seconds for 3-node test cluster
+        val capacity = 1800L  // 30 tokens/sec × 60 seconds for 3-node test cluster
         val estimatedUtilization = totalTokens.toDouble() / capacity
         
         logSection("DPTEST: UTILIZATION_EST - capacity=$capacity, utilization=$estimatedUtilization, threshold=0.60")
@@ -272,9 +272,9 @@ class DynamicPricingTest : TestermintTest() {
             logSection("DPTEST: HIGH_UTILIZATION - utilization=$estimatedUtilization > 60%, calculating price increase")
             // With growth caps: maximum 2% increase per block regardless of utilization level
             // Multiple BeginBlocker runs during test period can compound the 2% increases
-            // Assume 3-5 price updates during test (blocks every ~5 seconds)
+            // Assume 3-6 price updates during test (blocks every ~5 seconds)
             val minPriceIncrease = (1000L * 1.02).toLong()  // At least one 2% increase: 1020
-            val maxPriceIncrease = (1000L * Math.pow(1.02, 5.0)).toLong()  // Up to 5 compounds: ~1104
+            val maxPriceIncrease = (1000L * Math.pow(1.02, 6.0)).toLong()  // Up to 6 compounds: ~1126
             return Pair(minPriceIncrease, maxPriceIncrease)
         } else {
             logSection("DPTEST: NORMAL_UTILIZATION - utilization=$estimatedUtilization <= 60%, price should stay stable")

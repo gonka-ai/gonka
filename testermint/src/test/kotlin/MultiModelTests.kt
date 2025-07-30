@@ -97,8 +97,7 @@ class MultiModelTests : TestermintTest() {
         
         logSection("making inferences")
         val models = listOf(defaultModel, newModelName)
-        val inferences = runParallelInferencesWithResults(genesis, 30, models = models, maxConcurrentRequests = 30)
-        logSection("Completed ${inferences.size} inferences")
+        val inferences = runParallelInferencesWithResults(genesis, 30, waitForBlocks = 4, maxConcurrentRequests = 30, models = models)
         
         logSection("Waiting for settlement and claims")
         // We don't need to calculate exact amounts, just that the rewards goes through (claim isn't rejected)
@@ -113,10 +112,27 @@ class MultiModelTests : TestermintTest() {
             logSection("Participant after: ${it.id} Balance: ${it.balance}")
         }
         
-        // Get final inference states after settlement
-        val settledInferences = inferences.map { genesis.api.getInference(it.inferenceId) }
+        // Get final inference states after settlement - with pruning check
+        logSection("Getting settled inference states")
+        val settledInferences = try {
+            inferences.map { genesis.api.getInference(it.inferenceId) }
+        } catch (e: Exception) {
+            // Check if this is a pruning-related error
+            if (e.message?.contains("not found") == true) {
+                logSection("ERROR: Inferences have been pruned from storage. This can happen if:")
+                logSection("- Test took longer than 2 epochs (${2 * 15 * 5} seconds = ~2.5 minutes)")
+                logSection("- Current pruning threshold: 2 epochs after inference creation")
+                logSection("- Consider optimizing test timing or adjusting pruning settings in Main.kt")
+                logSection("- Failed inference IDs: ${inferences.take(3).map { it.inferenceId }}")
+                throw IllegalStateException("Inferences were pruned during test execution. Test timing exceeded 2-epoch threshold.", e)
+            } else {
+                throw e
+            }
+        }
+        
         val params = genesis.node.getInferenceParams().params
         
+        logSection("Calculating expected balance changes")
         // Calculate expected balance changes using the dual reward system logic
         val expectedChanges = calculateBalanceChanges(settledInferences, params, beforeParticipants, startLastRewardedEpoch, endLastRewardedEpoch)
         val actualChanges = beforeParticipants.associate {
