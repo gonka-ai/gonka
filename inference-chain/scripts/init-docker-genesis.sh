@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+set -x
 
 filter_cw20_code() {
   input=$(cat)

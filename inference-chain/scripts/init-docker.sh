@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+set -x
 ( set -o pipefail 2>/dev/null ) && set -o pipefail
 
 ###############################################################################
