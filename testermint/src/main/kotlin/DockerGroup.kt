@@ -121,8 +121,6 @@ data class DockerGroup(
             put("DAPI_API__ML_SERVER_PORT", "9100")
             put("DAPI_API__ADMIN_SERVER_PORT", "9200")
             put("DAPI_CHAIN_NODE__IS_GENESIS", isGenesis.toString().lowercase())
-            put("DAPI_CHAIN_NODE__URL", "http://$keyName-node:26657")
-            put("DAPI_CHAIN_NODE__SEED_API_URL", "http://genesis-node:26657")
             put("NODE_CONFIG_PATH", "/root/node_config.json")
             put("NODE_CONFIG", nodeConfigFile)
             put("PUBLIC_URL", publicUrl)
@@ -435,16 +433,6 @@ class Consumer(val name: String, val pair: LocalInferencePair, val address: Stri
             )
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)
-            localCluster.genesis.api.addUnfundedInferenceParticipant(
-                UnfundedInferenceParticipant(
-                    "",
-                    listOf(),
-                    "",
-                    newKey.pubkey.key,
-                    newKey.address
-                )
-            )
-            // Need time to make sure consumer is added
             localCluster.genesis.node.waitForNextBlock(2)
             return Consumer(
                 name = name,

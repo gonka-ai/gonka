@@ -49,7 +49,6 @@ export PROXY_PORT=81
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export PROXY_ACTIVE=true
-export DAPI_CHAIN_NODE__URL="http://$PUBLIC_IP:26657"
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
 ./launch_add_network_node.sh
@@ -68,7 +67,6 @@ export PROXY_PORT=82
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export PROXY_ACTIVE=true
-export DAPI_CHAIN_NODE__URL="http://$PUBLIC_IP:26657"
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
 ./launch_add_network_node.sh 

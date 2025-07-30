@@ -52,7 +52,6 @@ export RPC_PORT=8101
 export P2P_PORT=8201
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export DAPI_CHAIN_NODE__URL="http://${KEY_NAME}-node:26657"
 ./launch_add_network_node.sh
 
 # join node 'join2'
@@ -67,5 +66,4 @@ export RPC_PORT=8102
 export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export DAPI_CHAIN_NODE__URL="http://${KEY_NAME}-node:26657"
 ./launch_add_network_node.sh
