@@ -515,10 +515,10 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 	}
 
 	mlNodes := make([]*types.MLNodeInfo, 0, len(nodeWeights))
-	for nodeId, pocWeight := range nodeWeights {
+	for _, n := range nodeWeights {
 		mlNodes = append(mlNodes, &types.MLNodeInfo{
-			NodeId:    nodeId,
-			PocWeight: pocWeight,
+			NodeId:    n.nodeId,
+			PocWeight: n.weight,
 		})
 	}
 
@@ -618,13 +618,18 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 	return shouldContinue
 }
 
-func calculateParticipantWeight(batches []types.PoCBatch) (map[string]int64, int64) {
-	nodeWeights := make(map[string]int64)
+type nodeWeight struct {
+	nodeId string
+	weight int64
+}
+
+func calculateParticipantWeight(batches []types.PoCBatch) ([]nodeWeight, int64) {
+	nodeWeights := make([]nodeWeight, 0)
 	totalWeight := int64(0)
 	for _, batch := range batches {
 		weight := int64(len(batch.Nonces))
 		nodeId := batch.NodeId // Keep empty string for legacy batches without node_id
-		nodeWeights[nodeId] += weight
+		nodeWeights = append(nodeWeights, nodeWeight{nodeId: nodeId, weight: weight})
 		totalWeight += weight
 	}
 	return nodeWeights, totalWeight
