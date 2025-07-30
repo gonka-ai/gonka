@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/productscience/inference/app/upgrades/v1_14"
 	"github.com/productscience/inference/app/upgrades/v1_17"
+	"github.com/productscience/inference/app/upgrades/v1_18"
 
 	storetypes "cosmossdk.io/store/types"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -67,4 +68,5 @@ func (app *App) setupUpgradeHandlers() {
 	app.UpgradeKeeper.SetUpgradeHandler(v1_14.UpgradeName, v1_14.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 	// app.UpgradeKeeper.SetUpgradeHandler(v1_16.UpgradeName, v1_16.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v1_17.UpgradeName, v1_17.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v1_18.UpgradeName, v1_18.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 }
