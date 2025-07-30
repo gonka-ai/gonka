@@ -19,7 +19,7 @@ const MODEL_ID = "Qwen/QwQ-32B"
 func TestMsgServer_Validation(t *testing.T) {
 	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
 
-	model := &types.Model{Id: MODEL_ID}
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
 	k.SetModel(ctx, model)
 	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
 
