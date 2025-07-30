@@ -72,9 +72,9 @@ func TestGranteesByMessageTypeQuery(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, response)
-				require.NotNil(t, response.GranteeAddresses)
+				require.NotNil(t, response.Grantees)
 				// For now, we expect empty results since this is a placeholder implementation
-				require.Equal(t, 0, len(response.GranteeAddresses))
+				require.Equal(t, 0, len(response.Grantees))
 			}
 		})
 	}
@@ -104,9 +104,9 @@ func TestGranteesByMessageTypeQueryWithValidMessageTypes(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, response)
-			require.NotNil(t, response.GranteeAddresses)
+			require.NotNil(t, response.Grantees)
 			// For now, we expect empty results since this is a placeholder implementation
-			require.Equal(t, 0, len(response.GranteeAddresses))
+			require.Equal(t, 0, len(response.Grantees))
 		})
 	}
 }

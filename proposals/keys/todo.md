@@ -187,7 +187,7 @@ IN code look only in inferene-chain and decentralized-api dirs
     - SEED_API_URL (optional): URL of genesis/seed node for participant registration
     - All existing variables remain unchanged for backwards compatibility
 
-- [DONE]: Add query to find all authz grantees with specific message type for an account
+- [WIP]: Add query to find all authz grantees with specific message type for an account
     **Implemented authz grantee lookup query**: Added new query `GranteesByMessageType` in `query.proto` with REST endpoint `/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}`. Implemented keeper method in `query_grantees_by_message_type.go` with:
     - Complete proto definitions and gRPC endpoints
     - Proper input validation and error handling  

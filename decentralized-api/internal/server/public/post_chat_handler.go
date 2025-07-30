@@ -456,6 +456,23 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	return nil
 }
 
+func (s *Server) getGranteesToSignInference(ctx echo.Context, granterAddress string) ([]string, error) {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granterAddress,
+		MessageTypeUrl: "/inference.inference.MsgStartInference",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
+	}
+	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
+	for i, grantee := range grantees.Grantees {
+		granteesPubkeys[i] = grantee.PubKey
+	}
+	granteesPubkeys[len(granteesPubkeys)-1] = granterAddress
+	return granteesPubkeys, nil
+}
+
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	dev, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
@@ -464,30 +481,19 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return err
 	}
 
-	transfer, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.TransferAddress})
+	transferPubkeys, err := s.getGranteesToSignInference(ctx, request.TransferAddress)
 	if err != nil {
-		logging.Error("Failed to get transfer participant", types.Inferences, "address", request.TransferAddress, "error", err)
+		logging.Error("Failed to get grantees to sign inference", types.Inferences, "error", err)
 		return err
 	}
-
-	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
-		GranterAddress: request.TransferAddress,
-		MessageTypeUrl: "/inference.inference.MsgStartInference",
-	})
-	if err != nil {
-		logging.Error("Failed to query authz grantees for MsgStartInference", types.Inferences,
-			"granter", request.TransferAddress, "message_type", "/inference.inference.MsgStartInference", "error", err)
-	} else {
-		logging.Info("Found authz grantees for MsgStartInference", types.Inferences,
-			"granter", request.TransferAddress, "grantee_count", len(grantees.GranteeAddresses), "grantees", grantees.GranteeAddresses)
-	}
+	logging.Info("Transfer pubkeys", types.Inferences, "pubkeys", transferPubkeys)
 
 	if err := validateTransferRequest(request, dev.Pubkey); err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
 	}
 
-	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAccountAddress(), request.TransferSignature); err != nil {
+	if err = validateExecuteRequestWithGrantees(request, transferPubkeys, s.recorder.GetAccountAddress(), request.TransferSignature); err != nil {
 		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
 	}

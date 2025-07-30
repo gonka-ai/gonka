@@ -2,8 +2,9 @@ package keeper
 
 import (
 	"context"
-	sdkerrors "cosmossdk.io/errors"
 	"encoding/base64"
+
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -153,4 +154,20 @@ func (k msgServer) GetAccountPubKey(ctx context.Context, address string) (string
 		return "", sdkerrors.Wrap(types.ErrParticipantNotFound, address)
 	}
 	return base64.StdEncoding.EncodeToString(acc.GetPubKey().Bytes()), nil
+}
+
+func (k msgServer) GetAccountPubKeysWithGrantees(ctx context.Context, granterAddress string) ([]string, error) {
+	grantees, err := k.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granterAddress,
+		MessageTypeUrl: "/inference.inference.MsgStartInference",
+	})
+	if err != nil {
+		return nil, err
+	}
+	pubKeys := make([]string, len(grantees.Grantees)+1)
+	for i, grantee := range grantees.Grantees {
+		pubKeys[i] = grantee.PubKey
+	}
+	pubKeys[len(pubKeys)-1] = granterAddress
+	return pubKeys, nil
 }

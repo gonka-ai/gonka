@@ -35,7 +35,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 		return nil, status.Error(codes.Internal, "failed to get grants")
 	}
 
-	grantees := []string{}
+	grantees := []*types.Grantee{}
 	for _, grant := range grants.Grants {
 		if grant.Expiration != nil && grant.Expiration.Before(blockTime) {
 			continue
@@ -45,7 +45,30 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 
 		if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
 			if genericAuth.Msg == req.MessageTypeUrl {
-				grantees = append(grantees, grant.Grantee)
+				// ✅ Found a valid grantee, now get their pubkey
+				granteeAddr, err := sdk.AccAddressFromBech32(grant.Grantee)
+				if err != nil {
+					k.LogError("invalid grantee address", types.Participants, "address", grant.Grantee, "error", err)
+					continue
+				}
+
+				account := k.AccountKeeper.GetAccount(sdkCtx, granteeAddr)
+				if account == nil {
+					k.LogError("account not found", types.Participants, "address", grant.Grantee)
+					continue
+				}
+
+				pubKey := account.GetPubKey()
+				pubKeyStr := ""
+				if pubKey != nil {
+					pubKeyStr = pubKey.String()
+				}
+
+				// Append the struct with address and pubkey
+				grantees = append(grantees, &types.Grantee{
+					Address: grant.Grantee,
+					PubKey:  pubKeyStr,
+				})
 			}
 		}
 	}
@@ -56,6 +79,6 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 		"grantees", grantees)
 
 	return &types.QueryGranteesByMessageTypeResponse{
-		GranteeAddresses: grantees,
+		Grantees: grantees,
 	}, nil
 }

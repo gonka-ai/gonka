@@ -848,7 +848,12 @@ message QueryGranteesByMessageTypeRequest {
   string message_type_url  = 2;
 }
 
+message Grantee {
+  string address = 1;
+  string pub_key = 2;
+}
+
 message QueryGranteesByMessageTypeResponse {
-  repeated string grantee_addresses = 1;
+  repeated Grantee grantees = 1;
 }
 
