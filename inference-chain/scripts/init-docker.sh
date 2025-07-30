@@ -88,6 +88,13 @@ if $FIRST_RUN; then
   echo "Initialising node (first run)"
   output=$("$APP_NAME" init --overwrite --chain-id "$CHAIN_ID" \
                        --default-denom "$COIN_DENOM" my-node 2>&1)
+  exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+      echo "Error: '$APP_NAME init' failed with exit code $exit_code"
+      echo "Output:"
+      echo "$output"
+      exit $exit_code
+  fi
   echo "$output" | filter_cw20_code
 
   kv client chain-id "$CHAIN_ID"

@@ -49,6 +49,13 @@ output=$($APP_NAME init \
   --chain-id "$CHAIN_ID" \
   --default-denom $COIN_DENOM \
   my-node 2>&1)
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+    echo "Error: '$APP_NAME init' failed with exit code $exit_code"
+    echo "Output:"
+    echo "$output"
+    exit $exit_code
+fi
 echo "$output" | filter_cw20_code
 
 echo "Setting the chain configuration"
