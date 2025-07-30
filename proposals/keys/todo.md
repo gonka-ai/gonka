@@ -12,7 +12,7 @@ STATUS can be:
 - [WIP]
 - [DONE]
 
-You can work only at the task marked [WIP]. You need to solve this task in clear, simple and robust way and propose all solution minimalistic, simple, clear and concise
+You can work only at the task marked [WIP]. You need to solve this task in clear, simple and robust way and propose all solution minimalistic, simple, clear and concise. Write minimal code!
 
 All tasks implementation should not break tests.
 
@@ -141,8 +141,61 @@ IN code look only in inferene-chain and decentralized-api dirs
     
     **Usage**: Set `CREATE_KEY=true` for test nodes, `CREATE_KEY=false` with provided `ACCOUNT_PUBKEY` for production nodes
 
-    5. [WIP] Make sure that approach works with api for genesis node
+    5. [DONE] Make sure that approach works with api for genesis node
      **Implemented genesis key reuse for decentralized-api**: Modified `decentralized-api/scripts/init-docker.sh` to automatically extract `ACCOUNT_PUBKEY` from existing keys when neither `CREATE_KEY=true` nor `ACCOUNT_PUBKEY` is provided, with warning messages for production safety. Enhanced `decentralized-api/apiconfig/config_manager.go` to optionally use `ACCOUNT_PUBKEY` environment variable when provided. Genesis flow works in local-test-net: (1) `inference-chain/scripts/init-docker-genesis.sh` creates "genesis" key in shared `./prod-local/genesis:/root/.inference` volume, (2) decentralized-api detects existing "genesis" key and extracts public key with warnings, (3) both containers share keyring access for transaction signing. Volume sharing enables seamless key reuse in local development environments while maintaining backward compatibility.
+
+
+- [WIP]: update decentralized-api/scripts/init-docker.sh to create 2 keys when CREATE_KEY=true (test pipeline):
+    - cold one with name "$KEY_NAME"-COLD 
+    - warm one with "$KEY_NAME"
+    - use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD ):
+        Q: can it fetch validator-consensus-key automatically from node?
+    - using `inferenced tx inference grant-ml-ops-permissions` grant permission to "$KEY_NAME"
+    - update code to use "$KEY_NAME" for siging all transaction but still "$KEY_NAME"-COLD for signing bytes
+
+    **Implementation Plan:**
+    
+    [DONE]: Key Creation Logic**
+    - Replace single key creation with dual key creation in init-docker.sh
+    - Create `$KEY_NAME-COLD` (operator/cold wallet) for admin operations
+    - Create `$KEY_NAME` (AI operational/warm wallet) for routine AI operations
+    - Extract both addresses and public keys for subsequent steps
+
+    [DONE]: **Phase 2: Participant Registration**
+    - Added participant registration using cold wallet BEFORE granting permissions
+    - Uses `inferenced register-new-participant` command with cold key credentials
+    - **TMKMS Compatible**: Automatically extracts validator consensus key from chain node RPC status endpoint (`/status`)
+    - Works with both TMKMS and local validator keys (fetches from chain node, not local files)
+    - **Covers Both Paths**: Handles both CREATE_KEY=true and fallback scenarios (when ACCOUNT_PUBKEY not provided)
+    - Only runs when SEED_API_URL is provided (independent of CREATE_KEY value)
+    - Parameters: OPERATOR_ADDRESS, DAPI_API__PUBLIC_URL, ACCOUNT_PUBKEY, VALIDATOR_CONSENSUS_KEY
+    - Includes proper error handling and manual registration instructions
+
+    [DONE]: **Phase 2: Permission Granting**
+    - Grant ML operations permissions from cold key to warm key
+    - Use `inferenced tx inference grant-ml-ops-permissions $KEY_NAME-COLD $WARM_ADDRESS`
+    - Sign with cold key using --from $KEY_NAME-COLD flag
+    
+    <!-- **Phase 2: Validator Key Extraction** 
+    - Add automatic validator consensus key retrieval using `inferenced tendermint show-validator`
+    - Export VALIDATOR_CONSENSUS_KEY variable for registration -->
+    
+    **Phase 3: Participant Registration**
+    - Add conditional participant registration when CREATE_KEY=true and SEED_API_URL provided
+    - Use `inferenced register-new-participant` with cold key credentials
+    - Parameters: COLD_ADDRESS, DAPI_API__PUBLIC_URL, COLD_PUBKEY, VALIDATOR_CONSENSUS_KEY
+    
+    **Phase :
+    
+    **Phase 5: Configuration Update**
+    - Update ACCOUNT_PUBKEY logic to use warm key for all transactions.
+    - Maintain backwards compatibility by keeping $KEY_NAME as operational key
+    - Add proper error handling and meaningful error messages for each step
+    
+    **New Environment Variables:**
+    - SEED_API_URL (optional): URL of genesis/seed node for participant registration
+    - All existing variables remain unchanged for backwards compatibility
+
 
 **Total: 5 manual authorization message types**
 

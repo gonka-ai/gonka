@@ -81,7 +81,7 @@ ARG GOOS
 ARG GOARCH
 
 RUN apk update && \
-    apk add --no-cache sed ca-certificates jq libgcc musl-dev && \
+    apk add --no-cache sed ca-certificates jq libgcc musl-dev curl && \
     rm -rf /var/cache/apk/*
 
 WORKDIR /root

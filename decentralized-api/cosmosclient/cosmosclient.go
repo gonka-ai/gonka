@@ -21,6 +21,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
@@ -155,9 +156,8 @@ func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
-	name := icc.ApiAccount.SignerAccount.Name
-	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
-	bytes, _, err := icc.Client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	accAddr, _ := icc.ApiAccount.AccountAddress()
+	bytes, _, err := icc.Client.Context().Keyring.SignByAddress(accAddr, seed, signing.SignMode_SIGN_MODE_DIRECT)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +293,20 @@ func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Ms
 	if err != nil {
 		return nil, err
 	}
-	unsignedTx, err := factory.BuildUnsignedTx(msg)
+
+	var finalMsg sdk.Msg = msg
+	if !c.ApiAccount.IsSignerTheMainAccount() {
+		granteeAddress, err := c.ApiAccount.SignerAddress()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get signer address: %w", err)
+		}
+
+		execMsg := authztypes.NewMsgExec(granteeAddress, []sdk.Msg{msg})
+		finalMsg = &execMsg
+		logging.Info("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", sdk.MsgTypeURL(msg))
+	}
+
+	unsignedTx, err := factory.BuildUnsignedTx(finalMsg)
 	if err != nil {
 		return nil, err
 	}

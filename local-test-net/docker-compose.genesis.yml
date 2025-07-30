@@ -13,3 +13,4 @@ services:
   api:
     environment:
       - DAPI_CHAIN_NODE__IS_GENESIS=true 
+      - DAPI_CHAIN_NODE__URL=http://chain-node:26657
