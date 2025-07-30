@@ -624,15 +624,28 @@ type nodeWeight struct {
 }
 
 func calculateParticipantWeight(batches []types.PoCBatch) ([]nodeWeight, int64) {
-	nodeWeights := make([]nodeWeight, 0)
+	nodeWeights := make(map[string]int64)
 	totalWeight := int64(0)
 	for _, batch := range batches {
 		weight := int64(len(batch.Nonces))
 		nodeId := batch.NodeId // Keep empty string for legacy batches without node_id
-		nodeWeights = append(nodeWeights, nodeWeight{nodeId: nodeId, weight: weight})
+		nodeWeights[nodeId] += weight
 		totalWeight += weight
 	}
-	return nodeWeights, totalWeight
+
+	nodeWeightsSlice := make([]nodeWeight, 0, len(nodeWeights))
+	for nodeId, weight := range nodeWeights {
+		nodeWeightsSlice = append(nodeWeightsSlice, nodeWeight{nodeId: nodeId, weight: weight})
+	}
+	sort.Slice(nodeWeightsSlice, func(i, j int) bool {
+		if nodeWeightsSlice[i].weight == nodeWeightsSlice[j].weight {
+			// If weights are equal, sort by nodeId to ensure consistent order
+			return nodeWeightsSlice[i].nodeId < nodeWeightsSlice[j].nodeId
+		}
+		return nodeWeightsSlice[i].weight > nodeWeightsSlice[j].weight
+	})
+
+	return nodeWeightsSlice, totalWeight
 }
 
 // calculateTotalWeight calculates the total weight of all validators
