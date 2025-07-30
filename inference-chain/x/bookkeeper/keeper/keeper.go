@@ -2,11 +2,9 @@ package keeper
 
 import (
 	"context"
-	"fmt"
-	"strings"
-
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
+	"fmt"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -134,14 +132,6 @@ func (k Keeper) logTransaction(ctx context.Context, to string, from string, coin
 	}
 	if params.SimpleEntry {
 		amountString := fmt.Sprintf("%d", amount)
-		k.Logger().Info("TransactionEntry", "to", fixedSize(to, 64), "from", fixedSize(from, 64), "amount", fixedSize(amountString, 20), "denom", fixedSize(coin.Denom, 10), "memo", memo)
-	}
-}
-
-func fixedSize(to string, size int) string {
-	if len(to) > size {
-		return to[:size]
-	} else {
-		return to + strings.Repeat(" ", size-len(to))
+		k.Logger().Info(fmt.Sprintf("TransactionEntry to=%-64s from=%-64s amount=%20s denom=%10s memo=%s", to, from, amountString, coin.Denom, memo))
 	}
 }
