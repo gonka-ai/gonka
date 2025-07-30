@@ -6,7 +6,7 @@
     "poc_port": 5000,
     "max_concurrent": 500,
     "models": {
-      "unsloth/llama-3-8b-Instruct": {
+      "Qwen/Qwen2.5-7B-Instruct": {
         "args": [
           "--quantization",
           "fp8"

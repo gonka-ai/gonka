@@ -85,14 +85,17 @@ func DefaultParams() Params {
 
 func DefaultEpochParams() *EpochParams {
 	return &EpochParams{
-		EpochLength:               40,
-		EpochMultiplier:           1,
-		EpochShift:                0,
-		DefaultUnitOfComputePrice: 100,
-		PocStageDuration:          10,
-		PocExchangeDuration:       2,
-		PocValidationDelay:        2,
-		PocValidationDuration:     6,
+		EpochLength:                    40,
+		EpochMultiplier:                1,
+		EpochShift:                     0,
+		DefaultUnitOfComputePrice:      100,
+		PocStageDuration:               10,
+		PocExchangeDuration:            2,
+		PocValidationDelay:             2,
+		PocValidationDuration:          6,
+		SetNewValidatorsDelay:          1,
+		InferenceValidationCutoff:      0,
+		InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
 	}
 }
 
@@ -117,8 +120,9 @@ func DefaultValidationParams() *ValidationParams {
 
 func DefaultPocParams() *PocParams {
 	return &PocParams{
-		DefaultDifficulty:    5,
-		ValidationSampleSize: 200,
+		DefaultDifficulty:            5,
+		ValidationSampleSize:         200,
+		PocDataPruningEpochThreshold: 1, // Number of epochs after which PoC data can be pruned
 	}
 }
 
@@ -228,6 +232,41 @@ func validateEpochParams(i interface{}) error {
 	return nil
 }
 
+// Validate validates the EpochParams
+func (p *EpochParams) Validate() error {
+	if p.EpochLength <= 0 {
+		return fmt.Errorf("epoch length must be positive")
+	}
+	if p.EpochMultiplier <= 0 {
+		return fmt.Errorf("epoch multiplier must be positive")
+	}
+	if p.DefaultUnitOfComputePrice < 0 {
+		return fmt.Errorf("default unit of compute price cannot be negative")
+	}
+	if p.PocStageDuration <= 0 {
+		return fmt.Errorf("poc stage duration must be positive")
+	}
+	if p.PocExchangeDuration <= 0 {
+		return fmt.Errorf("poc exchange duration must be positive")
+	}
+	if p.PocValidationDelay < 0 {
+		return fmt.Errorf("poc validation delay cannot be negative")
+	}
+	if p.PocValidationDuration <= 0 {
+		return fmt.Errorf("poc validation duration must be positive")
+	}
+	if p.SetNewValidatorsDelay < 0 {
+		return fmt.Errorf("set new validators delay cannot be negative")
+	}
+	if p.InferenceValidationCutoff < 0 {
+		return fmt.Errorf("inference validation cutoff cannot be negative")
+	}
+	if p.InferencePruningEpochThreshold < 1 {
+		return fmt.Errorf("inference pruning epoch threshold must be at least 1")
+	}
+	return nil
+}
+
 // Validate validates the set of params
 func (p Params) Validate() error {
 	// Check for nil nested structs before calling their Validate() methods
@@ -258,10 +297,9 @@ func (p Params) Validate() error {
 	if err := p.BitcoinRewardParams.Validate(); err != nil {
 		return err
 	}
-	// TODO: Uncomment this when we have a way to validate the params
-	// if err := p.EpochParams.Validate(); err != nil {
-	// 	return err
-	// }
+	if err := p.EpochParams.Validate(); err != nil {
+		return err
+	}
 	// if err := p.PocParams.Validate(); err != nil {
 	// 	return err
 	// }
@@ -657,6 +695,39 @@ func validateGracePeriodPerTokenPrice(i interface{}) error {
 		return fmt.Errorf("invalid parameter type: %T", i)
 	}
 	// Grace period price can be 0 (free inference) or any positive value
+	return nil
+}
+
+func validateSetNewValidatorsDelay(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v < 0 {
+		return fmt.Errorf("set new validators delay cannot be negative")
+	}
+	return nil
+}
+
+func validateInferenceValidationCutoff(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v < 0 {
+		return fmt.Errorf("inference validation cutoff cannot be negative")
+	}
+	return nil
+}
+
+func validateInferencePruningEpochThreshold(i interface{}) error {
+	v, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v < 1 {
+		return fmt.Errorf("inference pruning epoch threshold must be at least 1")
+	}
 	return nil
 }
 

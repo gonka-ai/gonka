@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -50,6 +51,28 @@ func (k Keeper) GetHardwareNodesForParticipants(ctx context.Context, participant
 			}
 		}
 		result = append(result, hardwareNodes)
+	}
+
+	return result, nil
+}
+
+func (k Keeper) GetNodesForModel(ctx context.Context, modelId string) ([]*types.HardwareNode, error) {
+	// TODO: Optimize this to only get the nodes for the model from the KV store
+	allNodes, err := k.GetAllHardwareNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []*types.HardwareNode
+	for _, participantNodes := range allNodes {
+		for _, node := range participantNodes.HardwareNodes {
+			for _, model := range node.Models {
+				if model == modelId {
+					result = append(result, node)
+					break
+				}
+			}
+		}
 	}
 
 	return result, nil

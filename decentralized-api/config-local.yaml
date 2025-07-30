@@ -7,7 +7,7 @@ nodes:
     host:  34.171.235.205:8080/ # Deployed inference node
     max_concurrent: 500
     models:
-      - unsloth/llama-3-8b-Instruct
+      - Qwen/Qwen2.5-7B-Instruct
 chain_node:
   url: http://localhost:26657
   account_name: "alice"

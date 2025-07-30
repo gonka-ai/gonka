@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
 import org.tinylog.ThreadContext
@@ -72,9 +73,9 @@ data class ApplicationCLI(
     }
 
     fun waitForState(
-        check: (status: NodeInfoResponse) -> Boolean,
         description: String,
         staleTimeout: Duration = Duration.ofSeconds(20),
+        check: (status: NodeInfoResponse) -> Boolean,
     ): NodeInfoResponse {
         return wrapLog("waitForState", false) {
             Logger.info("Waiting for state: {}", description)
@@ -106,8 +107,8 @@ data class ApplicationCLI(
     fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
         return wrapLog("waitForMinimumBlock", false) {
             waitForState(
-                { it.syncInfo.latestBlockHeight >= minBlockHeight },
-                "$waitingFor:block height $minBlockHeight"
+                "$waitingFor:block height $minBlockHeight",
+                check = { it.syncInfo.latestBlockHeight >= minBlockHeight }
             )
         }.syncInfo.latestBlockHeight
     }
@@ -123,8 +124,8 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference"))
     }
 
-    fun getInference(inferenceId: String): InferenceWrapper = wrapLog("getInference", false) {
-        execAndParse(listOf("query", "inference", "show-inference", inferenceId))
+    fun getInference(inferenceId: String): InferenceWrapper? = wrapLog("getInference", false) {
+        execAndParseNullable(listOf("query", "inference", "show-inference", inferenceId))
     }
 
     fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
@@ -262,6 +263,7 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-top-miner"))
     }
 
+
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
         val output = execCli(args, includeOutputFlag)
@@ -275,11 +277,21 @@ data class ApplicationCLI(
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
+
         if (output.contains("inference is not ready; please wait for first block")) {
             throw NotReadyException()
         }
         // Extract JSON payload if output contains gas estimate
         return output.replace(Regex("^gas estimate: \\d+"), "")
+    }
+
+    inline fun <reified T> execAndParseNullable(args: List<String>, includeOutputFlag: Boolean = true): T? {
+        return try {
+            execAndParse(args, includeOutputFlag)
+        } catch (e: JsonSyntaxException) {
+            Logger.debug("Failed to parse response: {}", e.message)
+            null
+        }
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
@@ -424,6 +436,22 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "model-per-token-price", modelId))
     }
 
+    fun getPocBatchCount(epochStartHeight:Long): Long = wrapLog("getPocBatchCount", infoLevel = false) {
+        execAndParse<Count>(listOf("query", "inference", "count-po-c-batches-at-height", epochStartHeight.toString())).count
+    }
+
+    fun getPocValidationCount(epochStartHeight:Long): Long = wrapLog("getPocValidationCount", infoLevel = false) {
+        execAndParse<Count>(listOf("query", "inference", "count-po-c-validations-at-height", epochStartHeight.toString())).count
+    }
+
+    fun getPrivateKey(): String = wrapLog("getPrivateKey", infoLevel = false) {
+        val accountName = this.getAccountName()
+        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex")).first()
+    }
+
+    data class Count(
+        val count: Long = 0
+    )
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)

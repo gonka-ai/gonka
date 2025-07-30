@@ -8,11 +8,14 @@ import org.assertj.core.api.SoftAssertions
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import kotlin.test.assertNotNull
 
 class InferenceTests : TestermintTest() {
     @Test
     fun `valid inference`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(
@@ -29,7 +32,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `wrong TA address`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(
@@ -76,6 +81,7 @@ class InferenceTests : TestermintTest() {
         assertThat(response.code).isZero()
         println(response)
         val inference = genesis.node.getInference(signature)
+        assertNotNull(inference)
         assertThat(inference.inference.inferenceId).isEqualTo(signature)
         assertThat(inference.inference.requestTimestamp).isEqualTo(timestamp)
         assertThat(inference.inference.transferredBy).isEqualTo(genesisAddress)
@@ -166,6 +172,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `old timestamp`() {
         val params = genesis.getParams()
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
@@ -179,6 +186,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `repeated request rejected`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
@@ -195,7 +203,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `valid direct executor request`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -213,7 +223,8 @@ class InferenceTests : TestermintTest() {
         assertThat(valid.model).isEqualTo(inferenceRequestObject.model)
         assertThat(valid.choices).hasSize(1)
         genesis.node.waitForNextBlock()
-        val inference = genesis.node.getInference(valid.id).inference
+        val inference = genesis.node.getInference(valid.id)?.inference
+        assertNotNull(inference)
         softly {
             assertThat(inference.inferenceId).isEqualTo(signature)
             assertThat(inference.requestTimestamp).isEqualTo(timestamp)
@@ -227,6 +238,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor validates dev signature`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
@@ -290,7 +302,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor rejects duplicate requests`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -431,6 +445,9 @@ class InferenceTests : TestermintTest() {
         @BeforeAll
         fun getCluster(): Unit {
             val (clus, gen) = initCluster()
+            clus.allPairs.forEach { pair ->
+                pair.waitForMlNodesToLoad()
+            }
             cluster = clus
             genesis = gen
         }

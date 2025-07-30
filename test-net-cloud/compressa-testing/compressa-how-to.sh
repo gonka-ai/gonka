@@ -3,7 +3,8 @@
 #  https://testnet.productscience.ai/developer/quickstart/
 export ACCOUNT_NAME="test-account"
 # Url of the genesis k8s node API
-export NODE_URL="http://34.9.136.116:30000"
+export PLAIN_NODE_URL="http://34.9.136.116:30000/"
+export NODE_URL="http://34.9.136.116:30000/api"
 # export NODE_URL="http://34.9.136.116:30010"
 export GONKA_ENDPOINTS=$NODE_URL/v1
 # export INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"
@@ -16,15 +17,15 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 
 # Create account, should return 200
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
-  --node-address $NODE_URL
+  --node-address "$NODE_URL"
 
-export GONKA_ADDRESS="gonka1fmtvlapuncjqjugq9pu59k3h9wgwmlutww4ly5"
+export GONKA_ADDRESS="gonka18u3gz9hawfx5pt8q4l0438e6xqrx67rfw9j89l"
 
 # View it
 "$INFERENCED_BINARY" keys list
 
 "$INFERENCED_BINARY" query bank balances "$GONKA_ADDRESS" \
-  --node tcp://34.9.136.116:30002
+  --node tcp://34.9.136.116:30000/chain-rpc/ # trailing slash in necesary for now
 
 # Export private key:
 GONKA_PRIVATE_KEY="$(echo y | "$INFERENCED_BINARY" keys export $ACCOUNT_NAME --unarmored-hex --unsafe)"
@@ -63,3 +64,25 @@ kubectl -n genesis exec node-0 -- inferenced query inference list-inference --ou
 kubectl -n genesis exec node-0 -- inferenced query inference params --output json
 
 kubectl -n genesis exec node-0 -- inferenced query bank balances gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl --output json
+
+# Tunnel to admin API, might be useful to check node status
+kubectl port-forward -n genesis svc/api 9200:9200
+
+kubectl port-forward -n join-k8s-worker-2 svc/api 9200:9200
+
+# len of prompt in symbols: 3000
+# tasks to be executed: 200
+# total parallel workers: 100
+compressa-perf \
+	measure \
+	--node_url "$PLAIN_NODE_URL" \
+	--model_name Qwen/Qwen2.5-7B-Instruct \
+	--create-account-testnet \
+	--inferenced-path "$INFERENCED_BINARY" \
+	--experiment_name test \
+	--generate_prompts \
+	--num_prompts 3000 \
+	--prompt_length 3000 \
+	--num_tasks 200 \
+	--num_runners 100 \
+	--max_tokens 100

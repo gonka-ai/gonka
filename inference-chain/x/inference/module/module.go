@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -41,6 +40,11 @@ var (
 	_ appmodule.AppModule       = (*AppModule)(nil)
 	_ appmodule.HasBeginBlocker = (*AppModule)(nil)
 	_ appmodule.HasEndBlocker   = (*AppModule)(nil)
+)
+
+const (
+	defaultInferencePruningThreshold = 4
+	defaultPocPruningThreshold       = 4
 )
 
 // ----------------------------------------------------------------------------
@@ -153,7 +157,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
 // To avoid wrong/empty versions, the initial version should be set to 1.
-func (AppModule) ConsensusVersion() uint64 { return 3 }
+func (AppModule) ConsensusVersion() uint64 { return 4 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
@@ -238,6 +242,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
+	// Stage execution order for epoch transitions:
+	// 1. IsEndOfPoCValidationStage: Complete all epoch formation (onEndOfPoCValidationStage)
+	// 2. IsSetNewValidatorsStage: Switch validators and activate epoch (onSetNewValidatorsStage)
+	// This separation ensures clean boundaries between epoch preparation and validator switching
+	// and allow time for api nodes to load models on ml nodes.
+
+	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
+		am.LogInfo("onEndOfPoCValidationStage start", types.Stages, "blockHeight", blockHeight)
+		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
+	}
+
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
@@ -258,6 +273,28 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
+		}
+
+		// Prune old inferences
+		inferencePruningThreshold := am.keeper.GetParams(ctx).EpochParams.InferencePruningEpochThreshold
+		if inferencePruningThreshold == 0 {
+			am.LogInfo("Inference pruning threshold is 0, using default", types.Inferences, "threshold", defaultInferencePruningThreshold)
+			inferencePruningThreshold = defaultInferencePruningThreshold
+		}
+		pruneErr := am.keeper.PruneInferences(ctx, upcomingEpoch.Index, inferencePruningThreshold)
+		if pruneErr != nil {
+			am.LogError("Error pruning inferences", types.Inferences, "error", pruneErr)
+		}
+
+		// Prune old PoC data
+		pocPruningThreshold := am.keeper.GetParams(ctx).PocParams.PocDataPruningEpochThreshold
+		if pocPruningThreshold == 0 {
+			am.LogInfo("PoC pruning threshold is 0, using default", types.PoC, "threshold", defaultPocPruningThreshold)
+			pocPruningThreshold = defaultPocPruningThreshold
+		}
+		pocErr := am.keeper.PrunePoCData(ctx, upcomingEpoch.Index, pocPruningThreshold)
+		if pocErr != nil {
+			am.LogError("Error pruning PoC data", types.PoC, "error", pocErr)
 		}
 	}
 
@@ -283,7 +320,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 	return &types.Epoch{
 		Index:               getNextEpochIndex(prevEpoch),
-		PocStartBlockHeight: blockHeight,
+		PocStartBlockHeight: int64(blockHeight),
 	}
 }
 
@@ -291,10 +328,20 @@ func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
 }
 
-func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+// onEndOfPoCValidationStage handles all epoch formation logic at the end of PoC validation.
+// This stage is responsible for:
+// - Account settling from the previous epoch
+// - Computing new weights based on PoC results
+// - Setting models for participants (MLNode allocation)
+// - Registering top miners
+// - Setting active participants for the upcoming epoch
+// - Adding epoch members to the upcoming epoch group
+// This stage executes at IsEndOfPoCValidationStage(blockHeight) and must complete
+// before validator switching occurs in onSetNewValidatorsStage.
+func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight int64, blockTime int64) {
 	effectiveEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
 	if !found {
-		am.LogError("onSetNewValidatorsStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
+		am.LogError("onEndOfPoCValidationStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return
 	}
 
@@ -321,18 +368,18 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight), previousEpochPocStartHeight)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 	if !found || upcomingEpoch == nil {
-		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup)
+		am.LogError("onEndOfPoCValidationStage: Unable to get upcoming epoch group", types.EpochGroup)
 		return
 	}
 
 	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
 	if activeParticipants == nil {
-		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil", types.PoC)
+		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
 	}
 
@@ -343,26 +390,58 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		// which means participants will proceed with their unadjusted PotentialWeight.
 	}
 
-	am.setModelsForParticipants(ctx, activeParticipants)
+	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
 
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
+		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.Stages,
+	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 		"len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:         activeParticipants,
-		EpochGroupId:         upcomingEpoch.Index,
-		EpochId:              upcomingEpoch.Index,
-		PocStartBlockHeight:  upcomingEpoch.PocStartBlockHeight,
+		Participants:        activeParticipants,
+		EpochGroupId:        upcomingEpoch.Index,
+		EpochId:             upcomingEpoch.Index,
+		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
+		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
 		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
 		CreatedAtBlockHeight: blockHeight,
 	})
+
+	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
+			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
+		return
+	}
+
+	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+}
+
+// onSetNewValidatorsStage handles validator switching and epoch group activation.
+// This stage is responsible for:
+// - Computing unit of compute price for the upcoming epoch
+// - Moving the upcoming epoch group to effective status
+// - Switching the active validator set
+// - Setting the effective epoch index
+// This stage executes at IsSetNewValidatorsStage(blockHeight) and should run after
+// all epoch formation logic has completed in onEndOfPoCValidationStage.
+// The stage focuses solely on validator switching, with all epoch preparation
+// handled by the previous stage for clean separation of concerns.
+func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+	am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
+
+	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+	if !found || upcomingEpoch == nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup)
+		return
+	}
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
 	if err != nil {
@@ -370,8 +449,6 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
 		return
 	}
-
-	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
 
 	// Cache model capacities for the new epoch to enable fast dynamic pricing calculations
 	err = am.keeper.CacheAllModelCapacities(ctx)
@@ -382,6 +459,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	unitOfComputePrice, err := am.computePrice(ctx, *upcomingEpoch, upcomingEg)
 	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to compute price", types.Pricing, "error", err.Error())
 		return
 	}
 
@@ -398,6 +476,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
+		}
+		if p.Seed == nil {
+			am.LogError("onSetNewValidatorsStage: addEpochMembers. ILLEGAL STATE. Participant seed is nil. Skipping this participant", types.EpochGroup,
+				"participantIndex", p.Index)
+			continue
 		}
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
 		err = upcomingEg.AddMember(ctx, member)
@@ -602,31 +685,4 @@ func (am AppModule) LogWarn(msg string, subSystem types.SubSystem, keyvals ...in
 func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
 	am.keeper.Logger().Debug(msg, kvWithSubsystem...)
-}
-
-func (am AppModule) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant) {
-	for _, p := range participants {
-		hardwareNodes, found := am.keeper.GetHardwareNodes(ctx, p.Index)
-		if !found {
-			p.Models = make([]string, 0)
-			continue
-		}
-		p.Models = getAllModels(hardwareNodes)
-	}
-}
-
-func getAllModels(nodes *types.HardwareNodes) []string {
-	modelMap := make(map[string]struct{})
-	for _, node := range nodes.HardwareNodes {
-		for _, model := range node.Models {
-			modelMap[model] = struct{}{}
-		}
-	}
-
-	models := make([]string, 0, len(modelMap))
-	for model := range modelMap {
-		models = append(models, model)
-	}
-	sort.Strings(models)
-	return models
 }

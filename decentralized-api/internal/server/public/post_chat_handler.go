@@ -251,6 +251,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
 	if err != nil {
+		logging.Error("handleTransferRequest. Failed to create request to the executor node", types.Inferences, "error", err)
 		return err
 	}
 
@@ -271,8 +272,10 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}
 	defer resp.Body.Close()
 
-	logging.Info("Proxying response from executor", types.Inferences, "inferenceId", inferenceUUID)
-	proxyResponse(resp, ctx.Response().Writer, false, nil)
+	logging.Info("Proxying response from executor", types.Inferences,
+		"inferenceId", inferenceUUID,
+		"executor", executor.Address)
+	proxyResponse(resp, ctx.Response().Writer, false, nil, inferenceUUID)
 	return nil
 }
 
@@ -434,7 +437,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	logging.Debug("Proxying response from inference node", types.Inferences, "inferenceId", request.InferenceId)
-	proxyResponse(resp, w, true, responseProcessor)
+	proxyResponse(resp, w, true, responseProcessor, inferenceId)
 
 	logging.Debug("Processing response from inference node", types.Inferences, "inferenceId", request.InferenceId)
 	completionResponse, err := responseProcessor.GetResponse()

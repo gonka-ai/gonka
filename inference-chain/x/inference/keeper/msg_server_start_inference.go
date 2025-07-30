@@ -95,11 +95,15 @@ func (k msgServer) verifyKeys(ctx context.Context, msg *types.MsgStartInference,
 
 func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
 	expirationBlocks := k.GetParams(ctx).ValidationParams.ExpirationBlocks
+	expirationHeight := uint64(inference.StartBlockHeight + expirationBlocks)
 	k.SetInferenceTimeout(ctx, types.InferenceTimeout{
-		ExpirationHeight: uint64(inference.StartBlockHeight + expirationBlocks),
+		ExpirationHeight: expirationHeight,
 		InferenceId:      inference.InferenceId,
 	})
-	k.LogInfo("Inference Timeout Set:", types.Inferences, "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+expirationBlocks)
+
+	k.LogInfo("Inference Timeout Set:", types.Inferences,
+		"InferenceId", inference.InferenceId,
+		"ExpirationHeight", inference.StartBlockHeight+expirationBlocks)
 }
 
 func (k msgServer) processInferencePayments(

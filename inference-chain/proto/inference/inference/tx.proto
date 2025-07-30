@@ -181,6 +181,7 @@ message MsgSubmitPocBatch {
            string batch_id                     = 3;
   repeated int64  nonces                       = 4;
   repeated double dist                         = 5;
+           string node_id                      = 6;
 }
 
 message MsgSubmitPocBatchResponse {}
@@ -225,6 +226,12 @@ message MsgRegisterModel {
   string proposed_by                = 2;
   string id                         = 3;
   uint64 units_of_compute_per_token = 4;
+  string hf_repo                    = 5;
+  string hf_commit                  = 6;
+  repeated string model_args        = 7;
+  uint64 v_ram                      = 8;
+  uint64 throughput_per_nonce       = 9;
+  float validation_threshold        = 10;
 }
 
 message MsgRegisterModelResponse {}
