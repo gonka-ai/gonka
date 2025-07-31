@@ -433,6 +433,16 @@ class Consumer(val name: String, val pair: LocalInferencePair, val address: Stri
             )
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)
+            localCluster.genesis.api.addUnfundedInferenceParticipant(
+                UnfundedInferenceParticipant(
+                    "",
+                    listOf(),
+                    "",
+                    newKey.pubkey.key,
+                    newKey.address
+                )
+            )
+            // Need time to make sure consumer is added
             localCluster.genesis.node.waitForNextBlock(2)
             return Consumer(
                 name = name,

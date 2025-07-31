@@ -44,7 +44,8 @@ services:
     depends_on:
       - node
     environment:
-      - KEY_NAME=${KEY_NAME}
+      - KEY_NAME=${KEY_NAME} # WARM KEY
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY} # COLD KEY
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
