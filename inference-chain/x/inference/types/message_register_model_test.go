@@ -17,15 +17,19 @@ func TestMsgRegisterModel_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgRegisterModel{
-				Authority:  "invalid_address",
-				ProposedBy: "invalid_address",
+				Authority:           "invalid_address",
+				ProposedBy:          "invalid_address",
+				Id:                  "model-1",
+				ValidationThreshold: &Decimal{Value: 85, Exponent: -2},
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid address",
 			msg: MsgRegisterModel{
-				Authority:  sample.AccAddress(),
-				ProposedBy: sample.AccAddress(),
+				Authority:           sample.AccAddress(),
+				ProposedBy:          sample.AccAddress(),
+				Id:                  "model-1",
+				ValidationThreshold: &Decimal{Value: 85, Exponent: -2},
 			},
 		},
 	}

@@ -1,20 +1,22 @@
 syntax = "proto3";
 package inference.inference;
 
+import "inference/inference/params.proto";
+
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 message Model {
   string proposed_by = 1;
   string id = 2;
   uint64 units_of_compute_per_token = 3;
-  uint64 context_window             = 4;
-  string quantization               = 5;
-  uint64 coins_per_input_token      = 6;
-  uint64 coins_per_output_token     = 7;
+  uint64 context_window = 4;
+  string quantization = 5;
+  uint64 coins_per_input_token = 6;
+  uint64 coins_per_output_token = 7;
   string hf_repo = 8;
   string hf_commit = 9;
   repeated string model_args = 10;
   uint64 v_ram = 11;
   uint64 throughput_per_nonce = 12;
-  float validation_threshold = 13;
+  Decimal validation_threshold = 13;
 }

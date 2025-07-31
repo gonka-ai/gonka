@@ -209,4 +209,5 @@ data class ModelListItem(
     val modelArgs: List<String>,
     val vRam: String,
     val throughputPerNonce: String,
+    val validationThreshold: Decimal,
 )

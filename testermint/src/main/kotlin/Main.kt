@@ -495,9 +495,10 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 unitsOfComputePerToken = "1000",
                 hfRepo = "Qwen/QwQ-32B",
                 hfCommit = "976055f8c83f394f35dbd3ab09a285a984907bd0",
-                modelArgs = listOf("--quantization", "fp8", "-kv-cache-dtype", "fp8"),
+                modelArgs = listOf("--quantization", "fp8", "--kv-cache-dtype", "fp8"),
                 vRam = "32",
-                throughputPerNonce = "1000"
+                throughputPerNonce = "1000",
+                validationThreshold = Decimal.fromDouble(0.85),
             ),
             ModelListItem(
                 proposedBy = "genesis",
@@ -507,7 +508,8 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 hfCommit = "a09a35458c702b33eeacc393d103063234e8bc28",
                 modelArgs = listOf("--quantization", "fp8"),
                 vRam = "16",
-                throughputPerNonce = "10000"
+                throughputPerNonce = "10000",
+                validationThreshold = Decimal.fromDouble(0.85),
             )
         )
     }
