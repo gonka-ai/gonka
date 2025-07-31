@@ -68,7 +68,11 @@ data:
               "hf_commit": "976055f8c83f394f35dbd3ab09a285a984907bd0",
               "model_args": [],
               "v_ram": "16",
-              "throughput_per_nonce": "10000"
+              "throughput_per_nonce": "10000",
+              "validation_threshold": {
+                "value": "85",
+                "exponent": -2
+              }
             },
             {
               "proposed_by": "genesis",
@@ -81,7 +85,11 @@ data:
                 "fp8"
               ],
               "v_ram": "16",
-              "throughput_per_nonce": "10000"
+              "throughput_per_nonce": "10000",
+              "validation_threshold": {
+                "value": "85",
+                "exponent": -2
+              }
             }
           ],
           "genesis_only_params": {

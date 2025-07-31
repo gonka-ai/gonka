@@ -54,6 +54,7 @@ func TestSetModelsForParticipants_OneModelTwoNodes_Bug(t *testing.T) {
 			ModelArgs:              []string{"--quantization", "fp8", "-kv-cache-dtype", "fp8"},
 			VRam:                   32,
 			ThroughputPerNonce:     1000,
+			ValidationThreshold:    &types.Decimal{Value: 85, Exponent: -2},
 		},
 		{
 			ProposedBy:             "genesis",
@@ -64,6 +65,7 @@ func TestSetModelsForParticipants_OneModelTwoNodes_Bug(t *testing.T) {
 			ModelArgs:              []string{"--quantization", "fp8"},
 			VRam:                   16,
 			ThroughputPerNonce:     10000,
+			ValidationThreshold:    &types.Decimal{Value: 85, Exponent: -2},
 		},
 	}
 	// Mock Keeper setup

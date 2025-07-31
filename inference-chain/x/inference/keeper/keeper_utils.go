@@ -61,6 +61,13 @@ func GetValue[T proto.Message](k *Keeper, ctx context.Context, object T, keyPref
 	return GetValueFromStore(k, object, store, key)
 }
 
+func DeleteValue(k *Keeper, ctx context.Context, keyPrefix []byte, key []byte) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
+
+	store.Delete(key)
+}
+
 func GetValueFromStore[T proto.Message](k *Keeper, object T, store prefix.Store, key []byte) (T, bool) {
 	bz := store.Get(key)
 	if bz == nil {
