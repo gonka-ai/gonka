@@ -8,7 +8,6 @@ import (
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -26,7 +25,7 @@ type (
 		// should be the x/gov module account.
 		authority     string
 		AccountKeeper types.AccountKeeper
-		AuthzKeeper   authzkeeper.Keeper
+		AuthzKeeper   types.AuthzKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
 	}
 )
@@ -42,7 +41,7 @@ func NewKeeper(
 	validatorSet types.ValidatorSet,
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
-	authzKeeper authzkeeper.Keeper,
+	authzKeeper types.AuthzKeeper,
 	getWasmKeeper func() wasmkeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {

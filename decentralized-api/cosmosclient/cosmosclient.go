@@ -156,7 +156,7 @@ func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
-	accAddr, _ := icc.ApiAccount.AccountAddress()
+	accAddr, _ := icc.ApiAccount.SignerAddress()
 	bytes, _, err := icc.Client.Context().Keyring.SignByAddress(accAddr, seed, signing.SignMode_SIGN_MODE_DIRECT)
 	if err != nil {
 		return nil, err

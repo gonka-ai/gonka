@@ -168,6 +168,10 @@ func (k msgServer) GetAccountPubKeysWithGrantees(ctx context.Context, granterAdd
 	for i, grantee := range grantees.Grantees {
 		pubKeys[i] = grantee.PubKey
 	}
-	pubKeys[len(pubKeys)-1] = granterAddress
+	granterPubKey, err := k.GetAccountPubKey(ctx, granterAddress)
+	if err != nil {
+		return nil, err
+	}
+	pubKeys[len(pubKeys)-1] = granterPubKey
 	return pubKeys, nil
 }

@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
@@ -103,4 +104,8 @@ type EpochGroupDataKeeper interface {
 type ModelKeeper interface {
 	GetGovernanceModel(ctx context.Context, id string) (val *Model, found bool)
 	GetGovernanceModels(ctx context.Context) (list []*Model, err error)
+}
+
+type AuthzKeeper interface {
+	GranterGrants(ctx context.Context, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error)
 }

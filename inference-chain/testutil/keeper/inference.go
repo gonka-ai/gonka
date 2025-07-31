@@ -22,7 +22,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
@@ -38,8 +37,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	validatorSetMock := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	// For now, use nil for authz keeper since our current implementation doesn't use it
-	var authzKeeper authzkeeper.Keeper
+	authzKeeper := NewMockAuthzKeeper(ctrl)
 	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, authzKeeper)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
@@ -50,6 +48,7 @@ type InferenceMocks struct {
 	AccountKeeper *MockAccountKeeper
 	GroupKeeper   *MockGroupMessageKeeper
 	StakingKeeper *MockStakingKeeper
+	AuthzKeeper   *MockAuthzKeeper
 }
 
 func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
@@ -119,8 +118,7 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	validatorSet := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	// For now, use nil for authz keeper since our current implementation doesn't use it
-	var authzKeeper authzkeeper.Keeper
+	authzKeeper := NewMockAuthzKeeper(ctrl)
 	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, authzKeeper)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
@@ -130,6 +128,7 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 		AccountKeeper: accountKeeperMock,
 		GroupKeeper:   groupMock,
 		StakingKeeper: stakingMock,
+		AuthzKeeper:   authzKeeper,
 	}
 	return keep, context, mocks
 }
@@ -141,7 +140,7 @@ func InferenceKeeperWithMock(
 	validatorSet types.ValidatorSet,
 	groupMock types.GroupMessageKeeper,
 	stakingKeeper types.StakingKeeper,
-	authzKeeper authzkeeper.Keeper,
+	authzKeeper types.AuthzKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 

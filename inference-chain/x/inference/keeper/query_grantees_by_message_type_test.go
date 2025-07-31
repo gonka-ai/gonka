@@ -1,28 +1,33 @@
 package keeper_test
 
 import (
+	"fmt"
 	"testing"
 
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 func TestGranteesByMessageTypeQuery(t *testing.T) {
-	keeper, ctx := keepertest.InferenceKeeper(t)
+	keeper, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
 	tests := []struct {
 		name        string
 		req         *types.QueryGranteesByMessageTypeRequest
 		expectError bool
 		errorMsg    string
+		setupMock   func()
 	}{
 		{
 			name:        "nil request",
 			req:         nil,
 			expectError: true,
 			errorMsg:    "invalid request",
+			setupMock:   func() {}, // No mock needed for nil request
 		},
 		{
 			name: "empty granter address",
@@ -32,6 +37,7 @@ func TestGranteesByMessageTypeQuery(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "granter address cannot be empty",
+			setupMock:   func() {}, // No mock needed for validation failure
 		},
 		{
 			name: "empty message type URL",
@@ -41,6 +47,7 @@ func TestGranteesByMessageTypeQuery(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "message type URL cannot be empty",
+			setupMock:   func() {}, // No mock needed for validation failure
 		},
 		{
 			name: "invalid granter address",
@@ -49,7 +56,11 @@ func TestGranteesByMessageTypeQuery(t *testing.T) {
 				MessageTypeUrl: "/cosmos.bank.v1beta1.MsgSend",
 			},
 			expectError: true,
-			errorMsg:    "invalid granter address",
+			errorMsg:    "failed to get grants",
+			setupMock: func() {
+				// Mock the AuthzKeeper call to return an error for invalid address
+				mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("decoding bech32 failed: invalid bech32 string"))
+			},
 		},
 		{
 			name: "valid request with valid granter address",
@@ -58,11 +69,16 @@ func TestGranteesByMessageTypeQuery(t *testing.T) {
 				MessageTypeUrl: "/cosmos.bank.v1beta1.MsgSend",
 			},
 			expectError: false,
+			setupMock: func() {
+				// Mock the AuthzKeeper call to return empty grants
+				mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil)
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.setupMock()
 			response, err := keeper.GranteesByMessageType(ctx, tt.req)
 
 			if tt.expectError {
@@ -81,7 +97,7 @@ func TestGranteesByMessageTypeQuery(t *testing.T) {
 }
 
 func TestGranteesByMessageTypeQueryWithValidMessageTypes(t *testing.T) {
-	keeper, ctx := keepertest.InferenceKeeper(t)
+	keeper, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
 	validMessageTypes := []string{
 		"/cosmos.bank.v1beta1.MsgSend",
@@ -95,6 +111,9 @@ func TestGranteesByMessageTypeQueryWithValidMessageTypes(t *testing.T) {
 
 	for _, msgType := range validMessageTypes {
 		t.Run("message_type_"+msgType, func(t *testing.T) {
+			// Set up mock expectation for each test case
+			mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil)
+
 			req := &types.QueryGranteesByMessageTypeRequest{
 				GranterAddress: validGranterAddress,
 				MessageTypeUrl: msgType,

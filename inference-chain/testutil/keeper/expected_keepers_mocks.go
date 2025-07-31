@@ -15,6 +15,7 @@ import (
 
 	math "cosmossdk.io/math"
 	types "github.com/cosmos/cosmos-sdk/types"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 	types0 "github.com/cosmos/cosmos-sdk/x/bank/types"
 	group "github.com/cosmos/cosmos-sdk/x/group"
 	keeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
@@ -999,4 +1000,43 @@ func (m *MockModelKeeper) GetGovernanceModels(ctx context.Context) ([]*types2.Mo
 func (mr *MockModelKeeperMockRecorder) GetGovernanceModels(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGovernanceModels", reflect.TypeOf((*MockModelKeeper)(nil).GetGovernanceModels), ctx)
+}
+
+// MockAuthzKeeper is a mock of AuthzKeeper interface.
+type MockAuthzKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockAuthzKeeperMockRecorder
+	isgomock struct{}
+}
+
+// MockAuthzKeeperMockRecorder is the mock recorder for MockAuthzKeeper.
+type MockAuthzKeeperMockRecorder struct {
+	mock *MockAuthzKeeper
+}
+
+// NewMockAuthzKeeper creates a new mock instance.
+func NewMockAuthzKeeper(ctrl *gomock.Controller) *MockAuthzKeeper {
+	mock := &MockAuthzKeeper{ctrl: ctrl}
+	mock.recorder = &MockAuthzKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockAuthzKeeper) EXPECT() *MockAuthzKeeperMockRecorder {
+	return m.recorder
+}
+
+// GranterGrants mocks base method.
+func (m *MockAuthzKeeper) GranterGrants(ctx context.Context, req *authz.QueryGranterGrantsRequest) (*authz.QueryGranterGrantsResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GranterGrants", ctx, req)
+	ret0, _ := ret[0].(*authz.QueryGranterGrantsResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GranterGrants indicates an expected call of GranterGrants.
+func (mr *MockAuthzKeeperMockRecorder) GranterGrants(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GranterGrants", reflect.TypeOf((*MockAuthzKeeper)(nil).GranterGrants), ctx, req)
 }
