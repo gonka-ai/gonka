@@ -140,12 +140,12 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 	bitcoinParams := &types.BitcoinRewardParams{
 		InitialEpochReward: 285000000000000,
 		DecayRate:          types.DecimalFromFloat(-0.000475),
-		GenesisEpoch:       0,
+		GenesisEpoch:       1,
 	}
 
 	// Create epoch group data with validation weights
 	epochGroupData := &types.EpochGroupData{
-		EpochId: 100, // 100 epochs since genesis
+		EpochId: 100, // 99 epochs since genesis (epochsSinceGenesis = 100 - 1)
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: "participant1",
@@ -196,8 +196,8 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 
 		// Calculate expected rewards
 		// Total PoC weight: 1000 + 2000 + 1000 = 4000
-		// Fixed epoch reward (at epoch 100 with decay): calculated by CalculateFixedEpochReward
-		expectedEpochReward := CalculateFixedEpochReward(100, 285000000000000, bitcoinParams.DecayRate)
+		// Fixed epoch reward (at epoch 100, epochsSinceGenesis = 100 - 1 = 99): calculated by CalculateFixedEpochReward
+		expectedEpochReward := CalculateFixedEpochReward(99, 285000000000000, bitcoinParams.DecayRate)
 		require.Equal(t, int64(expectedEpochReward), bitcoinResult.Amount)
 
 		totalPoCWeight := uint64(4000)
@@ -356,9 +356,9 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 	})
 
 	t.Run("Genesis epoch reward distribution", func(t *testing.T) {
-		// Test at genesis epoch (no decay)
+		// Test at first reward epoch (no decay since epochsSinceGenesis = 1 - 1 = 0)
 		genesisEpochData := &types.EpochGroupData{
-			EpochId: 0, // Genesis epoch
+			EpochId: 1, // First reward epoch (epoch 0 is skipped)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -380,10 +380,10 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
-		// At genesis, reward should be initial amount
+		// At first reward epoch, reward should be initial amount (no decay since epochsSinceGenesis = 0)
 		require.Equal(t, int64(285000000000000), bitcoinResult.Amount)
-		require.Equal(t, uint64(0), bitcoinResult.EpochNumber)
-		require.False(t, bitcoinResult.DecayApplied) // No decay at genesis
+		require.Equal(t, uint64(1), bitcoinResult.EpochNumber)
+		require.False(t, bitcoinResult.DecayApplied) // No decay at first reward epoch
 
 		// Participant gets full reward
 		p1Result := results[0]
@@ -398,12 +398,12 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		oddRewardParams := &types.BitcoinRewardParams{
 			InitialEpochReward: 100,                       // Small reward for easier testing
 			DecayRate:          types.DecimalFromFloat(0), // No decay for predictability
-			GenesisEpoch:       0,
+			GenesisEpoch:       1,
 		}
 
 		// 3 participants with equal weight - 100 doesn't divide evenly by 3
 		remainderEpochData := &types.EpochGroupData{
-			EpochId: 0, // Genesis epoch for no decay
+			EpochId: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -476,7 +476,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 	bitcoinParams := &types.BitcoinRewardParams{
 		InitialEpochReward: 285000000000000,
 		DecayRate:          types.DecimalFromFloat(-0.000475),
-		GenesisEpoch:       0,
+		GenesisEpoch:       1,
 	}
 
 	// Setup settle parameters for supply cap checking
@@ -834,7 +834,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		bitcoinParams := &types.BitcoinRewardParams{
 			InitialEpochReward: 285000000000000,
 			DecayRate:          types.DecimalFromFloat(-0.000475),
-			GenesisEpoch:       0,
+			GenesisEpoch:       1,
 		}
 
 		// Should handle large number of participants efficiently
@@ -894,10 +894,10 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		bitcoinParams := &types.BitcoinRewardParams{
 			InitialEpochReward: 285000000000000,
 			DecayRate:          types.DecimalFromFloat(0), // No decay for predictability
-			GenesisEpoch:       0,
+			GenesisEpoch:       1,
 		}
 
-		largeWeightData.EpochId = 0 // Genesis for no decay
+		largeWeightData.EpochId = 1 // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 
 		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeWeightData, bitcoinParams)
 		require.NoError(t, err)
@@ -960,12 +960,12 @@ func TestMathematicalPrecision(t *testing.T) {
 		primeRewardParams := &types.BitcoinRewardParams{
 			InitialEpochReward: 97,                        // Prime number
 			DecayRate:          types.DecimalFromFloat(0), // No decay
-			GenesisEpoch:       0,
+			GenesisEpoch:       1,
 		}
 
 		// Three participants with prime weights
 		primeEpochData := &types.EpochGroupData{
-			EpochId: 0,
+			EpochId: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -1023,11 +1023,11 @@ func TestMathematicalPrecision(t *testing.T) {
 		evenRewardParams := &types.BitcoinRewardParams{
 			InitialEpochReward: 100,                       // Divides evenly by participant weights
 			DecayRate:          types.DecimalFromFloat(0), // No decay
-			GenesisEpoch:       0,
+			GenesisEpoch:       1,
 		}
 
 		evenEpochData := &types.EpochGroupData{
-			EpochId: 0,
+			EpochId: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",

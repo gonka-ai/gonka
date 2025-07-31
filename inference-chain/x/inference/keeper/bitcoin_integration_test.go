@@ -27,7 +27,7 @@ func TestBitcoinRewardIntegration_GovernanceFlagSwitching(t *testing.T) {
 		params.BitcoinRewardParams.UseBitcoinRewards = true
 		params.BitcoinRewardParams.InitialEpochReward = 50000
 		params.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(0) // No decay for predictability
-		params.BitcoinRewardParams.GenesisEpoch = 0
+		params.BitcoinRewardParams.GenesisEpoch = 1
 		require.NoError(t, k.SetParams(ctx, params))
 
 		// Verify parameters were set correctly
@@ -236,7 +236,7 @@ func TestBitcoinRewardIntegration_DefaultParameters(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, -0.000475, decayRateLegacy.MustFloat64(), 0.000001, "Default decay rate should be -0.000475")
 
-	require.Equal(t, uint64(0), bitcoinParams.GenesisEpoch, "Default genesis epoch should be 0")
+	require.Equal(t, uint64(1), bitcoinParams.GenesisEpoch, "Default genesis epoch should be 1 (since epoch 0 is skipped)")
 
 	// Test Phase 2 bonus parameters
 	utilBonusFactor, err := bitcoinParams.UtilizationBonusFactor.ToLegacyDec()

@@ -155,7 +155,7 @@ func DefaultBitcoinRewardParams() *BitcoinRewardParams {
 		UseBitcoinRewards:          true,
 		InitialEpochReward:         285000000000000,             // 285,000 gonka coins per epoch (285,000 * 1,000,000,000 nicoins)
 		DecayRate:                  DecimalFromFloat(-0.000475), // Exponential decay rate per epoch
-		GenesisEpoch:               0,                           // Starting epoch for Bitcoin-style calculations
+		GenesisEpoch:               1,                           // Starting epoch for Bitcoin-style calculations (since epoch 0 is skipped)
 		UtilizationBonusFactor:     DecimalFromFloat(0.5),       // Multiplier for utilization bonuses (Phase 2)
 		FullCoverageBonusFactor:    DecimalFromFloat(1.2),       // 20% bonus for complete model coverage (Phase 2)
 		PartialCoverageBonusFactor: DecimalFromFloat(0.1),       // Scaling factor for partial coverage (Phase 2)

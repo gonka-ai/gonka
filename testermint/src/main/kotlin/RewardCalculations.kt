@@ -18,7 +18,7 @@ import org.tinylog.kotlin.Logger
  */
 fun getEpochsSinceGenesis(inferencePair: LocalInferencePair, params: InferenceParams): Long {
     val currentEpochIndex = inferencePair.getEpochData().latestEpoch.index
-    val genesisEpoch = params.bitcoinRewardParams?.genesisEpoch ?: 0L
+    val genesisEpoch = params.bitcoinRewardParams?.genesisEpoch ?: 1L
     val workEpoch = currentEpochIndex - 1 // Rewards distributed for previous epoch's work
     return maxOf(workEpoch - genesisEpoch, 0L) // Ensure non-negative
 }
