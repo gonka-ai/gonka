@@ -51,7 +51,7 @@ func (s *Server) getPricing(ctx echo.Context) error {
 
 func (s *Server) getGovernancePricing(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	// Get the unit of compute price from the latest epoch data, as this is always the most current price.
 	response, err := queryClient.CurrentEpochGroupData(context, &types.QueryCurrentEpochGroupDataRequest{})
