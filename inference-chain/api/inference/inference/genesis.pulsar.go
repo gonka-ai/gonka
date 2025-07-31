@@ -17,7 +17,7 @@ import (
 var _ protoreflect.List = (*_GenesisState_3_list)(nil)
 
 type _GenesisState_3_list struct {
-	list *[]*Inference
+	list *[]*Model
 }
 
 func (x *_GenesisState_3_list) Len() int {
@@ -33,18 +33,18 @@ func (x *_GenesisState_3_list) Get(i int) protoreflect.Value {
 
 func (x *_GenesisState_3_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Inference)
+	concreteValue := valueUnwrapped.Interface().(*Model)
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_GenesisState_3_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Inference)
+	concreteValue := valueUnwrapped.Interface().(*Model)
 	*x.list = append(*x.list, concreteValue)
 }
 
 func (x *_GenesisState_3_list) AppendMutable() protoreflect.Value {
-	v := new(Inference)
+	v := new(Model)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
@@ -57,7 +57,7 @@ func (x *_GenesisState_3_list) Truncate(n int) {
 }
 
 func (x *_GenesisState_3_list) NewElement() protoreflect.Value {
-	v := new(Inference)
+	v := new(Model)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
@@ -65,533 +65,12 @@ func (x *_GenesisState_3_list) IsValid() bool {
 	return x.list != nil
 }
 
-var _ protoreflect.List = (*_GenesisState_4_list)(nil)
-
-type _GenesisState_4_list struct {
-	list *[]*Participant
-}
-
-func (x *_GenesisState_4_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_4_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_4_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Participant)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_4_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Participant)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_4_list) AppendMutable() protoreflect.Value {
-	v := new(Participant)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_4_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_4_list) NewElement() protoreflect.Value {
-	v := new(Participant)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_4_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_5_list)(nil)
-
-type _GenesisState_5_list struct {
-	list *[]*EpochGroupData
-}
-
-func (x *_GenesisState_5_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_5_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_5_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_5_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_5_list) AppendMutable() protoreflect.Value {
-	v := new(EpochGroupData)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_5_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_5_list) NewElement() protoreflect.Value {
-	v := new(EpochGroupData)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_5_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_6_list)(nil)
-
-type _GenesisState_6_list struct {
-	list *[]*SettleAmount
-}
-
-func (x *_GenesisState_6_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_6_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_6_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*SettleAmount)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_6_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*SettleAmount)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_6_list) AppendMutable() protoreflect.Value {
-	v := new(SettleAmount)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_6_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_6_list) NewElement() protoreflect.Value {
-	v := new(SettleAmount)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_6_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_7_list)(nil)
-
-type _GenesisState_7_list struct {
-	list *[]*EpochGroupValidations
-}
-
-func (x *_GenesisState_7_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_7_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_7_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupValidations)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_7_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupValidations)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_7_list) AppendMutable() protoreflect.Value {
-	v := new(EpochGroupValidations)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_7_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_7_list) NewElement() protoreflect.Value {
-	v := new(EpochGroupValidations)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_7_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_9_list)(nil)
-
-type _GenesisState_9_list struct {
-	list *[]*Model
-}
-
-func (x *_GenesisState_9_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_9_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_9_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Model)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_9_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Model)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_9_list) AppendMutable() protoreflect.Value {
-	v := new(Model)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_9_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_9_list) NewElement() protoreflect.Value {
-	v := new(Model)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_9_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_10_list)(nil)
-
-type _GenesisState_10_list struct {
-	list *[]*TopMiner
-}
-
-func (x *_GenesisState_10_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_10_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_10_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*TopMiner)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_10_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*TopMiner)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_10_list) AppendMutable() protoreflect.Value {
-	v := new(TopMiner)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_10_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_10_list) NewElement() protoreflect.Value {
-	v := new(TopMiner)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_10_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_11_list)(nil)
-
-type _GenesisState_11_list struct {
-	list *[]*InferenceTimeout
-}
-
-func (x *_GenesisState_11_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_11_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_11_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*InferenceTimeout)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_11_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*InferenceTimeout)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_11_list) AppendMutable() protoreflect.Value {
-	v := new(InferenceTimeout)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_11_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_11_list) NewElement() protoreflect.Value {
-	v := new(InferenceTimeout)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_11_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_12_list)(nil)
-
-type _GenesisState_12_list struct {
-	list *[]*InferenceValidationDetails
-}
-
-func (x *_GenesisState_12_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_12_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_12_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*InferenceValidationDetails)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_12_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*InferenceValidationDetails)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_12_list) AppendMutable() protoreflect.Value {
-	v := new(InferenceValidationDetails)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_12_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_12_list) NewElement() protoreflect.Value {
-	v := new(InferenceValidationDetails)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_12_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_13_list)(nil)
-
-type _GenesisState_13_list struct {
-	list *[]*EpochPerformanceSummary
-}
-
-func (x *_GenesisState_13_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_13_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_13_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochPerformanceSummary)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_13_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochPerformanceSummary)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_13_list) AppendMutable() protoreflect.Value {
-	v := new(EpochPerformanceSummary)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_13_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_13_list) NewElement() protoreflect.Value {
-	v := new(EpochPerformanceSummary)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_13_list) IsValid() bool {
-	return x.list != nil
-}
-
-var _ protoreflect.List = (*_GenesisState_14_list)(nil)
-
-type _GenesisState_14_list struct {
-	list *[]*PartialUpgrade
-}
-
-func (x *_GenesisState_14_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_14_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_14_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PartialUpgrade)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_14_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PartialUpgrade)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_14_list) AppendMutable() protoreflect.Value {
-	v := new(PartialUpgrade)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_14_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_14_list) NewElement() protoreflect.Value {
-	v := new(PartialUpgrade)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_14_list) IsValid() bool {
-	return x.list != nil
-}
-
 var (
-	md_GenesisState                                protoreflect.MessageDescriptor
-	fd_GenesisState_params                         protoreflect.FieldDescriptor
-	fd_GenesisState_genesis_only_params            protoreflect.FieldDescriptor
-	fd_GenesisState_inference_list                 protoreflect.FieldDescriptor
-	fd_GenesisState_participant_list               protoreflect.FieldDescriptor
-	fd_GenesisState_epoch_group_data_list          protoreflect.FieldDescriptor
-	fd_GenesisState_settle_amount_list             protoreflect.FieldDescriptor
-	fd_GenesisState_epoch_group_validations_list   protoreflect.FieldDescriptor
-	fd_GenesisState_tokenomics_data                protoreflect.FieldDescriptor
-	fd_GenesisState_model_list                     protoreflect.FieldDescriptor
-	fd_GenesisState_top_miner_list                 protoreflect.FieldDescriptor
-	fd_GenesisState_inference_timeout_list         protoreflect.FieldDescriptor
-	fd_GenesisState_inferenceValidationDetailsList protoreflect.FieldDescriptor
-	fd_GenesisState_epochPerformanceSummaryList    protoreflect.FieldDescriptor
-	fd_GenesisState_partialUpgradeList             protoreflect.FieldDescriptor
-	fd_GenesisState_cosm_wasm_params               protoreflect.FieldDescriptor
+	md_GenesisState                     protoreflect.MessageDescriptor
+	fd_GenesisState_params              protoreflect.FieldDescriptor
+	fd_GenesisState_genesis_only_params protoreflect.FieldDescriptor
+	fd_GenesisState_model_list          protoreflect.FieldDescriptor
+	fd_GenesisState_cosm_wasm_params    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -599,18 +78,7 @@ func init() {
 	md_GenesisState = File_inference_inference_genesis_proto.Messages().ByName("GenesisState")
 	fd_GenesisState_params = md_GenesisState.Fields().ByName("params")
 	fd_GenesisState_genesis_only_params = md_GenesisState.Fields().ByName("genesis_only_params")
-	fd_GenesisState_inference_list = md_GenesisState.Fields().ByName("inference_list")
-	fd_GenesisState_participant_list = md_GenesisState.Fields().ByName("participant_list")
-	fd_GenesisState_epoch_group_data_list = md_GenesisState.Fields().ByName("epoch_group_data_list")
-	fd_GenesisState_settle_amount_list = md_GenesisState.Fields().ByName("settle_amount_list")
-	fd_GenesisState_epoch_group_validations_list = md_GenesisState.Fields().ByName("epoch_group_validations_list")
-	fd_GenesisState_tokenomics_data = md_GenesisState.Fields().ByName("tokenomics_data")
 	fd_GenesisState_model_list = md_GenesisState.Fields().ByName("model_list")
-	fd_GenesisState_top_miner_list = md_GenesisState.Fields().ByName("top_miner_list")
-	fd_GenesisState_inference_timeout_list = md_GenesisState.Fields().ByName("inference_timeout_list")
-	fd_GenesisState_inferenceValidationDetailsList = md_GenesisState.Fields().ByName("inferenceValidationDetailsList")
-	fd_GenesisState_epochPerformanceSummaryList = md_GenesisState.Fields().ByName("epochPerformanceSummaryList")
-	fd_GenesisState_partialUpgradeList = md_GenesisState.Fields().ByName("partialUpgradeList")
 	fd_GenesisState_cosm_wasm_params = md_GenesisState.Fields().ByName("cosm_wasm_params")
 }
 
@@ -691,75 +159,9 @@ func (x *fastReflection_GenesisState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
-	if len(x.InferenceList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_3_list{list: &x.InferenceList})
-		if !f(fd_GenesisState_inference_list, value) {
-			return
-		}
-	}
-	if len(x.ParticipantList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_4_list{list: &x.ParticipantList})
-		if !f(fd_GenesisState_participant_list, value) {
-			return
-		}
-	}
-	if len(x.EpochGroupDataList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_5_list{list: &x.EpochGroupDataList})
-		if !f(fd_GenesisState_epoch_group_data_list, value) {
-			return
-		}
-	}
-	if len(x.SettleAmountList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_6_list{list: &x.SettleAmountList})
-		if !f(fd_GenesisState_settle_amount_list, value) {
-			return
-		}
-	}
-	if len(x.EpochGroupValidationsList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_7_list{list: &x.EpochGroupValidationsList})
-		if !f(fd_GenesisState_epoch_group_validations_list, value) {
-			return
-		}
-	}
-	if x.TokenomicsData != nil {
-		value := protoreflect.ValueOfMessage(x.TokenomicsData.ProtoReflect())
-		if !f(fd_GenesisState_tokenomics_data, value) {
-			return
-		}
-	}
 	if len(x.ModelList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_9_list{list: &x.ModelList})
+		value := protoreflect.ValueOfList(&_GenesisState_3_list{list: &x.ModelList})
 		if !f(fd_GenesisState_model_list, value) {
-			return
-		}
-	}
-	if len(x.TopMinerList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_10_list{list: &x.TopMinerList})
-		if !f(fd_GenesisState_top_miner_list, value) {
-			return
-		}
-	}
-	if len(x.InferenceTimeoutList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_11_list{list: &x.InferenceTimeoutList})
-		if !f(fd_GenesisState_inference_timeout_list, value) {
-			return
-		}
-	}
-	if len(x.InferenceValidationDetailsList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_12_list{list: &x.InferenceValidationDetailsList})
-		if !f(fd_GenesisState_inferenceValidationDetailsList, value) {
-			return
-		}
-	}
-	if len(x.EpochPerformanceSummaryList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_13_list{list: &x.EpochPerformanceSummaryList})
-		if !f(fd_GenesisState_epochPerformanceSummaryList, value) {
-			return
-		}
-	}
-	if len(x.PartialUpgradeList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_14_list{list: &x.PartialUpgradeList})
-		if !f(fd_GenesisState_partialUpgradeList, value) {
 			return
 		}
 	}
@@ -788,30 +190,8 @@ func (x *fastReflection_GenesisState) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.Params != nil
 	case "inference.inference.GenesisState.genesis_only_params":
 		return x.GenesisOnlyParams != nil
-	case "inference.inference.GenesisState.inference_list":
-		return len(x.InferenceList) != 0
-	case "inference.inference.GenesisState.participant_list":
-		return len(x.ParticipantList) != 0
-	case "inference.inference.GenesisState.epoch_group_data_list":
-		return len(x.EpochGroupDataList) != 0
-	case "inference.inference.GenesisState.settle_amount_list":
-		return len(x.SettleAmountList) != 0
-	case "inference.inference.GenesisState.epoch_group_validations_list":
-		return len(x.EpochGroupValidationsList) != 0
-	case "inference.inference.GenesisState.tokenomics_data":
-		return x.TokenomicsData != nil
 	case "inference.inference.GenesisState.model_list":
 		return len(x.ModelList) != 0
-	case "inference.inference.GenesisState.top_miner_list":
-		return len(x.TopMinerList) != 0
-	case "inference.inference.GenesisState.inference_timeout_list":
-		return len(x.InferenceTimeoutList) != 0
-	case "inference.inference.GenesisState.inferenceValidationDetailsList":
-		return len(x.InferenceValidationDetailsList) != 0
-	case "inference.inference.GenesisState.epochPerformanceSummaryList":
-		return len(x.EpochPerformanceSummaryList) != 0
-	case "inference.inference.GenesisState.partialUpgradeList":
-		return len(x.PartialUpgradeList) != 0
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		return x.CosmWasmParams != nil
 	default:
@@ -834,30 +214,8 @@ func (x *fastReflection_GenesisState) Clear(fd protoreflect.FieldDescriptor) {
 		x.Params = nil
 	case "inference.inference.GenesisState.genesis_only_params":
 		x.GenesisOnlyParams = nil
-	case "inference.inference.GenesisState.inference_list":
-		x.InferenceList = nil
-	case "inference.inference.GenesisState.participant_list":
-		x.ParticipantList = nil
-	case "inference.inference.GenesisState.epoch_group_data_list":
-		x.EpochGroupDataList = nil
-	case "inference.inference.GenesisState.settle_amount_list":
-		x.SettleAmountList = nil
-	case "inference.inference.GenesisState.epoch_group_validations_list":
-		x.EpochGroupValidationsList = nil
-	case "inference.inference.GenesisState.tokenomics_data":
-		x.TokenomicsData = nil
 	case "inference.inference.GenesisState.model_list":
 		x.ModelList = nil
-	case "inference.inference.GenesisState.top_miner_list":
-		x.TopMinerList = nil
-	case "inference.inference.GenesisState.inference_timeout_list":
-		x.InferenceTimeoutList = nil
-	case "inference.inference.GenesisState.inferenceValidationDetailsList":
-		x.InferenceValidationDetailsList = nil
-	case "inference.inference.GenesisState.epochPerformanceSummaryList":
-		x.EpochPerformanceSummaryList = nil
-	case "inference.inference.GenesisState.partialUpgradeList":
-		x.PartialUpgradeList = nil
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		x.CosmWasmParams = nil
 	default:
@@ -882,74 +240,11 @@ func (x *fastReflection_GenesisState) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.GenesisState.genesis_only_params":
 		value := x.GenesisOnlyParams
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.GenesisState.inference_list":
-		if len(x.InferenceList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_3_list{})
-		}
-		listValue := &_GenesisState_3_list{list: &x.InferenceList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.participant_list":
-		if len(x.ParticipantList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_4_list{})
-		}
-		listValue := &_GenesisState_4_list{list: &x.ParticipantList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.epoch_group_data_list":
-		if len(x.EpochGroupDataList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_5_list{})
-		}
-		listValue := &_GenesisState_5_list{list: &x.EpochGroupDataList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.settle_amount_list":
-		if len(x.SettleAmountList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_6_list{})
-		}
-		listValue := &_GenesisState_6_list{list: &x.SettleAmountList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.epoch_group_validations_list":
-		if len(x.EpochGroupValidationsList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_7_list{})
-		}
-		listValue := &_GenesisState_7_list{list: &x.EpochGroupValidationsList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.tokenomics_data":
-		value := x.TokenomicsData
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.GenesisState.model_list":
 		if len(x.ModelList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_9_list{})
+			return protoreflect.ValueOfList(&_GenesisState_3_list{})
 		}
-		listValue := &_GenesisState_9_list{list: &x.ModelList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.top_miner_list":
-		if len(x.TopMinerList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_10_list{})
-		}
-		listValue := &_GenesisState_10_list{list: &x.TopMinerList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.inference_timeout_list":
-		if len(x.InferenceTimeoutList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_11_list{})
-		}
-		listValue := &_GenesisState_11_list{list: &x.InferenceTimeoutList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.inferenceValidationDetailsList":
-		if len(x.InferenceValidationDetailsList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_12_list{})
-		}
-		listValue := &_GenesisState_12_list{list: &x.InferenceValidationDetailsList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.epochPerformanceSummaryList":
-		if len(x.EpochPerformanceSummaryList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_13_list{})
-		}
-		listValue := &_GenesisState_13_list{list: &x.EpochPerformanceSummaryList}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.GenesisState.partialUpgradeList":
-		if len(x.PartialUpgradeList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_14_list{})
-		}
-		listValue := &_GenesisState_14_list{list: &x.PartialUpgradeList}
+		listValue := &_GenesisState_3_list{list: &x.ModelList}
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		value := x.CosmWasmParams
@@ -978,52 +273,10 @@ func (x *fastReflection_GenesisState) Set(fd protoreflect.FieldDescriptor, value
 		x.Params = value.Message().Interface().(*Params)
 	case "inference.inference.GenesisState.genesis_only_params":
 		x.GenesisOnlyParams = value.Message().Interface().(*GenesisOnlyParams)
-	case "inference.inference.GenesisState.inference_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_3_list)
-		x.InferenceList = *clv.list
-	case "inference.inference.GenesisState.participant_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_4_list)
-		x.ParticipantList = *clv.list
-	case "inference.inference.GenesisState.epoch_group_data_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_5_list)
-		x.EpochGroupDataList = *clv.list
-	case "inference.inference.GenesisState.settle_amount_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_6_list)
-		x.SettleAmountList = *clv.list
-	case "inference.inference.GenesisState.epoch_group_validations_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_7_list)
-		x.EpochGroupValidationsList = *clv.list
-	case "inference.inference.GenesisState.tokenomics_data":
-		x.TokenomicsData = value.Message().Interface().(*TokenomicsData)
 	case "inference.inference.GenesisState.model_list":
 		lv := value.List()
-		clv := lv.(*_GenesisState_9_list)
+		clv := lv.(*_GenesisState_3_list)
 		x.ModelList = *clv.list
-	case "inference.inference.GenesisState.top_miner_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_10_list)
-		x.TopMinerList = *clv.list
-	case "inference.inference.GenesisState.inference_timeout_list":
-		lv := value.List()
-		clv := lv.(*_GenesisState_11_list)
-		x.InferenceTimeoutList = *clv.list
-	case "inference.inference.GenesisState.inferenceValidationDetailsList":
-		lv := value.List()
-		clv := lv.(*_GenesisState_12_list)
-		x.InferenceValidationDetailsList = *clv.list
-	case "inference.inference.GenesisState.epochPerformanceSummaryList":
-		lv := value.List()
-		clv := lv.(*_GenesisState_13_list)
-		x.EpochPerformanceSummaryList = *clv.list
-	case "inference.inference.GenesisState.partialUpgradeList":
-		lv := value.List()
-		clv := lv.(*_GenesisState_14_list)
-		x.PartialUpgradeList = *clv.list
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		x.CosmWasmParams = value.Message().Interface().(*CosmWasmParams)
 	default:
@@ -1056,76 +309,11 @@ func (x *fastReflection_GenesisState) Mutable(fd protoreflect.FieldDescriptor) p
 			x.GenesisOnlyParams = new(GenesisOnlyParams)
 		}
 		return protoreflect.ValueOfMessage(x.GenesisOnlyParams.ProtoReflect())
-	case "inference.inference.GenesisState.inference_list":
-		if x.InferenceList == nil {
-			x.InferenceList = []*Inference{}
-		}
-		value := &_GenesisState_3_list{list: &x.InferenceList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.participant_list":
-		if x.ParticipantList == nil {
-			x.ParticipantList = []*Participant{}
-		}
-		value := &_GenesisState_4_list{list: &x.ParticipantList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.epoch_group_data_list":
-		if x.EpochGroupDataList == nil {
-			x.EpochGroupDataList = []*EpochGroupData{}
-		}
-		value := &_GenesisState_5_list{list: &x.EpochGroupDataList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.settle_amount_list":
-		if x.SettleAmountList == nil {
-			x.SettleAmountList = []*SettleAmount{}
-		}
-		value := &_GenesisState_6_list{list: &x.SettleAmountList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.epoch_group_validations_list":
-		if x.EpochGroupValidationsList == nil {
-			x.EpochGroupValidationsList = []*EpochGroupValidations{}
-		}
-		value := &_GenesisState_7_list{list: &x.EpochGroupValidationsList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.tokenomics_data":
-		if x.TokenomicsData == nil {
-			x.TokenomicsData = new(TokenomicsData)
-		}
-		return protoreflect.ValueOfMessage(x.TokenomicsData.ProtoReflect())
 	case "inference.inference.GenesisState.model_list":
 		if x.ModelList == nil {
 			x.ModelList = []*Model{}
 		}
-		value := &_GenesisState_9_list{list: &x.ModelList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.top_miner_list":
-		if x.TopMinerList == nil {
-			x.TopMinerList = []*TopMiner{}
-		}
-		value := &_GenesisState_10_list{list: &x.TopMinerList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.inference_timeout_list":
-		if x.InferenceTimeoutList == nil {
-			x.InferenceTimeoutList = []*InferenceTimeout{}
-		}
-		value := &_GenesisState_11_list{list: &x.InferenceTimeoutList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.inferenceValidationDetailsList":
-		if x.InferenceValidationDetailsList == nil {
-			x.InferenceValidationDetailsList = []*InferenceValidationDetails{}
-		}
-		value := &_GenesisState_12_list{list: &x.InferenceValidationDetailsList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.epochPerformanceSummaryList":
-		if x.EpochPerformanceSummaryList == nil {
-			x.EpochPerformanceSummaryList = []*EpochPerformanceSummary{}
-		}
-		value := &_GenesisState_13_list{list: &x.EpochPerformanceSummaryList}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.GenesisState.partialUpgradeList":
-		if x.PartialUpgradeList == nil {
-			x.PartialUpgradeList = []*PartialUpgrade{}
-		}
-		value := &_GenesisState_14_list{list: &x.PartialUpgradeList}
+		value := &_GenesisState_3_list{list: &x.ModelList}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		if x.CosmWasmParams == nil {
@@ -1151,42 +339,9 @@ func (x *fastReflection_GenesisState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.GenesisState.genesis_only_params":
 		m := new(GenesisOnlyParams)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.GenesisState.inference_list":
-		list := []*Inference{}
-		return protoreflect.ValueOfList(&_GenesisState_3_list{list: &list})
-	case "inference.inference.GenesisState.participant_list":
-		list := []*Participant{}
-		return protoreflect.ValueOfList(&_GenesisState_4_list{list: &list})
-	case "inference.inference.GenesisState.epoch_group_data_list":
-		list := []*EpochGroupData{}
-		return protoreflect.ValueOfList(&_GenesisState_5_list{list: &list})
-	case "inference.inference.GenesisState.settle_amount_list":
-		list := []*SettleAmount{}
-		return protoreflect.ValueOfList(&_GenesisState_6_list{list: &list})
-	case "inference.inference.GenesisState.epoch_group_validations_list":
-		list := []*EpochGroupValidations{}
-		return protoreflect.ValueOfList(&_GenesisState_7_list{list: &list})
-	case "inference.inference.GenesisState.tokenomics_data":
-		m := new(TokenomicsData)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.GenesisState.model_list":
 		list := []*Model{}
-		return protoreflect.ValueOfList(&_GenesisState_9_list{list: &list})
-	case "inference.inference.GenesisState.top_miner_list":
-		list := []*TopMiner{}
-		return protoreflect.ValueOfList(&_GenesisState_10_list{list: &list})
-	case "inference.inference.GenesisState.inference_timeout_list":
-		list := []*InferenceTimeout{}
-		return protoreflect.ValueOfList(&_GenesisState_11_list{list: &list})
-	case "inference.inference.GenesisState.inferenceValidationDetailsList":
-		list := []*InferenceValidationDetails{}
-		return protoreflect.ValueOfList(&_GenesisState_12_list{list: &list})
-	case "inference.inference.GenesisState.epochPerformanceSummaryList":
-		list := []*EpochPerformanceSummary{}
-		return protoreflect.ValueOfList(&_GenesisState_13_list{list: &list})
-	case "inference.inference.GenesisState.partialUpgradeList":
-		list := []*PartialUpgrade{}
-		return protoreflect.ValueOfList(&_GenesisState_14_list{list: &list})
+		return protoreflect.ValueOfList(&_GenesisState_3_list{list: &list})
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		m := new(CosmWasmParams)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
@@ -1267,72 +422,8 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 			l = options.Size(x.GenesisOnlyParams)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if len(x.InferenceList) > 0 {
-			for _, e := range x.InferenceList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.ParticipantList) > 0 {
-			for _, e := range x.ParticipantList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.EpochGroupDataList) > 0 {
-			for _, e := range x.EpochGroupDataList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.SettleAmountList) > 0 {
-			for _, e := range x.SettleAmountList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.EpochGroupValidationsList) > 0 {
-			for _, e := range x.EpochGroupValidationsList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if x.TokenomicsData != nil {
-			l = options.Size(x.TokenomicsData)
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
 		if len(x.ModelList) > 0 {
 			for _, e := range x.ModelList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.TopMinerList) > 0 {
-			for _, e := range x.TopMinerList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.InferenceTimeoutList) > 0 {
-			for _, e := range x.InferenceTimeoutList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.InferenceValidationDetailsList) > 0 {
-			for _, e := range x.InferenceValidationDetailsList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.EpochPerformanceSummaryList) > 0 {
-			for _, e := range x.EpochPerformanceSummaryList {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if len(x.PartialUpgradeList) > 0 {
-			for _, e := range x.PartialUpgradeList {
 				l = options.Size(e)
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
@@ -1382,185 +473,11 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 			copy(dAtA[i:], encoded)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
-			dAtA[i] = 0x7a
-		}
-		if len(x.PartialUpgradeList) > 0 {
-			for iNdEx := len(x.PartialUpgradeList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.PartialUpgradeList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x72
-			}
-		}
-		if len(x.EpochPerformanceSummaryList) > 0 {
-			for iNdEx := len(x.EpochPerformanceSummaryList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.EpochPerformanceSummaryList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x6a
-			}
-		}
-		if len(x.InferenceValidationDetailsList) > 0 {
-			for iNdEx := len(x.InferenceValidationDetailsList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.InferenceValidationDetailsList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x62
-			}
-		}
-		if len(x.InferenceTimeoutList) > 0 {
-			for iNdEx := len(x.InferenceTimeoutList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.InferenceTimeoutList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x5a
-			}
-		}
-		if len(x.TopMinerList) > 0 {
-			for iNdEx := len(x.TopMinerList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.TopMinerList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x52
-			}
+			dAtA[i] = 0x22
 		}
 		if len(x.ModelList) > 0 {
 			for iNdEx := len(x.ModelList) - 1; iNdEx >= 0; iNdEx-- {
 				encoded, err := options.Marshal(x.ModelList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x4a
-			}
-		}
-		if x.TokenomicsData != nil {
-			encoded, err := options.Marshal(x.TokenomicsData)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
-			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0x42
-		}
-		if len(x.EpochGroupValidationsList) > 0 {
-			for iNdEx := len(x.EpochGroupValidationsList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.EpochGroupValidationsList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x3a
-			}
-		}
-		if len(x.SettleAmountList) > 0 {
-			for iNdEx := len(x.SettleAmountList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.SettleAmountList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x32
-			}
-		}
-		if len(x.EpochGroupDataList) > 0 {
-			for iNdEx := len(x.EpochGroupDataList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.EpochGroupDataList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x2a
-			}
-		}
-		if len(x.ParticipantList) > 0 {
-			for iNdEx := len(x.ParticipantList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.ParticipantList[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x22
-			}
-		}
-		if len(x.InferenceList) > 0 {
-			for iNdEx := len(x.InferenceList) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.InferenceList[iNdEx])
 				if err != nil {
 					return protoiface.MarshalOutput{
 						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1725,212 +642,6 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 3:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.InferenceList = append(x.InferenceList, &Inference{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.InferenceList[len(x.InferenceList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 4:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ParticipantList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.ParticipantList = append(x.ParticipantList, &Participant{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.ParticipantList[len(x.ParticipantList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 5:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupDataList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.EpochGroupDataList = append(x.EpochGroupDataList, &EpochGroupData{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochGroupDataList[len(x.EpochGroupDataList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 6:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SettleAmountList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.SettleAmountList = append(x.SettleAmountList, &SettleAmount{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.SettleAmountList[len(x.SettleAmountList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 7:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupValidationsList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.EpochGroupValidationsList = append(x.EpochGroupValidationsList, &EpochGroupValidations{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochGroupValidationsList[len(x.EpochGroupValidationsList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 8:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TokenomicsData", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if x.TokenomicsData == nil {
-					x.TokenomicsData = &TokenomicsData{}
-				}
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.TokenomicsData); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 9:
-				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelList", wireType)
 				}
 				var msglen int
@@ -1963,177 +674,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 10:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopMinerList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.TopMinerList = append(x.TopMinerList, &TopMiner{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.TopMinerList[len(x.TopMinerList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 11:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceTimeoutList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.InferenceTimeoutList = append(x.InferenceTimeoutList, &InferenceTimeout{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.InferenceTimeoutList[len(x.InferenceTimeoutList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 12:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceValidationDetailsList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.InferenceValidationDetailsList = append(x.InferenceValidationDetailsList, &InferenceValidationDetails{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.InferenceValidationDetailsList[len(x.InferenceValidationDetailsList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 13:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochPerformanceSummaryList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.EpochPerformanceSummaryList = append(x.EpochPerformanceSummaryList, &EpochPerformanceSummary{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochPerformanceSummaryList[len(x.EpochPerformanceSummaryList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 14:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PartialUpgradeList", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.PartialUpgradeList = append(x.PartialUpgradeList, &PartialUpgrade{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PartialUpgradeList[len(x.PartialUpgradeList)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 15:
+			case 4:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CosmWasmParams", wireType)
 				}
@@ -2224,21 +765,10 @@ type GenesisState struct {
 	unknownFields protoimpl.UnknownFields
 
 	// params defines all the parameters of the module.
-	Params                         *Params                       `protobuf:"bytes,1,opt,name=params,proto3" json:"params,omitempty"`
-	GenesisOnlyParams              *GenesisOnlyParams            `protobuf:"bytes,2,opt,name=genesis_only_params,json=genesisOnlyParams,proto3" json:"genesis_only_params,omitempty"`
-	InferenceList                  []*Inference                  `protobuf:"bytes,3,rep,name=inference_list,json=inferenceList,proto3" json:"inference_list,omitempty"`
-	ParticipantList                []*Participant                `protobuf:"bytes,4,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
-	EpochGroupDataList             []*EpochGroupData             `protobuf:"bytes,5,rep,name=epoch_group_data_list,json=epochGroupDataList,proto3" json:"epoch_group_data_list,omitempty"`
-	SettleAmountList               []*SettleAmount               `protobuf:"bytes,6,rep,name=settle_amount_list,json=settleAmountList,proto3" json:"settle_amount_list,omitempty"`
-	EpochGroupValidationsList      []*EpochGroupValidations      `protobuf:"bytes,7,rep,name=epoch_group_validations_list,json=epochGroupValidationsList,proto3" json:"epoch_group_validations_list,omitempty"`
-	TokenomicsData                 *TokenomicsData               `protobuf:"bytes,8,opt,name=tokenomics_data,json=tokenomicsData,proto3" json:"tokenomics_data,omitempty"`
-	ModelList                      []*Model                      `protobuf:"bytes,9,rep,name=model_list,json=modelList,proto3" json:"model_list,omitempty"`
-	TopMinerList                   []*TopMiner                   `protobuf:"bytes,10,rep,name=top_miner_list,json=topMinerList,proto3" json:"top_miner_list,omitempty"`
-	InferenceTimeoutList           []*InferenceTimeout           `protobuf:"bytes,11,rep,name=inference_timeout_list,json=inferenceTimeoutList,proto3" json:"inference_timeout_list,omitempty"`
-	InferenceValidationDetailsList []*InferenceValidationDetails `protobuf:"bytes,12,rep,name=inferenceValidationDetailsList,proto3" json:"inferenceValidationDetailsList,omitempty"`
-	EpochPerformanceSummaryList    []*EpochPerformanceSummary    `protobuf:"bytes,13,rep,name=epochPerformanceSummaryList,proto3" json:"epochPerformanceSummaryList,omitempty"`
-	PartialUpgradeList             []*PartialUpgrade             `protobuf:"bytes,14,rep,name=partialUpgradeList,proto3" json:"partialUpgradeList,omitempty"`
-	CosmWasmParams                 *CosmWasmParams               `protobuf:"bytes,15,opt,name=cosm_wasm_params,json=cosmWasmParams,proto3" json:"cosm_wasm_params,omitempty"`
+	Params            *Params            `protobuf:"bytes,1,opt,name=params,proto3" json:"params,omitempty"`
+	GenesisOnlyParams *GenesisOnlyParams `protobuf:"bytes,2,opt,name=genesis_only_params,json=genesisOnlyParams,proto3" json:"genesis_only_params,omitempty"`
+	ModelList         []*Model           `protobuf:"bytes,3,rep,name=model_list,json=modelList,proto3" json:"model_list,omitempty"`
+	CosmWasmParams    *CosmWasmParams    `protobuf:"bytes,4,opt,name=cosm_wasm_params,json=cosmWasmParams,proto3" json:"cosm_wasm_params,omitempty"`
 }
 
 func (x *GenesisState) Reset() {
@@ -2275,86 +805,9 @@ func (x *GenesisState) GetGenesisOnlyParams() *GenesisOnlyParams {
 	return nil
 }
 
-func (x *GenesisState) GetInferenceList() []*Inference {
-	if x != nil {
-		return x.InferenceList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetParticipantList() []*Participant {
-	if x != nil {
-		return x.ParticipantList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetEpochGroupDataList() []*EpochGroupData {
-	if x != nil {
-		return x.EpochGroupDataList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetSettleAmountList() []*SettleAmount {
-	if x != nil {
-		return x.SettleAmountList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetEpochGroupValidationsList() []*EpochGroupValidations {
-	if x != nil {
-		return x.EpochGroupValidationsList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetTokenomicsData() *TokenomicsData {
-	if x != nil {
-		return x.TokenomicsData
-	}
-	return nil
-}
-
 func (x *GenesisState) GetModelList() []*Model {
 	if x != nil {
 		return x.ModelList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetTopMinerList() []*TopMiner {
-	if x != nil {
-		return x.TopMinerList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetInferenceTimeoutList() []*InferenceTimeout {
-	if x != nil {
-		return x.InferenceTimeoutList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetInferenceValidationDetailsList() []*InferenceValidationDetails {
-	if x != nil {
-		return x.InferenceValidationDetailsList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetEpochPerformanceSummaryList() []*EpochPerformanceSummary {
-	if x != nil {
-		return x.EpochPerformanceSummaryList
-	}
-	return nil
-}
-
-func (x *GenesisState) GetPartialUpgradeList() []*PartialUpgrade {
-	if x != nil {
-		return x.PartialUpgradeList
 	}
 	return nil
 }
@@ -2412,7 +865,7 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x75, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x23, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x73, 0x2e, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x22, 0xe0, 0x0a, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74,
+	0x74, 0x6f, 0x22, 0xcc, 0x02, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74,
 	0x61, 0x74, 0x65, 0x12, 0x3e, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20,
 	0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
@@ -2423,94 +876,29 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e,
 	0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7,
 	0xb0, 0x2a, 0x01, 0x52, 0x11, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79,
-	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x4b, 0x0a, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1e,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04,
-	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0d, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x4c,
-	0x69, 0x73, 0x74, 0x12, 0x51, 0x0a, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
-	0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x20, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42,
-	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
-	0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x5c, 0x0a, 0x15, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f,
-	0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18,
-	0x05, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63,
-	0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00,
-	0x52, 0x12, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61,
-	0x4c, 0x69, 0x73, 0x74, 0x12, 0x55, 0x0a, 0x12, 0x73, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x5f, 0x61,
-	0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x41, 0x6d, 0x6f,
-	0x75, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x10, 0x73, 0x65, 0x74, 0x74, 0x6c,
-	0x65, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x71, 0x0a, 0x1c, 0x65,
-	0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x07, 0x20, 0x03, 0x28,
-	0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f,
-	0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x42, 0x04, 0xc8,
-	0xde, 0x1f, 0x00, 0x52, 0x19, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x56,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x4c,
-	0x0a, 0x0f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x5f, 0x64, 0x61, 0x74,
-	0x61, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54, 0x6f,
-	0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x44, 0x61, 0x74, 0x61, 0x52, 0x0e, 0x74, 0x6f,
-	0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x44, 0x61, 0x74, 0x61, 0x12, 0x3f, 0x0a, 0x0a,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x09, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x1a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x42, 0x04, 0xc8, 0xde,
-	0x1f, 0x00, 0x52, 0x09, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x49, 0x0a,
-	0x0e, 0x74, 0x6f, 0x70, 0x5f, 0x6d, 0x69, 0x6e, 0x65, 0x72, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18,
-	0x0a, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54, 0x6f, 0x70, 0x4d,
-	0x69, 0x6e, 0x65, 0x72, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0c, 0x74, 0x6f, 0x70, 0x4d,
-	0x69, 0x6e, 0x65, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x61, 0x0a, 0x16, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x5f, 0x6c, 0x69,
-	0x73, 0x74, 0x18, 0x0b, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x42,
-	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x14, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x7d, 0x0a, 0x1e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x4c, 0x69, 0x73, 0x74, 0x18, 0x0c, 0x20,
-	0x03, 0x28, 0x0b, 0x32, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x74,
-	0x61, 0x69, 0x6c, 0x73, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x1e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44,
-	0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x74, 0x0a, 0x1b, 0x65, 0x70,
-	0x6f, 0x63, 0x68, 0x50, 0x65, 0x72, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x6e, 0x63, 0x65, 0x53, 0x75,
-	0x6d, 0x6d, 0x61, 0x72, 0x79, 0x4c, 0x69, 0x73, 0x74, 0x18, 0x0d, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x65, 0x72, 0x66, 0x6f,
-	0x72, 0x6d, 0x61, 0x6e, 0x63, 0x65, 0x53, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x79, 0x42, 0x04, 0xc8,
-	0xde, 0x1f, 0x00, 0x52, 0x1b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x65, 0x72, 0x66, 0x6f, 0x72,
-	0x6d, 0x61, 0x6e, 0x63, 0x65, 0x53, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x79, 0x4c, 0x69, 0x73, 0x74,
-	0x12, 0x59, 0x0a, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61,
-	0x64, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x18, 0x0e, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61, 0x64,
-	0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c,
-	0x55, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x58, 0x0a, 0x10, 0x63,
-	0x6f, 0x73, 0x6d, 0x5f, 0x77, 0x61, 0x73, 0x6d, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18,
-	0x0f, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x73, 0x6d,
-	0x57, 0x61, 0x73, 0x6d, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00,
-	0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x0e, 0x63, 0x6f, 0x73, 0x6d, 0x57, 0x61, 0x73, 0x6d, 0x50,
-	0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
-	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
-	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x3f, 0x0a, 0x0a, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f,
+	0x6c, 0x69, 0x73, 0x74, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x6d, 0x6f,
+	0x64, 0x65, 0x6c, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x58, 0x0a, 0x10, 0x63, 0x6f, 0x73, 0x6d, 0x5f,
+	0x77, 0x61, 0x73, 0x6d, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x73, 0x6d, 0x57, 0x61, 0x73, 0x6d,
+	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a,
+	0x01, 0x52, 0x0e, 0x63, 0x6f, 0x73, 0x6d, 0x57, 0x61, 0x73, 0x6d, 0x50, 0x61, 0x72, 0x61, 0x6d,
+	0x73, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47,
+	0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63,
+	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca,
+	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d,
+	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06,
+	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -2527,44 +915,22 @@ func file_inference_inference_genesis_proto_rawDescGZIP() []byte {
 
 var file_inference_inference_genesis_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_inference_inference_genesis_proto_goTypes = []interface{}{
-	(*GenesisState)(nil),               // 0: inference.inference.GenesisState
-	(*Params)(nil),                     // 1: inference.inference.Params
-	(*GenesisOnlyParams)(nil),          // 2: inference.inference.GenesisOnlyParams
-	(*Inference)(nil),                  // 3: inference.inference.Inference
-	(*Participant)(nil),                // 4: inference.inference.Participant
-	(*EpochGroupData)(nil),             // 5: inference.inference.EpochGroupData
-	(*SettleAmount)(nil),               // 6: inference.inference.SettleAmount
-	(*EpochGroupValidations)(nil),      // 7: inference.inference.EpochGroupValidations
-	(*TokenomicsData)(nil),             // 8: inference.inference.TokenomicsData
-	(*Model)(nil),                      // 9: inference.inference.Model
-	(*TopMiner)(nil),                   // 10: inference.inference.TopMiner
-	(*InferenceTimeout)(nil),           // 11: inference.inference.InferenceTimeout
-	(*InferenceValidationDetails)(nil), // 12: inference.inference.InferenceValidationDetails
-	(*EpochPerformanceSummary)(nil),    // 13: inference.inference.EpochPerformanceSummary
-	(*PartialUpgrade)(nil),             // 14: inference.inference.PartialUpgrade
-	(*CosmWasmParams)(nil),             // 15: inference.inference.CosmWasmParams
+	(*GenesisState)(nil),      // 0: inference.inference.GenesisState
+	(*Params)(nil),            // 1: inference.inference.Params
+	(*GenesisOnlyParams)(nil), // 2: inference.inference.GenesisOnlyParams
+	(*Model)(nil),             // 3: inference.inference.Model
+	(*CosmWasmParams)(nil),    // 4: inference.inference.CosmWasmParams
 }
 var file_inference_inference_genesis_proto_depIdxs = []int32{
-	1,  // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
-	2,  // 1: inference.inference.GenesisState.genesis_only_params:type_name -> inference.inference.GenesisOnlyParams
-	3,  // 2: inference.inference.GenesisState.inference_list:type_name -> inference.inference.Inference
-	4,  // 3: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
-	5,  // 4: inference.inference.GenesisState.epoch_group_data_list:type_name -> inference.inference.EpochGroupData
-	6,  // 5: inference.inference.GenesisState.settle_amount_list:type_name -> inference.inference.SettleAmount
-	7,  // 6: inference.inference.GenesisState.epoch_group_validations_list:type_name -> inference.inference.EpochGroupValidations
-	8,  // 7: inference.inference.GenesisState.tokenomics_data:type_name -> inference.inference.TokenomicsData
-	9,  // 8: inference.inference.GenesisState.model_list:type_name -> inference.inference.Model
-	10, // 9: inference.inference.GenesisState.top_miner_list:type_name -> inference.inference.TopMiner
-	11, // 10: inference.inference.GenesisState.inference_timeout_list:type_name -> inference.inference.InferenceTimeout
-	12, // 11: inference.inference.GenesisState.inferenceValidationDetailsList:type_name -> inference.inference.InferenceValidationDetails
-	13, // 12: inference.inference.GenesisState.epochPerformanceSummaryList:type_name -> inference.inference.EpochPerformanceSummary
-	14, // 13: inference.inference.GenesisState.partialUpgradeList:type_name -> inference.inference.PartialUpgrade
-	15, // 14: inference.inference.GenesisState.cosm_wasm_params:type_name -> inference.inference.CosmWasmParams
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	1, // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
+	2, // 1: inference.inference.GenesisState.genesis_only_params:type_name -> inference.inference.GenesisOnlyParams
+	3, // 2: inference.inference.GenesisState.model_list:type_name -> inference.inference.Model
+	4, // 3: inference.inference.GenesisState.cosm_wasm_params:type_name -> inference.inference.CosmWasmParams
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_genesis_proto_init() }

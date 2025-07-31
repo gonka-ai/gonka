@@ -4,19 +4,19 @@ kind: Component
 images:
 - name: api
   newName: ghcr.io/product-science/api
-  newTag: 0.1.15
+  newTag: 0.1.18-alpha-1
 - name: node
   newName: ghcr.io/product-science/inferenced
-  newTag: 0.1.15
+  newTag: 0.1.18-alpha-1
 - name: inference
   newName: ghcr.io/product-science/mlnode
   newTag: 3.0.8
 - name: tmkms
   newName: ghcr.io/product-science/tmkms-softsign-with-keygen
-  newTag: 0.1.15
+  newTag: 0.1.18-alpha-1
 - name: proxy
   newName: ghcr.io/product-science/proxy
-  newTag: 0.1.15
+  newTag: 0.1.18-alpha-1
 - name: explorer
   newName: ghcr.io/product-science/explorer
   newTag: latest

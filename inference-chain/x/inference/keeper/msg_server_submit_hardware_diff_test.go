@@ -15,8 +15,9 @@ import (
 func registerTestModels(t *testing.T, k keeper.Keeper, ms types.MsgServer, ctx context.Context, models ...string) {
 	for _, model := range models {
 		_, err := ms.RegisterModel(ctx, &types.MsgRegisterModel{
-			Authority: k.GetAuthority(),
-			Id:        model,
+			Authority:           k.GetAuthority(),
+			Id:                  model,
+			ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2},
 		})
 		require.NoError(t, err)
 	}

@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"errors"
 	"math"
 	"strconv"
 
@@ -14,12 +13,6 @@ import (
 const (
 	TokenCost = 1_000
 )
-
-var ModelToPassValue = map[string]float64{
-	"Qwen/Qwen2.5-7B-Instruct":   0.85,
-	"Qwen/Qwen2.5-1.5B-Instruct": 0.85,
-	"Qwen/QwQ-32B":               0.85,
-}
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
 	k.LogInfo("Received MsgValidation", types.Validation,
@@ -59,11 +52,15 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passValue, ok := ModelToPassValue[inference.Model]
-	if !ok {
-		k.LogError("Model not supported", types.Validation, "model", inference.Model)
-		return nil, errors.New("Model " + inference.Model + " not supported")
+	model, err := k.GetEpochModel(ctx, inference.Model)
+	if err != nil {
+		k.LogError("Failed to get epoch model", types.Validation,
+			"model", inference.Model,
+			"inferenceId", msg.InferenceId,
+			"error", err)
+		return nil, err
 	}
+	passValue := model.ValidationThreshold.ToFloat()
 
 	passed := msg.Value > passValue
 	k.LogInfo(

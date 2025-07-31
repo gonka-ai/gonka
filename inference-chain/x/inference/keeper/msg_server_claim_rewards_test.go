@@ -18,8 +18,6 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	mockAccount := NewMockAccount(testutil.Creator)
-	// Setup a participant
-	MustAddParticipant(t, ms, ctx, *mockAccount)
 
 	// Create a seed value and its binary representation
 	seed := uint64(1)
@@ -240,14 +238,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
-
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
@@ -267,7 +257,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
 
-	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
@@ -280,7 +269,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100, // Using height as ID
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
@@ -310,21 +299,21 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -364,6 +353,8 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(0), resp.Amount)
 	require.Equal(t, "Inference not validated", resp.Result)
+
+	println("Setting EpochGroupValidations")
 
 	// Now let's validate all inferences and try again
 	validations := types.EpochGroupValidations{
@@ -462,14 +453,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
-
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
@@ -489,7 +472,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
 
-	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
@@ -502,7 +484,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100, // Using height as ID
+		EpochGroupId:        9000,
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
@@ -532,21 +514,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -779,7 +761,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// Claimant has two nodes, one with full availability
 	mainEpochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100,
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: "executor1", Weight: 50}},
 		SubGroupModels:      []string{MODEL_ID},
@@ -808,7 +790,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 
 	modelSubGroup := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        101,
+		EpochGroupId:        9001,
 		PocStartBlockHeight: pocStartBlockHeight,
 		ModelId:             MODEL_ID,
 		ValidationWeights: []*types.ValidationWeight{
@@ -829,7 +811,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// Inference occurring during PoC cutoff
 	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
 	inference := types.InferenceValidationDetails{
-		EpochGroupId:         100,
+		EpochId:              epoch.Index,
 		InferenceId:          "inference-during-poc",
 		ExecutorId:           "executor1",
 		ExecutorReputation:   0,

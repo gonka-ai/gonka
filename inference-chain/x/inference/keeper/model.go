@@ -11,6 +11,10 @@ func (k Keeper) SetModel(ctx context.Context, model *types.Model) {
 	SetValue(k, ctx, model, types.KeyPrefix(types.ModelKeyPrefix), types.ModelKey(model.Id))
 }
 
+func (k Keeper) DeleteGovernanceModel(ctx context.Context, id string) {
+	DeleteValue(&k, ctx, types.KeyPrefix(types.ModelKeyPrefix), types.ModelKey(id))
+}
+
 func (k Keeper) GetGovernanceModel(ctx context.Context, id string) (*types.Model, bool) {
 	return GetValue(&k, ctx, &types.Model{}, types.KeyPrefix(types.ModelKeyPrefix), types.ModelKey(id))
 }

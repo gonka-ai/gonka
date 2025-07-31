@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+set -x
 ( set -o pipefail 2>/dev/null ) && set -o pipefail
 
 ###############################################################################
@@ -54,7 +55,7 @@ need SEED_NODE_P2P_URL
 
 APP_NAME="${APP_NAME:-inferenced}"
 KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
-CHAIN_ID="${CHAIN_ID:-gonka-testnet-4}"
+CHAIN_ID="${CHAIN_ID:-gonka-testnet-5}"
 COIN_DENOM="${COIN_DENOM:-icoin}"
 STATE_DIR="${STATE_DIR:-/root/.inference}"
 
@@ -88,6 +89,13 @@ if $FIRST_RUN; then
   echo "Initialising node (first run)"
   output=$("$APP_NAME" init --overwrite --chain-id "$CHAIN_ID" \
                        --default-denom "$COIN_DENOM" my-node 2>&1)
+  exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+      echo "Error: '$APP_NAME init' failed with exit code $exit_code"
+      echo "Output:"
+      echo "$output"
+      exit $exit_code
+  fi
   echo "$output" | filter_cw20_code
 
   kv client chain-id "$CHAIN_ID"
