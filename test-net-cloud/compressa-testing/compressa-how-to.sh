@@ -19,7 +19,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address "$NODE_URL"
 
-export GONKA_ADDRESS="gonka18u3gz9hawfx5pt8q4l0438e6xqrx67rfw9j89l"
+export GONKA_ADDRESS="gonka1q2ghjmr08j0udgv03umq9vl5q38fp3hnhfz8ma"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -86,3 +86,19 @@ compressa-perf \
 	--num_tasks 200 \
 	--num_runners 100 \
 	--max_tokens 100
+
+# A continuous test, won't stop until you stop it manually
+compressa-perf \
+  stress \
+  --node_url "$PLAIN_NODE_URL" \
+  --model_name Qwen/Qwen2.5-7B-Instruct \
+  --create-account-testnet \
+  --inferenced-path "$INFERENCED_BINARY" \
+  --experiment_name "stress_test" \
+  --generate_prompts \
+  --num_prompts 2000 \
+  --prompt_length 10000 \
+  --num_runners 10 \
+  --max_tokens 300 \
+  --report_freq_min 1 \
+  --account-pool-size 10
