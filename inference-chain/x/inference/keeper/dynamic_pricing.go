@@ -159,12 +159,16 @@ func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string,
 	elasticity := dpParams.PriceElasticity.ToFloat()
 	minPrice := dpParams.MinPerTokenPrice
 
-	// Growth caps derived from elasticity parameter (governance-configurable)
-	// Maximum utilization excess/deficit is 0.40 (when utilization = 100% or 0%)
-	// This ensures caps match the original proposal: 2% with default elasticity of 0.05
-	maxUtilizationDeviation := 0.40                                     // 40% deviation (from 60% to 100% or 60% to 20%)
-	maxIncreasePerBlock := 1.0 + (maxUtilizationDeviation * elasticity) // e.g., 1.0 + (0.40 × 0.05) = 1.02
-	maxDecreasePerBlock := 1.0 - (maxUtilizationDeviation * elasticity) // e.g., 1.0 - (0.40 × 0.05) = 0.98
+	// Growth caps derived from elasticity parameter and stability zone bounds (governance-configurable)
+	// Calculate maximum possible deviations from stability zone dynamically
+	// Maximum excess: from upperBound to 100% utilization (for price increases)
+	// Maximum deficit: from lowerBound to 0% utilization (for price decreases)
+	maxExcessDeviation := 1.0 - upperBound  // e.g., 1.0 - 0.60 = 0.40
+	maxDeficitDeviation := lowerBound - 0.0 // e.g., 0.40 - 0.0 = 0.40
+
+	// Use appropriate deviation for each scenario
+	maxIncreasePerBlock := 1.0 + (maxExcessDeviation * elasticity)  // e.g., 1.0 + (0.40 × 0.05) = 1.02
+	maxDecreasePerBlock := 1.0 - (maxDeficitDeviation * elasticity) // e.g., 1.0 - (0.40 × 0.05) = 0.98
 
 	var newPrice uint64
 

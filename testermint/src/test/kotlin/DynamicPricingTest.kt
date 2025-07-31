@@ -54,6 +54,10 @@ class DynamicPricingTest : TestermintTest() {
 
         logSection("DPTEST: === PHASE 2: LOAD GENERATION & PRICE INCREASE ===")
         
+        // Measure actual blocks passed during load generation for accurate price calculation
+        val startBlock = genesis.getCurrentBlockHeight()
+        logSection("DPTEST: BLOCK_START - Starting load generation at block $startBlock")
+        
         // Generate high load to trigger price increase using regular inference requests
         // Strategy: Single batch of 20 regular inferences for high utilization testing
         // Regular requests generate ~85 tokens each (20 × 85 = 1,700 tokens vs 1,800 capacity = 94% utilization)
@@ -82,6 +86,11 @@ class DynamicPricingTest : TestermintTest() {
         logSection("DPTEST: PRICING_WAIT_START - Waiting 20 seconds for pricing algorithm")
         Thread.sleep(Duration.ofSeconds(20))
         
+        // Measure final block height to calculate actual blocks passed
+        val endBlock = genesis.getCurrentBlockHeight()
+        val actualBlocksPassed = endBlock - startBlock
+        logSection("DPTEST: BLOCK_END - Pricing check at block $endBlock, actual_blocks_passed=$actualBlocksPassed")
+        
         // Check price after high load
         val priceAfterLoad = getCurrentModelPrice(genesis, "Qwen/Qwen2.5-7B-Instruct")
         logSection("DPTEST: PRICE_AFTER_LOAD - price=$priceAfterLoad, initial_price=$initialPrice, increase=${priceAfterLoad - initialPrice}")
@@ -96,9 +105,9 @@ class DynamicPricingTest : TestermintTest() {
         assertThat(priceAfterLoad).isGreaterThan(1000L)
             .`as`("Price should increase above 1000 due to high utilization")
         
-        // Calculate expected utilization and price increase
-        val expectedPriceRange = calculateExpectedPriceRange(totalLoadTokens)
-        logSection("DPTEST: UTILIZATION_CALC - total_tokens=$totalLoadTokens, expected_range=${expectedPriceRange.first}-${expectedPriceRange.second}")
+        // Calculate expected utilization and price increase using actual blocks and network parameters
+        val expectedPriceRange = calculateExpectedPriceRange(genesis, totalLoadTokens, actualBlocksPassed)
+        logSection("DPTEST: UTILIZATION_CALC - total_tokens=$totalLoadTokens, blocks_passed=$actualBlocksPassed, expected_range=${expectedPriceRange.first}-${expectedPriceRange.second}")
         
         // Verify price follows elasticity formula (approximate)
         val priceInRange = priceAfterLoad >= expectedPriceRange.first && priceAfterLoad <= expectedPriceRange.second
@@ -257,29 +266,67 @@ class DynamicPricingTest : TestermintTest() {
         }
     }
     
-    private fun calculateExpectedPriceRange(totalTokens: Long): Pair<Long, Long> {
-        logSection("DPTEST: PRICE_CALC_START - calculating expected price range for total_tokens=$totalTokens")
+    private fun calculateExpectedPriceRange(genesis: com.productscience.LocalInferencePair, totalTokens: Long, actualBlocksPassed: Long): Pair<Long, Long> {
+        logSection("DPTEST: PRICE_CALC_START - calculating expected price range for total_tokens=$totalTokens, blocks_passed=$actualBlocksPassed")
         
+        // Get network parameters instead of using hardcoded values
+        val params = genesis.getParams()
+        val dynamicPricingParams = params.dynamicPricingParams
+        
+        if (dynamicPricingParams == null) {
+            logSection("DPTEST: NO_DYNAMIC_PRICING - dynamicPricingParams is null, using fallback range")
+            return Pair(1000L, 1200L)  // Fallback range if params not available
+        }
+        
+        // Extract network parameters
+        val stabilityLowerBound = dynamicPricingParams.stabilityZoneLowerBound.toDouble()
+        val stabilityUpperBound = dynamicPricingParams.stabilityZoneUpperBound.toDouble()
+        val priceElasticity = dynamicPricingParams.priceElasticity.toDouble()
+        val minPrice = dynamicPricingParams.minPerTokenPrice
+        val utilizationWindowDuration = dynamicPricingParams.utilizationWindowDuration
+        
+        logSection("DPTEST: NETWORK_PARAMS - stability_zone=($stabilityLowerBound-$stabilityUpperBound), price_elasticity=$priceElasticity, min_price=$minPrice, window_duration=${utilizationWindowDuration}s")
+        
+        // Calculate utilization based on network capacity
         // Based on regular requests: ~85 tokens per inference average
         // With 20 regular inferences: ~1,700 tokens expected (94% utilization vs 1,800 capacity)
-        // Utilization = tokens_processed_in_60s_window / capacity
+        // Utilization = tokens_processed_in_window / capacity
         val capacity = 1800L  // 30 tokens/sec × 60 seconds for 3-node test cluster
         val estimatedUtilization = totalTokens.toDouble() / capacity
         
-        logSection("DPTEST: UTILIZATION_EST - capacity=$capacity, utilization=$estimatedUtilization, threshold=0.60")
+        logSection("DPTEST: UTILIZATION_EST - capacity=$capacity, utilization=$estimatedUtilization, stability_zone=($stabilityLowerBound-$stabilityUpperBound)")
         
-        if (estimatedUtilization > 0.60) {
-            logSection("DPTEST: HIGH_UTILIZATION - utilization=$estimatedUtilization > 60%, calculating price increase")
-            // With growth caps: maximum 2% increase per block regardless of utilization level
-            // Multiple BeginBlocker runs during test period can compound the 2% increases
-            // Assume 3-6 price updates during test (blocks every ~5 seconds)
-            val minPriceIncrease = (1000L * 1.02).toLong()  // At least one 2% increase: 1020
-            val maxPriceIncrease = (1000L * Math.pow(1.02, 6.0)).toLong()  // Up to 6 compounds: ~1126
+        if (estimatedUtilization > stabilityUpperBound) {
+            logSection("DPTEST: HIGH_UTILIZATION - utilization=$estimatedUtilization > $stabilityUpperBound%, calculating price increase")
+            
+            // Calculate max price multiplier using the actual dynamic pricing formula:
+            // maxIncreasePerBlock = 1.0 + (maxExcessDeviation * elasticity)  
+            // Use maxExcessDeviation specifically for price increases (high utilization scenario)
+            val maxExcessDeviation = 1.0 - stabilityUpperBound  // e.g., 1.0 - 0.60 = 0.40
+            val maxDeficitDeviation = stabilityLowerBound - 0.0  // e.g., 0.40 - 0.0 = 0.40
+            val maxIncreasePerBlock = 1.0 + (maxExcessDeviation * priceElasticity)  // Use excess for increases
+            
+            logSection("DPTEST: ELASTICITY_CALC - stability_bounds=($stabilityLowerBound-$stabilityUpperBound), max_excess=$maxExcessDeviation, max_deficit=$maxDeficitDeviation, max_increase_per_block=$maxIncreasePerBlock (${((maxIncreasePerBlock - 1.0) * 100).toInt()}%)")
+            
+            // Apply -3/+1 block buffer for realistic timing variations
+            // -3: Initial blocks may not reflect full load yet  
+            // +1: Tests rarely run much longer than expected
+            val minBlocks = maxOf(1, actualBlocksPassed - 3)
+            val maxBlocks = actualBlocksPassed + 1
+            
+            logSection("DPTEST: BLOCK_BUFFER - actual_blocks=$actualBlocksPassed, range=$minBlocks-$maxBlocks")
+            
+            // Calculate price range with actual max increase per block compounding
+            val minPriceIncrease = (minPrice * Math.pow(maxIncreasePerBlock, minBlocks.toDouble())).toLong()
+            val maxPriceIncrease = (minPrice * Math.pow(maxIncreasePerBlock, maxBlocks.toDouble())).toLong()
+            
+            logSection("DPTEST: PRICE_PROJECTION - min_blocks=$minBlocks->$minPriceIncrease, max_blocks=$maxBlocks->$maxPriceIncrease")
+            
             return Pair(minPriceIncrease, maxPriceIncrease)
         } else {
-            logSection("DPTEST: NORMAL_UTILIZATION - utilization=$estimatedUtilization <= 60%, price should stay stable")
+            logSection("DPTEST: NORMAL_UTILIZATION - utilization=$estimatedUtilization <= $stabilityUpperBound%, price should stay stable")
             // Within or below stability zone - price should remain at base level
-            return Pair(1000L, 1000L)
+            return Pair(minPrice, minPrice)
         }
     }
 }
