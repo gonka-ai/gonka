@@ -134,7 +134,7 @@ func (k msgServer) processInferencePayments(
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
 		executor.CurrentEpochStats.InferenceCount++
 		executor.LastInferenceTime = inference.EndBlockTimestamp
-		k.LogBalance(executor.Address, payments.ExecutorPayment, executor.CoinBalance, "inference_finished:"+inference.InferenceId)
+		k.BankKeeper.LogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, types.GetCoin(executor.CoinBalance), "inference_finished:"+inference.InferenceId)
 		k.SetParticipant(ctx, executor)
 	}
 	return inference, nil

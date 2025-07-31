@@ -39,6 +39,11 @@ func BookkeeperKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 		log.NewNopLogger(),
 		authority.String(),
 		nil,
+		keeper.LogConfig{
+			DoubleEntry: true,
+			SimpleEntry: true,
+			LogLevel:    "INFO",
+		},
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

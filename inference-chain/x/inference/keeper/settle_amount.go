@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
@@ -78,23 +79,9 @@ func (k Keeper) burnSettleAmount(ctx context.Context, settleAmount types.SettleA
 			k.LogError("Error burning settle amount coins", types.Settle, "error", err, "participant", settleAmount.Participant, "amount", totalCoins)
 			return err
 		}
+		k.BankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, settleAmount.Participant, types.SettleSubAccount, sdk.NewInt64Coin(types.BaseCoin, int64(totalCoins)), reason)
 		k.LogInfo("Burned settle amount", types.Settle, "participant", settleAmount.Participant, "amount", totalCoins, "reason", reason)
 	}
-	return nil
-}
-
-// BurnSettleAmount burns coins from a settle amount and removes it from storage
-func (k Keeper) BurnSettleAmount(ctx context.Context, participant string, reason string) error {
-	settleAmount, found := k.GetSettleAmount(ctx, participant)
-	if !found {
-		return nil // Nothing to burn
-	}
-
-	err := k.burnSettleAmount(ctx, settleAmount, reason)
-	if err != nil {
-		return err
-	}
-	k.RemoveSettleAmount(ctx, participant)
 	return nil
 }
 
@@ -103,7 +90,7 @@ func (k Keeper) SetSettleAmountWithBurn(ctx context.Context, settleAmount types.
 	// Burn existing settle amount if it exists
 	existingSettle, found := k.GetSettleAmount(ctx, settleAmount.Participant)
 	if found {
-		err := k.burnSettleAmount(ctx, existingSettle, "replaced")
+		err := k.burnSettleAmount(ctx, existingSettle, "expired claim")
 		if err != nil {
 			return err
 		}
@@ -111,6 +98,8 @@ func (k Keeper) SetSettleAmountWithBurn(ctx context.Context, settleAmount types.
 
 	// Set the new settle amount
 	k.SetSettleAmount(ctx, settleAmount)
+	k.BankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, settleAmount.Participant, types.SettleSubAccount, sdk.NewInt64Coin(types.BaseCoin, int64(settleAmount.GetTotalCoins())), "awaiting claim")
+	k.BankKeeper.LogSubAccountTransaction(ctx, settleAmount.Participant, types.ModuleName, types.OwedSubAccount, sdk.NewInt64Coin(types.BaseCoin, int64(settleAmount.WorkCoins)), "moved to settled")
 	return nil
 }
 

@@ -93,17 +93,6 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
-func (k Keeper) LogTransaction(to string, from string, amount int64, memo string) {
-	// YES, "debit" means an account goes up, and "credit" means an account goes down.
-	// That's how accounting works.
-	k.Logger().Info("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "memo", memo, "signedAmount", amount)
-	k.Logger().Info("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "memo", memo, "signedAmount", -amount)
-}
-
-func (k Keeper) LogBalance(address string, change int64, result int64, memo string) {
-	k.Logger().Info("BalanceAudit", "address", address, "change", change, "result", result, "memo", memo)
-}
-
 func (k Keeper) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	k.Logger().Info(msg, append(keyvals, "subsystem", subSystem.String())...)
 }

@@ -202,6 +202,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 		func(ctx sdk.Context, pa sdk.AccAddress) (sdk.Coin, bool) {
 			return sdk.NewCoin(types.BaseCoin, fakeCollateralAmount), true
 		}).AnyTimes()
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	// Mock Slash to modify our fake collateral
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()

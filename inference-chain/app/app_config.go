@@ -329,8 +329,13 @@ var (
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
 			},
 			{
-				Name:   bookkeepermoduletypes.ModuleName,
-				Config: appconfig.WrapAny(&bookkeepermodulev1.Module{}),
+				Name: bookkeepermoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&bookkeepermodulev1.Module{
+					// TODO: This isn't configurable per node, it should be
+					DoubleEntry: true,
+					SimpleEntry: true,
+					LogLevel:    "info",
+				}),
 			},
 			{
 				Name:   inferencemoduletypes.ModuleName,

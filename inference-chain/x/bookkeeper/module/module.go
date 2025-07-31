@@ -197,12 +197,18 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	if in.Config.Authority != "" {
 		authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
 	}
+	logConfig := keeper.LogConfig{
+		DoubleEntry: in.Config.DoubleEntry,
+		SimpleEntry: in.Config.SimpleEntry,
+		LogLevel:    in.Config.LogLevel,
+	}
 	k := keeper.NewKeeper(
 		in.Cdc,
 		in.StoreService,
 		in.Logger,
 		authority.String(),
 		in.BankKeeper,
+		logConfig,
 	)
 	m := NewAppModule(
 		in.Cdc,

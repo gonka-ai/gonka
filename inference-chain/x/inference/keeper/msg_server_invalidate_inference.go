@@ -55,7 +55,7 @@ func (k msgServer) markInferenceAsInvalid(executor *types.Participant, inference
 	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
 	executor.CoinBalance -= inference.ActualCost
-	k.LogBalance(executor.Address, inference.ActualCost, executor.CoinBalance, "inference_invalidated:"+inference.InferenceId)
+	k.BankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, sdk.NewInt64Coin(types.BaseCoin, inference.ActualCost), "inference_invalidated:"+inference.InferenceId)
 	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
 	// We need to refund the cost, so we have to lookup the person who paid
 	payer, found := k.GetParticipant(ctx, inference.RequestedBy)

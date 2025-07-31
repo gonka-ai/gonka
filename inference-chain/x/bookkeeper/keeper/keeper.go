@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-
 	"github.com/productscience/inference/x/bookkeeper/types"
+	"strings"
 )
 
 type (
@@ -22,8 +22,15 @@ type (
 		authority string
 
 		bankKeeper types.BankKeeper
+		logConfig  LogConfig
 	}
 )
+
+type LogConfig struct {
+	DoubleEntry bool   `json:"double_entry"`
+	SimpleEntry bool   `json:"simple_entry"`
+	LogLevel    string `json:"log_level"`
+}
 
 func NewKeeper(
 	cdc codec.BinaryCodec,
@@ -32,6 +39,7 @@ func NewKeeper(
 	authority string,
 
 	bankKeeper types.BankKeeper,
+	logConfig LogConfig,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -44,6 +52,7 @@ func NewKeeper(
 		logger:       logger,
 
 		bankKeeper: bankKeeper,
+		logConfig:  logConfig,
 	}
 }
 
@@ -63,7 +72,7 @@ func (k Keeper) SendCoinsFromModuleToAccount(ctx context.Context, senderModule s
 		return err
 	}
 	for _, coin := range amt {
-		k.logTransaction(ctx, recipientAddr.String(), senderModule, coin, memo)
+		k.logTransaction(ctx, recipientAddr.String(), senderModule, coin, memo, "")
 	}
 	return nil
 }
@@ -74,7 +83,7 @@ func (k Keeper) SendCoinsFromModuleToModule(ctx context.Context, senderModule, r
 		return err
 	}
 	for _, coin := range amt {
-		k.logTransaction(ctx, recipientModule, senderModule, coin, memo)
+		k.logTransaction(ctx, recipientModule, senderModule, coin, memo, "")
 	}
 	return nil
 }
@@ -84,7 +93,7 @@ func (k Keeper) SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk
 		return err
 	}
 	for _, coin := range amt {
-		k.logTransaction(ctx, recipientModule, senderAddr.String(), coin, memo)
+		k.logTransaction(ctx, recipientModule, senderAddr.String(), coin, memo, "")
 	}
 	return nil
 }
@@ -98,7 +107,7 @@ func (k Keeper) MintCoins(ctx context.Context, moduleName string, amt sdk.Coins,
 		return err
 	}
 	for _, coin := range amt {
-		k.logTransaction(ctx, moduleName, "supply", coin, memo)
+		k.logTransaction(ctx, moduleName, "supply", coin, memo, "")
 	}
 	return nil
 }
@@ -113,25 +122,57 @@ func (k Keeper) BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins,
 		return err
 	}
 	for _, coin := range amt {
-		k.logTransaction(ctx, "supply", moduleName, coin, memo)
+		k.logTransaction(ctx, "supply", moduleName, coin, memo, "")
 	}
 	return nil
 }
 
 func (k Keeper) LogSubAccountTransaction(ctx context.Context, recipient string, sender string, subAccount string, amt sdk.Coin, memo string) {
-	k.logTransaction(ctx, recipient+"_"+subAccount, sender+"_"+subAccount, amt, memo)
+	k.logTransaction(ctx, recipient+"_"+subAccount, sender+"_"+subAccount, amt, memo, subAccount)
 }
 
-func (k Keeper) logTransaction(ctx context.Context, to string, from string, coin sdk.Coin, memo string) {
-	params := k.GetParams(ctx)
-
-	amount := coin.Amount.Int64()
-	if params.DoubleEntry {
-		k.Logger().Info("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount)
-		k.Logger().Info("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount)
+func (k Keeper) logTransaction(ctx context.Context, to string, from string, coin sdk.Coin, memo string, subAccount string) {
+	if coin.Amount.IsZero() {
+		return
 	}
-	if params.SimpleEntry {
+
+	logFunc := k.getLogFunction(k.logConfig.LogLevel)
+	amount := coin.Amount.Int64()
+	if k.logConfig.DoubleEntry {
+		logFunc("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount)
+		logFunc("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount)
+	}
+	if k.logConfig.SimpleEntry {
 		amountString := fmt.Sprintf("%d", amount)
-		k.Logger().Info(fmt.Sprintf("TransactionEntry to=%-64s from=%-64s amount=%20s denom=%10s memo=%s", to, from, amountString, coin.Denom, memo))
+		if subAccount != "" {
+			// Extra space here to ensure alignment in logs
+			logFunc(fmt.Sprintf("SubAccountEntry  to=%s from=%s amount=%20s denom=%10s memo=%s subaccount=%s", fixedSize(to, 64), fixedSize(from, 64), amountString, coin.Denom, memo, subAccount))
+		} else {
+			logFunc(fmt.Sprintf("TransactionEntry to=%s from=%s amount=%20s denom=%10s memo=%s", fixedSize(to, 64), fixedSize(from, 64), amountString, coin.Denom, memo))
+		}
+	}
+}
+
+func (k Keeper) getLogFunction(level string) func(msg string, keyvals ...interface{}) {
+	switch strings.ToLower(level) {
+	case "info":
+		return k.Logger().Info
+	case "debug":
+		return k.Logger().Debug
+	case "error":
+		return k.Logger().Error
+	case "warn":
+		return k.Logger().Warn
+	default:
+		return k.Logger().Info
+	}
+}
+
+// no easy way to truncate AND pad a string in Sprintf
+func fixedSize(to string, size int) string {
+	if len(to) > size {
+		return to[:size]
+	} else {
+		return to + strings.Repeat(" ", size-len(to))
 	}
 }

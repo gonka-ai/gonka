@@ -10,6 +10,8 @@ func (escrow *MockBookkeepingBankKeeper) ExpectAny(context sdk.Context) {
 	escrow.EXPECT().SendCoinsFromAccountToModule(context, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	escrow.EXPECT().SendCoinsFromModuleToAccount(context, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	escrow.EXPECT().SendCoinsFromModuleToModule(context, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	escrow.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
 }
 
 func coinsOf(amount uint64) sdk.Coins {

@@ -18,10 +18,7 @@ func NewParams() Params {
 
 // DefaultParams returns a default set of parameters
 func DefaultParams() Params {
-	return Params{
-		DoubleEntry: true,
-		SimpleEntry: true,
-	}
+	return Params{}
 }
 
 // ParamSetPairs get the params.ParamSet

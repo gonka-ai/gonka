@@ -4,6 +4,9 @@ const (
 	// ModuleName defines the module name
 	ModuleName = "inference"
 
+	SettleSubAccount = "settled"
+	OwedSubAccount   = "owed"
+
 	// StoreKey defines the primary module store key
 	StoreKey = ModuleName
 

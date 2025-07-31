@@ -187,6 +187,7 @@ type MockInferenceHelper struct {
 
 func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, sdk.Context) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	mocks.StubForInitGenesis(ctx)
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 

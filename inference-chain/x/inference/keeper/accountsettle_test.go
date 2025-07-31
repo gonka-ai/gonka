@@ -276,6 +276,7 @@ func TestActualSettle(t *testing.T) {
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
 
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin), gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	err := keeper.SettleAccounts(ctx, 10, 0)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
