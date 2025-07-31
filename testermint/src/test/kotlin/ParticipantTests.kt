@@ -96,7 +96,7 @@ class ParticipantTests : TestermintTest() {
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Running inferences")
-        runParallelInferences(genesis, 50, waitForBlocks = 1)
+        runParallelInferences(genesis, 50, waitForBlocks = 3)
         genesis.waitForBlock(2) {
             it.node.getMinimumValidationAverage().minimumValidationAverage < startMin.minimumValidationAverage
         }
