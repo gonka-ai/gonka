@@ -9,7 +9,9 @@
       "Qwen/Qwen2.5-7B-Instruct": {
         "args": [
           "--quantization",
-          "fp8"
+          "fp8",
+          "--gpu-memory-utilization",
+          "0.9"
         ]
       }
     }
