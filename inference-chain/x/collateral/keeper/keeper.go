@@ -28,7 +28,7 @@ type (
 		// should be the x/gov module account.
 		authority string
 
-		bankKeeper            types.BankKeeper
+		bankViewKeeper        types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
 	}
 )
@@ -52,7 +52,7 @@ func NewKeeper(
 		authority:    authority,
 		logger:       logger,
 
-		bankKeeper:            bankKeeper,
+		bankViewKeeper:        bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
 	}
 }

@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -309,4 +310,23 @@ func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	require.Equal(t, uint64(0), retrievedParams.TokenomicsParams.WorkVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.RewardVestingPeriod)
 	require.Equal(t, uint64(365), retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
+}
+
+func TestVestingIntegration_ErrorHandling(t *testing.T) {
+	k, _, ctx, mocks := setupKeeperWithMocksForStreamVesting(t)
+
+	participantAddrStr := sample.AccAddress()
+	amount := uint64(1000)
+	vestingPeriod := uint64(5)
+
+	expectedCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(amount)))
+
+	// Test case 2: Vesting keeper failure should be handled
+	mocks.StreamVestingKeeper.EXPECT().
+		AddVestedRewards(ctx, participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
+		Return(fmt.Errorf("invalid request"))
+
+	err := k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "vesting-error-test", &vestingPeriod)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid request")
 }

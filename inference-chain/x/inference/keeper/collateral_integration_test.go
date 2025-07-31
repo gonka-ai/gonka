@@ -69,7 +69,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		keepertest.PrintlnLogger{},
 		authority.String(),
 		nil,                  // bank keeper
-		bookkepingBankKeeper, // bank escrow keeper
+		bookkepingBankKeeper, // bookkeeping bank keeper
 	)
 
 	inferenceKeeper := keeper.NewKeeper(

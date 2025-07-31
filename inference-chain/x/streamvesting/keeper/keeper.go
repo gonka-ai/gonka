@@ -75,14 +75,14 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(ctx, fundingModule, types.ModuleName, amount, memo)
+	if err != nil {
+		return fmt.Errorf("failed to transfer coins from module %s to streamvesting module: %w", fundingModule, err)
+	}
 	for _, coin := range amount {
 		k.bookkeepingBankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, participantAddress, HoldingSubAccount,
 			coin, "vesting started for "+participantAddress)
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to transfer coins from module %s to streamvesting module: %w", fundingModule, err)
-	}
 	// Determine vesting epochs - use parameter if not specified
 	var epochs uint64
 	if vestingEpochs != nil {
