@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/base64"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
@@ -60,7 +61,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 				pubKey := account.GetPubKey()
 				pubKeyStr := ""
 				if pubKey != nil {
-					pubKeyStr = pubKey.String()
+					pubKeyStr = base64.StdEncoding.EncodeToString(pubKey.Bytes())
 				}
 
 				grantees = append(grantees, &types.Grantee{
