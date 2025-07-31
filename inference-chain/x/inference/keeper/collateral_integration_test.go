@@ -54,7 +54,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
-	bankKeeper := keepertest.NewMockBankEscrowKeeper(ctrl)
+	bookkepingBankKeeper := keepertest.NewMockBookkeepingBankKeeper(ctrl)
+	bankViewKeeper := keepertest.NewMockBankKeeper(ctrl)
 	accountKeeper := keepertest.NewMockAccountKeeper(ctrl)
 	validatorSet := keepertest.NewMockValidatorSet(ctrl)
 	groupMock := keepertest.NewMockGroupMessageKeeper(ctrl)
@@ -67,8 +68,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		runtime.NewKVStoreService(collateralStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		nil,        // bank keeper
-		bankKeeper, // bank escrow keeper
+		nil,                  // bank keeper
+		bookkepingBankKeeper, // bookkeeping bank keeper
 	)
 
 	inferenceKeeper := keeper.NewKeeper(
@@ -76,8 +77,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		runtime.NewKVStoreService(inferenceStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		bankKeeper,
-		nil, // authz
+		bookkepingBankKeeper,
+		bankViewKeeper, // authz
 		groupMock,
 		validatorSet,
 		stakingKeeper,
@@ -95,10 +96,10 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 	collateralMsgSrv := collateralKeeper.NewMsgServerImpl(cKeeper)
 
 	// Mock necessary bank calls
-	bankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-	bankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-	bankKeeper.EXPECT().BurnCoins(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-
+	bookkepingBankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkepingBankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkepingBankKeeper.EXPECT().BurnCoins(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkepingBankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	return ctx, inferenceKeeper, cKeeper, inferenceMsgSrv, collateralMsgSrv
 }
 
@@ -201,6 +202,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 		func(ctx sdk.Context, pa sdk.AccAddress) (sdk.Coin, bool) {
 			return sdk.NewCoin(types.BaseCoin, fakeCollateralAmount), true
 		}).AnyTimes()
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	// Mock Slash to modify our fake collateral
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
@@ -225,7 +227,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	k.SetParticipant(ctx, types.Participant{Index: authority, Address: authority, CurrentEpochStats: &types.CurrentEpochStats{}})
 
 	// Mock bank keeper for the refund logic, even though cost is 0
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	// Setup the inference object that will be invalidated
 	inferenceId := "test-inference-to-trigger-invalid"

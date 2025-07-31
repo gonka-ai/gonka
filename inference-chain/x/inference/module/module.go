@@ -544,6 +544,7 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 	}
 
 	reputation := calculations.CalculateReputation(&reputationContext)
+	am.LogInfo("ReputationCalculated", types.EpochGroup, "participantIndex", p.Index, "reputation", reputation)
 
 	return reputation, nil
 }
@@ -611,7 +612,7 @@ type ModuleInputs struct {
 
 	AccountKeeper       types.AccountKeeper
 	BankKeeper          types.BankKeeper
-	BankEscrowKeeper    types.BankEscrowKeeper
+	BankEscrowKeeper    types.BookkeepingBankKeeper
 	ValidatorSet        types.ValidatorSet
 	StakingKeeper       types.StakingKeeper
 	GroupServer         types.GroupMessageKeeper

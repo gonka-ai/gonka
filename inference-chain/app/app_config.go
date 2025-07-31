@@ -1,7 +1,10 @@
 package app
 
 import (
+	bookkeepermodulev1 "github.com/productscience/inference/api/inference/bookkeeper/module"
 	"time"
+
+	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 
 	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
 	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
@@ -56,8 +59,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
-	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
+	_ "github.com/productscience/inference/x/bookkeeper/module" // import for side-effects
+	bookkeepermoduletypes "github.com/productscience/inference/x/bookkeeper/types"
 	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
 	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
@@ -101,8 +105,9 @@ var (
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
 		// chain modules
-		collateralmoduletypes.ModuleName,
+		bookkeepermoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
@@ -129,6 +134,7 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
@@ -151,6 +157,7 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
@@ -176,6 +183,7 @@ var (
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: ibcfeetypes.ModuleName},
 		{Account: icatypes.ModuleName},
+		{Account: bookkeepermoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter}},
 		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
@@ -321,12 +329,21 @@ var (
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
 			},
 			{
-				Name:   collateralmoduletypes.ModuleName,
-				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
+				Name: bookkeepermoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&bookkeepermodulev1.Module{
+					// TODO: This isn't configurable per node, it should be
+					DoubleEntry: true,
+					SimpleEntry: true,
+					LogLevel:    "info",
+				}),
 			},
 			{
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
+			},
+			{
+				Name:   collateralmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
 			},
 			{
 				Name:   streamvestingmoduletypes.ModuleName,

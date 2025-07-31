@@ -1,0 +1,13 @@
+syntax = "proto3";
+package inference.bookkeeper;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/bookkeeper/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/bookkeeper/Params";
+  option (gogoproto.equal) = true;
+}

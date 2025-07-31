@@ -16,8 +16,8 @@ type (
 		cdc          codec.BinaryCodec
 		storeService store.KVStoreService
 		logger       log.Logger
-		BankKeeper   types.BankEscrowKeeper
-		bankView     types.BankKeeper
+		BankKeeper   types.BookkeepingBankKeeper
+		BankView     types.BankKeeper
 		validatorSet types.ValidatorSet
 		group        types.GroupMessageKeeper
 		Staking      types.StakingKeeper
@@ -37,7 +37,7 @@ func NewKeeper(
 	storeService store.KVStoreService,
 	logger log.Logger,
 	authority string,
-	bank types.BankEscrowKeeper,
+	bank types.BookkeepingBankKeeper,
 	bankView types.BankKeeper,
 	group types.GroupMessageKeeper,
 	validatorSet types.ValidatorSet,
@@ -57,7 +57,7 @@ func NewKeeper(
 		authority:           authority,
 		logger:              logger,
 		BankKeeper:          bank,
-		bankView:            bankView,
+		BankView:            bankView,
 		group:               group,
 		validatorSet:        validatorSet,
 		Staking:             staking,
@@ -93,14 +93,6 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
-func (k Keeper) LogTransaction(to string, from string, amount int64, memo string) {
-	k.Logger().Info("TransactionAudit", "to", to, "from", from, "amount", amount, "memo", memo)
-}
-
-func (k Keeper) LogBalance(address string, change int64, result int64, memo string) {
-	k.Logger().Info("BalanceAudit", "address", address, "change", change, "result", result, "memo", memo)
-}
-
 func (k Keeper) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	k.Logger().Info(msg, append(keyvals, "subsystem", subSystem.String())...)
 }
@@ -120,4 +112,22 @@ func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyVals ...inter
 // Codec returns the binary codec used by the keeper.
 func (k Keeper) Codec() codec.BinaryCodec {
 	return k.cdc
+}
+
+type EntryType int
+
+const (
+	Debit EntryType = iota
+	Credit
+)
+
+func (e EntryType) String() string {
+	switch e {
+	case Debit:
+		return "debit"
+	case Credit:
+		return "credit"
+	default:
+		return "unknown"
+	}
 }

@@ -52,7 +52,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
-	bankKeeper := keepertest.NewMockBankEscrowKeeper(ctrl)
+	bookkeepingBankKeeper := keepertest.NewMockBookkeepingBankKeeper(ctrl)
+	bankViewKeeper := keepertest.NewMockBankKeeper(ctrl)
 	accountKeeper := keepertest.NewMockAccountKeeper(ctrl)
 	validatorSet := keepertest.NewMockValidatorSet(ctrl)
 	groupMock := keepertest.NewMockGroupMessageKeeper(ctrl)
@@ -65,8 +66,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		runtime.NewKVStoreService(streamvestingStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		nil,        // bank keeper
-		bankKeeper, // bank escrow keeper
+		nil,                   // bank keeper
+		bookkeepingBankKeeper, // bank escrow keeper
 	)
 
 	inferenceKeeper := keeper.NewKeeper(
@@ -74,8 +75,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		runtime.NewKVStoreService(inferenceStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
-		bankKeeper,
-		nil, // authz
+		bookkeepingBankKeeper,
+		bankViewKeeper, // authz
 		groupMock,
 		validatorSet,
 		stakingKeeper,
@@ -93,9 +94,10 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	streamvestingMsgSrv := streamvestingkeeper.NewMsgServerImpl(svKeeper)
 
 	// Mock necessary bank calls
-	bankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-	bankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
-	bankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkeepingBankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkeepingBankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkeepingBankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	bookkeepingBankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return ctx, inferenceKeeper, svKeeper, inferenceMsgSrv, streamvestingMsgSrv
 }
@@ -118,11 +120,8 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 
 	// Mock expectations for vesting flow (escrow payment goes through inference module)
 	expectedWorkCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(workAmount)))
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToModule(ctx, types.ModuleName, streamvestingtypes.ModuleName, expectedWorkCoins).
-		Return(nil)
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, expectedWorkCoins, &workVestingPeriod).
+		AddVestedRewards(ctx, participantAddrStr, "inference", expectedWorkCoins, &workVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from escrow
@@ -134,11 +133,8 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 	rewardVestingPeriod := uint64(10)
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToModule(ctx, types.TopRewardPoolAccName, streamvestingtypes.ModuleName, expectedRewardCoins).
-		Return(nil)
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, expectedRewardCoins, &rewardVestingPeriod).
+		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from top reward pool module
@@ -168,7 +164,7 @@ func TestVestingIntegration_DirectPayment(t *testing.T) {
 	// Mock expectation for direct payment (no vesting)
 
 	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(ctx, types.TopRewardPoolAccName, participantAddr, expectedCoins).
+		SendCoinsFromModuleToAccount(ctx, types.TopRewardPoolAccName, participantAddr, expectedCoins, gomock.Any()).
 		Return(nil)
 
 	// No vesting keeper calls should be made
@@ -187,7 +183,7 @@ func TestVestingIntegration_EpochAdvancement(t *testing.T) {
 	vestingAmount := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	vestingEpochs := uint64(3)
 
-	err := svKeeper.AddVestedRewards(ctx, participantAddrStr, vestingAmount, &vestingEpochs)
+	err := svKeeper.AddVestedRewards(ctx, participantAddrStr, "inference", vestingAmount, &vestingEpochs, "")
 	require.NoError(t, err)
 
 	// Verify initial vesting schedule was created
@@ -254,7 +250,7 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 
 	expectedWorkCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(workAmount)))
 	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, expectedWorkCoins).
+		SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, expectedWorkCoins, gomock.Any()).
 		Return(nil)
 
 	err = k.PayParticipantFromEscrow(ctx, participantAddrStr, workAmount, "work-payment", &workVestingPeriod)
@@ -265,11 +261,8 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 	rewardVestingPeriod := uint64(7)
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToModule(ctx, types.TopRewardPoolAccName, streamvestingtypes.ModuleName, expectedRewardCoins).
-		Return(nil)
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, expectedRewardCoins, &rewardVestingPeriod).
+		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	err = k.PayParticipantFromModule(ctx, participantAddrStr, rewardAmount, types.TopRewardPoolAccName, "reward-payment", &rewardVestingPeriod)
@@ -290,12 +283,8 @@ func TestVestingIntegration_TopMinerRewards(t *testing.T) {
 
 	expectedCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 
-	// Mock expectations for top miner vesting
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToModule(ctx, types.TopRewardPoolAccName, streamvestingtypes.ModuleName, expectedCoins).
-		Return(nil)
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, expectedCoins, &topMinerVestingPeriod).
+		AddVestedRewards(ctx, participantAddrStr, "inference", expectedCoins, &topMinerVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute top miner reward payment
@@ -332,24 +321,12 @@ func TestVestingIntegration_ErrorHandling(t *testing.T) {
 
 	expectedCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(amount)))
 
-	// Test case 1: Bank transfer failure should be handled
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToModule(ctx, types.TopRewardPoolAccName, streamvestingtypes.ModuleName, expectedCoins).
-		Return(fmt.Errorf("insufficient funds"))
-
-	err := k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "error-test", &vestingPeriod)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "insufficient funds")
-
 	// Test case 2: Vesting keeper failure should be handled
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToModule(ctx, types.TopRewardPoolAccName, streamvestingtypes.ModuleName, expectedCoins).
-		Return(nil)
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, expectedCoins, &vestingPeriod).
+		AddVestedRewards(ctx, participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
 		Return(fmt.Errorf("invalid request"))
 
-	err = k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "vesting-error-test", &vestingPeriod)
+	err := k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "vesting-error-test", &vestingPeriod)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid request")
 }

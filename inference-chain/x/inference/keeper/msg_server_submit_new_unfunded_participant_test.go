@@ -33,8 +33,8 @@ func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().SetAccount(gomock.Any(), gomock.Any()).AnyTimes()
 
 	// Setup expectations for bank keeper (for funding)
-	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, gomock.Any()).Return(nil).AnyTimes()
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	// Call the function under test
 	_, err := ms.SubmitNewUnfundedParticipant(ctx, &types.MsgSubmitNewUnfundedParticipant{

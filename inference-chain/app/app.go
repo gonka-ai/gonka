@@ -86,6 +86,7 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	streamvestingmodulekeeper "github.com/productscience/inference/x/streamvesting/keeper"
 
+	bookkeepermodulekeeper "github.com/productscience/inference/x/bookkeeper/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	// WASM
@@ -160,6 +161,7 @@ type App struct {
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 	//ContractKeeper   *wasmkeeper.PermissionedKeeper
 
+	BookkeeperKeeper    bookkeepermodulekeeper.Keeper
 	InferenceKeeper     inferencemodulekeeper.Keeper
 	CollateralKeeper    collateralmodulekeeper.Keeper
 	StreamvestingKeeper streamvestingmodulekeeper.Keeper
@@ -288,6 +290,7 @@ func New(
 		&app.interfaceRegistry,
 		&app.AccountKeeper,
 		&app.BankKeeper,
+		&app.BookkeeperKeeper,
 		&app.StakingKeeper,
 		&app.DistrKeeper,
 		&app.ConsensusParamsKeeper,

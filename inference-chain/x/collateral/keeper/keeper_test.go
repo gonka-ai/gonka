@@ -17,7 +17,7 @@ type KeeperTestSuite struct {
 
 	ctx        sdk.Context
 	k          keeper.Keeper
-	bankKeeper *testkeeper.MockBankEscrowKeeper
+	bankKeeper *testkeeper.MockBookkeepingBankKeeper
 	msgServer  types.MsgServer
 }
 

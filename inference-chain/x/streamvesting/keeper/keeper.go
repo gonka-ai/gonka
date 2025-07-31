@@ -27,8 +27,8 @@ type (
 		// should be the x/gov module account.
 		authority string
 
-		bankKeeper       types.BankKeeper
-		bankEscrowKeeper types.BankEscrowKeeper
+		bankKeeper            types.BankKeeper
+		bookkeepingBankKeeper types.BookkeepingBankKeeper
 	}
 )
 
@@ -39,7 +39,7 @@ func NewKeeper(
 	authority string,
 
 	bankKeeper types.BankKeeper,
-	bankEscrowKeeper types.BankEscrowKeeper,
+	bookkeepingBankKeeper types.BookkeepingBankKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -51,8 +51,8 @@ func NewKeeper(
 		authority:    authority,
 		logger:       logger,
 
-		bankKeeper:       bankKeeper,
-		bankEscrowKeeper: bankEscrowKeeper,
+		bankKeeper:            bankKeeper,
+		bookkeepingBankKeeper: bookkeepingBankKeeper,
 	}
 }
 
@@ -66,9 +66,22 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
+const (
+	HoldingSubAccount = "vesting"
+)
+
 // AddVestedRewards adds vested rewards to a participant's schedule with aggregation logic
-func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string, amount sdk.Coins, vestingEpochs *uint64) error {
+func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string, fundingModule string, amount sdk.Coins, vestingEpochs *uint64, memo string) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(ctx, fundingModule, types.ModuleName, amount, memo)
+	if err != nil {
+		return fmt.Errorf("failed to transfer coins from module %s to streamvesting module: %w", fundingModule, err)
+	}
+	for _, coin := range amount {
+		k.bookkeepingBankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, participantAddress, HoldingSubAccount,
+			coin, "vesting started for "+participantAddress)
+	}
 
 	// Determine vesting epochs - use parameter if not specified
 	var epochs uint64
@@ -88,7 +101,7 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 	}
 
 	// Validate participant address
-	_, err := sdk.AccAddressFromBech32(participantAddress)
+	_, err = sdk.AccAddressFromBech32(participantAddress)
 	if err != nil {
 		return fmt.Errorf("invalid participant address: %w", err)
 	}
@@ -206,7 +219,7 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 			continue
 		}
 
-		err = k.bankEscrowKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, coinsToUnlock)
+		err = k.bookkeepingBankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddr, coinsToUnlock, "vesting payment")
 		if err != nil {
 			k.Logger().Error("Failed to unlock vested tokens", "participant", schedule.ParticipantAddress, "amount", coinsToUnlock, "error", err)
 			continue
@@ -220,6 +233,10 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 			k.RemoveVestingSchedule(ctx, schedule.ParticipantAddress)
 		} else {
 			k.SetVestingSchedule(ctx, schedule)
+		}
+		for _, coin := range coinsToUnlock {
+			k.bookkeepingBankKeeper.LogSubAccountTransaction(
+				ctx, schedule.ParticipantAddress, types.ModuleName, HoldingSubAccount, coin, "coins vested for "+schedule.ParticipantAddress)
 		}
 
 		// Add to totals
