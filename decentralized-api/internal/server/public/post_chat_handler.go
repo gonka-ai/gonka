@@ -588,15 +588,15 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 		ExecutorAddress: executorAddress,
 	}
 
-	address, err := sdk.AccAddressFromBech32(s.recorder.GetAccountAddress())
+	signerAddressStr := s.recorder.GetSignerAddress()
+	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
 	if err != nil {
-		logging.Error("Failed to parse address", types.Inferences, "address", s.recorder.GetAccountAddress(), "error", err)
+		logging.Error("Failed to parse address", types.Inferences, "address", signerAddressStr, "error", err)
 		return "", err
 	}
-
 	accountSigner := &cmd.AccountSigner{
-		Addr:    address,
-		Context: s.recorder.GetCosmosClient().Context(),
+		Addr:    signerAddress,
+		Keyring: s.recorder.GetKeyring(),
 	}
 
 	signature, err := calculations.Sign(accountSigner, components, agentType)

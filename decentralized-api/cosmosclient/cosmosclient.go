@@ -70,6 +70,29 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
+func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, nodeConfig apiconfig.ChainNodeConfig) error {
+	if nodeConfig.KeyringBackend == keyring.BackendFile {
+		interfaceRegistry := codectypes.NewInterfaceRegistry()
+		cryptocodec.RegisterInterfaces(interfaceRegistry)
+
+		cdc := codec.NewProtoCodec(interfaceRegistry)
+		kr, err := keyring.New(
+			"inferenced",
+			string(nodeConfig.KeyringBackend),
+			keyringDir,
+			strings.NewReader(nodeConfig.KeyringPassword),
+			cdc,
+		)
+		if err != nil {
+			log.Printf("Error creating keyring: %s", err)
+			return err
+		}
+		client.AccountRegistry.Keyring = kr
+		return nil
+	}
+	return nil
+}
+
 func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig apiconfig.ChainNodeConfig) (*InferenceCosmosClient, error) {
 	keyringDir, err := expandPath(nodeConfig.KeyringDir)
 	if err != nil {
@@ -93,23 +116,11 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		log.Printf("Error creating cosmos client: %s", err)
 		return nil, err
 	}
-
-	interfaceRegistry := codectypes.NewInterfaceRegistry()
-	cryptocodec.RegisterInterfaces(interfaceRegistry)
-
-	cdc := codec.NewProtoCodec(interfaceRegistry)
-	kr, err := keyring.New(
-		"inferenced",
-		string(nodeConfig.KeyringBackend),
-		keyringDir,
-		strings.NewReader(nodeConfig.KeyringPassword),
-		cdc,
-	)
+	err = updateKeyringIfNeeded(&client, keyringDir, nodeConfig)
 	if err != nil {
-		log.Printf("Error creating keyring: %s", err)
+		log.Printf("Error updating keyring: %s", err)
 		return nil, err
 	}
-	client.AccountRegistry.Keyring = kr
 
 	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, &client)
 	if err != nil {
@@ -155,11 +166,17 @@ type CosmosMessageClient interface {
 	GetContext() *context.Context
 	GetAccountAddress() string
 	GetAccountPubKey() cryptotypes.PubKey
+	GetSignerAddress() string
 	GetCosmosClient() *cosmosclient.Client
+	GetKeyring() *keyring.Keyring
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
 	return &icc.Context
+}
+
+func (icc *InferenceCosmosClient) GetKeyring() *keyring.Keyring {
+	return &icc.Client.AccountRegistry.Keyring
 }
 
 func (icc *InferenceCosmosClient) GetAccountAddress() string {
@@ -175,13 +192,23 @@ func (icc *InferenceCosmosClient) GetAccountPubKey() cryptotypes.PubKey {
 	return icc.ApiAccount.AccountKey
 }
 
+func (icc *InferenceCosmosClient) GetSignerAddress() string {
+	address, err := icc.ApiAccount.SignerAddressBech32()
+	if err != nil {
+		logging.Error("Failed to get signer address", types.Messages, "error", err)
+		return ""
+	}
+	return address
+}
+
 func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
 	return icc.Client
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
-	accAddr, _ := icc.ApiAccount.SignerAddress()
-	bytes, _, err := icc.Client.Context().Keyring.SignByAddress(accAddr, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	accName := icc.ApiAccount.SignerAccount.Name
+	kr := *icc.GetKeyring()
+	bytes, _, err := kr.Sign(accName, seed, signing.SignMode_SIGN_MODE_DIRECT)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +418,7 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 		WithGasPrices("").
 		WithGas(0).
 		WithUnordered(true).
-		WithKeybase(c.Client.AccountRegistry.Keyring)
+		WithKeybase(*c.GetKeyring())
 	c.TxFactory = &factory
 	return &factory, nil
 }
