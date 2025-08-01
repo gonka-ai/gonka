@@ -49,7 +49,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
-          
+
       # This step uses Gradle tasks to scan for test classes that will actually run tests after filtering
       # The tasks properly handle both class-level and method-level tags:
       # 1. Classes with @Tag("exclude") or @Tag("unstable") at the class level are completely excluded
@@ -233,6 +233,7 @@ jobs:
       - name: Archive Test Logs
         if: always()
         uses: actions/upload-artifact@v4
+        id: archive-logs
         with:
           name: test-logs-${{ matrix.test_group }}
           path: ./testermint/logs
@@ -246,6 +247,7 @@ jobs:
         uses: dorny/test-reporter@v1
         if: always()
         continue-on-error: true
+        id: test-reporter
         with:
           name: ${{ inputs.test_name }} (${{ matrix.test_group }})
           path: ./testermint/build/test-results/**/*.xml
@@ -267,11 +269,11 @@ jobs:
                 TESTS=$(grep -o 'tests="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
                 FAILURES=$(grep -o 'failures="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
                 SKIPS=$(grep -o 'skipped="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
-                
+          
                 PASSED=$((PASSED + TESTS - FAILURES - SKIPS))
                 FAILED=$((FAILED + FAILURES))
                 SKIPPED=$((SKIPPED + SKIPS))
-                
+          
                 # Extract detailed failed test names
                 if [ "$FAILURES" -gt 0 ]; then
                   # This is more robust against spaces in test names.
@@ -284,7 +286,7 @@ jobs:
                   if [ -n "$FAILED_NAMES" ]; then
                       FAILED_DETAILS_LINES=$(paste -d ' > ' <(echo "$FAILED_CLASSNAMES") <(echo "$FAILED_NAMES"))
                       FAILED_FROM_XML=$(echo "$FAILED_DETAILS_LINES" | tr '\n' ',')
-                      
+          
                       if [ ! -z "$FAILED_FROM_XML" ]; then
                         if [ -z "$FAILED_TESTS" ];
                           then FAILED_TESTS="$FAILED_FROM_XML"
@@ -300,9 +302,15 @@ jobs:
           # Clean up failed tests list (remove trailing comma)
           FAILED_TESTS=$(echo "$FAILED_TESTS" | sed 's/,$//')
           
+          # Get URLs for test report and logs
+          TEST_REPORT_URL="${{ steps.test-reporter.outputs.url_html || 'N/A' }}"
+          LOGS_ARTIFACT_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.archive-logs.outputs.artifact-id || 'N/A' }}"
+
           # Save to file with unique name
           {
             echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped"
+            echo "TEST_REPORT_URL: $TEST_REPORT_URL"
+            echo "LOGS_URL: $LOGS_ARTIFACT_URL"
             if [ ! -z "$FAILED_TESTS" ]; then
               echo "FAILED_TESTS: $FAILED_TESTS"
             fi
@@ -341,8 +349,8 @@ jobs:
         run: |
           echo "# 📊 Test Results Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Test Group | Passed | Failed | Skipped |" >> $GITHUB_STEP_SUMMARY
-          echo "|------------|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Group | Passed | Failed | Skipped | Reports |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|--------|---------|---------|" >> $GITHUB_STEP_SUMMARY
           
           TOTAL_PASSED=0
           TOTAL_FAILED=0
@@ -356,21 +364,44 @@ jobs:
             if [ -f "$file" ]; then
               content=$(cat "$file")
               echo "Processing: $content"
-              
+          
               # Extract test group name and numbers from first line
               first_line=$(echo "$content" | head -n1)
               TEST_GROUP=$(echo "$first_line" | cut -d':' -f1)
               PASSED=$(echo "$first_line" | grep -o '[0-9]* passed' | grep -o '[0-9]*')
               FAILED=$(echo "$first_line" | grep -o '[0-9]* failed' | grep -o '[0-9]*')
               SKIPPED=$(echo "$first_line" | grep -o '[0-9]* skipped' | grep -o '[0-9]*')
-              
+          
+              # Extract URLs
+              TEST_REPORT_URL=""
+              LOGS_URL=""
+              if grep -q "TEST_REPORT_URL:" "$file"; then
+                TEST_REPORT_URL=$(grep "TEST_REPORT_URL:" "$file" | cut -d':' -f2- | sed 's/^ *//')
+              fi
+              if grep -q "LOGS_URL:" "$file"; then
+                LOGS_URL=$(grep "LOGS_URL:" "$file" | cut -d':' -f2- | sed 's/^ *//')
+              fi
+
+              # Create links
+              LINKS=""
+              if [ ! -z "$TEST_REPORT_URL" ] && [ "$TEST_REPORT_URL" != "N/A" ]; then
+                LINKS="[Report]($TEST_REPORT_URL)"
+              fi
+              if [ ! -z "$LOGS_URL" ] && [ "$LOGS_URL" != "N/A" ]; then
+                if [ ! -z "$LINKS" ]; then
+                  LINKS="$LINKS / [Logs]($LOGS_URL)"
+                else
+                  LINKS="[Logs]($LOGS_URL)"
+                fi
+              fi
+
               # Add to table
-              echo "| $TEST_GROUP | $PASSED | $FAILED | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
-              
+              echo "| $TEST_GROUP | $PASSED | $FAILED | $SKIPPED | $LINKS |" >> $GITHUB_STEP_SUMMARY
+          
               TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
               TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
               TOTAL_SKIPPED=$((TOTAL_SKIPPED + SKIPPED))
-              
+          
               # Extract failed test names if present
               if grep -q "FAILED_TESTS:" "$file"; then
                 FAILED_TESTS=$(grep "FAILED_TESTS:" "$file" | cut -d':' -f2- | sed 's/^ *//')
@@ -382,14 +413,14 @@ jobs:
                   fi
                 fi
               fi
-              
+          
               echo "##[debug]$TEST_GROUP: P=$PASSED, F=$FAILED, S=$SKIPPED"
             fi
           done
           
           # Add totals row
-          echo "|------------|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **TOTAL** | **$TOTAL_PASSED** | **$TOTAL_FAILED** | **$TOTAL_SKIPPED** |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|--------|---------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **TOTAL** | **$TOTAL_PASSED** | **$TOTAL_FAILED** | **$TOTAL_SKIPPED** | |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Add status indicator
@@ -399,7 +430,7 @@ jobs:
           else
             echo "## ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
             echo "**$TOTAL_FAILED test(s) failed out of $((TOTAL_PASSED + TOTAL_FAILED + TOTAL_SKIPPED)) total**" >> $GITHUB_STEP_SUMMARY
-            
+          
             # Add failed test details
             if [ ! -z "$ALL_FAILED_TESTS" ]; then
               echo "" >> $GITHUB_STEP_SUMMARY
