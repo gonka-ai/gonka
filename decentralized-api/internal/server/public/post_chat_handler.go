@@ -650,6 +650,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 			RequestTimestamp:     request.Timestamp,
 			RequestedBy:          request.RequesterAddress,
 			OriginalPrompt:       string(request.Body),
+			Model:                model,
 		}
 
 		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
