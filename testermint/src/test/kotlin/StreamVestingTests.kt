@@ -1,22 +1,10 @@
-import com.productscience.EpochStage
+import com.productscience.*
 import com.productscience.data.spec
 import com.productscience.data.AppState
 import com.productscience.data.InferenceState
 import com.productscience.data.InferenceParams
 import com.productscience.data.BitcoinRewardParams
 import com.productscience.data.TokenomicsParams
-import com.productscience.initCluster
-import com.productscience.logSection
-import com.productscience.makeInferenceRequest
-import com.productscience.inferenceRequest
-import com.productscience.inferenceConfig
-import com.productscience.getInferenceResult
-import com.productscience.getRewardCalculationEpochIndex
-import com.productscience.calculateVestingScheduleChanges
-import com.productscience.isBitcoinRewardsEnabled
-import com.productscience.LocalCluster
-import com.productscience.LocalInferencePair
-import com.productscience.defaultInferenceResponseObject
 import java.time.Duration
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -49,23 +37,18 @@ class StreamVestingTests : TestermintTest() {
         
         logSection("=== VESTING TEST WITH AUTOMATIC REWARD SYSTEM DETECTION ===")
         if (isBitcoinEnabled) {
-            logSection("✅ Bitcoin Rewards System DETECTED - Running Bitcoin vesting test")
-            logSection("  • Fixed epoch rewards based on PoC weight")
-            logSection("  • No immediate RewardCoins bonuses per inference") 
-            logSection("  • Epoch rewards distributed at CLAIM_REWARDS stage")
+            logHighlight("✅ Bitcoin Rewards System DETECTED - Running Bitcoin vesting test")
+            logHighlight("  • Fixed epoch rewards based on PoC weight")
+            logHighlight("  • No immediate RewardCoins bonuses per inference")
+            logHighlight("  • Epoch rewards distributed at CLAIM_REWARDS stage")
             testBitcoinRewardSystemVesting(cluster, genesis)
         } else {
-            logSection("✅ Legacy Rewards System DETECTED - Running legacy vesting test")
-            logSection("  • Variable subsidies based on total network work")
-            logSection("  • Immediate RewardCoins bonuses per inference")
-            logSection("  • All rewards subject to vesting periods")
+            logHighlight("✅ Legacy Rewards System DETECTED - Running legacy vesting test")
+            logHighlight("  • Variable subsidies based on total network work")
+            logHighlight("  • Immediate RewardCoins bonuses per inference")
+            logHighlight("  • All rewards subject to vesting periods")
             testLegacyRewardSystemVesting(cluster, genesis)
         }
-        
-        // Mark for reboot to reset parameters back to defaults for subsequent tests
-        logSection("🧹 Cleaning up: Marking cluster for reboot to reset parameters")
-        genesis.markNeedsReboot()
-        logSection("✅ Next test will get fresh cluster with default parameters")
     }
 
     private fun testLegacyRewardSystemVesting(cluster: LocalCluster, genesis: LocalInferencePair) {
@@ -73,21 +56,21 @@ class StreamVestingTests : TestermintTest() {
         val participantAddress = participant.node.getAddress()
 
         logSection("=== LEGACY REWARD SYSTEM VESTING TEST ===")
-        logSection("Testing comprehensive vesting with legacy variable reward system")
-        logSection("  • Variable subsidies based on total network work")
-        logSection("  • Immediate RewardCoins bonuses per inference")
-        logSection("  • All rewards subject to vesting periods")
+        logHighlight("Testing comprehensive vesting with legacy variable reward system")
+        logHighlight("  • Variable subsidies based on total network work")
+        logHighlight("  • Immediate RewardCoins bonuses per inference")
+        logHighlight("  • All rewards subject to vesting periods")
         
         logSection("Waiting for system to be ready for inferences")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
 
         logSection("=== SCENARIO 1: Test Reward Vesting ===")
-        logSection("Querying initial participant balance")
+        logHighlight("Querying initial participant balance")
         val initialBalance = participant.getBalance(participantAddress)
-        logSection("Initial balance: $initialBalance nicoin")
+        logHighlight("Initial balance: $initialBalance nicoin")
 
         // Query initial vesting schedule (should be empty)
-        logSection("Querying initial vesting schedule")
+        logHighlight("Querying initial vesting schedule")
         val initialVestingSchedule = participant.node.queryVestingSchedule(participantAddress)
         assertThat(initialVestingSchedule.vestingSchedule?.epochAmounts).isNullOrEmpty()
 
@@ -103,15 +86,15 @@ class StreamVestingTests : TestermintTest() {
         logSection("Completed 20 inference requests")
         
         val participantInferences = allResults.filter { it.inference.assignedTo == participantAddress }
-        logSection("Found ${participantInferences.size} inferences assigned to participant ($participantAddress)")
+        logHighlight("Found ${participantInferences.size} inferences assigned to participant ($participantAddress)")
         
         allResults.forEachIndexed { index, result ->
-            logSection("Inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
+            logHighlight("Inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
         }
         
         require(participantInferences.isNotEmpty()) { "No inference was assigned to participant $participantAddress" }
         val inferenceResult = participantInferences.first()
-        logSection("Using inference: ${inferenceResult.inference.inferenceId}")
+        logHighlight("Using inference: ${inferenceResult.inference.inferenceId}")
 
         logSection("Waiting for inference to be processed and rewards calculated")
         participant.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -119,7 +102,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Verifying reward vesting: balance should NOT increase immediately")
         val balanceAfterReward = participant.getBalance(participantAddress)
-        logSection("Balance after reward: $balanceAfterReward nicoin")
+        logHighlight("Balance after reward: $balanceAfterReward nicoin")
         
         // Balance should not increase immediately due to vesting
         assertThat(balanceAfterReward).isLessThanOrEqualTo(initialBalance)
@@ -132,20 +115,20 @@ class StreamVestingTests : TestermintTest() {
         val totalVestingAmount = vestingScheduleAfterReward.vestingSchedule?.epochAmounts?.sumOf { 
             it.coins.sumOf { coin -> coin.amount } 
         } ?: 0
-        logSection("Total amount vesting: $totalVestingAmount nicoin over 2 epochs")
+        logHighlight("Total amount vesting: $totalVestingAmount nicoin over 2 epochs")
         assertThat(totalVestingAmount).isGreaterThan(0)
 
         logSection("=== SCENARIO 2: Test Epoch Unlocking ===")
-        logSection("Waiting for first epoch to unlock vested tokens")
+        logHighlight("Waiting for first epoch to unlock vested tokens")
         participant.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         participant.node.waitForNextBlock()
 
         val balanceAfterFirstEpoch = participant.getBalance(participantAddress)
-        logSection("Balance after first epoch unlock: $balanceAfterFirstEpoch nicoin")
+        logHighlight("Balance after first epoch unlock: $balanceAfterFirstEpoch nicoin")
         // Balance should increase after first epoch unlock
         assertThat(balanceAfterFirstEpoch).isGreaterThan(balanceAfterReward)
 
-        logSection("Verifying vesting schedule updated (should have 1 epoch left)")
+        logHighlight("Verifying vesting schedule updated (should have 1 epoch left)")
         val vestingAfterFirstEpoch = participant.node.queryVestingSchedule(participantAddress)
         if (!vestingAfterFirstEpoch.vestingSchedule?.epochAmounts.isNullOrEmpty()) {
             assertThat(vestingAfterFirstEpoch.vestingSchedule?.epochAmounts).hasSize(1) // 1 epoch remaining
@@ -156,11 +139,11 @@ class StreamVestingTests : TestermintTest() {
         participant.node.waitForNextBlock()
 
         val balanceAfterSecondEpoch = participant.getBalance(participantAddress)
-        logSection("Balance after second epoch unlock: $balanceAfterSecondEpoch nicoin")
+        logHighlight("Balance after second epoch unlock: $balanceAfterSecondEpoch nicoin")
         // Balance should increase further after second epoch unlock
         assertThat(balanceAfterSecondEpoch).isGreaterThan(balanceAfterFirstEpoch)
 
-        logSection("Verifying vesting schedule is now empty (all tokens unlocked)")
+        logHighlight("Verifying vesting schedule is now empty (all tokens unlocked)")
         val finalVestingSchedule = participant.node.queryVestingSchedule(participantAddress)
         assertThat(finalVestingSchedule.vestingSchedule?.epochAmounts).isNullOrEmpty()
 
@@ -168,7 +151,7 @@ class StreamVestingTests : TestermintTest() {
         logSection("Making 20 parallel second inference requests for aggregation test")
         val secondFutures = (1..20).map { i ->
             java.util.concurrent.CompletableFuture.supplyAsync {
-                logSection("Starting second inference request $i")
+                logHighlight("Starting second inference request $i")
                 getInferenceResult(participant)
             }
         }
@@ -177,22 +160,22 @@ class StreamVestingTests : TestermintTest() {
         logSection("Completed 20 second inference requests")
         
         val secondParticipantInferences = secondAllResults.filter { it.inference.assignedTo == participantAddress }
-        logSection("Found ${secondParticipantInferences.size} second inferences assigned to participant ($participantAddress)")
+        logHighlight("Found ${secondParticipantInferences.size} second inferences assigned to participant ($participantAddress)")
         
         secondAllResults.forEachIndexed { index, result ->
-            logSection("Second inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
+            logHighlight("Second inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
         }
         
         require(secondParticipantInferences.isNotEmpty()) { "No second inference was assigned to participant $participantAddress" }
         val secondInferenceResult = secondParticipantInferences.first()
-        logSection("Using second inference: ${secondInferenceResult.inference.inferenceId}")
+        logHighlight("Using second inference: ${secondInferenceResult.inference.inferenceId}")
 
         logSection("Waiting for second reward to be processed")
         participant.waitForStage(EpochStage.CLAIM_REWARDS) 
         participant.node.waitForNextBlock()
 
         val balanceBeforeAggregation = participant.getBalance(participantAddress)
-        logSection("Balance before aggregation test: $balanceBeforeAggregation nicoin")
+        logHighlight("Balance before aggregation test: $balanceBeforeAggregation nicoin")
 
         logSection("Making 20 parallel third inference requests to test aggregation")
         val thirdFutures = (1..20).map { i ->
@@ -203,18 +186,18 @@ class StreamVestingTests : TestermintTest() {
         }
         
         val thirdAllResults = thirdFutures.map { it.get() }
-        logSection("Completed 20 third inference requests")
+        logHighlight("Completed 20 third inference requests")
         
         val thirdParticipantInferences = thirdAllResults.filter { it.inference.assignedTo == participantAddress }
-        logSection("Found ${thirdParticipantInferences.size} third inferences assigned to participant ($participantAddress)")
+        logHighlight("Found ${thirdParticipantInferences.size} third inferences assigned to participant ($participantAddress)")
         
         thirdAllResults.forEachIndexed { index, result ->
-            logSection("Third inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
+            logHighlight("Third inference ${index + 1}: assigned_to: ${result.inference.assignedTo}, executed_by: ${result.inference.executedBy}")
         }
         
         require(thirdParticipantInferences.isNotEmpty()) { "No third inference was assigned to participant $participantAddress" }
         val thirdInferenceResult = thirdParticipantInferences.first()
-        logSection("Using third inference: ${thirdInferenceResult.inference.inferenceId}")
+        logHighlight("Using third inference: ${thirdInferenceResult.inference.inferenceId}")
 
         logSection("Waiting for third reward to be processed and aggregated")
         participant.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -228,18 +211,18 @@ class StreamVestingTests : TestermintTest() {
         val aggregatedTotalAmount = aggregatedVestingSchedule.vestingSchedule?.epochAmounts?.sumOf { 
             it.coins.sumOf { coin -> coin.amount } 
         } ?: 0
-        logSection("Total aggregated vesting amount: $aggregatedTotalAmount nicoin")
+        logHighlight("Total aggregated vesting amount: $aggregatedTotalAmount nicoin")
         
         // The aggregated amount should be greater than a single reward
         // TODO: unfortunatelly, it's not true, because we can't guarantee that the rewards are equal each time to the same validator
         // assertThat(aggregatedTotalAmount).isGreaterThan(totalVestingAmount)
 
         logSection("=== LEGACY REWARD SYSTEM VESTING TEST COMPLETED ===")
-        logSection("All scenarios verified for legacy variable reward system:")
-        logSection("✅ Reward vesting - rewards vest over 2 epochs instead of immediate payment")
-        logSection("✅ Epoch unlocking - tokens unlock progressively over 2 epochs")  
-        logSection("✅ Reward aggregation - multiple rewards aggregate into same 2-epoch schedule")
-        logSection("✅ Legacy system compatibility - immediate RewardCoins bonuses work with vesting")
+        logHighlight("All scenarios verified for legacy variable reward system:")
+        logHighlight("✅ Reward vesting - rewards vest over 2 epochs instead of immediate payment")
+        logHighlight("✅ Epoch unlocking - tokens unlock progressively over 2 epochs")
+        logHighlight("✅ Reward aggregation - multiple rewards aggregate into same 2-epoch schedule")
+        logHighlight("✅ Legacy system compatibility - immediate RewardCoins bonuses work with vesting")
     }
 
     private fun testBitcoinRewardSystemVesting(cluster: LocalCluster, genesis: LocalInferencePair) {

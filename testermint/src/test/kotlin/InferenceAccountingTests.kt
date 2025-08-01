@@ -1,22 +1,5 @@
-import com.productscience.ChatMessage
-import com.productscience.EpochStage
-import com.productscience.InferenceRequestPayload
-import com.productscience.InferenceResult
-import com.productscience.LocalCluster
-import com.productscience.LocalInferencePair
-import com.productscience.createSpec
+import com.productscience.*
 import com.productscience.data.*
-import com.productscience.defaultInferenceResponseObject
-import com.productscience.expectedCoinBalanceChanges
-import com.productscience.getInferenceResult
-import com.productscience.inferenceConfig
-import com.productscience.inferenceRequest
-import com.productscience.inferenceRequestObject
-import com.productscience.initCluster
-import com.productscience.logSection
-import com.productscience.calculateExpectedChangeFromEpochRewards
-import com.productscience.getRewardCalculationEpochIndex
-import com.productscience.verifySettledInferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -33,6 +16,7 @@ import kotlin.collections.component2
 import kotlin.random.Random
 import kotlin.test.assertNotNull
 import kotlinx.coroutines.runBlocking
+import java.time.Instant
 
 const val DELAY_SEED = 8675309
 
@@ -50,7 +34,7 @@ class InferenceAccountingTests : TestermintTest() {
         // Test 1: maxCompletionTokens parameter
         logSection("=== TEST 1: Testing maxCompletionTokens = $maxCompletionTokens ===")
         val expectedCost1 = (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
-        logSection("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost1")
+        logHighlight("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost1")
         verifyEscrow(
             cluster,
             inferenceRequestObject.copy(maxCompletionTokens = maxCompletionTokens),
@@ -64,7 +48,7 @@ class InferenceAccountingTests : TestermintTest() {
         // Test 2: maxTokens parameter  
         logSection("=== TEST 2: Testing maxTokens = $maxCompletionTokens ===")
         val expectedCost2 = (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
-        logSection("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost2")
+        logHighlight("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost2")
         verifyEscrow(
             cluster,
             inferenceRequestObject.copy(maxTokens = maxCompletionTokens),
@@ -78,7 +62,7 @@ class InferenceAccountingTests : TestermintTest() {
         // Test 3: Default tokens
         logSection("=== TEST 3: Testing default tokens = $DEFAULT_TOKENS ===")
         val expectedCost3 = (DEFAULT_TOKENS + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
-        logSection("Expected cost: ($DEFAULT_TOKENS + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost3")
+        logHighlight("Expected cost: ($DEFAULT_TOKENS + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost3")
         verifyEscrow(
             cluster,
             inferenceRequestObject,
@@ -101,16 +85,21 @@ class InferenceAccountingTests : TestermintTest() {
             it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(10))
         }
         val seed = Random.nextInt()
+        val payload = inference.copy(seed = seed).toJson()
+        val timestamp = Instant.now().toEpochNanos()
+        val address = genesis.node.getAddress()
+        val signature = genesis.node.signPayload(payload, address, timestamp, endpointAccount = address)
 
-        var inferenceId: String? = null
-        runBlocking {
-            val response = genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
-            inferenceId = response.id
+
+        CoroutineScope(Dispatchers.Default).launch {
+            genesis.api.makeInferenceRequest(payload, address, signature, timestamp)
         }
+
+        val inferenceId = signature
 
         var lastRequest: InferenceRequestPayload? = null
         var attempts = 0
-        while (lastRequest == null && attempts < 5) {
+        while (lastRequest == null && attempts < 15) {
             Thread.sleep(Duration.ofSeconds(1))
             attempts++
             lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
@@ -131,7 +120,7 @@ class InferenceAccountingTests : TestermintTest() {
                 try {
                     val chainInference = genesis.api.getInference(id)
                     
-                    logSection("Per-token price verification: ${chainInference.perTokenPrice} (expected: $DEFAULT_TOKEN_COST)")
+                    logHighlight("Per-token price verification: ${chainInference.perTokenPrice} (expected: $DEFAULT_TOKEN_COST)")
                     
                     assertThat(chainInference.perTokenPrice).withFailMessage {
                         "Per-token price in inference should not be null"
@@ -142,7 +131,7 @@ class InferenceAccountingTests : TestermintTest() {
                     }.isEqualTo(DEFAULT_TOKEN_COST)
                     
                 } catch (e: Exception) {
-                    logSection("⚠️ Could not verify per-token price: ${e.message}")
+                    logHighlight("⚠️ Could not verify per-token price: ${e.message}")
                 }
             }
         }
@@ -154,9 +143,9 @@ class InferenceAccountingTests : TestermintTest() {
             startBalance - currentBalance
         }.filter { it != 0L }.first()
         
-        logSection("Balance verification: deducted $difference nicoin (expected: $expectedEscrow)")
+        logHighlight("Balance verification: deducted $difference nicoin (expected: $expectedEscrow)")
         assertThat(difference).isEqualTo(expectedEscrow)
-        logSection("✅ Escrow verification completed successfully")
+        logHighlight("✅ Escrow verification completed successfully")
     }
 
     @Test
@@ -359,8 +348,8 @@ class InferenceAccountingTests : TestermintTest() {
         val currentLastRewardedEpoch = getRewardCalculationEpochIndex(genesis)
         
         Logger.info("Balances: Start:$balanceAtStart BeforeSettle:$balanceBeforeSettle AfterSettle:$balanceAfterSettle")
-        logSection("Genesis test end - Balance: $balanceAfterSettle, Epoch: $currentLastRewardedEpoch")
-        logSection("Epoch progression - Start: $startLastRewardedEpoch -> End: $currentLastRewardedEpoch (${currentLastRewardedEpoch - startLastRewardedEpoch} epochs elapsed)")
+        logHighlight("Genesis test end - Balance: $balanceAfterSettle, Epoch: $currentLastRewardedEpoch")
+        logHighlight("Epoch progression - Start: $startLastRewardedEpoch -> End: $currentLastRewardedEpoch (${currentLastRewardedEpoch - startLastRewardedEpoch} epochs elapsed)")
         assertThat(balanceBeforeSettle).isEqualTo(balanceAtStart - canceledInference.escrowAmount!!)
         
         // Calculate expected balance change due to epoch rewards in bitcoin like rewards logic
@@ -373,8 +362,8 @@ class InferenceAccountingTests : TestermintTest() {
         )
         val actualChange = balanceAfterSettle - balanceAtStart
         
-        logSection("Failed inference balance verification - Actual: $actualChange, Expected: $expectedChange")
-        logSection("Reward calculation range - StartLastRewardedEpoch: $startLastRewardedEpoch, CurrentLastRewardedEpoch: $currentLastRewardedEpoch, RewardRange: ${startLastRewardedEpoch + 1} to $currentLastRewardedEpoch")
+        logHighlight("Failed inference balance verification - Actual: $actualChange, Expected: $expectedChange")
+        logHighlight("Reward calculation range - StartLastRewardedEpoch: $startLastRewardedEpoch, CurrentLastRewardedEpoch: $currentLastRewardedEpoch, RewardRange: ${startLastRewardedEpoch + 1} to $currentLastRewardedEpoch")
         assertThat(actualChange).isEqualTo(expectedChange)
 
     }
