@@ -265,6 +265,19 @@ func (k *Keeper) handleGracePeriod(ctx context.Context, currentEpoch *types.Epoc
 // Called only on the first message (Start or Finish) to ensure consistent pricing
 // BeginBlocker must have set prices before this is called
 func (k *Keeper) RecordInferencePrice(ctx context.Context, inference *types.Inference) {
+	if inference == nil {
+		return
+	}
+	if inference.InferenceId == "" {
+		k.LogError("RecordInferencePrice called with empty inference ID", types.Pricing,
+			"inference", inference)
+		return
+	}
+	if inference.Model == "" {
+		k.LogError("RecordInferencePrice called with empty model ID", types.Pricing,
+			"inferenceId", inference.InferenceId, "inference", inference)
+		return
+	}
 	// Fast path: check if price is already stored (already locked in)
 	if inference.PerTokenPrice > 0 {
 		return // Already recorded, nothing to do

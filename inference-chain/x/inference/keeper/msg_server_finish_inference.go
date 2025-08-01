@@ -52,6 +52,8 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	// Record the current price only if this is the first message (StartInference not processed yet)
 	// This ensures consistent pricing regardless of message arrival order
 	if !existingInference.StartProcessed() {
+		existingInference.InferenceId = msg.InferenceId
+		existingInference.Model = msg.Model
 		k.RecordInferencePrice(goCtx, &existingInference)
 	}
 
@@ -148,14 +150,14 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	}
 
 	inferenceDetails := types.InferenceValidationDetails{
-		InferenceId:        existingInference.InferenceId,
-		ExecutorId:         existingInference.ExecutedBy,
-		ExecutorReputation: executorReputation,
-		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
-		ExecutorPower:      executorPower,
-		EpochId:            effectiveEpoch.Index,
-		Model:              existingInference.Model,
-		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
+		InferenceId:          existingInference.InferenceId,
+		ExecutorId:           existingInference.ExecutedBy,
+		ExecutorReputation:   executorReputation,
+		TrafficBasis:         uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
+		ExecutorPower:        executorPower,
+		EpochId:              effectiveEpoch.Index,
+		Model:                existingInference.Model,
+		TotalPower:           uint64(modelEpochGroup.GroupData.TotalWeight),
 		CreatedAtBlockHeight: ctx.BlockHeight(),
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
