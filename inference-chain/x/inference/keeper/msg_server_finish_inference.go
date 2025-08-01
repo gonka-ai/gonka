@@ -55,6 +55,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		existingInference.InferenceId = msg.InferenceId
 		existingInference.Model = msg.Model
 		k.RecordInferencePrice(goCtx, &existingInference)
+	} else if existingInference.Model != "" && existingInference.Model != msg.Model {
+		k.LogError("FinishInference: model mismatch", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"existingInference.Model", existingInference.Model,
+			"msg.Model", msg.Model)
 	}
 
 	blockContext := calculations.BlockContext{
