@@ -18,8 +18,6 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	mockAccount := NewMockAccount(testutil.Creator)
-	// Setup a participant
-	MustAddParticipant(t, ms, ctx, *mockAccount)
 
 	// Create a seed value and its binary representation
 	seed := uint64(1)
@@ -31,10 +29,15 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
+	pocStartBlockHeight := uint64(100)
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(ctx, &epoch)
+	k.SetEffectiveEpochIndex(ctx, epoch.Index)
+
 	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -43,8 +46,9 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 
 	// Setup epoch group data
 	epochData := types.EpochGroupData{
+		EpochId:             epoch.Index,
 		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -56,7 +60,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: 100,
+		EpochStartHeight: pocStartBlockHeight,
 		ParticipantId:    testutil.Creator,
 		Claimed:          false,
 	}
@@ -65,7 +69,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Setup validations
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidatedInferences: []string{"inference1"},
 	}
 	k.SetEpochGroupValidations(sdk.UnwrapSDKContext(ctx), validations)
@@ -98,7 +102,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           1,
 	})
 
@@ -113,7 +117,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.False(t, found)
 
 	// Verify the performance summary was updated
-	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdk.UnwrapSDKContext(ctx), 100, testutil.Creator)
+	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdk.UnwrapSDKContext(ctx), pocStartBlockHeight, testutil.Creator)
 	require.True(t, found)
 	require.True(t, updatedPerfSummary.Claimed)
 }
@@ -196,14 +200,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
-
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
@@ -218,10 +214,14 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
-	// Create a settle amount for the participant with the signature
+	pocStartBlockHeight := uint64(100)
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(sdkCtx, &epoch)
+	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
+
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -230,8 +230,9 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
-		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		EpochId:             epoch.Index,
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -251,7 +252,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: 100,
+		EpochStartHeight: pocStartBlockHeight,
 		ParticipantId:    testutil.Creator,
 		Claimed:          false,
 	}
@@ -260,21 +261,21 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -305,7 +306,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -315,10 +316,12 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.Equal(t, uint64(0), resp.Amount)
 	require.Equal(t, "Inference not validated", resp.Result)
 
+	println("Setting EpochGroupValidations")
+
 	// Now let's validate all inferences and try again
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
@@ -347,7 +350,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Call ClaimRewards again - this should succeed now
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -362,7 +365,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.False(t, found)
 
 	// Verify the performance summary was updated
-	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdkCtx, 100, testutil.Creator)
+	updatedPerfSummary, found := k.GetEpochPerformanceSummary(sdkCtx, pocStartBlockHeight, testutil.Creator)
 	require.True(t, found)
 	require.True(t, updatedPerfSummary.Claimed)
 }
@@ -373,14 +376,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
 
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
@@ -396,10 +391,14 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
-	// Create a settle amount for the participant with the signature
+	pocStartBlockHeight := uint64(100)
+	epoch := types.Epoch{Index: 15, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(sdkCtx, &epoch)
+	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
+
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		WorkCoins:      1000,
 		RewardCoins:    500,
 		SeedSignature:  signatureHex,
@@ -408,8 +407,9 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
-		EpochGroupId:        100, // Using height as ID
-		PocStartBlockHeight: 100,
+		EpochId:             epoch.Index,
+		EpochGroupId:        9000,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
@@ -429,7 +429,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: 100,
+		EpochStartHeight: pocStartBlockHeight,
 		ParticipantId:    testutil.Creator,
 		Claimed:          false,
 	}
@@ -438,21 +438,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -483,7 +483,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -497,7 +497,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// This should still fail because we need to validate all required inferences
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStartBlockHeight,
 		ValidatedInferences: []string{"inference2"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
@@ -508,7 +508,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards again - this should still fail
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           12345,
 	})
 
@@ -540,7 +540,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards with the new seed
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
 	})
 
@@ -579,7 +579,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Call ClaimRewards again - this should succeed now
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
-		PocStartHeight: 100,
+		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
 	})
 
@@ -588,4 +588,150 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(1500), resp.Amount)
 	require.Equal(t, "Rewards claimed successfully", resp.Result)
+}
+
+func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_NotAvailable(t *testing.T) {
+	pocAvailabilityTest(t, false)
+}
+
+func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_Available(t *testing.T) {
+	pocAvailabilityTest(t, true)
+}
+
+func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
+	// 1. Setup
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	// Participants & Keys
+	mockCreator := NewMockAccount(testutil.Creator)
+	mockExecutor := NewMockAccount("executor1")
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	MustAddParticipant(t, ms, ctx, *mockExecutor)
+	privKey := secp256k1.GenPrivKey()
+	pubKey := privKey.PubKey()
+
+	// Seed & Signature
+	seed := uint64(12345)
+	seedBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(seedBytes, seed)
+	signature, err := privKey.Sign(seedBytes)
+	require.NoError(t, err)
+	signatureHex := hex.EncodeToString(signature)
+
+	// Epoch and Params
+	pocStartBlockHeight := uint64(100)
+	epochLength := int64(200)
+	inferenceValidationCutoff := int64(20)
+	epoch := types.Epoch{Index: 1, PocStartBlockHeight: int64(pocStartBlockHeight)}
+	k.SetEpoch(sdkCtx, &epoch)
+	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
+	params := types.DefaultParams()
+	params.EpochParams.EpochLength = epochLength
+	params.EpochParams.InferenceValidationCutoff = inferenceValidationCutoff
+	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
+	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	k.SetParams(sdkCtx, params)
+
+	// Settle Amount
+	settleAmount := types.SettleAmount{
+		Participant:    testutil.Creator,
+		PocStartHeight: pocStartBlockHeight,
+		WorkCoins:      1000,
+		RewardCoins:    500,
+		SeedSignature:  signatureHex,
+	}
+	k.SetSettleAmount(sdkCtx, settleAmount)
+
+	// Epoch Group Data (Main and Sub-group)
+	// Claimant has two nodes, one with full availability
+	mainEpochData := types.EpochGroupData{
+		EpochId:             epoch.Index,
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
+		PocStartBlockHeight: pocStartBlockHeight,
+		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: "executor1", Weight: 50}},
+		SubGroupModels:      []string{MODEL_ID},
+	}
+	k.SetEpochGroupData(sdkCtx, mainEpochData)
+
+	var validatorWeight *types.ValidationWeight
+	if validatorIsAvailableDuringPoC {
+		validatorWeight = &types.ValidationWeight{
+			MemberAddress: testutil.Creator,
+			Weight:        50,
+			MlNodes: []*types.MLNodeInfo{
+				{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, true}},
+				{NodeId: "node2", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+			},
+		}
+	} else {
+		validatorWeight = &types.ValidationWeight{
+			MemberAddress: testutil.Creator,
+			Weight:        50,
+			MlNodes: []*types.MLNodeInfo{
+				{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+			},
+		}
+	}
+
+	modelSubGroup := types.EpochGroupData{
+		EpochId:             epoch.Index,
+		EpochGroupId:        9001,
+		PocStartBlockHeight: pocStartBlockHeight,
+		ModelId:             MODEL_ID,
+		ValidationWeights: []*types.ValidationWeight{
+			validatorWeight,
+			{
+				MemberAddress: "executor1",
+				Weight:        50,
+				MlNodes:       []*types.MLNodeInfo{{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, false}}},
+			},
+		},
+	}
+	k.SetEpochGroupData(sdkCtx, modelSubGroup)
+
+	// Performance Summary
+	perfSummary := types.EpochPerformanceSummary{EpochStartHeight: pocStartBlockHeight, ParticipantId: testutil.Creator, Claimed: false}
+	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
+
+	// Inference occurring during PoC cutoff
+	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
+	inference := types.InferenceValidationDetails{
+		EpochId:              epoch.Index,
+		InferenceId:          "inference-during-poc",
+		ExecutorId:           "executor1",
+		ExecutorReputation:   0,
+		TrafficBasis:         1000,
+		CreatedAtBlockHeight: epochContext.InferenceValidationCutoff(),
+		Model:                MODEL_ID,
+	}
+	k.SetInferenceValidationDetails(sdkCtx, inference)
+
+	// Mocks
+	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	require.NoError(t, err)
+	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	if !validatorIsAvailableDuringPoC {
+		workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
+		rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins).Return(nil)
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins).Return(nil)
+	}
+
+	if validatorIsAvailableDuringPoC {
+		// Validator was available, but did not validate the inference, expect 0 rewards
+		resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{Creator: testutil.Creator, PocStartHeight: pocStartBlockHeight, Seed: int64(seed)})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(0), resp.Amount)
+		require.Equal(t, "Inference not validated", resp.Result)
+	} else {
+		// Validator wasn't available, expect them to receive their reward even if they didn't validate all inferences
+		resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{Creator: testutil.Creator, PocStartHeight: pocStartBlockHeight, Seed: int64(seed)})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, uint64(1500), resp.Amount)
+		require.Equal(t, "Rewards claimed successfully", resp.Result)
+	}
 }

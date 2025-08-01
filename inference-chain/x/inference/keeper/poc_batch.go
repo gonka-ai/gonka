@@ -62,6 +62,21 @@ func (k Keeper) GetPoCBatchesByStage(ctx context.Context, pocStageStartBlockHeig
 	return batches, nil
 }
 
+func (k Keeper) GetPoCBatchesCountByStage(ctx context.Context, pocStageStartBlockHeight int64) (uint64, error) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocBatchKeyPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+	count := uint64(0)
+	for ; iterator.Valid(); iterator.Next() {
+		count++
+	}
+
+	return count, nil
+}
+
 func JoinPocBatches(batches map[string][]types.PoCBatch) map[string]types.PoCBatch {
 	result := make(map[string]types.PoCBatch)
 	for _, batchSlice := range batches {
@@ -126,4 +141,19 @@ func (k Keeper) GetPoCValidationByStage(ctx context.Context, pocStageStartBlockH
 	}
 
 	return validations, nil
+}
+
+func (k Keeper) GetPocValidationCountByStage(ctx context.Context, pocStageStartBlockHeight int64) (uint64, error) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocValidationPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+	count := uint64(0)
+	for ; iterator.Valid(); iterator.Next() {
+		count++
+	}
+
+	return count, nil
 }

@@ -133,6 +133,7 @@ class UpgradeTests : TestermintTest() {
         val newResponse = "Only a short response"
         val newSegment = "/newVersion"
         val newVersion = "v1"
+        genesis.waitForNextInferenceWindow()
         cluster.allPairs.forEach {
             it.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse(newResponse),
@@ -140,12 +141,13 @@ class UpgradeTests : TestermintTest() {
             )
             it.api.addNode(
                 validNode.copy(
-                    host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
+                    host = "${it.name.trim('/')}-mock-server",
                     inferenceSegment = newSegment, version = newVersion, id = "v1Node"
                 )
             )
         }
-        genesis.waitForNextInferenceWindow()
+        // Nodes changed so we really need to wait for PoC so it sets EpochModels and such
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
         val proposalId = genesis.runProposal(

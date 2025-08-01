@@ -3,12 +3,13 @@ package epochgroup
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strconv"
+
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"math/rand"
-	"strconv"
 )
 
 // GetRandomMemberForModel gets a random member for a specific model

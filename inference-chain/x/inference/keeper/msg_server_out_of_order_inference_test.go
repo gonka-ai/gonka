@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// NEEDREVIEW: for some reason this test is failing when run with other tests, but works fine when run alone.
 func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
@@ -45,7 +44,6 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	eaSignature, err := calculations.Sign(mockExecutor, components, calculations.ExecutorAgent)
 	require.NoError(t, err)
 
-	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -73,6 +71,9 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	require.Equal(t, uint64(10), savedInference.PromptTokenCount)
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)
+
+	model := types.Model{Id: "model1"}
+	StubModelSubgroup(t, ctx, k, mocks, &model)
 
 	// Now start the inference
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
