@@ -484,6 +484,16 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[ValidationParams::minValidationTrafficCutoff] = 10L
                 this[ValidationParams::expirationBlocks] = 7L
             }
+            this[InferenceParams::dynamicPricingParams] = spec<DynamicPricingParams> {
+                this[DynamicPricingParams::stabilityZoneLowerBound] = Decimal.fromDouble(0.40)
+                this[DynamicPricingParams::stabilityZoneUpperBound] = Decimal.fromDouble(0.60)
+                this[DynamicPricingParams::priceElasticity] = Decimal.fromDouble(0.05)
+                this[DynamicPricingParams::utilizationWindowDuration] = 60L
+                this[DynamicPricingParams::minPerTokenPrice] = 1000L  // Set to match DEFAULT_TOKEN_COST
+                this[DynamicPricingParams::basePerTokenPrice] = 1000L // Set to match DEFAULT_TOKEN_COST
+                this[DynamicPricingParams::gracePeriodEndEpoch] = 0L   // Disable grace period
+                this[DynamicPricingParams::gracePeriodPerTokenPrice] = 0L
+            }
         }
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
             this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
@@ -2129,3 +2139,4 @@ val defaultInferenceResponse = """
 """.trimIndent()
 
 val defaultInferenceResponseObject = cosmosJson.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)
+

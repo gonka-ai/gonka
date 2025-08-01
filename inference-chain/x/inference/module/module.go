@@ -110,10 +110,11 @@ func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *r
 type AppModule struct {
 	AppModuleBasic
 
-	keeper         keeper.Keeper
-	accountKeeper  types.AccountKeeper
-	bankKeeper     types.BankKeeper
-	groupMsgServer types.GroupMessageKeeper
+	keeper           keeper.Keeper
+	accountKeeper    types.AccountKeeper
+	bankKeeper       types.BankKeeper
+	groupMsgServer   types.GroupMessageKeeper
+	collateralKeeper types.CollateralKeeper
 }
 
 func NewAppModule(
@@ -122,13 +123,15 @@ func NewAppModule(
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
 	groupMsgServer types.GroupMessageKeeper,
+	collateralKeeper types.CollateralKeeper,
 ) AppModule {
 	return AppModule{
-		AppModuleBasic: NewAppModuleBasic(cdc),
-		keeper:         keeper,
-		accountKeeper:  accountKeeper,
-		bankKeeper:     bankKeeper,
-		groupMsgServer: groupMsgServer,
+		AppModuleBasic:   NewAppModuleBasic(cdc),
+		keeper:           keeper,
+		accountKeeper:    accountKeeper,
+		bankKeeper:       bankKeeper,
+		groupMsgServer:   groupMsgServer,
+		collateralKeeper: collateralKeeper,
 	}
 }
 
@@ -163,7 +166,15 @@ func (AppModule) ConsensusVersion() uint64 { return 4 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
-func (am AppModule) BeginBlock(_ context.Context) error {
+func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Update dynamic pricing for all models at the start of each block
+	// This ensures consistent pricing for all inferences processed in this block
+	err := am.keeper.UpdateDynamicPricing(ctx)
+	if err != nil {
+		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
+		// Don't return error - allow block processing to continue even if pricing update fails
+	}
+
 	return nil
 }
 
@@ -194,6 +205,7 @@ func (am AppModule) handleExpiredInference(ctx context.Context, inference types.
 		am.LogError("Error issuing refund", types.Inferences, "error", err)
 	}
 	am.keeper.SetInference(ctx, inference)
+	executor.CurrentEpochStats.MissedRequests++
 	am.keeper.SetParticipant(ctx, executor)
 }
 
@@ -338,6 +350,21 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
+	// Signal to the collateral module that the epoch has advanced.
+	// This will trigger its internal unbonding queue processing.
+	if am.keeper.GetCollateralKeeper() != nil {
+		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+	}
+
+	// Signal to the streamvesting module that the epoch has advanced.
+	// This will trigger vested token unlocking for the completed epoch.
+	if am.keeper.GetStreamVestingKeeper() != nil {
+		err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
+		}
+	}
+
 	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
 	previousEpochPocStartHeight := uint64(0)
 	if found {
@@ -359,6 +386,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if activeParticipants == nil {
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
+	}
+
+	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
+	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
+		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
+		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
+		// which means participants will proceed with their unadjusted PotentialWeight.
 	}
 
 	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
@@ -419,6 +453,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		am.LogError("onSetNewValidatorsStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
 			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
 		return
+	}
+
+	// Cache model capacities for the new epoch to enable fast dynamic pricing calculations
+	err = am.keeper.CacheAllModelCapacities(ctx)
+	if err != nil {
+		am.LogError("Failed to cache model capacities for new epoch", types.Pricing, "error", err, "blockHeight", blockHeight)
+		// Don't return error - epoch transition should continue even if capacity caching fails
 	}
 
 	unitOfComputePrice, err := am.computePrice(ctx, *upcomingEpoch, upcomingEg)
@@ -508,6 +549,7 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 	}
 
 	reputation := calculations.CalculateReputation(&reputationContext)
+	am.LogInfo("ReputationCalculated", types.EpochGroup, "participantIndex", p.Index, "reputation", reputation)
 
 	return reputation, nil
 }
@@ -657,14 +699,16 @@ type ModuleInputs struct {
 	Config       *modulev1.Module
 	Logger       log.Logger
 
-	AccountKeeper    types.AccountKeeper
-	BankKeeper       types.BankKeeper
-	BankEscrowKeeper types.BankEscrowKeeper
-	ValidatorSet     types.ValidatorSet
-	StakingKeeper    types.StakingKeeper
-	GroupServer      types.GroupMessageKeeper
-	AuthzKeeper      authzkeeper.Keeper
-	GetWasmKeeper    func() wasmkeeper.Keeper `optional:"true"`
+	AccountKeeper       types.AccountKeeper
+	BankKeeper          types.BankKeeper
+	BankEscrowKeeper    types.BookkeepingBankKeeper
+	ValidatorSet        types.ValidatorSet
+	StakingKeeper       types.StakingKeeper
+	GroupServer         types.GroupMessageKeeper
+	CollateralKeeper    types.CollateralKeeper
+	StreamVestingKeeper types.StreamVestingKeeper
+	AuthzKeeper         authzkeeper.Keeper
+	GetWasmKeeper       func() wasmkeeper.Keeper `optional:"true"`
 }
 
 type ModuleOutputs struct {
@@ -693,6 +737,8 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ValidatorSet,
 		in.StakingKeeper,
 		in.AccountKeeper,
+		in.CollateralKeeper,
+		in.StreamVestingKeeper,
 		in.AuthzKeeper,
 		in.GetWasmKeeper,
 	)
@@ -703,6 +749,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AccountKeeper,
 		in.BankKeeper,
 		in.GroupServer,
+		in.CollateralKeeper,
 	)
 
 	return ModuleOutputs{

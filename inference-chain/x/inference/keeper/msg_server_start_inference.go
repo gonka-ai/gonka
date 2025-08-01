@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"encoding/base64"
 
 	sdkerrors "cosmossdk.io/errors"
@@ -35,6 +36,13 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
+
+	// Record the current price only if this is the first message (FinishInference not processed yet)
+	// This ensures consistent pricing regardless of message arrival order
+	if !existingInference.FinishedProcessed() {
+		existingInference.Model = msg.Model
+		k.RecordInferencePrice(goCtx, &existingInference, msg.InferenceId)
+	}
 
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
@@ -93,9 +101,10 @@ func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
 		ExpirationHeight: expirationHeight,
 		InferenceId:      inference.InferenceId,
 	})
+
 	k.LogInfo("Inference Timeout Set:", types.Inferences,
 		"InferenceId", inference.InferenceId,
-		"ExpirationHeight", expirationHeight)
+		"ExpirationHeight", inference.StartBlockHeight+expirationBlocks)
 }
 
 func (k msgServer) processInferencePayments(
@@ -126,7 +135,7 @@ func (k msgServer) processInferencePayments(
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
 		executor.CurrentEpochStats.InferenceCount++
 		executor.LastInferenceTime = inference.EndBlockTimestamp
-		k.LogBalance(executor.Address, payments.ExecutorPayment, executor.CoinBalance, "inference_finished:"+inference.InferenceId)
+		k.BankKeeper.LogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, types.GetCoin(executor.CoinBalance), "inference_finished:"+inference.InferenceId)
 		k.SetParticipant(ctx, executor)
 	}
 	return inference, nil

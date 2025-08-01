@@ -180,6 +180,34 @@ data class LocalInferencePair(
         return this.mostRecentEpochData ?: error("No epoch data available")
     }
 
+    fun getBalance(address: String): Long {
+        return this.node.getBalance(address, this.node.config.denom).balance.amount
+    }
+
+    fun queryCollateral(address: String): Collateral {
+        return this.node.queryCollateral(address)
+    }
+
+    fun depositCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "deposit-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
+    }
+
+    fun withdrawCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "withdraw-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
+    }
+
     fun makeInferenceRequest(
         request: String,
         account: String? = null,
@@ -547,6 +575,16 @@ data class LocalInferencePair(
         }
     }
 
+    fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? = wrapLog("waitForInference", true) {
+        var inference: InferencePayload? = null
+        var tries = 0
+        while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
+            this.node.waitForNextBlock()
+            inference = this.api.getInferenceOrNull(inferenceId)
+            tries++
+        }
+        inference
+    }
 }
 
 data class ApplicationConfig(

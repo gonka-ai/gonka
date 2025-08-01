@@ -1,0 +1,17 @@
+syntax = "proto3";
+package inference.bookkeeper;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/bookkeeper/params.proto";
+
+option go_package = "github.com/productscience/inference/x/bookkeeper/types";
+
+// GenesisState defines the bookkeeper module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}

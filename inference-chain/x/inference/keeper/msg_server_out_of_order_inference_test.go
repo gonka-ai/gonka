@@ -35,6 +35,12 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	// Disable grace period for tests so we get actual pricing instead of 0
+	params := k.GetParams(ctx)
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	k.SetParams(ctx, params)
+
 	payload := "promptPayload"
 	requestTimestamp := ctx.BlockTime().UnixNano()
 

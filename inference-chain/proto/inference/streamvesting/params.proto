@@ -1,0 +1,17 @@
+syntax = "proto3";
+package inference.streamvesting;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/streamvesting/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/streamvesting/Params";
+  option (gogoproto.equal) = true;
+
+  // reward_vesting_period defines how many epochs rewards vest for
+  // Default is 180 epochs, but can be overridden to 2 in tests
+  uint64 reward_vesting_period = 1;
+}
