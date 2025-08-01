@@ -211,7 +211,7 @@ func TestRecordInferencePrice(t *testing.T) {
 			}
 
 			// Record price
-			k.RecordInferencePrice(sdk.UnwrapSDKContext(ctx), inference)
+			k.RecordInferencePrice(sdk.UnwrapSDKContext(ctx), inference, inference.InferenceId)
 
 			// Verify result
 			assert.Equal(t, tt.expectedPrice, inference.PerTokenPrice)
@@ -454,14 +454,14 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 		}
 
 		// Record price for inference
-		k.RecordInferencePrice(goCtx, inference)
+		k.RecordInferencePrice(goCtx, inference, inference.InferenceId)
 
 		// Verify price was recorded
 		assert.Equal(t, testPrice, inference.PerTokenPrice, "Price should be recorded in inference")
 
 		// Test that subsequent calls don't overwrite
 		k.SetModelCurrentPrice(goCtx, model1, uint64(9999))
-		k.RecordInferencePrice(goCtx, inference)
+		k.RecordInferencePrice(goCtx, inference, inference.InferenceId)
 		assert.Equal(t, testPrice, inference.PerTokenPrice, "Price should remain unchanged on second call")
 
 		t.Logf("Price recording works: recorded price %d for inference", testPrice)
