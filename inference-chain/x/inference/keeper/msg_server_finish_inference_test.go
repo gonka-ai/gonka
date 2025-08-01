@@ -315,6 +315,7 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		ExecutorSignature:    eaSignature,
 		RequestedBy:          h.MockRequester.address,
 		OriginalPrompt:       h.previousInference.OriginalPrompt,
+		Model:                h.previousInference.Model,
 	})
 	if err != nil {
 		return nil, err

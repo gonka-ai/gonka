@@ -271,12 +271,10 @@ func (k *Keeper) RecordInferencePrice(ctx context.Context, inference *types.Infe
 	if inference.InferenceId == "" {
 		k.LogError("RecordInferencePrice called with empty inference ID", types.Pricing,
 			"inference", inference)
-		return
 	}
 	if inference.Model == "" {
 		k.LogError("RecordInferencePrice called with empty model ID", types.Pricing,
 			"inferenceId", inference.InferenceId, "inference", inference)
-		return
 	}
 	// Fast path: check if price is already stored (already locked in)
 	if inference.PerTokenPrice > 0 {
