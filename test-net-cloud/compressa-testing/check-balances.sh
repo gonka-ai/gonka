@@ -6,12 +6,10 @@ set -euo pipefail
 ###############################################################################
 HOST="34.9.136.116:30000"            # API host, e.g. "34.9.17.182:1317"
 INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"   # inferenced cmd
-if [ -z "${GONKA_ADDRESS}" ]; then
-  REQUESTER_ADDRESS="gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl"
-  echo "Warning: GONKA_ADDRESS is not set. Using default address: $REQUESTER_ADDRESS" >&2
+if [ -z "${GONKA_ADDRESS:-}" ]; then
+  echo "Info: GONKA_ADDRESS is not set. Not querying for requester address." >&2
 else
-  REQUESTER_ADDRESS="$GONKA_ADDRESS"  # address to query balance for
-  echo "Using GONKA_ADDRESS: $REQUESTER_ADDRESS" >&2
+  echo "Info: Will query for GONKA_ADDRESS: $GONKA_ADDRESS" >&2
 fi
    # extra address
 ###############################################################################
@@ -19,7 +17,6 @@ fi
 echo "=== balance-fetch script starting ===" >&2
 echo "HOST=$HOST"                   >&2
 echo "INFERENCED_BINARY=$INFERENCED_BINARY" >&2
-echo "REQUESTER_ADDRESS=$REQUESTER_ADDRESS" >&2
 echo "====================================" >&2
 
 # ---------- NEW: make sure balances/ dir exists ----------
@@ -47,7 +44,9 @@ while IFS= read -r line; do
   ADDRESSES+=("$line")
 done < <(echo "$PARTICIPANT_JSON" | jq -r '.active_participants.participants[].index')
 
-ADDRESSES+=("$REQUESTER_ADDRESS")                            # append requester
+if [ -n "${GONKA_ADDRESS:-}" ]; then
+  ADDRESSES+=("$GONKA_ADDRESS") # append requester address if set
+fi
 echo "Total addresses to query: ${#ADDRESSES[@]}" >&2
 
 ###############################################################################
