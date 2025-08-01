@@ -121,5 +121,6 @@ data class MsgFinishInference(
     val executorSignature: String = "",
     val requestedBy: String = "",
     val originalPrompt: String = "",
+    val model: String = "",
 ) : TxMessage
 

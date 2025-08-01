@@ -1,3 +1,4 @@
+import com.productscience.*
 import com.productscience.data.Collateral
 import com.productscience.data.TxResponse
 import com.productscience.data.spec
@@ -5,14 +6,6 @@ import com.productscience.data.AppState
 import com.productscience.data.InferenceState
 import com.productscience.data.InferenceParams
 import com.productscience.data.ValidationParams
-import com.productscience.EpochStage
-import com.productscience.initCluster
-import com.productscience.logSection
-import com.productscience.makeInferenceRequest
-import com.productscience.inferenceRequest
-import com.productscience.inferenceConfig
-import com.productscience.getRewardCalculationEpochIndex
-import com.productscience.calculateExpectedChangeFromEpochRewards
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -24,20 +17,22 @@ class CollateralTests : TestermintTest() {
         val participant = cluster.genesis
         val participantAddress = participant.node.getAddress()
 
-        logSection("Query initial collateral for ${participant.name}")
+        logSection("Despositing collateral")
+
+        logHighlight("Query initial collateral for ${participant.name}")
         val initialCollateral = participant.queryCollateral(participantAddress)
         assertThat(initialCollateral.amount).isNull()
 
         val depositAmount = 1000L
-        logSection("Depositing $depositAmount nicoin for ${participant.name}")
+        logHighlight("Depositing $depositAmount nicoin for ${participant.name}")
 
         val initialBalance = participant.getBalance(participantAddress)
-        logSection("Initial balance is ${initialBalance}")
+        logHighlight("Initial balance is ${initialBalance}")
         val result = participant.depositCollateral(depositAmount)
         assertThat(result.code).isEqualTo(0)
         participant.node.waitForNextBlock()
 
-        logSection("Verifying collateral and balance changes")
+        logHighlight("Verifying collateral and balance changes")
         val collateralAfterDeposit = participant.queryCollateral(participantAddress)
         assertThat(collateralAfterDeposit.amount?.amount).isEqualTo(depositAmount)
         assertThat(collateralAfterDeposit.amount?.denom).isEqualTo("nicoin")
@@ -56,25 +51,25 @@ class CollateralTests : TestermintTest() {
         participant.withdrawCollateral(depositAmount)
         participant.node.waitForNextBlock()
 
-        logSection("Verifying active collateral is zero and balance is unchanged")
+        logSection("Verifying withdrawl")
         val activeCollateral = participant.queryCollateral(participantAddress)
         assertThat(activeCollateral.amount).isNull()
         val balanceAfterWithdraw = participant.getBalance(participantAddress)
         assertThat(balanceAfterWithdraw).isEqualTo(balanceAfterDeposit)
 
-        logSection("Verifying withdrawal is in the unbonding queue for epoch $expectedCompletionEpoch")
+        logHighlight("Verifying withdrawal is in the unbonding queue for epoch $expectedCompletionEpoch")
         val unbondingQueue = participant.node.queryUnbondingCollateral(participantAddress)
         assertThat(unbondingQueue.unbondings).hasSize(1)
         val unbondingEntry = unbondingQueue.unbondings!!.first()
         assertThat(unbondingEntry.amount.amount).isEqualTo(depositAmount)
         assertThat(unbondingEntry.completionEpoch.toLong()).isEqualTo(expectedCompletionEpoch)
 
-        logSection("Waiting for unbonding period to pass (${unbondingPeriod + 1} epochs)")
+        logHighlight("Waiting for unbonding period to pass (${unbondingPeriod + 1} epochs)")
         repeat((unbondingPeriod + 1).toInt()) {
             genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         }
 
-        logSection("Verifying balance is restored and queue is empty")
+        logHighlight("Verifying balance is restored and queue is empty")
         val finalBalance = participant.getBalance(participantAddress)
         
         // Calculate expected balance including any epoch rewards accumulated during unbonding
@@ -87,8 +82,8 @@ class CollateralTests : TestermintTest() {
             failureEpoch = null  // No excluded epochs for collateral test
         )
         val expectedFinalBalance = initialBalance + participantRewards
-        
-        logSection("Expected final balance: $initialBalance (initial) + $participantRewards (epoch rewards) = $expectedFinalBalance")
+
+        logHighlight("Expected final balance: $initialBalance (initial) + $participantRewards (epoch rewards) = $expectedFinalBalance")
         assertThat(finalBalance).isEqualTo(expectedFinalBalance)
 
         val finalUnbondingQueue = participant.node.queryUnbondingCollateral(participantAddress)
@@ -122,11 +117,11 @@ class CollateralTests : TestermintTest() {
         genesis.depositCollateral(depositAmount)
         genesis.node.waitForNextBlock()
 
-        logSection("Verifying initial collateral")
+        logHighlight("Verifying initial collateral")
         val initialCollateral = genesis.queryCollateral(genesisAddress)
         assertThat(initialCollateral.amount?.amount).isEqualTo(depositAmount)
 
-        logSection("Good inferences")
+        logSection("Making good inferences")
         repeat(3) {
             runCatching { genesis.makeInferenceRequest(inferenceRequest) }
         }
@@ -135,7 +130,7 @@ class CollateralTests : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.node.waitForNextBlock(2)
         
-        logSection("Configuring mock server to return invalid inferences")
+        logSection("Getting bad inferences")
         genesis.mock!!.setInferenceResponse("This is invalid json!!!")
 
         logSection("Running inferences until genesis is INVALID")

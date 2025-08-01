@@ -86,6 +86,7 @@ class InferenceTests : TestermintTest() {
         assertThat(inference.inference.requestTimestamp).isEqualTo(timestamp)
         assertThat(inference.inference.transferredBy).isEqualTo(genesisAddress)
         assertThat(inference.inference.transferSignature).isEqualTo(taSignature)
+        logHighlight("Per token cost: ${inference.inference.perTokenPrice}")
     }
 
     @Test
@@ -336,27 +337,27 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `direct finish inference works`() {
-        val timestamp = Instant.now().toEpochNanos()
+        val finishTimestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
-        val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
-        val taSignature =
-            genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
-        val message = MsgFinishInference(
+        val finishSignature = genesis.node.signPayload(inferenceRequest + finishTimestamp.toString() + genesisAddress, null)
+        val finishTaSignature =
+            genesis.node.signPayload(inferenceRequest + finishTimestamp.toString() + genesisAddress + genesisAddress, null)
+        val finishMessage = MsgFinishInference(
             creator = genesisAddress,
-            inferenceId = signature,
+            inferenceId = finishSignature,
             promptTokenCount = 10,
-            requestTimestamp = timestamp,
-            transferSignature = taSignature,
+            requestTimestamp = finishTimestamp,
+            transferSignature = finishTaSignature,
             responseHash = "fjdsf",
             responsePayload = "AI is cool",
             completionTokenCount = 100,
             executedBy = genesisAddress,
-            executorSignature = taSignature,
+            executorSignature = finishTaSignature,
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
             originalPrompt = inferenceRequest,
         )
-        val response = genesis.submitMessage(message)
+        val response = genesis.submitMessage(finishMessage)
         println(response)
         assertThat(response.code).isZero()
     }
