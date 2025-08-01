@@ -264,13 +264,13 @@ func (k *Keeper) handleGracePeriod(ctx context.Context, currentEpoch *types.Epoc
 // RecordInferencePrice locks in the current price for an inference
 // Called only on the first message (Start or Finish) to ensure consistent pricing
 // BeginBlocker must have set prices before this is called
-func (k *Keeper) RecordInferencePrice(ctx context.Context, inference *types.Inference) {
+func (k *Keeper) RecordInferencePrice(
+	ctx context.Context,
+	inference *types.Inference,
+	inferenceId string,
+) {
 	if inference == nil {
 		return
-	}
-	if inference.InferenceId == "" {
-		k.LogError("RecordInferencePrice called with empty inference ID", types.Pricing,
-			"inference", inference)
 	}
 	if inference.Model == "" {
 		k.LogError("RecordInferencePrice called with empty model ID", types.Pricing,
@@ -287,7 +287,7 @@ func (k *Keeper) RecordInferencePrice(ctx context.Context, inference *types.Infe
 		// This should never happen if BeginBlocker ran properly
 		// Log error but don't fail the inference - use legacy price as emergency fallback
 		k.LogError("Failed to get current price - BeginBlocker may not have run", types.Pricing,
-			"inferenceId", inference.InferenceId, "modelId", inference.Model, "error", err)
+			"inferenceId", inferenceId, "modelId", inference.Model, "error", err)
 		// Use legacy pricing as fallback (same value as calculations.PerTokenCost)
 		currentPrice = calculations.PerTokenCost
 	}
@@ -297,7 +297,7 @@ func (k *Keeper) RecordInferencePrice(ctx context.Context, inference *types.Infe
 	inference.PerTokenPrice = currentPrice
 
 	k.LogInfo("Recorded inference price", types.Pricing,
-		"inferenceId", inference.InferenceId, "modelId", inference.Model, "lockedPrice", currentPrice)
+		"inferenceId", inferenceId, "modelId", inference.Model, "lockedPrice", currentPrice)
 }
 
 // Model Capacity Caching Functions

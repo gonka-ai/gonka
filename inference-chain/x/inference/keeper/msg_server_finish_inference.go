@@ -49,17 +49,20 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return nil, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired")
 	}
 
-	if existingInference.StartProcessed() {
-		if existingInference.Model == "" {
-			k.LogError("FinishInference: model not set by the processed start message", types.Inferences,
-				"inferenceId", msg.InferenceId,
-				"executedBy", msg.ExecutedBy)
-		} else if existingInference.Model != msg.Model {
-			k.LogError("FinishInference: model mismatch", types.Inferences,
-				"inferenceId", msg.InferenceId,
-				"existingInference.Model", existingInference.Model,
-				"msg.Model", msg.Model)
-		}
+	// Record the current price only if this is the first message (StartInference not processed yet)
+	// This ensures consistent pricing regardless of message arrival order
+	if !existingInference.StartProcessed() {
+		existingInference.Model = msg.Model
+		k.RecordInferencePrice(goCtx, &existingInference, msg.InferenceId)
+	} else if existingInference.Model == "" {
+		k.LogError("FinishInference: model not set by the processed start message", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"executedBy", msg.ExecutedBy)
+	} else if existingInference.Model != msg.Model {
+		k.LogError("FinishInference: model mismatch", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"existingInference.Model", existingInference.Model,
+			"msg.Model", msg.Model)
 	}
 
 	blockContext := calculations.BlockContext{
@@ -68,12 +71,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 
 	inference, payments := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
-	// Record the current price only if this is the first message (StartInference not processed yet)
-	// This ensures consistent pricing regardless of message arrival order
-	if !inference.StartProcessed() {
-		existingInference.Model = msg.Model
-		k.RecordInferencePrice(goCtx, &existingInference)
-	}
 
 	finalInference, err := k.processInferencePayments(ctx, inference, payments)
 	if err != nil {
