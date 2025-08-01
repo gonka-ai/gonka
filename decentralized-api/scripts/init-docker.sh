@@ -39,9 +39,10 @@ if [ -z "${ACCOUNT_PUBKEY-}" ]; then
   echo "WARNING: For production, explicitly provide ACCOUNT_PUBKEY or set CREATE_KEY=true"
   sleep 20
 
+  export KEYRING_BACKEND="test"
   # Check if the key exists
-  if inferenced keys show "$KEY_NAME" --keyring-backend test --keyring-dir /root/.inference >/dev/null 2>&1; then
-    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
+  if inferenced keys show "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference >/dev/null 2>&1; then
+    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference | jq -r '.key')
     export ACCOUNT_PUBKEY
     echo "Extracted ACCOUNT_PUBKEY from existing key: $ACCOUNT_PUBKEY"
   else
@@ -72,9 +73,6 @@ if [ -n "$NODE_HOST" ]; then
   echo "Setting node address to http://$NODE_HOST:26657 in $yaml_file"
   sed -i "s/url: .*:26657/url: http:\/\/$NODE_HOST:26657/" "$yaml_file"
 fi
-
-echo "Setting keyring_backend to test in $yaml_file"
-sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
 echo "Initial config (before env var merge)"
 cat "$yaml_file"
