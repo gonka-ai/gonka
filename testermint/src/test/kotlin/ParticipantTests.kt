@@ -65,7 +65,7 @@ class ParticipantTests : TestermintTest() {
 
     @Test
     fun `add node after snapshot`() {
-        val (cluster, genesis) = initCluster()
+        val (cluster, genesis) = initCluster(reboot = true)
         logSection("Waiting for snapshot height")
         genesis.node.waitForMinimumBlock(102)
         val height = genesis.node.getStatus().syncInfo.latestBlockHeight

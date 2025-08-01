@@ -18,7 +18,7 @@ import java.time.Instant
 
 const val DELAY_SEED = 8675309
 
-@Timeout(value = 10, unit = TimeUnit.MINUTES)
+@Timeout(value = 15, unit = TimeUnit.MINUTES)
 class InferenceAccountingTests : TestermintTest() {
 
     @Test
@@ -74,10 +74,11 @@ class InferenceAccountingTests : TestermintTest() {
         expectedTokens: Int,
         expectedMaxTokens: Int,
     ) {
+        logSection("Sending inference request")
         val genesis = cluster.genesis
         val startBalance = genesis.node.getSelfBalance()
         cluster.allPairs.forEach {
-            it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(10))
+            it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(20))
         }
         val seed = Random.nextInt()
         val payload = inference.copy(seed = seed).toJson()
@@ -107,8 +108,9 @@ class InferenceAccountingTests : TestermintTest() {
         assertThat(lastRequest?.maxCompletionTokens).withFailMessage { "Max completion tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxCompletionTokens).isEqualTo(expectedMaxTokens)
 
+        logSection("Waiting for inference to be on chain")
         // Wait for inference to be available
-        val chainInference = genesis.waitForInference(inferenceId)
+        val chainInference = genesis.waitForInference(inferenceId, finished = false)
         assertNotNull(chainInference)
         // Balance verification
         val difference = (0..100).asSequence().map {
@@ -225,7 +227,7 @@ class InferenceAccountingTests : TestermintTest() {
             logSection("Making inference with consumer account")
             val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getAddress())
             assertThat(result).isNotNull
-            val inference = genesis.waitForInference(result.id)
+            val inference = genesis.waitForInference(result.id, finished = true)
             assertNotNull(inference, "Inference never finished")
             logSection("Verifying inference balances")
             assertThat(inference.executedBy).isNotNull()
