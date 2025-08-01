@@ -52,17 +52,18 @@ func NewParams() Params {
 }
 
 const million = 1_000_000
+const billion = 1_000_000_000
 const year = 365 * 24 * 60 * 60
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
-		TotalSupply:              1_000 * million,
-		OriginatorSupply:         160 * million,
-		TopRewardAmount:          120 * million,
-		PreProgrammedSaleAmount:  120 * million,
+		TotalSupply:              1_000 * million * billion,
+		OriginatorSupply:         160 * million * billion,
+		TopRewardAmount:          120 * million * billion,
+		PreProgrammedSaleAmount:  120 * million * billion,
 		TopRewards:               3,
-		SupplyDenom:              NativeCoin,
-		StandardRewardAmount:     600 * million,
+		SupplyDenom:              BaseCoin,
+		StandardRewardAmount:     600 * million * billion,
 		TopRewardPeriod:          year,
 		TopRewardPayouts:         12,
 		TopRewardPayoutsPerMiner: 4,
