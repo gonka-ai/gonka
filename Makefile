@@ -23,8 +23,8 @@ proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
 
 release: decentralized-api-release inference-chain-release tmkms-release proxy-release
-	@git tag $(TAG_NAME)
-	@git push origin $(TAG_NAME)
+	# @git tag $(TAG_NAME)
+	# @git push origin $(TAG_NAME)
 
 decentralized-api-release:
 	@echo "Releasing decentralized-api..."

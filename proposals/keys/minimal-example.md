@@ -136,10 +136,10 @@ register-new-participant [operator-address] [node-url] [operator-public-key] [va
 
 ```
 ./inferenced register-new-participant \
-    gonka1sknqf7usat47vx6ljfyxj2uzkntqrjedf3rafv \
-    "http://36.189.234.237:19252" \
-    "A90FVPMlZhWnvM5EYmAntmFnGgYYwX8XNNDVDbEny/p3" \
-    "Or0D+YWgRjz0XDJ1myB90m9W/rLnwsMVGx8nABKoIQA=" \
+    gonka1lqchmm97zcs9khyt38kga8ftcdacjcq78kk5mq \
+    "http://36.189.234.237:19254" \
+    "AvxOXFyZXsrP7d0oGrSxMvv06AyUU8AqDCjGErDQvgBQ" \
+    "x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11FKXOpWRmAA=" \
     --node-address http://36.189.234.237:19250
 ```
 
@@ -147,7 +147,7 @@ register-new-participant [operator-address] [node-url] [operator-public-key] [va
 gonka12fum536l6jyr6vwy7atsgfp07uwrtt9j48cd3q
 
 ./inferenced tx inference grant-ml-ops-permissions \
-    operator-19254 gonka19w64m5dahlg2s98sup94x4t0ydt0ng3wl6gykr \
+    operator-19254 gonka14mqkfa4j4d0mg6fzxpytqahxhkxlfgxaxgp8vc \
     --node http://36.189.234.237:19250/chain-rpc/ \
     --unordered --timeout-duration 1m \
     --from operator-19254 \

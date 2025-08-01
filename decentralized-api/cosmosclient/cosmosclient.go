@@ -89,7 +89,10 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		cosmosclient.WithGas("auto"),
 		cosmosclient.WithGasAdjustment(5),
 	)
-	log.Printf("Client created")
+	if err != nil {
+		log.Printf("Error creating cosmos client: %s", err)
+		return nil, err
+	}
 
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
 	cryptocodec.RegisterInterfaces(interfaceRegistry)
@@ -102,21 +105,20 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		strings.NewReader(nodeConfig.KeyringPassword),
 		cdc,
 	)
+	if err != nil {
+		log.Printf("Error creating keyring: %s", err)
+		return nil, err
+	}
 	client.AccountRegistry.Keyring = kr
-	if err != nil {
-		return nil, err
-	}
+
 	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, &client)
-	signerAddress, err := apiAccount.SignerAddressBech32()
 	if err != nil {
-		return nil, err
-	}
-	log.Printf("Signer address: %s", signerAddress)
-	if err != nil {
+		log.Printf("Error creating api account: %s", err)
 		return nil, err
 	}
 	accAddress, err := apiAccount.AccountAddressBech32()
 	if err != nil {
+		log.Printf("Error getting account address: %s", err)
 		return nil, err
 	}
 	log.Printf("Account address: %s", accAddress)
@@ -388,7 +390,8 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 		WithFees("").
 		WithGasPrices("").
 		WithGas(0).
-		WithUnordered(true)
+		WithUnordered(true).
+		WithKeybase(c.Client.AccountRegistry.Keyring)
 	c.TxFactory = &factory
 	return &factory, nil
 }
