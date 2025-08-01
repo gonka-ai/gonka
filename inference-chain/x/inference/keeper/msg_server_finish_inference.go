@@ -49,6 +49,22 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return nil, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired")
 	}
 
+	// Record the current price only if this is the first message (StartInference not processed yet)
+	// This ensures consistent pricing regardless of message arrival order
+	if !existingInference.StartProcessed() {
+		existingInference.Model = msg.Model
+		k.RecordInferencePrice(goCtx, &existingInference, msg.InferenceId)
+	} else if existingInference.Model == "" {
+		k.LogError("FinishInference: model not set by the processed start message", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"executedBy", msg.ExecutedBy)
+	} else if existingInference.Model != msg.Model {
+		k.LogError("FinishInference: model mismatch", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"existingInference.Model", existingInference.Model,
+			"msg.Model", msg.Model)
+	}
+
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
@@ -142,14 +158,14 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	}
 
 	inferenceDetails := types.InferenceValidationDetails{
-		InferenceId:        existingInference.InferenceId,
-		ExecutorId:         existingInference.ExecutedBy,
-		ExecutorReputation: executorReputation,
-		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
-		ExecutorPower:      executorPower,
-		EpochId:            effectiveEpoch.Index,
-		Model:              existingInference.Model,
-		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
+		InferenceId:          existingInference.InferenceId,
+		ExecutorId:           existingInference.ExecutedBy,
+		ExecutorReputation:   executorReputation,
+		TrafficBasis:         uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
+		ExecutorPower:        executorPower,
+		EpochId:              effectiveEpoch.Index,
+		Model:                existingInference.Model,
+		TotalPower:           uint64(modelEpochGroup.GroupData.TotalWeight),
 		CreatedAtBlockHeight: ctx.BlockHeight(),
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {

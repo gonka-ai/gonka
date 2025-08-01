@@ -263,17 +263,43 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod:      "GetAllModelCapacities",
+					Use:            "all-model-capacities",
+					Short:          "Get cached capacities for all models",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
 					RpcMethod:      "CountPoCbatchesAtHeight",
 					Use:            "count-po-c-batches-at-height [block-height]",
 					Short:          "Query countPoCBatchesAtHeight",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}},
 				},
-
 				{
 					RpcMethod:      "CountPoCvalidationsAtHeight",
 					Use:            "count-po-c-validations-at-height [block-height]",
 					Short:          "Query countPoCValidationsAtHeight",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}},
+				},
+
+				// Dynamic pricing queries
+				{
+					RpcMethod:      "GetModelPerTokenPrice",
+					Use:            "model-per-token-price [model-id]",
+					Short:          "Get current per-token price for a specific model",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "model_id"}},
+				},
+				{
+					RpcMethod:      "GetAllModelPerTokenPrices",
+					Use:            "all-model-per-token-prices",
+					Short:          "Get current per-token prices for all models",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "GetModelCapacity",
+					Use:            "model-capacity [model-id]",
+					Short:          "Get cached capacity for a specific model",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "model_id"}},
 				},
 
 				// this line is used by ignite scaffolding # autocli/query

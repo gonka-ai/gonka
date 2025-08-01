@@ -110,62 +110,6 @@ class ValidationTests : TestermintTest() {
     }
 }
 
-
-fun inParallel(
-    count: Int,
-    maxConcurrent: Int,
-    action: (Int) -> Unit
-) {
-    runBlocking {
-        val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrent).asCoroutineDispatcher()
-        val requests = List(count) { async(limitedDispatcher) { action(it) } }
-        requests.forEach { it.await() }
-    }
-}
-
-fun runParallelInferences(
-    genesis: LocalInferencePair,
-    count: Int,
-    waitForBlocks: Int = 20,
-    maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
-    models: List<String> = listOf(defaultModel),
-): List<Int> = runBlocking {
-    // Launch coroutines with async and collect the deferred results
-
-    val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
-    val requests = List(count) { i ->
-        async(limitedDispatcher) {
-            Logger.warn("Starting request $i")
-            try {
-                System.nanoTime()
-                // This works, because the Instant.now() resolution gives us 3 zeros at the end, so we know these will be unique
-                val timestamp = Instant.now().toEpochNanos() + i
-                val result = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson(), timestamp = timestamp)
-                Logger.info("Result for $i: $result\n\n\n")
-                result
-            } catch (e: Exception) {
-                Logger.error("Error making inference request: ${e.message}")
-                null
-            } finally {
-                Logger.warn("Finished request $i")
-            }
-        }
-    }
-
-    // Wait for all requests to complete and collect their results
-    val results = requests.map { it.await() }
-
-    genesis.node.waitForNextBlock(waitForBlocks)
-
-    // Return statuses
-    results.mapNotNull { result ->
-        result?.let {
-            val inference = genesis.api.getInference(result.id)
-            inference.status
-        }
-    }
-}
-
 val InferencePayload.statusEnum: InferenceStatus
     get() = InferenceStatus.entries.first { it.value == status }
 

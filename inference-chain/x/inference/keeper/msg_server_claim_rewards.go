@@ -37,11 +37,14 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
+	// TODO: Optimization: Payout claim should be done in one transaction
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
-	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant); err != nil {
+	params := ms.GetParams(ctx)
+	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
+	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.handleUnderfundedWork(ctx, err, settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -58,7 +61,8 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
 
 	// Pay rewards from module
-	if err := ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant); err != nil {
+	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
+	if err := ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {

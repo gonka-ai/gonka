@@ -52,10 +52,13 @@ func ProcessStartInference(
 			"assignedTo",
 			startMessage.AssignedTo,
 		)
+		// Preserve the PerTokenPrice that was set by RecordInferencePrice
+		existingPerTokenPrice := currentInference.PerTokenPrice
 		currentInference = &types.Inference{
-			Index:       startMessage.InferenceId,
-			InferenceId: startMessage.InferenceId,
-			Status:      types.InferenceStatus_STARTED,
+			Index:         startMessage.InferenceId,
+			InferenceId:   startMessage.InferenceId,
+			Status:        types.InferenceStatus_STARTED,
+			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
 	// Works if FinishInference came before
@@ -118,9 +121,13 @@ func ProcessFinishInference(
 			"inference_id",
 			finishMessage.InferenceId,
 		)
+		// Preserve the PerTokenPrice that was set by RecordInferencePrice
+		existingPerTokenPrice := currentInference.PerTokenPrice
 		currentInference = &types.Inference{
-			Index:       finishMessage.InferenceId,
-			InferenceId: finishMessage.InferenceId,
+			Index:         finishMessage.InferenceId,
+			InferenceId:   finishMessage.InferenceId,
+			Model:         finishMessage.Model,
+			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
 	currentInference.Status = types.InferenceStatus_FINISHED
@@ -179,12 +186,20 @@ func getMaxTokens(msg *types.MsgStartInference) uint64 {
 	return DefaultMaxTokens
 }
 
-const PerTokenCost = 1000
+const PerTokenCost = 1000 // Legacy fallback price
 
 func CalculateCost(inference *types.Inference) int64 {
-	return int64(inference.CompletionTokenCount*PerTokenCost + inference.PromptTokenCount*PerTokenCost)
+	// Simply use the per-token price stored in the inference
+	// RecordInferencePrice ensures this is always set to the correct value:
+	// - Dynamic price from BeginBlocker (including 0 for grace period)
+	// - Legacy fallback price (1000) if dynamic pricing unavailable
+	return int64(inference.CompletionTokenCount*inference.PerTokenPrice + inference.PromptTokenCount*inference.PerTokenPrice)
 }
 
 func CalculateEscrow(inference *types.Inference, promptTokens uint64) int64 {
-	return int64((inference.MaxTokens + promptTokens) * PerTokenCost)
+	// Simply use the per-token price stored in the inference
+	// RecordInferencePrice ensures this is always set to the correct value:
+	// - Dynamic price from BeginBlocker (including 0 for grace period)
+	// - Legacy fallback price (1000) if dynamic pricing unavailable
+	return int64((inference.MaxTokens + promptTokens) * inference.PerTokenPrice)
 }

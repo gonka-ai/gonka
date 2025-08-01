@@ -137,7 +137,7 @@ func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {
 
 	supplyDenom := state.GenesisOnlyParams.SupplyDenom
-	denomMetadata, found := k.BankKeeper.GetDenomMetaData(ctx, types.BaseCoin)
+	denomMetadata, found := k.BankView.GetDenomMetaData(ctx, types.BaseCoin)
 	if !found {
 		panic("BaseCoin denom not found")
 	}
@@ -154,10 +154,10 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	topRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
 	preProgrammedCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
 
-	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, sdk.NewCoins(topRewardCoin)); err != nil {
+	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, sdk.NewCoins(topRewardCoin), "top_reward_pool init"); err != nil {
 		panic(err)
 	}
-	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, sdk.NewCoins(preProgrammedCoin)); err != nil {
+	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, sdk.NewCoins(preProgrammedCoin), "pre_programmed_coin_init"); err != nil {
 		panic(err)
 	}
 }

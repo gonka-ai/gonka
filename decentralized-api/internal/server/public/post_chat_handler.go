@@ -192,7 +192,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	logging.Info("Prompt token estimation", types.Inferences, "count", promptTokenCount, "model", request.OpenAiRequest.Model)
 
-	if err := validateRequester(request, requester, promptTokenCount); err != nil {
+	if err := s.validateRequester(ctx.Request().Context(), request, requester, promptTokenCount); err != nil {
 		return err
 	}
 
@@ -650,6 +650,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 			RequestTimestamp:     request.Timestamp,
 			RequestedBy:          request.RequesterAddress,
 			OriginalPrompt:       string(request.Body),
+			Model:                model,
 		}
 
 		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
@@ -766,8 +767,8 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Check signature and available balance.
-func validateRequester(request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
+// validateRequester validates requester with dynamic pricing fallback to legacy
+func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
 	if requester == nil {
 		logging.Error("Inference participant not found", types.Inferences, "address", request.RequesterAddress)
 		return ErrInferenceParticipantNotFound
@@ -783,14 +784,42 @@ func validateRequester(request *ChatRequest, requester *types.QueryInferencePart
 		request.OpenAiRequest.MaxTokens = keeper.DefaultMaxTokens
 	}
 
-	// Calculate escrow needed based on both max tokens and prompt token estimation
-	maxTokensCost := uint64(request.OpenAiRequest.MaxTokens) * uint64(calculations.PerTokenCost)
+	var escrowNeeded uint64
+	var perTokenPrice uint64
 
-	// Use the promptTokenCount parameter that was passed in (estimation for escrow)
-	promptTokensCost := uint64(promptTokenCount) * uint64(calculations.PerTokenCost)
+	// Try to get dynamic pricing first
+	queryClient := s.recorder.NewInferenceQueryClient()
+	priceResponse, err := queryClient.GetModelPerTokenPrice(ctx, &types.QueryGetModelPerTokenPriceRequest{
+		ModelId: request.OpenAiRequest.Model,
+	})
 
-	escrowNeeded := maxTokensCost + promptTokensCost
-	logging.Debug("Escrow needed (using estimation)", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
+	if err == nil && priceResponse.Found {
+		// Use dynamic pricing
+		perTokenPrice = priceResponse.Price
+
+		logging.Debug("Using dynamic pricing", types.Inferences,
+			"perTokenPrice", perTokenPrice,
+			"model", request.OpenAiRequest.Model)
+	} else {
+		// Fall back to legacy pricing
+		logging.Warn("Failed to get dynamic pricing, falling back to legacy calculation", types.Inferences, "error", err)
+		perTokenPrice = uint64(calculations.PerTokenCost)
+
+		logging.Debug("Using legacy pricing", types.Inferences,
+			"perTokenPrice", perTokenPrice)
+	}
+
+	// Calculate escrow using consistent formula: (PromptTokens + MaxTokens) × PerTokenPrice
+	totalTokens := uint64(promptTokenCount) + uint64(request.OpenAiRequest.MaxTokens)
+	escrowNeeded = totalTokens * perTokenPrice
+
+	logging.Debug("Escrow calculation", types.Inferences,
+		"escrowNeeded", escrowNeeded,
+		"perTokenPrice", perTokenPrice,
+		"promptTokens", promptTokenCount,
+		"maxTokens", request.OpenAiRequest.MaxTokens,
+		"totalTokens", totalTokens)
+
 	logging.Debug("Client balance", types.Inferences, "balance", requester.Balance)
 	if requester.Balance < int64(escrowNeeded) {
 		return ErrInsufficientBalance

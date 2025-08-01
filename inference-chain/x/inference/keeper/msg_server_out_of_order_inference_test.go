@@ -1,10 +1,11 @@
 package keeper_test
 
 import (
+	"testing"
+
 	"github.com/productscience/inference/x/inference/calculations"
 	inference "github.com/productscience/inference/x/inference/module"
 	"go.uber.org/mock/gomock"
-	"testing"
 
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
@@ -30,6 +31,12 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(mockExecutor).Times(1)
 
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	// Disable grace period for tests so we get actual pricing instead of 0
+	params := k.GetParams(ctx)
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	k.SetParams(ctx, params)
+
 	payload := "promptPayload"
 	requestTimestamp := ctx.BlockTime().UnixNano()
 

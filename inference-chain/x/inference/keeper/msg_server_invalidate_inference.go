@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -36,7 +37,13 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 	if err != nil {
 		return nil, err
 	}
+
+	// Store the original status to check for a state transition to INVALID.
+	originalStatus := executor.Status
 	executor.Status = calculateStatus(k.Keeper.GetParams(goCtx).ValidationParams, executor)
+
+	// Check for a status transition and slash if necessary.
+	k.CheckAndSlashForInvalidStatus(goCtx, originalStatus, &executor)
 
 	k.SetInference(ctx, inference)
 	k.SetParticipant(ctx, executor)
@@ -48,7 +55,7 @@ func (k msgServer) markInferenceAsInvalid(executor *types.Participant, inference
 	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
 	executor.CoinBalance -= inference.ActualCost
-	k.LogBalance(executor.Address, inference.ActualCost, executor.CoinBalance, "inference_invalidated:"+inference.InferenceId)
+	k.BankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, sdk.NewInt64Coin(types.BaseCoin, inference.ActualCost), "inference_invalidated:"+inference.InferenceId)
 	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
 	// We need to refund the cost, so we have to lookup the person who paid
 	payer, found := k.GetParticipant(ctx, inference.RequestedBy)

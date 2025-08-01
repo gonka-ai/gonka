@@ -16,8 +16,8 @@ type (
 		cdc          codec.BinaryCodec
 		storeService store.KVStoreService
 		logger       log.Logger
-		BankKeeper   types.BankEscrowKeeper
-		bankView     types.BankKeeper
+		BankKeeper   types.BookkeepingBankKeeper
+		BankView     types.BankKeeper
 		validatorSet types.ValidatorSet
 		group        types.GroupMessageKeeper
 		Staking      types.StakingKeeper
@@ -26,6 +26,9 @@ type (
 		authority     string
 		AccountKeeper types.AccountKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
+
+		collateralKeeper    types.CollateralKeeper
+		streamvestingKeeper types.StreamVestingKeeper
 	}
 )
 
@@ -34,12 +37,14 @@ func NewKeeper(
 	storeService store.KVStoreService,
 	logger log.Logger,
 	authority string,
-	bank types.BankEscrowKeeper,
+	bank types.BookkeepingBankKeeper,
 	bankView types.BankKeeper,
 	group types.GroupMessageKeeper,
 	validatorSet types.ValidatorSet,
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
+	collateralKeeper types.CollateralKeeper,
+	streamvestingKeeper types.StreamVestingKeeper,
 	getWasmKeeper func() wasmkeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
@@ -47,17 +52,19 @@ func NewKeeper(
 	}
 
 	return Keeper{
-		cdc:           cdc,
-		storeService:  storeService,
-		authority:     authority,
-		logger:        logger,
-		BankKeeper:    bank,
-		bankView:      bankView,
-		group:         group,
-		validatorSet:  validatorSet,
-		Staking:       staking,
-		AccountKeeper: accountKeeper,
-		getWasmKeeper: getWasmKeeper,
+		cdc:                 cdc,
+		storeService:        storeService,
+		authority:           authority,
+		logger:              logger,
+		BankKeeper:          bank,
+		BankView:            bankView,
+		group:               group,
+		validatorSet:        validatorSet,
+		Staking:             staking,
+		AccountKeeper:       accountKeeper,
+		collateralKeeper:    collateralKeeper,
+		streamvestingKeeper: streamvestingKeeper,
+		getWasmKeeper:       getWasmKeeper,
 	}
 }
 
@@ -71,17 +78,19 @@ func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
 	return k.getWasmKeeper()
 }
 
+// GetCollateralKeeper returns the collateral keeper.
+func (k Keeper) GetCollateralKeeper() types.CollateralKeeper {
+	return k.collateralKeeper
+}
+
+// GetStreamVestingKeeper returns the streamvesting keeper.
+func (k Keeper) GetStreamVestingKeeper() types.StreamVestingKeeper {
+	return k.streamvestingKeeper
+}
+
 // Logger returns a module-specific logger.
 func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
-}
-
-func (k Keeper) LogTransaction(to string, from string, amount int64, memo string) {
-	k.Logger().Info("TransactionAudit", "to", to, "from", from, "amount", amount, "memo", memo)
-}
-
-func (k Keeper) LogBalance(address string, change int64, result int64, memo string) {
-	k.Logger().Info("BalanceAudit", "address", address, "change", change, "result", result, "memo", memo)
 }
 
 func (k Keeper) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
@@ -103,4 +112,22 @@ func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyVals ...inter
 // Codec returns the binary codec used by the keeper.
 func (k Keeper) Codec() codec.BinaryCodec {
 	return k.cdc
+}
+
+type EntryType int
+
+const (
+	Debit EntryType = iota
+	Credit
+)
+
+func (e EntryType) String() string {
+	switch e {
+	case Debit:
+		return "debit"
+	case Credit:
+		return "credit"
+	default:
+		return "unknown"
+	}
 }
