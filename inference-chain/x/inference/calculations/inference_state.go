@@ -52,13 +52,10 @@ func ProcessStartInference(
 			"assignedTo",
 			startMessage.AssignedTo,
 		)
-		// Preserve the PerTokenPrice that was set by RecordInferencePrice
-		existingPerTokenPrice := currentInference.PerTokenPrice
 		currentInference = &types.Inference{
-			Index:         startMessage.InferenceId,
-			InferenceId:   startMessage.InferenceId,
-			Status:        types.InferenceStatus_STARTED,
-			PerTokenPrice: existingPerTokenPrice, // Preserve dynamic pricing
+			Index:       startMessage.InferenceId,
+			InferenceId: startMessage.InferenceId,
+			Status:      types.InferenceStatus_STARTED,
 		}
 	}
 	// Works if FinishInference came before
@@ -122,11 +119,10 @@ func ProcessFinishInference(
 			finishMessage.InferenceId,
 		)
 		// Preserve the PerTokenPrice that was set by RecordInferencePrice
-		existingPerTokenPrice := currentInference.PerTokenPrice
 		currentInference = &types.Inference{
-			Index:         finishMessage.InferenceId,
-			InferenceId:   finishMessage.InferenceId,
-			PerTokenPrice: existingPerTokenPrice, // Preserve the PerTokenPrice
+			Index:       finishMessage.InferenceId,
+			InferenceId: finishMessage.InferenceId,
+			Model:       finishMessage.Model,
 		}
 	}
 	currentInference.Status = types.InferenceStatus_FINISHED

@@ -37,14 +37,6 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 
-	// Record the current price only if this is the first message (FinishInference not processed yet)
-	// This ensures consistent pricing regardless of message arrival order
-	if !existingInference.FinishedProcessed() {
-		existingInference.InferenceId = msg.InferenceId
-		existingInference.Model = msg.Model
-		k.RecordInferencePrice(goCtx, &existingInference)
-	}
-
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
@@ -53,6 +45,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	inference, payments, err := calculations.ProcessStartInference(&existingInference, msg, blockContext, k)
 	if err != nil {
 		return nil, err
+	}
+	// Record the current price only if this is the first message (FinishInference not processed yet)
+	// This ensures consistent pricing regardless of message arrival order
+	if !inference.FinishedProcessed() {
+		k.RecordInferencePrice(goCtx, &existingInference)
 	}
 
 	finalInference, err := k.processInferencePayments(ctx, inference, payments)
