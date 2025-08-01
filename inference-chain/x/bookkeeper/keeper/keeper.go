@@ -135,20 +135,21 @@ func (k Keeper) logTransaction(ctx context.Context, to string, from string, coin
 	if coin.Amount.IsZero() {
 		return
 	}
-
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 	logFunc := k.getLogFunction(k.logConfig.LogLevel)
 	amount := coin.Amount.Int64()
 	if k.logConfig.DoubleEntry {
-		logFunc("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount)
-		logFunc("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount)
+		logFunc("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount, "height", height)
+		logFunc("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount, "height", height)
 	}
 	if k.logConfig.SimpleEntry {
 		amountString := fmt.Sprintf("%d", amount)
+		heightString := fmt.Sprintf("%d", height)
 		if subAccount != "" {
 			// Extra space here to ensure alignment in logs
-			logFunc(fmt.Sprintf("SubAccountEntry  to=%s from=%s amount=%20s denom=%10s memo=%s subaccount=%s", fixedSize(to, 64), fixedSize(from, 64), amountString, coin.Denom, memo, subAccount))
+			logFunc(fmt.Sprintf("SubAccountEntry  to=%s from=%s amount=%20s %-10s height=%8s memo=%s subaccount=%s", fixedSize(to, 64), fixedSize(from, 64), amountString, coin.Denom, heightString, memo, subAccount))
 		} else {
-			logFunc(fmt.Sprintf("TransactionEntry to=%s from=%s amount=%20s denom=%10s memo=%s", fixedSize(to, 64), fixedSize(from, 64), amountString, coin.Denom, memo))
+			logFunc(fmt.Sprintf("TransactionEntry to=%s from=%s amount=%20s %-10s height=%8s memo=%s", fixedSize(to, 64), fixedSize(from, 64), amountString, coin.Denom, heightString, memo))
 		}
 	}
 }
