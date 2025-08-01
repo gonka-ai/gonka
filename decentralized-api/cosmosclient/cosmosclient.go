@@ -92,7 +92,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
-	apiAccount, err := apiconfig.NewApiAccount(ctx, addressPrefix, nodeConfig)
+	apiAccount, err := apiconfig.NewApiAccount(ctx, addressPrefix, nodeConfig, &client)
 	if err != nil {
 		return nil, err
 	}
@@ -353,25 +353,36 @@ func (icc *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 		return icc.TxFactory, nil
 	}
 
-	keyPassword := icc.NodeConfig.KeyringPassword
-	if keyPassword == "" {
-		return nil, errors.New("keyring password not set in config and environment variable not set")
-	}
-
 	clientCtx := icc.Client.Context()
-	keyringDir := clientCtx.KeyringDir
-	keyringBackend := string(icc.Client.Context().Keyring.Backend())
+	var kr keyring.Keyring // Declare a variable for the keyring
 
-	kr, err := keyring.New(
-		"inferenced",
-		keyringBackend,
-		keyringDir,
-		strings.NewReader(keyPassword),
-		clientCtx.Codec,
-	)
-	if err != nil {
-		logging.Error("Failed to create new non-interactive keyring", types.Messages, "error", err)
-		return nil, err
+	// Check the backend type to decide the strategy
+	backend := string(clientCtx.Keyring.Backend())
+
+	if backend == keyring.BackendTest {
+		// For the 'test' backend, simply use the existing keyring.
+		// It's already in-memory and non-interactive. No need to create a new one.
+		kr = clientCtx.Keyring
+	} else {
+		// For 'file' or other backends, create a new keyring instance
+		// with the password to enable non-interactive signing.
+		keyPassword := icc.NodeConfig.KeyringPassword
+		if keyPassword == "" {
+			return nil, errors.New("keyring password is required for non-test backends")
+		}
+
+		var err error
+		kr, err = keyring.New(
+			"inferenced", // The app name used to initialize keys
+			backend,
+			clientCtx.KeyringDir,
+			strings.NewReader(keyPassword),
+			clientCtx.Codec,
+		)
+		if err != nil {
+			logging.Error("Failed to create new non-interactive keyring", types.Messages, "error", err)
+			return nil, err
+		}
 	}
 
 	address, err := icc.ApiAccount.SignerAddress()
@@ -386,6 +397,7 @@ func (icc *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 		return nil, err
 	}
 
+	// ⚠️ Corrected from WithKeybase to WithKeyring
 	factory := tx.Factory{}.
 		WithKeybase(kr).
 		WithChainID(clientCtx.ChainID).
