@@ -240,6 +240,18 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		log.Printf("Loaded ACCOUNT_PUBKEY: %+v", accountPubKey)
 	}
 
+	if keyRingBackend, found := os.LookupEnv("KEYRING_BACKEND"); found {
+		config.ChainNode.KeyringBackend = keyRingBackend
+		log.Printf("Loaded KEYRING_BACKEND: %+v", keyRingBackend)
+	}
+
+	if keyringPassword, found := os.LookupEnv("KEYRING_PASSWORD"); found {
+		config.ChainNode.KeyringPassword = keyringPassword
+		log.Printf("Loaded KEYRING_PASSWORD: %+v", keyringPassword)
+	} else {
+		log.Printf("Warning: KEYRING_PASSWORD environment variable not set - keyring operations may fail")
+	}
+
 	if err := loadNodeConfig(&config); err != nil {
 		log.Fatalf("error loading node config: %v", err)
 	}

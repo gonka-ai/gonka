@@ -107,6 +107,7 @@ type ChainNodeConfig struct {
 	SignerKeyName    string `koanf:"signer_key_name"`
 	KeyringBackend   string `koanf:"keyring_backend"`
 	KeyringDir       string `koanf:"keyring_dir"`
+	KeyringPassword  string
 }
 
 type MLNodeKeyConfig struct {

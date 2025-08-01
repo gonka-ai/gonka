@@ -6,11 +6,11 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
-	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 )
 
 type ApiAccount struct {
@@ -20,20 +20,17 @@ type ApiAccount struct {
 }
 
 func NewApiAccount(ctx context.Context, addressPrefix string, nodeConfig ChainNodeConfig) (*ApiAccount, error) {
-	client, err := cosmosclient.New(
-		ctx,
-		cosmosclient.WithAddressPrefix(addressPrefix),
-		cosmosclient.WithNodeAddress(nodeConfig.Url),
-		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
-		cosmosclient.WithKeyringDir(nodeConfig.KeyringDir),
-	)
+	kr, err := keyring.New("inferenced", string(nodeConfig.KeyringBackend), nodeConfig.KeyringDir, nil, nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cosmos client: %w", err)
+		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
-	signer, err := client.AccountRegistry.GetByName(nodeConfig.SignerKeyName)
+	signer, err := kr.Key(nodeConfig.SignerKeyName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get signer account '%s' from keyring: %w", nodeConfig.SignerKeyName, err)
+	}
+	signerAccount := cosmosaccount.Account{
+		Record: signer,
 	}
 
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(nodeConfig.AccountPublicKey)
@@ -43,7 +40,7 @@ func NewApiAccount(ctx context.Context, addressPrefix string, nodeConfig ChainNo
 	accountKey := secp256k1.PubKey{Key: pubKeyBytes}
 	return &ApiAccount{
 		AccountKey:    &accountKey,
-		SignerAccount: &signer,
+		SignerAccount: &signerAccount,
 		AddressPrefix: addressPrefix,
 	}, nil
 }
