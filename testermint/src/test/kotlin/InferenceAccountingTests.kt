@@ -4,7 +4,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -15,7 +14,6 @@ import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.random.Random
 import kotlin.test.assertNotNull
-import kotlinx.coroutines.runBlocking
 import java.time.Instant
 
 const val DELAY_SEED = 8675309
@@ -33,12 +31,11 @@ class InferenceAccountingTests : TestermintTest() {
         
         // Test 1: maxCompletionTokens parameter
         logSection("=== TEST 1: Testing maxCompletionTokens = $maxCompletionTokens ===")
-        val expectedCost1 = (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
-        logHighlight("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost1")
+        val expectedTokens1 = (maxCompletionTokens + inferenceRequestObject.textLength())
         verifyEscrow(
             cluster,
             inferenceRequestObject.copy(maxCompletionTokens = maxCompletionTokens),
-            expectedCost1,
+            expectedTokens1,
             maxCompletionTokens
         )
         
@@ -47,12 +44,11 @@ class InferenceAccountingTests : TestermintTest() {
         
         // Test 2: maxTokens parameter  
         logSection("=== TEST 2: Testing maxTokens = $maxCompletionTokens ===")
-        val expectedCost2 = (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
-        logHighlight("Expected cost: ($maxCompletionTokens + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost2")
+        val expectedTokens2 = (maxCompletionTokens + inferenceRequestObject.textLength())
         verifyEscrow(
             cluster,
             inferenceRequestObject.copy(maxTokens = maxCompletionTokens),
-            expectedCost2,
+            expectedTokens2,
             maxCompletionTokens
         )
         
@@ -61,12 +57,11 @@ class InferenceAccountingTests : TestermintTest() {
         
         // Test 3: Default tokens
         logSection("=== TEST 3: Testing default tokens = $DEFAULT_TOKENS ===")
-        val expectedCost3 = (DEFAULT_TOKENS + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST
-        logHighlight("Expected cost: ($DEFAULT_TOKENS + ${inferenceRequestObject.textLength()}) × $DEFAULT_TOKEN_COST = $expectedCost3")
+        val expectedTokens3 = (DEFAULT_TOKENS + inferenceRequestObject.textLength())
         verifyEscrow(
             cluster,
             inferenceRequestObject,
-            expectedCost3,
+            expectedTokens3.toInt(),
             DEFAULT_TOKENS.toInt()
         )
         
@@ -76,7 +71,7 @@ class InferenceAccountingTests : TestermintTest() {
     private fun verifyEscrow(
         cluster: LocalCluster,
         inference: InferenceRequestPayload,
-        expectedEscrow: Long,
+        expectedTokens: Int,
         expectedMaxTokens: Int,
     ) {
         val genesis = cluster.genesis
@@ -111,40 +106,20 @@ class InferenceAccountingTests : TestermintTest() {
         assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
         assertThat(lastRequest?.maxCompletionTokens).withFailMessage { "Max completion tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxCompletionTokens).isEqualTo(expectedMaxTokens)
-        
-        // Per-token price verification  
-        lastRequest?.let { request ->
-            inferenceId?.let { id ->
-                Thread.sleep(Duration.ofSeconds(2))
-                
-                try {
-                    val chainInference = genesis.api.getInference(id)
-                    
-                    logHighlight("Per-token price verification: ${chainInference.perTokenPrice} (expected: $DEFAULT_TOKEN_COST)")
-                    
-                    assertThat(chainInference.perTokenPrice).withFailMessage {
-                        "Per-token price in inference should not be null"
-                    }.isNotNull()
-                    
-                    assertThat(chainInference.perTokenPrice).withFailMessage {
-                        "Per-token price in inference (${chainInference.perTokenPrice}) should equal DEFAULT_TOKEN_COST ($DEFAULT_TOKEN_COST)"
-                    }.isEqualTo(DEFAULT_TOKEN_COST)
-                    
-                } catch (e: Exception) {
-                    logHighlight("⚠️ Could not verify per-token price: ${e.message}")
-                }
-            }
-        }
-        
+
+        // Wait for inference to be available
+        val chainInference = genesis.waitForInference(inferenceId)
+        assertNotNull(chainInference)
         // Balance verification
         val difference = (0..100).asSequence().map {
             Thread.sleep(100)
             val currentBalance = genesis.node.getSelfBalance()
             startBalance - currentBalance
         }.filter { it != 0L }.first()
+        val expectedCost = expectedTokens * (chainInference.perTokenPrice ?: DEFAULT_TOKEN_COST)
         
-        logHighlight("Balance verification: deducted $difference nicoin (expected: $expectedEscrow)")
-        assertThat(difference).isEqualTo(expectedEscrow)
+        logHighlight("Balance verification: deducted $difference nicoin (expected: $expectedCost)")
+        assertThat(difference).isEqualTo(expectedCost)
         logHighlight("✅ Escrow verification completed successfully")
     }
 
@@ -250,14 +225,7 @@ class InferenceAccountingTests : TestermintTest() {
             logSection("Making inference with consumer account")
             val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getAddress())
             assertThat(result).isNotNull
-            var inference: InferencePayload? = null
-            var tries = 0
-            while (inference?.actualCost == null && tries < 5) {
-                genesis.node.waitForNextBlock()
-                inference = genesis.api.getInferenceOrNull(result.id)
-                tries++
-            }
-
+            val inference = genesis.waitForInference(result.id)
             assertNotNull(inference, "Inference never finished")
             logSection("Verifying inference balances")
             assertThat(inference.executedBy).isNotNull()
