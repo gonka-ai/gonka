@@ -6,15 +6,14 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"fmt"
-	"log/slog"
-	"net/http"
-	"sort"
-	"time"
-
 	"github.com/cometbft/cometbft/libs/rand"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"log/slog"
+	"net/http"
+	"sort"
+	"time"
 )
 
 type Assigner struct {

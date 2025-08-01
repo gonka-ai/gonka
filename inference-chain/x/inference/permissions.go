@@ -130,11 +130,11 @@ func GrantOperationKeyPermissionsToAccount(
 
 		if txResponse.Height > 0 {
 			if txResponse.TxResult.Code == 0 {
-				fmt.Println("\n✅ Transaction confirmed successfully!")
+				fmt.Println("\nTransaction confirmed successfully!")
 				fmt.Printf("Block height: %d\n", txResponse.Height)
 				return nil
 			} else {
-				return fmt.Errorf("\n❌ transaction %s included in block %d but failed with code %d: %s", txHash, txResponse.Height, txResponse.TxResult.Code, txResponse.TxResult.Log)
+				return fmt.Errorf("\nTransaction %s included in block %d but failed with code %d: %s", txHash, txResponse.Height, txResponse.TxResult.Code, txResponse.TxResult.Log)
 			}
 		}
 

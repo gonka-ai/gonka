@@ -6,11 +6,10 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"errors"
+	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"sort"
 	"time"
-
-	"github.com/productscience/inference/x/inference/types"
 )
 
 const logTagExecutor = "[training-task-executor] "

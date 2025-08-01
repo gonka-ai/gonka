@@ -5,12 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"os"
-	"strings"
-	"sync"
-
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
@@ -18,6 +12,11 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"github.com/productscience/inference/x/inference/types"
+	"io"
+	"log"
+	"os"
+	"strings"
+	"sync"
 )
 
 type ConfigManager struct {

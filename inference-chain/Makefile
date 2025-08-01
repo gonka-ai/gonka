@@ -213,7 +213,7 @@ build-linux-docker:
 			ln -sf /lib/wasmvm-static/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a && \
 			echo "Building static linux/amd64..." && \
 			CGO_ENABLED=1 CC=gcc GOOS=linux GOARCH=amd64 \
-			go build -ldflags "$(ldflags) -extldflags '\''-static'\''" -tags "ledger" "muslc" -o build/linux/amd64/inferenced ./cmd/inferenced/main.go'
+			go build -ldflags "$(ldflags) -extldflags '\''-static'\''" -tags "muslc" -o build/linux/amd64/inferenced ./cmd/inferenced/main.go'
 	@echo "Building linux/arm64..."
 	@docker run --rm --platform linux/arm64 \
 		-v "$(PWD)":/workspace \
@@ -230,7 +230,7 @@ build-linux-docker:
 			ln -sf /lib/wasmvm-static/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a && \
 			echo "Building static linux/arm64..." && \
 			CGO_ENABLED=1 CC=gcc GOOS=linux GOARCH=arm64 \
-			go build -ldflags "$(ldflags) -extldflags '\''-static'\''" -tags "ledger" "muslc" -o build/linux/arm64/inferenced ./cmd/inferenced/main.go'
+			go build -ldflags "$(ldflags) -extldflags '\''-static'\''" -tags "muslc" -o build/linux/arm64/inferenced ./cmd/inferenced/main.go'
 	@echo "Static Linux builds complete!"
 
 
@@ -247,16 +247,15 @@ build-%:
 			mkdir -p /tmp/wasmvm-static-$(OS)-$(ARCH); \
 			curl -L -o /tmp/wasmvm-static-$(OS)-$(ARCH)/libwasmvm.a $(WASMVM_STATIC_DARWIN_URL); \
 			CGO_ENABLED=1 CC=gcc GOOS=$(OS) GOARCH=$(ARCH) \
-			LEDGER_ENABLED=true \
 			CGO_LDFLAGS="-L/tmp/wasmvm-static-$(OS)-$(ARCH) -lwasmvm" \
-			go build -ldflags "$(ldflags)" -tags "ledger sys_wasmvm" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go; \
+			go build -ldflags "$(ldflags)" -tags "sys_wasmvm" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go; \
 			rm -rf /tmp/wasmvm-static-$(OS)-$(ARCH); \
 			codesign --remove-signature build/$(OS)/$(ARCH)/inferenced || true; \
 			codesign --force --sign - build/$(OS)/$(ARCH)/inferenced || true; \
 		else \
 			echo "Building static for Linux..."; \
 			CGO_ENABLED=1 CC=gcc GOOS=$(OS) GOARCH=$(ARCH) \
-			go build -ldflags "$(ldflags) -extldflags '-static'" -tags "ledger muslc" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go; \
+			go build -ldflags "$(ldflags) -extldflags '-static'" -tags "muslc" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go; \
 		fi; \
 	else \
 		echo "Cross-compilation for $(OS)/$(ARCH) requires Docker build..."; \

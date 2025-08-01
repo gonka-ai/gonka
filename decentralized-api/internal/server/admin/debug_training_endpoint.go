@@ -2,11 +2,10 @@ package admin
 
 import (
 	"decentralized-api/cosmosclient"
-	"net/http"
-	"strconv"
-
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
+	"net/http"
+	"strconv"
 )
 
 type CreateDummyTrainingTaskDto struct {

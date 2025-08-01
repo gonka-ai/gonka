@@ -70,6 +70,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
+// 'file' keyring backend to automatically provide interactive prompts for signing
 func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, nodeConfig apiconfig.ChainNodeConfig) error {
 	if nodeConfig.KeyringBackend == keyring.BackendFile {
 		interfaceRegistry := codectypes.NewInterfaceRegistry()
@@ -78,7 +79,7 @@ func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, nodeC
 		cdc := codec.NewProtoCodec(interfaceRegistry)
 		kr, err := keyring.New(
 			"inferenced",
-			string(nodeConfig.KeyringBackend),
+			nodeConfig.KeyringBackend,
 			keyringDir,
 			strings.NewReader(nodeConfig.KeyringPassword),
 			cdc,
