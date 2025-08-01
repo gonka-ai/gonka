@@ -17,6 +17,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/client/tx"
+	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -25,9 +26,10 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
-	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
 
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -69,7 +71,6 @@ func expandPath(path string) (string, error) {
 }
 
 func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig apiconfig.ChainNodeConfig) (*InferenceCosmosClient, error) {
-	// Get absolute path to keyring directory
 	keyringDir, err := expandPath(nodeConfig.KeyringDir)
 	if err != nil {
 		return nil, err
@@ -80,27 +81,45 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 	client, err := cosmosclient.New(
 		ctx,
 		cosmosclient.WithAddressPrefix(addressPrefix),
+		cosmosclient.WithKeyringServiceName("inferenced"),
 		cosmosclient.WithNodeAddress(nodeConfig.Url),
-		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
 		cosmosclient.WithKeyringDir(keyringDir),
 		cosmosclient.WithGasPrices("0icoin"),
 		cosmosclient.WithFees("0icoin"),
 		cosmosclient.WithGas("auto"),
 		cosmosclient.WithGasAdjustment(5),
 	)
+	log.Printf("Client created")
+
+	interfaceRegistry := codectypes.NewInterfaceRegistry()
+	cryptocodec.RegisterInterfaces(interfaceRegistry)
+
+	cdc := codec.NewProtoCodec(interfaceRegistry)
+	kr, err := keyring.New(
+		"inferenced",
+		string(nodeConfig.KeyringBackend),
+		keyringDir,
+		strings.NewReader(nodeConfig.KeyringPassword),
+		cdc,
+	)
+	client.AccountRegistry.Keyring = kr
 	if err != nil {
 		return nil, err
 	}
-
-	apiAccount, err := apiconfig.NewApiAccount(ctx, addressPrefix, nodeConfig, &client)
+	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, &client)
+	signerAddress, err := apiAccount.SignerAddressBech32()
 	if err != nil {
 		return nil, err
 	}
-
+	log.Printf("Signer address: %s", signerAddress)
+	if err != nil {
+		return nil, err
+	}
 	accAddress, err := apiAccount.AccountAddressBech32()
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("Account address: %s", accAddress)
 
 	return &InferenceCosmosClient{
 		Client:     &client,
@@ -348,68 +367,29 @@ func (icc *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx
 	return txBytes, nil
 }
 
-func (icc *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
-	if icc.TxFactory != nil {
-		return icc.TxFactory, nil
+func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
+	// Now that we don't need the sequence, we only need to create the factory if it doesn't exist
+	if c.TxFactory != nil {
+		return c.TxFactory, nil
 	}
-
-	clientCtx := icc.Client.Context()
-	var kr keyring.Keyring // Declare a variable for the keyring
-
-	// Check the backend type to decide the strategy
-	backend := string(clientCtx.Keyring.Backend())
-
-	if backend == keyring.BackendTest {
-		// For the 'test' backend, simply use the existing keyring.
-		// It's already in-memory and non-interactive. No need to create a new one.
-		kr = clientCtx.Keyring
-	} else {
-		// For 'file' or other backends, create a new keyring instance
-		// with the password to enable non-interactive signing.
-		keyPassword := icc.NodeConfig.KeyringPassword
-		if keyPassword == "" {
-			return nil, errors.New("keyring password is required for non-test backends")
-		}
-
-		var err error
-		kr, err = keyring.New(
-			"inferenced", // The app name used to initialize keys
-			backend,
-			clientCtx.KeyringDir,
-			strings.NewReader(keyPassword),
-			clientCtx.Codec,
-		)
-		if err != nil {
-			logging.Error("Failed to create new non-interactive keyring", types.Messages, "error", err)
-			return nil, err
-		}
-	}
-
-	address, err := icc.ApiAccount.SignerAddress()
+	address, err := c.ApiAccount.SignerAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "error", err)
 		return nil, err
 	}
-
-	accountNumber, _, err := accountRetriever.GetAccountNumberSequence(clientCtx, address)
+	accountNumber, _, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
 	if err != nil {
-		logging.Error("Failed to get account number", types.Messages, "error", err)
+		logging.Error("Failed to get account number and sequence", types.Messages, "error", err)
 		return nil, err
 	}
-
-	// ⚠️ Corrected from WithKeybase to WithKeyring
-	factory := tx.Factory{}.
-		WithKeybase(kr).
-		WithChainID(clientCtx.ChainID).
-		WithTxConfig(clientCtx.TxConfig).
+	factory := c.Client.TxFactory.
 		WithAccountNumber(accountNumber).
 		WithGasAdjustment(10).
-		WithGas(0).
 		WithFees("").
 		WithGasPrices("").
+		WithGas(0).
 		WithUnordered(true)
-
-	icc.TxFactory = &factory
+	c.TxFactory = &factory
 	return &factory, nil
 }
 

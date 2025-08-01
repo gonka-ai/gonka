@@ -2,7 +2,6 @@ package apiconfig
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"fmt"
 
@@ -19,7 +18,7 @@ type ApiAccount struct {
 	AddressPrefix string
 }
 
-func NewApiAccount(ctx context.Context, addressPrefix string, nodeConfig ChainNodeConfig, client *cosmosclient.Client) (*ApiAccount, error) {
+func NewApiAccount(addressPrefix string, nodeConfig ChainNodeConfig, client *cosmosclient.Client) (*ApiAccount, error) {
 	signer, err := client.AccountRegistry.GetByName(nodeConfig.SignerKeyName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get signer account '%s' from keyring: %w", nodeConfig.SignerKeyName, err)
