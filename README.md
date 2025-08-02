@@ -106,7 +106,7 @@ We support several types of tests to ensure the system’s stability and reliabi
 - Unit tests – For core logic in `ml`node, `chain` node, and `api` node
 - End-to-End tests – Test full task lifecycle across the network using Testermint module
 
-Detailed instructions on running and contributing to tests are available in [`CONTRIBUTING.md`](https://github.com/gonka-ai/gonka/blob/1291f20c650f80e202217a8efd9a3cd7064cdff1/CONTRIBUTING.md).
+Detailed instructions on running and contributing to tests are available in [`CONTRIBUTING.md`](https://github.com/gonka-ai/gonka/blob/main/CONTRIBUTING.md).
 ## Deployment strategy
 
 The system is designed around **containerized microservices**. Each component runs in its own Docker container, allowing:
