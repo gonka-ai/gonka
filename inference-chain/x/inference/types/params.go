@@ -24,17 +24,22 @@ const year = 365 * 24 * 60 * 60
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
-		TotalSupply:              1_000 * million,
-		OriginatorSupply:         160 * million,
-		TopRewardAmount:          120 * million,
-		PreProgrammedSaleAmount:  120 * million,
-		TopRewards:               3,
-		SupplyDenom:              NativeCoin,
-		StandardRewardAmount:     600 * million,
-		TopRewardPeriod:          year,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     year * 4,
+		TotalSupply:                  1_000 * million,
+		OriginatorSupply:             160 * million,
+		TopRewardAmount:              120 * million,
+		PreProgrammedSaleAmount:      120 * million,
+		TopRewards:                   3,
+		SupplyDenom:                  NativeCoin,
+		StandardRewardAmount:         600 * million,
+		TopRewardPeriod:              year,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         year * 4,
+		MaxIndividualPowerPercentage: DecimalFromFloat(0.30),
+		GenesisEnhancementEnabled:    true, // Enable genesis enhancement by default
+		NetworkMaturityThreshold:     10_000_000,
+		GenesisVetoMultiplier:        DecimalFromFloat(0.52),
+		FirstGenesisValidatorAddress: "", // Empty by default - must be set in genesis file
 	}
 }
 
@@ -50,8 +55,8 @@ func DefaultParams() Params {
 			PocExchangeDuration:            2,
 			PocValidationDelay:             2,
 			PocValidationDuration:          6,
-			SetNewValidatorsDelay:     1,
-			InferenceValidationCutoff: 0,
+			SetNewValidatorsDelay:          1,
+			InferenceValidationCutoff:      0,
 			InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
 		},
 		ValidationParams: &ValidationParams{

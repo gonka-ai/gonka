@@ -688,18 +688,23 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_GenesisOnlyParams                              protoreflect.MessageDescriptor
-	fd_GenesisOnlyParams_total_supply                 protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_originator_supply            protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_amount            protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_standard_reward_amount       protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_pre_programmed_sale_amount   protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_rewards                  protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_supply_denom                 protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_period            protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_payouts           protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_payouts_per_miner protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_max_duration      protoreflect.FieldDescriptor
+	md_GenesisOnlyParams                                 protoreflect.MessageDescriptor
+	fd_GenesisOnlyParams_total_supply                    protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_originator_supply               protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_amount               protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_standard_reward_amount          protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_pre_programmed_sale_amount      protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_rewards                     protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_supply_denom                    protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_period               protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_payouts              protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_payouts_per_miner    protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_max_duration         protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_max_individual_power_percentage protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_genesis_enhancement_enabled     protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_network_maturity_threshold      protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_genesis_veto_multiplier         protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_first_genesis_validator_address protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -716,6 +721,11 @@ func init() {
 	fd_GenesisOnlyParams_top_reward_payouts = md_GenesisOnlyParams.Fields().ByName("top_reward_payouts")
 	fd_GenesisOnlyParams_top_reward_payouts_per_miner = md_GenesisOnlyParams.Fields().ByName("top_reward_payouts_per_miner")
 	fd_GenesisOnlyParams_top_reward_max_duration = md_GenesisOnlyParams.Fields().ByName("top_reward_max_duration")
+	fd_GenesisOnlyParams_max_individual_power_percentage = md_GenesisOnlyParams.Fields().ByName("max_individual_power_percentage")
+	fd_GenesisOnlyParams_genesis_enhancement_enabled = md_GenesisOnlyParams.Fields().ByName("genesis_enhancement_enabled")
+	fd_GenesisOnlyParams_network_maturity_threshold = md_GenesisOnlyParams.Fields().ByName("network_maturity_threshold")
+	fd_GenesisOnlyParams_genesis_veto_multiplier = md_GenesisOnlyParams.Fields().ByName("genesis_veto_multiplier")
+	fd_GenesisOnlyParams_first_genesis_validator_address = md_GenesisOnlyParams.Fields().ByName("first_genesis_validator_address")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisOnlyParams)(nil)
@@ -849,6 +859,36 @@ func (x *fastReflection_GenesisOnlyParams) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
+	if x.MaxIndividualPowerPercentage != nil {
+		value := protoreflect.ValueOfMessage(x.MaxIndividualPowerPercentage.ProtoReflect())
+		if !f(fd_GenesisOnlyParams_max_individual_power_percentage, value) {
+			return
+		}
+	}
+	if x.GenesisEnhancementEnabled != false {
+		value := protoreflect.ValueOfBool(x.GenesisEnhancementEnabled)
+		if !f(fd_GenesisOnlyParams_genesis_enhancement_enabled, value) {
+			return
+		}
+	}
+	if x.NetworkMaturityThreshold != int64(0) {
+		value := protoreflect.ValueOfInt64(x.NetworkMaturityThreshold)
+		if !f(fd_GenesisOnlyParams_network_maturity_threshold, value) {
+			return
+		}
+	}
+	if x.GenesisVetoMultiplier != nil {
+		value := protoreflect.ValueOfMessage(x.GenesisVetoMultiplier.ProtoReflect())
+		if !f(fd_GenesisOnlyParams_genesis_veto_multiplier, value) {
+			return
+		}
+	}
+	if x.FirstGenesisValidatorAddress != "" {
+		value := protoreflect.ValueOfString(x.FirstGenesisValidatorAddress)
+		if !f(fd_GenesisOnlyParams_first_genesis_validator_address, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -886,6 +926,16 @@ func (x *fastReflection_GenesisOnlyParams) Has(fd protoreflect.FieldDescriptor) 
 		return x.TopRewardPayoutsPerMiner != int64(0)
 	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
 		return x.TopRewardMaxDuration != int64(0)
+	case "inference.inference.GenesisOnlyParams.max_individual_power_percentage":
+		return x.MaxIndividualPowerPercentage != nil
+	case "inference.inference.GenesisOnlyParams.genesis_enhancement_enabled":
+		return x.GenesisEnhancementEnabled != false
+	case "inference.inference.GenesisOnlyParams.network_maturity_threshold":
+		return x.NetworkMaturityThreshold != int64(0)
+	case "inference.inference.GenesisOnlyParams.genesis_veto_multiplier":
+		return x.GenesisVetoMultiplier != nil
+	case "inference.inference.GenesisOnlyParams.first_genesis_validator_address":
+		return x.FirstGenesisValidatorAddress != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -924,6 +974,16 @@ func (x *fastReflection_GenesisOnlyParams) Clear(fd protoreflect.FieldDescriptor
 		x.TopRewardPayoutsPerMiner = int64(0)
 	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
 		x.TopRewardMaxDuration = int64(0)
+	case "inference.inference.GenesisOnlyParams.max_individual_power_percentage":
+		x.MaxIndividualPowerPercentage = nil
+	case "inference.inference.GenesisOnlyParams.genesis_enhancement_enabled":
+		x.GenesisEnhancementEnabled = false
+	case "inference.inference.GenesisOnlyParams.network_maturity_threshold":
+		x.NetworkMaturityThreshold = int64(0)
+	case "inference.inference.GenesisOnlyParams.genesis_veto_multiplier":
+		x.GenesisVetoMultiplier = nil
+	case "inference.inference.GenesisOnlyParams.first_genesis_validator_address":
+		x.FirstGenesisValidatorAddress = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -973,6 +1033,21 @@ func (x *fastReflection_GenesisOnlyParams) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
 		value := x.TopRewardMaxDuration
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.max_individual_power_percentage":
+		value := x.MaxIndividualPowerPercentage
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.GenesisOnlyParams.genesis_enhancement_enabled":
+		value := x.GenesisEnhancementEnabled
+		return protoreflect.ValueOfBool(value)
+	case "inference.inference.GenesisOnlyParams.network_maturity_threshold":
+		value := x.NetworkMaturityThreshold
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.genesis_veto_multiplier":
+		value := x.GenesisVetoMultiplier
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.GenesisOnlyParams.first_genesis_validator_address":
+		value := x.FirstGenesisValidatorAddress
+		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1015,6 +1090,16 @@ func (x *fastReflection_GenesisOnlyParams) Set(fd protoreflect.FieldDescriptor, 
 		x.TopRewardPayoutsPerMiner = value.Int()
 	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
 		x.TopRewardMaxDuration = value.Int()
+	case "inference.inference.GenesisOnlyParams.max_individual_power_percentage":
+		x.MaxIndividualPowerPercentage = value.Message().Interface().(*Decimal)
+	case "inference.inference.GenesisOnlyParams.genesis_enhancement_enabled":
+		x.GenesisEnhancementEnabled = value.Bool()
+	case "inference.inference.GenesisOnlyParams.network_maturity_threshold":
+		x.NetworkMaturityThreshold = value.Int()
+	case "inference.inference.GenesisOnlyParams.genesis_veto_multiplier":
+		x.GenesisVetoMultiplier = value.Message().Interface().(*Decimal)
+	case "inference.inference.GenesisOnlyParams.first_genesis_validator_address":
+		x.FirstGenesisValidatorAddress = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1035,6 +1120,16 @@ func (x *fastReflection_GenesisOnlyParams) Set(fd protoreflect.FieldDescriptor, 
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_GenesisOnlyParams) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.GenesisOnlyParams.max_individual_power_percentage":
+		if x.MaxIndividualPowerPercentage == nil {
+			x.MaxIndividualPowerPercentage = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.MaxIndividualPowerPercentage.ProtoReflect())
+	case "inference.inference.GenesisOnlyParams.genesis_veto_multiplier":
+		if x.GenesisVetoMultiplier == nil {
+			x.GenesisVetoMultiplier = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.GenesisVetoMultiplier.ProtoReflect())
 	case "inference.inference.GenesisOnlyParams.total_supply":
 		panic(fmt.Errorf("field total_supply of message inference.inference.GenesisOnlyParams is not mutable"))
 	case "inference.inference.GenesisOnlyParams.originator_supply":
@@ -1057,6 +1152,12 @@ func (x *fastReflection_GenesisOnlyParams) Mutable(fd protoreflect.FieldDescript
 		panic(fmt.Errorf("field top_reward_payouts_per_miner of message inference.inference.GenesisOnlyParams is not mutable"))
 	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
 		panic(fmt.Errorf("field top_reward_max_duration of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.genesis_enhancement_enabled":
+		panic(fmt.Errorf("field genesis_enhancement_enabled of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.network_maturity_threshold":
+		panic(fmt.Errorf("field network_maturity_threshold of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.first_genesis_validator_address":
+		panic(fmt.Errorf("field first_genesis_validator_address of message inference.inference.GenesisOnlyParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1092,6 +1193,18 @@ func (x *fastReflection_GenesisOnlyParams) NewField(fd protoreflect.FieldDescrip
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
 		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.max_individual_power_percentage":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.GenesisOnlyParams.genesis_enhancement_enabled":
+		return protoreflect.ValueOfBool(false)
+	case "inference.inference.GenesisOnlyParams.network_maturity_threshold":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.genesis_veto_multiplier":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.GenesisOnlyParams.first_genesis_validator_address":
+		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1195,6 +1308,24 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 		if x.TopRewardMaxDuration != 0 {
 			n += 1 + runtime.Sov(uint64(x.TopRewardMaxDuration))
 		}
+		if x.MaxIndividualPowerPercentage != nil {
+			l = options.Size(x.MaxIndividualPowerPercentage)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.GenesisEnhancementEnabled {
+			n += 2
+		}
+		if x.NetworkMaturityThreshold != 0 {
+			n += 1 + runtime.Sov(uint64(x.NetworkMaturityThreshold))
+		}
+		if x.GenesisVetoMultiplier != nil {
+			l = options.Size(x.GenesisVetoMultiplier)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.FirstGenesisValidatorAddress)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1223,6 +1354,58 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.FirstGenesisValidatorAddress) > 0 {
+			i -= len(x.FirstGenesisValidatorAddress)
+			copy(dAtA[i:], x.FirstGenesisValidatorAddress)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.FirstGenesisValidatorAddress)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0x82
+		}
+		if x.GenesisVetoMultiplier != nil {
+			encoded, err := options.Marshal(x.GenesisVetoMultiplier)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x7a
+		}
+		if x.NetworkMaturityThreshold != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.NetworkMaturityThreshold))
+			i--
+			dAtA[i] = 0x70
+		}
+		if x.GenesisEnhancementEnabled {
+			i--
+			if x.GenesisEnhancementEnabled {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
+			}
+			i--
+			dAtA[i] = 0x68
+		}
+		if x.MaxIndividualPowerPercentage != nil {
+			encoded, err := options.Marshal(x.MaxIndividualPowerPercentage)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x62
 		}
 		if x.TopRewardMaxDuration != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardMaxDuration))
@@ -1552,6 +1735,149 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 12:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MaxIndividualPowerPercentage", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.MaxIndividualPowerPercentage == nil {
+					x.MaxIndividualPowerPercentage = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MaxIndividualPowerPercentage); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 13:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field GenesisEnhancementEnabled", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.GenesisEnhancementEnabled = bool(v != 0)
+			case 14:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NetworkMaturityThreshold", wireType)
+				}
+				x.NetworkMaturityThreshold = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.NetworkMaturityThreshold |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 15:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field GenesisVetoMultiplier", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.GenesisVetoMultiplier == nil {
+					x.GenesisVetoMultiplier = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.GenesisVetoMultiplier); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 16:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FirstGenesisValidatorAddress", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.FirstGenesisValidatorAddress = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -5466,17 +5792,22 @@ type GenesisOnlyParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	TotalSupply              int64  `protobuf:"varint,1,opt,name=total_supply,json=totalSupply,proto3" json:"total_supply,omitempty"`
-	OriginatorSupply         int64  `protobuf:"varint,2,opt,name=originator_supply,json=originatorSupply,proto3" json:"originator_supply,omitempty"`
-	TopRewardAmount          int64  `protobuf:"varint,3,opt,name=top_reward_amount,json=topRewardAmount,proto3" json:"top_reward_amount,omitempty"`
-	StandardRewardAmount     int64  `protobuf:"varint,4,opt,name=standard_reward_amount,json=standardRewardAmount,proto3" json:"standard_reward_amount,omitempty"`
-	PreProgrammedSaleAmount  int64  `protobuf:"varint,5,opt,name=pre_programmed_sale_amount,json=preProgrammedSaleAmount,proto3" json:"pre_programmed_sale_amount,omitempty"`
-	TopRewards               int32  `protobuf:"varint,6,opt,name=top_rewards,json=topRewards,proto3" json:"top_rewards,omitempty"`
-	SupplyDenom              string `protobuf:"bytes,7,opt,name=supply_denom,json=supplyDenom,proto3" json:"supply_denom,omitempty"`
-	TopRewardPeriod          int64  `protobuf:"varint,8,opt,name=top_reward_period,json=topRewardPeriod,proto3" json:"top_reward_period,omitempty"`
-	TopRewardPayouts         int64  `protobuf:"varint,9,opt,name=top_reward_payouts,json=topRewardPayouts,proto3" json:"top_reward_payouts,omitempty"`
-	TopRewardPayoutsPerMiner int64  `protobuf:"varint,10,opt,name=top_reward_payouts_per_miner,json=topRewardPayoutsPerMiner,proto3" json:"top_reward_payouts_per_miner,omitempty"`
-	TopRewardMaxDuration     int64  `protobuf:"varint,11,opt,name=top_reward_max_duration,json=topRewardMaxDuration,proto3" json:"top_reward_max_duration,omitempty"`
+	TotalSupply                  int64    `protobuf:"varint,1,opt,name=total_supply,json=totalSupply,proto3" json:"total_supply,omitempty"`
+	OriginatorSupply             int64    `protobuf:"varint,2,opt,name=originator_supply,json=originatorSupply,proto3" json:"originator_supply,omitempty"`
+	TopRewardAmount              int64    `protobuf:"varint,3,opt,name=top_reward_amount,json=topRewardAmount,proto3" json:"top_reward_amount,omitempty"`
+	StandardRewardAmount         int64    `protobuf:"varint,4,opt,name=standard_reward_amount,json=standardRewardAmount,proto3" json:"standard_reward_amount,omitempty"`
+	PreProgrammedSaleAmount      int64    `protobuf:"varint,5,opt,name=pre_programmed_sale_amount,json=preProgrammedSaleAmount,proto3" json:"pre_programmed_sale_amount,omitempty"`
+	TopRewards                   int32    `protobuf:"varint,6,opt,name=top_rewards,json=topRewards,proto3" json:"top_rewards,omitempty"`
+	SupplyDenom                  string   `protobuf:"bytes,7,opt,name=supply_denom,json=supplyDenom,proto3" json:"supply_denom,omitempty"`
+	TopRewardPeriod              int64    `protobuf:"varint,8,opt,name=top_reward_period,json=topRewardPeriod,proto3" json:"top_reward_period,omitempty"`
+	TopRewardPayouts             int64    `protobuf:"varint,9,opt,name=top_reward_payouts,json=topRewardPayouts,proto3" json:"top_reward_payouts,omitempty"`
+	TopRewardPayoutsPerMiner     int64    `protobuf:"varint,10,opt,name=top_reward_payouts_per_miner,json=topRewardPayoutsPerMiner,proto3" json:"top_reward_payouts_per_miner,omitempty"`
+	TopRewardMaxDuration         int64    `protobuf:"varint,11,opt,name=top_reward_max_duration,json=topRewardMaxDuration,proto3" json:"top_reward_max_duration,omitempty"`
+	MaxIndividualPowerPercentage *Decimal `protobuf:"bytes,12,opt,name=max_individual_power_percentage,json=maxIndividualPowerPercentage,proto3" json:"max_individual_power_percentage,omitempty"`
+	GenesisEnhancementEnabled    bool     `protobuf:"varint,13,opt,name=genesis_enhancement_enabled,json=genesisEnhancementEnabled,proto3" json:"genesis_enhancement_enabled,omitempty"`
+	NetworkMaturityThreshold     int64    `protobuf:"varint,14,opt,name=network_maturity_threshold,json=networkMaturityThreshold,proto3" json:"network_maturity_threshold,omitempty"`
+	GenesisVetoMultiplier        *Decimal `protobuf:"bytes,15,opt,name=genesis_veto_multiplier,json=genesisVetoMultiplier,proto3" json:"genesis_veto_multiplier,omitempty"`
+	FirstGenesisValidatorAddress string   `protobuf:"bytes,16,opt,name=first_genesis_validator_address,json=firstGenesisValidatorAddress,proto3" json:"first_genesis_validator_address,omitempty"`
 }
 
 func (x *GenesisOnlyParams) Reset() {
@@ -5574,6 +5905,41 @@ func (x *GenesisOnlyParams) GetTopRewardMaxDuration() int64 {
 		return x.TopRewardMaxDuration
 	}
 	return 0
+}
+
+func (x *GenesisOnlyParams) GetMaxIndividualPowerPercentage() *Decimal {
+	if x != nil {
+		return x.MaxIndividualPowerPercentage
+	}
+	return nil
+}
+
+func (x *GenesisOnlyParams) GetGenesisEnhancementEnabled() bool {
+	if x != nil {
+		return x.GenesisEnhancementEnabled
+	}
+	return false
+}
+
+func (x *GenesisOnlyParams) GetNetworkMaturityThreshold() int64 {
+	if x != nil {
+		return x.NetworkMaturityThreshold
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetGenesisVetoMultiplier() *Decimal {
+	if x != nil {
+		return x.GenesisVetoMultiplier
+	}
+	return nil
+}
+
+func (x *GenesisOnlyParams) GetFirstGenesisValidatorAddress() string {
+	if x != nil {
+		return x.FirstGenesisValidatorAddress
+	}
+	return ""
 }
 
 type TokenomicsParams struct {
@@ -6023,7 +6389,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x52, 0x10, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x50, 0x61, 0x72, 0x61,
 	0x6d, 0x73, 0x3a, 0x25, 0xe8, 0xa0, 0x1f, 0x01, 0x8a, 0xe7, 0xb0, 0x2a, 0x1c, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0x97, 0x04, 0x0a, 0x11, 0x47, 0x65,
+	0x63, 0x65, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0x97, 0x07, 0x0a, 0x11, 0x47, 0x65,
 	0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
 	0x21, 0x0a, 0x0c, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x75, 0x70, 0x70,
@@ -6057,7 +6423,31 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x6d, 0x61, 0x78, 0x5f, 0x64,
 	0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x74,
 	0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x4d, 0x61, 0x78, 0x44, 0x75, 0x72, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x22, 0xc2, 0x03, 0x0a, 0x10, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69,
+	0x69, 0x6f, 0x6e, 0x12, 0x63, 0x0a, 0x1f, 0x6d, 0x61, 0x78, 0x5f, 0x69, 0x6e, 0x64, 0x69, 0x76,
+	0x69, 0x64, 0x75, 0x61, 0x6c, 0x5f, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x5f, 0x70, 0x65, 0x72, 0x63,
+	0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x1c, 0x6d, 0x61, 0x78, 0x49,
+	0x6e, 0x64, 0x69, 0x76, 0x69, 0x64, 0x75, 0x61, 0x6c, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x50, 0x65,
+	0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x12, 0x3e, 0x0a, 0x1b, 0x67, 0x65, 0x6e, 0x65,
+	0x73, 0x69, 0x73, 0x5f, 0x65, 0x6e, 0x68, 0x61, 0x6e, 0x63, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x5f,
+	0x65, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x08, 0x52, 0x19, 0x67,
+	0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x45, 0x6e, 0x68, 0x61, 0x6e, 0x63, 0x65, 0x6d, 0x65, 0x6e,
+	0x74, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x12, 0x3c, 0x0a, 0x1a, 0x6e, 0x65, 0x74, 0x77,
+	0x6f, 0x72, 0x6b, 0x5f, 0x6d, 0x61, 0x74, 0x75, 0x72, 0x69, 0x74, 0x79, 0x5f, 0x74, 0x68, 0x72,
+	0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x6e, 0x65,
+	0x74, 0x77, 0x6f, 0x72, 0x6b, 0x4d, 0x61, 0x74, 0x75, 0x72, 0x69, 0x74, 0x79, 0x54, 0x68, 0x72,
+	0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x12, 0x54, 0x0a, 0x17, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69,
+	0x73, 0x5f, 0x76, 0x65, 0x74, 0x6f, 0x5f, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65,
+	0x72, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65,
+	0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x15, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x56, 0x65,
+	0x74, 0x6f, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x12, 0x45, 0x0a, 0x1f,
+	0x66, 0x69, 0x72, 0x73, 0x74, 0x5f, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x5f, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18,
+	0x10, 0x20, 0x01, 0x28, 0x09, 0x52, 0x1c, 0x66, 0x69, 0x72, 0x73, 0x74, 0x47, 0x65, 0x6e, 0x65,
+	0x73, 0x69, 0x73, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72,
+	0x65, 0x73, 0x73, 0x22, 0xc2, 0x03, 0x0a, 0x10, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69,
 	0x63, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x5a, 0x0a, 0x1a, 0x73, 0x75, 0x62, 0x73,
 	0x69, 0x64, 0x79, 0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x6e,
 	0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
@@ -6241,22 +6631,24 @@ var file_inference_inference_params_proto_depIdxs = []int32{
 	4,  // 1: inference.inference.Params.validation_params:type_name -> inference.inference.ValidationParams
 	5,  // 2: inference.inference.Params.poc_params:type_name -> inference.inference.PocParams
 	2,  // 3: inference.inference.Params.tokenomics_params:type_name -> inference.inference.TokenomicsParams
-	6,  // 4: inference.inference.TokenomicsParams.subsidy_reduction_interval:type_name -> inference.inference.Decimal
-	6,  // 5: inference.inference.TokenomicsParams.subsidy_reduction_amount:type_name -> inference.inference.Decimal
-	6,  // 6: inference.inference.TokenomicsParams.current_subsidy_percentage:type_name -> inference.inference.Decimal
-	6,  // 7: inference.inference.TokenomicsParams.top_reward_allowed_failure:type_name -> inference.inference.Decimal
-	6,  // 8: inference.inference.ValidationParams.false_positive_rate:type_name -> inference.inference.Decimal
-	6,  // 9: inference.inference.ValidationParams.pass_value:type_name -> inference.inference.Decimal
-	6,  // 10: inference.inference.ValidationParams.min_validation_average:type_name -> inference.inference.Decimal
-	6,  // 11: inference.inference.ValidationParams.max_validation_average:type_name -> inference.inference.Decimal
-	6,  // 12: inference.inference.ValidationParams.min_validation_halfway:type_name -> inference.inference.Decimal
-	6,  // 13: inference.inference.ValidationParams.miss_percentage_cutoff:type_name -> inference.inference.Decimal
-	6,  // 14: inference.inference.ValidationParams.miss_requests_penalty:type_name -> inference.inference.Decimal
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	6,  // 4: inference.inference.GenesisOnlyParams.max_individual_power_percentage:type_name -> inference.inference.Decimal
+	6,  // 5: inference.inference.GenesisOnlyParams.genesis_veto_multiplier:type_name -> inference.inference.Decimal
+	6,  // 6: inference.inference.TokenomicsParams.subsidy_reduction_interval:type_name -> inference.inference.Decimal
+	6,  // 7: inference.inference.TokenomicsParams.subsidy_reduction_amount:type_name -> inference.inference.Decimal
+	6,  // 8: inference.inference.TokenomicsParams.current_subsidy_percentage:type_name -> inference.inference.Decimal
+	6,  // 9: inference.inference.TokenomicsParams.top_reward_allowed_failure:type_name -> inference.inference.Decimal
+	6,  // 10: inference.inference.ValidationParams.false_positive_rate:type_name -> inference.inference.Decimal
+	6,  // 11: inference.inference.ValidationParams.pass_value:type_name -> inference.inference.Decimal
+	6,  // 12: inference.inference.ValidationParams.min_validation_average:type_name -> inference.inference.Decimal
+	6,  // 13: inference.inference.ValidationParams.max_validation_average:type_name -> inference.inference.Decimal
+	6,  // 14: inference.inference.ValidationParams.min_validation_halfway:type_name -> inference.inference.Decimal
+	6,  // 15: inference.inference.ValidationParams.miss_percentage_cutoff:type_name -> inference.inference.Decimal
+	6,  // 16: inference.inference.ValidationParams.miss_requests_penalty:type_name -> inference.inference.Decimal
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_params_proto_init() }

@@ -17,6 +17,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -295,7 +296,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
 
-		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
+		// Apply early network protection if conditions are met
+		finalComputeResult := am.applyEarlyNetworkProtection(ctx, computeResult)
+
+		_, err = am.keeper.Staking.SetComputeValidators(ctx, finalComputeResult)
 		if err != nil {
 			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())
 		}
@@ -355,6 +359,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
 	}
+
+	// Apply universal power capping to epoch powers
+	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
 
 	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
@@ -541,6 +548,62 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
+}
+
+// applyEpochPowerCapping applies universal power capping to activeParticipants after ComputeNewWeights
+// This system is applied universally regardless of network maturity
+func (am AppModule) applyEpochPowerCapping(ctx context.Context, activeParticipants []*types.ActiveParticipant) []*types.ActiveParticipant {
+	// Apply universal power capping
+	result := ApplyPowerCapping(ctx, am.keeper, activeParticipants)
+
+	// Log capping application results
+	originalTotal := int64(0)
+	for _, participant := range activeParticipants {
+		originalTotal += participant.Weight
+	}
+
+	if result.WasCapped {
+		am.LogInfo("Universal power capping applied to epoch powers", types.PoC,
+			"originalTotalPower", originalTotal,
+			"cappedTotalPower", result.TotalPower,
+			"participantCount", len(activeParticipants))
+	} else {
+		am.LogInfo("Universal power capping evaluated but not applied to epoch powers", types.PoC,
+			"totalPower", originalTotal,
+			"participantCount", len(activeParticipants),
+			"reason", "no participant exceeded 30% limit")
+	}
+
+	return result.CappedParticipants
+}
+
+// applyEarlyNetworkProtection applies genesis validator enhancement to compute results before validator set updates
+// This system only applies when network is immature (below maturity threshold)
+func (am AppModule) applyEarlyNetworkProtection(ctx context.Context, computeResults []stakingkeeper.ComputeResult) []stakingkeeper.ComputeResult {
+	// Apply genesis validator enhancement (only when network immature)
+	result := ApplyGenesisEnhancement(ctx, am.keeper, computeResults)
+
+	// Log enhancement application results
+	originalTotal := int64(0)
+	for _, cr := range computeResults {
+		originalTotal += cr.Power
+	}
+
+	if result.WasEnhanced {
+		firstGenesisValidatorKey := am.keeper.GetFirstGenesisValidatorAddress(ctx)
+		am.LogInfo("Genesis validator enhancement applied to staking powers", types.EpochGroup,
+			"originalTotalPower", originalTotal,
+			"enhancedTotalPower", result.TotalPower,
+			"participantCount", len(computeResults),
+			"firstGenesisValidator", firstGenesisValidatorKey)
+	} else {
+		am.LogInfo("Genesis validator enhancement evaluated but not applied to staking powers", types.EpochGroup,
+			"totalPower", originalTotal,
+			"participantCount", len(computeResults),
+			"reason", "network mature, insufficient participants, or first genesis validator not found")
+	}
+
+	return result.ComputeResults
 }
 
 // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
