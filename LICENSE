@@ -1,4 +1,5 @@
-**GONKA LICENSE:**
+GONKA LICENSE:
+
 This License applies to all portions of the Work expressly designated as subject to the Gonka License, including, without limitation, the Genesis Code as identified in Section 1. Except as expressly modified herein, the terms of the Apache License, Version 2.0 (“Apache 2.0”) will govern. In the event of a conflict between this License and Apache 2.0, this License will control for all Licensed Material. Capitalized terms otherwise not defined in the Gonka license shall have the meaning ascribed to them in Apache 2.0.
 
 1. Definitions
@@ -37,7 +38,8 @@ Enforcement of this License with respect to the Genesis Code and related restric
 (b) In the event of any conflict between this License and the Apache License 2.0, the terms of this License shall govern with respect to the Genesis Code and the specified governance processes.
 (c) Any amendment or modification to this License must (i) be proposed in writing and posted to the official project repository and community forum at least 14 days prior to any vote, and (ii) receive approval from a Community vote meeting the Requisite Threshold.  No amendment will affect rights granted prior to its effective date thereof.
 
-**APACHE LICENSE 2.0:**
+APACHE LICENSE 2.0:
+
 TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
 1. Definitions.
