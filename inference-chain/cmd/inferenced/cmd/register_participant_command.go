@@ -42,7 +42,7 @@ func extractAddressFromPubKey(pubKeyBase64 string) (string, error) {
 
 func RegisterNewParticipantCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "register-new-participant <node-url> <account-public-key> <validator-consensus-key>",
+		Use:   "register-new-participant <node-url> <account-public-key> <consensus-key>",
 		Short: "Register a new participant with the seed node",
 		Long: `Register a new participant with the seed node.
 
@@ -52,7 +52,7 @@ All communication happens via HTTP API calls to the seed node.
 Arguments:
   node-url                   Your node's public URL (e.g., http://my-node:8080)
   account-public-key         Base64-encoded account public key (from keyring output)
-  validator-consensus-key    Base64-encoded validator consensus public key (from node status)
+  consensus-key    Base64-encoded validator consensus public key (from node status)
 
 Example:
   inferenced register-new-participant \

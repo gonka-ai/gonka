@@ -149,7 +149,7 @@ High-level overview is in `proposals/keys/README.md`
 **Total: 5 manual authorization message types**
 
 - [DONE]: Add command in inferenced CLI which register new participant with seed's `g.POST("participants", s.submitNewParticipantHandler)`
-    **Implemented CLI participant registration**: Created `inferenced register-new-participant` command in `register_participant_command.go` that sends HTTP POST to seed node's `/v1/participants` endpoint. Command takes account-address, node-url, account-public-key, validator-consensus-key arguments and --node-address flag.
+    **Implemented CLI participant registration**: Created `inferenced register-new-participant` command in `register_participant_command.go` that sends HTTP POST to seed node's `/v1/participants` endpoint. Command takes account-address, node-url, account-public-key, consensus-key arguments and --node-address flag.
 
 - [DONE]: Create new command received granted and grantee account and grants permissions. Code is in @permissions.go
     **Implemented permission granting CLI**: Created `inferenced tx inference grant-ml-ops-permissions` command in `module.go` that grants all 18 AI operation permissions from account key to ML operational key using authz. Integrated with main CLI and supports standard transaction flags.
@@ -186,7 +186,7 @@ High-level overview is in `proposals/keys/README.md`
     - Create cold key with name "$KEY_NAME"-COLD 
     - Create warm key with "$KEY_NAME"
     - Use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD)
-        Q: can it fetch validator-consensus-key automatically from node?
+        Q: can it fetch consensus-key automatically from node?
     - Use `inferenced tx inference grant-ml-ops-permissions` to grant permission to "$KEY_NAME"
     - Update code to use "$KEY_NAME" for signing all transactions but still "$KEY_NAME"-COLD for admin operations
 
