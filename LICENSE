@@ -3,14 +3,14 @@ GONKA LICENSE:
 This License applies to all portions of the Work expressly designated as subject to the Gonka License, including, without limitation, the Genesis Code as identified in Section 1. Except as expressly modified herein, the terms of the Apache License, Version 2.0 (“Apache 2.0”) will govern. In the event of a conflict between this License and Apache 2.0, this License will control for all Licensed Material. Capitalized terms otherwise not defined in the Gonka license shall have the meaning ascribed to them in Apache 2.0.
 
 1. Definitions
-(a) “Community” refers to the active participants on the original network.
-(b) “Forking” means the act of copying and using the Genesis Code to create a separate, independent, or disconnected network.
-(c) “Genesis Code” means the portions of the source code listed in Appendix A (Genesis Code Reference). The Genesis Code Reference, including commit hashes or specific files, will be published at https://github.com/product-science/inference-ignite 
-(d) “Requisite Threshold” means the affirmative vote of active participants, with voting weight determined proportionally to their verified computational power contributed to the network during the most recent Sprint, optionally augmented by staked gonka collateral, as defined by the Proof-of-Compute consensus procedure and the on-chain Governance rules encoded in the Genesis Code.
-(e) “One-Year Anniversary” refers to the date that is exactly one year from the official launch of the original network.
+    (a) “Community” refers to the active participants on the original network.
+    (b) “Forking” means the act of copying and using the Genesis Code to create a separate, independent, or disconnected network.
+    (c) “Genesis Code” means the portions of the source code listed in Appendix A (Genesis Code Reference). The Genesis Code Reference, including commit hashes or specific files, will be published at https://github.com/product-science/inference-ignite 
+    (d) “Requisite Threshold” means the affirmative vote of active participants, with voting weight determined proportionally to their verified computational power contributed to the network during the most recent Sprint, optionally augmented by staked gonka collateral, as defined by the Proof-of-Compute consensus procedure and the on-chain Governance rules encoded in the Genesis Code.
+    (e) “One-Year Anniversary” refers to the date that is exactly one year from the official launch of the original network.
 
 2. License Grant
-Subject to the restrictions and conditions set forth in this License, the code published under this License is made available on an open-source basis, with the right to use, modify, distribute, and contribute, consistent with the terms of the Apache License 2.0, except where overridden by the custom provisions in this document.
+    Subject to the restrictions and conditions set forth in this License, the code published under this License is made available on an open-source basis, with the right to use, modify, distribute, and contribute, consistent with the terms of the Apache License 2.0, except where overridden by the custom provisions in this document.
 
 3. Terms of the Apache License 2.0
 Copyright held by Product Science, Inc. (the “Licensor”)
