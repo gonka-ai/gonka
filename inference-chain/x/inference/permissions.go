@@ -37,7 +37,7 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgRevalidateInference{},
 }
 
-func GrantOperationKeyPermissionsToAccount(
+func GrantMLOperationalKeyPermissionsToAccount(
 	ctx context.Context,
 	clientCtx client.Context,
 	txFactory tx.Factory,

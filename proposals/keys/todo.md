@@ -33,15 +33,42 @@ cd testermint && ./gradlew :test --tests "TestClass.test method name"    # Speci
 
 NEVER RUN MANY TESTERMINT TESTS AT ONCE
 
-Current vision of final result is placed in `proposals/keys/flow.md`
+Current implementation plan is in `proposals/keys/flow.md`
+High-level overview is in `proposals/keys/README.md`
 
-Fully Ignore Worker Key for now 
-Ignore genesis flow
+**Focus Areas:**
+- Implement v0: Account Key + ML Operational Key separation
+- Ignore Worker Key (legacy, not used)
+- Ignore genesis flow (focus on join flow)
+- Code changes only in inference-chain and decentralized-api directories
 
-IN code look only in inferene-chain and decentralized-api dirs
+## Current Status Summary
+
+**COMPLETED (v0 Foundation):**
+- Dual key architecture implemented (Account Key + ML Operational Key)
+- CLI commands for participant registration and permission granting
+- Account management infrastructure and authz integration
+- Automatic participant registration via seed node API
+- Permission sync and validation queries
+- TMKMS compatibility for validator consensus keys
+
+**IN PROGRESS:**
+- Pre-init workflow for external Account Key creation
+- Minimal example documentation
+
+**REMAINING (v0 Completion):**
+- External Account Key integration (hardware wallet support)
+- Modified docker-init.sh for production scenarios
+- Comprehensive testing with testermint
+- Governance voting from external Account Key
+
+**FUTURE (v1+):**
+- Governance Key and Treasury Key separation
+- Multi-signature groups using x/group module
+- Key rotation mechanisms
 ----
 
-# Phase 0 / Launch
+# Completed Tasks (Phase 0 Foundation)
 
 - [DONE]: Find all places where we use private key when init new node and list them
     **Identified two key usage patterns**: (1) Account Keys (SECP256K1) for transactions - stored in `~/.inference/`, used for validator registration via POST `/v1/participants`, runtime AI operations, and transaction signing. (2) Consensus Keys (ED25519) for block validation - generated via TMKMS, stored in `priv_validator_key.json`, used for consensus participation.
@@ -78,17 +105,17 @@ IN code look only in inferene-chain and decentralized-api dirs
 - **Purpose**: Block validation and consensus participation
 - **Security**: Can use TMKMS for secure key management
 
-- [DONE]: Define how flow changes when AI Operational Key - Hot Wallet added
-    **Defined key separation architecture**: Operator Key (cold) created offline for admin operations; AI Operational Key (hot) created on-server with authz permissions granted by Operator Key for automated AI operations. No direct participant association needed - AI Operational Key works via authz grants from Operator Key.
+- [DONE]: Define how flow changes when ML Operational Key - Hot Wallet added
+    **Defined key separation architecture**: Account Key (cold) created offline for admin operations; ML Operational Key (hot) created on-server with authz permissions granted by Account Key for automated AI operations. No direct participant association needed - ML Operational Key works via authz grants from Account Key.
 
 - [DONE]: Create Full list of permission to be granted to Warm Key. INCLUDING AI OPERATION AND WHEN SEED CREATES NEW PARTICIPANT
-    **Created comprehensive permission list**: Documented 18 AI Operational Key message types (MsgStartInference, MsgFinishInference, MsgClaimRewards, etc.) and 5 future Governance Key message types. All permissions defined in `inference.InferenceOperationKeyPerms` array for automated ML operations.
+    **Created comprehensive permission list**: Documented 18 ML Operational Key message types (MsgStartInference, MsgFinishInference, MsgClaimRewards, etc.) and 5 future Governance Key message types. All permissions defined in `inference.InferenceOperationKeyPerms` array for automated ML operations.
 
 ## Full Permission List by Key Type
 
 **Package:** `github.com/productscience/inference/x/inference/types`
 
-### AI Operational Key (Automated Operations - Hot Wallet)
+### ML Operational Key (Automated Operations - Hot Wallet)
 - `MsgStartInference` - Initiate AI inference requests
 - `MsgFinishInference` - Complete AI inference execution  
 - `MsgClaimRewards` - Automatically claim epoch rewards
@@ -112,18 +139,20 @@ IN code look only in inferene-chain and decentralized-api dirs
 
 **Total: 18 automated message types**
 
-### [Future] Governance Key (Manual Authorization - Cold Wallet)
+### [v1] Governance Key (Manual Authorization - Cold Wallet)
 - `MsgUpdateParams` - Governance parameter updates (authority only)
 - `MsgRegisterModel` - Register new AI models (authority only)
 - `MsgCreatePartialUpgrade` - System upgrades (authority only)
 - `MsgSubmitUnitOfComputePriceProposal` - Propose compute pricing changes
 - `MsgCreateTrainingTask` - Create new training tasks (operators/admins)
 
+**Total: 5 manual authorization message types**
+
 - [DONE]: Add command in inferenced CLI which register new participant with seed's `g.POST("participants", s.submitNewParticipantHandler)`
-    **Implemented CLI participant registration**: Created `inferenced register-new-participant` command in `register_participant_command.go` that sends HTTP POST to seed node's `/v1/participants` endpoint. Command takes operator-address, node-url, operator-public-key, validator-consensus-key arguments and --node-address flag.
+    **Implemented CLI participant registration**: Created `inferenced register-new-participant` command in `register_participant_command.go` that sends HTTP POST to seed node's `/v1/participants` endpoint. Command takes account-address, node-url, account-public-key, validator-consensus-key arguments and --node-address flag.
 
 - [DONE]: Create new command received granted and grantee account and grants permissions. Code is in @permissions.go
-    **Implemented permission granting CLI**: Created `inferenced tx inference grant-ml-ops-permissions` command in `module.go` that grants all 18 AI operation permissions from operator key to AI operational key using authz. Integrated with main CLI and supports standard transaction flags.
+    **Implemented permission granting CLI**: Created `inferenced tx inference grant-ml-ops-permissions` command in `module.go` that grants all 18 AI operation permissions from account key to ML operational key using authz. Integrated with main CLI and supports standard transaction flags.
 
 - [DONE]: Class to manage AccountKey and Operational Key
     **Built account management infrastructure**: Created `ApiAccount` struct in `accounts.go` with AccountKey/SignerAccount fields, implemented address methods, integrated keyring backend support, established `InferenceOperationKeyPerms` array, and added CLI integration for participant registration.
@@ -145,7 +174,7 @@ IN code look only in inferene-chain and decentralized-api dirs
      **Implemented genesis key reuse for decentralized-api**: Modified `decentralized-api/scripts/init-docker.sh` to automatically extract `ACCOUNT_PUBKEY` from existing keys when neither `CREATE_KEY=true` nor `ACCOUNT_PUBKEY` is provided, with warning messages for production safety. Enhanced `decentralized-api/apiconfig/config_manager.go` to optionally use `ACCOUNT_PUBKEY` environment variable when provided. Genesis flow works in local-test-net: (1) `inference-chain/scripts/init-docker-genesis.sh` creates "genesis" key in shared `./prod-local/genesis:/root/.inference` volume, (2) decentralized-api detects existing "genesis" key and extracts public key with warnings, (3) both containers share keyring access for transaction signing. Volume sharing enables seamless key reuse in local development environments while maintaining backward compatibility.
 
 
-- [DONE]: update decentralized-api/scripts/init-docker.sh to create 2 keys when CREATE_KEY=true (test pipeline):
+- [DONE]: TEST PIPELINE ONLY update decentralized-api/scripts/init-docker.sh to create 2 keys when CREATE_KEY=true (test pipeline):
     - cold one with name "$KEY_NAME"-COLD 
     - warm one with "$KEY_NAME"
     - use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD ):
@@ -155,30 +184,30 @@ IN code look only in inferene-chain and decentralized-api dirs
 
     **Implementation Completed:**
     
-    ✅ **Key Creation Logic**
+    **Key Creation Logic**
     - Implemented dual key creation in init-docker.sh
-    - Creates `$KEY_NAME-COLD` (operator/cold wallet) for admin operations
-    - Creates `$KEY_NAME` (AI operational/warm wallet) for routine AI operations
+    - Creates `$KEY_NAME-COLD` (account/cold wallet) for admin operations
+    - Creates `$KEY_NAME` (ML operational/warm wallet) for routine AI operations
     - Extracts both addresses and public keys for subsequent steps
 
-    ✅ **Participant Registration**
+    **Participant Registration**
     - Added participant registration using cold wallet BEFORE granting permissions
     - Uses `inferenced register-new-participant` command with cold key credentials
     - **TMKMS Compatible**: Automatically extracts validator consensus key from chain node RPC status endpoint (`/status`)
     - Works with both TMKMS and local validator keys (fetches from chain node, not local files)
     - **Covers Both Paths**: Handles both CREATE_KEY=true and fallback scenarios (when ACCOUNT_PUBKEY not provided)
     - Only runs when SEED_API_URL is provided (independent of CREATE_KEY value)
-    - Parameters: OPERATOR_ADDRESS, DAPI_API__PUBLIC_URL, ACCOUNT_PUBKEY, VALIDATOR_CONSENSUS_KEY
+    - Parameters: ACCOUNT_ADDRESS, DAPI_API__PUBLIC_URL, ACCOUNT_PUBKEY, VALIDATOR_CONSENSUS_KEY
     - Includes proper error handling and manual registration instructions
 
-    ✅ **Permission Granting with Account Sync**
+    **Permission Granting with Account Sync**
     - Grant ML operations permissions from cold key to warm key
     - Use `inferenced tx inference grant-ml-ops-permissions $KEY_NAME-COLD $WARM_ADDRESS`
     - Sign with cold key using --from $KEY_NAME-COLD flag
     - **Added `wait_for_account_sync()` function**: Waits for account to be available on local node before granting permissions (fixes timing issue where account exists on seed node but not yet synced to local node)
     - 60-second timeout with 3-second intervals, graceful fallback on timeout
     
-    ✅ **Configuration Integration**
+    **Configuration Integration**
     - Updated ACCOUNT_PUBKEY logic to use warm key for all transactions
     - Maintains backwards compatibility by keeping $KEY_NAME as operational key
     - Added proper error handling and meaningful error messages for each step
@@ -187,27 +216,50 @@ IN code look only in inferene-chain and decentralized-api dirs
     - SEED_API_URL (optional): URL of genesis/seed node for participant registration
     - All existing variables remain unchanged for backwards compatibility
 
-- [WIP]: Add query to find all authz grantees with specific message type for an account
+- [DONE]: Add query to find all authz grantees with specific message type for an account
     **Implemented authz grantee lookup query**: Added new query `GranteesByMessageType` in `query.proto` with REST endpoint `/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}`. Implemented keeper method in `query_grantees_by_message_type.go` with:
     - Complete proto definitions and gRPC endpoints
     - Proper input validation and error handling  
     - Comprehensive test coverage with all edge cases
     - Integration with dependency injection using actual authzkeeper.Keeper
     - Infrastructure ready for extending with actual authz grant iteration
-    - All tests passing ✅
+    - All tests passing
 
-**Total: 5 manual authorization message types**
+## Next Phase Tasks
 
-- [TODO]: Create a pre-init step when we:
-    - Create `Operator Key`
-    - Create `AI Operational Key` (from server) and grant all needed permission to it from outside of server
-    - Check that `AI Operational Key` has all this permissions granted
-    **Implementation**: Minimal copy-pastable examples in `proposals/keys/minimal-example.md`
+- [WIP]: Create a pre-init step when we:
+    - Create `Account Key` (outside server/container - SECURITY CRITICAL)
+    - Create `ML Operational Key` (on server) and grant all needed permissions to it from Account Key
+    - Check that `ML Operational Key` has all required permissions granted
+    - **Implementation**: Minimal copy-pastable examples in `proposals/keys/minimal-example.md`
 
+- [TODO]: Testing and validation
+    - Write testermint tests for multi-key architecture
+    - Test participant registration with external Account Key
+    - Validate authz permission granting workflow
 
-- [TODO]: Modify `docker-init.sh` to work with provided Public Key for `Operator Key` and Key Pair for `AI Operational Key`
-    - Q: Which data structures should we modify minimally
-- [TODO]: Make sure we can vote with `Operator Key` from outside of server
-- [TODO]: Right testermint test for all this
-- [TODO]: Figure out that all this works with ledger
-- [TODO]: Key rotation 
+- [TODO]: Future enhancements
+    - Hardware wallet integration (Ledger support)
+    - Key rotation mechanisms for ML Operational Key
+    - Multi-signature groups using x/group module
+
+## Implementation Status (Current Branch)
+
+**v0 Core Implementation COMPLETED:**
+- **Dual Key Architecture**: Account Key (cold) + ML Operational Key (hot) separation implemented
+- **CLI Commands**: `inferenced register-new-participant` and `inferenced tx inference grant-ml-ops-permissions` 
+- **Account Management**: `ApiAccount` struct with keyring backend support in `decentralized-api/apiconfig/accounts.go`
+- **Permission System**: 18 ML operational message types defined in `inference-chain/x/inference/permissions.go`
+- **Authz Query**: `GranteesByMessageType` query for permission validation in `inference-chain/x/inference/keeper/query_grantees_by_message_type.go`
+- **TMKMS Integration**: Validator consensus key extraction via RPC status endpoint (compatible with both TMKMS and local keys)
+- **Init Script Enhancement**: `decentralized-api/scripts/init-docker.sh` with dual key creation, participant registration, and permission granting
+
+**Production Readiness:**
+- Account sync waiting mechanism for distributed node environments
+- Environment variable support for external Account Key integration
+- Backward compatibility with existing single-key setups
+
+## Notes
+- v0 Implementation: Account Key + ML Operational Key separation
+- v1 Implementation: Add Governance Key and Treasury Key
+- Long Future: Maintenance Key and full multi-sig support 
