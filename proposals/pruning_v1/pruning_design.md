@@ -1,8 +1,8 @@
-# Pruning Design for Inference-Ignite Blockchain
+# Pruning Design for Gonka Blockchain
 
 ## Overview
 
-This document outlines the design for a comprehensive pruning system in the Inference-Ignite blockchain. The pruning system aims to optimize storage usage by removing unnecessary data while preserving essential information for statistics, analytics, and system integrity.
+This document outlines the design for a comprehensive pruning system in the Gonka blockchain. The pruning system aims to optimize storage usage by removing unnecessary data while preserving essential information for statistics, analytics, and system integrity.
 
 The design addresses two main types of data that consume significant storage space:
 

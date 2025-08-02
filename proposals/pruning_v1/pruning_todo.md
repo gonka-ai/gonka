@@ -1,6 +1,6 @@
 # Pruning Implementation Plan
 
-This document outlines a step-by-step approach to implementing the pruning system for the Inference-Ignite blockchain as described in the pruning design document. Each step is designed to be complete and includes testing requirements to ensure the implementation is robust and reliable.
+This document outlines a step-by-step approach to implementing the pruning system for the Gonka blockchain as described in the pruning design document. Each step is designed to be complete and includes testing requirements to ensure the implementation is robust and reliable.
 
 **Important Notes:**
 - This plan focuses exclusively on unit tests. Inference tests and performance tests are out of scope and will be handled separately.
@@ -189,6 +189,6 @@ If issues are discovered during implementation or testing, the following rollbac
 
 ## Conclusion
 
-This implementation plan provides a step-by-step approach to implementing the pruning system for the Inference-Ignite blockchain. By following this plan and ensuring all unit tests pass at each step, we can ensure a robust and reliable implementation that optimizes storage usage while maintaining all necessary functionality.
+This implementation plan provides a step-by-step approach to implementing the pruning system for the Gonka blockchain. By following this plan and ensuring all unit tests pass at each step, we can ensure a robust and reliable implementation that optimizes storage usage while maintaining all necessary functionality.
 
 Remember that this plan focuses exclusively on unit tests. Inference tests and performance tests will be handled separately by the development team.

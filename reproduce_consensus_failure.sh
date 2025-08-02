@@ -69,7 +69,7 @@ echo "### Step 4: Re-deploy the resources for '$TARGET_NAMESPACE' to simulate a 
 echo "This is done by re-applying the kustomization for that node."
 echo "This simulates a fresh node joining the network as a new participant."
 echo ""
-echo "# Note: We assume you are running this from the root of the 'inference-ignite' repository."
+echo "# Note: We assume you are running this from the root of the 'gonka' repository."
 # WARNING
 # Change version in image-versions/kustomization.yaml
 # Look for recent releases here if you deployed via GitHub Actions workflow:

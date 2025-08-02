@@ -2,7 +2,7 @@
 
 To deploy, use the following GitHub Action workflow:
 
-https://github.com/product-science/inference-ignite/actions/workflows/deploy-test-net-cloud.yml
+https://github.com/gonka-ai/gonka/actions/workflows/deploy-test-net-cloud.yml
 
 # Configuring k8s
 
