@@ -38,7 +38,7 @@ We are implementing a role-based key management system. This architecture separa
 - **Creation**: Created any time after Account Creation, privileges granted by Account Key using `/authz`
 - **Rotation**: Can be revoked or created any time using Account Key
 
-### [v0] Validator / Consensus / Tendermint Key - TMKMS with Secure Storage
+### [v0] Consensus (also called Validator or Tendermint Key) - TMKMS with Secure Storage
 - **Purpose**: Block validation and consensus participation
 - **Storage**: Managed within a secure TMKMS service to prevent double-signing and protect the key
 - **Algorithm**: ED25519
@@ -46,7 +46,7 @@ We are implementing a role-based key management system. This architecture separa
 - **Rotation**: Can be rotated with a message (`MsgRotateConsPubKey`) signed by the Account Key or one of its authorized grantees
 
 ### [Long Future] Maintenance Key
-- **Purpose**: Rotate Validator / Consensus / Tendermint Key
+- **Purpose**: Rotate Consensus Key
 - **Algorithm**: SECP256K1
 - **Creation**: Created any time after Account Creation, privileges granted by Account Key using `/authz`
 - **Rotation**: Can be revoked or created any time using Account Key
@@ -57,7 +57,7 @@ We are implementing a role-based key management system. This architecture separa
 At the launch we have:
 - **Account Key** - Cold Wallet - used for Gov, Treasury, Consensus Key rotation and ML Operational Key rotation 
 - **ML Operational Key** - Warm Wallet - used for all AI related transactions
-- **Validator / Consensus / Tendermint Key** - TMKMS with Secure Storage
+- **Consensus Key** - TMKMS with Secure Storage
 
 
 ## Implementation Priority
@@ -89,8 +89,12 @@ Company Participant:
 
 All steps should be done at the last step of main instruction for [Network Node launch](https://gonka.ai/participant/quickstart).
 
-The key creation procedure will require creating cold and warm accounts and executing several transactions using both of them. 
-When we mention executing commands from a local machine, it means a secure machine that can safely store critical keys and has restricted access.
+The key creation procedure will require generating a **cold keypair** and a **warm keypair** and executing several transactions using both of them.
+The following steps should be performed on a secure, local machine. A secure machine is one dedicated to managing critical keys and should ideally have:
+- Minimal exposure to the public internet (air-gapped is best).
+- A minimal installation of software; it is not used for daily web Browse or email.
+- An encrypted hard drive.
+- Restricted physical and remote access.
 
 At the time of launch, we don't support hardware wallets for managing private keys but they'll be supported soon. For now we recommend storing the private key on a machine with minimal access and protecting it with a password. 
 Don't forget to save the mnemonic phrase! After hardware wallets are supported, the private key should be transferred to one. 
@@ -124,7 +128,9 @@ It is the only way to recover your account if you ever forget your password.
 pyramid sweet dumb critic lamp various remove token talent drink announce tiny lab follow blind awful expire wasp flavor very pair tell next cable
 ```
 
-Don't forget to save *mnemonic phrase*, it's impossible to show it later.
+**CRITICAL**: Write this mnemonic phrase down and store it in a secure, offline location. 
+This phrase is the **only** way to recover your Account Key if you lose your password or access to this machine. 
+If you lose the mnemonic, you will permanently lose access to the key and all assets it controls.
 
 ## 2. [Server]: Add Account Public Key to server env variables
 
@@ -175,20 +181,20 @@ again plastic athlete arrow first measure danger drastic wolf coyote work memory
 
 To register new participant, we need to send new participants details to the seed node:
 1. Public Key for Account Key - we've created at local device: `"Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY"`
-2. Public Key for Validator Key - corresponding private key is generated inside `tmkms` containers and shouldn't leave it. 
+2. Public Key for Consensus Key - corresponding private key is generated inside `tmkms` containers and shouldn't leave it. 
 
 ### 4.1 [Server]: Start all containers excluding `api`:
 
-We can start `tmkms`, `node` and `proxy` containers to generate Validator Key and endpoint to receive it:
+We can start `tmkms`, `node` and `proxy` containers to generate Consensus Key and endpoint to receive it:
 ```
 docker compose up tmkms node proxy -d --no-deps
 ```
 
-### 4.2 [From server]: Get Validator Public Key
+### 4.2 [From server]: Get Consensus Public Key
 
-Use 26657 port for your new `node` container to get Validator Public Key
+Use 26657 port for your new `node` container to get Consensus Public Key
 ```
-curl http://localhost:26657/chain-rpc/status | jq -r '.result.validator_info.pub_key.value'
+curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value'
 ```
 
 **Example output:**
@@ -206,7 +212,7 @@ The command should be used like:
 ./inferenced register-new-participant \
     <new-node-url> \
     <account-public-key> \
-    <validator-consensus-key>
+    <consensus-key>
     --node-address $SEED_API_URL
 ```
 
@@ -223,7 +229,7 @@ Registering new participant:
   Node URL: http://36.189.234.237:19252
   Account Address: gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
   Account Public Key: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY
-  Validator Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
+  Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
   Seed Node Address: http://36.189.234.237:19250
 Sending registration request to http://36.189.234.237:19250/v1/participants
 Response status code: 200

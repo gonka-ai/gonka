@@ -123,7 +123,7 @@ High-level overview is in `proposals/keys/README.md`
 - `MsgSubmitPocBatch` - Submit proof of compute batches
 - `MsgSubmitPocValidation` - Submit PoC validation results
 - `MsgSubmitSeed` - Submit randomness seed (seed nodes only)
-- `MsgBridgeExchange` - Validate cross-chain bridge transactions
+- `MsgBridgeExchange` - Validate cross-chain bridge transactions ⚠️ **[BUG: Missing from codec.go]**
 - `MsgSubmitTrainingKvRecord` - Submit training key-value records
 - `MsgJoinTraining` - Join distributed training sessions
 - `MsgJoinTrainingStatus` - Report training status updates
@@ -137,7 +137,7 @@ High-level overview is in `proposals/keys/README.md`
 - `MsgInvalidateInference` - Invalidate fraudulent inferences (validators only)
 - `MsgRevalidateInference` - Request re-validation of disputed inferences
 
-**Total: 18 automated message types**
+**Total: 20 automated message types**
 
 ### [v1] Governance Key (Manual Authorization - Cold Wallet)
 - `MsgUpdateParams` - Governance parameter updates (authority only)
@@ -174,47 +174,21 @@ High-level overview is in `proposals/keys/README.md`
      **Implemented genesis key reuse for decentralized-api**: Modified `decentralized-api/scripts/init-docker.sh` to automatically extract `ACCOUNT_PUBKEY` from existing keys when neither `CREATE_KEY=true` nor `ACCOUNT_PUBKEY` is provided, with warning messages for production safety. Enhanced `decentralized-api/apiconfig/config_manager.go` to optionally use `ACCOUNT_PUBKEY` environment variable when provided. Genesis flow works in local-test-net: (1) `inference-chain/scripts/init-docker-genesis.sh` creates "genesis" key in shared `./prod-local/genesis:/root/.inference` volume, (2) decentralized-api detects existing "genesis" key and extracts public key with warnings, (3) both containers share keyring access for transaction signing. Volume sharing enables seamless key reuse in local development environments while maintaining backward compatibility.
 
 
-- [DONE]: TEST PIPELINE ONLY update decentralized-api/scripts/init-docker.sh to create 2 keys when CREATE_KEY=true (test pipeline):
-    - cold one with name "$KEY_NAME"-COLD 
-    - warm one with "$KEY_NAME"
-    - use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD ):
+- [DONE]: CREATE_KEY - single key is used
+    **Implemented single key creation with CREATE_KEY environment variable:**
+    - Basic CREATE_KEY=true functionality implemented in `decentralized-api/scripts/init-docker.sh`
+    - Creates single key with `$KEY_NAME` when CREATE_KEY=true
+    - Maintains backward compatibility with existing single-key setups
+    - Environment variable support added to `local-test-net/docker-compose.join.yml`
+
+- [TODO]: Auto-create dual keys and grant permissions (test pipeline enhancement)
+    **Remaining work for dual key architecture:**
+    - Create cold key with name "$KEY_NAME"-COLD 
+    - Create warm key with "$KEY_NAME"
+    - Use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD)
         Q: can it fetch validator-consensus-key automatically from node?
-    - using `inferenced tx inference grant-ml-ops-permissions` grant permission to "$KEY_NAME"
-    - update code to use "$KEY_NAME" for siging all transaction but still "$KEY_NAME"-COLD for signing bytes
-
-    **Implementation Completed:**
-    
-    **Key Creation Logic**
-    - Implemented dual key creation in init-docker.sh
-    - Creates `$KEY_NAME-COLD` (account/cold wallet) for admin operations
-    - Creates `$KEY_NAME` (ML operational/warm wallet) for routine AI operations
-    - Extracts both addresses and public keys for subsequent steps
-
-    **Participant Registration**
-    - Added participant registration using cold wallet BEFORE granting permissions
-    - Uses `inferenced register-new-participant` command with cold key credentials
-    - **TMKMS Compatible**: Automatically extracts validator consensus key from chain node RPC status endpoint (`/status`)
-    - Works with both TMKMS and local validator keys (fetches from chain node, not local files)
-    - **Covers Both Paths**: Handles both CREATE_KEY=true and fallback scenarios (when ACCOUNT_PUBKEY not provided)
-    - Only runs when SEED_API_URL is provided (independent of CREATE_KEY value)
-    - Parameters: ACCOUNT_ADDRESS, DAPI_API__PUBLIC_URL, ACCOUNT_PUBKEY, VALIDATOR_CONSENSUS_KEY
-    - Includes proper error handling and manual registration instructions
-
-    **Permission Granting with Account Sync**
-    - Grant ML operations permissions from cold key to warm key
-    - Use `inferenced tx inference grant-ml-ops-permissions $KEY_NAME-COLD $WARM_ADDRESS`
-    - Sign with cold key using --from $KEY_NAME-COLD flag
-    - **Added `wait_for_account_sync()` function**: Waits for account to be available on local node before granting permissions (fixes timing issue where account exists on seed node but not yet synced to local node)
-    - 60-second timeout with 3-second intervals, graceful fallback on timeout
-    
-    **Configuration Integration**
-    - Updated ACCOUNT_PUBKEY logic to use warm key for all transactions
-    - Maintains backwards compatibility by keeping $KEY_NAME as operational key
-    - Added proper error handling and meaningful error messages for each step
-    
-    **Environment Variables:**
-    - SEED_API_URL (optional): URL of genesis/seed node for participant registration
-    - All existing variables remain unchanged for backwards compatibility
+    - Use `inferenced tx inference grant-ml-ops-permissions` to grant permission to "$KEY_NAME"
+    - Update code to use "$KEY_NAME" for signing all transactions but still "$KEY_NAME"-COLD for admin operations
 
 - [DONE]: Add query to find all authz grantees with specific message type for an account
     **Implemented authz grantee lookup query**: Added new query `GranteesByMessageType` in `query.proto` with REST endpoint `/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}`. Implemented keeper method in `query_grantees_by_message_type.go` with:
@@ -227,7 +201,7 @@ High-level overview is in `proposals/keys/README.md`
 
 ## Next Phase Tasks
 
-- [WIP]: Create a pre-init step when we:
+- [DONE, partial]: Create a pre-init step when we:
     - Create `Account Key` (outside server/container - SECURITY CRITICAL)
     - Create `ML Operational Key` (on server) and grant all needed permissions to it from Account Key
     - Check that `ML Operational Key` has all required permissions granted
