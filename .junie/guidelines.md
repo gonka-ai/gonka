@@ -1,10 +1,10 @@
-# Development Guidelines for Inference-Ignite Project
+# Development Guidelines for Gonka Project
 
-This document outlines the development guidelines for the Inference-Ignite project, with a special focus on considerations for AI Agents working with the codebase.
+This document outlines the development guidelines for the Gonka project, with a special focus on considerations for AI Agents working with the codebase.
 
 ## Project Overview
 
-Inference-Ignite is a decentralized AI infrastructure designed to optimize computational power for AI model training and inference. The project uses a novel consensus mechanism called "Proof of Work 2.0" that ensures computational resources are allocated to AI workloads rather than being wasted on securing the blockchain.
+Gonka is a decentralized AI infrastructure designed to optimize computational power for AI model training and inference. The project uses a novel consensus mechanism called "Proof of Work 2.0" that ensures computational resources are allocated to AI workloads rather than being wasted on securing the blockchain.
 
 The system consists of three main components:
 1. **Chain Node** - Connects to the blockchain, maintains the blockchain layer, and handles consensus
@@ -135,7 +135,7 @@ When working with this codebase, AI Agents should:
 8. **Add new files to Git** - Use `git add` on the CLI to add newly created files to Github.
 9. **NEVER COMMIT FILES** - AI Agents should never commit files directly. Instead, they should provide the necessary changes and explanations, which can then be reviewed and committed by a human developer.
 
-By following these guidelines, AI Agents can contribute effectively to the Inference-Ignite project while maintaining the integrity and stability of the system.
+By following these guidelines, AI Agents can contribute effectively to the Gonka project while maintaining the integrity and stability of the system.
 
 ## Running Unit Tests During Dev
 To run tests in the `inference-chain` project:

@@ -79,7 +79,7 @@ echo "$GONKA_PRIVATE_KEY"
 # 1. python3 -m venv compressa-venv
 # 2. source compressa-venv/bin/activate
 # 3. pip install git+https://github.com/product-science/compressa-perf.git
-# 4. Download: https://github.com/product-science/inference-ignite/blob/main/mlnode/packages/benchmarks/resources/config.yml
+# 4. Download: https://github.com/gonka-ai/gonka/blob/main/mlnode/packages/benchmarks/resources/config.yml
 #    No need to change anything inside the config.yml file.
 
 export GONKA_ADDRESS
