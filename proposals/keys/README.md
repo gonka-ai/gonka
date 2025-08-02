@@ -87,20 +87,20 @@ Company Participant:
 
 # v0: Join New Node Key Management
 
-All steps should be be dont at the last step of main instruction for [Network Node launch](https://gonka.ai/participant/quickstart).
+All steps should be done at the last step of main instruction for [Network Node launch](https://gonka.ai/participant/quickstart).
 
-The key creating procedure will require to create cold and warm account and execute several transactions using both of them. 
-When we mention to execute command from local machine, it means machine which can be used to store important keys and no one... <FINISH>
+The key creation procedure will require creating cold and warm accounts and executing several transactions using both of them. 
+When we mention executing commands from a local machine, it means a secure machine that can safely store critical keys and has restricted access.
 
-At the time of launch, we don't support ledger for management private keys but it'll be supported soon. For now we recommend to have private key at the machine with minimal access and have it protected by password. 
-Don't forget to save mnemonic passphrase! After ledger is suppoted, private key should be transfered into it. 
+At the time of launch, we don't support hardware wallets for managing private keys but they'll be supported soon. For now we recommend storing the private key on a machine with minimal access and protecting it with a password. 
+Don't forget to save the mnemonic phrase! After hardware wallets are supported, the private key should be transferred to one. 
 
 
-Asssuming we have environment all env variables from `config.env` are loaded via `source config.env`.
+Assuming all environment variables from `config.env` are loaded via `source config.env`.
 
 ## 1. [Local device]: Create Account Key
 
-For keyring backend you should use `os` of `file` should be used for cold key. This example will `file` everywhere
+For the keyring backend, you should use `os` or `file` for the cold key. This example uses `file` throughout.
 
 ```
 ./inferenced keys add gonka-account-key --keyring-backend file
@@ -200,7 +200,7 @@ IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
 
 ### 4.3 [Any machine]: Register participant via `register-new-participant`
 
-This command doesn't require signing neither from cold or warm private key and can be executed at any machine.  
+This command doesn't require signing from either the cold or warm private key and can be executed on any machine.  
 The command should be used like:
 ```
 ./inferenced register-new-participant \
@@ -236,8 +236,8 @@ Participant is now available at http://36.189.234.237:19250/v1/participants/gonk
 
 ### 5. [Local machine]: Grant Permissions to ML Operational Key
 
-Finally, we need to grant permission from Account Key to ML Operational Key to create transactions required to proper node work.  
-That can be done using `grant-ml-ops-permissions` and singed by Account Key:
+Finally, we need to grant permissions from Account Key to ML Operational Key to create transactions required for proper node operation.  
+This can be done using `grant-ml-ops-permissions` and signed by Account Key:
 
 ```
 ./inferenced tx inference grant-ml-ops-permissions \
