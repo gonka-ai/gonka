@@ -67,12 +67,12 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 
 	// Check executor signature if executor participant is provided
 	if sigData.Executor != nil && sigData.ExecutorSignature != "" {
-		executorKey, err := pubKeyGetter.GetAccountPubKey(ctx, sigData.Executor.Address)
+		executorKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.Executor.Address)
 		if err != nil {
 			return sdkerrors.Wrap(types.ErrParticipantNotFound, sigData.Executor.Address)
 		}
 
-		err = ValidateSignature(components, ExecutorAgent, executorKey, sigData.ExecutorSignature)
+		err = ValidateSignatureWithGrantees(components, ExecutorAgent, executorKeys, sigData.ExecutorSignature)
 		if err != nil {
 			return sdkerrors.Wrap(types.ErrInvalidSignature, "executor signature validation failed")
 		}
