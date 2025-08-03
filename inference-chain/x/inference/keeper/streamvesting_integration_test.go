@@ -59,6 +59,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	groupMock := keepertest.NewMockGroupMessageKeeper(ctrl)
 	stakingKeeper := keepertest.NewMockStakingKeeper(ctrl)
 	collateralKeeper := keepertest.NewMockCollateralKeeper(ctrl)
+	authzKeeper := keepertest.NewMockAuthzKeeper(ctrl)
 
 	// --- Real Keepers ---
 	svKeeper := streamvestingkeeper.NewKeeper(
@@ -76,13 +77,14 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		keepertest.PrintlnLogger{},
 		authority.String(),
 		bookkeepingBankKeeper,
-		bankViewKeeper, // authz
+		bankViewKeeper,
 		groupMock,
 		validatorSet,
 		stakingKeeper,
 		accountKeeper,
 		collateralKeeper,
 		svKeeper,
+		authzKeeper,
 		nil,
 	)
 

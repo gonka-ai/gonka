@@ -1,4 +1,3 @@
-import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
 import com.productscience.createSpec
 import com.productscience.data.EpochPhase
@@ -11,14 +10,12 @@ import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.runParallelInferences
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import java.time.Duration
-import kotlin.test.assertNotNull
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.time.Duration
 
 class ParticipantTests : TestermintTest() {
     @Test

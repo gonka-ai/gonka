@@ -149,7 +149,7 @@ func cleanupExpiredAuthKeys(currentBlockHeight int64) {
 func (s *Server) postChat(ctx echo.Context) error {
 	logging.Debug("PostChat. Received request", types.Inferences, "path", ctx.Request().URL.Path)
 
-	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAddress())
+	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAccountAddress())
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 		request.InferenceId = inferenceUUID
 		request.Seed = strconv.Itoa(int(seed))
-		request.TransferAddress = s.recorder.GetAddress()
+		request.TransferAddress = s.recorder.GetAccountAddress()
 		request.TransferSignature = inferenceRequest.TransferSignature
 
 		logging.Info("Execute request on same node, fill request with extra data", types.Inferences, "inferenceId", request.InferenceId, "seed", request.Seed)
@@ -447,13 +447,38 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAddress(), request)
+	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
 		return nil
 	}
 	return nil
+}
+
+func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granterAddress,
+		MessageTypeUrl: "/inference.inference.MsgStartInference",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
+	}
+	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
+	for i, grantee := range grantees.Grantees {
+		granteesPubkeys[i] = grantee.PubKey
+	}
+
+	granterAccount, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: granterAddress})
+	if err != nil {
+		logging.Error("Failed to get granter account", types.Inferences, "address", granterAddress, "error", err)
+		return nil, err
+	}
+	granterPubKey := granterAccount.Pubkey
+
+	granteesPubkeys[len(granteesPubkeys)-1] = granterPubKey
+	return granteesPubkeys, nil
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
@@ -464,30 +489,31 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return err
 	}
 
-	transfer, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.TransferAddress})
+	transferPubkeys, err := s.getAllowedPubKeys(ctx, request.TransferAddress)
 	if err != nil {
-		logging.Error("Failed to get transfer participant", types.Inferences, "address", request.TransferAddress, "error", err)
+		logging.Error("Failed to get grantees to sign inference", types.Inferences, "error", err)
 		return err
 	}
+	logging.Info("Transfer pubkeys", types.Inferences, "pubkeys", transferPubkeys)
 
 	if err := validateTransferRequest(request, dev.Pubkey); err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
 	}
 
-	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAddress(), request.TransferSignature); err != nil {
+	if err = validateExecuteRequestWithGrantees(request, transferPubkeys, s.recorder.GetAccountAddress(), request.TransferSignature); err != nil {
 		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
 	}
 
-	err = s.validateTimestampNonce(err, request)
+	err = s.validateTimestampNonce(request)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *Server) validateTimestampNonce(err error, request *ChatRequest) error {
+func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 	status, err := s.recorder.GetCosmosClient().Status(context.Background())
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
@@ -562,15 +588,15 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 		ExecutorAddress: executorAddress,
 	}
 
-	address, err := sdk.AccAddressFromBech32(s.recorder.GetAddress())
+	signerAddressStr := s.recorder.GetSignerAddress()
+	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
 	if err != nil {
-		logging.Error("Failed to parse address", types.Inferences, "address", s.recorder.GetAddress(), "error", err)
+		logging.Error("Failed to parse address", types.Inferences, "address", signerAddressStr, "error", err)
 		return "", err
 	}
-
 	accountSigner := &cmd.AccountSigner{
-		Addr:    address,
-		Context: s.recorder.GetCosmosClient().Context(),
+		Addr:    signerAddress,
+		Keyring: s.recorder.GetKeyring(),
 	}
 
 	signature, err := calculations.Sign(accountSigner, components, agentType)

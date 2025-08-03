@@ -8,6 +8,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -79,7 +80,10 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mock the account keeper to return our mock account
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
@@ -338,8 +342,11 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Create a mock account with the public key
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 
-	// Mock the account keeper to return our mock account for the first call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	// Mock the account keeper to return our mock account (called multiple times during validation)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -363,9 +370,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		ValidatedInferences: []string{"inference1", "inference2", "inference3"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
-
-	// Mock the account keeper again for the second call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
@@ -553,8 +557,11 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Create a mock account with the public key
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 
-	// Mock the account keeper to return our mock account for the first call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	// Mock the account keeper to return our mock account (called multiple times during validation)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -577,9 +584,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		ValidatedInferences: []string{"inference2"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
-
-	// Mock the account keeper again for the second call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Call ClaimRewards again - this should still fail
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -610,11 +614,8 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	settleAmount.SeedSignature = signatureHex
 	k.SetSettleAmount(sdkCtx, settleAmount)
 
-	// Mock the account keeper again for the third call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
 	// Call ClaimRewards with the new seed
-	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	_, _ = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
@@ -631,10 +632,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	validations.ValidatedInferences = []string{"inference1", "inference2", "inference3"}
 	k.SetEpochGroupValidations(sdkCtx, validations)
 
-	// Mock the account keeper again for the fourth call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
-	// Mock the bank keeper for both direct and vesting payments
+	// Mock the bank keeper to allow payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
@@ -825,7 +823,11 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
 	if !validatorIsAvailableDuringPoC {
 		workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 		rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))

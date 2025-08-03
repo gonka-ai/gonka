@@ -2,10 +2,11 @@ package types
 
 import (
 	"context"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -118,4 +119,8 @@ type BookkeepingBankKeeper interface {
 type ModelKeeper interface {
 	GetGovernanceModel(ctx context.Context, id string) (val *Model, found bool)
 	GetGovernanceModels(ctx context.Context) (list []*Model, err error)
+}
+
+type AuthzKeeper interface {
+	GranterGrants(ctx context.Context, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error)
 }

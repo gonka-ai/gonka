@@ -164,3 +164,23 @@ func (k msgServer) GetAccountPubKey(ctx context.Context, address string) (string
 	}
 	return base64.StdEncoding.EncodeToString(acc.GetPubKey().Bytes()), nil
 }
+
+func (k msgServer) GetAccountPubKeysWithGrantees(ctx context.Context, granterAddress string) ([]string, error) {
+	grantees, err := k.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granterAddress,
+		MessageTypeUrl: "/inference.inference.MsgStartInference",
+	})
+	if err != nil {
+		return nil, err
+	}
+	pubKeys := make([]string, len(grantees.Grantees)+1)
+	for i, grantee := range grantees.Grantees {
+		pubKeys[i] = grantee.PubKey
+	}
+	granterPubKey, err := k.GetAccountPubKey(ctx, granterAddress)
+	if err != nil {
+		return nil, err
+	}
+	pubKeys[len(pubKeys)-1] = granterPubKey
+	return pubKeys, nil
+}

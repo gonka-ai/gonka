@@ -25,6 +25,7 @@ type (
 		// should be the x/gov module account.
 		authority     string
 		AccountKeeper types.AccountKeeper
+		AuthzKeeper   types.AuthzKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
 
 		collateralKeeper    types.CollateralKeeper
@@ -45,6 +46,7 @@ func NewKeeper(
 	accountKeeper types.AccountKeeper,
 	collateralKeeper types.CollateralKeeper,
 	streamvestingKeeper types.StreamVestingKeeper,
+	authzKeeper types.AuthzKeeper,
 	getWasmKeeper func() wasmkeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
@@ -62,6 +64,7 @@ func NewKeeper(
 		validatorSet:        validatorSet,
 		Staking:             staking,
 		AccountKeeper:       accountKeeper,
+		AuthzKeeper:         authzKeeper,
 		collateralKeeper:    collateralKeeper,
 		streamvestingKeeper: streamvestingKeeper,
 		getWasmKeeper:       getWasmKeeper,

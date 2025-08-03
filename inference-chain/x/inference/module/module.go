@@ -16,12 +16,14 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
+	"github.com/spf13/cobra"
 
 	// this line is used by starport scaffolding # 1
 
@@ -591,6 +593,21 @@ func (am AppModule) IsOnePerModuleType() {}
 // IsAppModule implements the appmodule.AppModule interface.
 func (am AppModule) IsAppModule() {}
 
+// GetTxCmd returns the transaction commands for this module
+func GetTxCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                        "inference",
+		Short:                      "Inference transaction subcommands",
+		DisableFlagParsing:         true,
+		SuggestionsMinimumDistance: 2,
+		RunE:                       client.ValidateCmd,
+	}
+
+	cmd.AddCommand(GrantMLOpsPermissionsCmd())
+
+	return cmd
+}
+
 // ----------------------------------------------------------------------------
 // App Wiring Setup
 // ----------------------------------------------------------------------------
@@ -618,6 +635,7 @@ type ModuleInputs struct {
 	GroupServer         types.GroupMessageKeeper
 	CollateralKeeper    types.CollateralKeeper
 	StreamVestingKeeper types.StreamVestingKeeper
+	AuthzKeeper         authzkeeper.Keeper
 	GetWasmKeeper       func() wasmkeeper.Keeper `optional:"true"`
 }
 
@@ -649,6 +667,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AccountKeeper,
 		in.CollateralKeeper,
 		in.StreamVestingKeeper,
+		in.AuthzKeeper,
 		in.GetWasmKeeper,
 	)
 

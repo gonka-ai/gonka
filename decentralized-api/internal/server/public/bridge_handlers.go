@@ -205,7 +205,7 @@ func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) {
 	}
 
 	msg := &types.MsgBridgeExchange{
-		Validator:       q.recorder.GetAddress(),
+		Validator:       q.recorder.GetAccountAddress(),
 		OriginChain:     block.OriginChain,
 		ContractAddress: receipt.ContractAddress,
 		OwnerAddress:    cosmosAddress,

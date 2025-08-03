@@ -357,6 +357,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/all_model_capacities";
 
   }
+
+  // Queries all authz grantees with specific message type for an account
+  rpc GranteesByMessageType (QueryGranteesByMessageTypeRequest) returns (QueryGranteesByMessageTypeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -897,4 +903,18 @@ message QueryGetAllModelCapacitiesResponse {
 message ModelCapacity {
   string model_id = 1;
   uint64 capacity = 2;
+}
+
+message QueryGranteesByMessageTypeRequest {
+  string granter_address   = 1;
+  string message_type_url  = 2;
+}
+
+message Grantee {
+  string address = 1;
+  string pub_key = 2;
+}
+
+message QueryGranteesByMessageTypeResponse {
+  repeated Grantee grantees = 1;
 }

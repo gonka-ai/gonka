@@ -74,9 +74,8 @@ update_configs() {
 ###############################################################################
 # Detect first run
 ###############################################################################
-if "$APP_NAME" keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" \
-                                    --keyring-dir "$STATE_DIR" >/dev/null 2>&1
-then
+INIT_FLAG="$STATE_DIR/.node_initialized"
+if [ -f "$INIT_FLAG" ]; then
   FIRST_RUN=false
 else
   FIRST_RUN=true
@@ -108,9 +107,7 @@ if $FIRST_RUN; then
   output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
   echo "$output" | filter_cw20_code
 
-
-  run "$APP_NAME" keys add "$KEY_NAME" \
-       --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR"
+  touch "$INIT_FLAG"
 fi
 
 ###############################################################################

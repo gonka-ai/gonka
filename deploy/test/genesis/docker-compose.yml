@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.18
+    image: ghcr.io/product-science/inferenced:0.1.19-alpha3
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -22,7 +22,7 @@ services:
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.18
+    image: ghcr.io/product-science/api:0.1.19-alpha3
     restart: always
     depends_on:
       - node
@@ -41,8 +41,36 @@ services:
       - /srv/dai/dapi:/root/.dapi
       - ./node-config.json:/root/node_config.json
     ports:
-      - "8000:9000"
+      - "9000:9000"
       - "9100:9100"
       - "9200:9200"
 
+  proxy:
+    container_name: proxy
+    image: ghcr.io/product-science/proxy:0.1.19-alpha3
+    ports:
+      - "8000:80"
+    environment:
+      - API_PORT=9000
+      - CHAIN_RPC_PORT=26657
+      - CHAIN_API_PORT=1317
+      - CHAIN_GRPC_PORT=9090
+      - DASHBOARD_PORT=5173
+    depends_on:
+      - node
+      - api
+      - explorer
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
+  explorer:
+    container_name: explorer
+    image: ghcr.io/product-science/explorer:latest
+    expose:
+      - "5173"
+    restart: unless-stopped
