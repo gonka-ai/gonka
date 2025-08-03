@@ -68,14 +68,25 @@ func (k Keeper) SetActiveEpochID(ctx sdk.Context, epochID uint64) {
 
 // GetActiveEpochID returns the current active epoch undergoing DKG
 // Returns 0 if no epoch is currently active
-func (k Keeper) GetActiveEpochID(ctx sdk.Context) uint64 {
+func (k Keeper) GetActiveEpochID(ctx sdk.Context) (uint64, bool) {
 	store := k.storeService.OpenKVStore(ctx)
 	key := []byte(ActiveEpochIDKey)
 
 	value, err := store.Get(key)
 	if err != nil || value == nil {
-		return 0 // No active epoch
+		return 0, false // No active epoch
 	}
 
-	return binary.BigEndian.Uint64(value)
+	return binary.BigEndian.Uint64(value), true
+}
+
+// ClearActiveEpochID removes the active epoch ID (no epoch is active)
+func (k Keeper) ClearActiveEpochID(ctx sdk.Context) {
+	store := k.storeService.OpenKVStore(ctx)
+	key := []byte(ActiveEpochIDKey)
+
+	err := store.Delete(key)
+	if err != nil {
+		k.Logger().Error("Failed to clear active epoch ID", "error", err)
+	}
 }

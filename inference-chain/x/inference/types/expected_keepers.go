@@ -126,4 +126,6 @@ type ModelKeeper interface {
 type BlsKeeper interface {
 	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
 	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, bool)
+	SetActiveEpochID(ctx sdk.Context, epochID uint64)
+	GetActiveEpochID(ctx sdk.Context) (uint64, bool)
 }

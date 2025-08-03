@@ -1,4 +1,4 @@
-package inference
+package inference_test
 
 import (
 	"encoding/base64"
@@ -15,8 +15,17 @@ import (
 	"go.uber.org/mock/gomock"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
-	inferencetypes "github.com/productscience/inference/x/inference/types"
+	blstypes "github.com/productscience/inference/x/bls/types"
+	"github.com/productscience/inference/x/inference/keeper"
+	inference "github.com/productscience/inference/x/inference/module"
+	"github.com/productscience/inference/x/inference/types"
 )
+
+// setupTestKeeperWithBLS creates a test keeper with BLS integration
+func setupTestKeeperWithBLS(t testing.TB) (keeper.Keeper, sdk.Context) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	return k, ctx
+}
 
 // newSecp256k1PubKeyFromHexStr creates a secp256k1.PubKey from a hex string (compressed, 33 bytes).
 func newSecp256k1PubKeyFromHexStr(t *testing.T, hexStr string) cryptotypes.PubKey {
@@ -51,16 +60,19 @@ var (
 	charlieAccAddrStr string
 )
 
-// init function to generate the addresses after the SDK is properly configured
-func init() {
-	// Configure the SDK with the gonka prefix
+// setupSDKConfig configures the SDK for testing if not already configured
+func setupSDKConfig() {
 	config := sdk.GetConfig()
-	config.SetBech32PrefixForAccount("gonka", "gonkapub")
-	config.Seal()
+	// Only configure if not already configured with gonka prefix
+	if config.GetBech32AccountAddrPrefix() != "gonka" {
+		config.SetBech32PrefixForAccount("gonka", "gonkapub")
+		config.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+	}
 }
 
 // setupTestAddresses generates valid bech32 addresses for testing
 func setupTestAddresses(t *testing.T) {
+	setupSDKConfig() // Ensure SDK is configured before generating addresses
 	if aliceAccAddrStr == "" {
 		aliceAccAddrStr = generateValidBech32Address(t, aliceSecp256k1PubHex)
 		bobAccAddrStr = generateValidBech32Address(t, bobSecp256k1PubHex)
@@ -113,24 +125,24 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 
-	participants := []*inferencetypes.Participant{
-		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, ValidatorKey: "valKeyAlice", WorkerPublicKey: "ignoredWKeyAlice", Weight: 50, Status: inferencetypes.ParticipantStatus_ACTIVE},
-		{Index: bobAccAddrStr, Address: bobAccAddrStr, ValidatorKey: "valKeyBob", WorkerPublicKey: "ignoredWKeyBob", Weight: 30, Status: inferencetypes.ParticipantStatus_ACTIVE},
-		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, ValidatorKey: "valKeyCharlie", WorkerPublicKey: "ignoredWKeyCharlie", Weight: 20, Status: inferencetypes.ParticipantStatus_ACTIVE},
+	participants := []*types.Participant{
+		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, ValidatorKey: "valKeyAlice", WorkerPublicKey: "ignoredWKeyAlice", Weight: 50, Status: types.ParticipantStatus_ACTIVE},
+		{Index: bobAccAddrStr, Address: bobAccAddrStr, ValidatorKey: "valKeyBob", WorkerPublicKey: "ignoredWKeyBob", Weight: 30, Status: types.ParticipantStatus_ACTIVE},
+		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, ValidatorKey: "valKeyCharlie", WorkerPublicKey: "ignoredWKeyCharlie", Weight: 20, Status: types.ParticipantStatus_ACTIVE},
 	}
 	for _, p := range participants {
 		k.SetParticipant(ctx, *p)
 	}
 
-	activeParticipants := []*inferencetypes.ActiveParticipant{
+	activeParticipants := []*types.ActiveParticipant{
 		{Index: aliceAccAddrStr, Weight: 50},
 		{Index: bobAccAddrStr, Weight: 30},
 		{Index: charlieAccAddrStr, Weight: 20},
 	}
 
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 	epochID := uint64(1)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
 	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
 	require.True(t, found)
@@ -152,10 +164,10 @@ func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
 	epochID := uint64(2)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, []*inferencetypes.ActiveParticipant{})
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, []*types.ActiveParticipant{})
 
 	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
 	require.False(t, found)
@@ -183,24 +195,24 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	cdc := codec.NewProtoCodec(registry)
 
 	// Store participant entries in inference keeper (WorkerPublicKey is ignored)
-	storedParticipants := []*inferencetypes.Participant{
-		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, Weight: 30, Status: inferencetypes.ParticipantStatus_ACTIVE},
-		{Index: bobAccAddrStr, Address: bobAccAddrStr, Weight: 30, Status: inferencetypes.ParticipantStatus_ACTIVE},
-		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, Weight: 40, Status: inferencetypes.ParticipantStatus_ACTIVE},
+	storedParticipants := []*types.Participant{
+		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, Weight: 30, Status: types.ParticipantStatus_ACTIVE},
+		{Index: bobAccAddrStr, Address: bobAccAddrStr, Weight: 30, Status: types.ParticipantStatus_ACTIVE},
+		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, Weight: 40, Status: types.ParticipantStatus_ACTIVE},
 	}
 	for _, p := range storedParticipants {
 		k.SetParticipant(ctx, *p)
 	}
 
-	activeParticipants := []*inferencetypes.ActiveParticipant{
+	activeParticipants := []*types.ActiveParticipant{
 		{Index: aliceAccAddrStr, Weight: 30},
 		{Index: bobAccAddrStr, Weight: 30},
 		{Index: charlieAccAddrStr, Weight: 40},
 	}
 
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 	epochID := uint64(3)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
 	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
 	require.True(t, found, "DKG should proceed if at least one participant is valid")
@@ -228,23 +240,23 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 
 	// Participant store has different keys for WorkerPublicKey and a (mocked) ValidatorKey string.
 	// These should be ignored.
-	storedParticipant := inferencetypes.Participant{
+	storedParticipant := types.Participant{
 		Index:           aliceAccAddrStr,
 		Address:         aliceAccAddrStr,
 		ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("some_other_validator_key_data")),
 		WorkerPublicKey: base64.StdEncoding.EncodeToString(newSecp256k1PubKeyFromHexStr(t, aliceOtherSecp256k1PubHex).Bytes()), // A different, valid secp256k1 key
 		Weight:          100,
-		Status:          inferencetypes.ParticipantStatus_ACTIVE,
+		Status:          types.ParticipantStatus_ACTIVE,
 	}
 	k.SetParticipant(ctx, storedParticipant)
 
-	activeParticipants := []*inferencetypes.ActiveParticipant{
+	activeParticipants := []*types.ActiveParticipant{
 		{Index: aliceAccAddrStr, Weight: 100},
 	}
 
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 	epochID := uint64(4)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
 	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
 	require.True(t, found)
@@ -275,15 +287,15 @@ func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
 	// ActiveParticipant is listed, but NO corresponding entry via k.SetParticipant()
-	activeParticipants := []*inferencetypes.ActiveParticipant{
+	activeParticipants := []*types.ActiveParticipant{
 		{Index: missingAddr, Weight: 100},
 	}
 
 	epochID := uint64(5)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
 	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
 	require.False(t, found, "EpochBLSData should not be created if participant is not in store, even if in active list")
@@ -307,26 +319,26 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 
 	// Participant IS in the store, but its WorkerPublicKey is malformed.
 	// This tests if any old logic might try to fall back to this malformed key if AccountKeeper fails.
-	storedParticipantWithBadWKey := inferencetypes.Participant{
+	storedParticipantWithBadWKey := types.Participant{
 		Index:           problemAddr,
 		Address:         problemAddr,
 		ValidatorKey:    "valKeyIgnored",
 		WorkerPublicKey: "!@#this_is_not_base64_encoded_!@#",
 		Weight:          100,
-		Status:          inferencetypes.ParticipantStatus_ACTIVE,
+		Status:          types.ParticipantStatus_ACTIVE,
 	}
 	k.SetParticipant(ctx, storedParticipantWithBadWKey)
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
-	activeParticipants := []*inferencetypes.ActiveParticipant{
+	activeParticipants := []*types.ActiveParticipant{
 		{Index: problemAddr, Weight: 100},
 	}
 
 	epochID := uint64(6)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
 	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
 	require.False(t, found, "EpochBLSData should not be created if AccountKeeper yields no key AND stored WorkerKey is invalid")
@@ -337,10 +349,12 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 // These tests are designed to verify that behavior once implemented.
 
 func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
+	setupSDKConfig() // Ensure SDK is configured for address generation
 	k, ctx := setupTestKeeperWithBLS(t)
-	cdc := k.Cdc()
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
 
-	// Set up test accounts  
+	// Set up test accounts
 	alicePrivKey := secp256k1.GenPrivKey()
 	bobPrivKey := secp256k1.GenPrivKey()
 	aliceAccAddr := sdk.AccAddress(alicePrivKey.PubKey().Address())
@@ -348,60 +362,69 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 	aliceAccAddrStr := aliceAccAddr.String()
 	bobAccAddrStr := bobAccAddr.String()
 
-	// Create mock account keeper with test accounts
-	expectedPubKeysMap := map[string][]byte{
-		aliceAccAddrStr: alicePrivKey.PubKey().Bytes(),
-		bobAccAddrStr:   bobPrivKey.PubKey().Bytes(),
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+
+	// Set up mock expectations for AccountKeeper
+	participantDetails := map[string]string{
+		aliceAccAddrStr: hex.EncodeToString(alicePrivKey.PubKey().Bytes()),
+		bobAccAddrStr:   hex.EncodeToString(bobPrivKey.PubKey().Bytes()),
 	}
-	mockAccountKeeper := createMockAccountKeeperWithPubKeys(expectedPubKeysMap)
+	expectedPubKeysMap := setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
+	// Verify that the mock setup worked correctly
+	require.Len(t, expectedPubKeysMap, 2, "Should have pub keys for both participants")
 
 	// Set up active participants for epoch 1
-	epoch1Participants := []*inferencetypes.ActiveParticipant{
+	epoch1Participants := []*types.ActiveParticipant{
 		{Index: aliceAccAddrStr, Weight: 50},
 		{Index: bobAccAddrStr, Weight: 50},
 	}
 
-	// Set up active participants for epoch 2  
-	epoch2Participants := []*inferencetypes.ActiveParticipant{
+	// Set up active participants for epoch 2
+	epoch2Participants := []*types.ActiveParticipant{
 		{Index: aliceAccAddrStr, Weight: 60},
 		{Index: bobAccAddrStr, Weight: 40},
 	}
 
-	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
 	// Initiate DKG for epoch 1 - should succeed
 	epochID1 := uint64(1)
-	appModule.initiateBLSKeyGeneration(ctx, epochID1, epoch1Participants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID1, epoch1Participants)
 
 	// Verify epoch 1 DKG was initiated
 	epochBLSData1, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID1)
 	require.True(t, found, "Epoch 1 DKG should be initiated")
 	require.Equal(t, epochID1, epochBLSData1.EpochId)
-	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
+	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
 
 	// Verify epoch 1 is set as active
-	activeEpochID := k.BlsKeeper.GetActiveEpochID(ctx)
+	activeEpochID, found := k.BlsKeeper.GetActiveEpochID(ctx)
+	require.True(t, found, "Active epoch should be found")
 	require.Equal(t, epochID1, activeEpochID, "Epoch 1 should be active")
 
 	// Initiate DKG for epoch 2 while epoch 1 is still running - should succeed (concurrent DKG allowed)
 	epochID2 := uint64(2)
-	appModule.initiateBLSKeyGeneration(ctx, epochID2, epoch2Participants)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID2, epoch2Participants)
 
 	// Verify epoch 2 DKG was also initiated (concurrent DKG rounds are allowed)
 	epochBLSData2, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID2)
 	require.True(t, found, "Epoch 2 DKG should be initiated even when epoch 1 is still running")
 	require.Equal(t, epochID2, epochBLSData2.EpochId)
-	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
+	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
 
 	// Verify both epochs have their own independent DKG data
 	require.NotEqual(t, epochBLSData1.EpochId, epochBLSData2.EpochId, "Epochs should have different IDs")
-	
+
 	// Both should be in DEALING phase
-	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
-	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
+	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
+	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
 
 	// Active epoch tracking should reflect the most recent one (epoch 2)
-	activeEpochID = k.BlsKeeper.GetActiveEpochID(ctx)
+	activeEpochID, found = k.BlsKeeper.GetActiveEpochID(ctx)
+	require.True(t, found, "Active epoch should be found after second initiation")
 	require.Equal(t, epochID2, activeEpochID, "Active epoch should be updated to the most recent one")
 
 	// Both epochs should have valid participant data
