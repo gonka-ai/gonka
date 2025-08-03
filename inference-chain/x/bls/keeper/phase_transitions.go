@@ -12,8 +12,8 @@ import (
 // ProcessDKGPhaseTransitions checks the currently active DKG epoch and transitions it to the next phase if deadline has passed
 func (k Keeper) ProcessDKGPhaseTransitions(ctx sdk.Context) error {
 	// Get the currently active epoch ID
-	activeEpochID := k.GetActiveEpochID(ctx)
-	if activeEpochID == 0 {
+	activeEpochID, found := k.GetActiveEpochID(ctx)
+	if !found {
 		// No active DKG - this is normal
 		return nil
 	}
@@ -102,7 +102,7 @@ func (k Keeper) TransitionToVerifyingPhase(ctx sdk.Context, epochBLSData *types.
 		k.SetEpochBLSData(ctx, *epochBLSData)
 
 		// Clear active epoch since DKG process is complete (failed)
-		k.SetActiveEpochID(ctx, 0)
+		k.ClearActiveEpochID(ctx)
 
 		// Emit event for DKG failure
 		failureReason := fmt.Sprintf("Insufficient participation in dealing phase: %d slots with dealer parts out of %d total slots (required: >%d)",
@@ -187,7 +187,7 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 		k.SetEpochBLSData(ctx, *epochBLSData)
 
 		// Clear active epoch since DKG process is complete (successfully)
-		k.SetActiveEpochID(ctx, 0)
+		k.ClearActiveEpochID(ctx)
 
 		// Emit event for successful DKG completion
 		if err := ctx.EventManager().EmitTypedEvent(&types.EventGroupPublicKeyGenerated{
@@ -221,7 +221,7 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 		k.SetEpochBLSData(ctx, *epochBLSData)
 
 		// Clear active epoch since DKG process is complete (failed)
-		k.SetActiveEpochID(ctx, 0)
+		k.ClearActiveEpochID(ctx)
 
 		// Emit event for DKG failure
 		failureReason := fmt.Sprintf("Insufficient participation in verification phase: %d slots with verification vectors out of %d total slots (required: >%d)",

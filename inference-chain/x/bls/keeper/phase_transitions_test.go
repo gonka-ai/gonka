@@ -140,17 +140,20 @@ func TestActiveEpochTracking(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Initially no active epoch
-	activeEpoch := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 
 	// Set an active epoch
 	k.SetActiveEpochID(ctx, 123)
-	activeEpoch = k.GetActiveEpochID(ctx)
+	activeEpoch, found = k.GetActiveEpochID(ctx)
+	require.True(t, found)
 	require.Equal(t, uint64(123), activeEpoch)
 
 	// Clear active epoch
-	k.SetActiveEpochID(ctx, 0)
-	activeEpoch = k.GetActiveEpochID(ctx)
+	k.ClearActiveEpochID(ctx)
+	activeEpoch, found = k.GetActiveEpochID(ctx)
+	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 }
 
@@ -180,7 +183,9 @@ func TestProcessDKGPhaseTransitions_ActiveEpoch(t *testing.T) {
 	storedData, found := k.GetEpochBLSData(ctx, epochID)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, storedData.DkgPhase)
-	require.Equal(t, epochID, k.GetActiveEpochID(ctx)) // Still active
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.True(t, found)
+	require.Equal(t, epochID, activeEpoch) // Still active
 }
 
 func TestActiveEpochClearedOnFailure(t *testing.T) {
@@ -204,7 +209,9 @@ func TestActiveEpochClearedOnFailure(t *testing.T) {
 	storedData, found := k.GetEpochBLSData(ctx, epochID)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
-	require.Equal(t, uint64(0), k.GetActiveEpochID(ctx)) // Should be cleared
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.False(t, found)
+	require.Equal(t, uint64(0), activeEpoch) // Should be cleared
 }
 
 // Helper function to create test epoch BLS data
@@ -323,7 +330,9 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
 
 	// Verify active epoch was cleared
-	require.Equal(t, uint64(0), k.GetActiveEpochID(ctx))
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.False(t, found)
+	require.Equal(t, uint64(0), activeEpoch)
 }
 
 func TestCompleteDKG_InsufficientVerification(t *testing.T) {
@@ -354,7 +363,9 @@ func TestCompleteDKG_InsufficientVerification(t *testing.T) {
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 
 	// Verify active epoch was cleared
-	require.Equal(t, uint64(0), k.GetActiveEpochID(ctx))
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.False(t, found)
+	require.Equal(t, uint64(0), activeEpoch)
 }
 
 func TestCompleteDKG_WrongPhase(t *testing.T) {
@@ -484,7 +495,9 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
 
 	// Verify active epoch was cleared
-	require.Equal(t, uint64(0), k.GetActiveEpochID(ctx))
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.False(t, found)
+	require.Equal(t, uint64(0), activeEpoch)
 }
 
 func TestProcessDKGPhaseTransitionForEpoch_VerifyingToFailed(t *testing.T) {
@@ -515,5 +528,7 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToFailed(t *testing.T) {
 	require.Nil(t, storedData.GroupPublicKey)
 
 	// Verify active epoch was cleared
-	require.Equal(t, uint64(0), k.GetActiveEpochID(ctx))
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.False(t, found)
+	require.Equal(t, uint64(0), activeEpoch)
 }

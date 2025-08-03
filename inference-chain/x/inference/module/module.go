@@ -429,7 +429,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
 
 	// Call BLS module to initiate key generation for the new epoch
-	am.initiateBLSKeyGeneration(ctx, upcomingEg.GroupData.EpochGroupId, activeParticipants)
+	am.InitiateBLSKeyGeneration(ctx, upcomingEg.GroupData.EpochGroupId, activeParticipants)
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.
@@ -716,7 +716,7 @@ func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...i
 }
 
 // initiateBLSKeyGeneration calls the BLS module to start DKG for the new epoch
-func (am AppModule) initiateBLSKeyGeneration(ctx context.Context, epochID uint64, activeParticipants []*types.ActiveParticipant) {
+func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64, activeParticipants []*types.ActiveParticipant) {
 	if len(activeParticipants) == 0 {
 		am.LogWarn("No active participants for BLS key generation", types.EpochGroup, "epochID", epochID)
 		return
