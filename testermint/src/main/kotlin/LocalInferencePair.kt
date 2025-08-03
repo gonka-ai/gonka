@@ -430,7 +430,11 @@ data class LocalInferencePair(
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
-        return submitTransaction(this.node.getTransactionJson(args))
+        return submitTransaction(this.node.getTransactionJson(args), waitForProcessed)
+    }
+
+    fun submitGovernanceTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        return submitTransaction(this.node.getGovernanceTransactionJson(args), waitForProcessed)
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
@@ -459,7 +463,7 @@ data class LocalInferencePair(
             val jsonFileName = "governance-proposal.json"
             node.writeFileToContainer(governanceJson, jsonFileName)
 
-            this.submitTransaction(
+            this.submitGovernanceTransaction(
                 listOf(
                     "gov",
                     "submit-proposal",
@@ -484,7 +488,7 @@ data class LocalInferencePair(
         val binariesJson =
             """{"binaries":{$binariesJsonObj},"api_binaries":{$apiBinariesJsonObj}, "node_version": "$nodeVersion"}"""
 
-        this.submitTransaction(
+        this.submitGovernanceTransaction(
             listOf(
                 "upgrade",
                 "software-upgrade",
@@ -548,7 +552,7 @@ data class LocalInferencePair(
         }
 
     fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
-        this.submitTransaction(
+        this.submitGovernanceTransaction(
             listOf(
                 "gov",
                 "deposit",
@@ -559,7 +563,7 @@ data class LocalInferencePair(
     }
 
     fun voteOnProposal(proposalId: String, option: String): TxResponse = wrapLog("voteOnProposal", true) {
-        this.submitTransaction(
+        this.submitGovernanceTransaction(
             listOf(
                 "gov",
                 "vote",

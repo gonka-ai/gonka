@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="build-w-config" type="GoApplicationRunConfiguration" factoryName="Go Application">
-    <module name="inference-ignite" />
+    <module name="gonka" />
     <working_directory value="$PROJECT_DIR$/decentralized-api" />
     <envs>
       <env name="API_CONFIG_PATH" value="config-local.yaml" />

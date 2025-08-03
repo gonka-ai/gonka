@@ -147,6 +147,8 @@ data class ApplicationCLI(
     }
 
     var accountKey: Validator? = null
+    var coldAccountKey: Validator? = null
+    
     fun getAddress(): String = wrapLog("getAddress", false) {
         getAccountIfNeeded()
         accountKey!!.address
@@ -159,9 +161,28 @@ data class ApplicationCLI(
         }
     }
 
+    private fun getColdAccountIfNeeded() {
+        if (coldAccountKey == null) {
+            val keys = getKeys()
+            // Prefer cold key (ending with -COLD) for governance operations
+            coldAccountKey = keys.firstOrNull { it.type == "local" && it.name.endsWith("-COLD") } 
+                ?: (keys.firstOrNull { it.type == "local" && !it.name.startsWith("POOL") } ?: keys.first())
+        }
+    }
+
     fun getAccountName(): String = wrapLog("getAccountName", false) {
         getAccountIfNeeded()
         accountKey!!.name
+    }
+
+    fun getColdAccountName(): String = wrapLog("getColdAccountName", false) {
+        getColdAccountIfNeeded()
+        coldAccountKey!!.name
+    }
+
+    fun getColdAddress(): String = wrapLog("getColdAddress", false) {
+        getColdAccountIfNeeded()
+        coldAccountKey!!.address
     }
 
 
@@ -319,7 +340,7 @@ data class ApplicationCLI(
             val retryWait = retryRules.firstNotNullOfOrNull { it.retryDuration(operation, fullOutput, retries) }
             if (retryWait != null) {
                 retries++
-                Thread.sleep(retryWait)
+                Thread.sleep(retryWait.toMillis())
                 continue
             }
             return output
@@ -382,8 +403,8 @@ data class ApplicationCLI(
     }
 
 
-    fun getTransactionJson(args: List<String>): String {
-        val from = this.getAccountName()
+    fun getTransactionJson(args: List<String>, fromAccount: String? = null): String {
+        val from = fromAccount ?: this.getAccountName()
         Logger.info("Getting transaction json for account {}", from)
         val finalArgs = listOf(
             config.execName,
@@ -399,6 +420,10 @@ data class ApplicationCLI(
             from
         )
         return exec(finalArgs).joinToString("")
+    }
+
+    fun getGovernanceTransactionJson(args: List<String>): String {
+        return getTransactionJson(args, this.getColdAccountName())
     }
 
     fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {

@@ -51,6 +51,8 @@ High-level overview is in `proposals/keys/README.md`
 - Automatic participant registration via seed node API
 - Permission sync and validation queries
 - TMKMS compatibility for validator consensus keys
+- **Auto-create dual keys and grant permissions when CREATE_KEY=true**
+- **Testermint governance testing with cold key support**
 
 **IN PROGRESS:**
 - Pre-init workflow for external Account Key creation
@@ -59,7 +61,6 @@ High-level overview is in `proposals/keys/README.md`
 **REMAINING (v0 Completion):**
 - External Account Key integration (hardware wallet support)
 - Modified docker-init.sh for production scenarios
-- Comprehensive testing with testermint
 - Governance voting from external Account Key
 
 **FUTURE (v1+):**
@@ -181,14 +182,17 @@ High-level overview is in `proposals/keys/README.md`
     - Maintains backward compatibility with existing single-key setups
     - Environment variable support added to `local-test-net/docker-compose.join.yml`
 
-- [TODO]: Auto-create dual keys and grant permissions (test pipeline enhancement)
-    **Remaining work for dual key architecture:**
-    - Create cold key with name "$KEY_NAME"-COLD 
-    - Create warm key with "$KEY_NAME"
-    - Use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD)
-        Q: can it fetch consensus-key automatically from node?
-    - Use `inferenced tx inference grant-ml-ops-permissions` to grant permission to "$KEY_NAME"
-    - Update code to use "$KEY_NAME" for signing all transactions but still "$KEY_NAME"-COLD for admin operations
+- [DONE]: Auto-create dual keys and grant permissions (test pipeline enhancement, CREATE_KEY is set)
+    **Completed dual key architecture implementation:**
+    - ✅ Create cold key with name "$KEY_NAME-COLD" 
+    - ✅ Create warm key with "$KEY_NAME"
+    - ✅ Use inferenced register-new-participant to register participant on first run (addr for "$KEY_NAME"-COLD)
+        A: Yes, fetches consensus-key automatically from node status endpoint
+    - ✅ Use `inferenced tx inference grant-ml-ops-permissions` to grant permission to "$KEY_NAME"
+    - ✅ Update code to use "$KEY_NAME" for signing all transactions but still "$KEY_NAME"-COLD for admin operations
+        Implementation: KEY_NAME → SignerKeyName (hot), ACCOUNT_PUBKEY → AccountPublicKey (cold identity)
+    - ✅ Update testermint to use cold key for external operations (ApplicationCLI.getColdAccountName())
+    - ✅ Updated all governance operations to use submitGovernanceTransaction() with cold key
 
 - [DONE]: Add query to find all authz grantees with specific message type for an account
     **Implemented authz grantee lookup query**: Added new query `GranteesByMessageType` in `query.proto` with REST endpoint `/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}`. Implemented keeper method in `query_grantees_by_message_type.go` with:
