@@ -76,6 +76,9 @@ func NewServer(
 
 	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
+
+	g.GET("validators/:height", s.getValidatorsByBlock)
+	g.GET("block/:height", s.getBlock)
 	return s
 }
 

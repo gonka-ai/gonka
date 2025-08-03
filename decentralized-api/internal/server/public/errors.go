@@ -13,7 +13,7 @@ var (
 	ErrIdRequired           = echo.NewHTTPError(http.StatusBadRequest, "Id is required")
 	ErrAddressRequired      = echo.NewHTTPError(http.StatusBadRequest, "Address is required")
 	ErrInvalidEpochId       = echo.NewHTTPError(http.StatusBadRequest, "Invalid epoch id")
+	ErrInvalidBlockHeight   = echo.NewHTTPError(http.StatusBadRequest, "Invalid block height")
 	ErrInvalidTrainingJobId = echo.NewHTTPError(http.StatusBadRequest, "Invalid training job id")
-	ErrEpochIsNotReached    = echo.NewHTTPError(http.StatusBadRequest, "Epoch is not reached")
 	ErrInferenceNotFound    = echo.NewHTTPError(http.StatusNotFound, "Inference not found")
 )
