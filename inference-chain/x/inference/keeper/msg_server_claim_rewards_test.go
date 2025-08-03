@@ -371,9 +371,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
 
-	// Mock the account keeper again for the second call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
 	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
@@ -588,9 +585,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
 
-	// Mock the account keeper again for the second call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
 	// Call ClaimRewards again - this should still fail
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
@@ -620,11 +614,8 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	settleAmount.SeedSignature = signatureHex
 	k.SetSettleAmount(sdkCtx, settleAmount)
 
-	// Mock the account keeper again for the third call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
 	// Call ClaimRewards with the new seed
-	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	_, _ = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
@@ -640,9 +631,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// For now, let's just validate all inferences to make the test pass
 	validations.ValidatedInferences = []string{"inference1", "inference2", "inference3"}
 	k.SetEpochGroupValidations(sdkCtx, validations)
-
-	// Mock the account keeper again for the fourth call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Mock the bank keeper to allow payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))

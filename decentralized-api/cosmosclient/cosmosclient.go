@@ -40,7 +40,7 @@ type InferenceCosmosClient struct {
 	Address    string
 	Context    context.Context
 	TxFactory  *tx.Factory
-	NodeConfig apiconfig.ChainNodeConfig
+	config     *apiconfig.ConfigManager
 }
 
 func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.ConfigManager) (*InferenceCosmosClient, error) {
@@ -48,7 +48,7 @@ func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string
 	var err error
 	logging.Info("Connecting to cosmos sdk node", types.System, "config", config, "height", config.GetHeight())
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.GetChainNodeConfig())
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config)
 		if err == nil {
 			return client, nil
 		}
@@ -71,7 +71,8 @@ func expandPath(path string) (string, error) {
 }
 
 // 'file' keyring backend to automatically provide interactive prompts for signing
-func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, nodeConfig apiconfig.ChainNodeConfig) error {
+func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, config *apiconfig.ConfigManager) error {
+	nodeConfig := config.GetChainNodeConfig()
 	if nodeConfig.KeyringBackend == keyring.BackendFile {
 		interfaceRegistry := codectypes.NewInterfaceRegistry()
 		cryptocodec.RegisterInterfaces(interfaceRegistry)
@@ -94,7 +95,8 @@ func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, nodeC
 	return nil
 }
 
-func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig apiconfig.ChainNodeConfig) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config *apiconfig.ConfigManager) (*InferenceCosmosClient, error) {
+	nodeConfig := config.GetChainNodeConfig()
 	keyringDir, err := expandPath(nodeConfig.KeyringDir)
 	if err != nil {
 		return nil, err
@@ -117,7 +119,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		log.Printf("Error creating cosmos client: %s", err)
 		return nil, err
 	}
-	err = updateKeyringIfNeeded(&client, keyringDir, nodeConfig)
+	err = updateKeyringIfNeeded(&client, keyringDir, config)
 	if err != nil {
 		log.Printf("Error updating keyring: %s", err)
 		return nil, err
@@ -140,7 +142,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		ApiAccount: apiAccount,
 		Address:    accAddress,
 		Context:    ctx,
-		NodeConfig: nodeConfig,
+		config:     config,
 	}, nil
 }
 
