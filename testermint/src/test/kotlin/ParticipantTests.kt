@@ -1,27 +1,25 @@
-import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
 import com.productscience.createSpec
 import com.productscience.data.EpochPhase
 import com.productscience.data.StakeValidator
 import com.productscience.data.StakeValidatorStatus
-import com.productscience.data.UpdateParams
 import com.productscience.data.spec
 import com.productscience.getNextStage
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
+import com.productscience.runParallelInferences
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import java.time.Duration
-import kotlin.test.assertNotNull
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.time.Duration
 
 class ParticipantTests : TestermintTest() {
     @Test
-    @Tag("excluded")
+    @Tag("exclude")
     fun `print out gonka values`() {
         // useful for testing gonka client
         val (cluster, genesis) = initCluster()
@@ -42,11 +40,12 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForMlNodesToLoad()
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
-        runParallelInferences(genesis, 10)
+        runParallelInferences(genesis, 10, maxConcurrentRequests = 10)
         logSection("Waiting for next epoch")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         logSection("verifying reputation increase")
@@ -63,7 +62,7 @@ class ParticipantTests : TestermintTest() {
 
     @Test
     fun `add node after snapshot`() {
-        val (cluster, genesis) = initCluster()
+        val (cluster, genesis) = initCluster(reboot = true)
         logSection("Waiting for snapshot height")
         genesis.node.waitForMinimumBlock(102)
         val height = genesis.node.getStatus().syncInfo.latestBlockHeight
@@ -94,7 +93,7 @@ class ParticipantTests : TestermintTest() {
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Running inferences")
-        runParallelInferences(genesis, 50, waitForBlocks = 1)
+        runParallelInferences(genesis, 50, waitForBlocks = 3, maxConcurrentRequests = 50)
         genesis.waitForBlock(2) {
             it.node.getMinimumValidationAverage().minimumValidationAverage < startMin.minimumValidationAverage
         }

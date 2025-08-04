@@ -101,7 +101,8 @@ message MsgFinishInference {
   string transfer_signature     = 10;
   string executor_signature     = 11;
   string requested_by           = 12;
-  string original_prompt         = 13;
+  string original_prompt        = 13;
+  string model                  = 14;
 }
 
 message MsgFinishInferenceResponse {
@@ -221,17 +222,17 @@ message MsgSubmitUnitOfComputePriceProposal {
 message MsgSubmitUnitOfComputePriceProposalResponse {}
 
 message MsgRegisterModel {
-  option (cosmos.msg.v1.signer) = "authority";
-  string authority                  = 1;
-  string proposed_by                = 2;
-  string id                         = 3;
-  uint64 units_of_compute_per_token = 4;
-  string hf_repo                    = 5;
-  string hf_commit                  = 6;
-  repeated string model_args        = 7;
-  uint64 v_ram                      = 8;
-  uint64 throughput_per_nonce       = 9;
-  float validation_threshold        = 10;
+  option (cosmos.msg.v1.signer)      = "authority";
+  string authority                   = 1;
+  string proposed_by                 = 2;
+  string id                          = 3;
+  uint64 units_of_compute_per_token  = 4;
+  string hf_repo                     = 5;
+  string hf_commit                   = 6;
+  repeated string model_args         = 7;
+  uint64 v_ram                       = 8;
+  uint64 throughput_per_nonce        = 9;
+  Decimal validation_threshold       = 10;
 }
 
 message MsgRegisterModelResponse {}

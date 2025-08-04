@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.15
+    image: ghcr.io/product-science/inferenced:0.1.19
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -22,7 +22,7 @@ services:
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.15
+    image: ghcr.io/product-science/api:0.1.19
     restart: always
     depends_on:
       - node
@@ -47,7 +47,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.15
+    image: ghcr.io/product-science/proxy:0.1.19
     ports:
       - "${API_PORT:-8000}:80"
     environment:

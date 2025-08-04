@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -39,7 +40,9 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
 		case keeper.UpdateAndPayMiner:
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
-			err := am.keeper.PayParticipantFromModule(ctx, typedAction.Miner.Address, uint64(typedAction.Payout), types.TopRewardPoolAccName, "top_miner")
+			params := am.keeper.GetParams(ctx)
+			topMinerVestingPeriod := &params.TokenomicsParams.TopMinerVestingPeriod
+			err := am.keeper.PayParticipantFromModule(ctx, typedAction.Miner.Address, uint64(typedAction.Payout), types.TopRewardPoolAccName, "top_miner", topMinerVestingPeriod)
 			if err != nil {
 				return err
 			}

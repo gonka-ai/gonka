@@ -4,6 +4,7 @@ import (
 	"context"
 	cosmosclient "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -53,8 +54,8 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreReco
 	logging.Info("SetStoreRecord called", types.Training, "key", req.Record.Key, "value", req.Record.Value)
 
 	msg := &inference.MsgSubmitTrainingKvRecord{
-		Creator:     s.cosmosClient.GetAddress(),
-		Participant: s.cosmosClient.GetAddress(),
+		Creator:     s.cosmosClient.GetAccountAddress(),
+		Participant: s.cosmosClient.GetAccountAddress(),
 		TaskId:      req.RunId,
 		Key:         req.Record.Key,
 		Value:       req.Record.Value,
@@ -117,7 +118,7 @@ func (s *Server) ListStoreKeys(ctx context.Context, req *inference.StoreListKeys
 
 func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
 	msg := inference.MsgJoinTraining{
-		Creator: s.cosmosClient.GetAddress(),
+		Creator: s.cosmosClient.GetAccountAddress(),
 		Req:     req,
 	}
 	resp := inference.MsgJoinTrainingResponse{}
@@ -132,7 +133,7 @@ func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRe
 
 func (s *Server) GetJoinTrainingStatus(ctx context.Context, req *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
 	msg := inference.MsgJoinTrainingStatus{
-		Creator: s.cosmosClient.GetAddress(),
+		Creator: s.cosmosClient.GetAccountAddress(),
 		Req:     req,
 	}
 	resp := inference.MsgJoinTrainingStatusResponse{}
@@ -152,7 +153,7 @@ func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequ
 	// TODO: probably call it unconditionally. Even if transaction fails
 
 	msg := inference.MsgTrainingHeartbeat{
-		Creator: s.cosmosClient.GetAddress(),
+		Creator: s.cosmosClient.GetAccountAddress(),
 		Req:     req,
 	}
 	resp := inference.MsgTrainingHeartbeatResponse{}
@@ -193,7 +194,7 @@ func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierReques
 	logging.Info("SetBarrier called", types.Training)
 
 	msg := inference.MsgSetBarrier{
-		Creator: s.cosmosClient.GetAddress(),
+		Creator: s.cosmosClient.GetAccountAddress(),
 		Req:     req,
 	}
 	resp := inference.MsgSetBarrierResponse{}

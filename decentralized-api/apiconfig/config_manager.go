@@ -175,8 +175,8 @@ func (cm *ConfigManager) CreateWorkerKey() (string, error) {
 	workerPublicKeyString := base64.StdEncoding.EncodeToString(workerPublicKey.Bytes())
 	workerPrivateKey := workerKey.Bytes()
 	workerPrivateKeyString := base64.StdEncoding.EncodeToString(workerPrivateKey)
-	cm.currentConfig.KeyConfig.WorkerPrivateKey = workerPrivateKeyString
-	cm.currentConfig.KeyConfig.WorkerPublicKey = workerPublicKeyString
+	cm.currentConfig.MLNodeKeyConfig.WorkerPrivateKey = workerPrivateKeyString
+	cm.currentConfig.MLNodeKeyConfig.WorkerPublicKey = workerPublicKeyString
 	err := cm.Write()
 	if err != nil {
 		return "", err
@@ -234,7 +234,25 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		log.Fatalf("error unmarshalling config: %v", err)
 	}
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
-		config.ChainNode.AccountName = keyName
+		config.ChainNode.SignerKeyName = keyName
+		log.Printf("Loaded KEY_NAME: %+v", keyName)
+	}
+
+	if accountPubKey, found := os.LookupEnv("ACCOUNT_PUBKEY"); found {
+		config.ChainNode.AccountPublicKey = accountPubKey
+		log.Printf("Loaded ACCOUNT_PUBKEY: %+v", accountPubKey)
+	}
+
+	if keyRingBackend, found := os.LookupEnv("KEYRING_BACKEND"); found {
+		config.ChainNode.KeyringBackend = keyRingBackend
+		log.Printf("Loaded KEYRING_BACKEND: %+v", keyRingBackend)
+	}
+
+	if keyringPassword, found := os.LookupEnv("KEYRING_PASSWORD"); found {
+		config.ChainNode.KeyringPassword = keyringPassword
+		log.Printf("Loaded KEYRING_PASSWORD: %+v", keyringPassword)
+	} else {
+		log.Printf("Warning: KEYRING_PASSWORD environment variable not set - keyring operations may fail")
 	}
 
 	if err := loadNodeConfig(&config); err != nil {

@@ -27,10 +27,10 @@ func (s *Server) postDummyTrainingTask(ctx echo.Context) error {
 	}
 
 	msg := &inference.MsgCreateDummyTrainingTask{
-		Creator: s.recorder.GetAddress(),
+		Creator: s.recorder.GetAccountAddress(),
 		Task: &inference.TrainingTask{
 			Id:          body.TaskId,
-			RequestedBy: s.recorder.GetAddress(),
+			RequestedBy: s.recorder.GetAccountAddress(),
 			Assignees:   assignees,
 		},
 	}

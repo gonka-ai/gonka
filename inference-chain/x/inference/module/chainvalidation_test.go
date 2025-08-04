@@ -1,10 +1,11 @@
 package inference_test
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/utils"
 	"strconv"
 	"testing"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/utils"
 
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/x/group"
@@ -14,6 +15,7 @@ import (
 
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/testutil/sample"
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
@@ -76,7 +78,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 		AnyTimes()
 
 	// Create AppModule with the keeper
-	am := inference.NewAppModule(nil, k, nil, nil, nil)
+	am := inference.NewAppModule(nil, k, nil, nil, nil, nil)
 
 	// Set up batches
 	batch := types.PoCBatch{
@@ -122,6 +124,181 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 
 	// Verify the result
 	require.Equal(t, 1, len(result))
+}
+
+func TestCollateralGracePeriod(t *testing.T) {
+	// Setup with mocks
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Set parameters: Grace period ends at epoch 10
+	inferenceParams := types.DefaultParams()
+	inferenceParams.CollateralParams.GracePeriodEndEpoch = 10
+	k.SetParams(ctx, inferenceParams)
+
+	// Set current epoch to 5 (within grace period).
+	// AdjustWeightsByCollateral uses GetLatestEpoch, which is based on the "Effective" epoch.
+	// We must set the effective epoch first, then the upcoming epoch.
+	k.SetEffectiveEpochIndex(ctx, 4)
+	currentEpoch := types.Epoch{Index: 5}
+	k.SetEpoch(ctx, &currentEpoch)
+
+	// Create a participant with potential weight but zero collateral
+	// The "Weight" field here represents the "PotentialWeight" before adjustment.
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  "participant1",
+			Weight: 1000,
+		},
+	}
+
+	// Execute the core logic that adjusts weights
+	err := k.AdjustWeightsByCollateral(ctx, participants)
+	require.NoError(t, err)
+
+	// Verify the result
+	finalParticipant := participants[0]
+	// During grace period, final weight should remain the same as potential weight
+	require.Equal(t, int64(1000), finalParticipant.Weight,
+		"During grace period, Weight should be unchanged")
+}
+
+func TestNoCollateralPostGracePeriod(t *testing.T) {
+	// Setup with mocks
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Set parameters: Grace period ends at epoch 2
+	inferenceParams := types.DefaultParams()
+	inferenceParams.CollateralParams.GracePeriodEndEpoch = 2
+	inferenceParams.CollateralParams.BaseWeightRatio = types.DecimalFromFloat(0.2)
+	k.SetParams(ctx, inferenceParams)
+
+	// Set current epoch to 5 (after grace period)
+	k.SetEffectiveEpochIndex(ctx, 4)
+	currentEpoch := types.Epoch{Index: 5}
+	k.SetEpoch(ctx, &currentEpoch)
+
+	// Create a participant with potential weight but zero collateral
+	participantAddress := sample.AccAddress()
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  participantAddress,
+			Weight: 1000, // This is the "PotentialWeight"
+		},
+	}
+
+	// Mock the collateral keeper to return zero collateral for this participant
+	addr, err := sdk.AccAddressFromBech32(participantAddress)
+	require.NoError(t, err)
+	mocks.CollateralKeeper.EXPECT().
+		GetCollateral(gomock.Any(), addr).
+		Return(sdk.Coin{}, false). // No collateral found
+		Times(1)
+
+	// Execute the core logic that adjusts weights
+	err = k.AdjustWeightsByCollateral(ctx, participants)
+	require.NoError(t, err)
+
+	// Verify the result
+	finalParticipant := participants[0]
+	// After grace period with no collateral, weight should be base weight (1000 * 0.2 = 200)
+	require.Equal(t, int64(200), finalParticipant.Weight,
+		"With no collateral post-grace period, Weight should be reduced to the base weight")
+}
+
+func TestPostGracePeriod_FullCollateral(t *testing.T) {
+	// Setup with mocks
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Set parameters
+	inferenceParams := types.DefaultParams()
+	inferenceParams.CollateralParams.GracePeriodEndEpoch = 2
+	inferenceParams.CollateralParams.BaseWeightRatio = types.DecimalFromFloat(0.2)
+	inferenceParams.CollateralParams.CollateralPerWeightUnit = types.DecimalFromFloat(1.0)
+	k.SetParams(ctx, inferenceParams)
+
+	// Set current epoch to 5 (after grace period)
+	k.SetEffectiveEpochIndex(ctx, 4)
+	currentEpoch := types.Epoch{Index: 5}
+	k.SetEpoch(ctx, &currentEpoch)
+
+	// Create a participant with potential weight
+	participantAddress := sample.AccAddress()
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  participantAddress,
+			Weight: 1000, // This is the "PotentialWeight"
+		},
+	}
+
+	// Mock the collateral keeper to return enough collateral to cover the remaining 80%
+	// Collateral-Eligible Weight = 1000 * (1 - 0.2) = 800
+	// Required Collateral = 800 * 1.0 = 800
+	addr, err := sdk.AccAddressFromBech32(participantAddress)
+	require.NoError(t, err)
+	requiredCollateral := sdk.NewCoin(types.BaseCoin, math.NewInt(800))
+	mocks.CollateralKeeper.EXPECT().
+		GetCollateral(gomock.Any(), addr).
+		Return(requiredCollateral, true). // Full collateral found
+		Times(1)
+
+	// Execute the core logic that adjusts weights
+	err = k.AdjustWeightsByCollateral(ctx, participants)
+	require.NoError(t, err)
+
+	// Verify the result
+	finalParticipant := participants[0]
+	// With full collateral, weight should equal potential weight
+	require.Equal(t, int64(1000), finalParticipant.Weight,
+		"With full collateral post-grace period, Weight should equal PotentialWeight")
+}
+
+func TestPostGracePeriod_PartialCollateral(t *testing.T) {
+	// Setup with mocks
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Set parameters
+	inferenceParams := types.DefaultParams()
+	inferenceParams.CollateralParams.GracePeriodEndEpoch = 2
+	inferenceParams.CollateralParams.BaseWeightRatio = types.DecimalFromFloat(0.2)
+	inferenceParams.CollateralParams.CollateralPerWeightUnit = types.DecimalFromFloat(1.0)
+	k.SetParams(ctx, inferenceParams)
+
+	// Set current epoch to 5 (after grace period)
+	k.SetEffectiveEpochIndex(ctx, 4)
+	currentEpoch := types.Epoch{Index: 5}
+	k.SetEpoch(ctx, &currentEpoch)
+
+	// Create a participant with potential weight
+	participantAddress := sample.AccAddress()
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  participantAddress,
+			Weight: 1000, // This is the "PotentialWeight"
+		},
+	}
+
+	// Mock the collateral keeper to return enough collateral to cover half of the remaining 80%
+	// Collateral-Eligible Weight = 1000 * (1 - 0.2) = 800
+	// Required Collateral for 50% activation = 800 * 0.5 = 400
+	addr, err := sdk.AccAddressFromBech32(participantAddress)
+	require.NoError(t, err)
+	partialCollateral := sdk.NewCoin(types.BaseCoin, math.NewInt(400))
+	mocks.CollateralKeeper.EXPECT().
+		GetCollateral(gomock.Any(), addr).
+		Return(partialCollateral, true). // Partial collateral found
+		Times(1)
+
+	// Execute the core logic that adjusts weights
+	err = k.AdjustWeightsByCollateral(ctx, participants)
+	require.NoError(t, err)
+
+	// Verify the result
+	finalParticipant := participants[0]
+	// Base Weight = 1000 * 0.2 = 200
+	// Activated Weight = 400 (from collateral) / 1.0 (ratio) = 400
+	// Total Weight = 200 + 400 = 600
+	require.Equal(t, int64(600), finalParticipant.Weight,
+		"With partial collateral post-grace period, Weight should be BaseWeight + ActivatedWeight")
 }
 
 func TestComputeNewWeights(t *testing.T) {
@@ -403,7 +580,7 @@ func TestComputeNewWeights(t *testing.T) {
 			k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
 			// Create AppModule with the keeper
-			am := inference.NewAppModule(nil, k, nil, nil, nil)
+			am := inference.NewAppModule(nil, k, nil, nil, nil, nil)
 
 			// Setup state
 			tt.setupState(t, &k, ctx, &mocks)

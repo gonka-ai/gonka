@@ -1,5 +1,6 @@
 package com.productscience.data
 
+import com.google.gson.annotations.SerializedName
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
@@ -58,6 +59,11 @@ data class InferenceParams(
     val validationParams: ValidationParams,
     val pocParams: PocParams,
     val tokenomicsParams: TokenomicsParams,
+    val collateralParams: CollateralParams,
+    @SerializedName("bitcoin_reward_params")
+    val bitcoinRewardParams: BitcoinRewardParams? = null,
+    @SerializedName("dynamic_pricing_params")
+    val dynamicPricingParams: DynamicPricingParams? = null,
 )
 
 data class TokenomicsParams(
@@ -66,6 +72,48 @@ data class TokenomicsParams(
     val currentSubsidyPercentage: Decimal,
     val topRewardAllowedFailure: Decimal,
     val topMinerPocQualification: Long,
+    @SerializedName("work_vesting_period")
+    val workVestingPeriod: Long? = null,
+    @SerializedName("reward_vesting_period") 
+    val rewardVestingPeriod: Long? = null,
+    @SerializedName("top_miner_vesting_period")
+    val topMinerVestingPeriod: Long? = null,
+)
+
+data class BitcoinRewardParams(
+    @SerializedName("use_bitcoin_rewards")
+    val useBitcoinRewards: Boolean,
+    @SerializedName("initial_epoch_reward")
+    val initialEpochReward: Long,
+    @SerializedName("decay_rate")
+    val decayRate: Decimal,
+    @SerializedName("genesis_epoch")
+    val genesisEpoch: Long,
+    @SerializedName("utilization_bonus_factor")
+    val utilizationBonusFactor: Decimal,
+    @SerializedName("full_coverage_bonus_factor") 
+    val fullCoverageBonusFactor: Decimal,
+    @SerializedName("partial_coverage_bonus_factor")
+    val partialCoverageBonusFactor: Decimal
+)
+
+data class DynamicPricingParams(
+    @SerializedName("stability_zone_lower_bound")
+    val stabilityZoneLowerBound: Decimal,
+    @SerializedName("stability_zone_upper_bound")
+    val stabilityZoneUpperBound: Decimal,
+    @SerializedName("price_elasticity")
+    val priceElasticity: Decimal,
+    @SerializedName("utilization_window_duration")
+    val utilizationWindowDuration: Long,
+    @SerializedName("min_per_token_price")
+    val minPerTokenPrice: Long,
+    @SerializedName("base_per_token_price")
+    val basePerTokenPrice: Long,
+    @SerializedName("grace_period_end_epoch")
+    val gracePeriodEndEpoch: Long,
+    @SerializedName("grace_period_per_token_price")
+    val gracePeriodPerTokenPrice: Long,
 )
 
 data class EpochParams(
@@ -78,6 +126,7 @@ data class EpochParams(
     val pocValidationDelay: Long,
     val pocValidationDuration: Long,
     val setNewValidatorsDelay: Long,
+    val inferencePruningEpochThreshold: Long
 )
 
 data class Decimal(
@@ -208,4 +257,5 @@ data class ModelListItem(
     val modelArgs: List<String>,
     val vRam: String,
     val throughputPerNonce: String,
+    val validationThreshold: Decimal,
 )

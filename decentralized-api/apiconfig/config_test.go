@@ -5,10 +5,11 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/knadh/koanf/providers/rawbytes"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
+
+	"github.com/knadh/koanf/providers/rawbytes"
+	"github.com/stretchr/testify/require"
 )
 
 type version struct {
@@ -126,7 +127,7 @@ func TestConfigLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 8080, testManager.GetApiConfig().Port)
 	require.Equal(t, "http://join1-node:26657", testManager.GetChainNodeConfig().Url)
-	require.Equal(t, "join1", testManager.GetChainNodeConfig().AccountName)
+	require.Equal(t, "join1", testManager.GetChainNodeConfig().SignerKeyName)
 	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 }
@@ -169,7 +170,7 @@ func TestConfigLoadEnvOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 9000, testManager.GetApiConfig().Port)
 	require.Equal(t, "http://join1-node:26658", testManager.GetChainNodeConfig().Url)
-	require.Equal(t, "join2", testManager.GetChainNodeConfig().AccountName)
+	require.Equal(t, "join2", testManager.GetChainNodeConfig().SignerKeyName)
 	require.Equal(t, "http://callback", testManager.GetApiConfig().PoCCallbackUrl)
 	require.Equal(t, "http://public", testManager.GetApiConfig().PublicUrl)
 	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
@@ -224,7 +225,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 8080, testManager2.GetApiConfig().Port)
 	require.Equal(t, "http://join1-node:26657", testManager2.GetChainNodeConfig().Url)
-	require.Equal(t, "join1", testManager2.GetChainNodeConfig().AccountName)
+	require.Equal(t, "join1", testManager2.GetChainNodeConfig().SignerKeyName)
 	require.Equal(t, "test", testManager2.GetChainNodeConfig().KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager2.GetChainNodeConfig().KeyringDir)
 	require.Equal(t, "v1", testManager2.GetCurrentNodeVersion())
@@ -296,7 +297,8 @@ api:
     port: 8080
 chain_node:
     url: http://join1-node:26657
-    account_name: join1
+    signer_key_name: join1
+    account_public_key: ""
     keyring_backend: test
     keyring_dir: /root/.inference
 current_height: 393

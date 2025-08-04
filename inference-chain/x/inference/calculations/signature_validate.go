@@ -2,14 +2,15 @@ package calculations
 
 import (
 	"context"
-	sdkerrors "cosmossdk.io/errors"
 	"encoding/base64"
 	"errors"
+	"log/slog"
+	"strconv"
+
+	sdkerrors "cosmossdk.io/errors"
 	"github.com/cometbft/cometbft/crypto"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
-	"strconv"
 )
 
 type SignatureType int
@@ -23,6 +24,7 @@ const (
 // PubKeyGetter defines an interface for retrieving public keys
 type PubKeyGetter interface {
 	GetAccountPubKey(ctx context.Context, address string) (string, error)
+	GetAccountPubKeysWithGrantees(ctx context.Context, granterAddress string) ([]string, error)
 }
 
 // SignatureData contains signature strings and participant pointers
@@ -52,12 +54,12 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 
 	// Check transfer agent signature if transfer agent participant is provided
 	if sigData.TransferAgent != nil && sigData.TransferSignature != "" {
-		agentKey, err := pubKeyGetter.GetAccountPubKey(ctx, sigData.TransferAgent.Address)
+		agentKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.TransferAgent.Address)
 		if err != nil {
 			return sdkerrors.Wrap(types.ErrParticipantNotFound, sigData.TransferAgent.Address)
 		}
 
-		err = ValidateSignature(components, TransferAgent, agentKey, sigData.TransferSignature)
+		err = ValidateSignatureWithGrantees(components, TransferAgent, agentKeys, sigData.TransferSignature)
 		if err != nil {
 			return sdkerrors.Wrap(types.ErrInvalidSignature, "transfer signature validation failed")
 		}
@@ -65,12 +67,12 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 
 	// Check executor signature if executor participant is provided
 	if sigData.Executor != nil && sigData.ExecutorSignature != "" {
-		executorKey, err := pubKeyGetter.GetAccountPubKey(ctx, sigData.Executor.Address)
+		executorKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.Executor.Address)
 		if err != nil {
 			return sdkerrors.Wrap(types.ErrParticipantNotFound, sigData.Executor.Address)
 		}
 
-		err = ValidateSignature(components, ExecutorAgent, executorKey, sigData.ExecutorSignature)
+		err = ValidateSignatureWithGrantees(components, ExecutorAgent, executorKeys, sigData.ExecutorSignature)
 		if err != nil {
 			return sdkerrors.Wrap(types.ErrInvalidSignature, "executor signature validation failed")
 		}
@@ -103,7 +105,6 @@ func Sign(signer Signer, components SignatureComponents, signatureType Signature
 	return signature, nil
 }
 
-// ValidateSignature validates a signature based on the provided signature type
 func ValidateSignature(components SignatureComponents, signatureType SignatureType, pubKey string, signature string) error {
 	slog.Info("Validating signature", "type", signatureType, "pubKey", pubKey, "signature", signature)
 	slog.Info("Components", "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
@@ -111,7 +112,13 @@ func ValidateSignature(components SignatureComponents, signatureType SignatureTy
 	return validateSignature(bytes, pubKey, signature)
 }
 
-// getSignatureBytes returns the bytes to be signed based on the signature type
+func ValidateSignatureWithGrantees(components SignatureComponents, signatureType SignatureType, pubKeys []string, signature string) error {
+	slog.Info("Validating signature with grantees", "type", signatureType, "pubKeys", pubKeys, "signature", signature)
+	slog.Info("Components", "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
+	bytes := getSignatureBytes(components, signatureType)
+	return validateSignatureWithGrantees(bytes, pubKeys, signature)
+}
+
 func getSignatureBytes(components SignatureComponents, signatureType SignatureType) []byte {
 	var bytes []byte
 
@@ -125,6 +132,27 @@ func getSignatureBytes(components SignatureComponents, signatureType SignatureTy
 	}
 
 	return bytes
+}
+
+func validateSignatureWithGrantees(
+	bytes []byte,
+	pubKeys []string,
+	signature string,
+) error {
+	errors := []error{}
+	for _, pubKey := range pubKeys {
+		err := validateSignature(bytes, pubKey, signature)
+		if err == nil {
+			return nil
+		}
+		slog.Warn("Invalid signature", "pubKey", pubKey, "error", err)
+		errors = append(errors, err)
+	}
+	slog.Warn("Invalid signature", "errors", errors)
+	if len(errors) > 0 {
+		return errors[0]
+	}
+	return nil
 }
 
 func validateSignature(bytes []byte, pubKey string, signature string) error {

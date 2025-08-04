@@ -3,10 +3,11 @@ package admin
 import (
 	"decentralized-api/logging"
 	"fmt"
+	"net/http"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 func (s *Server) postUnitOfComputePriceProposal(ctx echo.Context) error {
@@ -34,7 +35,7 @@ func (s *Server) postUnitOfComputePriceProposal(ctx echo.Context) error {
 func (s *Server) getUnitOfComputePriceProposal(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	queryRequest := &types.QueryGetUnitOfComputePriceProposalRequest{
-		Participant: s.recorder.GetAddress(),
+		Participant: s.recorder.GetAccountAddress(),
 	}
 
 	queryResponse, err := queryClient.GetUnitOfComputePriceProposal(s.recorder.GetContext(), queryRequest)

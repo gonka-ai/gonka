@@ -18,6 +18,7 @@ var GenesisModelsTest = map[string]types.Model{
 		ModelArgs:              []string{"--quantization", "fp8", "-kv-cache-dtype", "fp8"},
 		VRam:                   32,
 		ThroughputPerNonce:     1000,
+		ValidationThreshold:    &types.Decimal{Value: 85, Exponent: -2},
 	},
 	GenesisModelsTest_QWEN: {
 		ProposedBy:             "genesis",
@@ -28,6 +29,7 @@ var GenesisModelsTest = map[string]types.Model{
 		ModelArgs:              []string{"--quantization", "fp8"},
 		VRam:                   16,
 		ThroughputPerNonce:     10000,
+		ValidationThreshold:    &types.Decimal{Value: 85, Exponent: -2},
 	},
 }
 

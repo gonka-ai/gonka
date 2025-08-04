@@ -362,6 +362,7 @@ private fun resetMlNodesToDefault(pair: LocalInferencePair) {
         }
     }
 
+    Logger.info { "Resetting ml nodes" }
     pair.waitForNextInferenceWindow(windowSizeInBlocks = 5)
     pair.api.setNodesTo(defaultNode)
 }
@@ -483,6 +484,16 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[ValidationParams::minValidationTrafficCutoff] = 10L
                 this[ValidationParams::expirationBlocks] = 7L
             }
+            this[InferenceParams::dynamicPricingParams] = spec<DynamicPricingParams> {
+                this[DynamicPricingParams::stabilityZoneLowerBound] = Decimal.fromDouble(0.40)
+                this[DynamicPricingParams::stabilityZoneUpperBound] = Decimal.fromDouble(0.60)
+                this[DynamicPricingParams::priceElasticity] = Decimal.fromDouble(0.05)
+                this[DynamicPricingParams::utilizationWindowDuration] = 60L
+                this[DynamicPricingParams::minPerTokenPrice] = 1000L  // Set to match DEFAULT_TOKEN_COST
+                this[DynamicPricingParams::basePerTokenPrice] = 1000L // Set to match DEFAULT_TOKEN_COST
+                this[DynamicPricingParams::gracePeriodEndEpoch] = 0L   // Disable grace period
+                this[DynamicPricingParams::gracePeriodPerTokenPrice] = 0L
+            }
         }
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
             this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
@@ -494,9 +505,10 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 unitsOfComputePerToken = "1000",
                 hfRepo = "Qwen/QwQ-32B",
                 hfCommit = "976055f8c83f394f35dbd3ab09a285a984907bd0",
-                modelArgs = listOf("--quantization", "fp8", "-kv-cache-dtype", "fp8"),
+                modelArgs = listOf("--quantization", "fp8", "--kv-cache-dtype", "fp8"),
                 vRam = "32",
-                throughputPerNonce = "1000"
+                throughputPerNonce = "1000",
+                validationThreshold = Decimal.fromDouble(0.85),
             ),
             ModelListItem(
                 proposedBy = "genesis",
@@ -506,7 +518,8 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 hfCommit = "a09a35458c702b33eeacc393d103063234e8bc28",
                 modelArgs = listOf("--quantization", "fp8"),
                 vRam = "16",
-                throughputPerNonce = "10000"
+                throughputPerNonce = "10000",
+                validationThreshold = Decimal.fromDouble(0.85),
             )
         )
     }
@@ -2126,3 +2139,4 @@ val defaultInferenceResponse = """
 """.trimIndent()
 
 val defaultInferenceResponseObject = cosmosJson.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)
+

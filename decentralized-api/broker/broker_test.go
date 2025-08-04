@@ -182,7 +182,7 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 
 	<-setStatusCommand.Response
 
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestNodeRemoval(t *testing.T) {

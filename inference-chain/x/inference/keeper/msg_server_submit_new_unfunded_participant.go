@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"encoding/base64"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -53,7 +54,7 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 			k.LogError("Error minting coins", types.Participants, "error", err)
 			return nil, err
 		}
-		err = k.PayParticipantFromModule(ctx, msg.GetAddress(), uint64(starterAmount), types.ModuleName, "starter_coins:"+newParticipant.GetAddress())
+		err = k.PayParticipantFromModule(ctx, msg.GetAddress(), uint64(starterAmount), types.ModuleName, "starter_coins:"+newParticipant.GetAddress(), nil)
 		if err != nil {
 			k.LogError("Error sending coins", types.Participants, "error", err)
 			return nil, err

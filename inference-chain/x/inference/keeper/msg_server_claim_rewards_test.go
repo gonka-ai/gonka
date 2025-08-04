@@ -8,6 +8,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -18,8 +19,6 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	mockAccount := NewMockAccount(testutil.Creator)
-	// Setup a participant
-	MustAddParticipant(t, ms, ctx, *mockAccount)
 
 	// Create a seed value and its binary representation
 	seed := uint64(1)
@@ -81,25 +80,66 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mock the account keeper to return our mock account
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
 
-	// Mock the bank keeper to allow payments
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
+	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
+	// Expect direct payment flow (if vesting periods are 0 or nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		workCoins,
-	).Return(nil)
+		gomock.Any(),
+	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		rewardCoins,
-	).Return(nil)
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // escrow payment from inference module
+		"streamvesting",
+		workCoins,
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		gomock.Any(),
+		workCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // reward payment from inference module
+		"streamvesting",
+		rewardCoins,
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		gomock.Any(),
+		rewardCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
+	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -202,14 +242,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
-
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
@@ -229,7 +261,6 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
 
-	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
@@ -242,7 +273,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100, // Using height as ID
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
@@ -272,21 +303,21 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -311,8 +342,11 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Create a mock account with the public key
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 
-	// Mock the account keeper to return our mock account for the first call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	// Mock the account keeper to return our mock account (called multiple times during validation)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -327,6 +361,8 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	require.Equal(t, uint64(0), resp.Amount)
 	require.Equal(t, "Inference not validated", resp.Result)
 
+	println("Setting EpochGroupValidations")
+
 	// Now let's validate all inferences and try again
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
@@ -335,26 +371,61 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
 
-	// Mock the account keeper again for the second call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
-	// Mock the bank keeper to allow payments
+	// Mock the bank keeper for both direct and vesting payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
+	// Expect direct payment flow (if vesting periods are 0 or nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		workCoins,
-	).Return(nil)
+		gomock.Any(),
+	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		rewardCoins,
-	).Return(nil)
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // escrow payment from inference module
+		"streamvesting",
+		workCoins,
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		gomock.Any(),
+		workCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // reward payment from inference module
+		"streamvesting",
+		rewardCoins,
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		gomock.Any(),
+		rewardCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
+	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -386,14 +457,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor1 := NewMockAccount("executor1")
-	mockExecutor2 := NewMockAccount("executor2")
-	// Setup participants
-	MustAddParticipant(t, ms, ctx, *mockCreator)
-	MustAddParticipant(t, ms, ctx, *mockExecutor1)
-	MustAddParticipant(t, ms, ctx, *mockExecutor2)
-
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
@@ -413,7 +476,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k.SetEpoch(sdkCtx, &epoch)
 	k.SetEffectiveEpochIndex(sdkCtx, epoch.Index)
 
-	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:    testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
@@ -426,7 +488,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100, // Using height as ID
+		EpochGroupId:        9000,
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights: []*types.ValidationWeight{
 			{
@@ -456,21 +518,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochGroupId:       100,
+		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -495,8 +557,11 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Create a mock account with the public key
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 
-	// Mock the account keeper to return our mock account for the first call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	// Mock the account keeper to return our mock account (called multiple times during validation)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -519,9 +584,6 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		ValidatedInferences: []string{"inference2"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
-
-	// Mock the account keeper again for the second call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
 
 	// Call ClaimRewards again - this should still fail
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -552,11 +614,8 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	settleAmount.SeedSignature = signatureHex
 	k.SetSettleAmount(sdkCtx, settleAmount)
 
-	// Mock the account keeper again for the third call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
 	// Call ClaimRewards with the new seed
-	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	_, _ = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
 		Creator:        testutil.Creator,
 		PocStartHeight: pocStartBlockHeight,
 		Seed:           54321,
@@ -573,26 +632,61 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	validations.ValidatedInferences = []string{"inference1", "inference2", "inference3"}
 	k.SetEpochGroupValidations(sdkCtx, validations)
 
-	// Mock the account keeper again for the fourth call
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
-
 	// Mock the bank keeper to allow payments
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
 
+	// Expect direct payment flow (if vesting periods are 0 or nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		workCoins,
-	).Return(nil)
+		gomock.Any(),
+	).Return(nil).AnyTimes()
 
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(
 		gomock.Any(),
 		types.ModuleName,
 		addr,
 		rewardCoins,
-	).Return(nil)
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	// Expect vesting flow: module -> streamvesting -> vesting schedule (if vesting periods > 0)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // escrow payment from inference module
+		"streamvesting",
+		workCoins,
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		gomock.Any(),
+		workCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(
+		gomock.Any(),
+		types.ModuleName, // reward payment from inference module
+		"streamvesting",
+		rewardCoins,
+		gomock.Any(),
+	).Return(nil).AnyTimes()
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(
+		gomock.Any(),
+		testutil.Creator,
+		gomock.Any(),
+		rewardCoins,
+		gomock.Any(), // vestingEpochs is a pointer to 180
+		gomock.Any(),
+	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards again - this should succeed now
 	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
@@ -665,7 +759,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// Claimant has two nodes, one with full availability
 	mainEpochData := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        100,
+		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
 		PocStartBlockHeight: pocStartBlockHeight,
 		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: "executor1", Weight: 50}},
 		SubGroupModels:      []string{MODEL_ID},
@@ -694,7 +788,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 
 	modelSubGroup := types.EpochGroupData{
 		EpochId:             epoch.Index,
-		EpochGroupId:        101,
+		EpochGroupId:        9001,
 		PocStartBlockHeight: pocStartBlockHeight,
 		ModelId:             MODEL_ID,
 		ValidationWeights: []*types.ValidationWeight{
@@ -715,7 +809,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	// Inference occurring during PoC cutoff
 	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
 	inference := types.InferenceValidationDetails{
-		EpochGroupId:         100,
+		EpochId:              epoch.Index,
 		InferenceId:          "inference-during-poc",
 		ExecutorId:           "executor1",
 		ExecutorReputation:   0,
@@ -729,12 +823,16 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
 	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+
+	// Mock the AuthzKeeper to return empty grants (no grantees)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
 	if !validatorIsAvailableDuringPoC {
 		workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 		rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
-		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins).Return(nil)
-		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins).Return(nil)
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, workCoins, gomock.Any()).Return(nil)
+		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, rewardCoins, gomock.Any()).Return(nil)
 	}
 
 	if validatorIsAvailableDuringPoC {

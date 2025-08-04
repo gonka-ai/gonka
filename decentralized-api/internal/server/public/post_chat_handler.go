@@ -149,7 +149,7 @@ func cleanupExpiredAuthKeys(currentBlockHeight int64) {
 func (s *Server) postChat(ctx echo.Context) error {
 	logging.Debug("PostChat. Received request", types.Inferences, "path", ctx.Request().URL.Path)
 
-	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAddress())
+	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAccountAddress())
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	logging.Info("Prompt token estimation", types.Inferences, "count", promptTokenCount, "model", request.OpenAiRequest.Model)
 
-	if err := validateRequester(request, requester, promptTokenCount); err != nil {
+	if err := s.validateRequester(ctx.Request().Context(), request, requester, promptTokenCount); err != nil {
 		return err
 	}
 
@@ -242,7 +242,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 		request.InferenceId = inferenceUUID
 		request.Seed = strconv.Itoa(int(seed))
-		request.TransferAddress = s.recorder.GetAddress()
+		request.TransferAddress = s.recorder.GetAccountAddress()
 		request.TransferSignature = inferenceRequest.TransferSignature
 
 		logging.Info("Execute request on same node, fill request with extra data", types.Inferences, "inferenceId", request.InferenceId, "seed", request.Seed)
@@ -447,13 +447,38 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAddress(), request)
+	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
 		return nil
 	}
 	return nil
+}
+
+func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granterAddress,
+		MessageTypeUrl: "/inference.inference.MsgStartInference",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
+	}
+	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
+	for i, grantee := range grantees.Grantees {
+		granteesPubkeys[i] = grantee.PubKey
+	}
+
+	granterAccount, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: granterAddress})
+	if err != nil {
+		logging.Error("Failed to get granter account", types.Inferences, "address", granterAddress, "error", err)
+		return nil, err
+	}
+	granterPubKey := granterAccount.Pubkey
+
+	granteesPubkeys[len(granteesPubkeys)-1] = granterPubKey
+	return granteesPubkeys, nil
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
@@ -464,23 +489,24 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return err
 	}
 
-	transfer, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.TransferAddress})
+	transferPubkeys, err := s.getAllowedPubKeys(ctx, request.TransferAddress)
 	if err != nil {
-		logging.Error("Failed to get transfer participant", types.Inferences, "address", request.TransferAddress, "error", err)
+		logging.Error("Failed to get grantees to sign inference", types.Inferences, "error", err)
 		return err
 	}
+	logging.Info("Transfer pubkeys", types.Inferences, "pubkeys", transferPubkeys)
 
 	if err := validateTransferRequest(request, dev.Pubkey); err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
 	}
 
-	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAddress(), request.TransferSignature); err != nil {
+	if err = validateExecuteRequestWithGrantees(request, transferPubkeys, s.recorder.GetAccountAddress(), request.TransferSignature); err != nil {
 		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
 	}
 
-	err = s.validateTimestampNonce(err, request)
+	err = s.validateTimestampNonce(request)
 	if err != nil {
 		return err
 	}
@@ -562,15 +588,17 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 		ExecutorAddress: executorAddress,
 	}
 
-	address, err := sdk.AccAddressFromBech32(s.recorder.GetAddress())
+	signerAddressStr := s.recorder.GetSignerAddress()
+	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
 	if err != nil {
-		logging.Error("Failed to parse address", types.Inferences, "address", s.recorder.GetAddress(), "error", err)
+		logging.Error("Failed to parse address", types.Inferences, "address", signerAddressStr, "error", err)
 		return "", err
 	}
-
 	accountSigner := &cmd.AccountSigner{
 		Addr:    address,
 		Context: s.recorder.GetClientContext(),
+		Addr:    signerAddress,
+		Keyring: s.recorder.GetKeyring(),
 	}
 
 	signature, err := calculations.Sign(accountSigner, components, agentType)
@@ -650,6 +678,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 			RequestTimestamp:     request.Timestamp,
 			RequestedBy:          request.RequesterAddress,
 			OriginalPrompt:       string(request.Body),
+			Model:                model,
 		}
 
 		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
@@ -766,8 +795,8 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Check signature and available balance.
-func validateRequester(request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
+// validateRequester validates requester with dynamic pricing fallback to legacy
+func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
 	if requester == nil {
 		logging.Error("Inference participant not found", types.Inferences, "address", request.RequesterAddress)
 		return ErrInferenceParticipantNotFound
@@ -783,14 +812,42 @@ func validateRequester(request *ChatRequest, requester *types.QueryInferencePart
 		request.OpenAiRequest.MaxTokens = keeper.DefaultMaxTokens
 	}
 
-	// Calculate escrow needed based on both max tokens and prompt token estimation
-	maxTokensCost := uint64(request.OpenAiRequest.MaxTokens) * uint64(calculations.PerTokenCost)
+	var escrowNeeded uint64
+	var perTokenPrice uint64
 
-	// Use the promptTokenCount parameter that was passed in (estimation for escrow)
-	promptTokensCost := uint64(promptTokenCount) * uint64(calculations.PerTokenCost)
+	// Try to get dynamic pricing first
+	queryClient := s.recorder.NewInferenceQueryClient()
+	priceResponse, err := queryClient.GetModelPerTokenPrice(ctx, &types.QueryGetModelPerTokenPriceRequest{
+		ModelId: request.OpenAiRequest.Model,
+	})
 
-	escrowNeeded := maxTokensCost + promptTokensCost
-	logging.Debug("Escrow needed (using estimation)", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
+	if err == nil && priceResponse.Found {
+		// Use dynamic pricing
+		perTokenPrice = priceResponse.Price
+
+		logging.Debug("Using dynamic pricing", types.Inferences,
+			"perTokenPrice", perTokenPrice,
+			"model", request.OpenAiRequest.Model)
+	} else {
+		// Fall back to legacy pricing
+		logging.Warn("Failed to get dynamic pricing, falling back to legacy calculation", types.Inferences, "error", err)
+		perTokenPrice = uint64(calculations.PerTokenCost)
+
+		logging.Debug("Using legacy pricing", types.Inferences,
+			"perTokenPrice", perTokenPrice)
+	}
+
+	// Calculate escrow using consistent formula: (PromptTokens + MaxTokens) × PerTokenPrice
+	totalTokens := uint64(promptTokenCount) + uint64(request.OpenAiRequest.MaxTokens)
+	escrowNeeded = totalTokens * perTokenPrice
+
+	logging.Debug("Escrow calculation", types.Inferences,
+		"escrowNeeded", escrowNeeded,
+		"perTokenPrice", perTokenPrice,
+		"promptTokens", promptTokenCount,
+		"maxTokens", request.OpenAiRequest.MaxTokens,
+		"totalTokens", totalTokens)
+
 	logging.Debug("Client balance", types.Inferences, "balance", requester.Balance)
 	if requester.Balance < int64(escrowNeeded) {
 		return ErrInsufficientBalance

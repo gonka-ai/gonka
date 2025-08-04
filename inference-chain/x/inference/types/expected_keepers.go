@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
@@ -25,16 +26,8 @@ type AccountKeeper interface {
 type BankKeeper interface {
 	SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins
 	SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
-	// Methods imported from bank should be defined here
-}
-
-type BankEscrowKeeper interface {
-	SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
-	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
-	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
-	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
-	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 	GetDenomMetaData(ctx context.Context, denom string) (banktypes.Metadata, bool)
+	// Methods imported from bank should be defined here
 }
 
 type GroupMessageKeeper interface {
@@ -80,6 +73,19 @@ type StakingKeeper interface {
 	GetAllValidators(ctx context.Context) (validators []types.Validator, err error)
 }
 
+// CollateralKeeper defines the expected interface for the Collateral module.
+type CollateralKeeper interface {
+	AdvanceEpoch(ctx context.Context, completedEpoch uint64)
+	GetCollateral(ctx context.Context, participant sdk.AccAddress) (collateral sdk.Coin, found bool)
+	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec) (sdk.Coin, error)
+}
+
+// StreamVestingKeeper defines the expected interface for the StreamVesting module.
+type StreamVestingKeeper interface {
+	AddVestedRewards(ctx context.Context, participantAddress string, fundingModule string, amount sdk.Coins, vestingEpochs *uint64, memo string) error
+	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
+}
+
 type ParticipantKeeper interface {
 	GetParticipant(ctx context.Context, index string) (val Participant, found bool)
 	GetParticipants(ctx context.Context, ids []string) ([]Participant, bool)
@@ -100,7 +106,21 @@ type EpochGroupDataKeeper interface {
 	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
 }
 
+type BookkeepingBankKeeper interface {
+	SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins, memo string) error
+	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error
+	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins, memo string) error
+	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins, memo string) error
+	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins, memo string) error
+	// For logging transactions to tracking accounts, like vesting holds
+	LogSubAccountTransaction(ctx context.Context, recipient string, sender string, subAccount string, amt sdk.Coin, memo string)
+}
+
 type ModelKeeper interface {
 	GetGovernanceModel(ctx context.Context, id string) (val *Model, found bool)
 	GetGovernanceModels(ctx context.Context) (list []*Model, err error)
+}
+
+type AuthzKeeper interface {
+	GranterGrants(ctx context.Context, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error)
 }

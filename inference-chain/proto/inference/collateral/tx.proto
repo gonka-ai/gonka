@@ -1,0 +1,88 @@
+syntax = "proto3";
+package inference.collateral;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "inference/collateral/params.proto";
+import "cosmos/base/v1beta1/coin.proto";
+
+option go_package = "github.com/productscience/inference/x/collateral/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams defines a (governance) operation for updating the module
+  // parameters. The authority defaults to the x/gov module account.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // DepositCollateral deposits collateral for the participant
+  rpc DepositCollateral(MsgDepositCollateral) returns (MsgDepositCollateralResponse);
+
+  // WithdrawCollateral initiates withdrawal of collateral (subject to unbonding period)
+  rpc WithdrawCollateral(MsgWithdrawCollateral) returns (MsgWithdrawCollateralResponse);
+}
+
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "inference/x/collateral/MsgUpdateParams";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params defines the module parameters to update.
+  //
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse defines the response structure for executing a
+// MsgUpdateParams message.
+message MsgUpdateParamsResponse {}
+
+// MsgDepositCollateral defines a message to deposit collateral
+message MsgDepositCollateral {
+  option (cosmos.msg.v1.signer) = "participant";
+  option (amino.name) = "inference/x/collateral/MsgDepositCollateral";
+
+  // participant is the address depositing collateral
+  string participant = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // amount is the collateral to deposit
+  cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgDepositCollateralResponse defines the response structure for executing a
+// MsgDepositCollateral message.
+message MsgDepositCollateralResponse {}
+
+// MsgWithdrawCollateral defines a message to withdraw collateral
+message MsgWithdrawCollateral {
+  option (cosmos.msg.v1.signer) = "participant";
+  option (amino.name) = "inference/x/collateral/MsgWithdrawCollateral";
+
+  // participant is the address withdrawing collateral
+  string participant = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // amount is the collateral to withdraw
+  cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgWithdrawCollateralResponse defines the response structure for executing a
+// MsgWithdrawCollateral message.
+message MsgWithdrawCollateralResponse {
+  // completion_epoch is the epoch when the withdrawal will complete
+  uint64 completion_epoch = 1;
+}

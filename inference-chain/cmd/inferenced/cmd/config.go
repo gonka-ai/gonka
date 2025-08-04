@@ -8,6 +8,10 @@ import (
 	"github.com/productscience/inference/app"
 )
 
+const (
+	CoinType = 1200
+)
+
 func initSDKConfig() {
 	// Set prefixes
 	accountPubKeyPrefix := app.AccountAddressPrefix + "pub"
@@ -18,6 +22,7 @@ func initSDKConfig() {
 
 	// Set and seal config
 	config := sdk.GetConfig()
+	config.SetCoinType(CoinType) // TODO: change to custom coin type
 	config.SetBech32PrefixForAccount(app.AccountAddressPrefix, accountPubKeyPrefix)
 	config.SetBech32PrefixForValidator(validatorAddressPrefix, validatorPubKeyPrefix)
 	config.SetBech32PrefixForConsensusNode(consNodeAddressPrefix, consNodePubKeyPrefix)

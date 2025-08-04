@@ -110,7 +110,7 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 
 func (a *Assigner) findAlreadyClaimedTask(tasks []*types.TrainingTask) *types.TrainingTask {
 	for _, task := range tasks {
-		if task.Assigner == a.cosmosClient.GetAddress() {
+		if task.Assigner == a.cosmosClient.GetAccountAddress() {
 			return task
 		}
 	}
@@ -219,7 +219,7 @@ func (a *Assigner) checkTaskIsStillClaimed() {
 		return
 	}
 
-	if resp.Task.Assigner != a.cosmosClient.GetAddress() {
+	if resp.Task.Assigner != a.cosmosClient.GetAccountAddress() {
 		slog.Info(logTag+"Task is no longer claimed by me", "taskId", a.task.task.Id)
 		a.task = nil
 	}

@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.15
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.19
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.15
+    image: ghcr.io/product-science/inferenced:0.1.19
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -36,7 +36,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.15
+    image: ghcr.io/product-science/api:0.1.19
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -44,7 +44,10 @@ services:
     depends_on:
       - node
     environment:
-      - KEY_NAME=${KEY_NAME}
+      - KEY_NAME=${KEY_NAME} # WARM KEY
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY} # COLD KEY
+      - KEYRING_BACKEND=${KEYRING_BACKEND:-test}
+      - KEYRING_PASSWORD=${KEYRING_PASSWORD:-default}
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
@@ -61,7 +64,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.15
+    image: ghcr.io/product-science/proxy:0.1.19
     ports:
       - "${API_PORT:-8000}:80"
     environment:

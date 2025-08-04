@@ -38,11 +38,15 @@
           "model_args": [
             "--quantization",
             "fp8",
-            "-kv-cache-dtype",
+            "--kv-cache-dtype",
             "fp8"
           ],
-          "v_ram": "32",
-          "throughput_per_nonce": "1000"
+          "v_ram": "80",
+          "throughput_per_nonce": "1000",
+          "validation_threshold": {
+            "value": "85",
+            "exponent": -2
+          }
         },
         {
           "proposed_by": "genesis",
@@ -54,18 +58,22 @@
             "--quantization",
             "fp8"
           ],
-          "v_ram": "16",
-          "throughput_per_nonce": "10000"
+          "v_ram": "24",
+          "throughput_per_nonce": "10000",
+          "validation_threshold": {
+            "value": "85",
+            "exponent": -2
+          }
         }
       ],
       "genesis_only_params": {
-        "total_supply": "1000",
-        "originator_supply": "160",
-        "top_reward_amount": "120",
-        "standard_reward_amount": "600",
-        "pre_programmed_sale_amount": "120",
+        "total_supply": "1000000000000000000",
+        "originator_supply": "160000000000000000",
+        "top_reward_amount": "120000000000000000",
+        "standard_reward_amount": "600000000000000000",
+        "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
-        "supply_denom": "mcicoin"
+        "supply_denom": "nicoin"
       }
     }
   }

@@ -2,10 +2,13 @@ package keeper
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -37,11 +40,14 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
+	// TODO: Optimization: Payout claim should be done in one transaction
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
-	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant); err != nil {
+	params := ms.GetParams(ctx)
+	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
+	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.handleUnderfundedWork(ctx, err, settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -58,7 +64,8 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
 
 	// Pay rewards from module
-	if err := ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant); err != nil {
+	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
+	if err := ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
@@ -178,6 +185,21 @@ func (k msgServer) hasMissedValidations(ctx sdk.Context, msg *types.MsgClaimRewa
 	return false, nil
 }
 
+func (ms msgServer) validateSeedSignatureForPubkey(msg *types.MsgClaimRewards, settleAmount *types.SettleAmount, pubKey cryptotypes.PubKey) error {
+	seedBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(seedBytes, uint64(msg.Seed))
+	signature, err := hex.DecodeString(settleAmount.SeedSignature)
+	if err != nil {
+		ms.LogInfo("Error decoding signature for", types.Claims, "error", err)
+		return err
+	}
+	ms.LogDebug("Verifying signature", types.Claims, "seedBytes", hex.EncodeToString(seedBytes), "signature", hex.EncodeToString(signature), "pubkey", pubKey.String())
+	if !pubKey.VerifySignature(seedBytes, signature) {
+		return types.ErrClaimSignatureInvalid
+	}
+	return nil
+}
+
 func (ms msgServer) validateSeedSignature(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {
 	ms.LogDebug("Validating seed signature", types.Claims, "account", msg.Creator, "seed", msg.Seed, "height", msg.PocStartHeight)
 	addr, err := sdk.AccAddressFromBech32(msg.Creator)
@@ -189,20 +211,27 @@ func (ms msgServer) validateSeedSignature(ctx sdk.Context, msg *types.MsgClaimRe
 		ms.LogError("Account not found for signature", types.Claims, "address", msg.Creator)
 		return types.ErrParticipantNotFound
 	}
-	pubKey := acc.GetPubKey()
-	seedBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(seedBytes, uint64(msg.Seed))
-	signature, err := hex.DecodeString(settleAmount.SeedSignature)
+	accountPubkeys, err := ms.GetAccountPubKeysWithGrantees(ctx, msg.Creator)
 	if err != nil {
-		ms.LogError("Error decoding signature", types.Claims, "error", err)
+		ms.LogError("Error getting grantees pubkeys", types.Claims, "error", err)
 		return err
 	}
-	ms.LogDebug("Verifying signature", types.Claims, "seedBytes", hex.EncodeToString(seedBytes), "signature", hex.EncodeToString(signature), "pubkey", pubKey.String())
-	if !pubKey.VerifySignature(seedBytes, signature) {
-		ms.LogError("Signature verification failed", types.Claims, "seed", msg.Seed, "signature", settleAmount.SeedSignature, "seedBytes", hex.EncodeToString(seedBytes))
-		return types.ErrClaimSignatureInvalid
+
+	for _, granteePubKeyStr := range accountPubkeys {
+		pubKey, err := base64.StdEncoding.DecodeString(granteePubKeyStr)
+		if err != nil {
+			ms.LogError("Error getting grantee pubkey", types.Claims, "error", err)
+			continue
+		}
+		granteePubKey := &secp256k1.PubKey{Key: pubKey}
+		err = ms.validateSeedSignatureForPubkey(msg, settleAmount, granteePubKey)
+		if err == nil {
+			return nil
+		}
 	}
-	return nil
+
+	ms.LogError("Seed signature validation failed", types.Claims, "account", msg.Creator)
+	return err
 }
 
 func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) map[string]bool {
@@ -300,9 +329,9 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelTotalWeights[subModelId] = subTotalWeight
 	}
 
+	skipped := 0
 	mustBeValidated := make([]string, 0)
-	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochGroupId)
-	var skipped int
+	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochId)
 	for _, inference := range finishedInferences {
 		if inference.ExecutorId == msg.Creator {
 			continue

@@ -80,10 +80,13 @@ import (
 	ibctransferkeeper "github.com/cosmos/ibc-go/v8/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 
+	collateralmodulekeeper "github.com/productscience/inference/x/collateral/keeper"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencegenesis "github.com/productscience/inference/x/inference/module"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	streamvestingmodulekeeper "github.com/productscience/inference/x/streamvesting/keeper"
 
+	bookkeepermodulekeeper "github.com/productscience/inference/x/bookkeeper/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	// WASM
@@ -158,7 +161,10 @@ type App struct {
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 	//ContractKeeper   *wasmkeeper.PermissionedKeeper
 
-	InferenceKeeper inferencemodulekeeper.Keeper
+	BookkeeperKeeper    bookkeepermodulekeeper.Keeper
+	InferenceKeeper     inferencemodulekeeper.Keeper
+	CollateralKeeper    collateralmodulekeeper.Keeper
+	StreamvestingKeeper streamvestingmodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
 
 	// simulation manager
@@ -284,6 +290,7 @@ func New(
 		&app.interfaceRegistry,
 		&app.AccountKeeper,
 		&app.BankKeeper,
+		&app.BookkeeperKeeper,
 		&app.StakingKeeper,
 		&app.DistrKeeper,
 		&app.ConsensusParamsKeeper,
@@ -300,6 +307,8 @@ func New(
 		&app.GroupKeeper,
 		&app.CircuitBreakerKeeper,
 		&app.InferenceKeeper,
+		&app.CollateralKeeper,
+		&app.StreamvestingKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
 		panic(err)

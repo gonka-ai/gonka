@@ -2,7 +2,6 @@ package cosmosclient
 
 import (
 	"context"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
@@ -11,24 +10,37 @@ import (
 	"fmt"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/golang/protobuf/proto"
-	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
-	"github.com/productscience/inference/api/inference/inference"
 	"log"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
+	upgradetypes "cosmossdk.io/x/upgrade/types"
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"github.com/cosmos/cosmos-sdk/client/tx"
+	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
+	"github.com/golang/protobuf/proto"
+	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
+	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
+
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 type InferenceCosmosClient struct {
 	ctx     context.Context
-	account *cosmosaccount.Account
+	apiAccount *apiconfig.ApiAccount
 	address string
 	manager tx_manager.TxManager
 }
@@ -43,7 +55,7 @@ func NewInferenceCosmosClientWithRetry(
 	var err error
 	logging.Info("Connecting to cosmos sdk node", types.System, "config", config, "height", config.GetHeight())
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.GetChainNodeConfig(), config.GetNatsConfig())
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config)
 		if err == nil {
 			return client, nil
 		}
@@ -65,6 +77,31 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
+// 'file' keyring backend to automatically provide interactive prompts for signing
+func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, config *apiconfig.ConfigManager) error {
+	nodeConfig := config.GetChainNodeConfig()
+	if nodeConfig.KeyringBackend == keyring.BackendFile {
+		interfaceRegistry := codectypes.NewInterfaceRegistry()
+		cryptocodec.RegisterInterfaces(interfaceRegistry)
+
+		cdc := codec.NewProtoCodec(interfaceRegistry)
+		kr, err := keyring.New(
+			"inferenced",
+			nodeConfig.KeyringBackend,
+			keyringDir,
+			strings.NewReader(nodeConfig.KeyringPassword),
+			cdc,
+		)
+		if err != nil {
+			log.Printf("Error creating keyring: %s", err)
+			return err
+		}
+		client.AccountRegistry.Keyring = kr
+		return nil
+	}
+	return nil
+}
+
 func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig apiconfig.ChainNodeConfig, natsConfig apiconfig.NatsServerConfig) (*InferenceCosmosClient, error) {
 	// Get absolute path to keyring directory
 	keyringDir, err := expandPath(nodeConfig.KeyringDir)
@@ -77,8 +114,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 	cosmoclient, err := cosmosclient.New(
 		ctx,
 		cosmosclient.WithAddressPrefix(addressPrefix),
+		cosmosclient.WithKeyringServiceName("inferenced"),
 		cosmosclient.WithNodeAddress(nodeConfig.Url),
-		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
 		cosmosclient.WithKeyringDir(keyringDir),
 		cosmosclient.WithGasPrices("0icoin"),
 		cosmosclient.WithFees("0icoin"),
@@ -86,18 +123,26 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		cosmosclient.WithGasAdjustment(5),
 	)
 	if err != nil {
+		log.Printf("Error creating cosmos client: %s", err)
+		return nil, err
+	}
+	err = updateKeyringIfNeeded(&client, keyringDir, config)
+	if err != nil {
+		log.Printf("Error updating keyring: %s", err)
 		return nil, err
 	}
 
-	account, err := cosmoclient.AccountRegistry.GetByName(nodeConfig.AccountName)
+	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, &client)
 	if err != nil {
+		log.Printf("Error creating api account: %s", err)
 		return nil, err
 	}
-
-	addr, err := account.Address(addressPrefix)
+	accAddress, err := apiAccount.AccountAddressBech32()
 	if err != nil {
+		log.Printf("Error getting account address: %s", err)
 		return nil, err
 	}
+	log.Printf("Account address: %s", accAddress)
 
 	natsConn, err := client.ConnectToNats(natsConfig.Host, natsConfig.Port, "tx_manager")
 	if err != nil {
@@ -111,8 +156,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 
 	return &InferenceCosmosClient{
 		ctx:     ctx,
-		address: addr,
-		account: &account,
+		address: accAddress,
+		apiAccount: apiAccount,
 		manager: mn,
 	}, nil
 }
@@ -141,6 +186,7 @@ type CosmosMessageClient interface {
 	SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error
 	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	GetContext() context.Context
+	GetKeyring() *keyring.Keyring
 	GetClientContext() sdkclient.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
@@ -162,12 +208,54 @@ func (icc *InferenceCosmosClient) GetAddress() string {
 	return icc.address
 }
 
+func (icc *InferenceCosmosClient) GetKeyring() *keyring.Keyring {
+	return &icc.Client.AccountRegistry.Keyring
+}
+
+func (icc *InferenceCosmosClient) GetAccountAddress() string {
+	address, err := icc.ApiAccount.AccountAddressBech32()
+	if err != nil {
+		logging.Error("Failed to get account address", types.Messages, "error", err)
+		return ""
+	}
+	return address
+}
+
+func (icc *InferenceCosmosClient) GetAccountPubKey() cryptotypes.PubKey {
+	return icc.ApiAccount.AccountKey
+}
+
+
+func (icc *InferenceCosmosClient) GetKeyring() *keyring.Keyring {
+	return &icc.Client.AccountRegistry.Keyring
+}
+
 func (icc *InferenceCosmosClient) GetAccount() *cosmosaccount.Account {
 	return icc.account
 }
 
+
+func (icc *InferenceCosmosClient) GetSignerAddress() string {
+	address, err := icc.ApiAccount.SignerAddressBech32()
+	if err != nil {
+		logging.Error("Failed to get signer address", types.Messages, "error", err)
+		return ""
+	}
+	return address
+}
+
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 	return icc.manager.SignBytes(seed)
+}
+
+func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
+	accName := icc.ApiAccount.SignerAccount.Name
+	kr := *icc.GetKeyring()
+	bytes, _, err := kr.Sign(accName, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
 }
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
@@ -280,6 +368,157 @@ func (icc *InferenceCosmosClient) BridgeExchange(transaction *types.MsgBridgeExc
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
 	return icc.manager.SendTransactionAsyncWithRetry(msg)
+}
+
+var accountRetriever = authtypes.AccountRetriever{}
+
+func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
+	factory, err := c.getFactory()
+	if err != nil {
+		return nil, err
+	}
+	unsignedTx, err := factory.BuildUnsignedTx(msg)
+	if err != nil {
+		return nil, err
+	}
+	txBytes, err := c.getSignedBytes(ctx, unsignedTx, factory)
+	if err != nil {
+		return nil, err
+	}
+	return c.Client.Context().BroadcastTxSync(txBytes)
+}
+
+// TODO: This is likely not as guaranteed to be unique as we want. Will fix
+func getTimestamp() time.Time {
+	// Use the current time in seconds since epoch
+	return time.Now().Add(time.Second * 60) // Adding 60 seconds to ensure the transaction is valid for a while
+}
+
+func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, error) {
+	// Gas is not charged, but without a high gas limit the transactions fail
+	unsignedTx.SetGasLimit(1000000000)
+	unsignedTx.SetFeeAmount(sdk.Coins{})
+	timestamp := getTimestamp()
+	unsignedTx.SetUnordered(true)
+	unsignedTx.SetTimeoutTimestamp(timestamp)
+	name := c.Account.Name
+	logging.Debug("Signing transaction", types.Messages, "name", name)
+	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
+	if err != nil {
+		logging.Error("Failed to sign transaction", types.Messages, "error", err)
+		return nil, err
+	}
+	txBytes, err := c.Client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
+	if err != nil {
+		logging.Error("Failed to encode transaction", types.Messages, "error", err)
+		return nil, err
+	}
+	return txBytes, nil
+}
+
+func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
+	// Now that we don't need the sequence, we only need to create the factory if it doesn't exist
+	if c.TxFactory != nil {
+		return c.TxFactory, nil
+	}
+	address, err := c.Account.Record.GetAddress()
+	if err != nil {
+		logging.Error("Failed to get account address", types.Messages, "error", err)
+		return nil, err
+	}
+	accountNumber, _, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
+	if err != nil {
+		logging.Error("Failed to get account number and sequence", types.Messages, "error", err)
+		return nil, err
+	}
+	factory := c.Client.TxFactory.
+		WithAccountNumber(accountNumber).WithGasAdjustment(10).WithFees("").WithGasPrices("").WithGas(0).WithUnordered(true)
+	c.TxFactory = &factory
+	return &factory, nil
+}
+
+func (icc *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
+	factory, err := icc.getFactory()
+	if err != nil {
+		return nil, err
+	}
+
+	var finalMsg sdk.Msg = msg
+	if !icc.ApiAccount.IsSignerTheMainAccount() {
+		granteeAddress, err := icc.ApiAccount.SignerAddress()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get signer address: %w", err)
+		}
+
+		execMsg := authztypes.NewMsgExec(granteeAddress, []sdk.Msg{msg})
+		finalMsg = &execMsg
+		logging.Info("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", sdk.MsgTypeURL(msg))
+	}
+
+	unsignedTx, err := factory.BuildUnsignedTx(finalMsg)
+	if err != nil {
+		return nil, err
+	}
+	txBytes, err := icc.getSignedBytes(ctx, unsignedTx, factory)
+	if err != nil {
+		return nil, err
+	}
+	return icc.Client.Context().BroadcastTxSync(txBytes)
+}
+
+// TODO: This is likely not as guaranteed to be unique as we want. Will fix
+func getTimestamp() time.Time {
+	// Use the current time in seconds since epoch
+	return time.Now().Add(time.Second * 60) // Adding 60 seconds to ensure the transaction is valid for a while
+}
+
+func (icc *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, error) {
+	// Gas is not charged, but without a high gas limit the transactions fail
+	unsignedTx.SetGasLimit(1000000000)
+	unsignedTx.SetFeeAmount(sdk.Coins{})
+	timestamp := getTimestamp()
+	unsignedTx.SetUnordered(true)
+	unsignedTx.SetTimeoutTimestamp(timestamp)
+	name := icc.ApiAccount.SignerAccount.Name
+	logging.Debug("Signing transaction", types.Messages, "name", name)
+	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
+	if err != nil {
+		logging.Error("Failed to sign transaction", types.Messages, "error", err)
+		return nil, err
+	}
+	txBytes, err := icc.Client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
+	if err != nil {
+		logging.Error("Failed to encode transaction", types.Messages, "error", err)
+		return nil, err
+	}
+	return txBytes, nil
+}
+
+func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
+	// Now that we don't need the sequence, we only need to create the factory if it doesn't exist
+	if c.TxFactory != nil {
+		return c.TxFactory, nil
+	}
+	address, err := c.ApiAccount.SignerAddress()
+	if err != nil {
+		logging.Error("Failed to get account address", types.Messages, "error", err)
+		return nil, err
+	}
+	accountNumber, _, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
+	if err != nil {
+		logging.Error("Failed to get account number and sequence", types.Messages, "error", err)
+		return nil, err
+	}
+	factory := c.Client.TxFactory.
+		WithAccountNumber(accountNumber).
+		WithGasAdjustment(10).
+		WithFees("").
+		WithGasPrices("").
+		WithGas(0).
+		WithUnordered(true).
+		WithKeybase(*c.GetKeyring())
+	c.TxFactory = &factory
+	return &factory, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
