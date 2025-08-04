@@ -55,7 +55,7 @@ func (s *Server) postRequestThresholdSignature(c echo.Context) error {
 	}
 
 	msg := &types.MsgRequestThresholdSignature{
-		Creator:        s.recorder.GetAddress(),
+		Creator:        s.recorder.GetAccountAddress(),
 		CurrentEpochId: body.CurrentEpochId.ToUint64(),
 		ChainId:        body.ChainId,
 		RequestId:      body.RequestId,

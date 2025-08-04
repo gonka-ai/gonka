@@ -66,7 +66,7 @@ func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRes
 	}
 
 	logging.Info(verifierLogTag+"Processing DKG verifying phase started", inferenceTypes.BLS,
-		"epochID", epochID, "deadlineBlock", deadlineBlock, "verifier", bm.cosmosClient.GetAddress())
+		"epochID", epochID, "deadlineBlock", deadlineBlock, "verifier", bm.cosmosClient.GetAccountAddress())
 
 	// Extract epoch data from event instead of querying chain
 	epochData, err := bm.extractEpochDataFromVerifyingEvent(event)
@@ -114,7 +114,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 	}
 
 	// Find our participant info
-	myAddress := bm.cosmosClient.GetAddress()
+	myAddress := bm.cosmosClient.GetAccountAddress()
 	var myParticipantIndex int = -1
 	var myParticipant *types.BLSParticipantInfo
 
@@ -211,29 +211,10 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		for slotOffset := 0; slotOffset < numSlots; slotOffset++ {
 			slotIndex := verificationResult.SlotRange[0] + uint32(slotOffset)
 
-			// Check if we have encrypted share for this slot
-			if slotOffset >= len(participantShares.EncryptedShares) {
-				logging.Warn(verifierLogTag+"Slot offset out of bounds", inferenceTypes.BLS,
-					"dealerIndex", dealerIndex,
-					"slotOffset", slotOffset,
-					"availableShares", len(participantShares.EncryptedShares))
-				allSlotsValid = false
-				break
-			}
-
-			encryptedShare := participantShares.EncryptedShares[slotOffset]
-			if len(encryptedShare) == 0 {
-				logging.Debug(verifierLogTag+"Empty encrypted share", inferenceTypes.BLS,
-					"dealerIndex", dealerIndex,
-					"slotIndex", slotIndex)
-				allSlotsValid = false
-				break
-			}
-
-			// Decrypt the share
-			decryptedShare, err := bm.decryptShare(encryptedShare)
+			// Try to decrypt share for this slot (may have multiple ciphertexts due to warm keys)
+			decryptedShare, err := bm.decryptShareForSlot(participantShares.EncryptedShares, slotOffset, numSlots, dealerIndex, slotIndex)
 			if err != nil {
-				logging.Warn(verifierLogTag+"Failed to decrypt share", inferenceTypes.BLS,
+				logging.Warn(verifierLogTag+"Failed to decrypt any ciphertext for slot", inferenceTypes.BLS,
 					"dealerIndex", dealerIndex,
 					"slotIndex", slotIndex,
 					"error", err)
@@ -312,6 +293,54 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		"processedSlots", len(verificationResult.AggregatedShares))
 
 	return nil
+}
+
+// decryptShareForSlot tries to decrypt a share for a specific slot, handling warm keys
+// For warm keys, multiple ciphertexts per slot are stored consecutively in the encrypted_shares array
+func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, numSlots, dealerIndex int, slotIndex uint32) (*fr.Element, error) {
+	totalCiphertexts := len(encryptedShares)
+	if totalCiphertexts == 0 {
+		return nil, fmt.Errorf("no encrypted shares available")
+	}
+
+	// Get our current public key for logging
+	ourPubKey := bm.cosmosClient.GetAccountPubKey()
+
+	// Calculate keys per slot: totalCiphertexts = numSlots * keysPerSlot
+	if totalCiphertexts%numSlots != 0 {
+		return nil, fmt.Errorf("invalid encrypted shares array length: %d ciphertexts for %d slots (not evenly divisible)", totalCiphertexts, numSlots)
+	}
+
+	keysPerSlot := totalCiphertexts / numSlots
+
+	// Calculate the range of ciphertexts for this specific slot
+	startIndex := slotOffset * keysPerSlot
+	endIndex := startIndex + keysPerSlot
+
+	if endIndex > totalCiphertexts {
+		return nil, fmt.Errorf("calculated ciphertext range [%d:%d] exceeds array bounds %d", startIndex, endIndex, totalCiphertexts)
+	}
+
+	// Try each ciphertext for this slot until one decrypts successfully
+	for cipherIndex := startIndex; cipherIndex < endIndex; cipherIndex++ {
+		encryptedShare := encryptedShares[cipherIndex]
+		if len(encryptedShare) == 0 {
+			continue // Skip empty ciphertexts
+		}
+
+		// Try to decrypt this ciphertext
+		decryptedShare, err := bm.decryptShare(encryptedShare)
+		if err != nil {
+			// This ciphertext didn't decrypt with our key, try the next one
+			continue
+		}
+
+		// Successfully decrypted!
+		return decryptedShare, nil
+	}
+
+	// If we get here, none of the ciphertexts for this slot could be decrypted
+	return nil, fmt.Errorf("failed to decrypt any of %d ciphertexts for slot %d with our key %s", keysPerSlot, slotIndex, ourPubKey)
 }
 
 // decryptShare decrypts an encrypted share using the cosmos-sdk keyring Decrypt API
@@ -397,7 +426,7 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 
 	// Submit the verification vector using the dealer validity we already determined
 	msg := &types.MsgSubmitVerificationVector{
-		Creator:        bm.cosmosClient.GetAddress(),
+		Creator:        bm.cosmosClient.GetAccountAddress(),
 		EpochId:        epochID,
 		DealerValidity: verificationResult.DealerValidity,
 	}

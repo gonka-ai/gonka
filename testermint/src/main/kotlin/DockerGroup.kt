@@ -264,10 +264,21 @@ fun createDockerGroup(
 
 fun getRepoRoot(): String {
     val currentDir = Path.of("").toAbsolutePath()
-    return generateSequence(currentDir) { it.parent }
-        .firstOrNull { it.fileName.toString() == "gonka" }
-        ?.toString()
-        ?: throw IllegalStateException("Repository root 'gonka' not found")
+    Logger.info("Searching for repository root 'gonka' starting from: {}", currentDir)
+    
+    val repoRoot = generateSequence(currentDir) { it.parent }
+        .onEach { path -> 
+            Logger.debug("Checking directory: {} (fileName: {})", path, path.fileName?.toString() ?: "null")
+        }
+        .firstOrNull { it.fileName.toString() == "inference-ignite" }
+    
+    return if (repoRoot != null) {
+        Logger.info("Found repository root: {}", repoRoot)
+        repoRoot.toString()
+    } else {
+        Logger.error("Repository root 'gonka' not found. Searched from: {}", currentDir)
+        throw IllegalStateException("Repository root 'gonka' not found")
+    }
 }
 
 fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentCluster: LocalCluster?): List<DockerGroup> {

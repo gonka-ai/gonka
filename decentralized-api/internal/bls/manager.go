@@ -1,6 +1,7 @@
 package bls
 
 import (
+	"context"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
@@ -17,6 +18,7 @@ const (
 // BlsManager handles all BLS operations including DKG dealing, verification, and group key validation
 type BlsManager struct {
 	cosmosClient cosmosclient.InferenceCosmosClient
+	ctx          context.Context // Context for chain queries
 
 	// Verification state management
 	cache *VerificationCache // Cache for multiple epochs
@@ -122,6 +124,7 @@ type SlotAssignment struct {
 func NewBlsManager(cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager {
 	return &BlsManager{
 		cosmosClient: cosmosClient,
+		ctx:          context.Background(), // Use background context for chain queries
 		cache:        NewVerificationCache(),
 	}
 }
