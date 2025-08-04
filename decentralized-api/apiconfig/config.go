@@ -13,7 +13,6 @@ type Config struct {
 	KeyConfig          KeyConfig             `koanf:"key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
-	GenesisAppHashHex  string                `koanf:"genesis_app_hash"`
 	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 }
 
@@ -98,6 +97,7 @@ type ApiConfig struct {
 	AdminServerPort       int    `koanf:"admin_server_port"`
 	MlGrpcServerPort      int    `koanf:"ml_grpc_server_port"`
 	TestMode              bool   `koanf:"test_mode"`
+	GenesisAppHashHex     string `koanf:"genesis_app_hash_hex"`
 }
 
 type ChainNodeConfig struct {

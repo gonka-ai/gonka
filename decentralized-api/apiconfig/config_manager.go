@@ -130,7 +130,7 @@ func (cm *ConfigManager) GetHeight() int64 {
 }
 
 func (cm *ConfigManager) GetGenesisAppHash() string {
-	return cm.currentConfig.GenesisAppHashHex
+	return cm.currentConfig.Api.GenesisAppHashHex
 }
 
 func (cm *ConfigManager) SetPreviousSeed(seed SeedInfo) error {

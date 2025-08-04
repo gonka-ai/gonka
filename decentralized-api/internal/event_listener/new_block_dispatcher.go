@@ -103,15 +103,16 @@ func NewOnNewBlockDispatcher(
 	configManager *apiconfig.ConfigManager,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
-		nodeBroker:           nodeBroker,
-		nodePocOrchestrator:  nodePocOrchestrator,
-		queryClient:          queryClient,
-		phaseTracker:         phaseTracker,
-		reconciliationConfig: reconciliationConfig,
-		getStatusFunc:        getStatusFunc,
-		setHeightFunc:        setHeightFunc,
-		randomSeedManager:    randomSeedManager,
-		configManager:        configManager,
+		nodeBroker:             nodeBroker,
+		nodePocOrchestrator:    nodePocOrchestrator,
+		queryClient:            queryClient,
+		lastVerifiedAppHashHex: configManager.GetGenesisAppHash(),
+		phaseTracker:           phaseTracker,
+		reconciliationConfig:   reconciliationConfig,
+		getStatusFunc:          getStatusFunc,
+		setHeightFunc:          setHeightFunc,
+		randomSeedManager:      randomSeedManager,
+		configManager:          configManager,
 	}
 }
 
@@ -187,38 +188,6 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 	d.verifyParticipantsChain(ctx, networkInfo.BlockHeight)
 
-	if d.lastVerifiedAppHashHex != "" && d.configManager.GetHeight() != networkInfo.BlockHeight-1 {
-		rpcClient, err := cosmosclient.NewRpcClient(d.configManager.GetChainNodeConfig().Url)
-		if err != nil {
-			logging.Warn("Failed to create rpc client", types.System, "error", err)
-		}
-
-		currEpoch, err := d.queryClient.GetCurrentEpoch(ctx, &types.QueryGetCurrentEpochRequest{})
-		if err != nil {
-			logging.Warn("Failed to get current epoch", types.Participants, "error", err)
-		}
-
-		logging.Info("Current epoch resolved.", types.Participants, "epoch", currEpoch.Epoch)
-
-		data, err := utils.QueryActiveParticipants(rpcClient, currEpoch.Epoch)(ctx, "current")
-		if err != nil {
-
-		}
-
-		err = externalutils.VerifyParticipants(
-			ctx,
-			d.lastVerifiedAppHashHex,
-			func(ctx context.Context, epoch string) (*contracts.ActiveParticipantWithProof, error) {
-				return data, nil
-			},
-			utils.QueryValidators(rpcClient),
-			utils.QueryBlock(rpcClient))
-		if err != nil {
-			panic(err)
-		}
-		d.lastVerifiedAppHashHex = data.Block.AppHash.String()
-	}
-
 	// Let's check in prod how often this happens
 	if networkInfo.BlockHeight != blockInfo.Height {
 		logging.Warn("Block height mismatch between event and network query", types.Stages,
@@ -271,7 +240,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 }
 
 func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curHeight int64) {
-	if d.lastVerifiedAppHashHex != "" && d.configManager.GetHeight() != curHeight-1 {
+	logging.Info("verify participants", types.System,
+		"known_height", d.configManager.GetHeight(), "current_height", curHeight, "last_verified_app_hash", d.lastVerifiedAppHashHex)
+
+	//if d.lastVerifiedAppHashHex != "" && d.configManager.GetHeight() != curHeight-1 {
+	if d.lastVerifiedAppHashHex != "" {
+
+		logging.Info("verify participants: start", types.System)
+
 		rpcClient, err := cosmosclient.NewRpcClient(d.configManager.GetChainNodeConfig().Url)
 		if err != nil {
 			logging.Error("Failed to create rpc client", types.System, "error", err)
@@ -304,6 +280,7 @@ func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curH
 			panic(err)
 		}
 		d.lastVerifiedAppHashHex = data.Block.AppHash.String()
+		logging.Info("verify participants successfully", types.Stages, "new_app_hash", d.lastVerifiedAppHashHex)
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	comettypes "github.com/cometbft/cometbft/types"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/gonka-ai/gonka-utils/go/contracts"
 	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"github.com/productscience/inference/x/inference/types"
@@ -48,9 +50,14 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) external
 			"epoch", epochId,
 			"value_bytes", len(result.Response.Value))
 
-		var activeParticipants contracts.ActiveParticipants
-		if err := json.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-			logging.Error("Failed to unmarshal active participant. Req 1", types.Participants, "error", err)
+		interfaceRegistry := codectypes.NewInterfaceRegistry()
+		types.RegisterInterfaces(interfaceRegistry)
+
+		cdc := codec.NewProtoCodec(interfaceRegistry)
+
+		var activeParticipants types.ActiveParticipants
+		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
+			logging.Error("Failed to unmarshal active participants. Req 1", types.Participants, "error", err)
 			return nil, err
 		}
 
@@ -90,8 +97,30 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) external
 
 		activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
 		addresses := make([]string, len(activeParticipants.Participants))
+
+		finalParticipants := contracts.ActiveParticipants{
+			Participants:         make([]*contracts.ActiveParticipant, len(activeParticipants.Participants)),
+			EpochGroupId:         activeParticipants.EpochGroupId,
+			PocStartBlockHeight:  activeParticipants.PocStartBlockHeight,
+			EffectiveBlockHeight: activeParticipants.EffectiveBlockHeight,
+			CreatedAtBlockHeight: activeParticipants.CreatedAtBlockHeight,
+			EpochId:              activeParticipants.EpochId,
+		}
+
 		for i, participant := range activeParticipants.Participants {
 			addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+			finalParticipants.Participants[i] = &contracts.ActiveParticipant{
+				Index:        participant.Index,
+				ValidatorKey: participant.ValidatorKey,
+				Weight:       participant.Weight,
+				InferenceUrl: participant.InferenceUrl,
+				Models:       participant.Models,
+				Seed: &contracts.RandomSeed{
+					Participant: participant.Seed.Participant,
+					BlockHeight: participant.Seed.BlockHeight,
+					Signature:   participant.Seed.Signature,
+				},
+			}
 			if err != nil {
 				logging.Error("Failed to convert public key to address", types.Participants, "error", err)
 			}
@@ -103,7 +132,7 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) external
 		}
 
 		return &contracts.ActiveParticipantWithProof{
-			ActiveParticipants:      activeParticipants,
+			ActiveParticipants:      finalParticipants,
 			Addresses:               addresses,
 			ActiveParticipantsBytes: activeParticipantsBytes,
 			ProofOps:                result.Response.ProofOps,
