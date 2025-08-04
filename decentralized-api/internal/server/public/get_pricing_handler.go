@@ -187,7 +187,7 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 // getDynamicPricingData queries dynamic pricing information from the chain
 func (s *Server) getDynamicPricingData() (bool, map[string]uint64, error) {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	// Get all model prices directly from the chain's KV storage
 	pricesResponse, err := queryClient.GetAllModelPerTokenPrices(context, &types.QueryGetAllModelPerTokenPricesRequest{})

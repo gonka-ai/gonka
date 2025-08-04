@@ -2,21 +2,23 @@ package tx_manager
 
 import (
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/server"
 	"decentralized-api/logging"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
-	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"time"
 
@@ -38,7 +40,8 @@ type TxManager interface {
 	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
 	GetClientContext() client.Context
-	SignBytes(seed []byte) ([]byte, error)
+	GetKeyring() *keyring.Keyring
+	GetApiAccount() apiconfig.ApiAccount
 	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 }
@@ -46,7 +49,7 @@ type TxManager interface {
 type manager struct {
 	ctx              context.Context
 	client           *cosmosclient.Client
-	account          *cosmosaccount.Account
+	apiAccount       *apiconfig.ApiAccount
 	txFactory        *tx.Factory
 	accountRetriever client.AccountRetriever
 	address          string
@@ -58,7 +61,7 @@ type manager struct {
 func StartTxManager(
 	ctx context.Context,
 	client *cosmosclient.Client,
-	account *cosmosaccount.Account,
+	account *apiconfig.ApiAccount,
 	defaultTimeout time.Duration,
 	natsConnection *nats.Conn,
 	address string) (*manager, error) {
@@ -73,7 +76,7 @@ func StartTxManager(
 		ctx:              ctx,
 		client:           client,
 		address:          address,
-		account:          account,
+		apiAccount:       account,
 		accountRetriever: authtypes.AccountRetriever{},
 		defaultTimeout:   defaultTimeout,
 		natsConnection:   natsConnection,
@@ -92,7 +95,7 @@ func StartTxManager(
 		ctx:              ctx,
 		client:           client,
 		address:          address,
-		account:          account,
+		apiAccount:       account,
 		accountRetriever: authtypes.AccountRetriever{},
 		defaultTimeout:   defaultTimeout,
 		natsConnection:   natsConnection,
@@ -110,6 +113,10 @@ type txInfo struct {
 	RawTx   []byte
 	TxHash  string
 	Timeout time.Time
+}
+
+func (m *manager) GetApiAccount() apiconfig.ApiAccount {
+	return *m.apiAccount
 }
 
 func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
@@ -162,13 +169,8 @@ func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultT
 	return result, nil
 }
 
-func (m *manager) SignBytes(seed []byte) ([]byte, error) {
-	name := m.account.Name
-	bytes, _, err := m.client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
-	if err != nil {
-		return nil, err
-	}
-	return bytes, nil
+func (m *manager) GetKeyring() *keyring.Keyring {
+	return &m.client.AccountRegistry.Keyring
 }
 
 func (m *manager) putOnRetry(
@@ -389,7 +391,20 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	unsignedTx, err := factory.BuildUnsignedTx(rawTx)
+
+	var finalMsg sdk.Msg = rawTx
+	if !m.apiAccount.IsSignerTheMainAccount() {
+		granteeAddress, err := m.apiAccount.SignerAddress()
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("failed to get signer address: %w", err)
+		}
+
+		execMsg := authztypes.NewMsgExec(granteeAddress, []sdk.Msg{rawTx})
+		finalMsg = &execMsg
+		logging.Info("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", sdk.MsgTypeURL(rawTx))
+	}
+
+	unsignedTx, err := factory.BuildUnsignedTx(finalMsg)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -423,7 +438,7 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 	if m.txFactory != nil {
 		return m.txFactory, nil
 	}
-	address, err := m.account.Record.GetAddress()
+	address, err := m.apiAccount.SignerAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "tx_id", id, "error", err)
 		return nil, err
@@ -436,7 +451,11 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 	factory := m.client.TxFactory.
 		WithAccountNumber(accountNumber).
 		WithGasAdjustment(10).
-		WithFees("").WithGasPrices("").WithGas(0).WithUnordered(true)
+		WithFees("").
+		WithGasPrices("").
+		WithGas(0).
+		WithUnordered(true).
+		WithKeybase(*m.GetKeyring())
 	m.txFactory = &factory
 	return &factory, nil
 }
@@ -449,7 +468,7 @@ func (m *manager) getSignedBytes(ctx context.Context, id string, unsignedTx clie
 	unsignedTx.SetFeeAmount(sdk.Coins{})
 	unsignedTx.SetUnordered(true)
 	unsignedTx.SetTimeoutTimestamp(timestamp)
-	name := m.account.Name
+	name := m.apiAccount.SignerAccount.Name
 	logging.Debug("Signing transaction", types.Messages, "tx_id", id, "timeout", timestamp.String(), "name", name)
 
 	err := tx.Sign(ctx, *factory, name, unsignedTx, false)

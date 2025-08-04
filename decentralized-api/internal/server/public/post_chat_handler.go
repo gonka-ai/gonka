@@ -513,7 +513,7 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 	return nil
 }
 
-func (s *Server) validateTimestampNonce(err error, request *ChatRequest) error {
+func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 	status, err := s.recorder.Status(context.Background())
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
@@ -595,8 +595,6 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 		return "", err
 	}
 	accountSigner := &cmd.AccountSigner{
-		Addr:    address,
-		Context: s.recorder.GetClientContext(),
 		Addr:    signerAddress,
 		Keyring: s.recorder.GetKeyring(),
 	}
