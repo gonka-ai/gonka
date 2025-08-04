@@ -177,9 +177,9 @@ message BandwidthLimitsParams {
   // estimated_limits_per_block_kb is the maximum KB per block that can be consumed
   uint64 estimated_limits_per_block_kb = 1;
 
-  // kb_per_input_token is the estimated KB per input token (using string for decimal precision)
-  string kb_per_input_token = 2 [(cosmos_proto.scalar) = "cosmos.Dec"];
+  // kb_per_input_token is the estimated KB per input token
+  Decimal kb_per_input_token = 2;
 
-  // kb_per_output_token is the estimated KB per output token (using string for decimal precision)
-  string kb_per_output_token = 3 [(cosmos_proto.scalar) = "cosmos.Dec"];
+  // kb_per_output_token is the estimated KB per output token
+  Decimal kb_per_output_token = 3;
 }

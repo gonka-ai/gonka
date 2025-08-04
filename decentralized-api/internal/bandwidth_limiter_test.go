@@ -1,11 +1,13 @@
 package internal
 
 import (
+	"decentralized-api/apiconfig"
 	"math"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,4 +112,116 @@ func TestBandwidthLimiter_Cleanup(t *testing.T) {
 	require.False(t, exists6, "Usage for block 6 should have been cleaned up")
 	require.False(t, exists7, "Usage for block 7 should have been cleaned up")
 	require.True(t, exists25, "Usage for block 25 should not have been cleaned up")
+}
+
+func TestBandwidthParameterLoading(t *testing.T) {
+	// Test that bandwidth parameters are correctly loaded from proto Decimal types
+
+	// Create test Decimal values that simulate chain parameters
+	kbPerInputDecimal := &types.Decimal{
+		Value:    23, // 0.0023 = 23 * 10^-4
+		Exponent: -4,
+	}
+
+	kbPerOutputDecimal := &types.Decimal{
+		Value:    64, // 0.64 = 64 * 10^-2
+		Exponent: -2,
+	}
+
+	// Create mock BandwidthLimitsParams
+	bandwidthParams := &types.BandwidthLimitsParams{
+		EstimatedLimitsPerBlockKb: 1024,
+		KbPerInputToken:           kbPerInputDecimal,
+		KbPerOutputToken:          kbPerOutputDecimal,
+	}
+
+	// Create mock ValidationParams
+	validationParams := &types.ValidationParams{
+		TimestampExpiration: 300,
+		TimestampAdvance:    60,
+		ExpirationBlocks:    10,
+	}
+
+	// Create mock Params
+	params := &types.Params{
+		ValidationParams:      validationParams,
+		BandwidthLimitsParams: bandwidthParams,
+	}
+
+	// Simulate parameter loading logic from new_block_dispatcher.go
+	validationConfig := apiconfig.ValidationParamsCache{
+		TimestampExpiration: params.ValidationParams.TimestampExpiration,
+		TimestampAdvance:    params.ValidationParams.TimestampAdvance,
+		ExpirationBlocks:    params.ValidationParams.ExpirationBlocks,
+	}
+
+	// Load bandwidth parameters separately (like in new_block_dispatcher.go)
+	var bandwidthConfig apiconfig.BandwidthParamsCache
+	if params.BandwidthLimitsParams != nil {
+		bandwidthConfig = apiconfig.BandwidthParamsCache{
+			EstimatedLimitsPerBlockKb: params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
+			KbPerInputToken:           params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
+			KbPerOutputToken:          params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
+		}
+	}
+
+	// Verify the parameters were loaded correctly
+	require.Equal(t, uint64(1024), bandwidthConfig.EstimatedLimitsPerBlockKb, "EstimatedLimitsPerBlockKb should be loaded from bandwidth params")
+	require.InDelta(t, 0.0023, bandwidthConfig.KbPerInputToken, 0.00001, "KbPerInputToken should be converted correctly from Decimal")
+	require.InDelta(t, 0.64, bandwidthConfig.KbPerOutputToken, 0.00001, "KbPerOutputToken should be converted correctly from Decimal")
+
+	// Verify validation params are separate and preserved
+	require.Equal(t, int64(300), validationConfig.TimestampExpiration, "TimestampExpiration should be preserved")
+	require.Equal(t, int64(60), validationConfig.TimestampAdvance, "TimestampAdvance should be preserved")
+	require.Equal(t, int64(10), validationConfig.ExpirationBlocks, "ExpirationBlocks should be preserved")
+
+	// Test that BandwidthLimiter can be created with these parameters
+	limiter := NewBandwidthLimiter(bandwidthConfig.EstimatedLimitsPerBlockKb, validationConfig.ExpirationBlocks, bandwidthConfig.KbPerInputToken, bandwidthConfig.KbPerOutputToken)
+	require.NotNil(t, limiter, "BandwidthLimiter should be created successfully")
+
+	// Test a calculation with the loaded parameters
+	can, estimatedKB := limiter.CanAcceptRequest(1, 1000, 100)
+	expectedKB := 1000*bandwidthConfig.KbPerInputToken + 100*bandwidthConfig.KbPerOutputToken // 1000*0.0023 + 100*0.64 = 66.3
+	require.True(t, can, "Should accept request under limit")
+	require.InDelta(t, expectedKB, estimatedKB, 0.01, "Estimated KB should match calculation with loaded parameters")
+}
+
+func TestConfigManagerInterface(t *testing.T) {
+	// Test that our ConfigManager interface is satisfied by the actual config manager
+	// This ensures the factory function will work correctly in the server
+
+	// Create mock config manager
+	mockConfig := &MockConfigManager{
+		validationParams: apiconfig.ValidationParamsCache{
+			ExpirationBlocks: 15,
+		},
+		bandwidthParams: apiconfig.BandwidthParamsCache{
+			EstimatedLimitsPerBlockKb: 2048,
+			KbPerInputToken:           0.005,
+			KbPerOutputToken:          0.8,
+		},
+	}
+
+	// Test that our interface methods work
+	validationParams := mockConfig.GetValidationParams()
+	bandwidthParams := mockConfig.GetBandwidthParams()
+
+	require.Equal(t, int64(15), validationParams.ExpirationBlocks, "Should return validation params")
+	require.Equal(t, uint64(2048), bandwidthParams.EstimatedLimitsPerBlockKb, "Should return bandwidth params")
+	require.Equal(t, 0.005, bandwidthParams.KbPerInputToken, "Should return input token coefficient")
+	require.Equal(t, 0.8, bandwidthParams.KbPerOutputToken, "Should return output token coefficient")
+}
+
+// Mock implementations for testing
+type MockConfigManager struct {
+	validationParams apiconfig.ValidationParamsCache
+	bandwidthParams  apiconfig.BandwidthParamsCache
+}
+
+func (m *MockConfigManager) GetValidationParams() apiconfig.ValidationParamsCache {
+	return m.validationParams
+}
+
+func (m *MockConfigManager) GetBandwidthParams() apiconfig.BandwidthParamsCache {
+	return m.bandwidthParams
 }

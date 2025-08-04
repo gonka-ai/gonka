@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"sync"
@@ -148,4 +149,49 @@ func CalculateWeightBasedBandwidthLimit(recorder cosmosclient.CosmosMessageClien
 		"adjustedLimit", adjustedLimit)
 
 	return adjustedLimit, nil
+}
+
+// NewBandwidthLimiterFromConfig creates a BandwidthLimiter with parameters loaded from config manager
+// and applies weight-based allocation based on chain state
+func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosclient.CosmosMessageClient) *BandwidthLimiter {
+	validationParams := configManager.GetValidationParams()
+	bandwidthParams := configManager.GetBandwidthParams()
+
+	requestLifespanBlocks := validationParams.ExpirationBlocks
+	if requestLifespanBlocks == 0 {
+		requestLifespanBlocks = 10 // Default to 10 blocks
+	}
+
+	limitsPerBlockKB := bandwidthParams.EstimatedLimitsPerBlockKb
+	if limitsPerBlockKB == 0 {
+		limitsPerBlockKB = 1024 // Default to 1MB if not set
+	}
+	kbPerInputToken := bandwidthParams.KbPerInputToken
+	if kbPerInputToken == 0 {
+		kbPerInputToken = 0.0023 // Default from README.md analysis
+	}
+	kbPerOutputToken := bandwidthParams.KbPerOutputToken
+	if kbPerOutputToken == 0 {
+		kbPerOutputToken = 0.64 // Default from README.md analysis
+	}
+
+	logging.Info("Using bandwidth parameters for limiter", types.Config,
+		"limitsPerBlockKB", limitsPerBlockKB,
+		"requestLifespanBlocks", requestLifespanBlocks,
+		"kbPerInputToken", kbPerInputToken,
+		"kbPerOutputToken", kbPerOutputToken)
+
+	adjustedLimitsPerBlockKB, err := CalculateWeightBasedBandwidthLimit(recorder, limitsPerBlockKB)
+	if err != nil {
+		logging.Warn("Failed to calculate weight-based bandwidth limit, using default", types.Config, "error", err)
+		adjustedLimitsPerBlockKB = limitsPerBlockKB
+	}
+
+	return NewBandwidthLimiter(adjustedLimitsPerBlockKB, requestLifespanBlocks, kbPerInputToken, kbPerOutputToken)
+}
+
+// ConfigManager interface for bandwidth limiter configuration
+type ConfigManager interface {
+	GetValidationParams() apiconfig.ValidationParamsCache
+	GetBandwidthParams() apiconfig.BandwidthParamsCache
 }

@@ -6,12 +6,10 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal"
 	"decentralized-api/internal/server/middleware"
-	"decentralized-api/logging"
 	"decentralized-api/training"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/x/inference/types"
 )
 
 type Server struct {
@@ -46,31 +44,7 @@ func NewServer(
 		blockQueue:       blockQueue,
 	}
 
-	validationParams := configManager.GetValidationParams()
-	limitsPerBlockKB := validationParams.EstimatedLimitsPerBlockKb
-	if limitsPerBlockKB == 0 {
-		limitsPerBlockKB = 1024 // Default to 1MB if not set
-	}
-	requestLifespanBlocks := validationParams.ExpirationBlocks
-	if requestLifespanBlocks == 0 {
-		requestLifespanBlocks = 10 // Default to 10 blocks
-	}
-	kbPerInputToken := validationParams.KbPerInputToken
-	if kbPerInputToken == 0 {
-		kbPerInputToken = 0.0023 // Default from README.md analysis
-	}
-	kbPerOutputToken := validationParams.KbPerOutputToken
-	if kbPerOutputToken == 0 {
-		kbPerOutputToken = 0.64 // Default from README.md analysis
-	}
-
-	adjustedLimitsPerBlockKB, err := internal.CalculateWeightBasedBandwidthLimit(recorder, limitsPerBlockKB)
-	if err != nil {
-		logging.Warn("Failed to calculate weight-based bandwidth limit, using default", types.Config, "error", err)
-		adjustedLimitsPerBlockKB = limitsPerBlockKB
-	}
-
-	s.bandwidthLimiter = internal.NewBandwidthLimiter(adjustedLimitsPerBlockKB, requestLifespanBlocks, kbPerInputToken, kbPerOutputToken)
+	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder)
 
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/v1/")

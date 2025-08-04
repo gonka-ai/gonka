@@ -8436,14 +8436,14 @@ func (x *fastReflection_BandwidthLimitsParams) Range(f func(protoreflect.FieldDe
 			return
 		}
 	}
-	if x.KbPerInputToken != "" {
-		value := protoreflect.ValueOfString(x.KbPerInputToken)
+	if x.KbPerInputToken != nil {
+		value := protoreflect.ValueOfMessage(x.KbPerInputToken.ProtoReflect())
 		if !f(fd_BandwidthLimitsParams_kb_per_input_token, value) {
 			return
 		}
 	}
-	if x.KbPerOutputToken != "" {
-		value := protoreflect.ValueOfString(x.KbPerOutputToken)
+	if x.KbPerOutputToken != nil {
+		value := protoreflect.ValueOfMessage(x.KbPerOutputToken.ProtoReflect())
 		if !f(fd_BandwidthLimitsParams_kb_per_output_token, value) {
 			return
 		}
@@ -8466,9 +8466,9 @@ func (x *fastReflection_BandwidthLimitsParams) Has(fd protoreflect.FieldDescript
 	case "inference.inference.BandwidthLimitsParams.estimated_limits_per_block_kb":
 		return x.EstimatedLimitsPerBlockKb != uint64(0)
 	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
-		return x.KbPerInputToken != ""
+		return x.KbPerInputToken != nil
 	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
-		return x.KbPerOutputToken != ""
+		return x.KbPerOutputToken != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BandwidthLimitsParams"))
@@ -8488,9 +8488,9 @@ func (x *fastReflection_BandwidthLimitsParams) Clear(fd protoreflect.FieldDescri
 	case "inference.inference.BandwidthLimitsParams.estimated_limits_per_block_kb":
 		x.EstimatedLimitsPerBlockKb = uint64(0)
 	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
-		x.KbPerInputToken = ""
+		x.KbPerInputToken = nil
 	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
-		x.KbPerOutputToken = ""
+		x.KbPerOutputToken = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BandwidthLimitsParams"))
@@ -8512,10 +8512,10 @@ func (x *fastReflection_BandwidthLimitsParams) Get(descriptor protoreflect.Field
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
 		value := x.KbPerInputToken
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
 		value := x.KbPerOutputToken
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BandwidthLimitsParams"))
@@ -8539,9 +8539,9 @@ func (x *fastReflection_BandwidthLimitsParams) Set(fd protoreflect.FieldDescript
 	case "inference.inference.BandwidthLimitsParams.estimated_limits_per_block_kb":
 		x.EstimatedLimitsPerBlockKb = value.Uint()
 	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
-		x.KbPerInputToken = value.Interface().(string)
+		x.KbPerInputToken = value.Message().Interface().(*Decimal)
 	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
-		x.KbPerOutputToken = value.Interface().(string)
+		x.KbPerOutputToken = value.Message().Interface().(*Decimal)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BandwidthLimitsParams"))
@@ -8562,12 +8562,18 @@ func (x *fastReflection_BandwidthLimitsParams) Set(fd protoreflect.FieldDescript
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_BandwidthLimitsParams) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
+		if x.KbPerInputToken == nil {
+			x.KbPerInputToken = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.KbPerInputToken.ProtoReflect())
+	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
+		if x.KbPerOutputToken == nil {
+			x.KbPerOutputToken = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.KbPerOutputToken.ProtoReflect())
 	case "inference.inference.BandwidthLimitsParams.estimated_limits_per_block_kb":
 		panic(fmt.Errorf("field estimated_limits_per_block_kb of message inference.inference.BandwidthLimitsParams is not mutable"))
-	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
-		panic(fmt.Errorf("field kb_per_input_token of message inference.inference.BandwidthLimitsParams is not mutable"))
-	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
-		panic(fmt.Errorf("field kb_per_output_token of message inference.inference.BandwidthLimitsParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BandwidthLimitsParams"))
@@ -8584,9 +8590,11 @@ func (x *fastReflection_BandwidthLimitsParams) NewField(fd protoreflect.FieldDes
 	case "inference.inference.BandwidthLimitsParams.estimated_limits_per_block_kb":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.BandwidthLimitsParams.kb_per_input_token":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.BandwidthLimitsParams.kb_per_output_token":
-		return protoreflect.ValueOfString("")
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BandwidthLimitsParams"))
@@ -8659,12 +8667,12 @@ func (x *fastReflection_BandwidthLimitsParams) ProtoMethods() *protoiface.Method
 		if x.EstimatedLimitsPerBlockKb != 0 {
 			n += 1 + runtime.Sov(uint64(x.EstimatedLimitsPerBlockKb))
 		}
-		l = len(x.KbPerInputToken)
-		if l > 0 {
+		if x.KbPerInputToken != nil {
+			l = options.Size(x.KbPerInputToken)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.KbPerOutputToken)
-		if l > 0 {
+		if x.KbPerOutputToken != nil {
+			l = options.Size(x.KbPerOutputToken)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
@@ -8696,17 +8704,31 @@ func (x *fastReflection_BandwidthLimitsParams) ProtoMethods() *protoiface.Method
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.KbPerOutputToken) > 0 {
-			i -= len(x.KbPerOutputToken)
-			copy(dAtA[i:], x.KbPerOutputToken)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.KbPerOutputToken)))
+		if x.KbPerOutputToken != nil {
+			encoded, err := options.Marshal(x.KbPerOutputToken)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0x1a
 		}
-		if len(x.KbPerInputToken) > 0 {
-			i -= len(x.KbPerInputToken)
-			copy(dAtA[i:], x.KbPerInputToken)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.KbPerInputToken)))
+		if x.KbPerInputToken != nil {
+			encoded, err := options.Marshal(x.KbPerInputToken)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0x12
 		}
@@ -8787,7 +8809,7 @@ func (x *fastReflection_BandwidthLimitsParams) ProtoMethods() *protoiface.Method
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field KbPerInputToken", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -8797,29 +8819,33 @@ func (x *fastReflection_BandwidthLimitsParams) ProtoMethods() *protoiface.Method
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.KbPerInputToken = string(dAtA[iNdEx:postIndex])
+				if x.KbPerInputToken == nil {
+					x.KbPerInputToken = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.KbPerInputToken); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			case 3:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field KbPerOutputToken", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -8829,23 +8855,27 @@ func (x *fastReflection_BandwidthLimitsParams) ProtoMethods() *protoiface.Method
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.KbPerOutputToken = string(dAtA[iNdEx:postIndex])
+				if x.KbPerOutputToken == nil {
+					x.KbPerOutputToken = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.KbPerOutputToken); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
@@ -9829,10 +9859,10 @@ type BandwidthLimitsParams struct {
 
 	// estimated_limits_per_block_kb is the maximum KB per block that can be consumed
 	EstimatedLimitsPerBlockKb uint64 `protobuf:"varint,1,opt,name=estimated_limits_per_block_kb,json=estimatedLimitsPerBlockKb,proto3" json:"estimated_limits_per_block_kb,omitempty"`
-	// kb_per_input_token is the estimated KB per input token (using string for decimal precision)
-	KbPerInputToken string `protobuf:"bytes,2,opt,name=kb_per_input_token,json=kbPerInputToken,proto3" json:"kb_per_input_token,omitempty"`
-	// kb_per_output_token is the estimated KB per output token (using string for decimal precision)
-	KbPerOutputToken string `protobuf:"bytes,3,opt,name=kb_per_output_token,json=kbPerOutputToken,proto3" json:"kb_per_output_token,omitempty"`
+	// kb_per_input_token is the estimated KB per input token
+	KbPerInputToken *Decimal `protobuf:"bytes,2,opt,name=kb_per_input_token,json=kbPerInputToken,proto3" json:"kb_per_input_token,omitempty"`
+	// kb_per_output_token is the estimated KB per output token
+	KbPerOutputToken *Decimal `protobuf:"bytes,3,opt,name=kb_per_output_token,json=kbPerOutputToken,proto3" json:"kb_per_output_token,omitempty"`
 }
 
 func (x *BandwidthLimitsParams) Reset() {
@@ -9862,18 +9892,18 @@ func (x *BandwidthLimitsParams) GetEstimatedLimitsPerBlockKb() uint64 {
 	return 0
 }
 
-func (x *BandwidthLimitsParams) GetKbPerInputToken() string {
+func (x *BandwidthLimitsParams) GetKbPerInputToken() *Decimal {
 	if x != nil {
 		return x.KbPerInputToken
 	}
-	return ""
+	return nil
 }
 
-func (x *BandwidthLimitsParams) GetKbPerOutputToken() string {
+func (x *BandwidthLimitsParams) GetKbPerOutputToken() *Decimal {
 	if x != nil {
 		return x.KbPerOutputToken
 	}
-	return ""
+	return nil
 }
 
 var File_inference_inference_params_proto protoreflect.FileDescriptor
@@ -10220,33 +10250,35 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x72, 0x69, 0x6f, 0x64, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x70,
 	0x72, 0x69, 0x63, 0x65, 0x18, 0x08, 0x20, 0x01, 0x28, 0x04, 0x52, 0x18, 0x67, 0x72, 0x61, 0x63,
 	0x65, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x50, 0x65, 0x72, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x50,
-	0x72, 0x69, 0x63, 0x65, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xdb, 0x01, 0x0a, 0x15, 0x42,
+	0x72, 0x69, 0x63, 0x65, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xf7, 0x01, 0x0a, 0x15, 0x42,
 	0x61, 0x6e, 0x64, 0x77, 0x69, 0x64, 0x74, 0x68, 0x4c, 0x69, 0x6d, 0x69, 0x74, 0x73, 0x50, 0x61,
 	0x72, 0x61, 0x6d, 0x73, 0x12, 0x40, 0x0a, 0x1d, 0x65, 0x73, 0x74, 0x69, 0x6d, 0x61, 0x74, 0x65,
 	0x64, 0x5f, 0x6c, 0x69, 0x6d, 0x69, 0x74, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x62, 0x6c, 0x6f,
 	0x63, 0x6b, 0x5f, 0x6b, 0x62, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x19, 0x65, 0x73, 0x74,
 	0x69, 0x6d, 0x61, 0x74, 0x65, 0x64, 0x4c, 0x69, 0x6d, 0x69, 0x74, 0x73, 0x50, 0x65, 0x72, 0x42,
-	0x6c, 0x6f, 0x63, 0x6b, 0x4b, 0x62, 0x12, 0x3b, 0x0a, 0x12, 0x6b, 0x62, 0x5f, 0x70, 0x65, 0x72,
+	0x6c, 0x6f, 0x63, 0x6b, 0x4b, 0x62, 0x12, 0x49, 0x0a, 0x12, 0x6b, 0x62, 0x5f, 0x70, 0x65, 0x72,
 	0x5f, 0x69, 0x6e, 0x70, 0x75, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x09, 0x42, 0x0e, 0xd2, 0xb4, 0x2d, 0x0a, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x44,
-	0x65, 0x63, 0x52, 0x0f, 0x6b, 0x62, 0x50, 0x65, 0x72, 0x49, 0x6e, 0x70, 0x75, 0x74, 0x54, 0x6f,
-	0x6b, 0x65, 0x6e, 0x12, 0x3d, 0x0a, 0x13, 0x6b, 0x62, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6f, 0x75,
-	0x74, 0x70, 0x75, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
-	0x42, 0x0e, 0xd2, 0xb4, 0x2d, 0x0a, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x44, 0x65, 0x63,
-	0x52, 0x10, 0x6b, 0x62, 0x50, 0x65, 0x72, 0x4f, 0x75, 0x74, 0x70, 0x75, 0x74, 0x54, 0x6f, 0x6b,
-	0x65, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d,
+	0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c,
+	0x52, 0x0f, 0x6b, 0x62, 0x50, 0x65, 0x72, 0x49, 0x6e, 0x70, 0x75, 0x74, 0x54, 0x6f, 0x6b, 0x65,
+	0x6e, 0x12, 0x4b, 0x0a, 0x13, 0x6b, 0x62, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6f, 0x75, 0x74, 0x70,
+	0x75, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74,
-	0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69,
-	0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa,
-	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x10, 0x6b, 0x62,
+	0x50, 0x65, 0x72, 0x4f, 0x75, 0x74, 0x70, 0x75, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x3a, 0x04,
+	0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
+	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
+	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
+	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -10307,11 +10339,13 @@ var file_inference_inference_params_proto_depIdxs = []int32{
 	6,  // 28: inference.inference.DynamicPricingParams.stability_zone_lower_bound:type_name -> inference.inference.Decimal
 	6,  // 29: inference.inference.DynamicPricingParams.stability_zone_upper_bound:type_name -> inference.inference.Decimal
 	6,  // 30: inference.inference.DynamicPricingParams.price_elasticity:type_name -> inference.inference.Decimal
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	6,  // 31: inference.inference.BandwidthLimitsParams.kb_per_input_token:type_name -> inference.inference.Decimal
+	6,  // 32: inference.inference.BandwidthLimitsParams.kb_per_output_token:type_name -> inference.inference.Decimal
+	33, // [33:33] is the sub-list for method output_type
+	33, // [33:33] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_params_proto_init() }

@@ -14,6 +14,7 @@ type Config struct {
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
 	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
+	BandwidthParams    BandwidthParamsCache  `koanf:"bandwidth_params"`
 }
 
 type NodeVersionStack struct {
@@ -139,11 +140,13 @@ type Hardware struct {
 }
 
 type ValidationParamsCache struct {
-	TimestampExpiration       int64  `koanf:"timestamp_expiration"`
-	TimestampAdvance          int64  `koanf:"timestamp_advance"`
-	EstimatedLimitsPerBlockKb uint64 `koanf:"estimated_limits_per_block_kb"`
-	ExpirationBlocks          int64  `koanf:"expiration_blocks"`
-	// Bandwidth estimation coefficients
-	KbPerInputToken  float64 `koanf:"kb_per_input_token"`
-	KbPerOutputToken float64 `koanf:"kb_per_output_token"`
+	TimestampExpiration int64 `koanf:"timestamp_expiration"`
+	TimestampAdvance    int64 `koanf:"timestamp_advance"`
+	ExpirationBlocks    int64 `koanf:"expiration_blocks"`
+}
+
+type BandwidthParamsCache struct {
+	EstimatedLimitsPerBlockKb uint64  `koanf:"estimated_limits_per_block_kb"`
+	KbPerInputToken           float64 `koanf:"kb_per_input_token"`
+	KbPerOutputToken          float64 `koanf:"kb_per_output_token"`
 }

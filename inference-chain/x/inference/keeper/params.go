@@ -51,9 +51,15 @@ func (k Keeper) GetBandwidthLimitsParams(ctx context.Context) (*types.BandwidthL
 	if params.BandwidthLimitsParams == nil {
 		// Return default values if not set
 		return &types.BandwidthLimitsParams{
-			EstimatedLimitsPerBlockKb: 1024,     // Default 1MB per block
-			KbPerInputToken:           "0.0023", // Default from README.md
-			KbPerOutputToken:          "0.64",   // Default from README.md
+			EstimatedLimitsPerBlockKb: 1024, // Default 1MB per block
+			KbPerInputToken: &types.Decimal{
+				Value:    23, // 0.0023 = 23 × 10^(-4)
+				Exponent: -4,
+			},
+			KbPerOutputToken: &types.Decimal{
+				Value:    64, // 0.64 = 64 × 10^(-2)
+				Exponent: -2,
+			},
 		}, nil
 	}
 	return params.BandwidthLimitsParams, nil
