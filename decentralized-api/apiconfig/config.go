@@ -10,9 +10,10 @@ type Config struct {
 	PreviousSeed       SeedInfo              `koanf:"previous_seed"`
 	CurrentHeight      int64                 `koanf:"current_height"`
 	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
-	KeyConfig          KeyConfig             `koanf:"key_config"`
+	MLNodeKeyConfig    MLNodeKeyConfig       `koanf:"ml_node_key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
+	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 }
 
 type NodeVersionStack struct {
@@ -95,20 +96,21 @@ type ApiConfig struct {
 	MLServerPort          int    `koanf:"ml_server_port"`
 	AdminServerPort       int    `koanf:"admin_server_port"`
 	MlGrpcServerPort      int    `koanf:"ml_grpc_server_port"`
-	ExplorerUrl           string `koanf:"explorer_url"`
 	TestMode              bool   `koanf:"test_mode"`
 }
 
 type ChainNodeConfig struct {
-	Url            string `koanf:"url"`
-	AccountName    string `koanf:"account_name"`
-	KeyringBackend string `koanf:"keyring_backend"`
-	KeyringDir     string `koanf:"keyring_dir"`
-	IsGenesis      bool   `koanf:"is_genesis"`
-	SeedApiUrl     string `koanf:"seed_api_url"`
+	Url              string `koanf:"url"`
+	IsGenesis        bool   `koanf:"is_genesis"`
+	SeedApiUrl       string `koanf:"seed_api_url"`
+	AccountPublicKey string `koanf:"account_public_key"`
+	SignerKeyName    string `koanf:"signer_key_name"`
+	KeyringBackend   string `koanf:"keyring_backend"`
+	KeyringDir       string `koanf:"keyring_dir"`
+	KeyringPassword  string
 }
 
-type KeyConfig struct {
+type MLNodeKeyConfig struct {
 	WorkerPublicKey  string `koanf:"worker_public"`
 	WorkerPrivateKey string `koanf:"worker_private"`
 }
@@ -134,4 +136,9 @@ type ModelConfig struct {
 type Hardware struct {
 	Type  string `koanf:"type" json:"type"`
 	Count uint32 `koanf:"count" json:"count"`
+}
+
+type ValidationParamsCache struct {
+	TimestampExpiration int64 `koanf:"timestamp_expiration"`
+	TimestampAdvance    int64 `koanf:"timestamp_advance"`
 }

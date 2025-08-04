@@ -1,60 +1,80 @@
 package keeper_test
 
 import (
-	"github.com/productscience/inference/x/inference/calculations"
-	inference "github.com/productscience/inference/x/inference/module"
 	"testing"
 
+	"github.com/productscience/inference/x/inference/calculations"
+	inference "github.com/productscience/inference/x/inference/module"
+	"go.uber.org/mock/gomock"
+
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
-// NEEDREVIEW: for some reason this test is failing when run with other tests, but works fine when run alone.
 func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	mockRequester := NewMockAccount(testutil.Requester)
+	mockTransferAgent := NewMockAccount(testutil.Creator)
+	mockExecutor := NewMockAccount(testutil.Executor)
+	MustAddParticipant(t, ms, ctx, *mockRequester)
+	MustAddParticipant(t, ms, ctx, *mockTransferAgent)
+	MustAddParticipant(t, ms, ctx, *mockExecutor)
 
 	mocks.StubForInitGenesis(ctx)
 
 	// For escrow calls
 	mocks.BankKeeper.ExpectAny(ctx)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockRequester.GetBechAddress()).Return(mockRequester).Times(2)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(mockTransferAgent).Times(2)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(mockExecutor).Times(1)
+
+	// For GranteesByMessageType calls (used by both FinishInference and StartInference)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
-	// Add participants directly
-	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: testutil.Requester,
-		Url:     "url",
-	})
+	// Disable grace period for tests so we get actual pricing instead of 0
+	params := k.GetParams(ctx)
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	k.SetParams(ctx, params)
+
+	payload := "promptPayload"
+	requestTimestamp := ctx.BlockTime().UnixNano()
+
+	components := calculations.SignatureComponents{
+		Payload:         payload,
+		Timestamp:       requestTimestamp,
+		TransferAddress: mockTransferAgent.address,
+		ExecutorAddress: mockExecutor.address,
+	}
+	inferenceId, err := calculations.Sign(mockRequester, components, calculations.Developer)
+	taSignature, err := calculations.Sign(mockTransferAgent, components, calculations.TransferAgent)
+	eaSignature, err := calculations.Sign(mockExecutor, components, calculations.ExecutorAgent)
 	require.NoError(t, err)
 
-	_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: testutil.Creator,
-		Url:     "url",
-	})
-	require.NoError(t, err)
-
-	_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: testutil.Executor,
-		Url:     "url",
-	})
-	require.NoError(t, err)
-
-	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
-		InferenceId:          "inferenceId",
+		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
-		ExecutedBy:           testutil.Executor,
+		ExecutedBy:           mockExecutor.address,
+		TransferredBy:        mockTransferAgent.address,
+		RequestTimestamp:     requestTimestamp,
+		TransferSignature:    taSignature,
+		ExecutorSignature:    eaSignature,
+		RequestedBy:          mockRequester.address,
+		OriginalPrompt:       payload,
 	})
 	require.NoError(t, err) // Now this should succeed
 
 	// Verify the inference was created with FINISHED status
-	savedInference, found := k.GetInference(ctx, "inferenceId")
+	savedInference, found := k.GetInference(ctx, inferenceId)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_FINISHED, savedInference.Status)
 	require.Equal(t, "responseHash", savedInference.ResponseHash)
@@ -63,20 +83,27 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)
 
+	model := types.Model{Id: "model1"}
+	StubModelSubgroup(t, ctx, k, mocks, &model)
+
 	// Now start the inference
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
-		InferenceId:   "inferenceId",
-		PromptHash:    "promptHash",
-		PromptPayload: "promptPayload",
-		RequestedBy:   testutil.Requester,
-		Creator:       testutil.Creator,
-		Model:         "model1",
+		InferenceId:       inferenceId,
+		PromptHash:        "promptHash",
+		PromptPayload:     payload,
+		RequestedBy:       testutil.Requester,
+		Creator:           testutil.Creator,
+		Model:             "model1",
+		OriginalPrompt:    payload,
+		RequestTimestamp:  requestTimestamp,
+		TransferSignature: taSignature,
+		AssignedTo:        testutil.Executor,
 	})
 	require.NoError(t, err)
 
 	// Verify the inference was updated correctly
 	// It should still be in FINISHED state, but now have the start information as well
-	savedInference, found = k.GetInference(ctx, "inferenceId")
+	savedInference, found = k.GetInference(ctx, inferenceId)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_FINISHED, savedInference.Status)
 	require.Equal(t, "promptHash", savedInference.PromptHash)

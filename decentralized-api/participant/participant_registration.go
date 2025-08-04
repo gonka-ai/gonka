@@ -10,14 +10,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/cometbft/cometbft/crypto"
-	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/cometbft/cometbft/crypto"
+	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func participantExistsWithWait(recorder cosmosclient.CosmosMessageClient, chainNodeUrl string) (bool, error) {
@@ -34,14 +35,14 @@ func participantExistsWithWait(recorder cosmosclient.CosmosMessageClient, chainN
 
 func participantExists(recorder cosmosclient.CosmosMessageClient) (bool, error) {
 	queryClient := recorder.NewInferenceQueryClient()
-	request := &types.QueryGetParticipantRequest{Index: recorder.GetAddress()}
+	request := &types.QueryGetParticipantRequest{Index: recorder.GetAccountAddress()}
 
 	// TODO: check participant state, compute diff and update?
 	// 	Or implement some ways to periodically (or by request) update the participant state
 	response, err := queryClient.Participant(*recorder.GetContext(), request)
 	if err != nil {
 		if strings.Contains(err.Error(), "code = NotFound") {
-			logging.Info("Participant does not exist", types.Participants, "Address", recorder.GetAddress(), "err", err)
+			logging.Info("Participant does not exist", types.Participants, "Address", recorder.GetAccountAddress(), "err", err)
 			return false, nil
 		} else {
 			return false, err
@@ -138,11 +139,8 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("Failed to create worker key: %w", err)
 	}
 
-	address := recorder.GetAddress()
-	pubKey, err := recorder.GetAccount().Record.GetPubKey()
-	if err != nil {
-		return fmt.Errorf("Failed to get public key: %w", err)
-	}
+	address := recorder.GetAccountAddress()
+	pubKey := recorder.GetAccountPubKey()
 	pubKeyString := keyToStringFromBytes(pubKey.Bytes())
 
 	logging.Info(

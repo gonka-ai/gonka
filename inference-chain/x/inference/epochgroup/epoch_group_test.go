@@ -2,13 +2,14 @@ package epochgroup_test
 
 import (
 	"context"
+	"testing"
+
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"testing"
 )
 
 const (
@@ -27,11 +28,15 @@ func createEpochGroupObject(t testing.TB, epochGroupData *types.EpochGroupData) 
 	logger := keeper.NewMockLogger()
 	participantKeeper := keeper.NewInMemoryParticipantKeeper()
 	groupDataKeeper := keeper.NewInMemoryEpochGroupDataKeeper()
+	modelKeeper := keeper.NewInMemoryModelKeeper()
+	hardwareNodeKeeper := keeper.NewInMemoryHardwareNodeKeeper()
 
 	return &EpochGroupMock{
 		EpochGroup: epochgroup.NewEpochGroup(
 			groupMock,
 			participantKeeper,
+			modelKeeper,
+			hardwareNodeKeeper,
 			authority,
 			logger,
 			groupDataKeeper,
@@ -89,8 +94,37 @@ func TestAddMembers(t *testing.T) {
 	testEG.EpochGroup.AddMember(context.Background(), member)
 }
 
+func createTestModels() []types.Model {
+	return []types.Model{
+		{
+			Id: "model1",
+		},
+		{
+			Id: "model2",
+		},
+	}
+}
+
+func createTestEpochGroupWithModels(t *testing.T) *EpochGroupMock {
+	epochGroupData := &types.EpochGroupData{
+		PocStartBlockHeight: 10,
+		EpochGroupId:        8,
+		EpochPolicy:         "epochPolicy",
+	}
+	epochGroup := createEpochGroupObject(t, epochGroupData)
+	epochGroup.EpochGroup.GroupDataKeeper.SetEpochGroupData(context.Background(), *epochGroupData)
+
+	modelKeeper := epochGroup.EpochGroup.ModelKeeper.(*keeper.InMemoryModelKeeper)
+	for _, model := range createTestModels() {
+		modelKeeper.SetModel(&model)
+	}
+
+	return epochGroup
+
+}
+
 func TestAddMembersWithModels(t *testing.T) {
-	testEG := createTestEpochGroup(t)
+	testEG := createTestEpochGroupWithModels(t)
 
 	// Mock for parent group
 	testEG.GroupMock.EXPECT().UpdateGroupMembers(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
@@ -132,7 +166,7 @@ func TestAddMembersWithModels(t *testing.T) {
 }
 
 func TestGetRandomMemberForModel(t *testing.T) {
-	testEG := createTestEpochGroup(t)
+	testEG := createTestEpochGroupWithModels(t)
 
 	// Mock for parent group
 	testEG.GroupMock.EXPECT().UpdateGroupMembers(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()

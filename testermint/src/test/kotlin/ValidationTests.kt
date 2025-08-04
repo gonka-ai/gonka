@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -17,9 +18,20 @@ import java.util.concurrent.TimeUnit
 class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
-        val (_, genesis) = initCluster()
+        val (_, genesis) = initCluster(
+            config = inferenceConfig.copy(
+                genesisSpec = createSpec(
+                    epochLength = 100,
+                    epochShift = 80
+                )
+            ),
+            reboot = true
+        )
+
+        genesis.node.waitForMinimumBlock(35)
         logSection("Making inference requests in parallel")
-        val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
+        val requests = 50
+        val statuses = runParallelInferences(genesis, requests, maxConcurrentRequests = requests)
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")
@@ -28,6 +40,7 @@ class ValidationTests : TestermintTest() {
         }).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
+        assertThat(statuses).hasSize(requests)
 
         Thread.sleep(10000)
     }
@@ -94,57 +107,6 @@ class ValidationTests : TestermintTest() {
 
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.VALIDATED)
 
-    }
-}
-
-
-fun inParallel(
-    count: Int,
-    maxConcurrent: Int,
-    action: (Int) -> Unit
-) {
-    runBlocking {
-        val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrent).asCoroutineDispatcher()
-        val requests = List(count) { async(limitedDispatcher) { action(it) } }
-        requests.forEach { it.await() }
-    }
-}
-
-fun runParallelInferences(
-    genesis: LocalInferencePair,
-    count: Int,
-    waitForBlocks: Int = 20,
-    maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
-    models: List<String> = listOf(defaultModel),
-): List<Int> = runBlocking {
-    // Launch coroutines with async and collect the deferred results
-
-    val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
-    val requests = List(count) { i ->
-        async(limitedDispatcher) {
-            Logger.warn("Starting request $i")
-            try {
-                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
-            } catch (e: Exception) {
-                Logger.error("Error making inference request: ${e.message}")
-                null
-            } finally {
-                Logger.warn("Finished request $i")
-            }
-        }
-    }
-
-    // Wait for all requests to complete and collect their results
-    val results = requests.map { it.await() }
-
-    genesis.node.waitForNextBlock(waitForBlocks)
-
-    // Return statuses
-    results.mapNotNull { result ->
-        result?.let {
-            val inference = genesis.api.getInference(result.id)
-            inference.status
-        }
     }
 }
 

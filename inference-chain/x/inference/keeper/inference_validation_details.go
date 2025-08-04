@@ -15,7 +15,7 @@ func (k Keeper) SetInferenceValidationDetails(ctx context.Context, inferenceVali
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
 	b := k.cdc.MustMarshal(&inferenceValidationDetails)
 	store.Set(types.InferenceValidationDetailsKey(
-		inferenceValidationDetails.EpochGroupId,
+		inferenceValidationDetails.EpochId,
 		inferenceValidationDetails.InferenceId,
 	), b)
 }
@@ -25,7 +25,6 @@ func (k Keeper) GetInferenceValidationDetails(
 	ctx context.Context,
 	epochId uint64,
 	inferenceId string,
-
 ) (val types.InferenceValidationDetails, found bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
@@ -47,7 +46,6 @@ func (k Keeper) RemoveInferenceValidationDetails(
 	ctx context.Context,
 	epochId uint64,
 	inferenceId string,
-
 ) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))

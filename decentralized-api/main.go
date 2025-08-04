@@ -72,6 +72,13 @@ func main() {
 	}
 
 	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+	// NOTE: getParams is waiting for rpc to be ready, don't add request before it
+	params, err := getParams(context.Background(), *recorder)
+	if err != nil {
+		logging.Error("Failed to get params", types.System, "error", err)
+		return
+	}
+	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
 	if err != nil {
@@ -85,20 +92,13 @@ func main() {
 		nodeBroker.LoadNodeToBroker(&node)
 	}
 
-	params, err := getParams(context.Background(), *recorder)
-	if err != nil {
-		logging.Error("Failed to get params", types.System, "error", err)
-		return
-	}
-	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
-
 	if err := participant.RegisterParticipantIfNeeded(recorder, config); err != nil {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}
 
 	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", recorder.Account.Name,
+		types.PoC, "name", recorder.ApiAccount.SignerAccount.Name,
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
@@ -122,7 +122,7 @@ func main() {
 	training.NewAssigner(recorder, &tendermintClient, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
-	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
+	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
@@ -133,12 +133,12 @@ func main() {
 	// Bridge external block queue
 	blockQueue := pserver.NewBlockQueue(recorder)
 
-	publicServer := pserver.NewServer(config.GetApiConfig().ExplorerUrl, nodeBroker, config, recorder, trainingExecutor, blockQueue)
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
-	mlServer := mlserver.NewServer(recorder)
+	mlServer := mlserver.NewServer(recorder, nodeBroker)
 	mlServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)

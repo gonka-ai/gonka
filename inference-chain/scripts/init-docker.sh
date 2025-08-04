@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+set -x
 ( set -o pipefail 2>/dev/null ) && set -o pipefail
 
 ###############################################################################
@@ -54,7 +55,7 @@ need SEED_NODE_P2P_URL
 
 APP_NAME="${APP_NAME:-inferenced}"
 KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
-CHAIN_ID="${CHAIN_ID:-gonka-testnet-3}"
+CHAIN_ID="${CHAIN_ID:-gonka-testnet-5}"
 COIN_DENOM="${COIN_DENOM:-icoin}"
 STATE_DIR="${STATE_DIR:-/root/.inference}"
 
@@ -62,22 +63,19 @@ SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-10}"
 SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
 TRUSTED_BLOCK_PERIOD="${TRUSTED_BLOCK_PERIOD:-2}"
 
-update_configs_for_explorer() {
-  if [ "${WITH_EXPLORER:-}" = true ]; then
-    sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"
-
+update_configs() {
+  if [ "${REST_API_ACTIVE:-}" = true ]; then
     "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
   else
-    echo "Skipping config changes for explorer"
+    echo "Skipping update node config"
   fi
 }
 
 ###############################################################################
 # Detect first run
 ###############################################################################
-if "$APP_NAME" keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" \
-                                    --keyring-dir "$STATE_DIR" >/dev/null 2>&1
-then
+INIT_FLAG="$STATE_DIR/.node_initialized"
+if [ -f "$INIT_FLAG" ]; then
   FIRST_RUN=false
 else
   FIRST_RUN=true
@@ -90,21 +88,26 @@ if $FIRST_RUN; then
   echo "Initialising node (first run)"
   output=$("$APP_NAME" init --overwrite --chain-id "$CHAIN_ID" \
                        --default-denom "$COIN_DENOM" my-node 2>&1)
+  exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+      echo "Error: '$APP_NAME init' failed with exit code $exit_code"
+      echo "Output:"
+      echo "$output"
+      exit $exit_code
+  fi
   echo "$output" | filter_cw20_code
 
   kv client chain-id "$CHAIN_ID"
   kv client keyring-backend "$KEYRING_BACKEND"
   kv app minimum-gas-prices "0${COIN_DENOM}"
 
-  update_configs_for_explorer
+  update_configs
 
   GENESIS_FILE="$STATE_DIR/config/genesis.json"
   output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
   echo "$output" | filter_cw20_code
 
-
-  run "$APP_NAME" keys add "$KEY_NAME" \
-       --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR"
+  touch "$INIT_FLAG"
 fi
 
 ###############################################################################
@@ -161,7 +164,7 @@ if [ -n "${TMKMS_PORT-}" ]; then
     "$STATE_DIR/config/config.toml"
 fi
 
-update_configs_for_explorer
+update_configs
 
 ###############################################################################
 # Cosmovisor bootstrap (one-time)

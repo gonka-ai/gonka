@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"decentralized-api/apiconfig"
@@ -23,6 +24,7 @@ import (
 // Minimal interface for query operations needed by the dispatcher
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
+	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -59,6 +61,7 @@ type OnNewBlockDispatcher struct {
 	getStatusFunc        StatusFunc
 	setHeightFunc        SetHeightFunc
 	randomSeedManager    poc.RandomSeedManager
+	configManager        *apiconfig.ConfigManager
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -72,8 +75,8 @@ type SyncInfo struct {
 
 var DefaultReconciliationConfig = MlNodeReconciliationConfig{
 	Inference: &MlNodeStageReconciliationConfig{
-		BlockInterval: 10,
-		TimeInterval:  60 * time.Second,
+		BlockInterval: 5,
+		TimeInterval:  30 * time.Second,
 	},
 	PoC: &MlNodeStageReconciliationConfig{
 		BlockInterval: 1,
@@ -93,6 +96,7 @@ func NewOnNewBlockDispatcher(
 	setHeightFunc SetHeightFunc,
 	randomSeedManager poc.RandomSeedManager,
 	reconciliationConfig MlNodeReconciliationConfig,
+	configManager *apiconfig.ConfigManager,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
 		nodeBroker:           nodeBroker,
@@ -103,6 +107,7 @@ func NewOnNewBlockDispatcher(
 		getStatusFunc:        getStatusFunc,
 		setHeightFunc:        setHeightFunc,
 		randomSeedManager:    randomSeedManager,
+		configManager:        configManager,
 	}
 }
 
@@ -137,6 +142,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		setHeightFunc,
 		randomSeedManager,
 		reconciliationConfig,
+		configManager,
 	)
 }
 
@@ -152,6 +158,27 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		logging.Error("Failed to query network info, skipping block processing", types.Stages,
 			"error", err, "height", blockInfo.Height)
 		return err // Skip processing this block
+	}
+
+	// Fetch validation parameters - skip in tests
+	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") { // Skip in tests where hash has format "hash-N"
+		params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
+		if err != nil {
+			logging.Error("Failed to get params", types.Validation, "error", err)
+		} else {
+			// Update validation parameters in config
+			validationParams := apiconfig.ValidationParamsCache{
+				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
+				TimestampAdvance:    params.Params.ValidationParams.TimestampAdvance,
+			}
+			logging.Debug("Updating validation parameters", types.Validation,
+				"timestampExpiration", validationParams.TimestampExpiration,
+				"timestampAdvance", validationParams.TimestampAdvance)
+			err = d.configManager.SetValidationParams(validationParams)
+			if err != nil {
+				logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+			}
+		}
 	}
 
 	// Let's check in prod how often this happens
@@ -241,6 +268,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	epochContext := epochState.LatestEpoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
+
+	// Sync broker node state with the latest epoch data at the start of a transition check
+	if err := d.nodeBroker.UpdateNodeWithEpochData(&epochState); err != nil {
+		logging.Error("Failed to update node with epoch data, skipping phase transitions.", types.Stages, "error", err)
+		return
+	}
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {

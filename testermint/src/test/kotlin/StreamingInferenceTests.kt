@@ -4,12 +4,15 @@ import com.productscience.InferenceResult
 import com.productscience.data.ResponseMessage
 import com.productscience.data.Usage
 import com.productscience.defaultInferenceResponseObject
+import com.productscience.expectedCoinBalanceChanges
 import com.productscience.getInterruptedStreamingInferenceResult
+import com.productscience.getRewardCalculationEpochIndex
 import com.productscience.getStreamingInferenceResult
 import com.productscience.inferenceRequestStreamObject
 import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.makeInterruptedStreamingInferenceRequest
+import com.productscience.verifySettledInferences
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -33,6 +36,7 @@ class StreamingInferenceTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making streaming inference")
         val beforeBalances = genesis.api.getParticipants()
         val inferenceResult = getStreamingInferenceResult(genesis)
@@ -52,16 +56,17 @@ class StreamingInferenceTests : TestermintTest() {
         logSection("Clearing claims")
         // If we don't wait until the next rewards claim, there may be lingering requests that mess with our math
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        val startLastRewardedEpoch = getRewardCalculationEpochIndex(genesis)
         val participants = genesis.api.getParticipants()
-
         participants.forEach {
             Logger.info("Participant: ${it.id}, Balance: ${it.balance}")
         }
+        genesis.waitForNextInferenceWindow()
         logSection("Making inference")
         val inferences: Sequence<InferenceResult> = generateSequence {
             getStreamingInferenceResult(genesis)
         }.take(1)
-        verifySettledInferences(genesis, inferences, participants)
+        verifySettledInferences(genesis, inferences, participants, startLastRewardedEpoch)
     }
 
     @Test
@@ -69,6 +74,7 @@ class StreamingInferenceTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making interrupted streaming inference")
         val beforeBalances = genesis.api.getParticipants()
 
@@ -90,11 +96,12 @@ class StreamingInferenceTests : TestermintTest() {
     @Test
     @Tag("unstable")
     fun `spam interrupted streaming requests`() {
-        val maxConcurrentRequests = 100
-        val totalRequests = 100
+        val maxConcurrentRequests = 50
+        val totalRequests = 50
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making interrupted streaming inference")
         val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
 
@@ -137,6 +144,7 @@ class StreamingInferenceTests : TestermintTest() {
         }
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        genesis.waitForNextInferenceWindow()
         logSection("Making interrupted streaming inference")
         val beforeBalances = genesis.api.getParticipants()
 

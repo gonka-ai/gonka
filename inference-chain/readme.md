@@ -8,7 +8,7 @@ Make sure, you have installed:
 
 ## Get started
 ### Local run single node (Linux)
-**Being in root of inference-ignite repo**
+**Being in root of gonka repo**
 build binary:
 ```shell
 make build

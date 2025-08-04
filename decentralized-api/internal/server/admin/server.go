@@ -14,6 +14,7 @@ import (
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/app"
+	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -69,6 +70,7 @@ func getCodec() *codec.ProtoCodec {
 	banktypes.RegisterInterfaces(interfaceRegistry)
 	v1.RegisterInterfaces(interfaceRegistry)
 	upgradetypes.RegisterInterfaces(interfaceRegistry)
+	collateraltypes.RegisterInterfaces(interfaceRegistry)
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 	return cdc
 }

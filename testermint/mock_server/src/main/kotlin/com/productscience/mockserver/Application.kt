@@ -1,5 +1,6 @@
 package com.productscience.mockserver
 
+import com.productscience.mockserver.routes.fileRoutes
 import com.productscience.mockserver.routes.healthRoutes
 import com.productscience.mockserver.routes.inferenceRoutes
 import com.productscience.mockserver.routes.powRoutes
@@ -97,6 +98,7 @@ fun Application.configureRouting() {
         healthRoutes()
         responseRoutes(responseService)
         tokenizationRoutes(tokenizationService)
+        fileRoutes() // Route for serving files
     }
 }
 

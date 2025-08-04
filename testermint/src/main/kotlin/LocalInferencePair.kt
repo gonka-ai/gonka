@@ -1,27 +1,13 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.ContainerPort
-import com.github.dockerjava.api.model.HostConfig
-import com.github.dockerjava.api.model.LogConfig
-import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
-import com.github.dockerjava.transport.DockerHttpClient
 import com.github.kittinunf.fuel.core.FuelError
-import com.productscience.data.AppState
-import com.productscience.data.EpochPhase
-import com.productscience.data.EpochResponse
-import com.productscience.data.GovernanceMessage
-import com.productscience.data.GovernanceProposal
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParticipant
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.PubKey
-import com.productscience.data.Spec
-import com.productscience.data.TxResponse
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -87,7 +73,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
 }
 
 private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
-    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "0.0.0.0"
+    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "localhost"
     return "http://$privateUrl:${portMap[privatePort]?.publicPort}"
 }
 
@@ -157,7 +143,7 @@ fun attachDockerLogs(
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
-    val mock: IInferenceMock?,
+    val mock: IInferenceMock?, // FIXME: technically it's a list
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null,
@@ -194,15 +180,48 @@ data class LocalInferencePair(
         return this.mostRecentEpochData ?: error("No epoch data available")
     }
 
-    fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {
-        val signature = node.signPayload(request, account)
+    fun getBalance(address: String): Long {
+        return this.node.getBalance(address, this.node.config.denom).balance.amount
+    }
+
+    fun queryCollateral(address: String): Collateral {
+        return this.node.queryCollateral(address)
+    }
+
+    fun depositCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "deposit-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
+    }
+
+    fun withdrawCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "withdraw-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
+    }
+
+    fun makeInferenceRequest(
+        request: String,
+        account: String? = null,
+        timestamp: Long = Instant.now().toEpochNanos(),
+        taAddress: String = node.getAddress(),
+    ): OpenAIResponse {
+        val signature = node.signPayload(request,account, timestamp = timestamp, endpointAccount = taAddress)
         val address = node.getAddress()
-        return api.makeInferenceRequest(request, address, signature)
+        return api.makeInferenceRequest(request, address, signature, timestamp)
     }
 
     /**
      * Makes a streaming inference request that can be interrupted.
-     * 
+     *
      * @param request The request body as a string. The request should include "stream": true.
      * @param account The account to use for signing the payload (optional)
      * @return A StreamConnection object that can be used to read from the stream and interrupt it
@@ -230,9 +249,10 @@ data class LocalInferencePair(
             request
         }
 
-        val signature = node.signPayload(requestWithStream, account)
         val address = node.getAddress()
-        return api.createInferenceStreamConnection(requestWithStream, address, signature)
+        val timestamp = Instant.now().toEpochNanos()
+        val signature = node.signPayload(requestWithStream, account, timestamp = timestamp, endpointAccount = address)
+        return api.createInferenceStreamConnection(requestWithStream, address, signature, timestamp)
     }
 
     fun getCurrentBlockHeight(): Long {
@@ -249,10 +269,11 @@ data class LocalInferencePair(
     data class WaitForStageResult(
         val stageBlock: Long,
         val stageBlockWithOffset: Long,
-        val currentBlock: Long
+        val currentBlock: Long,
+        val waitDuration: Duration,
     )
 
-    fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5) {
+    fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5): WaitForStageResult? {
         val epochData = getEpochData()
         val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
         val currentPhase = epochData.phase
@@ -264,27 +285,31 @@ data class LocalInferencePair(
                     "currentPhase=$currentPhase"
         }
 
-        if (getEpochData().phase != EpochPhase.Inference ||
-            startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
+        if (epochData.phase != EpochPhase.Inference ||
+            startOfNextPoc - currentBlockHeight < windowSizeInBlocks) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
-            waitForStage(EpochStage.SET_NEW_VALIDATORS)
+            return waitForStage(EpochStage.SET_NEW_VALIDATORS)
         } else {
             Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
+            return null
         }
     }
 
     fun waitForStage(stage: EpochStage, offset: Int = 1): WaitForStageResult {
         val stageBlock = getNextStage(stage)
         val stageBlockWithOffset = stageBlock + offset
+        val waitStart = Instant.now()
         val currentBlock = this.node.waitForMinimumBlock(
             stageBlockWithOffset,
             "stage $stage" + if (offset > 0) "+$offset)" else ""
         )
+        val waitEnd = Instant.now()
 
         return WaitForStageResult(
             stageBlock = stageBlock,
             stageBlockWithOffset = stageBlockWithOffset,
-            currentBlock = currentBlock
+            currentBlock = currentBlock,
+            waitDuration = Duration.between(waitStart, waitEnd),
         )
     }
 
@@ -347,9 +372,38 @@ data class LocalInferencePair(
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
 
-    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+    fun submitMessage(message: TxMessage, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitMessage", true) {
+        submitTransaction(Transaction(TransactionBody(listOf(message), "", 0)), waitForProcessed)
+    }
+
+    fun submitTransaction(transaction: Transaction, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitTransaction", true) {
+        submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
+    }
+
+    fun waitForMlNodesToLoad(maxWaitAttempts: Int = 10, sleepTimeMillis: Long = 5_000L) {
+        var i = 0
+        while (true) {
+            val nodes = api.getNodes()
+            if (nodes.isNotEmpty() && nodes.all { n ->
+                n.state.currentStatus != "UNKNOWN" && n.state.intendedStatus != "UNKNOWN"
+            }) {
+                Logger.info("All nodes are loaded and ready. numNodes = ${nodes.size}. nodes = $nodes")
+                break
+            }
+
+            i++
+            if (i >= maxWaitAttempts) {
+                error("Waited for ${sleepTimeMillis * 10} ms for ml node to be ready, but it never was." +
+                        " Check if the mock server is running. pairName = ${name}. nodes = $nodes")
+            }
+
+            Thread.sleep(sleepTimeMillis)
+        }
+    }
+
+
+    fun submitTransaction(json: String, waitForProcessed: Boolean = true): TxResponse {
         val start = Instant.now()
-        val json = this.node.getTransactionJson(args)
         val submittedTransaction = try {
             this.api.submitTransaction(json)
         } catch (e: FuelError) {
@@ -373,6 +427,10 @@ data class LocalInferencePair(
         } else {
             submittedTransaction
         }
+    }
+
+    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        return submitTransaction(this.node.getTransactionJson(args))
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
@@ -517,6 +575,16 @@ data class LocalInferencePair(
         }
     }
 
+    fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? = wrapLog("waitForInference", true) {
+        var inference: InferencePayload? = null
+        var tries = 0
+        while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
+            this.node.waitForNextBlock()
+            inference = this.api.getInferenceOrNull(inferenceId)
+            tries++
+        }
+        inference
+    }
 }
 
 data class ApplicationConfig(
@@ -532,8 +600,14 @@ data class ApplicationConfig(
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
     // execName accommodates upgraded chains.
-    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName"
+    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
+    val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
+    val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")
+}
+
+fun Instant.toEpochNanos(): Long {
+    return this.epochSecond * 1_000_000_000 + this.nano.toLong()
 }

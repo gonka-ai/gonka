@@ -12,5 +12,8 @@ const (
 
 // NOTE: In ALL cases, if we represent coins as an int, they should be in BaseCoin units
 func GetCoins(coins int64) sdk.Coins {
-	return sdk.NewCoins(sdk.NewInt64Coin(BaseCoin, coins))
+	return sdk.NewCoins(GetCoin(coins))
+}
+func GetCoin(coin int64) sdk.Coin {
+	return sdk.NewInt64Coin(BaseCoin, coin)
 }

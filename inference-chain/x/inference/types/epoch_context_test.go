@@ -2,9 +2,10 @@ package types_test
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestZeroEpoch(t *testing.T) {
@@ -16,6 +17,7 @@ func TestZeroEpoch(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    2,
 		PocValidationDuration: 10,
+		SetNewValidatorsDelay: 1,
 	}
 	initialBlockHeight := int64(1)
 	startOfPoc := int64(10)
@@ -33,6 +35,7 @@ func Test(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    2,
 		PocValidationDuration: 20,
+		SetNewValidatorsDelay: 1,
 	}
 	epoch := types.Epoch{
 		Index:               5,
@@ -138,7 +141,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
-	// We exchange until the isSetNewValidatorsStage, not sure if it's the right way though
+	// Validation exchange window now closes at EndOfPoCValidation stage, not SetNewValidators stage
 	require.True(t, ec.IsValidationExchangeWindow(i))
 	require.True(t, ec.IsEndOfPoCValidationStage(i))
 	i++
@@ -147,7 +150,8 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
-	require.True(t, ec.IsValidationExchangeWindow(i))
+	// Validation exchange window is now closed at SetNewValidators stage
+	require.False(t, ec.IsValidationExchangeWindow(i))
 	require.True(t, ec.IsSetNewValidatorsStage(i))
 	i++
 
@@ -185,6 +189,7 @@ func TestPlain(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    2,
 		PocValidationDuration: 10,
+		SetNewValidatorsDelay: 1,
 	}
 	startOfPoc := int64(10)
 	epoch := types.Epoch{Index: 1, PocStartBlockHeight: startOfPoc}
@@ -232,6 +237,7 @@ func TestProdBug(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    1,
 		PocValidationDuration: 4,
+		SetNewValidatorsDelay: 1,
 	}
 
 	epoch := types.Epoch{Index: 1, PocStartBlockHeight: 50}

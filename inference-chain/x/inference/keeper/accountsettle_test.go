@@ -1,12 +1,14 @@
 package keeper_test
 
 import (
+	"go.uber.org/mock/gomock"
+	"testing"
+
 	keeper2 "github.com/productscience/inference/testutil/keeper"
 	inference "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 var tokenomicsParams = types.DefaultParams().TokenomicsParams
@@ -261,6 +263,11 @@ func TestActualSettle(t *testing.T) {
 		CurrentEpochStats: &types.CurrentEpochStats{},
 	}
 	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
+
+	// Configure to use legacy reward system for this test
+	params := keeper.GetParams(ctx)
+	params.BitcoinRewardParams.UseBitcoinRewards = false
+	keeper.SetParams(ctx, params)
 	keeper.SetParticipant(ctx, participant1)
 	keeper.SetParticipant(ctx, participant2)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
@@ -268,8 +275,9 @@ func TestActualSettle(t *testing.T) {
 	})
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
 
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin)).Return(nil)
-	err := keeper.SettleAccounts(ctx, 10)
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin), gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	err := keeper.SettleAccounts(ctx, 10, 0)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
 	require.True(t, found)

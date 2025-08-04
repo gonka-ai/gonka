@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+set -x
 
 filter_cw20_code() {
   input=$(cat)
@@ -28,17 +29,15 @@ echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 KEY_NAME="genesis"
 APP_NAME="inferenced"
-CHAIN_ID="gonka-testnet-3"
+CHAIN_ID="gonka-testnet-5"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 
-update_configs_for_explorer() {
-  if [ "${WITH_EXPLORER:-}" = true ]; then
-    sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"
-
+update_configs() {
+  if [ "${REST_API_ACTIVE:-}" = true ]; then
     "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
   else
-    echo "Skipping config changes for explorer"
+    echo "Skipping update node config"
   fi
 }
 
@@ -51,6 +50,13 @@ output=$($APP_NAME init \
   --chain-id "$CHAIN_ID" \
   --default-denom $COIN_DENOM \
   my-node 2>&1)
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+    echo "Error: '$APP_NAME init' failed with exit code $exit_code"
+    echo "Output:"
+    echo "$output"
+    exit $exit_code
+fi
 echo "$output" | filter_cw20_code
 
 echo "Setting the chain configuration"
@@ -157,7 +163,7 @@ if [ -f "config_override.toml" ]; then
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
 
-update_configs_for_explorer
+update_configs
 
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {

@@ -314,7 +314,8 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 			continue
 		}
 
-		vd.EpochGroupId = vd.EpochId
+		// EpochGroupId is deleted from the codebase by now
+		// vd.EpochGroupId = vd.EpochId
 
 		bz, err := k.Codec().Marshal(&vd)
 		if err != nil {

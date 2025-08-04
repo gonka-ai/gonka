@@ -52,15 +52,22 @@ func ProcessStartInference(
 			"assignedTo",
 			startMessage.AssignedTo,
 		)
+		// Preserve the PerTokenPrice that was set by RecordInferencePrice
+		existingPerTokenPrice := currentInference.PerTokenPrice
 		currentInference = &types.Inference{
-			Index:       startMessage.InferenceId,
-			InferenceId: startMessage.InferenceId,
-			Status:      types.InferenceStatus_STARTED,
+			Index:         startMessage.InferenceId,
+			InferenceId:   startMessage.InferenceId,
+			Status:        types.InferenceStatus_STARTED,
+			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
 	// Works if FinishInference came before
+	currentInference.RequestTimestamp = startMessage.RequestTimestamp
+	currentInference.TransferredBy = startMessage.Creator
+	currentInference.TransferSignature = startMessage.TransferSignature
 	currentInference.PromptHash = startMessage.PromptHash
 	currentInference.PromptPayload = startMessage.PromptPayload
+	currentInference.OriginalPrompt = startMessage.OriginalPrompt
 	if currentInference.PromptTokenCount == 0 {
 		currentInference.PromptTokenCount = startMessage.PromptTokenCount
 	}
@@ -73,6 +80,9 @@ func ProcessStartInference(
 	currentInference.NodeVersion = startMessage.NodeVersion
 
 	if currentInference.EscrowAmount == 0 {
+		if startMessage.PromptTokenCount == 0 {
+			logger.LogWarn("PromptTokens is 0 when StartInference is called!", types.Inferences, "inferenceId", startMessage.InferenceId)
+		}
 		escrowAmount := CalculateEscrow(currentInference, startMessage.PromptTokenCount)
 		// We are NOT setting inference.EscrowAmount here, because it will be set later after
 		// escrow is SUCCESSFULLY put in escrow.
@@ -111,9 +121,13 @@ func ProcessFinishInference(
 			"inference_id",
 			finishMessage.InferenceId,
 		)
+		// Preserve the PerTokenPrice that was set by RecordInferencePrice
+		existingPerTokenPrice := currentInference.PerTokenPrice
 		currentInference = &types.Inference{
-			Index:       finishMessage.InferenceId,
-			InferenceId: finishMessage.InferenceId,
+			Index:         finishMessage.InferenceId,
+			InferenceId:   finishMessage.InferenceId,
+			Model:         finishMessage.Model,
+			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
 	currentInference.Status = types.InferenceStatus_FINISHED
@@ -125,11 +139,24 @@ func ProcessFinishInference(
 	if finishMessage.PromptTokenCount != 0 {
 		currentInference.PromptTokenCount = finishMessage.PromptTokenCount
 	}
+	// TODO: What if there are discrepancies between existing values and the ones in finishMessage?
+	currentInference.RequestTimestamp = finishMessage.RequestTimestamp
+	currentInference.TransferredBy = finishMessage.TransferredBy
+	currentInference.TransferSignature = finishMessage.TransferSignature
+	currentInference.ExecutionSignature = finishMessage.ExecutorSignature
+	currentInference.OriginalPrompt = finishMessage.OriginalPrompt
+
 	currentInference.CompletionTokenCount = finishMessage.CompletionTokenCount
 	currentInference.ExecutedBy = finishMessage.ExecutedBy
 	currentInference.EndBlockHeight = blockContext.BlockHeight
 	currentInference.EndBlockTimestamp = blockContext.BlockTimestamp
 
+	if currentInference.PromptTokenCount == 0 {
+		logger.LogWarn("PromptTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+	}
+	if currentInference.CompletionTokenCount == 0 {
+		logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+	}
 	currentInference.ActualCost = CalculateCost(currentInference)
 	if startProcessed(currentInference) {
 		escrowAmount := currentInference.EscrowAmount
@@ -159,12 +186,20 @@ func getMaxTokens(msg *types.MsgStartInference) uint64 {
 	return DefaultMaxTokens
 }
 
-const PerTokenCost = 1000
+const PerTokenCost = 1000 // Legacy fallback price
 
 func CalculateCost(inference *types.Inference) int64 {
-	return int64(inference.CompletionTokenCount*PerTokenCost + inference.PromptTokenCount*PerTokenCost)
+	// Simply use the per-token price stored in the inference
+	// RecordInferencePrice ensures this is always set to the correct value:
+	// - Dynamic price from BeginBlocker (including 0 for grace period)
+	// - Legacy fallback price (1000) if dynamic pricing unavailable
+	return int64(inference.CompletionTokenCount*inference.PerTokenPrice + inference.PromptTokenCount*inference.PerTokenPrice)
 }
 
 func CalculateEscrow(inference *types.Inference, promptTokens uint64) int64 {
-	return int64((inference.MaxTokens + promptTokens) * PerTokenCost)
+	// Simply use the per-token price stored in the inference
+	// RecordInferencePrice ensures this is always set to the correct value:
+	// - Dynamic price from BeginBlocker (including 0 for grace period)
+	// - Legacy fallback price (1000) if dynamic pricing unavailable
+	return int64((inference.MaxTokens + promptTokens) * inference.PerTokenPrice)
 }

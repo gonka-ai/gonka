@@ -29,6 +29,10 @@ spec:
           name: tendermint-p2p
         - containerPort: 26657
           name: tendermint-rpc
+        - containerPort: 1317
+          name: rest-api
+        - containerPort: 9090
+          name: tendermint-grpc
         env:
         - name: KEY_NAME
           value: "genesis"
@@ -53,6 +57,8 @@ spec:
           value: "true"
         - name: TGBOT_PRIVATE_KEY_PASS
           value: "defaultpassword"
+        - name: REST_API_ACTIVE
+          value: "true"
         volumeMounts:
         - name: data
           mountPath: /root/.inference

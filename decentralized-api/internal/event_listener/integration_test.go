@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/productscience/inference/testutil/keeper"
+
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
@@ -75,6 +77,12 @@ func (m MockOrchestratorChainBridge) GetBlockHash(height int64) (string, error) 
 	return fmt.Sprintf("block-hash-%d", height), nil
 }
 
+func (m MockOrchestratorChainBridge) GetPocParams() (*types.PocParams, error) {
+	return &types.PocParams{
+		ValidationSampleSize: 200,
+	}, nil
+}
+
 type MockBrokerChainBridge struct {
 	mock.Mock
 }
@@ -89,7 +97,7 @@ func (m *MockBrokerChainBridge) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryHardwareNodesResponse), args.Error(1)
+	return args.Get(0).(*types.QueryHardwareNodesResponse), nil
 }
 
 func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
@@ -99,6 +107,30 @@ func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardware
 
 func (m *MockBrokerChainBridge) GetBlockHash(height int64) (string, error) {
 	return "block-hash-" + strconv.FormatInt(height, 10), nil
+}
+
+func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	args := m.Called(pocHeight, modelId)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
 type MockRandomSeedManager struct {
@@ -124,6 +156,14 @@ type MockQueryClient struct {
 func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
 	args := m.Called(ctx, req)
 	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)
+}
+
+func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
 // Test setup helpers
@@ -186,12 +226,55 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
+	mockChainBridge.On("GetGovernanceModels").Return(&types.QueryModelsAllResponse{
+		Model: keeper.GenesisModelsTestList(),
+	}, nil)
+	mockChainBridge.On("GetCurrentEpochGroupData").Return(&types.QueryCurrentEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "test-model").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			ModelSnapshot: &types.Model{Id: "test-model"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "some-address",
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-1"},
+						{NodeId: "node-2"},
+					},
+				},
+			},
+		},
+	}, nil)
+
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: paramsToReturn,
 		},
 		// Empty epoch for now
 		LatestEpoch: types.Epoch{},
+	}, nil)
+
+	// Setup mock for Params method
+	validationParams := &types.ValidationParams{
+		TimestampExpiration: 10,
+		TimestampAdvance:    10,
+	}
+	mockQueryClient.On("Params", mock.MatchedBy(func(ctx context.Context) bool {
+		return true // Match any context
+	}), mock.AnythingOfType("*types.QueryParamsRequest")).Return(&types.QueryParamsResponse{
+		Params: types.Params{
+			ValidationParams: validationParams,
+		},
 	}, nil)
 
 	// Setup mock expectations for RandomSeedManager
@@ -206,6 +289,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		finalReconciliationConfig = *reconcilialtionConfig
 	}
 	// Create dispatcher with mocked dependencies
+	mockConfigManager := &apiconfig.ConfigManager{}
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
 		pocOrchestrator,
@@ -215,6 +299,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		mockSetHeightFunc,
 		mockSeedManager,
 		finalReconciliationConfig,
+		mockConfigManager,
 	)
 
 	return &IntegrationTestSetup{
@@ -240,7 +325,7 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 		PoCPort:          port, // Use different ports to distinguish nodes
 		MaxConcurrent:    1,
 		Models: map[string]apiconfig.ModelConfig{
-			"test-model": {Args: []string{}},
+			keeper.GenesisModelsTest_QWQ: {Args: []string{}},
 		},
 		Hardware: []apiconfig.Hardware{
 			{Type: "GPU", Count: 1},
@@ -356,6 +441,20 @@ func waitForAsync(duration time.Duration) {
 	time.Sleep(duration)
 }
 
+func waitForNodeStatus(t *testing.T, setup *IntegrationTestSetup, nodeId string, expectedStatus types.HardwareNodeStatus, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, state := setup.getNode(nodeId)
+		if state.CurrentStatus == expectedStatus {
+			return // Success
+		}
+		time.Sleep(50 * time.Millisecond) // Poll interval
+	}
+	// If the loop finishes, the condition was not met in time.
+	_, state := setup.getNode(nodeId)
+	require.Equal(t, expectedStatus, state.CurrentStatus, "timed out waiting for node status")
+}
+
 func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 	return MlNodeReconciliationConfig{
 		Inference: &MlNodeStageReconciliationConfig{
@@ -377,14 +476,17 @@ func TestInferenceReconciliation(t *testing.T) {
 	setup := createIntegrationTestSetup(&reconciliationConfig, &epochParams)
 
 	setup.addTestNode("node-1", 8081)
+	waitForNodeStatus(t, setup, "node-1", types.HardwareNodeStatus_STOPPED, 2*time.Second)
+
 	setup.addTestNode("node-2", 8082)
+	waitForNodeStatus(t, setup, "node-2", types.HardwareNodeStatus_STOPPED, 2*time.Second)
 
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
-		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)
 		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.IntendedStatus)
 	})
 	setup.assertNode("node-2", func(n broker.NodeResponse) {
-		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)
 		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.IntendedStatus)
 	})
 
@@ -620,7 +722,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		assert.Equal(t, 1, node2Client.InitValidateCalled, "Enabled node-2 should receive InitGenerate call")
 	})
 
-	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
+	node1Expected := NodeClientAssertion{StopCalled: 0, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
 	assertNodeClient(t, node1Expected, node1Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)

@@ -1,0 +1,16 @@
+syntax = "proto3";
+package inference.collateral;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/collateral/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/collateral/Params";
+  option (gogoproto.equal) = true;
+
+  // UnbondingPeriodEpochs is the number of epochs a withdrawal must wait before being released
+  uint64 unbonding_period_epochs = 1;
+}

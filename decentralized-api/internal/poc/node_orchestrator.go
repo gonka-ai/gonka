@@ -11,6 +11,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const (
+	POC_VALIDATE_BATCH_RETRIES     = 5
+	POC_VALIDATE_SAMPLES_PER_BATCH = 200
+)
+
 type NodePoCOrchestrator interface {
 	ValidateReceivedBatches(startOfValStageHeight int64)
 }
@@ -26,6 +31,7 @@ type NodePoCOrchestratorImpl struct {
 type OrchestratorChainBridge interface {
 	PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error)
 	GetBlockHash(height int64) (string, error)
+	GetPocParams() (*types.PocParams, error)
 }
 
 type OrchestratorChainBridgeImpl struct {
@@ -40,6 +46,16 @@ func (b *OrchestratorChainBridgeImpl) PoCBatchesForStage(startPoCBlockHeight int
 		return nil, err
 	}
 	return response, nil
+}
+
+func (b *OrchestratorChainBridgeImpl) GetPocParams() (*types.PocParams, error) {
+	response, err := b.cosmosClient.NewInferenceQueryClient().Params(*b.cosmosClient.GetContext(), &types.QueryParamsRequest{})
+	if err != nil {
+		logging.Error("Failed to query params", types.PoC, "error", err)
+		return nil, err
+	}
+	pocParams := response.Params.PocParams
+	return pocParams, nil
 }
 
 func (b *OrchestratorChainBridgeImpl) GetBlockHash(height int64) (string, error) {
@@ -82,12 +98,6 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
 	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 	epochState := o.phaseTracker.GetCurrentEpochState()
-	if epochState == nil {
-		logging.Error("ValidateReceivedBatches. Current epoch state is nil", types.PoC,
-			"startOfValStageHeight", startOfValStageHeight)
-		return
-	}
-
 	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
 	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
 	logging.Info("ValidateReceivedBatches. Current epoch state.", types.PoC,
@@ -128,13 +138,30 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		return
 	}
 	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "startOfValStageHeight", startOfValStageHeight, "numNodes", len(nodes))
+	nodes = filterNodes(nodes)
+	logging.Info("ValidateReceivedBatches. Filtered nodes available for PoC validation.", types.PoC, "numNodes", len(nodes))
 
 	if len(nodes) == 0 {
 		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 		return
 	}
 
-	for i, batch := range batches.PocBatch {
+	pocParams, err := o.chainBridge.GetPocParams()
+	if err != nil {
+		logging.Error("ValidateReceivedBatches. Failed to get chain parameters", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		return
+	}
+	samplesPerBatch := int64(pocParams.ValidationSampleSize)
+	if pocParams.ValidationSampleSize == 0 {
+		logging.Info("Defaulting to 200 samples per batch", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+		samplesPerBatch = POC_VALIDATE_SAMPLES_PER_BATCH
+	}
+
+	attemptCounter := 0
+	successfulValidations := 0
+	failedValidations := 0
+
+	for _, batch := range batches.PocBatch {
 		joinedBatch := mlnodeclient.ProofBatch{
 			PublicKey:   batch.HexPubKey,
 			BlockHash:   blockHash,
@@ -145,22 +172,58 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
 			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
 		}
-		node := nodes[i%len(nodes)]
 
-		logging.Info("ValidateReceivedBatches. Sending joined batch for validation.", types.PoC,
-			"startOfValStageHeight", startOfValStageHeight,
-			"node.Id", node.Node.Id, "node.Host", node.Node.Host,
-			"batch.Participant", batch.Participant)
-		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
+		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, samplesPerBatch)
 
-		// FIXME: copying: doesn't look good for large PoCBatch structures?
-		nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
-		err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
-		if err != nil {
-			logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
-			continue
+		validationSucceeded := false
+		for attempt := range POC_VALIDATE_BATCH_RETRIES {
+			node := nodes[attemptCounter%len(nodes)]
+			attemptCounter++
+
+			logging.Info("ValidateReceivedBatches. Sending sampled batch for validation.", types.PoC,
+				"attempt", attempt,
+				"length", len(batchToValidate.Nonces),
+				"startOfValStageHeight", startOfValStageHeight,
+				"node.Id", node.Node.Id, "node.Host", node.Node.Host,
+				"batch.Participant", batch.Participant)
+			logging.Debug("ValidateReceivedBatches. Sending batch", types.PoC, "node", node.Node.Host, "batch", batchToValidate)
+
+			// FIXME: copying: doesn't look good for large PoCBatch structures?
+			nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
+			err = nodeClient.ValidateBatch(context.Background(), batchToValidate)
+			if err != nil {
+				logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
+				continue
+			}
+
+			validationSucceeded = true
+			break
+		}
+
+		if validationSucceeded {
+			successfulValidations++
+		} else {
+			failedValidations++
+			logging.Error("ValidateReceivedBatches. Failed to validate batch after all retry attempts", types.PoC,
+				"startOfValStageHeight", startOfValStageHeight,
+				"batch.Participant", batch.Participant,
+				"maxAttempts", POC_VALIDATE_BATCH_RETRIES)
 		}
 	}
 
-	logging.Info("ValidateReceivedBatches. Finished.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+	logging.Info("ValidateReceivedBatches. Finished.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"totalBatches", len(batches.PocBatch),
+		"successfulValidations", successfulValidations,
+		"failedValidations", failedValidations)
+}
+
+func filterNodes(nodes []broker.NodeResponse) []broker.NodeResponse {
+	filtered := make([]broker.NodeResponse, 0, len(nodes))
+	for _, node := range nodes {
+		if node.State.CurrentStatus == types.HardwareNodeStatus_POC && node.State.PocCurrentStatus == broker.PocStatusValidating {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
 }

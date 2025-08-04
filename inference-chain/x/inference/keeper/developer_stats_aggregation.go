@@ -3,6 +3,7 @@ package keeper
 import (
 	"bytes"
 	"context"
+
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -315,7 +316,7 @@ func modelByTimeKey(model string, timestamp int64, inferenceId string) []byte {
 	return append(modelKey, []byte(inferenceId)...)
 }
 
-var keySeparator = []byte("/")
+var keySeparator = []byte("__SEP__")
 
 func developerByEpochKey(developerAddr string, epochId uint64) []byte {
 	return append(append(sdk.Uint64ToBigEndian(epochId), keySeparator...), []byte(developerAddr)...)

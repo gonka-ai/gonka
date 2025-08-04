@@ -32,6 +32,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	_ "github.com/cosmos/cosmos-sdk/x/auth" // import for side-effects
@@ -68,6 +69,7 @@ import (
 	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/staking" // import for side-effects
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+
 	_ "github.com/cosmos/ibc-go/modules/capability" // import for side-effects
 	capabilitykeeper "github.com/cosmos/ibc-go/modules/capability/keeper"
 	_ "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts" // import for side-effects
@@ -78,7 +80,13 @@ import (
 	ibctransferkeeper "github.com/cosmos/ibc-go/v8/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 
+	collateralmodulekeeper "github.com/productscience/inference/x/collateral/keeper"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
+	inferencegenesis "github.com/productscience/inference/x/inference/module"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+	streamvestingmodulekeeper "github.com/productscience/inference/x/streamvesting/keeper"
+
+	bookkeepermodulekeeper "github.com/productscience/inference/x/bookkeeper/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	// WASM
@@ -153,7 +161,10 @@ type App struct {
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 	//ContractKeeper   *wasmkeeper.PermissionedKeeper
 
-	InferenceKeeper inferencemodulekeeper.Keeper
+	BookkeeperKeeper    bookkeepermodulekeeper.Keeper
+	InferenceKeeper     inferencemodulekeeper.Keeper
+	CollateralKeeper    collateralmodulekeeper.Keeper
+	StreamvestingKeeper streamvestingmodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
 
 	// simulation manager
@@ -279,6 +290,7 @@ func New(
 		&app.interfaceRegistry,
 		&app.AccountKeeper,
 		&app.BankKeeper,
+		&app.BookkeeperKeeper,
 		&app.StakingKeeper,
 		&app.DistrKeeper,
 		&app.ConsensusParamsKeeper,
@@ -295,6 +307,8 @@ func New(
 		&app.GroupKeeper,
 		&app.CircuitBreakerKeeper,
 		&app.InferenceKeeper,
+		&app.CollateralKeeper,
+		&app.StreamvestingKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
 		panic(err)
@@ -387,6 +401,12 @@ func New(
 
 	if loadLatest {
 		ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
+		// Initialize denom metadata in the SDK's global registry on every startup
+		if err := app.initializeDenomMetadata(ctx); err != nil {
+			ctx.Logger().Warn("Failed to register denom metadata", "error", err)
+		} else {
+			ctx.Logger().Info("Successfully registered denom metadata")
+		}
 
 		if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
@@ -507,4 +527,27 @@ func BlockedAddresses() map[string]bool {
 		}
 	}
 	return result
+}
+
+func (app *App) initializeDenomMetadata(ctx sdk.Context) error {
+	denomMetadata, found := app.BankKeeper.GetDenomMetaData(ctx, inferencetypes.BaseCoin)
+	if !found {
+		ctx.Logger().Info("BaseCoin denom metadata not found during app initialization, this may be normal during genesis")
+		return nil
+	}
+
+	for _, denomUnit := range denomMetadata.DenomUnits {
+		if _, isRegistered := sdk.GetDenomUnit(denomUnit.Denom); isRegistered {
+			ctx.Logger().Info("Denom metadata already registered, skipping duplicate registration",
+				"base", denomMetadata.Base, "registered_unit", denomUnit.Denom)
+			return nil
+		}
+	}
+
+	if err := inferencegenesis.LoadMetadataToSdk(denomMetadata); err != nil {
+		return fmt.Errorf("failed to load denom metadata to SDK: %w", err)
+	}
+
+	ctx.Logger().Info("Successfully initialized denom metadata", "base", denomMetadata.Base, "units", len(denomMetadata.DenomUnits))
+	return nil
 }

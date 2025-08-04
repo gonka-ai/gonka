@@ -1,0 +1,12 @@
+services:
+  explorer:
+    container_name: ${KEY_NAME}-explorer
+    image: ghcr.io/product-science/explorer:latest
+    networks:
+      - chain-public
+    restart: unless-stopped
+
+  # Enable REST API server when explorer is included
+  chain-node:
+    environment:
+      - REST_API_ACTIVE=true  # Enable REST API server for explorer

@@ -19,7 +19,7 @@ func SubmitProposal(cosmosClient CosmosMessageClient, msg sdk.Msg, proposalData 
 	proposalMsg, err := v1.NewMsgSubmitProposal(
 		[]sdk.Msg{msg},
 		types.GetCoins(100000000), // FIXME: this should be equal to min deposit
-		cosmosClient.GetAddress(),
+		cosmosClient.GetAccountAddress(),
 		proposalData.Metadata,
 		proposalData.Title,
 		proposalData.Summary,

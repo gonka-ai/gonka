@@ -1,21 +1,24 @@
 package public
 
 import (
+	"net/http"
+
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 type ChatRequest struct {
-	Body             []byte
-	Request          *http.Request
-	OpenAiRequest    OpenAiRequest
-	AuthKey          string // signature signing inference request
-	PubKey           string // pubkey of participant, who signed inference request
-	Seed             string
-	InferenceId      string
-	RequesterAddress string // address of participant, who signed inference request
+	Body              []byte
+	Request           *http.Request
+	OpenAiRequest     OpenAiRequest
+	AuthKey           string // signature signing inference request
+	Seed              string
+	InferenceId       string
+	RequesterAddress  string // address of participant, who signed inference request
+	TransferAddress   string
+	Timestamp         int64  // timestamp of the request
+	TransferSignature string // signature of the transfer address
 }
 
 type OpenAiRequest struct {
@@ -33,17 +36,6 @@ type Message struct {
 type ExecutorDestination struct {
 	Url     string `json:"url"`
 	Address string `json:"address"`
-}
-
-type InferenceTransaction struct {
-	PromptHash           string `json:"promptHash"`
-	PromptPayload        string `json:"promptPayload"`
-	ResponseHash         string `json:"responseHash"`
-	ResponsePayload      string `json:"responsePayload"`
-	PromptTokenCount     uint64 `json:"promptTokenCount"`
-	CompletionTokenCount uint64 `json:"completionTokenCount"`
-	Model                string `json:"model"`
-	Id                   string `json:"id"`
 }
 
 type ModelsResponse struct {
@@ -123,8 +115,10 @@ type UnitOfComputePriceProposalDto struct {
 }
 
 type PricingDto struct {
-	Price  uint64          `json:"unit_of_compute_price"`
+	Price  uint64          `json:"unit_of_compute_price"` // Legacy field for backward compatibility
 	Models []ModelPriceDto `json:"models"`
+	// Dynamic pricing information
+	DynamicPricingEnabled bool `json:"dynamic_pricing_enabled"`
 }
 
 type RegisterModelDto struct {
@@ -134,8 +128,11 @@ type RegisterModelDto struct {
 
 type ModelPriceDto struct {
 	Id                     string `json:"id"`
-	UnitsOfComputePerToken uint64 `json:"units_of_compute_per_token"`
-	PricePerToken          uint64 `json:"price_per_token"`
+	UnitsOfComputePerToken uint64 `json:"units_of_compute_per_token"` // Legacy field for backward compatibility
+	PricePerToken          uint64 `json:"price_per_token"`            // Current price (dynamic or legacy)
+	// Model metrics information
+	Utilization *float64 `json:"utilization,omitempty"` // Current utilization if available
+	Capacity    *int64   `json:"capacity,omitempty"`    // Model capacity if available
 }
 
 // FinalizedBlock represents a finalized block with optional receipts

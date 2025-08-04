@@ -3,6 +3,8 @@ package com.productscience
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.Consumer.Companion.create
+import com.productscience.data.AppState
+import com.productscience.data.Spec
 import com.productscience.data.UnfundedInferenceParticipant
 import org.tinylog.Logger
 import java.io.File
@@ -16,10 +18,16 @@ import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
+import kotlin.io.path.exists
 
+const val GENESIS_KEY_NAME = "genesis"
 const val LOCAL_TEST_NET_DIR = "local-test-net"
-const val GENESIS_COMPOSE_FILE = "${LOCAL_TEST_NET_DIR}/docker-compose-local-genesis.yml"
-const val NODE_COMPOSE_FILE = "${LOCAL_TEST_NET_DIR}/docker-compose-local.yml"
+val BASE_COMPOSE_FILES = listOf(
+    "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
+    "${LOCAL_TEST_NET_DIR}/docker-compose.proxy.yml"
+)
+val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml"
+val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.join.yml"
 
 data class GenesisUrls(val keyName: String) {
     val apiUrl = "http://$keyName-api:9000"
@@ -36,6 +44,9 @@ data class DockerGroup(
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
     val mockExternalPort: Int,
+    val proxyPort: Int,
+    val rpcPort: Int,
+    val p2pPort: Int,
     val workingDirectory: String,
     val genesisGroup: GenesisUrls? = null,
     val genesisOverridesFile: String,
@@ -44,7 +55,17 @@ data class DockerGroup(
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
 ) {
-    val composeFile = if (isGenesis) GENESIS_COMPOSE_FILE else NODE_COMPOSE_FILE
+    val composeFiles = when (isGenesis) {
+        true -> GENESIS_COMPOSE_FILES
+        false -> NODE_COMPOSE_FILES
+    }.let { baseFiles: List<String> ->
+        val additionalFiles = config.additionalDockerFilesByKeyName[keyName] ?: emptyList()
+        baseFiles + additionalFiles.map { "$LOCAL_TEST_NET_DIR/$it" }
+    }.onEach { file: String ->
+        if (!Path.of(workingDirectory, file).exists()) {
+            error("A docker file doesn't exist: $file")
+        }
+    }
 
     fun dockerProcess(vararg args: String): ProcessBuilder {
         val envMap = this.getCommonEnvMap(useSnapshots)
@@ -56,28 +77,38 @@ data class DockerGroup(
     fun init() {
         tearDownExisting()
         setupFiles()
-        val dockerProcess = dockerProcess(
-            "compose",
-            "-p",
-            keyName,
-            "-f",
-            composeFile,
-            "--project-directory",
-            workingDirectory,
-            "up",
-            "-d"
-        )
+        val composeArgs = mutableListOf("compose", "-p", keyName)
+        composeFiles.forEach { file ->
+            composeArgs.addAll(listOf("-f", file))
+        }
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d"))
+        val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
         val process = dockerProcess.start()
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
         // Just register the log events
         getLocalInferencePairs(config)
+        print(
+            "Genesis overrides file: $genesisOverridesFile | content: ${
+                Files.readString(
+                    Path.of(
+                        workingDirectory,
+                        genesisOverridesFile
+                    )
+                )
+            }"
+        )
     }
 
     fun tearDownExisting() {
         Logger.info("Tearing down existing docker group with keyName={}", keyName)
-        dockerProcess("compose", "-p", keyName, "--project-directory", workingDirectory, "down").start().waitFor()
+        val composeArgs = mutableListOf("compose", "-p", keyName)
+        composeFiles.forEach { file ->
+            composeArgs.addAll(listOf("-f", file))
+        }
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "down"))
+        dockerProcess(*composeArgs.toTypedArray()).start().waitFor()
     }
 
     private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
@@ -99,6 +130,9 @@ data class DockerGroup(
             put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", mockExternalPort.toString())
+            put("PROXY_PORT", proxyPort.toString())
+            put("RPC_PORT", rpcPort.toString())
+            put("P2P_PORT", p2pPort.toString())
             put("GENESIS_OVERRIDES_FILE", genesisOverridesFile)
             put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
             put("SNAPSHOT_INTERVAL", "100")
@@ -170,6 +204,7 @@ data class DockerGroup(
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
         Logger.info("Setup files for keyName={}", keyName)
     }
+
     init {
         require(isGenesis || genesisGroup != null) { "Genesis group must be provided" }
     }
@@ -182,8 +217,10 @@ fun createDockerGroup(
     config: ApplicationConfig,
     useSnapshots: Boolean
 ): DockerGroup {
-    val keyName = if (iteration == 0) "genesis" else "join$joinIter"
-    val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_mock-server_$keyName.json"
+    val keyName = if (iteration == 0) GENESIS_KEY_NAME else "join$joinIter"
+    val nodeConfigFile = config.nodeConfigFileByKeyName[keyName]
+        .let { fileOrNull: String? -> fileOrNull ?: "node_payload_mock-server_$keyName.json" }
+        .let { file: String -> "$LOCAL_TEST_NET_DIR/$file" }
     val repoRoot = getRepoRoot()
 
     val nodeFile = Path.of(repoRoot, nodeConfigFile)
@@ -198,7 +235,7 @@ fun createDockerGroup(
                 "poc_port": 8080,
                 "max_concurrent": 10,
                 "models": [
-                  "unsloth/llama-3-8b-Instruct"
+                  "Qwen/Qwen2.5-7B-Instruct"
                 ]
               }
             ]
@@ -214,6 +251,9 @@ fun createDockerGroup(
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
         mockExternalPort = 8090 + iteration,
+        proxyPort = 8000 + iteration,
+        rpcPort = 26657 + iteration,
+        p2pPort = 26656 + iteration,
         workingDirectory = repoRoot,
         genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
         genesisGroup = genesisUrls,
@@ -225,9 +265,9 @@ fun createDockerGroup(
 fun getRepoRoot(): String {
     val currentDir = Path.of("").toAbsolutePath()
     return generateSequence(currentDir) { it.parent }
-        .firstOrNull { it.fileName.toString() == "inference-ignite" }
+        .firstOrNull { it.fileName.toString() == "gonka" }
         ?.toString()
-        ?: throw IllegalStateException("Repository root 'inference-ignite' not found")
+        ?: throw IllegalStateException("Repository root 'gonka' not found")
 }
 
 fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentCluster: LocalCluster?): List<DockerGroup> {
@@ -238,7 +278,13 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         if (joinSize > joinCount) {
             (joinCount until joinSize).mapIndexed { _, index ->
                 val actualIndex = (index + 1) * 10
-                createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
+                createDockerGroup(
+                    index + 1,
+                    actualIndex,
+                    GenesisUrls(genesisGroup.keyName.trimStart('/')),
+                    config,
+                    false
+                )
             }.forEach { it.tearDownExisting() }
         }
         val joinGroups = (1..joinCount).mapIndexed { index, _ ->
@@ -262,14 +308,19 @@ fun initCluster(
     joinCount: Int = 2,
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
+    resetMlNodes: Boolean = true,
+    mergeSpec: Spec<AppState>? = null,
 ): Pair<LocalCluster, LocalInferencePair> {
     logSection("Cluster Discovery")
+    val finalConfig = mergeSpec?.let {
+        config.copy(genesisSpec = config.genesisSpec?.merge(mergeSpec))
+    } ?: config
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
-    val cluster = setupLocalCluster(joinCount, config, reboot || rebootFlagOn)
+    val cluster = setupLocalCluster(joinCount, finalConfig, reboot || rebootFlagOn)
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs)
+        initialize(cluster.allPairs, resetMlNodes = resetMlNodes)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {
@@ -278,7 +329,7 @@ fun initCluster(
         }
         Logger.error(e, "Error initializing cluser, retrying")
         logSection("Exception during cluster initialization, retrying")
-        return initCluster(joinCount, config, reboot = true)
+        return initCluster(joinCount, finalConfig, reboot = true)
     }
     logSection("Cluster Initialized")
     cluster.allPairs.forEach {
@@ -358,6 +409,11 @@ data class LocalCluster(
         }
     }
 
+    fun waitForMlNodesToLoad() {
+        Logger.info("Waiting for ML nodes to load", "")
+        allPairs.forEach { pair -> pair.waitForMlNodesToLoad() }
+        error("Timeout waiting for ML nodes to load")
+    }
 }
 
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {

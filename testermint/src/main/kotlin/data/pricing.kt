@@ -29,3 +29,11 @@ data class RegisterModelDto(
     val id: String,
     val unitsOfComputePerToken: ULong,
 )
+
+/**
+ * Response data class for model per token price queries
+ */
+data class ModelPerTokenPriceResponse(
+    val price: String,
+    val found: Boolean
+)
