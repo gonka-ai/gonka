@@ -232,8 +232,41 @@ Agent_limit = Total_throughput ÷ Number_of_agents
 For 3 agents: ~14 requests/second each (conservative estimate)
 
 
-## Plan 
+## Implementation Plan
 
-### Phase 1
+### Phase 0: Rate Limiting
+**Objective**: Implement Transfer Agent request limits to prevent chain bandwidth saturation
 
-### Phase 2
+**Implementation**:
+- Add `InferenceRequestLimit` tracker per Transfer Agent
+- Track active requests and estimated data size (KB)
+- Enforce per-block KB limits: `ValidationParams.LimitsPerBlockKB` (from genesis params)
+- Return error when limits exceeded: "Transfer Agent capacity reached. Try another TA from `/v1/epochs/current/participants`"
+
+**Data estimation**: `Expected_KB = max_tokens × 0.64 + prompt_tokens × 0.0023`
+
+**Open Questions**:
+- **Q1**: How to estimate expected produced data based on active requests? (Current estimation unclear for in-flight requests)
+- **Q2**: Should limits be uniform across TAs or proportional to network weight? (TAs with higher network weight may process transactions faster, potentially warranting higher limits)
+
+### Phase 1: Payload Optimization
+**Objective**: Reduce on-chain data size by 60-80%
+
+**Changes**:
+- Replace full payloads with hash signatures in `MsgStartInference` and `MsgFinishInference`
+- Convert JSON payloads to protobuf structures
+- Remove redundant fields:
+  - `bytes` arrays in logprobs
+  - Duplicate `original_prompt` fields
+  - Unnecessary metadata
+
+### Phase 2: Off-chain Response Storage
+**Objective**: Eliminate response payload storage on-chain until validation
+
+**Protocol**:
+1. **Execution**: Store only response hash on-chain, executor keeps full response locally (N epochs)
+2. **Validation trigger**: Validator requests response directly from executor
+3. **Success path**: Validate response against hash, record result on-chain
+4. **Failure path**: If executor fails to provide response:
+   - Send `MsgProvideInference` requiring on-chain response storage
+   - Validate against hash or apply immediate punishment
