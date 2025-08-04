@@ -1,0 +1,66 @@
+syntax = "proto3";
+package inference.streamvesting;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "inference/streamvesting/params.proto";
+import "inference/streamvesting/vesting_schedule.proto";
+
+option go_package = "github.com/productscience/inference/x/streamvesting/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/productscience/inference/streamvesting/params";
+  }
+
+  // VestingSchedule queries a participant's full vesting schedule.
+  rpc VestingSchedule(QueryVestingScheduleRequest) returns (QueryVestingScheduleResponse) {
+    option (google.api.http).get = "/productscience/inference/streamvesting/vesting_schedule/{participant_address}";
+  }
+
+  // TotalVestingAmount queries the total vesting amount for a participant.
+  rpc TotalVestingAmount(QueryTotalVestingAmountRequest) returns (QueryTotalVestingAmountResponse) {
+    option (google.api.http).get = "/productscience/inference/streamvesting/total_vesting/{participant_address}";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryVestingScheduleRequest is request type for the Query/VestingSchedule RPC method.
+message QueryVestingScheduleRequest {
+  string participant_address = 1;
+}
+
+// QueryVestingScheduleResponse is response type for the Query/VestingSchedule RPC method.
+message QueryVestingScheduleResponse {
+  VestingSchedule vesting_schedule = 1;
+}
+
+// QueryTotalVestingAmountRequest is request type for the Query/TotalVestingAmount RPC method.
+message QueryTotalVestingAmountRequest {
+  string participant_address = 1;
+}
+
+// QueryTotalVestingAmountResponse is response type for the Query/TotalVestingAmount RPC method.
+message QueryTotalVestingAmountResponse {
+  repeated cosmos.base.v1beta1.Coin total_amount = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+}

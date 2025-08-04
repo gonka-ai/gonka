@@ -3,6 +3,7 @@ import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
 import com.productscience.data.ModelConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.Logger
@@ -86,23 +87,66 @@ class MultiModelTests : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
         genesis.waitForNextInferenceWindow()
+        
+        logSection("Getting initial participant states")
+        val startLastRewardedEpoch = getRewardCalculationEpochIndex(genesis)
+        val beforeParticipants = genesis.api.getParticipants()
+        beforeParticipants.forEach {
+            logSection("Participant before: ${it.id} Balance: ${it.balance}")
+        }
+        
         logSection("making inferences")
-        val join1Balance = cluster.joinPairs[0].node.getSelfBalance("nicoin")
-        val join2Balance = cluster.joinPairs[1].node.getSelfBalance("nicoin")
-        val join3Balance = cluster.joinPairs[2].node.getSelfBalance("nicoin")
         val models = listOf(defaultModel, newModelName)
-        runParallelInferences(genesis, 30, models = models)
-        logSection("Verifying some rewards given")
+        val inferences = runParallelInferencesWithResults(genesis, 30, waitForBlocks = 4, maxConcurrentRequests = 30, models = models)
+        
+        logSection("Waiting for settlement and claims")
         // We don't need to calculate exact amounts, just that the rewards goes through (claim isn't rejected)
         // genesis.waitForStage(EpochStage.START_OF_POC) // TODO: Can be deleted if works
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        // There is 99.95% chance each pair gets at least one inference (with 30 inferences)
-        // If this fails, look to see if the node that doesn't increase it's balance ever got an inference
-        assertThat(cluster.joinPairs[0].node.getSelfBalance("nicoin")).isGreaterThan(join1Balance)
-        assertThat(cluster.joinPairs[1].node.getSelfBalance("nicoin")).isGreaterThan(join2Balance)
-        assertThat(cluster.joinPairs[2].node.getSelfBalance("nicoin")).isGreaterThan(join3Balance)
-//        verifySettledInferences(genesis, inferences, participants)
+        
+        logSection("Verifying balance changes")
+        val afterParticipants = genesis.api.getParticipants()
+        // Capture end epoch at same time as afterParticipants to measure same time period
+        val endLastRewardedEpoch = getRewardCalculationEpochIndex(genesis)
+        afterParticipants.forEach {
+            logSection("Participant after: ${it.id} Balance: ${it.balance}")
+        }
+        
+        // Get final inference states after settlement - with pruning check
+        logSection("Getting settled inference states")
+        val settledInferences = try {
+            inferences.map { genesis.api.getInference(it.inferenceId) }
+        } catch (e: Exception) {
+            // Check if this is a pruning-related error
+            if (e.message?.contains("not found") == true) {
+                logSection("ERROR: Inferences have been pruned from storage. This can happen if:")
+                logSection("- Test took longer than 2 epochs (${2 * 15 * 5} seconds = ~2.5 minutes)")
+                logSection("- Current pruning threshold: 2 epochs after inference creation")
+                logSection("- Consider optimizing test timing or adjusting pruning settings in Main.kt")
+                logSection("- Failed inference IDs: ${inferences.take(3).map { it.inferenceId }}")
+                throw IllegalStateException("Inferences were pruned during test execution. Test timing exceeded 2-epoch threshold.", e)
+            } else {
+                throw e
+            }
+        }
+        
+        val params = genesis.node.getInferenceParams().params
+        
+        logSection("Calculating expected balance changes")
+        // Calculate expected balance changes using the dual reward system logic
+        val expectedChanges = calculateBalanceChanges(settledInferences, params, beforeParticipants, startLastRewardedEpoch, endLastRewardedEpoch)
+        val actualChanges = beforeParticipants.associate {
+            it.id to afterParticipants.first { participant -> participant.id == it.id }.balance - it.balance
+        }
+        
+        logSection("Comparing expected vs actual balance changes")
+        expectedChanges.forEach { (participantId, expectedChange) ->
+            val actualChange = actualChanges[participantId] ?: 0L
+            logSection("Participant $participantId - Expected: $expectedChange Actual: $actualChange")
+            
+            // Verify that the actual change matches our calculated expectation (with small tolerance for rounding)
+            assertThat(actualChange).`as`("Participant $participantId balance change")
+                .isCloseTo(expectedChange, Offset.offset(3))
+        }
     }
-
-
 }

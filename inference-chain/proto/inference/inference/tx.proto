@@ -101,7 +101,8 @@ message MsgFinishInference {
   string transfer_signature     = 10;
   string executor_signature     = 11;
   string requested_by           = 12;
-  string original_prompt         = 13;
+  string original_prompt        = 13;
+  string model                  = 14;
 }
 
 message MsgFinishInferenceResponse {

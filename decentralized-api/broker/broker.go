@@ -55,7 +55,7 @@ func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient, chainNode
 func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	req := &types.QueryHardwareNodesRequest{
-		Participant: b.client.GetAddress(),
+		Participant: b.client.GetAccountAddress(),
 	}
 	return queryClient.HardwareNodes(*b.client.GetContext(), req)
 }

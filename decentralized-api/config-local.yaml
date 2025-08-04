@@ -10,7 +10,8 @@ nodes:
       - Qwen/Qwen2.5-7B-Instruct
 chain_node:
   url: http://localhost:26657
-  account_name: "alice"
+  account_public_key: ""
+  signer_key_name: "alice"
   keyring_backend: "test"
   keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root
   is_genesis: false

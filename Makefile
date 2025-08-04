@@ -11,7 +11,7 @@ api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
 
 node-build-docker:
-	@make -C inference-chain build-docker SET_LATEST=1 GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE)
+	@make -C inference-chain build-docker SET_LATEST=1 $(if $(GENESIS_OVERRIDES_FILE),GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE),)
 
 mock-server-build-docker:
 	@echo "Building mock-server JAR file..."

@@ -45,8 +45,8 @@ Make sure you have the following installed:
 #### 2. Build the project
 Clone the repository:
 ```
-git clone https://github.com/product-science/inference-ignite.git
-cd inferenced-ignite (or repo name)**
+git clone https://github.com/gonka-ai/gonka.git
+cd gonka (or repo name)**
 ```
 
 Build chain and API nodes, and run unit tests:
@@ -54,7 +54,7 @@ Build chain and API nodes, and run unit tests:
 make local-build
 ```
 #### 3. Run local tests
-There is an integration testing framework dubbed “Testermint”. This framework runs on live `api` and `chain` nodes, and emulates `ml` nodes using WireMock. It runs a local cluster of nodes using Docker and tests things very close to how they will work in a live environment. See the README.md in the [`/testermint`](https://github.com/product-science/inference-ignite/tree/main/testermint) directory for more details.
+There is an integration testing framework dubbed “Testermint”. This framework runs on live `api` and `chain` nodes, and emulates `ml` nodes using WireMock. It runs a local cluster of nodes using Docker and tests things very close to how they will work in a live environment. See the README.md in the [`/testermint`](https://github.com/gonka-ai/gonka/tree/main/testermint) directory for more details.
 
 This command will build locally, deploy a small network of Docker containers, and run a set of these integration-level tests. It will take quite some time to run completely.
 ```
@@ -69,8 +69,8 @@ Our project is built as a modular, containerized infrastructure with multiple in
 ### Core components
 
 - Network Node — This service handles all communication, including:
-    - [`chain`](https://github.com/product-science/inference-ignite/tree/main/inference-chain) node that connects to the blockchain, maintains the blockchain layer, and handles consensus.
-    - [`api`](https://github.com/product-science/inference-ignite/tree/main/decentralized-api) node serves as the primary coordination layer between the blockchain (`chain node`) and the AI execution environment (`ml` node). It exposes REST/gRPC endpoints for interacting with users, developers, and internal components, while managing work orchestration, validation scheduling, and result verification processes that require off-chain execution. In addition to handling user requests, it is responsible for:
+    - [`chain`](https://github.com/gonka-ai/gonka/tree/main/inference-chain) node that connects to the blockchain, maintains the blockchain layer, and handles consensus.
+    - [`api`](https://github.com/gonka-ai/gonka/tree/main/decentralized-api) node serves as the primary coordination layer between the blockchain (`chain node`) and the AI execution environment (`ml` node). It exposes REST/gRPC endpoints for interacting with users, developers, and internal components, while managing work orchestration, validation scheduling, and result verification processes that require off-chain execution. In addition to handling user requests, it is responsible for:
         - Routing inference and training jobs to the `ml` node
         - Recording inference results and ensuring task completion
         - Scheduling and managing validation tasks
@@ -106,7 +106,7 @@ We support several types of tests to ensure the system’s stability and reliabi
 - Unit tests – For core logic in `ml`node, `chain` node, and `api` node
 - End-to-End tests – Test full task lifecycle across the network using Testermint module
 
-Detailed instructions on running and contributing to tests are available in [`CONTRIBUTING.md`](https://github.com/product-science/inference-ignite/blob/1291f20c650f80e202217a8efd9a3cd7064cdff1/CONTRIBUTING.md).
+Detailed instructions on running and contributing to tests are available in [`CONTRIBUTING.md`](https://github.com/gonka-ai/gonka/blob/main/CONTRIBUTING.md).
 ## Deployment strategy
 
 The system is designed around **containerized microservices**. Each component runs in its own Docker container, allowing:

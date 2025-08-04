@@ -1,7 +1,10 @@
 package app
 
 import (
+	bookkeepermodulev1 "github.com/productscience/inference/api/inference/bookkeeper/module"
 	"time"
+
+	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 
 	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
 	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
@@ -55,9 +58,16 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
+	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
+	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
+	_ "github.com/productscience/inference/x/bookkeeper/module" // import for side-effects
+	bookkeepermoduletypes "github.com/productscience/inference/x/bookkeeper/types"
+	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
+	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
+	_ "github.com/productscience/inference/x/streamvesting/module" // import for side-effects
+	streamvestingmoduletypes "github.com/productscience/inference/x/streamvesting/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 )
 
@@ -95,8 +105,11 @@ var (
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		streamvestingmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 
@@ -121,7 +134,10 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		streamvestingmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	}
@@ -141,7 +157,10 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		bookkeepermoduletypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
+		streamvestingmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	}
@@ -164,10 +183,13 @@ var (
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: ibcfeetypes.ModuleName},
 		{Account: icatypes.ModuleName},
+		{Account: bookkeepermoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter}},
 		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		{Account: collateralmoduletypes.ModuleName, Permissions: []string{authtypes.Burner}},
+		{Account: streamvestingmoduletypes.ModuleName, Permissions: []string{authtypes.Minter}},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 
@@ -307,8 +329,25 @@ var (
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
 			},
 			{
+				Name: bookkeepermoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&bookkeepermodulev1.Module{
+					// TODO: This isn't configurable per node, it should be
+					DoubleEntry: true,
+					SimpleEntry: true,
+					LogLevel:    "info",
+				}),
+			},
+			{
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
+			},
+			{
+				Name:   collateralmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
+			},
+			{
+				Name:   streamvestingmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&streamvestingmodulev1.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},

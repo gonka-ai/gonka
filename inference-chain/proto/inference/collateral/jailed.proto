@@ -1,0 +1,10 @@
+syntax = "proto3";
+package inference.collateral;
+
+option go_package = "github.com/productscience/inference/x/collateral/types";
+
+// JailedParticipant defines a participant who is currently jailed at the consensus level.
+// Their presence in the store indicates a jailed state.
+message JailedParticipant {
+  string address = 1;
+} 

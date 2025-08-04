@@ -1,0 +1,21 @@
+syntax = "proto3";
+package inference.collateral;
+
+import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
+
+option go_package = "github.com/productscience/inference/x/collateral/types";
+
+// UnbondingCollateral represents collateral that is in the process of being withdrawn
+message UnbondingCollateral {
+  // participant is the address of the participant withdrawing collateral
+  string participant = 1;
+  
+  // amount is the collateral amount being withdrawn
+  cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false
+  ];
+  
+  // completion_epoch is the epoch when the funds will be released
+  uint64 completion_epoch = 3;
+} 

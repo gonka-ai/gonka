@@ -193,6 +193,46 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
+    fun queryCollateral(address: String): Collateral = wrapLog("queryCollateral", false) {
+        val output = execCli(listOf("query", "collateral", "show-collateral", address))
+
+        if (output.contains("collateral not found")) {
+            return@wrapLog Collateral(null, emptyList())
+        }
+        
+        return@wrapLog cosmosJson.fromJson(output, Collateral::class.java)
+    }
+
+    fun queryUnbondingCollateral(address: String): UnbondingCollateralResponse = wrapLog("queryUnbondingCollateral", false) {
+        execAndParse(listOf("query", "collateral", "show-unbonding-collateral", address))
+    }
+
+    fun queryCollateralParams(): CollateralParamsWrapper = wrapLog("queryCollateralParams", false) {
+        execAndParse(listOf("query", "collateral", "params"))
+    }
+
+    fun queryVestingSchedule(address: String): VestingScheduleResponse = wrapLog("queryVestingSchedule", false) {
+        try {
+            execAndParse(listOf("query", "streamvesting", "vesting-schedule", address))
+        } catch (e: Exception) {
+            // Return empty schedule if not found
+            VestingScheduleResponse(null)
+        }
+    }
+
+    fun queryTotalVestingAmount(address: String): TotalVestingAmountResponse = wrapLog("queryTotalVestingAmount", false) {
+        try {
+            execAndParse(listOf("query", "streamvesting", "total-vesting", address))
+        } catch (e: Exception) {
+            // Return null amount if not found
+            TotalVestingAmountResponse(null)
+        }
+    }
+
+    fun queryStreamVestingParams(): StreamVestingParamsWrapper = wrapLog("queryStreamVestingParams", false) {
+        execAndParse(listOf("query", "streamvesting", "params"))
+    }
+
     fun getGovParams(): GovState = wrapLog("getGovParams", false) {
         execAndParse(listOf("query", "gov", "params"))
     }
@@ -226,6 +266,11 @@ data class ApplicationCLI(
 
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
+        val output = execCli(args, includeOutputFlag)
+        return cosmosJson.fromJson(output, T::class.java)
+    }
+    
+    fun execCli(args: List<String>, includeOutputFlag: Boolean = true): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
@@ -237,8 +282,7 @@ data class ApplicationCLI(
             throw NotReadyException()
         }
         // Extract JSON payload if output contains gas estimate
-        val jsonOutput = output.replace(Regex("^gas estimate: \\d+"), "")
-        return cosmosJson.fromJson(jsonOutput, T::class.java)
+        return output.replace(Regex("^gas estimate: \\d+"), "")
     }
 
     inline fun <reified T> execAndParseNullable(args: List<String>, includeOutputFlag: Boolean = true): T? {
@@ -388,6 +432,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "gov", "proposals"))
     }
 
+    fun getModelPerTokenPrice(modelId: String): ModelPerTokenPriceResponse = wrapLog("getModelPerTokenPrice", false) {
+        execAndParse(listOf("query", "inference", "model-per-token-price", modelId))
+    }
+
     fun getPocBatchCount(epochStartHeight:Long): Long = wrapLog("getPocBatchCount", infoLevel = false) {
         execAndParse<Count>(listOf("query", "inference", "count-po-c-batches-at-height", epochStartHeight.toString())).count
     }
@@ -404,7 +452,6 @@ data class ApplicationCLI(
     data class Count(
         val count: Long = 0
     )
-
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)

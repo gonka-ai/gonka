@@ -234,7 +234,6 @@ build-linux-docker:
 	@echo "Static Linux builds complete!"
 
 
-
 build-%:
 	$(eval OS := $(word 1,$(subst -, ,$*)))
 	$(eval ARCH := $(word 2,$(subst -, ,$*)))

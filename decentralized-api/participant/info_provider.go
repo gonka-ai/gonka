@@ -2,6 +2,7 @@ package participant
 
 import (
 	"decentralized-api/cosmosclient"
+
 	"github.com/productscience/inference/x/inference/utils"
 )
 
@@ -16,13 +17,9 @@ type CosmosInfo struct {
 }
 
 func NewCurrentParticipantInfo(client cosmosclient.CosmosMessageClient) (*CosmosInfo, error) {
-	address := client.GetAddress()
+	address := client.GetAccountAddress()
 
-	pubKey, err := client.GetAccount().Record.GetPubKey()
-	if err != nil {
-		// Handle the error appropriately, maybe log it or return an empty string
-		return nil, err
-	}
+	pubKey := client.GetAccountPubKey()
 	pubkeyString := utils.PubKeyToHexString(pubKey)
 
 	return &CosmosInfo{Address: address, PubKey: pubkeyString}, nil
