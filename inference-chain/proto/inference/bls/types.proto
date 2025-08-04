@@ -23,6 +23,9 @@ enum DKGPhase {
   
   // FAILED represents the phase where DKG has failed
   DKG_PHASE_FAILED = 4;
+  
+  // SIGNED represents the phase where DKG has completed and been validated by previous epoch
+  DKG_PHASE_SIGNED = 5;
 }
 
 // BLSParticipantInfo contains information about a participant in the DKG process
@@ -115,4 +118,13 @@ message EpochBLSData {
   // This is populated when the DKG transitions to COMPLETED phase
   // Index i corresponds to whether dealer i (participants[i]) is valid
   repeated bool valid_dealers = 11;
-} 
+  
+  // validation_signature is the final aggregated signature validating this epoch's group public key
+  // This signature is created by the previous epoch's validators using their BLS slot shares
+  // For Epoch 1 (genesis), this field remains empty (no previous epoch to validate)
+  // For Epoch N+1, stores the signature from Epoch N validators confirming the new group public key
+  // Format: 48-byte G1 compressed signature
+  bytes validation_signature = 12;
+}
+
+ 

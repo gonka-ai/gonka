@@ -6,7 +6,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/bls_dkg"
+	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/validation"
@@ -25,16 +25,18 @@ import (
 )
 
 const (
-	finishInferenceAction      = "/inference.inference.MsgFinishInference"
-	startInferenceAction       = "/inference.inference.MsgStartInference"
-	validationAction           = "/inference.inference.MsgValidation"
-	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
-	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
+	finishInferenceAction           = "/inference.inference.MsgFinishInference"
+	startInferenceAction            = "/inference.inference.MsgStartInference"
+	validationAction                = "/inference.inference.MsgValidation"
+	trainingTaskAssignedAction      = "/inference.inference.MsgAssignTrainingTask"
+	submitGovProposalAction         = "/cosmos.gov.v1.MsgSubmitProposal"
+	requestThresholdSignatureAction = "/inference.bls.MsgRequestThresholdSignature"
 
 	// BLS Typed Event Types (from EmitTypedEvent)
-	blsKeyGenerationInitiatedEvent  = "inference.bls.EventKeyGenerationInitiated"
-	blsVerifyingPhaseStartedEvent   = "inference.bls.EventVerifyingPhaseStarted"
-	blsGroupPublicKeyGeneratedEvent = "inference.bls.EventGroupPublicKeyGenerated"
+	blsKeyGenerationInitiatedEvent    = "inference.bls.EventKeyGenerationInitiated"
+	blsVerifyingPhaseStartedEvent     = "inference.bls.EventVerifyingPhaseStarted"
+	blsGroupPublicKeyGeneratedEvent   = "inference.bls.EventGroupPublicKeyGenerated"
+	blsThresholdSigningRequestedEvent = "inference.bls.EventThresholdSigningRequested"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -47,8 +49,7 @@ type EventListener struct {
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
-	blsDealer           *bls_dkg.Dealer
-	blsVerifier         *bls_dkg.Verifier
+	blsManager          *bls.BlsManager
 	nodeCaughtUp        atomic.Bool
 	phaseTracker        *chainphase.ChainPhaseTracker
 	dispatcher          *OnNewBlockDispatcher
@@ -66,8 +67,7 @@ func NewEventListener(
 	trainingExecutor *training.Executor,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
-	blsDealer *bls_dkg.Dealer,
-	blsVerifier *bls_dkg.Verifier,
+	blsManager *bls.BlsManager,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
@@ -88,8 +88,7 @@ func NewEventListener(
 		phaseTracker:        phaseTracker,
 		dispatcher:          dispatcher,
 		cancelFunc:          cancelFunc,
-		blsDealer:           blsDealer,
-		blsVerifier:         blsVerifier,
+		blsManager:          blsManager,
 	}
 }
 
@@ -106,11 +105,13 @@ func (el *EventListener) openWsConnAndSubscribe() {
 
 	// WARNING: It looks like Tendermint can't support more than 5 subscriptions per websocket
 	// If we want to add more subscription we should subscribe to all TX and filter on our side
-	subscribeToEvents(el.ws, 1, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
-	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
-	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
+	subscribeToEvents(el.ws, 1, "tm.event='NewBlock'")
+	// All transactions originating from the inference module
+	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.module='inference'")
+	// All transactions originating from the BLS module
+	subscribeToEvents(el.ws, 3, "tm.event='Tx' AND message.module='bls'")
+	// Validation-specific flag (remains separate because it can originate from other modules)
 	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
-	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
 
 	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
@@ -294,7 +295,6 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 
 	case txEventType:
-		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
@@ -303,9 +303,11 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, workerName string) {
 	// Check for BLS events in NewBlock events (emitted from EndBlocker)
+	// Note: Threshold signing events are handled separately in handleBLSTransactionEvents
+
 	if epochIdValues := event.Result.Events[blsKeyGenerationInitiatedEvent+".epoch_id"]; len(epochIdValues) > 0 {
 		logging.Info("Key generation initiated event received", types.EventProcessing, "worker", workerName)
-		err := el.blsDealer.ProcessKeyGenerationInitiated(event)
+		err := el.blsManager.ProcessKeyGenerationInitiated(event)
 		if err != nil {
 			logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", workerName)
 		}
@@ -313,7 +315,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 
 	if epochIdValues := event.Result.Events[blsVerifyingPhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
 		logging.Info("Verifying phase started event received", types.EventProcessing, "worker", workerName)
-		err := el.blsVerifier.ProcessVerifyingPhaseStarted(event)
+		err := el.blsManager.ProcessVerifyingPhaseStarted(event)
 		if err != nil {
 			logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", workerName)
 		}
@@ -321,9 +323,22 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 
 	if epochIdValues := event.Result.Events[blsGroupPublicKeyGeneratedEvent+".epoch_id"]; len(epochIdValues) > 0 {
 		logging.Info("Group public key generated event received", types.EventProcessing, "worker", workerName)
-		err := el.blsVerifier.ProcessGroupPublicKeyGenerated(event)
+		err := el.blsManager.ProcessGroupPublicKeyGenerated(event)
 		if err != nil {
 			logging.Error("Failed to process group public key generated event", types.EventProcessing, "error", err, "worker", workerName)
+		}
+	}
+}
+
+func (el *EventListener) handleBLSTransactionEvents(event *chainevents.JSONRPCResponse, workerName string) {
+	// Only handle threshold signing events in transaction events (emitted from message processing)
+	if requestIdValues := event.Result.Events[blsThresholdSigningRequestedEvent+".request_id"]; len(requestIdValues) > 0 {
+		logging.Info("Threshold signing requested event received (from transaction)", types.EventProcessing, "worker", workerName)
+		if el.isNodeSynced() {
+			err := el.blsManager.ProcessThresholdSigningRequested(event)
+			if err != nil {
+				logging.Error("Failed to process threshold signing requested event", types.EventProcessing, "error", err, "worker", workerName)
+			}
 		}
 	}
 }
@@ -334,6 +349,9 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 		return
 	}
 
+	// Check for transaction-specific BLS events (only threshold signing events are emitted from message processing)
+	el.handleBLSTransactionEvents(event, name)
+
 	actions, ok := event.Result.Events["message.action"]
 	if !ok || len(actions) == 0 {
 		// Handle the missing key or empty slice.
@@ -343,15 +361,16 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 	}
 
 	action := actions[0]
-	logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
 	//	for i, attr := range event.Result.Events[key] {
 	//		logging.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
 	//	}
 	//}
+
 	switch action {
 	case startInferenceAction, finishInferenceAction:
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 		if el.isNodeSynced() {
 			el.validator.SampleInferenceToValidate(
 				event.Result.Events["inference_finished.inference_id"],
@@ -359,13 +378,16 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 			)
 		}
 	case validationAction:
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 		if el.isNodeSynced() {
 			el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
 		}
 	case submitGovProposalAction:
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 		proposalIdOrNil := event.Result.Events["proposal_id"]
 		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
 	case trainingTaskAssignedAction:
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 		if el.isNodeSynced() {
 			logging.Info("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
 			taskIds := event.Result.Events["training_task_assigned.task_id"]
@@ -382,8 +404,9 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 				el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
 			}
 		}
+	case requestThresholdSignatureAction:
 	default:
-		logging.Warn("Unhandled action received", types.EventProcessing, "action", action)
+		logging.Debug("Unhandled action received", types.EventProcessing, "action", action)
 	}
 }
 

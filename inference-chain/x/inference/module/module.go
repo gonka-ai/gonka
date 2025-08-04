@@ -427,7 +427,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
 
 	// Call BLS module to initiate key generation for the new epoch
-	am.InitiateBLSKeyGeneration(ctx, upcomingEg.GroupData.EpochGroupId, activeParticipants)
+	am.InitiateBLSKeyGeneration(ctx, upcomingEpoch.Index, activeParticipants)
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.

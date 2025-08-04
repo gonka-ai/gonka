@@ -3,6 +3,7 @@ package com.productscience
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
+import com.productscience.data.toHexString
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
@@ -263,6 +264,13 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-top-miner"))
     }
 
+    fun queryBLSEpochData(epochId: Long): EpochBLSDataWrapper = wrapLog("queryBLSEpochData", false) {
+        execAndParse(listOf("query", "bls", "epoch-data", epochId.toString()))
+    }
+
+    fun queryBLSSigningStatus(requestId: String): SigningStatusWrapper = wrapLog("queryBLSSigningStatus", false) {
+        execAndParse(listOf("query", "bls", "signing-status", requestId))
+    }
 
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
@@ -447,6 +455,31 @@ data class ApplicationCLI(
     fun getPrivateKey(): String = wrapLog("getPrivateKey", infoLevel = false) {
         val accountName = this.getAccountName()
         exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex")).first()
+    }
+
+    fun requestThresholdSignature(
+        currentEpochId: Long,
+        chainId: String,
+        requestId: String,
+        data: List<String>
+    ): TxResponse = wrapLog("requestThresholdSignature", true) {
+        val from = this.getAccountName()
+        val baseArgs = listOf(
+            "tx", "bls", "request-threshold-signature",
+            currentEpochId.toString(),
+            chainId.toByteArray().toHexString(),
+            requestId.toByteArray().toHexString(),
+        ) + data.map { it.toByteArray().toHexString() }
+
+        val finalArgs = baseArgs + listOf(
+            "--from", from,
+            "--keyring-backend", "test",
+            "--chain-id", config.chainId,
+            "--keyring-dir", "/root/${config.stateDirName}",
+            "--yes"
+        )
+        
+        execAndParse(finalArgs)
     }
 
     data class Count(

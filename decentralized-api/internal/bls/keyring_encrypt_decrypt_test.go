@@ -1,4 +1,4 @@
-package bls_dkg
+package bls
 
 import (
 	"bytes"

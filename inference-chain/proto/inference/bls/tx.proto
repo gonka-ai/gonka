@@ -23,6 +23,15 @@ service Msg {
   
   // SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
   rpc SubmitVerificationVector(MsgSubmitVerificationVector) returns (MsgSubmitVerificationVectorResponse);
+  
+  // SubmitGroupKeyValidationSignature allows a participant to submit their partial signature for group key validation
+  rpc SubmitGroupKeyValidationSignature(MsgSubmitGroupKeyValidationSignature) returns (MsgSubmitGroupKeyValidationSignatureResponse);
+  
+  // SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
+  rpc SubmitPartialSignature(MsgSubmitPartialSignature) returns (MsgSubmitPartialSignatureResponse);
+  
+  // RequestThresholdSignature allows external users to request a threshold signature
+  rpc RequestThresholdSignature(MsgRequestThresholdSignature) returns (MsgRequestThresholdSignatureResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -90,3 +99,72 @@ message MsgSubmitVerificationVector {
 // MsgSubmitVerificationVectorResponse defines the response structure for executing a
 // MsgSubmitVerificationVector message.
 message MsgSubmitVerificationVectorResponse {}
+
+// MsgSubmitGroupKeyValidationSignature is the message for submitting partial signatures for group key validation
+message MsgSubmitGroupKeyValidationSignature {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "inference/x/bls/MsgSubmitGroupKeyValidationSignature";
+
+  // creator is the address of the participant submitting their partial signature
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // new_epoch_id identifies the epoch whose group public key is being validated
+  uint64 new_epoch_id = 2;
+  
+  // slot_indices are the slot indices this participant is signing for (from their previous epoch assignment)
+  repeated uint32 slot_indices = 3;
+  
+  // partial_signature is the BLS partial signature (G1 point, 48-byte compressed format)
+  bytes partial_signature = 4;
+}
+
+// MsgSubmitGroupKeyValidationSignatureResponse defines the response structure for executing a
+// MsgSubmitGroupKeyValidationSignature message.
+message MsgSubmitGroupKeyValidationSignatureResponse {}
+
+// MsgSubmitPartialSignature is the message for submitting partial signatures for threshold signing
+message MsgSubmitPartialSignature {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "inference/x/bls/MsgSubmitPartialSignature";
+
+  // creator is the address of the participant submitting their partial signature
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // request_id identifies the threshold signing request this partial signature is for
+  bytes request_id = 2;
+  
+  // slot_indices are the slot indices this participant is signing for (from their current epoch assignment)
+  repeated uint32 slot_indices = 3;
+  
+  // partial_signature is the aggregated BLS partial signature for all participant's slots (G1 point, 48-byte compressed format)
+  bytes partial_signature = 4;
+}
+
+// MsgSubmitPartialSignatureResponse defines the response structure for executing a
+// MsgSubmitPartialSignature message.
+message MsgSubmitPartialSignatureResponse {}
+
+// MsgRequestThresholdSignature allows external users to request a threshold signature via transaction
+message MsgRequestThresholdSignature {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name)           = "inference/x/bls/MsgRequestThresholdSignature";
+
+  // creator is the address of the user requesting the threshold signature
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // current_epoch_id identifies the epoch to use for signing
+  uint64 current_epoch_id = 2;
+
+  // chain_id is the chain ID for EIP-155 compatibility (32 bytes)
+  bytes chain_id = 3;
+
+  // request_id is the user-provided unique identifier for this request (32 bytes)
+  bytes request_id = 4;
+
+  // data is the arbitrary data to be signed (array of 32-byte chunks)
+  repeated bytes data = 5;
+}
+
+// MsgRequestThresholdSignatureResponse defines the response structure for executing a
+// MsgRequestThresholdSignature message.
+message MsgRequestThresholdSignatureResponse {}

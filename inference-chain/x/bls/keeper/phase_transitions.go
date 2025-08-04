@@ -13,7 +13,7 @@ import (
 func (k Keeper) ProcessDKGPhaseTransitions(ctx sdk.Context) error {
 	// Get the currently active epoch ID
 	activeEpochID, found := k.GetActiveEpochID(ctx)
-	if !found {
+	if !found || activeEpochID == 0 {
 		// No active DKG - this is normal
 		return nil
 	}
@@ -30,7 +30,9 @@ func (k Keeper) ProcessDKGPhaseTransitionForEpoch(ctx sdk.Context, epochID uint6
 	}
 
 	// Skip completed or failed DKGs
-	if epochBLSData.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED || epochBLSData.DkgPhase == types.DKGPhase_DKG_PHASE_FAILED {
+	if epochBLSData.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED ||
+		epochBLSData.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED ||
+		epochBLSData.DkgPhase == types.DKGPhase_DKG_PHASE_FAILED {
 		return nil
 	}
 
@@ -196,6 +198,7 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 			ITotalSlots:    epochBLSData.ITotalSlots,
 			TSlotsDegree:   epochBLSData.TSlotsDegree,
 			EpochData:      *epochBLSData,
+			ChainId:        ctx.ChainID(),
 		}); err != nil {
 			return fmt.Errorf("failed to emit EventGroupPublicKeyGenerated for epoch %d: %w", epochBLSData.EpochId, err)
 		}

@@ -78,6 +78,12 @@ func NewServer(
 
 	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
+
+	// BLS Query Endpoints
+	blsGroup := g.Group("bls/")
+	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
+	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
+
 	return s
 }
 

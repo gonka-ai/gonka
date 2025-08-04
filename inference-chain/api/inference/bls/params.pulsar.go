@@ -4,6 +4,7 @@ package bls
 import (
 	_ "cosmossdk.io/api/amino"
 	fmt "fmt"
+	_ "github.com/cosmos/cosmos-proto"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -20,6 +21,7 @@ var (
 	fd_Params_t_slots_degree_offset              protoreflect.FieldDescriptor
 	fd_Params_dealing_phase_duration_blocks      protoreflect.FieldDescriptor
 	fd_Params_verification_phase_duration_blocks protoreflect.FieldDescriptor
+	fd_Params_signing_deadline_blocks            protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -29,6 +31,7 @@ func init() {
 	fd_Params_t_slots_degree_offset = md_Params.Fields().ByName("t_slots_degree_offset")
 	fd_Params_dealing_phase_duration_blocks = md_Params.Fields().ByName("dealing_phase_duration_blocks")
 	fd_Params_verification_phase_duration_blocks = md_Params.Fields().ByName("verification_phase_duration_blocks")
+	fd_Params_signing_deadline_blocks = md_Params.Fields().ByName("signing_deadline_blocks")
 }
 
 var _ protoreflect.Message = (*fastReflection_Params)(nil)
@@ -120,6 +123,12 @@ func (x *fastReflection_Params) Range(f func(protoreflect.FieldDescriptor, proto
 			return
 		}
 	}
+	if x.SigningDeadlineBlocks != int64(0) {
+		value := protoreflect.ValueOfInt64(x.SigningDeadlineBlocks)
+		if !f(fd_Params_signing_deadline_blocks, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -143,6 +152,8 @@ func (x *fastReflection_Params) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.DealingPhaseDurationBlocks != int64(0)
 	case "inference.bls.Params.verification_phase_duration_blocks":
 		return x.VerificationPhaseDurationBlocks != int64(0)
+	case "inference.bls.Params.signing_deadline_blocks":
+		return x.SigningDeadlineBlocks != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.Params"))
@@ -167,6 +178,8 @@ func (x *fastReflection_Params) Clear(fd protoreflect.FieldDescriptor) {
 		x.DealingPhaseDurationBlocks = int64(0)
 	case "inference.bls.Params.verification_phase_duration_blocks":
 		x.VerificationPhaseDurationBlocks = int64(0)
+	case "inference.bls.Params.signing_deadline_blocks":
+		x.SigningDeadlineBlocks = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.Params"))
@@ -194,6 +207,9 @@ func (x *fastReflection_Params) Get(descriptor protoreflect.FieldDescriptor) pro
 		return protoreflect.ValueOfInt64(value)
 	case "inference.bls.Params.verification_phase_duration_blocks":
 		value := x.VerificationPhaseDurationBlocks
+		return protoreflect.ValueOfInt64(value)
+	case "inference.bls.Params.signing_deadline_blocks":
+		value := x.SigningDeadlineBlocks
 		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
@@ -223,6 +239,8 @@ func (x *fastReflection_Params) Set(fd protoreflect.FieldDescriptor, value proto
 		x.DealingPhaseDurationBlocks = value.Int()
 	case "inference.bls.Params.verification_phase_duration_blocks":
 		x.VerificationPhaseDurationBlocks = value.Int()
+	case "inference.bls.Params.signing_deadline_blocks":
+		x.SigningDeadlineBlocks = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.Params"))
@@ -251,6 +269,8 @@ func (x *fastReflection_Params) Mutable(fd protoreflect.FieldDescriptor) protore
 		panic(fmt.Errorf("field dealing_phase_duration_blocks of message inference.bls.Params is not mutable"))
 	case "inference.bls.Params.verification_phase_duration_blocks":
 		panic(fmt.Errorf("field verification_phase_duration_blocks of message inference.bls.Params is not mutable"))
+	case "inference.bls.Params.signing_deadline_blocks":
+		panic(fmt.Errorf("field signing_deadline_blocks of message inference.bls.Params is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.Params"))
@@ -271,6 +291,8 @@ func (x *fastReflection_Params) NewField(fd protoreflect.FieldDescriptor) protor
 	case "inference.bls.Params.dealing_phase_duration_blocks":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.bls.Params.verification_phase_duration_blocks":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.bls.Params.signing_deadline_blocks":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
@@ -353,6 +375,9 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 		if x.VerificationPhaseDurationBlocks != 0 {
 			n += 1 + runtime.Sov(uint64(x.VerificationPhaseDurationBlocks))
 		}
+		if x.SigningDeadlineBlocks != 0 {
+			n += 1 + runtime.Sov(uint64(x.SigningDeadlineBlocks))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -381,6 +406,11 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.SigningDeadlineBlocks != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.SigningDeadlineBlocks))
+			i--
+			dAtA[i] = 0x28
 		}
 		if x.VerificationPhaseDurationBlocks != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.VerificationPhaseDurationBlocks))
@@ -527,6 +557,691 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SigningDeadlineBlocks", wireType)
+				}
+				x.SigningDeadlineBlocks = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.SigningDeadlineBlocks |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var _ protoreflect.List = (*_PartialSignature_2_list)(nil)
+
+type _PartialSignature_2_list struct {
+	list *[]uint32
+}
+
+func (x *_PartialSignature_2_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_PartialSignature_2_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfUint32((*x.list)[i])
+}
+
+func (x *_PartialSignature_2_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Uint()
+	concreteValue := (uint32)(valueUnwrapped)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_PartialSignature_2_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Uint()
+	concreteValue := (uint32)(valueUnwrapped)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_PartialSignature_2_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message PartialSignature at list field SlotIndices as it is not of Message kind"))
+}
+
+func (x *_PartialSignature_2_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_PartialSignature_2_list) NewElement() protoreflect.Value {
+	v := uint32(0)
+	return protoreflect.ValueOfUint32(v)
+}
+
+func (x *_PartialSignature_2_list) IsValid() bool {
+	return x.list != nil
+}
+
+var (
+	md_PartialSignature                     protoreflect.MessageDescriptor
+	fd_PartialSignature_participant_address protoreflect.FieldDescriptor
+	fd_PartialSignature_slot_indices        protoreflect.FieldDescriptor
+	fd_PartialSignature_signature           protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_params_proto_init()
+	md_PartialSignature = File_inference_bls_params_proto.Messages().ByName("PartialSignature")
+	fd_PartialSignature_participant_address = md_PartialSignature.Fields().ByName("participant_address")
+	fd_PartialSignature_slot_indices = md_PartialSignature.Fields().ByName("slot_indices")
+	fd_PartialSignature_signature = md_PartialSignature.Fields().ByName("signature")
+}
+
+var _ protoreflect.Message = (*fastReflection_PartialSignature)(nil)
+
+type fastReflection_PartialSignature PartialSignature
+
+func (x *PartialSignature) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_PartialSignature)(x)
+}
+
+func (x *PartialSignature) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_params_proto_msgTypes[1]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_PartialSignature_messageType fastReflection_PartialSignature_messageType
+var _ protoreflect.MessageType = fastReflection_PartialSignature_messageType{}
+
+type fastReflection_PartialSignature_messageType struct{}
+
+func (x fastReflection_PartialSignature_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_PartialSignature)(nil)
+}
+func (x fastReflection_PartialSignature_messageType) New() protoreflect.Message {
+	return new(fastReflection_PartialSignature)
+}
+func (x fastReflection_PartialSignature_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_PartialSignature
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_PartialSignature) Descriptor() protoreflect.MessageDescriptor {
+	return md_PartialSignature
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_PartialSignature) Type() protoreflect.MessageType {
+	return _fastReflection_PartialSignature_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_PartialSignature) New() protoreflect.Message {
+	return new(fastReflection_PartialSignature)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_PartialSignature) Interface() protoreflect.ProtoMessage {
+	return (*PartialSignature)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_PartialSignature) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.ParticipantAddress != "" {
+		value := protoreflect.ValueOfString(x.ParticipantAddress)
+		if !f(fd_PartialSignature_participant_address, value) {
+			return
+		}
+	}
+	if len(x.SlotIndices) != 0 {
+		value := protoreflect.ValueOfList(&_PartialSignature_2_list{list: &x.SlotIndices})
+		if !f(fd_PartialSignature_slot_indices, value) {
+			return
+		}
+	}
+	if len(x.Signature) != 0 {
+		value := protoreflect.ValueOfBytes(x.Signature)
+		if !f(fd_PartialSignature_signature, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_PartialSignature) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.PartialSignature.participant_address":
+		return x.ParticipantAddress != ""
+	case "inference.bls.PartialSignature.slot_indices":
+		return len(x.SlotIndices) != 0
+	case "inference.bls.PartialSignature.signature":
+		return len(x.Signature) != 0
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.PartialSignature"))
+		}
+		panic(fmt.Errorf("message inference.bls.PartialSignature does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_PartialSignature) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.PartialSignature.participant_address":
+		x.ParticipantAddress = ""
+	case "inference.bls.PartialSignature.slot_indices":
+		x.SlotIndices = nil
+	case "inference.bls.PartialSignature.signature":
+		x.Signature = nil
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.PartialSignature"))
+		}
+		panic(fmt.Errorf("message inference.bls.PartialSignature does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_PartialSignature) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.PartialSignature.participant_address":
+		value := x.ParticipantAddress
+		return protoreflect.ValueOfString(value)
+	case "inference.bls.PartialSignature.slot_indices":
+		if len(x.SlotIndices) == 0 {
+			return protoreflect.ValueOfList(&_PartialSignature_2_list{})
+		}
+		listValue := &_PartialSignature_2_list{list: &x.SlotIndices}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.bls.PartialSignature.signature":
+		value := x.Signature
+		return protoreflect.ValueOfBytes(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.PartialSignature"))
+		}
+		panic(fmt.Errorf("message inference.bls.PartialSignature does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_PartialSignature) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.PartialSignature.participant_address":
+		x.ParticipantAddress = value.Interface().(string)
+	case "inference.bls.PartialSignature.slot_indices":
+		lv := value.List()
+		clv := lv.(*_PartialSignature_2_list)
+		x.SlotIndices = *clv.list
+	case "inference.bls.PartialSignature.signature":
+		x.Signature = value.Bytes()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.PartialSignature"))
+		}
+		panic(fmt.Errorf("message inference.bls.PartialSignature does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_PartialSignature) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.PartialSignature.slot_indices":
+		if x.SlotIndices == nil {
+			x.SlotIndices = []uint32{}
+		}
+		value := &_PartialSignature_2_list{list: &x.SlotIndices}
+		return protoreflect.ValueOfList(value)
+	case "inference.bls.PartialSignature.participant_address":
+		panic(fmt.Errorf("field participant_address of message inference.bls.PartialSignature is not mutable"))
+	case "inference.bls.PartialSignature.signature":
+		panic(fmt.Errorf("field signature of message inference.bls.PartialSignature is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.PartialSignature"))
+		}
+		panic(fmt.Errorf("message inference.bls.PartialSignature does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_PartialSignature) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.PartialSignature.participant_address":
+		return protoreflect.ValueOfString("")
+	case "inference.bls.PartialSignature.slot_indices":
+		list := []uint32{}
+		return protoreflect.ValueOfList(&_PartialSignature_2_list{list: &list})
+	case "inference.bls.PartialSignature.signature":
+		return protoreflect.ValueOfBytes(nil)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.PartialSignature"))
+		}
+		panic(fmt.Errorf("message inference.bls.PartialSignature does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_PartialSignature) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.PartialSignature", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_PartialSignature) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_PartialSignature) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_PartialSignature) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_PartialSignature) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*PartialSignature)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.ParticipantAddress)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if len(x.SlotIndices) > 0 {
+			l = 0
+			for _, e := range x.SlotIndices {
+				l += runtime.Sov(uint64(e))
+			}
+			n += 1 + runtime.Sov(uint64(l)) + l
+		}
+		l = len(x.Signature)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*PartialSignature)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Signature) > 0 {
+			i -= len(x.Signature)
+			copy(dAtA[i:], x.Signature)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Signature)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if len(x.SlotIndices) > 0 {
+			var pksize2 int
+			for _, num := range x.SlotIndices {
+				pksize2 += runtime.Sov(uint64(num))
+			}
+			i -= pksize2
+			j1 := i
+			for _, num := range x.SlotIndices {
+				for num >= 1<<7 {
+					dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
+					num >>= 7
+					j1++
+				}
+				dAtA[j1] = uint8(num)
+				j1++
+			}
+			i = runtime.EncodeVarint(dAtA, i, uint64(pksize2))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.ParticipantAddress) > 0 {
+			i -= len(x.ParticipantAddress)
+			copy(dAtA[i:], x.ParticipantAddress)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ParticipantAddress)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*PartialSignature)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PartialSignature: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PartialSignature: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ParticipantAddress", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ParticipantAddress = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType == 0 {
+					var v uint32
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= uint32(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					x.SlotIndices = append(x.SlotIndices, v)
+				} else if wireType == 2 {
+					var packedLen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						packedLen |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if packedLen < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					postIndex := iNdEx + packedLen
+					if postIndex < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					if postIndex > l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					var elementCount int
+					var count int
+					for _, integer := range dAtA[iNdEx:postIndex] {
+						if integer < 128 {
+							count++
+						}
+					}
+					elementCount = count
+					if elementCount != 0 && len(x.SlotIndices) == 0 {
+						x.SlotIndices = make([]uint32, 0, elementCount)
+					}
+					for iNdEx < postIndex {
+						var v uint32
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							v |= uint32(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						x.SlotIndices = append(x.SlotIndices, v)
+					}
+				} else {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SlotIndices", wireType)
+				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Signature = append(x.Signature[:0], dAtA[iNdEx:postIndex]...)
+				if x.Signature == nil {
+					x.Signature = []byte{}
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -589,6 +1304,8 @@ type Params struct {
 	DealingPhaseDurationBlocks int64 `protobuf:"varint,3,opt,name=dealing_phase_duration_blocks,json=dealingPhaseDurationBlocks,proto3" json:"dealing_phase_duration_blocks,omitempty"`
 	// Duration in blocks for the verification phase (e.g., 3 blocks for PoC)
 	VerificationPhaseDurationBlocks int64 `protobuf:"varint,4,opt,name=verification_phase_duration_blocks,json=verificationPhaseDurationBlocks,proto3" json:"verification_phase_duration_blocks,omitempty"`
+	// Duration in blocks for threshold signing deadline (e.g., 10 blocks for PoC)
+	SigningDeadlineBlocks int64 `protobuf:"varint,5,opt,name=signing_deadline_blocks,json=signingDeadlineBlocks,proto3" json:"signing_deadline_blocks,omitempty"`
 }
 
 func (x *Params) Reset() {
@@ -639,42 +1356,119 @@ func (x *Params) GetVerificationPhaseDurationBlocks() int64 {
 	return 0
 }
 
+func (x *Params) GetSigningDeadlineBlocks() int64 {
+	if x != nil {
+		return x.SigningDeadlineBlocks
+	}
+	return 0
+}
+
+// PartialSignature represents a partial signature from a single participant in threshold signing
+type PartialSignature struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// participant_address is the address of the participant who submitted this partial signature
+	ParticipantAddress string `protobuf:"bytes,1,opt,name=participant_address,json=participantAddress,proto3" json:"participant_address,omitempty"`
+	// slot_indices are the slot indices this participant is signing for (from their current epoch assignment)
+	SlotIndices []uint32 `protobuf:"varint,2,rep,packed,name=slot_indices,json=slotIndices,proto3" json:"slot_indices,omitempty"`
+	// signature is the BLS partial signature (G1 point, 48-byte compressed format)
+	Signature []byte `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+}
+
+func (x *PartialSignature) Reset() {
+	*x = PartialSignature{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_params_proto_msgTypes[1]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *PartialSignature) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PartialSignature) ProtoMessage() {}
+
+// Deprecated: Use PartialSignature.ProtoReflect.Descriptor instead.
+func (*PartialSignature) Descriptor() ([]byte, []int) {
+	return file_inference_bls_params_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *PartialSignature) GetParticipantAddress() string {
+	if x != nil {
+		return x.ParticipantAddress
+	}
+	return ""
+}
+
+func (x *PartialSignature) GetSlotIndices() []uint32 {
+	if x != nil {
+		return x.SlotIndices
+	}
+	return nil
+}
+
+func (x *PartialSignature) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 var File_inference_bls_params_proto protoreflect.FileDescriptor
 
 var file_inference_bls_params_proto_rawDesc = []byte{
 	0x0a, 0x1a, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0x2f,
 	0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x0d, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x1a, 0x11, 0x61, 0x6d, 0x69,
-	0x6e, 0x6f, 0x2f, 0x61, 0x6d, 0x69, 0x6e, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x14,
-	0x67, 0x6f, 0x67, 0x6f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x22, 0x90, 0x02, 0x0a, 0x06, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
-	0x22, 0x0a, 0x0d, 0x69, 0x5f, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0b, 0x69, 0x54, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x6c,
-	0x6f, 0x74, 0x73, 0x12, 0x31, 0x0a, 0x15, 0x74, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x5f, 0x64,
-	0x65, 0x67, 0x72, 0x65, 0x65, 0x5f, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x0d, 0x52, 0x12, 0x74, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x44, 0x65, 0x67, 0x72, 0x65, 0x65,
-	0x4f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x12, 0x41, 0x0a, 0x1d, 0x64, 0x65, 0x61, 0x6c, 0x69, 0x6e,
-	0x67, 0x5f, 0x70, 0x68, 0x61, 0x73, 0x65, 0x5f, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1a, 0x64,
-	0x65, 0x61, 0x6c, 0x69, 0x6e, 0x67, 0x50, 0x68, 0x61, 0x73, 0x65, 0x44, 0x75, 0x72, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x12, 0x4b, 0x0a, 0x22, 0x76, 0x65, 0x72,
-	0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x70, 0x68, 0x61, 0x73, 0x65, 0x5f,
-	0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x18,
-	0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1f, 0x76, 0x65, 0x72, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x50, 0x68, 0x61, 0x73, 0x65, 0x44, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x3a, 0x1f, 0xe8, 0xa0, 0x1f, 0x01, 0x8a, 0xe7, 0xb0, 0x2a,
-	0x16, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f, 0x62, 0x6c, 0x73,
-	0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x42, 0x0b, 0x50,
-	0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x1e, 0x63, 0x6f,
-	0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0xa2, 0x02, 0x03, 0x49,
-	0x42, 0x58, 0xaa, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42,
-	0x6c, 0x73, 0xca, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42,
-	0x6c, 0x73, 0xe2, 0x02, 0x19, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42,
-	0x6c, 0x73, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02,
-	0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42, 0x6c, 0x73, 0x62,
-	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6e, 0x6f, 0x2f, 0x61, 0x6d, 0x69, 0x6e, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x19,
+	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x5f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x14, 0x67, 0x6f, 0x67, 0x6f, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22,
+	0xc8, 0x02, 0x0a, 0x06, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x22, 0x0a, 0x0d, 0x69, 0x5f,
+	0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x0b, 0x69, 0x54, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x12, 0x31,
+	0x0a, 0x15, 0x74, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x5f, 0x64, 0x65, 0x67, 0x72, 0x65, 0x65,
+	0x5f, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x12, 0x74,
+	0x53, 0x6c, 0x6f, 0x74, 0x73, 0x44, 0x65, 0x67, 0x72, 0x65, 0x65, 0x4f, 0x66, 0x66, 0x73, 0x65,
+	0x74, 0x12, 0x41, 0x0a, 0x1d, 0x64, 0x65, 0x61, 0x6c, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x68, 0x61,
+	0x73, 0x65, 0x5f, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x62, 0x6c, 0x6f, 0x63,
+	0x6b, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1a, 0x64, 0x65, 0x61, 0x6c, 0x69, 0x6e,
+	0x67, 0x50, 0x68, 0x61, 0x73, 0x65, 0x44, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x42, 0x6c,
+	0x6f, 0x63, 0x6b, 0x73, 0x12, 0x4b, 0x0a, 0x22, 0x76, 0x65, 0x72, 0x69, 0x66, 0x69, 0x63, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x70, 0x68, 0x61, 0x73, 0x65, 0x5f, 0x64, 0x75, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x1f, 0x76, 0x65, 0x72, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x68,
+	0x61, 0x73, 0x65, 0x44, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
+	0x73, 0x12, 0x36, 0x0a, 0x17, 0x73, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x5f, 0x64, 0x65, 0x61,
+	0x64, 0x6c, 0x69, 0x6e, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x18, 0x05, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x15, 0x73, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x44, 0x65, 0x61, 0x64, 0x6c,
+	0x69, 0x6e, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x3a, 0x1f, 0xe8, 0xa0, 0x1f, 0x01, 0x8a,
+	0xe7, 0xb0, 0x2a, 0x16, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f,
+	0x62, 0x6c, 0x73, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0x9e, 0x01, 0x0a, 0x10, 0x50,
+	0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12,
+	0x49, 0x0a, 0x13, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x61,
+	0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x42, 0x18, 0xd2, 0xb4,
+	0x2d, 0x14, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
+	0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
+	0x61, 0x6e, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x73, 0x6c,
+	0x6f, 0x74, 0x5f, 0x69, 0x6e, 0x64, 0x69, 0x63, 0x65, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0d,
+	0x52, 0x0b, 0x73, 0x6c, 0x6f, 0x74, 0x49, 0x6e, 0x64, 0x69, 0x63, 0x65, 0x73, 0x12, 0x1c, 0x0a,
+	0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c,
+	0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x42, 0x95, 0x01, 0x0a, 0x11,
+	0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c,
+	0x73, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
+	0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
+	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73,
+	0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2, 0x02, 0x19, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61,
+	0x74, 0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a,
+	0x42, 0x6c, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -689,9 +1483,10 @@ func file_inference_bls_params_proto_rawDescGZIP() []byte {
 	return file_inference_bls_params_proto_rawDescData
 }
 
-var file_inference_bls_params_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_inference_bls_params_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_inference_bls_params_proto_goTypes = []interface{}{
-	(*Params)(nil), // 0: inference.bls.Params
+	(*Params)(nil),           // 0: inference.bls.Params
+	(*PartialSignature)(nil), // 1: inference.bls.PartialSignature
 }
 var file_inference_bls_params_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -719,6 +1514,18 @@ func file_inference_bls_params_proto_init() {
 				return nil
 			}
 		}
+		file_inference_bls_params_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*PartialSignature); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -726,7 +1533,7 @@ func file_inference_bls_params_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_bls_params_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

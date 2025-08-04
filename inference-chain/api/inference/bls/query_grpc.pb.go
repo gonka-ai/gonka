@@ -19,8 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName       = "/inference.bls.Query/Params"
-	Query_EpochBLSData_FullMethodName = "/inference.bls.Query/EpochBLSData"
+	Query_Params_FullMethodName         = "/inference.bls.Query/Params"
+	Query_EpochBLSData_FullMethodName   = "/inference.bls.Query/EpochBLSData"
+	Query_SigningStatus_FullMethodName  = "/inference.bls.Query/SigningStatus"
+	Query_SigningHistory_FullMethodName = "/inference.bls.Query/SigningHistory"
 )
 
 // QueryClient is the client API for Query service.
@@ -31,6 +33,10 @@ type QueryClient interface {
 	Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error)
 	// EpochBLSData queries complete BLS data for a specific epoch
 	EpochBLSData(ctx context.Context, in *QueryEpochBLSDataRequest, opts ...grpc.CallOption) (*QueryEpochBLSDataResponse, error)
+	// SigningStatus queries the status of a specific threshold signing request
+	SigningStatus(ctx context.Context, in *QuerySigningStatusRequest, opts ...grpc.CallOption) (*QuerySigningStatusResponse, error)
+	// SigningHistory queries threshold signing requests with filtering and pagination
+	SigningHistory(ctx context.Context, in *QuerySigningHistoryRequest, opts ...grpc.CallOption) (*QuerySigningHistoryResponse, error)
 }
 
 type queryClient struct {
@@ -59,6 +65,24 @@ func (c *queryClient) EpochBLSData(ctx context.Context, in *QueryEpochBLSDataReq
 	return out, nil
 }
 
+func (c *queryClient) SigningStatus(ctx context.Context, in *QuerySigningStatusRequest, opts ...grpc.CallOption) (*QuerySigningStatusResponse, error) {
+	out := new(QuerySigningStatusResponse)
+	err := c.cc.Invoke(ctx, Query_SigningStatus_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) SigningHistory(ctx context.Context, in *QuerySigningHistoryRequest, opts ...grpc.CallOption) (*QuerySigningHistoryResponse, error) {
+	out := new(QuerySigningHistoryResponse)
+	err := c.cc.Invoke(ctx, Query_SigningHistory_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -67,6 +91,10 @@ type QueryServer interface {
 	Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error)
 	// EpochBLSData queries complete BLS data for a specific epoch
 	EpochBLSData(context.Context, *QueryEpochBLSDataRequest) (*QueryEpochBLSDataResponse, error)
+	// SigningStatus queries the status of a specific threshold signing request
+	SigningStatus(context.Context, *QuerySigningStatusRequest) (*QuerySigningStatusResponse, error)
+	// SigningHistory queries threshold signing requests with filtering and pagination
+	SigningHistory(context.Context, *QuerySigningHistoryRequest) (*QuerySigningHistoryResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -79,6 +107,12 @@ func (UnimplementedQueryServer) Params(context.Context, *QueryParamsRequest) (*Q
 }
 func (UnimplementedQueryServer) EpochBLSData(context.Context, *QueryEpochBLSDataRequest) (*QueryEpochBLSDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochBLSData not implemented")
+}
+func (UnimplementedQueryServer) SigningStatus(context.Context, *QuerySigningStatusRequest) (*QuerySigningStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SigningStatus not implemented")
+}
+func (UnimplementedQueryServer) SigningHistory(context.Context, *QuerySigningHistoryRequest) (*QuerySigningHistoryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SigningHistory not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -129,6 +163,42 @@ func _Query_EpochBLSData_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_SigningStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QuerySigningStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).SigningStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_SigningStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).SigningStatus(ctx, req.(*QuerySigningStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_SigningHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QuerySigningHistoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).SigningHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_SigningHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).SigningHistory(ctx, req.(*QuerySigningHistoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -143,6 +213,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochBLSData",
 			Handler:    _Query_EpochBLSData_Handler,
+		},
+		{
+			MethodName: "SigningStatus",
+			Handler:    _Query_SigningStatus_Handler,
+		},
+		{
+			MethodName: "SigningHistory",
+			Handler:    _Query_SigningHistory_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
