@@ -87,6 +87,9 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
 [TODO]: Instantiate BandwidthLimiter in server setup
     Modify main server initialization to create BandwidthLimiter instance with all bandwidth parameters (limit and coefficients) fetched from chain's BandwidthLimitsParams
 
+[DONE]: Implement weight-based bandwidth allocation per Transfer Agent  
+    ✅ Added calculateWeightBasedBandwidthLimit function in server.go that fetches all participants, finds current node's weight, calculates total weight, and applies the formula: taEstimatedLimitsPerBlockKb = EstimatedLimitsPerBlockKb * (nodeWeight / totalWeight). Function is called during server initialization with graceful fallback to default limit if weight calculation fails.
+
 [TODO]: Add bandwidth checking to request handler before proxying
     Modify `post_chat_handler.go` to get current block height, check CanAcceptRequest, reject with 429 error if over limit, otherwise RecordRequest
 

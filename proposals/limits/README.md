@@ -226,10 +226,25 @@ Requests_per_second = Requests_per_block ÷ 5 seconds
 - **Conservative (P90)**: 236 KB → ~91 requests/block → **18 requests/second** recoreded on chain
 
 ### Per Transfer Agent Allocation
+
+**Weight-Based Distribution** (Recommended):
+```
+taEstimatedLimitsPerBlockKb = EstimatedLimitsPerBlockKb × (nodeWeight / totalWeight)
+```
+
+Since all transactions have fee = 0 (no mempool priority), nodes with higher weight can record transactions faster due to:
+- More frequent block proposals 
+- Faster addition to their own mempool
+
+Weight-based allocation ensures fair resource distribution proportional to each node's chain contribution.
+
+**Alternative: Equal Distribution**:
 ```
 Agent_limit = Total_throughput ÷ Number_of_agents
 ```
 For 3 agents: ~14 requests/second each (conservative estimate)
+
+> **Note**: Equal distribution is simpler but may create inefficiencies when node weights vary significantly.
 
 
 ## Bandwidth Tracking Approaches
