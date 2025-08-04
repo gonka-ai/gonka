@@ -59,6 +59,7 @@ message MsgStartInference {
 ```
 
 #### [Not in current scope] TODO:
+- cut payload datastructure and use protobuf for it
 - don't send payload twice
 
 
@@ -83,6 +84,7 @@ message MsgFinishInference {
 ```
 
 #### [Not in current scope] TODO:
+- cut response datastructure and use protobuf for it
 - don't input payload once again
 - don't send full response payload till requested (=> on-demand)
 
@@ -130,6 +132,72 @@ Based on observed network traffic with top-k=5 logprobs (enforced by Transfer Ag
 |--------|------|-----|-------|
 | **Input tokens** | 0.0023 KB/token | 0.0037 KB/token | Doubles for short prompts (<200 tokens) |
 | **Output tokens** | 0.6424 KB/token | 0.7125 KB/token | Includes top-k=5 logprobs (auto-enabled) |
+
+#### Example Data Structures
+
+**Input Request** (compact, minimal per-token overhead):
+```json
+{
+  "model": "gpt-4",
+  "messages": [{"role": "user", "content": "What is machine learning?"}],
+  "max_tokens": 150,
+  "logprobs": true,
+  "top_logprobs": 5
+}
+```
+
+**Output Response** (verbose due to logprobs metadata):
+```json
+{
+  "choices": [{
+    "message": {"content": "Machine learning is a subset of artificial intelligence..."},
+    "logprobs": {
+      "content": [
+        {
+          "token": "9707",
+          "logprob": -0.0234,
+          "bytes": [77, 97, 99, 104, 105, 110, 101],
+          "top_logprobs": [
+            {"token": "9707", "logprob": -0.0234, "bytes": [77, 97, 99, 104, 105, 110, 101]},
+            {"token": "15234", "logprob": -1.456, "bytes": [65, 114, 116, 105, 102, 105, 99, 105, 97, 108]},
+            {"token": "25891", "logprob": -2.789, "bytes": [68, 101, 101, 112]},
+            {"token": "34567", "logprob": -3.012, "bytes": [78, 101, 117, 114, 97, 108]},
+            {"token": "42134", "logprob": -3.245, "bytes": [67, 111, 109, 112, 117, 116, 101, 114]}
+          ]
+        },
+        {
+          "token": "6754",
+          "logprob": -0.1567,
+          "bytes": [32, 108, 101, 97, 114, 110, 105, 110, 103],
+          "top_logprobs": [
+            {"token": "6754", "logprob": -0.1567, "bytes": [32, 108, 101, 97, 114, 110, 105, 110, 103]},
+            {"token": "8923", "logprob": -2.234, "bytes": [32, 105, 110, 116, 101, 108, 108, 105, 103, 101, 110, 99, 101]},
+            {"token": "12456", "logprob": -3.567, "bytes": [32, 118, 105, 115, 105, 111, 110]},
+            ...
+          ]
+        },
+        {
+          "token": "374",
+          "logprob": -0.0891,
+          "bytes": [32, 105, 115],
+          "top_logprobs": [
+            {"token": "374", "logprob": -0.0891, "bytes": [32, 105, 115]},
+            {"token": "7832", "logprob": -1.789, "bytes": [32, 105, 110, 118, 111, 108, 118, 101, 115]},
+            ...
+          ]
+        },
+        ...
+      ]
+    }
+  }],
+  "usage": {"prompt_tokens": 4, "completion_tokens": 12}
+}
+```
+*Each output token generates ~640 bytes of metadata including top-5 alternatives with probabilities and byte representations.*
+
+> **Note**: After PR `gm/enforced-str`, token IDs (e.g., "9707") are used instead of token strings. The actual text is preserved in the `bytes` array.
+
+> **Node 2**: We for sure should cut A LOT of this data and don't transfer it
 
 #### Typical Request Profile (QwQ Model)
 - **Input**: 4,000 tokens
