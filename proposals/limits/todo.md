@@ -101,7 +101,7 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
 [DONE]: Create unit tests for BandwidthLimiter
     ✅ Created `decentralized-api/internal/bandwidth_limiter_test.go` with comprehensive tests for: under-limit acceptance, over-limit rejection, correct record/release behavior with completion-block logic, thread safety under concurrent load, and cleanup functionality. All tests passing.
 
-[TODO]: Create integration test in testermint
+[WIP]: Create integration test in testermint
     Add new test suite that configures low bandwidth limit (100KB), sends 70KB request (success), immediate 40KB request (429 failure), wait for completion, retry 40KB request (success)
 
 ---
