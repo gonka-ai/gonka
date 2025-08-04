@@ -13,6 +13,7 @@ type Config struct {
 	KeyConfig          KeyConfig             `koanf:"key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
+	GenesisAppHashHex  string                `koanf:"genesis_app_hash"`
 	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 }
 

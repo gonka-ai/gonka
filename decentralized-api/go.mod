@@ -1,8 +1,6 @@
 module decentralized-api
 
-go 1.23.2
-
-toolchain go1.24.2
+go 1.24.5
 
 require (
 	cosmossdk.io/errors v1.0.2
@@ -13,6 +11,7 @@ require (
 	github.com/cosmos/cosmos-sdk v0.53.3
 	github.com/cosmos/ibc-go/v8 v8.2.0
 	github.com/golang/protobuf v1.5.4
+	github.com/gonka-ai/gonka-utils/go v0.0.0-20250803220145-149a2da98ccd
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/ignite/cli/v28 v28.5.0
