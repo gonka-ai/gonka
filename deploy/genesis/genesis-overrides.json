@@ -24,7 +24,7 @@
         "epochParams": {
         "epoch_length": "1800",
         "epoch_multiplier": "1",
-        "epoch_shift": "1750",
+        "epoch_shift": "1650",
         "poc_stage_duration": "60",
         "poc_exchange_duration": "5",
         "poc_validation_delay": "5",

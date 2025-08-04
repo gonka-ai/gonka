@@ -55,7 +55,7 @@ need SEED_NODE_P2P_URL
 
 APP_NAME="${APP_NAME:-inferenced}"
 KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
-CHAIN_ID="${CHAIN_ID:-gonka-testnet-5}"
+CHAIN_ID="${CHAIN_ID:-gonka-testnet-6}"
 COIN_DENOM="${COIN_DENOM:-icoin}"
 STATE_DIR="${STATE_DIR:-/root/.inference}"
 
