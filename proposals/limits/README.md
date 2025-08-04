@@ -199,78 +199,41 @@ Based on observed network traffic with top-k=5 logprobs (enforced by Transfer Ag
 
 > **Node 2**: We for sure should cut A LOT of this data and don't transfer it
 
-#### Typical Request Profile (QwQ Model)
-- **Input**: 4,000 tokens
-- **Output**: 150 tokens  
-- **Observed throughput**: 0.11 requests/second (realistic), 0.25 requests/second (target)
+#### Example
+**Typical Request:**
+- Input: 1,000 tokens → ~2.3 KB
+- Output: 150 tokens → ~96 KB  
+- Total payload: ~102 KB (with 20% validation rate)
 
-### Payload Size Analysis
+## Capacity Estimation
 
-#### Complete Request Payload
-Observed from network logs (full input + output JSONs):
+### Simple Formulas
 
-| Validation Rate | Mean Size | P90 Size |
-|----------------|-----------|----------|
-| No validation | 85 KB | 197 KB |
-| 15% validation | 98 KB | 226 KB |
-| **~20% validation** (dynamic) | **102 KB** | **236 KB** |
-| 50% validation (startup) | 139 KB | 325 KB |
-
-#### Message-Level Breakdown
-Each inference generates multiple messages with data duplication:
-
-**Per inference transmission:**
-- `MsgStartInference`: PromptPayload (~9.2 KB for 4K tokens)
-- `MsgFinishInference`: ResponsePayload + OriginalPrompt (~96 KB + 9.2 KB)  
-- `MsgValidation`: ResponsePayload (20% of inferences, ~96 KB)
-
-**Total per inference**: 28.5 KB (20% validation) to 57.4 KB (50% validation)
-
-## Capacity Calculations
-
-### Theoretical Limits
-
-Using the formula: `0.0023 × Input_tokens + 0.6424 × Output_tokens`
-
-**Block capacity**: 22,000 KB - 500 KB (safety buffer) = 21,500 KB
-
-**Maximum inferences per block** (typical 4K input, 150 output):
+**Per-request data size:**
 ```
-21,500 KB ÷ (0.0023 × 4,000 + 0.6424 × 150) = 204 inferences/block
+Total_KB = Input_tokens × 0.0023 + Output_tokens × 0.64 + Validation_overhead
 ```
 
-### Practical Throughput Limits
+**Chain throughput (20% validation):**
+```
+Block_capacity = 21,500 KB (22MB - 500KB safety buffer)
+Requests_per_block = Block_capacity ÷ Average_payload_size
+Requests_per_second = Requests_per_block ÷ 5 seconds
+```
 
-Based on observed payload sizes:
+### Practical Limits
+- **Average payload**: 102 KB → ~211 requests/block → **42 requests/second** recoreded on chain
+- **Conservative (P90)**: 236 KB → ~91 requests/block → **18 requests/second** recoreded on chain
 
-| Scenario | Payload Size | Inferences/Block | Inferences/Second |
-|----------|--------------|------------------|-------------------|
-| **Current (~20% validation)** | 102 KB (mean) | 211 | 42 |
-| **Current (~20% validation)** | 236 KB (P90) | 91 | 18 |
-| Conservative estimate | 250 KB | 86 | 17 |
-| High validation (50%) | 325 KB (P90) | 66 | 13 |
-
-### Per Transfer Agent Limits
-
-**Formula per node**: `(Chain_capacity_KB ÷ Number_of_transfer_agents) ÷ Payload_size_KB`
-
-For multiple Transfer Agents, divide the total capacity proportionally based on node weight or equally.
+### Per Transfer Agent Allocation
+```
+Agent_limit = Total_throughput ÷ Number_of_agents
+```
+For 3 agents: ~14 requests/second each (conservative estimate)
 
 
-## Recommendations
+## Plan 
 
-### Immediate Implementation
-1. **Transfer Agent rate limiting**: 15-20 inferences/second per node (conservative P90 estimate)
-2. **Token limits**: Maximum 4,000 input + 150 output tokens per request (DefaultMaxTokens)
-3. **Payload monitoring**: Alert when individual requests exceed 250 KB
+### Phase 1
 
-### Optimization Opportunities
-1. **Reduce data duplication**: OriginalPrompt is stored in both MsgStartInference and MsgFinishInference
-2. **Validation efficiency**: Consider reducing validation rate from 20% to 15% during normal operation  
-3. **Data pruning**: Implemented - removes inference payloads after configurable epoch threshold
-4. **Compression**: Implement payload compression for large requests
-
-### Monitoring Metrics
-- Track actual payload sizes vs. estimates
-- Monitor block utilization percentage  
-- Alert on sustained throughput above 80% capacity
+### Phase 2
