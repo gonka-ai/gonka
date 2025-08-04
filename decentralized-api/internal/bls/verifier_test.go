@@ -1,9 +1,10 @@
-package bls_dkg
+package bls
 
 import (
 	"strings"
 	"testing"
 
+	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -11,13 +12,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewVerifier(t *testing.T) {
-	// Test with nil client for basic construction
-	verifier := NewVerifier(nil)
+// createMockCosmosClient creates a minimal mock cosmos client for testing
+func createMockCosmosClient() cosmosclient.InferenceCosmosClient {
+	return cosmosclient.InferenceCosmosClient{
+		Address: "cosmos1testaddress",
+	}
+}
 
-	assert.NotNil(t, verifier)
-	assert.NotNil(t, verifier.cache)                       // Should have cache initialized
-	assert.Nil(t, verifier.GetCurrentVerificationResult()) // Should be nil until verification starts
+func TestNewBlsManager(t *testing.T) {
+	// Test with mock client for basic construction
+	blsManager := NewBlsManager(createMockCosmosClient())
+
+	assert.NotNil(t, blsManager)
+	assert.NotNil(t, blsManager.cache)                       // Should have cache initialized
+	assert.Nil(t, blsManager.GetCurrentVerificationResult()) // Should be nil until verification starts
 }
 
 func TestVerificationResult(t *testing.T) {
@@ -157,12 +165,12 @@ func TestVerificationCacheEdgeCases(t *testing.T) {
 }
 
 func TestVerifierCacheIntegration(t *testing.T) {
-	verifier := NewVerifier(nil)
+	blsManager := NewBlsManager(createMockCosmosClient())
 
 	// Test initial state
-	assert.NotNil(t, verifier.cache)
-	assert.Nil(t, verifier.GetCurrentVerificationResult())
-	assert.Empty(t, verifier.GetCachedEpochs())
+	assert.NotNil(t, blsManager.cache)
+	assert.Nil(t, blsManager.GetCurrentVerificationResult())
+	assert.Empty(t, blsManager.GetCachedEpochs())
 
 	// Manually create and store verification results
 	result1 := &VerificationResult{
@@ -179,22 +187,22 @@ func TestVerifierCacheIntegration(t *testing.T) {
 		SlotRange:     [2]uint32{2, 3},
 	}
 
-	verifier.cache.Store(result1)
-	verifier.cache.Store(result2)
+	blsManager.cache.Store(result1)
+	blsManager.cache.Store(result2)
 
 	// Test convenience methods
-	assert.Equal(t, result1, verifier.GetVerificationResult(1))
-	assert.Equal(t, result2, verifier.GetVerificationResult(2))
-	assert.Equal(t, result2, verifier.GetCurrentVerificationResult())
+	assert.Equal(t, result1, blsManager.GetVerificationResult(1))
+	assert.Equal(t, result2, blsManager.GetVerificationResult(2))
+	assert.Equal(t, result2, blsManager.GetCurrentVerificationResult())
 
-	epochs := verifier.GetCachedEpochs()
+	epochs := blsManager.GetCachedEpochs()
 	assert.Len(t, epochs, 2)
 	assert.Contains(t, epochs, uint64(1))
 	assert.Contains(t, epochs, uint64(2))
 }
 
 func TestStoreVerificationResult(t *testing.T) {
-	verifier := NewVerifier(nil)
+	blsManager := NewBlsManager(createMockCosmosClient())
 
 	// Test storing a valid result
 	result1 := &VerificationResult{
@@ -204,10 +212,10 @@ func TestStoreVerificationResult(t *testing.T) {
 		SlotRange:     [2]uint32{0, 1},
 	}
 
-	verifier.storeVerificationResult(result1)
+	blsManager.storeVerificationResult(result1)
 
 	// Verify it was stored
-	stored := verifier.GetVerificationResult(1)
+	stored := blsManager.GetVerificationResult(1)
 	assert.NotNil(t, stored)
 	assert.Equal(t, uint64(1), stored.EpochID)
 	assert.Equal(t, types.DKGPhase_DKG_PHASE_VERIFYING, stored.DkgPhase)
@@ -215,10 +223,10 @@ func TestStoreVerificationResult(t *testing.T) {
 	assert.Equal(t, [2]uint32{0, 1}, stored.SlotRange)
 
 	// Test storing nil result - should not panic
-	verifier.storeVerificationResult(nil)
+	blsManager.storeVerificationResult(nil)
 
 	// Cache should still only have one result
-	assert.Len(t, verifier.GetCachedEpochs(), 1)
+	assert.Len(t, blsManager.GetCachedEpochs(), 1)
 
 	// Test storing another result
 	result2 := &VerificationResult{
@@ -228,21 +236,21 @@ func TestStoreVerificationResult(t *testing.T) {
 		SlotRange:     [2]uint32{2, 3},
 	}
 
-	verifier.storeVerificationResult(result2)
+	blsManager.storeVerificationResult(result2)
 
 	// Should have both results now
-	assert.Len(t, verifier.GetCachedEpochs(), 2)
-	assert.NotNil(t, verifier.GetVerificationResult(1))
-	assert.NotNil(t, verifier.GetVerificationResult(2))
+	assert.Len(t, blsManager.GetCachedEpochs(), 2)
+	assert.NotNil(t, blsManager.GetVerificationResult(1))
+	assert.NotNil(t, blsManager.GetVerificationResult(2))
 
 	// Current should be the latest (highest epoch ID)
-	current := verifier.GetCurrentVerificationResult()
+	current := blsManager.GetCurrentVerificationResult()
 	assert.Equal(t, uint64(2), current.EpochID)
 	assert.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, current.DkgPhase)
 }
 
 func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
-	verifier := NewVerifier(nil)
+	blsManager := NewBlsManager(createMockCosmosClient())
 
 	// Mock event for epoch 5 with complete and proper mock data
 	completeEpochData := `{
@@ -270,9 +278,9 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 	event := &chainevents.JSONRPCResponse{
 		Result: chainevents.Result{
 			Events: map[string][]string{
-				"inference.bls.EventVerifyingPhaseStarted.epoch_id":                           {"5"},
-				"inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":     {"1000"},
-				"inference.bls.EventVerifyingPhaseStarted.epoch_data":                         {completeEpochData},
+				"inference.bls.EventVerifyingPhaseStarted.epoch_id":                       {"5"},
+				"inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block": {"1000"},
+				"inference.bls.EventVerifyingPhaseStarted.epoch_data":                     {completeEpochData},
 			},
 		},
 	}
@@ -284,10 +292,10 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
 	}
-	verifier.cache.Store(result)
+	blsManager.cache.Store(result)
 
 	// Test: Call should skip verification because we already have a VERIFYING result
-	err := verifier.ProcessVerifyingPhaseStarted(event)
+	err := blsManager.ProcessVerifyingPhaseStarted(event)
 	assert.NoError(t, err) // Should succeed without trying to verify again
 
 	// Update the result to COMPLETED phase
@@ -297,15 +305,15 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
 	}
-	verifier.cache.Store(resultCompleted)
+	blsManager.cache.Store(resultCompleted)
 
 	// Test: Call should also skip verification because we have a COMPLETED result
-	err = verifier.ProcessVerifyingPhaseStarted(event)
+	err = blsManager.ProcessVerifyingPhaseStarted(event)
 	assert.NoError(t, err) // Should succeed without trying to verify again
 }
 
 func TestProcessGroupPublicKeyGeneratedWithExistingResult(t *testing.T) {
-	verifier := NewVerifier(nil)
+	blsManager := NewBlsManager(createMockCosmosClient())
 
 	// Mock event for epoch 10
 	event := &chainevents.JSONRPCResponse{
@@ -324,20 +332,20 @@ func TestProcessGroupPublicKeyGeneratedWithExistingResult(t *testing.T) {
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
 	}
-	verifier.cache.Store(completedResult)
+	blsManager.cache.Store(completedResult)
 
 	// This should skip processing and return successfully
-	err := verifier.ProcessGroupPublicKeyGenerated(event)
+	err := blsManager.ProcessGroupPublicKeyGeneratedToVerify(event)
 	assert.NoError(t, err) // Should succeed without trying to query chain
 
 	// Verify the result is still COMPLETED and unchanged
-	stored := verifier.GetVerificationResult(10)
+	stored := blsManager.GetVerificationResult(10)
 	assert.NotNil(t, stored)
 	assert.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, stored.DkgPhase)
 }
 
 func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
-	verifier := NewVerifier(nil)
+	blsManager := NewBlsManager(createMockCosmosClient())
 
 	// Test invalid event - missing epoch_id
 	invalidEvent := &chainevents.JSONRPCResponse{
@@ -348,7 +356,7 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 		},
 	}
 
-	err := verifier.ProcessGroupPublicKeyGenerated(invalidEvent)
+	err := blsManager.ProcessGroupPublicKeyGeneratedToVerify(invalidEvent)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "epoch_id not found")
 
@@ -361,7 +369,7 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 		},
 	}
 
-	err = verifier.ProcessGroupPublicKeyGenerated(invalidEpochEvent)
+	err = blsManager.ProcessGroupPublicKeyGeneratedToVerify(invalidEpochEvent)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse epoch_id")
 }

@@ -1,7 +1,6 @@
-package bls_dkg
+package bls
 
 import (
-	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
@@ -18,101 +17,8 @@ import (
 
 const verifierLogTag = "[bls-verifier] "
 
-// VerificationResult holds the results of DKG verification for an epoch
-type VerificationResult struct {
-	EpochID          uint64
-	DkgPhase         types.DKGPhase // The DKG phase when verification was performed
-	IsParticipant    bool
-	SlotRange        [2]uint32      // [start_index, end_index]
-	DealerShares     [][]fr.Element // dealer_index -> [slot_shares...]
-	DealerValidity   []bool         // dealer_index -> validity
-	AggregatedShares []fr.Element   // slot_offset -> aggregated_share
-	ValidDealers     []bool         // final consensus validity of each dealer (after majority voting)
-	GroupPublicKey   []byte         // the final group public key (when DKG is completed)
-}
-
-// VerificationCache manages verification results for multiple epochs
-type VerificationCache struct {
-	results map[uint64]*VerificationResult // epochID -> VerificationResult
-}
-
-// NewVerificationCache creates a new verification cache
-func NewVerificationCache() *VerificationCache {
-	return &VerificationCache{
-		results: make(map[uint64]*VerificationResult),
-	}
-}
-
-// Store adds a verification result to the cache and cleans up old entries
-func (vc *VerificationCache) Store(result *VerificationResult) {
-	if result == nil {
-		return
-	}
-
-	// Store the new result
-	vc.results[result.EpochID] = result
-
-	// Clean up old entries (keep only current and previous epoch)
-	if result.EpochID >= 2 {
-		epochToRemove := result.EpochID - 2
-		if _, exists := vc.results[epochToRemove]; exists {
-			delete(vc.results, epochToRemove)
-			logging.Debug(verifierLogTag+"Removed old verification result from cache", inferenceTypes.BLS,
-				"removedEpochID", epochToRemove,
-				"currentEpochID", result.EpochID)
-		}
-	}
-
-	logging.Debug(verifierLogTag+"Stored verification result in cache", inferenceTypes.BLS,
-		"epochID", result.EpochID,
-		"cachedEpochs", len(vc.results))
-}
-
-// Get retrieves a verification result for a specific epoch
-func (vc *VerificationCache) Get(epochID uint64) *VerificationResult {
-	return vc.results[epochID]
-}
-
-// GetCurrent returns the verification result for the highest epoch ID
-func (vc *VerificationCache) GetCurrent() *VerificationResult {
-	var current *VerificationResult
-	var maxEpochID uint64 = 0
-
-	for epochID, result := range vc.results {
-		if epochID > maxEpochID {
-			maxEpochID = epochID
-			current = result
-		}
-	}
-
-	return current
-}
-
-// GetCachedEpochs returns a list of all cached epoch IDs
-func (vc *VerificationCache) GetCachedEpochs() []uint64 {
-	epochs := make([]uint64, 0, len(vc.results))
-	for epochID := range vc.results {
-		epochs = append(epochs, epochID)
-	}
-	return epochs
-}
-
-// Verifier handles the verification phase of DKG
-type Verifier struct {
-	cosmosClient cosmosclient.CosmosMessageClient
-	cache        *VerificationCache // Cache for multiple epochs
-}
-
-// NewVerifier creates a new DKG verifier instance
-func NewVerifier(cosmosClient cosmosclient.CosmosMessageClient) *Verifier {
-	return &Verifier{
-		cosmosClient: cosmosClient,
-		cache:        NewVerificationCache(),
-	}
-}
-
 // ProcessVerifyingPhaseStarted handles the EventVerifyingPhaseStarted event
-func (v *Verifier) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCResponse) error {
+func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCResponse) error {
 	// Extract event data from chain event (typed event from EmitTypedEvent)
 	epochIDs, ok := event.Result.Events["inference.bls.EventVerifyingPhaseStarted.epoch_id"]
 	if !ok || len(epochIDs) == 0 {
@@ -130,10 +36,11 @@ func (v *Verifier) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRespon
 		return fmt.Errorf("failed to parse epoch_id: %w", err)
 	}
 
-	existingResult := v.GetVerificationResult(epochID)
+	existingResult := bm.GetVerificationResult(epochID)
 	if existingResult != nil &&
 		(existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_VERIFYING ||
-			existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED) {
+			existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED ||
+			existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED) {
 		logging.Info(verifierLogTag+"Verification already completed for this epoch", inferenceTypes.BLS,
 			"epochID", epochID,
 			"existingPhase", existingResult.DkgPhase,
@@ -159,16 +66,16 @@ func (v *Verifier) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRespon
 	}
 
 	logging.Info(verifierLogTag+"Processing DKG verifying phase started", inferenceTypes.BLS,
-		"epochID", epochID, "deadlineBlock", deadlineBlock, "verifier", v.cosmosClient.GetAddress())
+		"epochID", epochID, "deadlineBlock", deadlineBlock, "verifier", bm.cosmosClient.GetAddress())
 
 	// Extract epoch data from event instead of querying chain
-	epochData, err := v.extractEpochDataFromVerifyingEvent(event)
+	epochData, err := bm.extractEpochDataFromVerifyingEvent(event)
 	if err != nil {
 		return fmt.Errorf("failed to extract epoch data from event: %w", err)
 	}
 
 	// Setup, perform verification, and store result for this epoch using event data
-	completed, err := v.setupAndPerformVerification(epochID, epochData)
+	completed, err := bm.setupAndPerformVerification(epochID, epochData)
 	if err != nil {
 		return fmt.Errorf("failed to setup and perform verification for epoch %d: %w", epochID, err)
 	}
@@ -179,7 +86,7 @@ func (v *Verifier) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRespon
 	}
 
 	// Submit verification vector
-	err = v.submitVerificationVectorSimplified(epochID)
+	err = bm.submitVerificationVectorSimplified(epochID)
 	if err != nil {
 		return fmt.Errorf("failed to submit verification vector: %w", err)
 	}
@@ -189,7 +96,7 @@ func (v *Verifier) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRespon
 
 // setupAndPerformVerification handles epoch data validation, participant setup, verification, and storage
 // Returns true if verification was completed and stored, false if we're not a participant or not in correct phase
-func (v *Verifier) setupAndPerformVerification(epochID uint64, epochData *types.EpochBLSData) (bool, error) {
+func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *types.EpochBLSData) (bool, error) {
 	// Create new verification result for this epoch
 	verificationResult := &VerificationResult{
 		EpochID: epochID,
@@ -207,7 +114,7 @@ func (v *Verifier) setupAndPerformVerification(epochID uint64, epochData *types.
 	}
 
 	// Find our participant info
-	myAddress := v.cosmosClient.GetAddress()
+	myAddress := bm.cosmosClient.GetAddress()
 	var myParticipantIndex int = -1
 	var myParticipant *types.BLSParticipantInfo
 
@@ -240,19 +147,19 @@ func (v *Verifier) setupAndPerformVerification(epochID uint64, epochData *types.
 		"tDegree", epochData.TSlotsDegree)
 
 	// Perform verification and reconstruction
-	err := v.performVerificationAndReconstruction(verificationResult, epochData.DealerParts, myParticipantIndex)
+	err := bm.performVerificationAndReconstruction(verificationResult, epochData.DealerParts, myParticipantIndex)
 	if err != nil {
 		return false, fmt.Errorf("failed to perform verification and reconstruction: %w", err)
 	}
 
 	// Store the completed verification result in cache
-	v.storeVerificationResult(verificationResult)
+	bm.storeVerificationResult(verificationResult)
 
 	return true, nil
 }
 
 // performVerificationAndReconstruction performs the core verification and share reconstruction logic
-func (v *Verifier) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipantIndex int) error {
+func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipantIndex int) error {
 	logging.Debug(verifierLogTag+"Starting share verification and reconstruction", inferenceTypes.BLS,
 		"epochID", verificationResult.EpochID,
 		"slotRange", verificationResult.SlotRange,
@@ -324,7 +231,7 @@ func (v *Verifier) performVerificationAndReconstruction(verificationResult *Veri
 			}
 
 			// Decrypt the share
-			decryptedShare, err := v.decryptShare(encryptedShare)
+			decryptedShare, err := bm.decryptShare(encryptedShare)
 			if err != nil {
 				logging.Warn(verifierLogTag+"Failed to decrypt share", inferenceTypes.BLS,
 					"dealerIndex", dealerIndex,
@@ -335,7 +242,7 @@ func (v *Verifier) performVerificationAndReconstruction(verificationResult *Veri
 			}
 
 			// Verify the share against dealer's commitments
-			isValid, err := v.verifyShareAgainstCommitments(decryptedShare, slotIndex, dealerPart.Commitments)
+			isValid, err := bm.verifyShareAgainstCommitments(decryptedShare, slotIndex, dealerPart.Commitments)
 			if err != nil {
 				logging.Warn(verifierLogTag+"Failed to verify share", inferenceTypes.BLS,
 					"dealerIndex", dealerIndex,
@@ -408,9 +315,9 @@ func (v *Verifier) performVerificationAndReconstruction(verificationResult *Veri
 }
 
 // decryptShare decrypts an encrypted share using the cosmos-sdk keyring Decrypt API
-func (v *Verifier) decryptShare(encryptedShare []byte) (*fr.Element, error) {
+func (bm *BlsManager) decryptShare(encryptedShare []byte) (*fr.Element, error) {
 	// Use the cosmos-sdk keyring Decrypt method through the clean interface
-	decryptedBytes, err := v.cosmosClient.DecryptBytes(encryptedShare)
+	decryptedBytes, err := bm.cosmosClient.DecryptBytes(encryptedShare)
 	if err != nil {
 		return nil, fmt.Errorf("keyring decryption failed: %w", err)
 	}
@@ -427,7 +334,7 @@ func (v *Verifier) decryptShare(encryptedShare []byte) (*fr.Element, error) {
 }
 
 // verifyShareAgainstCommitments verifies a decrypted share against the dealer's polynomial commitments
-func (v *Verifier) verifyShareAgainstCommitments(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
+func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
 	if len(commitments) == 0 {
 		return false, fmt.Errorf("no commitments provided")
 	}
@@ -479,9 +386,9 @@ func (v *Verifier) verifyShareAgainstCommitments(share *fr.Element, slotIndex ui
 }
 
 // submitVerificationVectorSimplified constructs and submits the verification vector to the chain
-func (v *Verifier) submitVerificationVectorSimplified(epochID uint64) error {
+func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 	// Get verification result from cache
-	verificationResult := v.cache.Get(epochID)
+	verificationResult := bm.cache.Get(epochID)
 	if verificationResult == nil {
 		return fmt.Errorf("verification result not found in cache for epoch %d", epochID)
 	}
@@ -490,12 +397,12 @@ func (v *Verifier) submitVerificationVectorSimplified(epochID uint64) error {
 
 	// Submit the verification vector using the dealer validity we already determined
 	msg := &types.MsgSubmitVerificationVector{
-		Creator:        v.cosmosClient.GetAddress(),
+		Creator:        bm.cosmosClient.GetAddress(),
 		EpochId:        epochID,
 		DealerValidity: verificationResult.DealerValidity,
 	}
 
-	_, err := v.cosmosClient.SubmitVerificationVector(msg)
+	_, err := bm.cosmosClient.SubmitVerificationVector(msg)
 	if err != nil {
 		return fmt.Errorf("failed to submit verification vector: %w", err)
 	}
@@ -519,40 +426,8 @@ func countTrueValues(values []bool) int {
 	return count
 }
 
-// GetVerificationResult returns the verification result for a specific epoch
-func (v *Verifier) GetVerificationResult(epochID uint64) *VerificationResult {
-	return v.cache.Get(epochID)
-}
-
-// GetCurrentVerificationResult returns the current verification result (highest epoch)
-func (v *Verifier) GetCurrentVerificationResult() *VerificationResult {
-	return v.cache.GetCurrent()
-}
-
-// GetCachedEpochs returns all cached epoch IDs
-func (v *Verifier) GetCachedEpochs() []uint64 {
-	return v.cache.GetCachedEpochs()
-}
-
-// storeVerificationResult stores a verification result in the cache
-// This method can be extended in the future for additional validation or processing
-func (v *Verifier) storeVerificationResult(result *VerificationResult) {
-	if result == nil {
-		logging.Warn(verifierLogTag+"Attempted to store nil verification result", inferenceTypes.BLS)
-		return
-	}
-
-	v.cache.Store(result)
-
-	logging.Debug(verifierLogTag+"Stored verification result", inferenceTypes.BLS,
-		"epochID", result.EpochID,
-		"isParticipant", result.IsParticipant,
-		"slotRange", result.SlotRange,
-		"totalCachedEpochs", len(v.cache.GetCachedEpochs()))
-}
-
 // ProcessGroupPublicKeyGenerated handles the DKG completion event
-func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResponse) error {
+func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.JSONRPCResponse) error {
 	// Extract epochID from event
 	epochIDs, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_id"]
 	if !ok || len(epochIDs) == 0 {
@@ -572,9 +447,9 @@ func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResp
 
 	logging.Debug(verifierLogTag+"Processing group public key generated", inferenceTypes.BLS, "epochID", epochID)
 
-	// Check if we already have a COMPLETED result for this epoch
-	existingResult := v.GetVerificationResult(epochID)
-	if existingResult != nil && existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED {
+	// Check if we already have a COMPLETED or SIGNED result for this epoch
+	existingResult := bm.GetVerificationResult(epochID)
+	if existingResult != nil && (existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED || existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED) {
 		logging.Warn(verifierLogTag+"DKG already completed for this epoch", inferenceTypes.BLS,
 			"epochID", epochID,
 			"isParticipant", existingResult.IsParticipant)
@@ -582,17 +457,17 @@ func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResp
 	}
 
 	// Extract epoch data from event instead of querying chain
-	epochData, err := v.extractEpochDataFromGroupPublicKeyEvent(event)
+	epochData, err := bm.extractEpochDataFromGroupPublicKeyEvent(event)
 	if err != nil {
 		return fmt.Errorf("failed to extract epoch data from event: %w", err)
 	}
 
 	// Validate we're in the correct phase
-	if epochData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED {
+	if epochData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED && epochData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
 		logging.Warn(verifierLogTag+"DKG not in completed phase", inferenceTypes.BLS,
 			"epochID", epochID,
 			"currentPhase", epochData.DkgPhase)
-		return fmt.Errorf("epoch %d is not in COMPLETED phase, current phase: %s", epochID, epochData.DkgPhase)
+		return fmt.Errorf("epoch %d is not in COMPLETED or SIGNED phase, current phase: %s", epochID, epochData.DkgPhase)
 	}
 
 	// If we don't have a VERIFYING result, we need to perform verification first
@@ -607,7 +482,7 @@ func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResp
 			}())
 
 		// Setup and perform verification to get our slot shares using event data
-		completed, err := v.setupAndPerformVerification(epochID, epochData)
+		completed, err := bm.setupAndPerformVerification(epochID, epochData)
 		if err != nil {
 			return fmt.Errorf("failed to setup and perform verification for epoch %d: %w", epochID, err)
 		}
@@ -618,7 +493,7 @@ func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResp
 		}
 
 		// Get the updated verification result
-		existingResult = v.GetVerificationResult(epochID)
+		existingResult = bm.GetVerificationResult(epochID)
 		if existingResult == nil {
 			return fmt.Errorf("verification result not found after performing verification for epoch %d", epochID)
 		}
@@ -651,7 +526,7 @@ func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResp
 	}
 
 	// Store the completed verification result
-	v.storeVerificationResult(completedResult)
+	bm.storeVerificationResult(completedResult)
 
 	logging.Info(verifierLogTag+"Successfully processed DKG completion", inferenceTypes.BLS,
 		"epochID", epochID,
@@ -664,7 +539,7 @@ func (v *Verifier) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCResp
 }
 
 // extractEpochDataFromGroupPublicKeyEvent extracts epoch data from a group public key generated event
-func (v *Verifier) extractEpochDataFromGroupPublicKeyEvent(event *chainevents.JSONRPCResponse) (*types.EpochBLSData, error) {
+func (bm *BlsManager) extractEpochDataFromGroupPublicKeyEvent(event *chainevents.JSONRPCResponse) (*types.EpochBLSData, error) {
 	// Extract epoch data from event - this should be a JSON-encoded object
 	epochDataStrs, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_data"]
 	if !ok || len(epochDataStrs) == 0 {
@@ -679,7 +554,7 @@ func (v *Verifier) extractEpochDataFromGroupPublicKeyEvent(event *chainevents.JS
 	}
 
 	// Parse the epoch data using the helper function that handles type conversions
-	epochData, err := v.parseEpochDataFromJSON(unquotedEpochData)
+	epochData, err := bm.parseEpochDataFromJSON(unquotedEpochData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse epoch_data: %w", err)
 	}
@@ -688,7 +563,7 @@ func (v *Verifier) extractEpochDataFromGroupPublicKeyEvent(event *chainevents.JS
 }
 
 // parseEpochDataFromJSON parses epoch data from JSON with explicit type conversion for protobuf fields
-func (v *Verifier) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSData, error) {
+func (bm *BlsManager) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSData, error) {
 	// Parse the JSON into a map first to handle type conversions
 	var epochDataMap map[string]interface{}
 	err := json.Unmarshal([]byte(jsonStr), &epochDataMap)
@@ -765,7 +640,7 @@ func (v *Verifier) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSData, 
 }
 
 // extractEpochDataFromVerifyingEvent extracts epoch data from a verifying event
-func (v *Verifier) extractEpochDataFromVerifyingEvent(event *chainevents.JSONRPCResponse) (*types.EpochBLSData, error) {
+func (bm *BlsManager) extractEpochDataFromVerifyingEvent(event *chainevents.JSONRPCResponse) (*types.EpochBLSData, error) {
 	// Extract epoch data from event - this should be a JSON-encoded object
 	epochDataStrs, ok := event.Result.Events["inference.bls.EventVerifyingPhaseStarted.epoch_data"]
 	if !ok || len(epochDataStrs) == 0 {
@@ -780,7 +655,7 @@ func (v *Verifier) extractEpochDataFromVerifyingEvent(event *chainevents.JSONRPC
 	}
 
 	// Parse the epoch data using the helper function that handles type conversions
-	epochData, err := v.parseEpochDataFromJSON(unquotedEpochData)
+	epochData, err := bm.parseEpochDataFromJSON(unquotedEpochData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse epoch_data: %w", err)
 	}

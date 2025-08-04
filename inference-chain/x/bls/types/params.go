@@ -14,6 +14,7 @@ var (
 	KeyTSlotsDegreeOffset              = []byte("TSlotsDegreeOffset")
 	KeyDealingPhaseDurationBlocks      = []byte("DealingPhaseDurationBlocks")
 	KeyVerificationPhaseDurationBlocks = []byte("VerificationPhaseDurationBlocks")
+	KeySigningDeadlineBlocks           = []byte("SigningDeadlineBlocks")
 )
 
 // ParamKeyTable the param key table for launch module
@@ -27,12 +28,14 @@ func NewParams(
 	tSlotsDegreeOffset uint32,
 	dealingPhaseDurationBlocks int64,
 	verificationPhaseDurationBlocks int64,
+	signingDeadlineBlocks int64,
 ) Params {
 	return Params{
 		ITotalSlots:                     iTotalSlots,
 		TSlotsDegreeOffset:              tSlotsDegreeOffset,
 		DealingPhaseDurationBlocks:      dealingPhaseDurationBlocks,
 		VerificationPhaseDurationBlocks: verificationPhaseDurationBlocks,
+		SigningDeadlineBlocks:           signingDeadlineBlocks,
 	}
 }
 
@@ -43,6 +46,7 @@ func DefaultParams() Params {
 		50,  // t_slots_degree_offset: floor(100/2) = 50
 		5,   // dealing_phase_duration_blocks: 5 blocks for PoC
 		3,   // verification_phase_duration_blocks: 3 blocks for PoC
+		10,  // signing_deadline_blocks: 10 blocks for PoC (enough time for controllers to respond)
 	)
 }
 
@@ -53,6 +57,7 @@ func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 		paramtypes.NewParamSetPair(KeyTSlotsDegreeOffset, &p.TSlotsDegreeOffset, validateTSlotsDegreeOffset),
 		paramtypes.NewParamSetPair(KeyDealingPhaseDurationBlocks, &p.DealingPhaseDurationBlocks, validateDealingPhaseDurationBlocks),
 		paramtypes.NewParamSetPair(KeyVerificationPhaseDurationBlocks, &p.VerificationPhaseDurationBlocks, validateVerificationPhaseDurationBlocks),
+		paramtypes.NewParamSetPair(KeySigningDeadlineBlocks, &p.SigningDeadlineBlocks, validateSigningDeadlineBlocks),
 	}
 }
 
@@ -68,6 +73,9 @@ func (p Params) Validate() error {
 		return err
 	}
 	if err := validateVerificationPhaseDurationBlocks(p.VerificationPhaseDurationBlocks); err != nil {
+		return err
+	}
+	if err := validateSigningDeadlineBlocks(p.SigningDeadlineBlocks); err != nil {
 		return err
 	}
 
@@ -131,6 +139,19 @@ func validateVerificationPhaseDurationBlocks(i interface{}) error {
 
 	if v <= 0 {
 		return fmt.Errorf("verification_phase_duration_blocks must be positive")
+	}
+
+	return nil
+}
+
+func validateSigningDeadlineBlocks(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+
+	if v <= 0 {
+		return fmt.Errorf("signing_deadline_blocks must be positive")
 	}
 
 	return nil

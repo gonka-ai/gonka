@@ -128,8 +128,14 @@ type AuthzKeeper interface {
 
 // BlsKeeper defines the expected interface for the BLS module.
 type BlsKeeper interface {
+	// DKG methods
 	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
 	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, bool)
 	SetActiveEpochID(ctx sdk.Context, epochID uint64)
 	GetActiveEpochID(ctx sdk.Context) (uint64, bool)
+
+	// Threshold signing methods
+	RequestThresholdSignature(ctx sdk.Context, signingData blstypes.SigningData) error
+	GetSigningStatus(ctx sdk.Context, requestID []byte) (*blstypes.ThresholdSigningRequest, error)
+	ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64) ([]*blstypes.ThresholdSigningRequest, error)
 }

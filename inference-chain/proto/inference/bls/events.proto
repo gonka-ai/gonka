@@ -81,4 +81,70 @@ message EventGroupPublicKeyGenerated {
   
   // epoch_data contains the complete epoch BLS data at the time of completion
   EpochBLSData epoch_data = 5 [(gogoproto.nullable) = false];
+
+  // chain_id is the chain ID for EIP-155 compatibility
+  string chain_id = 6;
+}
+
+// EventGroupKeyValidated is emitted when group key validation completes successfully
+message EventGroupKeyValidated {
+  // new_epoch_id identifies the epoch whose group public key was successfully validated
+  uint64 new_epoch_id = 1;
+  
+  // final_signature is the aggregated signature validating the new group public key (G1 point, 48-byte compressed)
+  bytes final_signature = 2;
+}
+
+// EventGroupKeyValidationFailed is emitted when group key validation fails
+message EventGroupKeyValidationFailed {
+  // new_epoch_id identifies the epoch whose group public key validation failed
+  uint64 new_epoch_id = 1;
+  
+  // reason describes why the validation failed
+  string reason = 2;
+}
+
+// EventThresholdSigningRequested is emitted when a new threshold signing request is created
+message EventThresholdSigningRequested {
+  // request_id uniquely identifies this threshold signing request
+  bytes request_id = 1;
+  
+  // current_epoch_id identifies the epoch being used for signing
+  uint64 current_epoch_id = 2;
+  
+  // encoded_data is the Ethereum-compatible abi.encodePacked result that participants will sign
+  bytes encoded_data = 3;
+  
+  // message_hash is the keccak256 hash of the encoded_data (pre-computed for participants)
+  bytes message_hash = 4;
+  
+  // deadline_block_height is the block height after which this request expires
+  int64 deadline_block_height = 5;
+}
+
+// EventThresholdSigningCompleted is emitted when threshold signing completes successfully
+message EventThresholdSigningCompleted {
+  // request_id identifies the threshold signing request that completed
+  bytes request_id = 1;
+  
+  // current_epoch_id identifies the epoch used for signing
+  uint64 current_epoch_id = 2;
+  
+  // final_signature is the aggregated BLS threshold signature (G1 point, 48-byte compressed)
+  bytes final_signature = 3;
+  
+  // participating_slots is the total number of slots that participated in the signing
+  uint32 participating_slots = 4;
+}
+
+// EventThresholdSigningFailed is emitted when threshold signing fails or expires
+message EventThresholdSigningFailed {
+  // request_id identifies the threshold signing request that failed
+  bytes request_id = 1;
+  
+  // current_epoch_id identifies the epoch used for signing
+  uint64 current_epoch_id = 2;
+  
+  // reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
+  string reason = 3;
 } 

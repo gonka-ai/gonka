@@ -2674,6 +2674,7 @@ var (
 	fd_EventGroupPublicKeyGenerated_i_total_slots    protoreflect.FieldDescriptor
 	fd_EventGroupPublicKeyGenerated_t_slots_degree   protoreflect.FieldDescriptor
 	fd_EventGroupPublicKeyGenerated_epoch_data       protoreflect.FieldDescriptor
+	fd_EventGroupPublicKeyGenerated_chain_id         protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -2684,6 +2685,7 @@ func init() {
 	fd_EventGroupPublicKeyGenerated_i_total_slots = md_EventGroupPublicKeyGenerated.Fields().ByName("i_total_slots")
 	fd_EventGroupPublicKeyGenerated_t_slots_degree = md_EventGroupPublicKeyGenerated.Fields().ByName("t_slots_degree")
 	fd_EventGroupPublicKeyGenerated_epoch_data = md_EventGroupPublicKeyGenerated.Fields().ByName("epoch_data")
+	fd_EventGroupPublicKeyGenerated_chain_id = md_EventGroupPublicKeyGenerated.Fields().ByName("chain_id")
 }
 
 var _ protoreflect.Message = (*fastReflection_EventGroupPublicKeyGenerated)(nil)
@@ -2781,6 +2783,12 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Range(f func(protoreflect.
 			return
 		}
 	}
+	if x.ChainId != "" {
+		value := protoreflect.ValueOfString(x.ChainId)
+		if !f(fd_EventGroupPublicKeyGenerated_chain_id, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -2806,6 +2814,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Has(fd protoreflect.FieldD
 		return x.TSlotsDegree != uint32(0)
 	case "inference.bls.EventGroupPublicKeyGenerated.epoch_data":
 		return x.EpochData != nil
+	case "inference.bls.EventGroupPublicKeyGenerated.chain_id":
+		return x.ChainId != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupPublicKeyGenerated"))
@@ -2832,6 +2842,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Clear(fd protoreflect.Fiel
 		x.TSlotsDegree = uint32(0)
 	case "inference.bls.EventGroupPublicKeyGenerated.epoch_data":
 		x.EpochData = nil
+	case "inference.bls.EventGroupPublicKeyGenerated.chain_id":
+		x.ChainId = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupPublicKeyGenerated"))
@@ -2863,6 +2875,9 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Get(descriptor protoreflec
 	case "inference.bls.EventGroupPublicKeyGenerated.epoch_data":
 		value := x.EpochData
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.bls.EventGroupPublicKeyGenerated.chain_id":
+		value := x.ChainId
+		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupPublicKeyGenerated"))
@@ -2893,6 +2908,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Set(fd protoreflect.FieldD
 		x.TSlotsDegree = uint32(value.Uint())
 	case "inference.bls.EventGroupPublicKeyGenerated.epoch_data":
 		x.EpochData = value.Message().Interface().(*EpochBLSData)
+	case "inference.bls.EventGroupPublicKeyGenerated.chain_id":
+		x.ChainId = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupPublicKeyGenerated"))
@@ -2926,6 +2943,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Mutable(fd protoreflect.Fi
 		panic(fmt.Errorf("field i_total_slots of message inference.bls.EventGroupPublicKeyGenerated is not mutable"))
 	case "inference.bls.EventGroupPublicKeyGenerated.t_slots_degree":
 		panic(fmt.Errorf("field t_slots_degree of message inference.bls.EventGroupPublicKeyGenerated is not mutable"))
+	case "inference.bls.EventGroupPublicKeyGenerated.chain_id":
+		panic(fmt.Errorf("field chain_id of message inference.bls.EventGroupPublicKeyGenerated is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupPublicKeyGenerated"))
@@ -2950,6 +2969,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) NewField(fd protoreflect.F
 	case "inference.bls.EventGroupPublicKeyGenerated.epoch_data":
 		m := new(EpochBLSData)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.bls.EventGroupPublicKeyGenerated.chain_id":
+		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupPublicKeyGenerated"))
@@ -3036,6 +3057,10 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 			l = options.Size(x.EpochData)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		l = len(x.ChainId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -3064,6 +3089,13 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.ChainId) > 0 {
+			i -= len(x.ChainId)
+			copy(dAtA[i:], x.ChainId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ChainId)))
+			i--
+			dAtA[i] = 0x32
 		}
 		if x.EpochData != nil {
 			encoded, err := options.Marshal(x.EpochData)
@@ -3276,6 +3308,2744 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochData); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
+				iNdEx = postIndex
+			case 6:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ChainId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ChainId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_EventGroupKeyValidated                 protoreflect.MessageDescriptor
+	fd_EventGroupKeyValidated_new_epoch_id    protoreflect.FieldDescriptor
+	fd_EventGroupKeyValidated_final_signature protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventGroupKeyValidated = File_inference_bls_events_proto.Messages().ByName("EventGroupKeyValidated")
+	fd_EventGroupKeyValidated_new_epoch_id = md_EventGroupKeyValidated.Fields().ByName("new_epoch_id")
+	fd_EventGroupKeyValidated_final_signature = md_EventGroupKeyValidated.Fields().ByName("final_signature")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventGroupKeyValidated)(nil)
+
+type fastReflection_EventGroupKeyValidated EventGroupKeyValidated
+
+func (x *EventGroupKeyValidated) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventGroupKeyValidated)(x)
+}
+
+func (x *EventGroupKeyValidated) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventGroupKeyValidated_messageType fastReflection_EventGroupKeyValidated_messageType
+var _ protoreflect.MessageType = fastReflection_EventGroupKeyValidated_messageType{}
+
+type fastReflection_EventGroupKeyValidated_messageType struct{}
+
+func (x fastReflection_EventGroupKeyValidated_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventGroupKeyValidated)(nil)
+}
+func (x fastReflection_EventGroupKeyValidated_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventGroupKeyValidated)
+}
+func (x fastReflection_EventGroupKeyValidated_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventGroupKeyValidated
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventGroupKeyValidated) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventGroupKeyValidated
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventGroupKeyValidated) Type() protoreflect.MessageType {
+	return _fastReflection_EventGroupKeyValidated_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventGroupKeyValidated) New() protoreflect.Message {
+	return new(fastReflection_EventGroupKeyValidated)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventGroupKeyValidated) Interface() protoreflect.ProtoMessage {
+	return (*EventGroupKeyValidated)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventGroupKeyValidated) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.NewEpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.NewEpochId)
+		if !f(fd_EventGroupKeyValidated_new_epoch_id, value) {
+			return
+		}
+	}
+	if len(x.FinalSignature) != 0 {
+		value := protoreflect.ValueOfBytes(x.FinalSignature)
+		if !f(fd_EventGroupKeyValidated_final_signature, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventGroupKeyValidated) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+		return x.NewEpochId != uint64(0)
+	case "inference.bls.EventGroupKeyValidated.final_signature":
+		return len(x.FinalSignature) != 0
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidated"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidated does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidated) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+		x.NewEpochId = uint64(0)
+	case "inference.bls.EventGroupKeyValidated.final_signature":
+		x.FinalSignature = nil
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidated"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidated does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventGroupKeyValidated) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+		value := x.NewEpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventGroupKeyValidated.final_signature":
+		value := x.FinalSignature
+		return protoreflect.ValueOfBytes(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidated"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidated does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidated) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+		x.NewEpochId = value.Uint()
+	case "inference.bls.EventGroupKeyValidated.final_signature":
+		x.FinalSignature = value.Bytes()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidated"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidated does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidated) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+		panic(fmt.Errorf("field new_epoch_id of message inference.bls.EventGroupKeyValidated is not mutable"))
+	case "inference.bls.EventGroupKeyValidated.final_signature":
+		panic(fmt.Errorf("field final_signature of message inference.bls.EventGroupKeyValidated is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidated"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidated does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventGroupKeyValidated) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventGroupKeyValidated.final_signature":
+		return protoreflect.ValueOfBytes(nil)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidated"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidated does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventGroupKeyValidated) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventGroupKeyValidated", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventGroupKeyValidated) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidated) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventGroupKeyValidated) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventGroupKeyValidated) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventGroupKeyValidated)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.NewEpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.NewEpochId))
+		}
+		l = len(x.FinalSignature)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventGroupKeyValidated)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.FinalSignature) > 0 {
+			i -= len(x.FinalSignature)
+			copy(dAtA[i:], x.FinalSignature)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.FinalSignature)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if x.NewEpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.NewEpochId))
+			i--
+			dAtA[i] = 0x8
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventGroupKeyValidated)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventGroupKeyValidated: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventGroupKeyValidated: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+				}
+				x.NewEpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.NewEpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FinalSignature", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.FinalSignature = append(x.FinalSignature[:0], dAtA[iNdEx:postIndex]...)
+				if x.FinalSignature == nil {
+					x.FinalSignature = []byte{}
+				}
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_EventGroupKeyValidationFailed              protoreflect.MessageDescriptor
+	fd_EventGroupKeyValidationFailed_new_epoch_id protoreflect.FieldDescriptor
+	fd_EventGroupKeyValidationFailed_reason       protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventGroupKeyValidationFailed = File_inference_bls_events_proto.Messages().ByName("EventGroupKeyValidationFailed")
+	fd_EventGroupKeyValidationFailed_new_epoch_id = md_EventGroupKeyValidationFailed.Fields().ByName("new_epoch_id")
+	fd_EventGroupKeyValidationFailed_reason = md_EventGroupKeyValidationFailed.Fields().ByName("reason")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventGroupKeyValidationFailed)(nil)
+
+type fastReflection_EventGroupKeyValidationFailed EventGroupKeyValidationFailed
+
+func (x *EventGroupKeyValidationFailed) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventGroupKeyValidationFailed)(x)
+}
+
+func (x *EventGroupKeyValidationFailed) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[7]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventGroupKeyValidationFailed_messageType fastReflection_EventGroupKeyValidationFailed_messageType
+var _ protoreflect.MessageType = fastReflection_EventGroupKeyValidationFailed_messageType{}
+
+type fastReflection_EventGroupKeyValidationFailed_messageType struct{}
+
+func (x fastReflection_EventGroupKeyValidationFailed_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventGroupKeyValidationFailed)(nil)
+}
+func (x fastReflection_EventGroupKeyValidationFailed_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventGroupKeyValidationFailed)
+}
+func (x fastReflection_EventGroupKeyValidationFailed_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventGroupKeyValidationFailed
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventGroupKeyValidationFailed) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventGroupKeyValidationFailed
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventGroupKeyValidationFailed) Type() protoreflect.MessageType {
+	return _fastReflection_EventGroupKeyValidationFailed_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventGroupKeyValidationFailed) New() protoreflect.Message {
+	return new(fastReflection_EventGroupKeyValidationFailed)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventGroupKeyValidationFailed) Interface() protoreflect.ProtoMessage {
+	return (*EventGroupKeyValidationFailed)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventGroupKeyValidationFailed) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.NewEpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.NewEpochId)
+		if !f(fd_EventGroupKeyValidationFailed_new_epoch_id, value) {
+			return
+		}
+	}
+	if x.Reason != "" {
+		value := protoreflect.ValueOfString(x.Reason)
+		if !f(fd_EventGroupKeyValidationFailed_reason, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventGroupKeyValidationFailed) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+		return x.NewEpochId != uint64(0)
+	case "inference.bls.EventGroupKeyValidationFailed.reason":
+		return x.Reason != ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidationFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidationFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidationFailed) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+		x.NewEpochId = uint64(0)
+	case "inference.bls.EventGroupKeyValidationFailed.reason":
+		x.Reason = ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidationFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidationFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventGroupKeyValidationFailed) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+		value := x.NewEpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventGroupKeyValidationFailed.reason":
+		value := x.Reason
+		return protoreflect.ValueOfString(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidationFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidationFailed does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidationFailed) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+		x.NewEpochId = value.Uint()
+	case "inference.bls.EventGroupKeyValidationFailed.reason":
+		x.Reason = value.Interface().(string)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidationFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidationFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidationFailed) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+		panic(fmt.Errorf("field new_epoch_id of message inference.bls.EventGroupKeyValidationFailed is not mutable"))
+	case "inference.bls.EventGroupKeyValidationFailed.reason":
+		panic(fmt.Errorf("field reason of message inference.bls.EventGroupKeyValidationFailed is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidationFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidationFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventGroupKeyValidationFailed) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventGroupKeyValidationFailed.reason":
+		return protoreflect.ValueOfString("")
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventGroupKeyValidationFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventGroupKeyValidationFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventGroupKeyValidationFailed) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventGroupKeyValidationFailed", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventGroupKeyValidationFailed) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventGroupKeyValidationFailed) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventGroupKeyValidationFailed) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventGroupKeyValidationFailed) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventGroupKeyValidationFailed)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.NewEpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.NewEpochId))
+		}
+		l = len(x.Reason)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventGroupKeyValidationFailed)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Reason) > 0 {
+			i -= len(x.Reason)
+			copy(dAtA[i:], x.Reason)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Reason)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if x.NewEpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.NewEpochId))
+			i--
+			dAtA[i] = 0x8
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventGroupKeyValidationFailed)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventGroupKeyValidationFailed: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventGroupKeyValidationFailed: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+				}
+				x.NewEpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.NewEpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Reason", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Reason = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_EventThresholdSigningRequested                       protoreflect.MessageDescriptor
+	fd_EventThresholdSigningRequested_request_id            protoreflect.FieldDescriptor
+	fd_EventThresholdSigningRequested_current_epoch_id      protoreflect.FieldDescriptor
+	fd_EventThresholdSigningRequested_encoded_data          protoreflect.FieldDescriptor
+	fd_EventThresholdSigningRequested_message_hash          protoreflect.FieldDescriptor
+	fd_EventThresholdSigningRequested_deadline_block_height protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventThresholdSigningRequested = File_inference_bls_events_proto.Messages().ByName("EventThresholdSigningRequested")
+	fd_EventThresholdSigningRequested_request_id = md_EventThresholdSigningRequested.Fields().ByName("request_id")
+	fd_EventThresholdSigningRequested_current_epoch_id = md_EventThresholdSigningRequested.Fields().ByName("current_epoch_id")
+	fd_EventThresholdSigningRequested_encoded_data = md_EventThresholdSigningRequested.Fields().ByName("encoded_data")
+	fd_EventThresholdSigningRequested_message_hash = md_EventThresholdSigningRequested.Fields().ByName("message_hash")
+	fd_EventThresholdSigningRequested_deadline_block_height = md_EventThresholdSigningRequested.Fields().ByName("deadline_block_height")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventThresholdSigningRequested)(nil)
+
+type fastReflection_EventThresholdSigningRequested EventThresholdSigningRequested
+
+func (x *EventThresholdSigningRequested) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventThresholdSigningRequested)(x)
+}
+
+func (x *EventThresholdSigningRequested) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[8]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventThresholdSigningRequested_messageType fastReflection_EventThresholdSigningRequested_messageType
+var _ protoreflect.MessageType = fastReflection_EventThresholdSigningRequested_messageType{}
+
+type fastReflection_EventThresholdSigningRequested_messageType struct{}
+
+func (x fastReflection_EventThresholdSigningRequested_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventThresholdSigningRequested)(nil)
+}
+func (x fastReflection_EventThresholdSigningRequested_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventThresholdSigningRequested)
+}
+func (x fastReflection_EventThresholdSigningRequested_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventThresholdSigningRequested
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventThresholdSigningRequested) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventThresholdSigningRequested
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventThresholdSigningRequested) Type() protoreflect.MessageType {
+	return _fastReflection_EventThresholdSigningRequested_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventThresholdSigningRequested) New() protoreflect.Message {
+	return new(fastReflection_EventThresholdSigningRequested)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventThresholdSigningRequested) Interface() protoreflect.ProtoMessage {
+	return (*EventThresholdSigningRequested)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventThresholdSigningRequested) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if len(x.RequestId) != 0 {
+		value := protoreflect.ValueOfBytes(x.RequestId)
+		if !f(fd_EventThresholdSigningRequested_request_id, value) {
+			return
+		}
+	}
+	if x.CurrentEpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentEpochId)
+		if !f(fd_EventThresholdSigningRequested_current_epoch_id, value) {
+			return
+		}
+	}
+	if len(x.EncodedData) != 0 {
+		value := protoreflect.ValueOfBytes(x.EncodedData)
+		if !f(fd_EventThresholdSigningRequested_encoded_data, value) {
+			return
+		}
+	}
+	if len(x.MessageHash) != 0 {
+		value := protoreflect.ValueOfBytes(x.MessageHash)
+		if !f(fd_EventThresholdSigningRequested_message_hash, value) {
+			return
+		}
+	}
+	if x.DeadlineBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.DeadlineBlockHeight)
+		if !f(fd_EventThresholdSigningRequested_deadline_block_height, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventThresholdSigningRequested) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningRequested.request_id":
+		return len(x.RequestId) != 0
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+		return x.CurrentEpochId != uint64(0)
+	case "inference.bls.EventThresholdSigningRequested.encoded_data":
+		return len(x.EncodedData) != 0
+	case "inference.bls.EventThresholdSigningRequested.message_hash":
+		return len(x.MessageHash) != 0
+	case "inference.bls.EventThresholdSigningRequested.deadline_block_height":
+		return x.DeadlineBlockHeight != int64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningRequested"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningRequested does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningRequested) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningRequested.request_id":
+		x.RequestId = nil
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+		x.CurrentEpochId = uint64(0)
+	case "inference.bls.EventThresholdSigningRequested.encoded_data":
+		x.EncodedData = nil
+	case "inference.bls.EventThresholdSigningRequested.message_hash":
+		x.MessageHash = nil
+	case "inference.bls.EventThresholdSigningRequested.deadline_block_height":
+		x.DeadlineBlockHeight = int64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningRequested"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningRequested does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventThresholdSigningRequested) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventThresholdSigningRequested.request_id":
+		value := x.RequestId
+		return protoreflect.ValueOfBytes(value)
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+		value := x.CurrentEpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventThresholdSigningRequested.encoded_data":
+		value := x.EncodedData
+		return protoreflect.ValueOfBytes(value)
+	case "inference.bls.EventThresholdSigningRequested.message_hash":
+		value := x.MessageHash
+		return protoreflect.ValueOfBytes(value)
+	case "inference.bls.EventThresholdSigningRequested.deadline_block_height":
+		value := x.DeadlineBlockHeight
+		return protoreflect.ValueOfInt64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningRequested"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningRequested does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningRequested) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningRequested.request_id":
+		x.RequestId = value.Bytes()
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+		x.CurrentEpochId = value.Uint()
+	case "inference.bls.EventThresholdSigningRequested.encoded_data":
+		x.EncodedData = value.Bytes()
+	case "inference.bls.EventThresholdSigningRequested.message_hash":
+		x.MessageHash = value.Bytes()
+	case "inference.bls.EventThresholdSigningRequested.deadline_block_height":
+		x.DeadlineBlockHeight = value.Int()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningRequested"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningRequested does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningRequested) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningRequested.request_id":
+		panic(fmt.Errorf("field request_id of message inference.bls.EventThresholdSigningRequested is not mutable"))
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+		panic(fmt.Errorf("field current_epoch_id of message inference.bls.EventThresholdSigningRequested is not mutable"))
+	case "inference.bls.EventThresholdSigningRequested.encoded_data":
+		panic(fmt.Errorf("field encoded_data of message inference.bls.EventThresholdSigningRequested is not mutable"))
+	case "inference.bls.EventThresholdSigningRequested.message_hash":
+		panic(fmt.Errorf("field message_hash of message inference.bls.EventThresholdSigningRequested is not mutable"))
+	case "inference.bls.EventThresholdSigningRequested.deadline_block_height":
+		panic(fmt.Errorf("field deadline_block_height of message inference.bls.EventThresholdSigningRequested is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningRequested"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningRequested does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventThresholdSigningRequested) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningRequested.request_id":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventThresholdSigningRequested.encoded_data":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.bls.EventThresholdSigningRequested.message_hash":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.bls.EventThresholdSigningRequested.deadline_block_height":
+		return protoreflect.ValueOfInt64(int64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningRequested"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningRequested does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventThresholdSigningRequested) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventThresholdSigningRequested", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventThresholdSigningRequested) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningRequested) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventThresholdSigningRequested) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventThresholdSigningRequested) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventThresholdSigningRequested)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.RequestId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.CurrentEpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentEpochId))
+		}
+		l = len(x.EncodedData)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.MessageHash)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.DeadlineBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.DeadlineBlockHeight))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventThresholdSigningRequested)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.DeadlineBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.DeadlineBlockHeight))
+			i--
+			dAtA[i] = 0x28
+		}
+		if len(x.MessageHash) > 0 {
+			i -= len(x.MessageHash)
+			copy(dAtA[i:], x.MessageHash)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.MessageHash)))
+			i--
+			dAtA[i] = 0x22
+		}
+		if len(x.EncodedData) > 0 {
+			i -= len(x.EncodedData)
+			copy(dAtA[i:], x.EncodedData)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.EncodedData)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if x.CurrentEpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochId))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.RequestId) > 0 {
+			i -= len(x.RequestId)
+			copy(dAtA[i:], x.RequestId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RequestId)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventThresholdSigningRequested)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventThresholdSigningRequested: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventThresholdSigningRequested: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.RequestId = append(x.RequestId[:0], dAtA[iNdEx:postIndex]...)
+				if x.RequestId == nil {
+					x.RequestId = []byte{}
+				}
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+				}
+				x.CurrentEpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CurrentEpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EncodedData", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.EncodedData = append(x.EncodedData[:0], dAtA[iNdEx:postIndex]...)
+				if x.EncodedData == nil {
+					x.EncodedData = []byte{}
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MessageHash", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.MessageHash = append(x.MessageHash[:0], dAtA[iNdEx:postIndex]...)
+				if x.MessageHash == nil {
+					x.MessageHash = []byte{}
+				}
+				iNdEx = postIndex
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DeadlineBlockHeight", wireType)
+				}
+				x.DeadlineBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.DeadlineBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_EventThresholdSigningCompleted                     protoreflect.MessageDescriptor
+	fd_EventThresholdSigningCompleted_request_id          protoreflect.FieldDescriptor
+	fd_EventThresholdSigningCompleted_current_epoch_id    protoreflect.FieldDescriptor
+	fd_EventThresholdSigningCompleted_final_signature     protoreflect.FieldDescriptor
+	fd_EventThresholdSigningCompleted_participating_slots protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventThresholdSigningCompleted = File_inference_bls_events_proto.Messages().ByName("EventThresholdSigningCompleted")
+	fd_EventThresholdSigningCompleted_request_id = md_EventThresholdSigningCompleted.Fields().ByName("request_id")
+	fd_EventThresholdSigningCompleted_current_epoch_id = md_EventThresholdSigningCompleted.Fields().ByName("current_epoch_id")
+	fd_EventThresholdSigningCompleted_final_signature = md_EventThresholdSigningCompleted.Fields().ByName("final_signature")
+	fd_EventThresholdSigningCompleted_participating_slots = md_EventThresholdSigningCompleted.Fields().ByName("participating_slots")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventThresholdSigningCompleted)(nil)
+
+type fastReflection_EventThresholdSigningCompleted EventThresholdSigningCompleted
+
+func (x *EventThresholdSigningCompleted) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventThresholdSigningCompleted)(x)
+}
+
+func (x *EventThresholdSigningCompleted) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[9]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventThresholdSigningCompleted_messageType fastReflection_EventThresholdSigningCompleted_messageType
+var _ protoreflect.MessageType = fastReflection_EventThresholdSigningCompleted_messageType{}
+
+type fastReflection_EventThresholdSigningCompleted_messageType struct{}
+
+func (x fastReflection_EventThresholdSigningCompleted_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventThresholdSigningCompleted)(nil)
+}
+func (x fastReflection_EventThresholdSigningCompleted_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventThresholdSigningCompleted)
+}
+func (x fastReflection_EventThresholdSigningCompleted_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventThresholdSigningCompleted
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventThresholdSigningCompleted) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventThresholdSigningCompleted
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventThresholdSigningCompleted) Type() protoreflect.MessageType {
+	return _fastReflection_EventThresholdSigningCompleted_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventThresholdSigningCompleted) New() protoreflect.Message {
+	return new(fastReflection_EventThresholdSigningCompleted)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventThresholdSigningCompleted) Interface() protoreflect.ProtoMessage {
+	return (*EventThresholdSigningCompleted)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventThresholdSigningCompleted) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if len(x.RequestId) != 0 {
+		value := protoreflect.ValueOfBytes(x.RequestId)
+		if !f(fd_EventThresholdSigningCompleted_request_id, value) {
+			return
+		}
+	}
+	if x.CurrentEpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentEpochId)
+		if !f(fd_EventThresholdSigningCompleted_current_epoch_id, value) {
+			return
+		}
+	}
+	if len(x.FinalSignature) != 0 {
+		value := protoreflect.ValueOfBytes(x.FinalSignature)
+		if !f(fd_EventThresholdSigningCompleted_final_signature, value) {
+			return
+		}
+	}
+	if x.ParticipatingSlots != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.ParticipatingSlots)
+		if !f(fd_EventThresholdSigningCompleted_participating_slots, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventThresholdSigningCompleted) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningCompleted.request_id":
+		return len(x.RequestId) != 0
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+		return x.CurrentEpochId != uint64(0)
+	case "inference.bls.EventThresholdSigningCompleted.final_signature":
+		return len(x.FinalSignature) != 0
+	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
+		return x.ParticipatingSlots != uint32(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningCompleted"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningCompleted does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningCompleted) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningCompleted.request_id":
+		x.RequestId = nil
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+		x.CurrentEpochId = uint64(0)
+	case "inference.bls.EventThresholdSigningCompleted.final_signature":
+		x.FinalSignature = nil
+	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
+		x.ParticipatingSlots = uint32(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningCompleted"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningCompleted does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventThresholdSigningCompleted) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventThresholdSigningCompleted.request_id":
+		value := x.RequestId
+		return protoreflect.ValueOfBytes(value)
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+		value := x.CurrentEpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventThresholdSigningCompleted.final_signature":
+		value := x.FinalSignature
+		return protoreflect.ValueOfBytes(value)
+	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
+		value := x.ParticipatingSlots
+		return protoreflect.ValueOfUint32(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningCompleted"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningCompleted does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningCompleted) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningCompleted.request_id":
+		x.RequestId = value.Bytes()
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+		x.CurrentEpochId = value.Uint()
+	case "inference.bls.EventThresholdSigningCompleted.final_signature":
+		x.FinalSignature = value.Bytes()
+	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
+		x.ParticipatingSlots = uint32(value.Uint())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningCompleted"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningCompleted does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningCompleted) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningCompleted.request_id":
+		panic(fmt.Errorf("field request_id of message inference.bls.EventThresholdSigningCompleted is not mutable"))
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+		panic(fmt.Errorf("field current_epoch_id of message inference.bls.EventThresholdSigningCompleted is not mutable"))
+	case "inference.bls.EventThresholdSigningCompleted.final_signature":
+		panic(fmt.Errorf("field final_signature of message inference.bls.EventThresholdSigningCompleted is not mutable"))
+	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
+		panic(fmt.Errorf("field participating_slots of message inference.bls.EventThresholdSigningCompleted is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningCompleted"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningCompleted does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventThresholdSigningCompleted) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningCompleted.request_id":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventThresholdSigningCompleted.final_signature":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
+		return protoreflect.ValueOfUint32(uint32(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningCompleted"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningCompleted does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventThresholdSigningCompleted) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventThresholdSigningCompleted", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventThresholdSigningCompleted) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningCompleted) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventThresholdSigningCompleted) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventThresholdSigningCompleted) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventThresholdSigningCompleted)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.RequestId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.CurrentEpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentEpochId))
+		}
+		l = len(x.FinalSignature)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.ParticipatingSlots != 0 {
+			n += 1 + runtime.Sov(uint64(x.ParticipatingSlots))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventThresholdSigningCompleted)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ParticipatingSlots != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ParticipatingSlots))
+			i--
+			dAtA[i] = 0x20
+		}
+		if len(x.FinalSignature) > 0 {
+			i -= len(x.FinalSignature)
+			copy(dAtA[i:], x.FinalSignature)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.FinalSignature)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if x.CurrentEpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochId))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.RequestId) > 0 {
+			i -= len(x.RequestId)
+			copy(dAtA[i:], x.RequestId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RequestId)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventThresholdSigningCompleted)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventThresholdSigningCompleted: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventThresholdSigningCompleted: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.RequestId = append(x.RequestId[:0], dAtA[iNdEx:postIndex]...)
+				if x.RequestId == nil {
+					x.RequestId = []byte{}
+				}
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+				}
+				x.CurrentEpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CurrentEpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FinalSignature", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.FinalSignature = append(x.FinalSignature[:0], dAtA[iNdEx:postIndex]...)
+				if x.FinalSignature == nil {
+					x.FinalSignature = []byte{}
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ParticipatingSlots", wireType)
+				}
+				x.ParticipatingSlots = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ParticipatingSlots |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_EventThresholdSigningFailed                  protoreflect.MessageDescriptor
+	fd_EventThresholdSigningFailed_request_id       protoreflect.FieldDescriptor
+	fd_EventThresholdSigningFailed_current_epoch_id protoreflect.FieldDescriptor
+	fd_EventThresholdSigningFailed_reason           protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventThresholdSigningFailed = File_inference_bls_events_proto.Messages().ByName("EventThresholdSigningFailed")
+	fd_EventThresholdSigningFailed_request_id = md_EventThresholdSigningFailed.Fields().ByName("request_id")
+	fd_EventThresholdSigningFailed_current_epoch_id = md_EventThresholdSigningFailed.Fields().ByName("current_epoch_id")
+	fd_EventThresholdSigningFailed_reason = md_EventThresholdSigningFailed.Fields().ByName("reason")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventThresholdSigningFailed)(nil)
+
+type fastReflection_EventThresholdSigningFailed EventThresholdSigningFailed
+
+func (x *EventThresholdSigningFailed) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventThresholdSigningFailed)(x)
+}
+
+func (x *EventThresholdSigningFailed) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[10]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventThresholdSigningFailed_messageType fastReflection_EventThresholdSigningFailed_messageType
+var _ protoreflect.MessageType = fastReflection_EventThresholdSigningFailed_messageType{}
+
+type fastReflection_EventThresholdSigningFailed_messageType struct{}
+
+func (x fastReflection_EventThresholdSigningFailed_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventThresholdSigningFailed)(nil)
+}
+func (x fastReflection_EventThresholdSigningFailed_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventThresholdSigningFailed)
+}
+func (x fastReflection_EventThresholdSigningFailed_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventThresholdSigningFailed
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventThresholdSigningFailed) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventThresholdSigningFailed
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventThresholdSigningFailed) Type() protoreflect.MessageType {
+	return _fastReflection_EventThresholdSigningFailed_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventThresholdSigningFailed) New() protoreflect.Message {
+	return new(fastReflection_EventThresholdSigningFailed)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventThresholdSigningFailed) Interface() protoreflect.ProtoMessage {
+	return (*EventThresholdSigningFailed)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventThresholdSigningFailed) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if len(x.RequestId) != 0 {
+		value := protoreflect.ValueOfBytes(x.RequestId)
+		if !f(fd_EventThresholdSigningFailed_request_id, value) {
+			return
+		}
+	}
+	if x.CurrentEpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentEpochId)
+		if !f(fd_EventThresholdSigningFailed_current_epoch_id, value) {
+			return
+		}
+	}
+	if x.Reason != "" {
+		value := protoreflect.ValueOfString(x.Reason)
+		if !f(fd_EventThresholdSigningFailed_reason, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventThresholdSigningFailed) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningFailed.request_id":
+		return len(x.RequestId) != 0
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+		return x.CurrentEpochId != uint64(0)
+	case "inference.bls.EventThresholdSigningFailed.reason":
+		return x.Reason != ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningFailed) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningFailed.request_id":
+		x.RequestId = nil
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+		x.CurrentEpochId = uint64(0)
+	case "inference.bls.EventThresholdSigningFailed.reason":
+		x.Reason = ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventThresholdSigningFailed) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventThresholdSigningFailed.request_id":
+		value := x.RequestId
+		return protoreflect.ValueOfBytes(value)
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+		value := x.CurrentEpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventThresholdSigningFailed.reason":
+		value := x.Reason
+		return protoreflect.ValueOfString(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningFailed does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningFailed) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningFailed.request_id":
+		x.RequestId = value.Bytes()
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+		x.CurrentEpochId = value.Uint()
+	case "inference.bls.EventThresholdSigningFailed.reason":
+		x.Reason = value.Interface().(string)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningFailed) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningFailed.request_id":
+		panic(fmt.Errorf("field request_id of message inference.bls.EventThresholdSigningFailed is not mutable"))
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+		panic(fmt.Errorf("field current_epoch_id of message inference.bls.EventThresholdSigningFailed is not mutable"))
+	case "inference.bls.EventThresholdSigningFailed.reason":
+		panic(fmt.Errorf("field reason of message inference.bls.EventThresholdSigningFailed is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventThresholdSigningFailed) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventThresholdSigningFailed.request_id":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventThresholdSigningFailed.reason":
+		return protoreflect.ValueOfString("")
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventThresholdSigningFailed"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventThresholdSigningFailed does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventThresholdSigningFailed) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventThresholdSigningFailed", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventThresholdSigningFailed) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventThresholdSigningFailed) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventThresholdSigningFailed) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventThresholdSigningFailed) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventThresholdSigningFailed)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.RequestId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.CurrentEpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentEpochId))
+		}
+		l = len(x.Reason)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventThresholdSigningFailed)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Reason) > 0 {
+			i -= len(x.Reason)
+			copy(dAtA[i:], x.Reason)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Reason)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if x.CurrentEpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochId))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.RequestId) > 0 {
+			i -= len(x.RequestId)
+			copy(dAtA[i:], x.RequestId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RequestId)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventThresholdSigningFailed)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventThresholdSigningFailed: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventThresholdSigningFailed: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.RequestId = append(x.RequestId[:0], dAtA[iNdEx:postIndex]...)
+				if x.RequestId == nil {
+					x.RequestId = []byte{}
+				}
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+				}
+				x.CurrentEpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CurrentEpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Reason", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Reason = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
@@ -3607,6 +6377,8 @@ type EventGroupPublicKeyGenerated struct {
 	TSlotsDegree uint32 `protobuf:"varint,4,opt,name=t_slots_degree,json=tSlotsDegree,proto3" json:"t_slots_degree,omitempty"`
 	// epoch_data contains the complete epoch BLS data at the time of completion
 	EpochData *EpochBLSData `protobuf:"bytes,5,opt,name=epoch_data,json=epochData,proto3" json:"epoch_data,omitempty"`
+	// chain_id is the chain ID for EIP-155 compatibility
+	ChainId string `protobuf:"bytes,6,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
 }
 
 func (x *EventGroupPublicKeyGenerated) Reset() {
@@ -3662,6 +6434,297 @@ func (x *EventGroupPublicKeyGenerated) GetEpochData() *EpochBLSData {
 		return x.EpochData
 	}
 	return nil
+}
+
+func (x *EventGroupPublicKeyGenerated) GetChainId() string {
+	if x != nil {
+		return x.ChainId
+	}
+	return ""
+}
+
+// EventGroupKeyValidated is emitted when group key validation completes successfully
+type EventGroupKeyValidated struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// new_epoch_id identifies the epoch whose group public key was successfully validated
+	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// final_signature is the aggregated signature validating the new group public key (G1 point, 48-byte compressed)
+	FinalSignature []byte `protobuf:"bytes,2,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
+}
+
+func (x *EventGroupKeyValidated) Reset() {
+	*x = EventGroupKeyValidated{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventGroupKeyValidated) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventGroupKeyValidated) ProtoMessage() {}
+
+// Deprecated: Use EventGroupKeyValidated.ProtoReflect.Descriptor instead.
+func (*EventGroupKeyValidated) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *EventGroupKeyValidated) GetNewEpochId() uint64 {
+	if x != nil {
+		return x.NewEpochId
+	}
+	return 0
+}
+
+func (x *EventGroupKeyValidated) GetFinalSignature() []byte {
+	if x != nil {
+		return x.FinalSignature
+	}
+	return nil
+}
+
+// EventGroupKeyValidationFailed is emitted when group key validation fails
+type EventGroupKeyValidationFailed struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// new_epoch_id identifies the epoch whose group public key validation failed
+	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// reason describes why the validation failed
+	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+}
+
+func (x *EventGroupKeyValidationFailed) Reset() {
+	*x = EventGroupKeyValidationFailed{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[7]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventGroupKeyValidationFailed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventGroupKeyValidationFailed) ProtoMessage() {}
+
+// Deprecated: Use EventGroupKeyValidationFailed.ProtoReflect.Descriptor instead.
+func (*EventGroupKeyValidationFailed) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *EventGroupKeyValidationFailed) GetNewEpochId() uint64 {
+	if x != nil {
+		return x.NewEpochId
+	}
+	return 0
+}
+
+func (x *EventGroupKeyValidationFailed) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// EventThresholdSigningRequested is emitted when a new threshold signing request is created
+type EventThresholdSigningRequested struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// request_id uniquely identifies this threshold signing request
+	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// current_epoch_id identifies the epoch being used for signing
+	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// encoded_data is the Ethereum-compatible abi.encodePacked result that participants will sign
+	EncodedData []byte `protobuf:"bytes,3,opt,name=encoded_data,json=encodedData,proto3" json:"encoded_data,omitempty"`
+	// message_hash is the keccak256 hash of the encoded_data (pre-computed for participants)
+	MessageHash []byte `protobuf:"bytes,4,opt,name=message_hash,json=messageHash,proto3" json:"message_hash,omitempty"`
+	// deadline_block_height is the block height after which this request expires
+	DeadlineBlockHeight int64 `protobuf:"varint,5,opt,name=deadline_block_height,json=deadlineBlockHeight,proto3" json:"deadline_block_height,omitempty"`
+}
+
+func (x *EventThresholdSigningRequested) Reset() {
+	*x = EventThresholdSigningRequested{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[8]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventThresholdSigningRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventThresholdSigningRequested) ProtoMessage() {}
+
+// Deprecated: Use EventThresholdSigningRequested.ProtoReflect.Descriptor instead.
+func (*EventThresholdSigningRequested) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *EventThresholdSigningRequested) GetRequestId() []byte {
+	if x != nil {
+		return x.RequestId
+	}
+	return nil
+}
+
+func (x *EventThresholdSigningRequested) GetCurrentEpochId() uint64 {
+	if x != nil {
+		return x.CurrentEpochId
+	}
+	return 0
+}
+
+func (x *EventThresholdSigningRequested) GetEncodedData() []byte {
+	if x != nil {
+		return x.EncodedData
+	}
+	return nil
+}
+
+func (x *EventThresholdSigningRequested) GetMessageHash() []byte {
+	if x != nil {
+		return x.MessageHash
+	}
+	return nil
+}
+
+func (x *EventThresholdSigningRequested) GetDeadlineBlockHeight() int64 {
+	if x != nil {
+		return x.DeadlineBlockHeight
+	}
+	return 0
+}
+
+// EventThresholdSigningCompleted is emitted when threshold signing completes successfully
+type EventThresholdSigningCompleted struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// request_id identifies the threshold signing request that completed
+	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// current_epoch_id identifies the epoch used for signing
+	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// final_signature is the aggregated BLS threshold signature (G1 point, 48-byte compressed)
+	FinalSignature []byte `protobuf:"bytes,3,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
+	// participating_slots is the total number of slots that participated in the signing
+	ParticipatingSlots uint32 `protobuf:"varint,4,opt,name=participating_slots,json=participatingSlots,proto3" json:"participating_slots,omitempty"`
+}
+
+func (x *EventThresholdSigningCompleted) Reset() {
+	*x = EventThresholdSigningCompleted{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[9]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventThresholdSigningCompleted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventThresholdSigningCompleted) ProtoMessage() {}
+
+// Deprecated: Use EventThresholdSigningCompleted.ProtoReflect.Descriptor instead.
+func (*EventThresholdSigningCompleted) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *EventThresholdSigningCompleted) GetRequestId() []byte {
+	if x != nil {
+		return x.RequestId
+	}
+	return nil
+}
+
+func (x *EventThresholdSigningCompleted) GetCurrentEpochId() uint64 {
+	if x != nil {
+		return x.CurrentEpochId
+	}
+	return 0
+}
+
+func (x *EventThresholdSigningCompleted) GetFinalSignature() []byte {
+	if x != nil {
+		return x.FinalSignature
+	}
+	return nil
+}
+
+func (x *EventThresholdSigningCompleted) GetParticipatingSlots() uint32 {
+	if x != nil {
+		return x.ParticipatingSlots
+	}
+	return 0
+}
+
+// EventThresholdSigningFailed is emitted when threshold signing fails or expires
+type EventThresholdSigningFailed struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// request_id identifies the threshold signing request that failed
+	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// current_epoch_id identifies the epoch used for signing
+	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
+	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+}
+
+func (x *EventThresholdSigningFailed) Reset() {
+	*x = EventThresholdSigningFailed{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[10]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventThresholdSigningFailed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventThresholdSigningFailed) ProtoMessage() {}
+
+// Deprecated: Use EventThresholdSigningFailed.ProtoReflect.Descriptor instead.
+func (*EventThresholdSigningFailed) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *EventThresholdSigningFailed) GetRequestId() []byte {
+	if x != nil {
+		return x.RequestId
+	}
+	return nil
+}
+
+func (x *EventThresholdSigningFailed) GetCurrentEpochId() uint64 {
+	if x != nil {
+		return x.CurrentEpochId
+	}
+	return 0
+}
+
+func (x *EventThresholdSigningFailed) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 var File_inference_bls_events_proto protoreflect.FileDescriptor
@@ -3725,7 +6788,7 @@ var file_inference_bls_events_proto_rawDesc = []byte{
 	0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x42, 0x18, 0xd2, 0xb4, 0x2d, 0x14,
 	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x53, 0x74,
 	0x72, 0x69, 0x6e, 0x67, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xef, 0x01, 0x0a, 0x1c, 0x45, 0x76, 0x65,
+	0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x8a, 0x02, 0x0a, 0x1c, 0x45, 0x76, 0x65,
 	0x6e, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b, 0x65, 0x79,
 	0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f,
 	0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f,
@@ -3740,17 +6803,66 @@ var file_inference_bls_events_proto_rawDesc = []byte{
 	0x68, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x45, 0x70, 0x6f,
 	0x63, 0x68, 0x42, 0x4c, 0x53, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52,
-	0x09, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x44, 0x61, 0x74, 0x61, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63,
-	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73,
-	0x42, 0x0b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
-	0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
-	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0xa2,
-	0x02, 0x03, 0x49, 0x42, 0x58, 0xaa, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2, 0x02, 0x19, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
-	0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42,
-	0x6c, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x09, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x44, 0x61, 0x74, 0x61, 0x12, 0x19, 0x0a, 0x08, 0x63, 0x68,
+	0x61, 0x69, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x68,
+	0x61, 0x69, 0x6e, 0x49, 0x64, 0x22, 0x63, 0x0a, 0x16, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x47, 0x72,
+	0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x12,
+	0x20, 0x0a, 0x0c, 0x6e, 0x65, 0x77, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x6e, 0x65, 0x77, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49,
+	0x64, 0x12, 0x27, 0x0a, 0x0f, 0x66, 0x69, 0x6e, 0x61, 0x6c, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61,
+	0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0e, 0x66, 0x69, 0x6e, 0x61,
+	0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x59, 0x0a, 0x1d, 0x45, 0x76,
+	0x65, 0x6e, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x12, 0x20, 0x0a, 0x0c, 0x6e,
+	0x65, 0x77, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0a, 0x6e, 0x65, 0x77, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a,
+	0x06, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72,
+	0x65, 0x61, 0x73, 0x6f, 0x6e, 0x22, 0xe3, 0x01, 0x0a, 0x1e, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54,
+	0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x10, 0x63, 0x75, 0x72, 0x72, 0x65,
+	0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49,
+	0x64, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x6e, 0x63, 0x6f, 0x64, 0x65, 0x64, 0x5f, 0x64, 0x61, 0x74,
+	0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0b, 0x65, 0x6e, 0x63, 0x6f, 0x64, 0x65, 0x64,
+	0x44, 0x61, 0x74, 0x61, 0x12, 0x21, 0x0a, 0x0c, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x5f,
+	0x68, 0x61, 0x73, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0b, 0x6d, 0x65, 0x73, 0x73,
+	0x61, 0x67, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x32, 0x0a, 0x15, 0x64, 0x65, 0x61, 0x64, 0x6c,
+	0x69, 0x6e, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x64, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65,
+	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xc3, 0x01, 0x0a, 0x1e,
+	0x45, 0x76, 0x65, 0x6e, 0x74, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69,
+	0x67, 0x6e, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x12, 0x1d,
+	0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a,
+	0x10, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69,
+	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74,
+	0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x27, 0x0a, 0x0f, 0x66, 0x69, 0x6e, 0x61, 0x6c,
+	0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c,
+	0x52, 0x0e, 0x66, 0x69, 0x6e, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65,
+	0x12, 0x2f, 0x0a, 0x13, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x74, 0x69, 0x6e,
+	0x67, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x12, 0x70,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x53, 0x6c, 0x6f, 0x74,
+	0x73, 0x22, 0x7e, 0x0a, 0x1b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68,
+	0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64,
+	0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12,
+	0x28, 0x0a, 0x10, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68,
+	0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72, 0x65,
+	0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65, 0x61,
+	0x73, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x61, 0x73, 0x6f,
+	0x6e, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x42, 0x0b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
+	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa, 0x02, 0x0d, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca, 0x02, 0x0d, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2, 0x02, 0x19, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c, 0x47, 0x50, 0x42,
+	0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42, 0x6c, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x33,
 }
 
 var (
@@ -3765,7 +6877,7 @@ func file_inference_bls_events_proto_rawDescGZIP() []byte {
 	return file_inference_bls_events_proto_rawDescData
 }
 
-var file_inference_bls_events_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_inference_bls_events_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_inference_bls_events_proto_goTypes = []interface{}{
 	(*EventKeyGenerationInitiated)(nil),      // 0: inference.bls.EventKeyGenerationInitiated
 	(*EventDealerPartSubmitted)(nil),         // 1: inference.bls.EventDealerPartSubmitted
@@ -3773,19 +6885,24 @@ var file_inference_bls_events_proto_goTypes = []interface{}{
 	(*EventDKGFailed)(nil),                   // 3: inference.bls.EventDKGFailed
 	(*EventVerificationVectorSubmitted)(nil), // 4: inference.bls.EventVerificationVectorSubmitted
 	(*EventGroupPublicKeyGenerated)(nil),     // 5: inference.bls.EventGroupPublicKeyGenerated
-	(*BLSParticipantInfo)(nil),               // 6: inference.bls.BLSParticipantInfo
-	(*EpochBLSData)(nil),                     // 7: inference.bls.EpochBLSData
+	(*EventGroupKeyValidated)(nil),           // 6: inference.bls.EventGroupKeyValidated
+	(*EventGroupKeyValidationFailed)(nil),    // 7: inference.bls.EventGroupKeyValidationFailed
+	(*EventThresholdSigningRequested)(nil),   // 8: inference.bls.EventThresholdSigningRequested
+	(*EventThresholdSigningCompleted)(nil),   // 9: inference.bls.EventThresholdSigningCompleted
+	(*EventThresholdSigningFailed)(nil),      // 10: inference.bls.EventThresholdSigningFailed
+	(*BLSParticipantInfo)(nil),               // 11: inference.bls.BLSParticipantInfo
+	(*EpochBLSData)(nil),                     // 12: inference.bls.EpochBLSData
 }
 var file_inference_bls_events_proto_depIdxs = []int32{
-	6, // 0: inference.bls.EventKeyGenerationInitiated.participants:type_name -> inference.bls.BLSParticipantInfo
-	7, // 1: inference.bls.EventVerifyingPhaseStarted.epoch_data:type_name -> inference.bls.EpochBLSData
-	7, // 2: inference.bls.EventDKGFailed.epoch_data:type_name -> inference.bls.EpochBLSData
-	7, // 3: inference.bls.EventGroupPublicKeyGenerated.epoch_data:type_name -> inference.bls.EpochBLSData
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	11, // 0: inference.bls.EventKeyGenerationInitiated.participants:type_name -> inference.bls.BLSParticipantInfo
+	12, // 1: inference.bls.EventVerifyingPhaseStarted.epoch_data:type_name -> inference.bls.EpochBLSData
+	12, // 2: inference.bls.EventDKGFailed.epoch_data:type_name -> inference.bls.EpochBLSData
+	12, // 3: inference.bls.EventGroupPublicKeyGenerated.epoch_data:type_name -> inference.bls.EpochBLSData
+	4,  // [4:4] is the sub-list for method output_type
+	4,  // [4:4] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_inference_bls_events_proto_init() }
@@ -3867,6 +6984,66 @@ func file_inference_bls_events_proto_init() {
 				return nil
 			}
 		}
+		file_inference_bls_events_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventGroupKeyValidated); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_bls_events_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventGroupKeyValidationFailed); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_bls_events_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventThresholdSigningRequested); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_bls_events_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventThresholdSigningCompleted); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_bls_events_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventThresholdSigningFailed); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3874,7 +7051,7 @@ func file_inference_bls_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_bls_events_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

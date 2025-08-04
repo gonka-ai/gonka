@@ -1,11 +1,14 @@
 import com.productscience.EpochStage
 import com.productscience.initCluster
 import com.productscience.logSection
+import com.productscience.data.RequestThresholdSignatureDto
+import com.productscience.data.toHexString
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.Tag
 import org.tinylog.kotlin.Logger
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /**
@@ -21,7 +24,6 @@ import java.util.concurrent.TimeUnit
  * - IntelliJ: Right-click and run individual tests
  */
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
-@Tag("exclude")  // Excluded from default test runs via Makefile
 @Tag("bls-integration")
 @Tag("docker-required")
 class BLSDKGSuccessTest : TestermintTest() {
@@ -61,6 +63,20 @@ class BLSDKGSuccessTest : TestermintTest() {
         // Validate controller readiness for threshold signing (using captured epoch ID)
         logSection("Validating threshold signing readiness")
         validateThresholdSigningReadiness(allPairs, epochId)
+
+        // Validate group key signature from previous epoch
+        if (epochId > 1) {
+            logSection("BLS_TEST: Validating group key signature from previous epoch")
+            waitForDKGPhase(genesis, DKGPhase.SIGNED, epochId)
+            logSection("BLS_TEST: Group key signature validated for epoch $epochId")
+            validateGroupKeySignature(allPairs, epochId)
+        } else {
+            logSection("BLS_TEST: No previous epoch, skipping group key signature validation")
+        }
+
+        // Test threshold signing
+        logSection("BLS_TEST: Testing threshold signing")
+        testThresholdSigning(allPairs, epochId)        
         
         logSection("BLS DKG Success Flow Test completed successfully!")
     }
@@ -213,6 +229,50 @@ class BLSDKGSuccessTest : TestermintTest() {
         
         Logger.info("All controllers ready for threshold signing")
     }
+
+    private fun validateGroupKeySignature(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
+        val blsData = queryEpochBLSData(allPairs.first(), epochId)
+        assertThat(blsData?.validationSignature).isNotNull()
+        assertThat(blsData?.validationSignature).hasSize(48) // Compressed G1 format
+        Logger.info("Group key signature validated for epoch $epochId")
+    }
+
+    private fun testThresholdSigning(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
+        val genesis = allPairs.first()
+        val requestId = "test_request_${epochId}"
+        val requestIdBytes = requestId.toByteArray()
+        val requestIdHex = requestIdBytes.toHexString()  // Convert to hex for API query
+        val data = listOf("test_data")
+
+        // Request a threshold signature via the API
+        val requestDto = RequestThresholdSignatureDto(
+            currentEpochId = epochId.toULong(),  // Convert Long to ULong
+            chainId = "inference".toByteArray(),
+            requestId = requestIdBytes,
+            data = data.map { it.toByteArray() }
+        )
+        genesis.api.requestThresholdSignature(requestDto)
+        Logger.info("Threshold signature requested via API for request ID: $requestId (hex: $requestIdHex)")
+
+        // Wait for the signature to be created (with 10-block deadline, allow time for controller response)
+        genesis.node.waitForNextBlock(12)
+
+        // Query the signing status via API instead of CLI (using hex-encoded request ID)
+        val signingStatus = genesis.api.queryBLSSigningStatus(requestIdHex)
+        
+        if (signingStatus.signingRequest == null) {
+            Logger.error("Signing request not found! This suggests the request was never created, expired, or has a different ID")
+        }
+        
+        val statusCode = signingStatus.signingRequest.status.toString().toInt()
+        val statusEnum = ThresholdSigningStatus.fromValue(statusCode)
+        Logger.info("Found signing request with status: $statusEnum ($statusCode)")
+        assertThat(statusEnum).isEqualTo(ThresholdSigningStatus.COMPLETED)
+        assertThat(signingStatus.signingRequest.finalSignature).isNotNull()
+        val sigBytes = Base64.getDecoder().decode(signingStatus.signingRequest.finalSignature)
+        assertThat(sigBytes).hasSize(48) // Compressed G1 format
+        Logger.info("Threshold signature created successfully for request $requestId")
+    }
     
     // ========================================
     // DKG Phase Management
@@ -223,7 +283,21 @@ class BLSDKGSuccessTest : TestermintTest() {
         DEALING(1),
         VERIFYING(2), 
         COMPLETED(3),
-        FAILED(4)
+        FAILED(4),
+        SIGNED(5)
+    }
+
+    enum class ThresholdSigningStatus(val value: Int) {
+        UNSPECIFIED(0),
+        COLLECTING_SIGNATURES(1),
+        AGGREGATING(2),
+        COMPLETED(3),
+        EXPIRED(5);
+
+        companion object {
+            fun fromValue(value: Int): ThresholdSigningStatus =
+                values().firstOrNull { it.value == value } ?: UNSPECIFIED
+        }
     }
     
     private fun waitForDKGPhase(pair: com.productscience.LocalInferencePair, targetPhase: DKGPhase, epochId: Long, maxAttempts: Int = 20) {
@@ -276,12 +350,12 @@ class BLSDKGSuccessTest : TestermintTest() {
         val currentHeight = pair.getCurrentBlockHeight()
         val epochLength = pair.getEpochLength()
         // TODO: It's a temparary fix, remove it. Generate odd-numbered epochs (1, 3, 5, 7...) instead of sequential (1, 2, 3, 4...)
-        val calculatedEpochId = (currentHeight / epochLength) * 2 - 1
+        val calculatedEpochId = (currentHeight / epochLength)
         Logger.info("Calculated epoch ID: $calculatedEpochId (block: $currentHeight, epoch length: $epochLength)")
         
         // Try to find which epoch actually has DKG data by checking recent epochs
         // DKG might be running for the current epoch or the next epoch
-        val epochsToTry = listOf(calculatedEpochId, calculatedEpochId + 2, calculatedEpochId - 2).filter { it >= 1 }
+        val epochsToTry = listOf(calculatedEpochId, calculatedEpochId + 1, calculatedEpochId - 2).filter { it >= 1 }
         
         for (epochId in epochsToTry) {
             try {
@@ -461,7 +535,8 @@ class BLSDKGSuccessTest : TestermintTest() {
         val groupPublicKey: ByteArray?,
         val dealerParts: List<DealerPartStorage>,
         val verificationSubmissions: List<VerificationVectorSubmission>,
-        val validDealers: List<Boolean>
+        val validDealers: List<Boolean>,
+        val validationSignature: ByteArray?
     )
     
     data class BLSParticipantInfo(
@@ -639,6 +714,9 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessT
         @Suppress("UNCHECKED_CAST")
         val validDealersList = (epochData["valid_dealers"] as? List<Boolean>) ?: emptyList()
         
+        // Parse validation signature
+        val validationSignature = parseByteArrayFromChain(epochData["validation_signature"])
+        
         BLSDKGSuccessTest.EpochBLSData(
             epochId = epochId,
             iTotalSlots = iTotalSlots,
@@ -650,7 +728,8 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessT
             groupPublicKey = groupPublicKey,
             dealerParts = dealerParts,
             verificationSubmissions = verificationSubmissions,
-            validDealers = validDealersList
+            validDealers = validDealersList,
+            validationSignature = validationSignature
         )
         
     } catch (e: Exception) {

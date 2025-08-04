@@ -160,6 +160,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		// Don't return error to avoid halting the chain - log and continue
 	}
 
+	// Process threshold signing deadlines for expired requests
+	if err := am.keeper.ProcessThresholdSigningDeadlines(sdkCtx); err != nil {
+		am.keeper.Logger().Error("Failed to process threshold signing deadlines", "error", err)
+		// Don't return error to avoid halting the chain - log and continue
+	}
+
 	return nil
 }
 

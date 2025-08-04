@@ -348,6 +348,8 @@ type EventGroupPublicKeyGenerated struct {
 	TSlotsDegree uint32 `protobuf:"varint,4,opt,name=t_slots_degree,json=tSlotsDegree,proto3" json:"t_slots_degree,omitempty"`
 	// epoch_data contains the complete epoch BLS data at the time of completion
 	EpochData EpochBLSData `protobuf:"bytes,5,opt,name=epoch_data,json=epochData,proto3" json:"epoch_data"`
+	// chain_id is the chain ID for EIP-155 compatibility
+	ChainId string `protobuf:"bytes,6,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
 }
 
 func (m *EventGroupPublicKeyGenerated) Reset()         { *m = EventGroupPublicKeyGenerated{} }
@@ -418,6 +420,342 @@ func (m *EventGroupPublicKeyGenerated) GetEpochData() EpochBLSData {
 	return EpochBLSData{}
 }
 
+func (m *EventGroupPublicKeyGenerated) GetChainId() string {
+	if m != nil {
+		return m.ChainId
+	}
+	return ""
+}
+
+// EventGroupKeyValidated is emitted when group key validation completes successfully
+type EventGroupKeyValidated struct {
+	// new_epoch_id identifies the epoch whose group public key was successfully validated
+	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// final_signature is the aggregated signature validating the new group public key (G1 point, 48-byte compressed)
+	FinalSignature []byte `protobuf:"bytes,2,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
+}
+
+func (m *EventGroupKeyValidated) Reset()         { *m = EventGroupKeyValidated{} }
+func (m *EventGroupKeyValidated) String() string { return proto.CompactTextString(m) }
+func (*EventGroupKeyValidated) ProtoMessage()    {}
+func (*EventGroupKeyValidated) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96b42c6054f2dc42, []int{6}
+}
+func (m *EventGroupKeyValidated) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventGroupKeyValidated) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventGroupKeyValidated.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventGroupKeyValidated) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventGroupKeyValidated.Merge(m, src)
+}
+func (m *EventGroupKeyValidated) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventGroupKeyValidated) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventGroupKeyValidated.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventGroupKeyValidated proto.InternalMessageInfo
+
+func (m *EventGroupKeyValidated) GetNewEpochId() uint64 {
+	if m != nil {
+		return m.NewEpochId
+	}
+	return 0
+}
+
+func (m *EventGroupKeyValidated) GetFinalSignature() []byte {
+	if m != nil {
+		return m.FinalSignature
+	}
+	return nil
+}
+
+// EventGroupKeyValidationFailed is emitted when group key validation fails
+type EventGroupKeyValidationFailed struct {
+	// new_epoch_id identifies the epoch whose group public key validation failed
+	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// reason describes why the validation failed
+	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+}
+
+func (m *EventGroupKeyValidationFailed) Reset()         { *m = EventGroupKeyValidationFailed{} }
+func (m *EventGroupKeyValidationFailed) String() string { return proto.CompactTextString(m) }
+func (*EventGroupKeyValidationFailed) ProtoMessage()    {}
+func (*EventGroupKeyValidationFailed) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96b42c6054f2dc42, []int{7}
+}
+func (m *EventGroupKeyValidationFailed) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventGroupKeyValidationFailed) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventGroupKeyValidationFailed.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventGroupKeyValidationFailed) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventGroupKeyValidationFailed.Merge(m, src)
+}
+func (m *EventGroupKeyValidationFailed) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventGroupKeyValidationFailed) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventGroupKeyValidationFailed.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventGroupKeyValidationFailed proto.InternalMessageInfo
+
+func (m *EventGroupKeyValidationFailed) GetNewEpochId() uint64 {
+	if m != nil {
+		return m.NewEpochId
+	}
+	return 0
+}
+
+func (m *EventGroupKeyValidationFailed) GetReason() string {
+	if m != nil {
+		return m.Reason
+	}
+	return ""
+}
+
+// EventThresholdSigningRequested is emitted when a new threshold signing request is created
+type EventThresholdSigningRequested struct {
+	// request_id uniquely identifies this threshold signing request
+	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// current_epoch_id identifies the epoch being used for signing
+	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// encoded_data is the Ethereum-compatible abi.encodePacked result that participants will sign
+	EncodedData []byte `protobuf:"bytes,3,opt,name=encoded_data,json=encodedData,proto3" json:"encoded_data,omitempty"`
+	// message_hash is the keccak256 hash of the encoded_data (pre-computed for participants)
+	MessageHash []byte `protobuf:"bytes,4,opt,name=message_hash,json=messageHash,proto3" json:"message_hash,omitempty"`
+	// deadline_block_height is the block height after which this request expires
+	DeadlineBlockHeight int64 `protobuf:"varint,5,opt,name=deadline_block_height,json=deadlineBlockHeight,proto3" json:"deadline_block_height,omitempty"`
+}
+
+func (m *EventThresholdSigningRequested) Reset()         { *m = EventThresholdSigningRequested{} }
+func (m *EventThresholdSigningRequested) String() string { return proto.CompactTextString(m) }
+func (*EventThresholdSigningRequested) ProtoMessage()    {}
+func (*EventThresholdSigningRequested) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96b42c6054f2dc42, []int{8}
+}
+func (m *EventThresholdSigningRequested) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventThresholdSigningRequested) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventThresholdSigningRequested.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventThresholdSigningRequested) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventThresholdSigningRequested.Merge(m, src)
+}
+func (m *EventThresholdSigningRequested) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventThresholdSigningRequested) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventThresholdSigningRequested.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventThresholdSigningRequested proto.InternalMessageInfo
+
+func (m *EventThresholdSigningRequested) GetRequestId() []byte {
+	if m != nil {
+		return m.RequestId
+	}
+	return nil
+}
+
+func (m *EventThresholdSigningRequested) GetCurrentEpochId() uint64 {
+	if m != nil {
+		return m.CurrentEpochId
+	}
+	return 0
+}
+
+func (m *EventThresholdSigningRequested) GetEncodedData() []byte {
+	if m != nil {
+		return m.EncodedData
+	}
+	return nil
+}
+
+func (m *EventThresholdSigningRequested) GetMessageHash() []byte {
+	if m != nil {
+		return m.MessageHash
+	}
+	return nil
+}
+
+func (m *EventThresholdSigningRequested) GetDeadlineBlockHeight() int64 {
+	if m != nil {
+		return m.DeadlineBlockHeight
+	}
+	return 0
+}
+
+// EventThresholdSigningCompleted is emitted when threshold signing completes successfully
+type EventThresholdSigningCompleted struct {
+	// request_id identifies the threshold signing request that completed
+	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// current_epoch_id identifies the epoch used for signing
+	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// final_signature is the aggregated BLS threshold signature (G1 point, 48-byte compressed)
+	FinalSignature []byte `protobuf:"bytes,3,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
+	// participating_slots is the total number of slots that participated in the signing
+	ParticipatingSlots uint32 `protobuf:"varint,4,opt,name=participating_slots,json=participatingSlots,proto3" json:"participating_slots,omitempty"`
+}
+
+func (m *EventThresholdSigningCompleted) Reset()         { *m = EventThresholdSigningCompleted{} }
+func (m *EventThresholdSigningCompleted) String() string { return proto.CompactTextString(m) }
+func (*EventThresholdSigningCompleted) ProtoMessage()    {}
+func (*EventThresholdSigningCompleted) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96b42c6054f2dc42, []int{9}
+}
+func (m *EventThresholdSigningCompleted) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventThresholdSigningCompleted) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventThresholdSigningCompleted.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventThresholdSigningCompleted) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventThresholdSigningCompleted.Merge(m, src)
+}
+func (m *EventThresholdSigningCompleted) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventThresholdSigningCompleted) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventThresholdSigningCompleted.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventThresholdSigningCompleted proto.InternalMessageInfo
+
+func (m *EventThresholdSigningCompleted) GetRequestId() []byte {
+	if m != nil {
+		return m.RequestId
+	}
+	return nil
+}
+
+func (m *EventThresholdSigningCompleted) GetCurrentEpochId() uint64 {
+	if m != nil {
+		return m.CurrentEpochId
+	}
+	return 0
+}
+
+func (m *EventThresholdSigningCompleted) GetFinalSignature() []byte {
+	if m != nil {
+		return m.FinalSignature
+	}
+	return nil
+}
+
+func (m *EventThresholdSigningCompleted) GetParticipatingSlots() uint32 {
+	if m != nil {
+		return m.ParticipatingSlots
+	}
+	return 0
+}
+
+// EventThresholdSigningFailed is emitted when threshold signing fails or expires
+type EventThresholdSigningFailed struct {
+	// request_id identifies the threshold signing request that failed
+	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// current_epoch_id identifies the epoch used for signing
+	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
+	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+}
+
+func (m *EventThresholdSigningFailed) Reset()         { *m = EventThresholdSigningFailed{} }
+func (m *EventThresholdSigningFailed) String() string { return proto.CompactTextString(m) }
+func (*EventThresholdSigningFailed) ProtoMessage()    {}
+func (*EventThresholdSigningFailed) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96b42c6054f2dc42, []int{10}
+}
+func (m *EventThresholdSigningFailed) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventThresholdSigningFailed) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventThresholdSigningFailed.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventThresholdSigningFailed) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventThresholdSigningFailed.Merge(m, src)
+}
+func (m *EventThresholdSigningFailed) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventThresholdSigningFailed) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventThresholdSigningFailed.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventThresholdSigningFailed proto.InternalMessageInfo
+
+func (m *EventThresholdSigningFailed) GetRequestId() []byte {
+	if m != nil {
+		return m.RequestId
+	}
+	return nil
+}
+
+func (m *EventThresholdSigningFailed) GetCurrentEpochId() uint64 {
+	if m != nil {
+		return m.CurrentEpochId
+	}
+	return 0
+}
+
+func (m *EventThresholdSigningFailed) GetReason() string {
+	if m != nil {
+		return m.Reason
+	}
+	return ""
+}
+
 func init() {
 	proto.RegisterType((*EventKeyGenerationInitiated)(nil), "inference.bls.EventKeyGenerationInitiated")
 	proto.RegisterType((*EventDealerPartSubmitted)(nil), "inference.bls.EventDealerPartSubmitted")
@@ -425,49 +763,69 @@ func init() {
 	proto.RegisterType((*EventDKGFailed)(nil), "inference.bls.EventDKGFailed")
 	proto.RegisterType((*EventVerificationVectorSubmitted)(nil), "inference.bls.EventVerificationVectorSubmitted")
 	proto.RegisterType((*EventGroupPublicKeyGenerated)(nil), "inference.bls.EventGroupPublicKeyGenerated")
+	proto.RegisterType((*EventGroupKeyValidated)(nil), "inference.bls.EventGroupKeyValidated")
+	proto.RegisterType((*EventGroupKeyValidationFailed)(nil), "inference.bls.EventGroupKeyValidationFailed")
+	proto.RegisterType((*EventThresholdSigningRequested)(nil), "inference.bls.EventThresholdSigningRequested")
+	proto.RegisterType((*EventThresholdSigningCompleted)(nil), "inference.bls.EventThresholdSigningCompleted")
+	proto.RegisterType((*EventThresholdSigningFailed)(nil), "inference.bls.EventThresholdSigningFailed")
 }
 
 func init() { proto.RegisterFile("inference/bls/events.proto", fileDescriptor_96b42c6054f2dc42) }
 
 var fileDescriptor_96b42c6054f2dc42 = []byte{
-	// 582 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x54, 0xcd, 0x6e, 0xd3, 0x40,
-	0x10, 0x8e, 0x49, 0x28, 0x74, 0xf3, 0x23, 0x30, 0x15, 0x72, 0x13, 0x64, 0x42, 0xc4, 0x21, 0x17,
-	0x62, 0xa9, 0x3c, 0x00, 0x60, 0x52, 0xa2, 0x28, 0x3d, 0x44, 0x36, 0xea, 0x81, 0x8b, 0xb5, 0xb6,
-	0x27, 0xce, 0xaa, 0xce, 0xae, 0xb5, 0xbb, 0x89, 0xc8, 0x03, 0x20, 0x71, 0xe4, 0x61, 0x38, 0x73,
-	0xee, 0x8d, 0x8a, 0x13, 0x27, 0x84, 0x92, 0x07, 0xe0, 0x15, 0x90, 0xd7, 0x0e, 0xa9, 0x01, 0xb5,
-	0x41, 0xe2, 0x62, 0x79, 0x66, 0xbe, 0x6f, 0x67, 0xf6, 0x9b, 0x9d, 0x41, 0x4d, 0x42, 0x27, 0xc0,
-	0x81, 0x06, 0x60, 0xf9, 0xb1, 0xb0, 0x60, 0x01, 0x54, 0x8a, 0x5e, 0xc2, 0x99, 0x64, 0x7a, 0xfd,
-	0x57, 0xac, 0xe7, 0xc7, 0xa2, 0x79, 0x17, 0xcf, 0x08, 0x65, 0x96, 0xfa, 0x66, 0x88, 0xe6, 0x61,
-	0xc0, 0xc4, 0x8c, 0x09, 0x4f, 0x59, 0x56, 0x66, 0xe4, 0xa1, 0x83, 0x88, 0x45, 0x2c, 0xf3, 0xa7,
-	0x7f, 0x1b, 0x42, 0x31, 0x9d, 0x5c, 0x26, 0x90, 0x13, 0x3a, 0x9f, 0x35, 0xd4, 0x3a, 0x4e, 0xd3,
-	0x8f, 0x60, 0x39, 0x00, 0x0a, 0x1c, 0x4b, 0xc2, 0xe8, 0x90, 0x12, 0x49, 0xb0, 0x84, 0x50, 0x3f,
-	0x44, 0xb7, 0x21, 0x61, 0xc1, 0xd4, 0x23, 0xa1, 0xa1, 0xb5, 0xb5, 0x6e, 0xc5, 0xb9, 0xa5, 0xec,
-	0x61, 0xa8, 0x77, 0x50, 0x9d, 0x78, 0x92, 0x49, 0x1c, 0x7b, 0x22, 0x66, 0x52, 0x18, 0x37, 0xda,
-	0x5a, 0xb7, 0xee, 0x54, 0xc9, 0xeb, 0xd4, 0xe7, 0xa6, 0x2e, 0xfd, 0x31, 0x6a, 0xc8, 0x2c, 0xea,
-	0x85, 0x10, 0x71, 0x00, 0xa3, 0xac, 0x40, 0x35, 0xa9, 0xe2, 0x7d, 0xe5, 0xd3, 0x47, 0xa8, 0x96,
-	0x60, 0x2e, 0x49, 0x40, 0x12, 0x4c, 0xa5, 0x30, 0x2a, 0xed, 0x72, 0xb7, 0x7a, 0xf4, 0xa8, 0x57,
-	0x50, 0xa2, 0x67, 0x9f, 0xb8, 0xe3, 0x2d, 0x6a, 0x48, 0x27, 0xcc, 0xae, 0x9c, 0x7f, 0x7b, 0x58,
-	0x72, 0x0a, 0xe4, 0xce, 0x02, 0x19, 0xea, 0x42, 0x7d, 0xc0, 0x31, 0xf0, 0x94, 0xe1, 0xce, 0xfd,
-	0x19, 0x91, 0xd7, 0xdc, 0xe6, 0x19, 0x6a, 0x84, 0x8a, 0xe1, 0xe1, 0x30, 0xe4, 0x20, 0xb2, 0xeb,
-	0xec, 0xdb, 0xc6, 0x97, 0x8f, 0x4f, 0x0e, 0x72, 0x8d, 0x5f, 0x64, 0x11, 0x57, 0x72, 0x42, 0x23,
-	0xa7, 0x9e, 0xe1, 0x73, 0x67, 0xe7, 0x93, 0x86, 0x9a, 0x2a, 0xf1, 0x29, 0x70, 0x32, 0x59, 0x12,
-	0x1a, 0x8d, 0xa7, 0x58, 0x80, 0x2b, 0x31, 0xbf, 0x26, 0xf5, 0x4b, 0x64, 0x2e, 0x36, 0x1c, 0x2f,
-	0x49, 0x49, 0x5e, 0x08, 0x38, 0x8c, 0x09, 0x05, 0xcf, 0x8f, 0x59, 0x70, 0xa6, 0x4a, 0xa9, 0x38,
-	0xad, 0x45, 0xe1, 0xe4, 0x7e, 0x8e, 0xb1, 0x53, 0x88, 0xfe, 0x1c, 0xa1, 0xec, 0xfc, 0x10, 0x4b,
-	0xac, 0x54, 0xae, 0x1e, 0xb5, 0x7e, 0x53, 0xf0, 0x38, 0x05, 0xd8, 0x27, 0x6e, 0x1f, 0x4b, 0x9c,
-	0x6b, 0xb7, 0xaf, 0x48, 0xa9, 0xa3, 0xf3, 0x4e, 0x43, 0x8d, 0x4c, 0xb9, 0xd1, 0xe0, 0x15, 0x26,
-	0xf1, 0xd5, 0x45, 0xdf, 0x47, 0x7b, 0x1c, 0xb0, 0x60, 0x34, 0xd3, 0xc9, 0xc9, 0xad, 0xff, 0x50,
-	0xc7, 0x7b, 0x0d, 0xb5, 0xb7, 0x42, 0x92, 0x40, 0xbd, 0xc8, 0x53, 0x08, 0x24, 0xe3, 0x3b, 0x75,
-	0x72, 0x88, 0xee, 0x5d, 0x7a, 0x10, 0x3b, 0xb7, 0x53, 0xbf, 0x44, 0xda, 0xf4, 0xf4, 0x87, 0x86,
-	0x1e, 0xa8, 0x52, 0x06, 0x9c, 0xcd, 0x93, 0xf1, 0xdc, 0x8f, 0x49, 0xb0, 0x1d, 0x94, 0xab, 0xcb,
-	0xe8, 0xa2, 0x3b, 0x51, 0xca, 0xf2, 0x12, 0x45, 0xf3, 0xce, 0x60, 0xa9, 0x6a, 0xa8, 0x39, 0x8d,
-	0xa8, 0x70, 0xda, 0x9f, 0x83, 0x54, 0xde, 0x65, 0x90, 0x2a, 0x7f, 0x19, 0xa4, 0xa2, 0xf8, 0x37,
-	0xff, 0x5d, 0x7c, 0x7b, 0x78, 0xbe, 0x32, 0xb5, 0x8b, 0x95, 0xa9, 0x7d, 0x5f, 0x99, 0xda, 0x87,
-	0xb5, 0x59, 0xba, 0x58, 0x9b, 0xa5, 0xaf, 0x6b, 0xb3, 0xf4, 0xc6, 0x8a, 0x88, 0x9c, 0xce, 0xfd,
-	0x5e, 0xc0, 0x66, 0x56, 0xc2, 0x59, 0x38, 0x0f, 0xa4, 0x08, 0x88, 0x5a, 0x2a, 0xdb, 0xf5, 0xf2,
-	0x76, 0xbb, 0x60, 0xfc, 0x3d, 0xb5, 0x61, 0x9e, 0xfe, 0x0c, 0x00, 0x00, 0xff, 0xff, 0xec, 0xdd,
-	0x5c, 0x32, 0xed, 0x04, 0x00, 0x00,
+	// 823 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x55, 0x41, 0x8f, 0xdb, 0x44,
+	0x14, 0x8e, 0x9b, 0xb0, 0x65, 0x27, 0x4e, 0x00, 0xb7, 0x54, 0x69, 0x96, 0x9a, 0xac, 0x85, 0x44,
+	0x2e, 0x24, 0xd2, 0xf2, 0x03, 0x80, 0x34, 0xcb, 0x36, 0x4a, 0x0f, 0x2b, 0xa7, 0x5a, 0x09, 0x2e,
+	0xd6, 0xc4, 0xf3, 0x62, 0x8f, 0xea, 0xcc, 0x98, 0x99, 0x71, 0x4a, 0x2e, 0xdc, 0x90, 0x10, 0x27,
+	0x7e, 0x0c, 0x67, 0x2e, 0x5c, 0x7a, 0xa3, 0xe2, 0xc4, 0x09, 0xa1, 0xcd, 0x1f, 0x41, 0x33, 0x76,
+	0x70, 0xbc, 0xa4, 0xdd, 0xad, 0xb4, 0x97, 0x28, 0xf3, 0xbd, 0xf7, 0xe6, 0xbd, 0xef, 0x7b, 0xef,
+	0x79, 0x50, 0x97, 0xb2, 0x05, 0x08, 0x60, 0x21, 0x0c, 0xe7, 0x89, 0x1c, 0xc2, 0x0a, 0x98, 0x92,
+	0x83, 0x54, 0x70, 0xc5, 0x9d, 0xd6, 0x7f, 0xb6, 0xc1, 0x3c, 0x91, 0xdd, 0x0f, 0xf0, 0x92, 0x32,
+	0x3e, 0x34, 0xbf, 0xb9, 0x47, 0xf7, 0x61, 0xc8, 0xe5, 0x92, 0xcb, 0xc0, 0x9c, 0x86, 0xf9, 0xa1,
+	0x30, 0xdd, 0x8f, 0x78, 0xc4, 0x73, 0x5c, 0xff, 0xdb, 0x06, 0x54, 0xd3, 0xa9, 0x75, 0x0a, 0x45,
+	0x80, 0xf7, 0x87, 0x85, 0x8e, 0x4e, 0x75, 0xfa, 0x29, 0xac, 0xcf, 0x80, 0x81, 0xc0, 0x8a, 0x72,
+	0x36, 0x61, 0x54, 0x51, 0xac, 0x80, 0x38, 0x0f, 0xd1, 0xbb, 0x90, 0xf2, 0x30, 0x0e, 0x28, 0xe9,
+	0x58, 0x3d, 0xab, 0xdf, 0xf0, 0xef, 0x9a, 0xf3, 0x84, 0x38, 0x1e, 0x6a, 0xd1, 0x40, 0x71, 0x85,
+	0x93, 0x40, 0x26, 0x5c, 0xc9, 0xce, 0x9d, 0x9e, 0xd5, 0x6f, 0xf9, 0x4d, 0xfa, 0x4c, 0x63, 0x33,
+	0x0d, 0x39, 0x9f, 0xa0, 0xb6, 0xca, 0xad, 0x01, 0x81, 0x48, 0x00, 0x74, 0xea, 0xc6, 0xc9, 0x56,
+	0xc6, 0x3e, 0x36, 0x98, 0x33, 0x45, 0x76, 0x8a, 0x85, 0xa2, 0x21, 0x4d, 0x31, 0x53, 0xb2, 0xd3,
+	0xe8, 0xd5, 0xfb, 0xcd, 0x93, 0xe3, 0x41, 0x45, 0x89, 0xc1, 0xe8, 0xe9, 0xec, 0xbc, 0xf4, 0x9a,
+	0xb0, 0x05, 0x1f, 0x35, 0x5e, 0xfe, 0xfd, 0x71, 0xcd, 0xaf, 0x04, 0x7b, 0x2b, 0xd4, 0x31, 0x84,
+	0xc6, 0x80, 0x13, 0x10, 0x3a, 0x62, 0x96, 0xcd, 0x97, 0x54, 0x5d, 0xc3, 0xe6, 0x0b, 0xd4, 0x26,
+	0x26, 0x22, 0xc0, 0x84, 0x08, 0x90, 0x39, 0x9d, 0xc3, 0x51, 0xe7, 0xcf, 0x5f, 0x3f, 0xbb, 0x5f,
+	0x68, 0xfc, 0x55, 0x6e, 0x99, 0x29, 0x41, 0x59, 0xe4, 0xb7, 0x72, 0xff, 0x02, 0xf4, 0x7e, 0xb3,
+	0x50, 0xd7, 0x24, 0xbe, 0x00, 0x41, 0x17, 0x6b, 0xca, 0xa2, 0xf3, 0x18, 0x4b, 0x98, 0x29, 0x2c,
+	0xae, 0x49, 0xfd, 0x18, 0xb9, 0xab, 0x6d, 0x4c, 0x90, 0xea, 0xa0, 0x80, 0x00, 0x26, 0x09, 0x65,
+	0x10, 0xcc, 0x13, 0x1e, 0x3e, 0x37, 0xa5, 0x34, 0xfc, 0xa3, 0x55, 0xe5, 0xe6, 0x71, 0xe1, 0x33,
+	0xd2, 0x2e, 0xce, 0x97, 0x08, 0xe5, 0xf7, 0x13, 0xac, 0xb0, 0x51, 0xb9, 0x79, 0x72, 0x74, 0x45,
+	0xc1, 0x53, 0xed, 0x30, 0x7a, 0x3a, 0x1b, 0x63, 0x85, 0x0b, 0xed, 0x0e, 0x4d, 0x90, 0x06, 0xbc,
+	0x1f, 0x2d, 0xd4, 0xce, 0x95, 0x9b, 0x9e, 0x7d, 0x8d, 0x69, 0xf2, 0xe6, 0xa2, 0x1f, 0xa0, 0x03,
+	0x01, 0x58, 0x72, 0x96, 0xeb, 0xe4, 0x17, 0xa7, 0x5b, 0xa8, 0xe3, 0x27, 0x0b, 0xf5, 0x4a, 0x21,
+	0x69, 0x68, 0x26, 0xf2, 0x02, 0x42, 0xc5, 0xc5, 0x8d, 0x3a, 0x39, 0x41, 0xf7, 0x76, 0x06, 0xe2,
+	0xc6, 0xed, 0x74, 0x76, 0x82, 0xb6, 0x3d, 0xfd, 0xf9, 0x0e, 0xfa, 0xc8, 0x94, 0x72, 0x26, 0x78,
+	0x96, 0x9e, 0x67, 0xf3, 0x84, 0x86, 0xe5, 0xa2, 0xbc, 0xb9, 0x8c, 0x3e, 0x7a, 0x3f, 0xd2, 0x51,
+	0x41, 0x6a, 0xc2, 0x82, 0xe7, 0xb0, 0x36, 0x35, 0xd8, 0x7e, 0x3b, 0xaa, 0xdc, 0xf6, 0xff, 0x45,
+	0xaa, 0xdf, 0x64, 0x91, 0x1a, 0x7b, 0x16, 0xa9, 0x2a, 0xfe, 0x3b, 0x6f, 0x2f, 0xbe, 0x26, 0x14,
+	0xc6, 0x98, 0x32, 0x4d, 0xe8, 0xc0, 0x34, 0xf6, 0xae, 0x39, 0x4f, 0x88, 0x17, 0xa2, 0x07, 0xa5,
+	0x16, 0x53, 0x58, 0x5f, 0xe0, 0x84, 0x12, 0xa3, 0x42, 0x0f, 0xd9, 0x0c, 0x5e, 0x04, 0x57, 0x94,
+	0x40, 0x0c, 0x5e, 0x9c, 0x16, 0x62, 0x7c, 0x8a, 0xde, 0x5b, 0x50, 0xa6, 0x09, 0xd2, 0x88, 0x61,
+	0x95, 0x09, 0xd8, 0x6a, 0x61, 0xe0, 0xd9, 0x16, 0xf5, 0xbe, 0x41, 0x8f, 0xf6, 0x25, 0xa1, 0x9c,
+	0x15, 0x23, 0x79, 0x7d, 0xae, 0xd7, 0x4c, 0xa6, 0xb7, 0xb1, 0x90, 0x6b, 0xee, 0x7e, 0x16, 0x0b,
+	0x90, 0x31, 0x4f, 0x88, 0x4e, 0xab, 0x5b, 0x0f, 0xdf, 0x65, 0x20, 0x35, 0x91, 0x47, 0x08, 0x89,
+	0xfc, 0xb0, 0xbd, 0xda, 0xf6, 0x0f, 0x0b, 0x24, 0x6f, 0x69, 0x98, 0x09, 0x01, 0x4c, 0x95, 0xf9,
+	0xf3, 0xd5, 0x6c, 0x17, 0xf8, 0xb6, 0x86, 0x63, 0x64, 0x03, 0x0b, 0x39, 0x01, 0x52, 0xee, 0x81,
+	0xed, 0x37, 0x0b, 0xcc, 0x28, 0x7d, 0x8c, 0xec, 0x25, 0x48, 0x89, 0x23, 0x08, 0x62, 0x2c, 0x63,
+	0xd3, 0x4f, 0xdb, 0x6f, 0x16, 0xd8, 0x13, 0x2c, 0x63, 0xe7, 0x04, 0x7d, 0x58, 0xfd, 0x10, 0x04,
+	0x31, 0xd0, 0x28, 0x56, 0xa6, 0xb3, 0x75, 0xff, 0x1e, 0xd9, 0xfd, 0x02, 0x3c, 0x31, 0x26, 0xef,
+	0xf7, 0xd7, 0xb1, 0x7c, 0xcc, 0x97, 0x69, 0x02, 0xb7, 0xca, 0x72, 0x4f, 0x57, 0xeb, 0xfb, 0xba,
+	0xea, 0x0c, 0x77, 0x56, 0x52, 0xe9, 0xaf, 0x5c, 0x3e, 0xe7, 0xf9, 0x08, 0x3b, 0x15, 0x93, 0x19,
+	0x67, 0xef, 0x87, 0xe2, 0x55, 0xba, 0x4a, 0xa2, 0x18, 0x82, 0x5b, 0x63, 0x50, 0xce, 0x4a, 0x7d,
+	0x77, 0x56, 0x46, 0x93, 0x97, 0x97, 0xae, 0xf5, 0xea, 0xd2, 0xb5, 0xfe, 0xb9, 0x74, 0xad, 0x5f,
+	0x36, 0x6e, 0xed, 0xd5, 0xc6, 0xad, 0xfd, 0xb5, 0x71, 0x6b, 0xdf, 0x0e, 0x23, 0xaa, 0xe2, 0x6c,
+	0x3e, 0x08, 0xf9, 0x72, 0x98, 0x0a, 0x4e, 0xb2, 0x50, 0xc9, 0x90, 0x9a, 0xb7, 0xb5, 0x7c, 0x65,
+	0xbf, 0x2f, 0xdf, 0xd9, 0xf9, 0x81, 0x79, 0x68, 0x3f, 0xff, 0x37, 0x00, 0x00, 0xff, 0xff, 0xc8,
+	0x35, 0xe0, 0x41, 0xf4, 0x07, 0x00, 0x00,
 }
 
 func (m *EventKeyGenerationInitiated) Marshal() (dAtA []byte, err error) {
@@ -700,6 +1058,13 @@ func (m *EventGroupPublicKeyGenerated) MarshalToSizedBuffer(dAtA []byte) (int, e
 	_ = i
 	var l int
 	_ = l
+	if len(m.ChainId) > 0 {
+		i -= len(m.ChainId)
+		copy(dAtA[i:], m.ChainId)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.ChainId)))
+		i--
+		dAtA[i] = 0x32
+	}
 	{
 		size, err := m.EpochData.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
@@ -731,6 +1096,219 @@ func (m *EventGroupPublicKeyGenerated) MarshalToSizedBuffer(dAtA []byte) (int, e
 		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
 		i--
 		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EventGroupKeyValidated) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventGroupKeyValidated) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventGroupKeyValidated) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.FinalSignature) > 0 {
+		i -= len(m.FinalSignature)
+		copy(dAtA[i:], m.FinalSignature)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.FinalSignature)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.NewEpochId != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.NewEpochId))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EventGroupKeyValidationFailed) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventGroupKeyValidationFailed) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventGroupKeyValidationFailed) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Reason) > 0 {
+		i -= len(m.Reason)
+		copy(dAtA[i:], m.Reason)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.Reason)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.NewEpochId != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.NewEpochId))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EventThresholdSigningRequested) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventThresholdSigningRequested) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventThresholdSigningRequested) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.DeadlineBlockHeight != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.DeadlineBlockHeight))
+		i--
+		dAtA[i] = 0x28
+	}
+	if len(m.MessageHash) > 0 {
+		i -= len(m.MessageHash)
+		copy(dAtA[i:], m.MessageHash)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.MessageHash)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.EncodedData) > 0 {
+		i -= len(m.EncodedData)
+		copy(dAtA[i:], m.EncodedData)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.EncodedData)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.CurrentEpochId != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochId))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.RequestId) > 0 {
+		i -= len(m.RequestId)
+		copy(dAtA[i:], m.RequestId)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.RequestId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EventThresholdSigningCompleted) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventThresholdSigningCompleted) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventThresholdSigningCompleted) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.ParticipatingSlots != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.ParticipatingSlots))
+		i--
+		dAtA[i] = 0x20
+	}
+	if len(m.FinalSignature) > 0 {
+		i -= len(m.FinalSignature)
+		copy(dAtA[i:], m.FinalSignature)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.FinalSignature)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.CurrentEpochId != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochId))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.RequestId) > 0 {
+		i -= len(m.RequestId)
+		copy(dAtA[i:], m.RequestId)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.RequestId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EventThresholdSigningFailed) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventThresholdSigningFailed) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventThresholdSigningFailed) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Reason) > 0 {
+		i -= len(m.Reason)
+		copy(dAtA[i:], m.Reason)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.Reason)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.CurrentEpochId != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochId))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.RequestId) > 0 {
+		i -= len(m.RequestId)
+		copy(dAtA[i:], m.RequestId)
+		i = encodeVarintEvents(dAtA, i, uint64(len(m.RequestId)))
+		i--
+		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -858,6 +1436,112 @@ func (m *EventGroupPublicKeyGenerated) Size() (n int) {
 	}
 	l = m.EpochData.Size()
 	n += 1 + l + sovEvents(uint64(l))
+	l = len(m.ChainId)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	return n
+}
+
+func (m *EventGroupKeyValidated) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.NewEpochId != 0 {
+		n += 1 + sovEvents(uint64(m.NewEpochId))
+	}
+	l = len(m.FinalSignature)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	return n
+}
+
+func (m *EventGroupKeyValidationFailed) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.NewEpochId != 0 {
+		n += 1 + sovEvents(uint64(m.NewEpochId))
+	}
+	l = len(m.Reason)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	return n
+}
+
+func (m *EventThresholdSigningRequested) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.RequestId)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	if m.CurrentEpochId != 0 {
+		n += 1 + sovEvents(uint64(m.CurrentEpochId))
+	}
+	l = len(m.EncodedData)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	l = len(m.MessageHash)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	if m.DeadlineBlockHeight != 0 {
+		n += 1 + sovEvents(uint64(m.DeadlineBlockHeight))
+	}
+	return n
+}
+
+func (m *EventThresholdSigningCompleted) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.RequestId)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	if m.CurrentEpochId != 0 {
+		n += 1 + sovEvents(uint64(m.CurrentEpochId))
+	}
+	l = len(m.FinalSignature)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	if m.ParticipatingSlots != 0 {
+		n += 1 + sovEvents(uint64(m.ParticipatingSlots))
+	}
+	return n
+}
+
+func (m *EventThresholdSigningFailed) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.RequestId)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
+	if m.CurrentEpochId != 0 {
+		n += 1 + sovEvents(uint64(m.CurrentEpochId))
+	}
+	l = len(m.Reason)
+	if l > 0 {
+		n += 1 + l + sovEvents(uint64(l))
+	}
 	return n
 }
 
@@ -1617,6 +2301,723 @@ func (m *EventGroupPublicKeyGenerated) Unmarshal(dAtA []byte) error {
 			if err := m.EpochData.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ChainId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ChainId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EventGroupKeyValidated) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventGroupKeyValidated: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventGroupKeyValidated: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+			}
+			m.NewEpochId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.NewEpochId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FinalSignature", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.FinalSignature = append(m.FinalSignature[:0], dAtA[iNdEx:postIndex]...)
+			if m.FinalSignature == nil {
+				m.FinalSignature = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EventGroupKeyValidationFailed) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventGroupKeyValidationFailed: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventGroupKeyValidationFailed: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+			}
+			m.NewEpochId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.NewEpochId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Reason", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Reason = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EventThresholdSigningRequested) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventThresholdSigningRequested: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventThresholdSigningRequested: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RequestId = append(m.RequestId[:0], dAtA[iNdEx:postIndex]...)
+			if m.RequestId == nil {
+				m.RequestId = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+			}
+			m.CurrentEpochId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CurrentEpochId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EncodedData", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.EncodedData = append(m.EncodedData[:0], dAtA[iNdEx:postIndex]...)
+			if m.EncodedData == nil {
+				m.EncodedData = []byte{}
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MessageHash", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MessageHash = append(m.MessageHash[:0], dAtA[iNdEx:postIndex]...)
+			if m.MessageHash == nil {
+				m.MessageHash = []byte{}
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DeadlineBlockHeight", wireType)
+			}
+			m.DeadlineBlockHeight = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DeadlineBlockHeight |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EventThresholdSigningCompleted) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventThresholdSigningCompleted: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventThresholdSigningCompleted: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RequestId = append(m.RequestId[:0], dAtA[iNdEx:postIndex]...)
+			if m.RequestId == nil {
+				m.RequestId = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+			}
+			m.CurrentEpochId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CurrentEpochId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FinalSignature", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.FinalSignature = append(m.FinalSignature[:0], dAtA[iNdEx:postIndex]...)
+			if m.FinalSignature == nil {
+				m.FinalSignature = []byte{}
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ParticipatingSlots", wireType)
+			}
+			m.ParticipatingSlots = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ParticipatingSlots |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EventThresholdSigningFailed) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventThresholdSigningFailed: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventThresholdSigningFailed: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RequestId = append(m.RequestId[:0], dAtA[iNdEx:postIndex]...)
+			if m.RequestId == nil {
+				m.RequestId = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+			}
+			m.CurrentEpochId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CurrentEpochId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Reason", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Reason = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

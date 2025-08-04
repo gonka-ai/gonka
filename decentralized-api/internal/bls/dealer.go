@@ -11,11 +11,10 @@
 //     "github.com/Consensys/gnark-crypto/ecc/bls12-381/fr"
 // )
 
-package bls_dkg
+package bls
 
 import (
 	"crypto/rand"
-	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
@@ -24,31 +23,19 @@ import (
 	"math/big"
 	"strconv"
 
-	inferenceTypes "github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/bls/types"
+	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
-	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/cosmos/cosmos-sdk/crypto/ecies"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
-// Dealer handles the dealing phase of BLS DKG
-type Dealer struct {
-	cosmosClient cosmosclient.CosmosMessageClient
-	address      string
-}
-
-// NewDealer creates a new dealer instance
-func NewDealer(cosmosClient cosmosclient.CosmosMessageClient) *Dealer {
-	return &Dealer{
-		cosmosClient: cosmosClient,
-		address:      cosmosClient.GetAddress(),
-	}
-}
+// DEALER METHODS - All methods operate on BlsManager
 
 // ProcessKeyGenerationInitiated handles the EventKeyGenerationInitiated event
-func (d *Dealer) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCResponse) error {
+func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCResponse) error {
 	// Extract event data from chain event (typed event from EmitTypedEvent)
 	epochIDs, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.epoch_id"]
 	if !ok || len(epochIDs) == 0 {
@@ -99,10 +86,10 @@ func (d *Dealer) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRespons
 	}
 
 	logging.Debug("Processing DKG key generation initiated", inferenceTypes.BLS,
-		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", d.address)
+		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", bm.cosmosClient.Address)
 
 	// Parse participants from event
-	participants, err := d.parseParticipantsFromEvent(event)
+	participants, err := bm.parseParticipantsFromEvent(event)
 	if err != nil {
 		return fmt.Errorf("failed to parse participants: %w", err)
 	}
@@ -110,7 +97,7 @@ func (d *Dealer) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRespons
 	// Check if this node is a participant
 	isParticipant := false
 	for _, participant := range participants {
-		if participant.Address == d.address {
+		if participant.Address == bm.cosmosClient.Address {
 			isParticipant = true
 			break
 		}
@@ -118,7 +105,7 @@ func (d *Dealer) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRespons
 
 	if !isParticipant {
 		logging.Debug("Not a participant in this DKG round", inferenceTypes.BLS,
-			"epochID", epochID, "address", d.address)
+			"epochID", epochID, "address", bm.cosmosClient.Address)
 		return nil
 	}
 
@@ -126,25 +113,25 @@ func (d *Dealer) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRespons
 		"epochID", epochID, "participantCount", len(participants))
 
 	// Generate dealer part
-	dealerPart, err := d.generateDealerPart(epochID, uint32(totalSlots), uint32(tDegree), participants)
+	dealerPart, err := bm.generateDealerPart(epochID, uint32(totalSlots), uint32(tDegree), participants)
 	if err != nil {
 		return fmt.Errorf("failed to generate dealer part: %w", err)
 	}
 
 	// Submit dealer part to chain
-	err = d.cosmosClient.SubmitDealerPart(dealerPart)
+	err = bm.cosmosClient.SubmitDealerPart(dealerPart)
 	if err != nil {
 		return fmt.Errorf("failed to submit dealer part: %w", err)
 	}
 
 	logging.Info("Successfully submitted dealer part", inferenceTypes.BLS,
-		"epochID", epochID, "dealer", d.address)
+		"epochID", epochID, "dealer", bm.cosmosClient.Address)
 
 	return nil
 }
 
 // parseParticipantsFromEvent extracts participant information from the event
-func (d *Dealer) parseParticipantsFromEvent(event *chainevents.JSONRPCResponse) ([]ParticipantInfo, error) {
+func (bm *BlsManager) parseParticipantsFromEvent(event *chainevents.JSONRPCResponse) ([]ParticipantInfo, error) {
 	// Get the participants field - this should be a JSON-encoded array
 	participantStrs, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.participants"]
 	if !ok || len(participantStrs) == 0 {
@@ -180,8 +167,8 @@ func (d *Dealer) parseParticipantsFromEvent(event *chainevents.JSONRPCResponse) 
 		}
 
 		logging.Debug("Parsed participant from event", inferenceTypes.BLS,
-			"index", i, "address", blsParticipant.Address, 
-			"slotStart", blsParticipant.SlotStartIndex, 
+			"index", i, "address", blsParticipant.Address,
+			"slotStart", blsParticipant.SlotStartIndex,
 			"slotEnd", blsParticipant.SlotEndIndex)
 	}
 
@@ -191,16 +178,8 @@ func (d *Dealer) parseParticipantsFromEvent(event *chainevents.JSONRPCResponse) 
 	return participants, nil
 }
 
-// ParticipantInfo represents participant information for DKG
-type ParticipantInfo struct {
-	Address            string
-	Secp256K1PublicKey []byte
-	SlotStartIndex     uint32
-	SlotEndIndex       uint32
-}
-
 // generateDealerPart generates the dealer's contribution to the DKG
-func (d *Dealer) generateDealerPart(epochID uint64, totalSlots, tDegree uint32, participants []ParticipantInfo) (*types.MsgSubmitDealerPart, error) {
+func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uint32, participants []ParticipantInfo) (*types.MsgSubmitDealerPart, error) {
 	logging.Debug("Generating dealer part", inferenceTypes.BLS,
 		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "participantCount", len(participants))
 
@@ -247,7 +226,7 @@ func (d *Dealer) generateDealerPart(epochID uint64, totalSlots, tDegree uint32, 
 	}
 
 	dealerPart := &types.MsgSubmitDealerPart{
-		Creator:                        d.address,
+		Creator:                        bm.cosmosClient.Address,
 		EpochId:                        epochID,
 		Commitments:                    commitments,
 		EncryptedSharesForParticipants: encryptedSharesForParticipants,

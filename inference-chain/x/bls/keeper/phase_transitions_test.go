@@ -136,6 +136,25 @@ func TestProcessDKGPhaseTransitionForEpoch_CompletedEpoch(t *testing.T) {
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 }
 
+func TestProcessDKGPhaseTransitionForEpoch_SignedEpoch(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	// Create signed epoch data
+	epochID := uint64(6)
+	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_SIGNED
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	// Process transition - should do nothing
+	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochID)
+	require.NoError(t, err)
+
+	// Verify phase didn't change
+	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	require.True(t, found)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_SIGNED, storedData.DkgPhase)
+}
+
 func TestActiveEpochTracking(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 

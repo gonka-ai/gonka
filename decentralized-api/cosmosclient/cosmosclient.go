@@ -178,6 +178,8 @@ type CosmosMessageClient interface {
 	GetKeyring() *keyring.Keyring
 	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
 	SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*blstypes.MsgSubmitVerificationVectorResponse, error)
+	SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error
+	SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error
 	NewBLSQueryClient() blstypes.QueryClient
 }
 
@@ -592,6 +594,23 @@ func (icc *InferenceCosmosClient) SubmitVerificationVector(transaction *blstypes
 	response := blstypes.MsgSubmitVerificationVectorResponse{}
 	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
 	return &response, err
+}
+
+func (icc *InferenceCosmosClient) SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error {
+	transaction.Creator = icc.Address
+	_, err := icc.SendTransaction(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error {
+	transaction := &blstypes.MsgSubmitPartialSignature{
+		Creator:          icc.Address,
+		RequestId:        requestId,
+		SlotIndices:      slotIndices,
+		PartialSignature: partialSignature,
+	}
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
