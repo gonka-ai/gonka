@@ -139,6 +139,11 @@ type Hardware struct {
 }
 
 type ValidationParamsCache struct {
-	TimestampExpiration int64 `koanf:"timestamp_expiration"`
-	TimestampAdvance    int64 `koanf:"timestamp_advance"`
+	TimestampExpiration       int64  `koanf:"timestamp_expiration"`
+	TimestampAdvance          int64  `koanf:"timestamp_advance"`
+	EstimatedLimitsPerBlockKb uint64 `koanf:"estimated_limits_per_block_kb"`
+	ExpirationBlocks          int64  `koanf:"expiration_blocks"`
+	// Bandwidth estimation coefficients
+	KbPerInputToken  float64 `koanf:"kb_per_input_token"`
+	KbPerOutputToken float64 `koanf:"kb_per_output_token"`
 }

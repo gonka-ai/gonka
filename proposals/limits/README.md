@@ -232,22 +232,52 @@ Agent_limit = Total_throughput ÷ Number_of_agents
 For 3 agents: ~14 requests/second each (conservative estimate)
 
 
-## Implementation Plan
+## Bandwidth Tracking Approaches
 
-### Phase 0: Rate Limiting
-**Objective**: Implement Transfer Agent request limits to prevent chain bandwidth saturation
+Three different approaches to track and limit bandwidth usage:
 
-**Implementation**:
-- Add `InferenceRequestLimit` tracker per Transfer Agent
-- Track active requests and estimated data size (KB)
-- Enforce per-block KB limits: `ValidationParams.LimitsPerBlockKB` (from genesis params)
-- Return error when limits exceeded: "Transfer Agent capacity reached. Try another TA from `/v1/epochs/current/participants`"
+### Option 1: Initial Estimation + Expiration Block
+**How it works**: Estimate KB based on request parameters, reserve bandwidth until expiration block
+```go
+requestKB := float64(promptTokens)*0.0023 + float64(maxTokens)*0.64  // Assume worst case
+committedKB[blockHeight] += requestKB  // Reserve until expiration
+```
 
-**Data estimation**: `Expected_KB = max_tokens × 0.64 + prompt_tokens × 0.0023`
+**Pros**:
+- **Predictive**: Can prevent accepting requests before limits exceeded
+- **Simple implementation**: No proxy instrumentation needed
+- **Fail-fast**: Immediate feedback to users
 
-**Open Questions**:
-- **Q1**: How to estimate expected produced data based on active requests? (Current estimation unclear for in-flight requests)
-- **Q2**: Should limits be uniform across TAs or proportional to network weight? (TAs with higher network weight may process transactions faster, potentially warranting higher limits)
+**Cons**:
+- **Over-estimation**: Reserves for max_tokens but most responses much shorter
+- **Static assumptions**: Fixed KB/token ratios may drift over time
+- **Block-based expiration**: May hold bandwidth longer than actual completion time
+
+### Option 2: Real KB Tracking via Proxy
+**How it works**: Measure actual bytes transferred through proxy, track real KB per block
+```go
+// In proxy when response completes:
+actualKB := len(responsePayload) / 1024.0
+actualKBPerBlock[currentBlock] += actualKB
+
+// For admission control:
+recentAvgKB := getRecentAverage(3)  // Last 3 blocks
+return recentAvgKB < nodeLimit * 0.8  // Throttle at 80%
+```
+
+**Pros**:
+- **Accurate**: Tracks real bandwidth consumption
+- **Adaptive**: Automatically adjusts to actual usage patterns
+- **No over-reservation**: Only counts actual data transferred
+
+**Cons**:
+- **Reactive only**: Can only throttle after measuring, not prevent beforehand
+- **Implementation complexity**: Requires proxy instrumentation
+- **Memory tracking**: Must store actual payload sizes over time windows
+
+---
+
+**Recommendation**: Start with **Option 1** for simplicity and reliability, then consider **Option 2** if more precision needed.
 
 ### Phase 1: Payload Optimization
 **Objective**: Reduce on-chain data size by 60-80%

@@ -4,6 +4,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/training"
 	"net/http"
@@ -18,6 +19,7 @@ type Server struct {
 	recorder         cosmosclient.CosmosMessageClient
 	trainingExecutor *training.Executor
 	blockQueue       *BridgeQueue
+	bandwidthLimiter *internal.BandwidthLimiter
 }
 
 // TODO: think about rate limits
@@ -41,6 +43,26 @@ func NewServer(
 		trainingExecutor: trainingExecutor,
 		blockQueue:       blockQueue,
 	}
+
+	validationParams := configManager.GetValidationParams()
+	limitsPerBlockKB := validationParams.EstimatedLimitsPerBlockKb
+	if limitsPerBlockKB == 0 {
+		limitsPerBlockKB = 1024 // Default to 1MB if not set
+	}
+	requestLifespanBlocks := validationParams.ExpirationBlocks
+	if requestLifespanBlocks == 0 {
+		requestLifespanBlocks = 10 // Default to 10 blocks
+	}
+	kbPerInputToken := validationParams.KbPerInputToken
+	if kbPerInputToken == 0 {
+		kbPerInputToken = 0.0023 // Default from README.md analysis
+	}
+	kbPerOutputToken := validationParams.KbPerOutputToken
+	if kbPerOutputToken == 0 {
+		kbPerOutputToken = 0.64 // Default from README.md analysis
+	}
+
+	s.bandwidthLimiter = internal.NewBandwidthLimiter(limitsPerBlockKB, requestLifespanBlocks, kbPerInputToken, kbPerOutputToken)
 
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/v1/")
