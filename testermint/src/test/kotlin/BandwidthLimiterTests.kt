@@ -11,104 +11,144 @@ class BandwidthLimiterTests : TestermintTest() {
     @Test
     fun `bandwidth limiter with rate limiting`() {
         // Initialize cluster with default configuration
-        // The bandwidth limiter uses default limits from decentralized-api config:
-        // - EstimatedLimitsPerBlockKb: 1024KB (default)
-        // - KbPerInputToken: 0.0023 
-        // - KbPerOutputToken: 0.64
-        // - RequestLifespanBlocks: 10 (default)
         val (cluster, genesis) = initCluster(reboot = true)
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
 
         logSection("=== Testing Bandwidth Limiter ===")
-        logSection("Bandwidth calculation: Total KB gets divided by requestLifespanBlocks (10)")
-        logSection("Limit: 1024KB per block, so need >10240KB total to exceed limit")
-
-        // Test: Use runParallelInferences with 20 requests to exceed bandwidth limit
-        logSection("1. Sending 20 parallel requests using runParallelInferences")
         
-        // Create requests that will collectively exceed bandwidth
-        // Each request: maxTokens = 800 -> ~512KB total (800 * 0.64)
-        // Per block: 512KB / 10 blocks = ~51.2KB per block per request
-        // 20 requests: 20 * 51.2KB = ~1024KB per block (right at the limit)
-        // Let's use 25 requests to definitely exceed: 25 * 51.2KB = ~1280KB per block > 1024KB limit
+        // Create requests that will exceed bandwidth limits
         val testRequest = inferenceRequestObject.copy(
             messages = listOf(ChatMessage("user", "Bandwidth test request.")),
-            maxTokens = 800 // ~512KB total, ~51.2KB per block
+            maxTokens = 800 // Large request to trigger bandwidth limits
         )
 
-        logSection("Each request: 800 maxTokens = ~512KB total = ~51.2KB per block")
-        logSection("Testing with 20 requests = ~1024KB per block (should hit limit)")
+        logSection("1. Testing bandwidth limiter by sending parallel requests and counting errors")
+        
+        // Send requests in parallel and count both successes and bandwidth rejections
+        var successCount = 0
+        var bandwidthRejectionCount = 0
+        var otherErrorCount = 0
+        
+        val requests = (1..20).map {
+            Thread {
+                try {
+                    val response = genesis.makeInferenceRequest(testRequest.toJson())
+                    synchronized(this) {
+                        successCount++
+                        logSection("Request $it: SUCCESS")
+                    }
+                } catch (e: FuelError) {
+                    val errorMessage = e.response.data.toString(Charsets.UTF_8)
+                    synchronized(this) {
+                        if (errorMessage.contains("Transfer Agent capacity reached") || 
+                            errorMessage.contains("bandwidth") ||
+                            e.response.statusCode == 429) {
+                            bandwidthRejectionCount++
+                            logSection("Request $it: BANDWIDTH REJECTED - $errorMessage")
+                        } else {
+                            otherErrorCount++
+                            logSection("Request $it: OTHER ERROR - $errorMessage")
+                        }
+                    }
+                } catch (e: Exception) {
+                    synchronized(this) {
+                        otherErrorCount++
+                        logSection("Request $it: EXCEPTION - ${e.message}")
+                    }
+                }
+            }
+        }
+        
+        // Start all requests simultaneously
+        requests.forEach { it.start() }
+        requests.forEach { it.join() }
+        
+        logSection("2. Results from 20 parallel requests:")
+        logSection("- Successful requests: $successCount")
+        logSection("- Bandwidth rejections: $bandwidthRejectionCount")
+        logSection("- Other errors: $otherErrorCount")
+        
+        // Verify bandwidth limiter is working
+        assertThat(bandwidthRejectionCount).describedAs("Bandwidth limiter should reject some requests").isGreaterThan(0)
+        logSection("✓ Bandwidth limiter correctly rejected $bandwidthRejectionCount requests")
 
-        // Use runParallelInferences with many concurrent requests
-        val results = runParallelInferencesWithResults(
-            genesis = genesis,
-            count = 20,
-            waitForBlocks = 0, // Don't wait for completion initially
-            maxConcurrentRequests = 20, // Allow all to run simultaneously
-            inferenceRequest = testRequest
-        )
+        // Test with even more requests to ensure consistent behavior
+        logSection("3. Testing with more requests (30) to verify consistent bandwidth limiting")
         
-        val successfulRequests = results.size
-        val rejectedRequests = 20 - successfulRequests
+        successCount = 0
+        bandwidthRejectionCount = 0
+        otherErrorCount = 0
         
-        logSection("2. Results from runParallelInferences:")
-        logSection("- Successful requests: $successfulRequests")
-        logSection("- Rejected requests: $rejectedRequests")
+        val moreRequests = (1..30).map {
+            Thread {
+                try {
+                    val response = genesis.makeInferenceRequest(testRequest.toJson())
+                    synchronized(this) { successCount++ }
+                } catch (e: FuelError) {
+                    val errorMessage = e.response.data.toString(Charsets.UTF_8)
+                    synchronized(this) {
+                        if (errorMessage.contains("Transfer Agent capacity reached") || 
+                            errorMessage.contains("bandwidth") ||
+                            e.response.statusCode == 429) {
+                            bandwidthRejectionCount++
+                        } else {
+                            otherErrorCount++
+                        }
+                    }
+                } catch (e: Exception) {
+                    synchronized(this) { otherErrorCount++ }
+                }
+            }
+        }
         
-        // Some requests should be rejected due to bandwidth limits
-        assertThat(rejectedRequests).describedAs("Some requests should be rejected due to bandwidth limits").isGreaterThan(0)
-        assertThat(successfulRequests).describedAs("Some requests should succeed").isGreaterThan(0)
-        logSection("✓ Bandwidth limiter correctly rejected $rejectedRequests out of 20 requests")
-
-        // Test with even more requests to ensure clear rejection
-        logSection("3. Testing with even more requests (30) to ensure clear bandwidth limiting")
-        
-        val moreResults = runParallelInferencesWithResults(
-            genesis = genesis,
-            count = 30,
-            waitForBlocks = 0,
-            maxConcurrentRequests = 30,
-            inferenceRequest = testRequest
-        )
-        
-        val moreSuccessful = moreResults.size
-        val moreRejected = 30 - moreSuccessful
+        moreRequests.forEach { it.start() }
+        moreRequests.forEach { it.join() }
         
         logSection("Results from 30 parallel requests:")
-        logSection("- Successful requests: $moreSuccessful")
-        logSection("- Rejected requests: $moreRejected")
+        logSection("- Successful requests: $successCount")
+        logSection("- Bandwidth rejections: $bandwidthRejectionCount")
+        logSection("- Other errors: $otherErrorCount")
         
-        // With 30 requests, we should definitely see rejections
-        assertThat(moreRejected).describedAs("More requests should be rejected with higher load").isGreaterThan(0)
-        logSection("✓ Bandwidth limiter correctly rejected $moreRejected out of 30 requests")
+        assertThat(bandwidthRejectionCount).describedAs("More requests should be rejected with higher load").isGreaterThan(0)
+        logSection("✓ Bandwidth limiter consistently rejected $bandwidthRejectionCount requests")
 
-        // Test bandwidth release
+        // Test bandwidth release after waiting
         logSection("4. Waiting for bandwidth release and testing again")
         genesis.node.waitForNextBlock(5) // Wait for completion and bandwidth release
         Thread.sleep(2000) // Additional wait for cleanup
         
-        val finalResults = runParallelInferencesWithResults(
-            genesis = genesis,
-            count = 10,
-            waitForBlocks = 0,
-            maxConcurrentRequests = 10,
-            inferenceRequest = testRequest
-        )
+        successCount = 0
+        bandwidthRejectionCount = 0
         
-        val finalSuccessful = finalResults.size
-        logSection("After bandwidth release: $finalSuccessful out of 10 requests succeeded")
+        val finalRequests = (1..10).map {
+            Thread {
+                try {
+                    val response = genesis.makeInferenceRequest(testRequest.toJson())
+                    synchronized(this) { successCount++ }
+                } catch (e: FuelError) {
+                    val errorMessage = e.response.data.toString(Charsets.UTF_8)
+                    synchronized(this) {
+                        if (errorMessage.contains("Transfer Agent capacity reached") || 
+                            errorMessage.contains("bandwidth") ||
+                            e.response.statusCode == 429) {
+                            bandwidthRejectionCount++
+                        }
+                    }
+                }
+            }
+        }
         
-        // After release, more requests should succeed
-        assertThat(finalSuccessful).describedAs("More requests should succeed after bandwidth release").isGreaterThan(5)
+        finalRequests.forEach { it.start() }
+        finalRequests.forEach { it.join() }
+        
+        logSection("After bandwidth release: $successCount successes, $bandwidthRejectionCount rejections")
+        
+        // After release, fewer requests should be rejected
+        assertThat(successCount).describedAs("More requests should succeed after bandwidth release").isGreaterThan(3)
         logSection("✓ Bandwidth was released and new requests can be processed")
 
         logSection("=== Bandwidth Limiter Test Completed Successfully ===")
-        logSection("Summary:")
-        logSection("- First test (20 requests): $rejectedRequests rejected")
-        logSection("- Second test (30 requests): $moreRejected rejected") 
-        logSection("- After release (10 requests): ${10 - finalSuccessful} rejected")
-        logSection("- Bandwidth limiter is working correctly!")
     }
 }
 

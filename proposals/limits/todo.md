@@ -84,7 +84,7 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
 
 ### API Server Integration
 
-[TODO]: Instantiate BandwidthLimiter in server setup
+[DONE]: Instantiate BandwidthLimiter in server setup
     Modify main server initialization to create BandwidthLimiter instance with all bandwidth parameters (limit and coefficients) fetched from chain's BandwidthLimitsParams
 
 [DONE]: Implement weight-based bandwidth allocation per Transfer Agent  
@@ -92,10 +92,10 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
     ✅ PERFORMANCE FIX: Added EpochGroupDataCache to prevent expensive RPC calls on every request. Cache only fetches new EpochGroupData when epoch changes (from blockchain RPC every ~few hours instead of every request). BandwidthLimiter now uses cached data via ChainPhaseTracker integration, dramatically reducing load from potentially 1000s of queries/minute to 1 query/epoch. Minimalistic implementation with thread-safe double-checked locking pattern.
     ✅ COMPUTATION OPTIMIZATION: Added cached weight-based limit calculation. Now skips weight computation loop entirely if same epoch, avoiding redundant math on every request. Only recalculates when epoch changes, providing near-zero overhead for repeated requests within same epoch.
 
-[TODO]: Add bandwidth checking to request handler before proxying
+[DONE]: Add bandwidth checking to request handler before proxying
     Modify `post_chat_handler.go` to get current block height, check CanAcceptRequest, reject with 429 error if over limit, otherwise RecordRequest
 
-[TODO]: Add bandwidth release after request completion  
+[DONE]: Add bandwidth release after request completion  
     Modify request handler to call ReleaseRequest using defer statement to ensure bandwidth is freed even if request fails mid-stream
 
 ### Testing Implementation
@@ -104,7 +104,7 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
     ✅ Created `decentralized-api/internal/bandwidth_limiter_test.go` with comprehensive tests for: under-limit acceptance, over-limit rejection, correct record/release behavior with completion-block logic, thread safety under concurrent load, and cleanup functionality. All tests passing.
 
 [DONE]: Create integration test in testermint
-    ✅ Created comprehensive BandwidthLimiterTests.kt with multiple test scenarios: oversized request rejection (guaranteed 429), parallel requests using runParallelInferencesWithResults, sequential requests with timing delays, and bandwidth release verification. Test handles mocked inference environment properly and provides robust verification of bandwidth limiting functionality.
+    ✅ Created comprehensive BandwidthLimiterTests.kt with proper error handling for bandwidth limiter rejections. Test now correctly catches and counts both successful requests and bandwidth rejections (error message "Transfer Agent capacity reached") by using manual thread-based parallel requests with synchronized counting. Verifies bandwidth limiting functionality through proper error response handling and tests bandwidth release after waiting for completion blocks.
 
 ---
 
