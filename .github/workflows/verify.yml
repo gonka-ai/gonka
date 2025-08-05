@@ -11,6 +11,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     name: Build and Test chain
+    permissions:
+      contents: read
+      checks: write
     defaults:
       run:
         working-directory: ./inference-chain
@@ -64,6 +67,9 @@ jobs:
   build-and-test-api:
     runs-on: ubuntu-latest
     name: Build and Test API Wrapper
+    permissions:
+      contents: read
+      checks: write
     defaults:
       run:
         working-directory: ./decentralized-api
