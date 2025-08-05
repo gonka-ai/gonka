@@ -24,11 +24,10 @@ import java.util.concurrent.TimeUnit
  * - IntelliJ: Right-click and run individual tests
  */
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
-@Tag("bls-integration")
-@Tag("docker-required")
 class BLSDKGSuccessTest : TestermintTest() {
 
     @Test
+    @Tag("bls-integration")
     fun `complete BLS DKG success flow with 3 participants`() {
         logSection("Starting BLS DKG Success Flow Test")
         
@@ -82,6 +81,7 @@ class BLSDKGSuccessTest : TestermintTest() {
     }
     
     @Test 
+    @Tag("bls-integration")
     fun `BLS state consistency across cluster nodes`() {
         logSection("Testing BLS state consistency across cluster nodes")
         
@@ -117,6 +117,7 @@ class BLSDKGSuccessTest : TestermintTest() {
     }
     
     @Test
+    @Tag("bls-integration")
     fun `cryptographic operations validation`() {
         logSection("Testing cryptographic operations validation")
         
@@ -277,28 +278,6 @@ class BLSDKGSuccessTest : TestermintTest() {
     // ========================================
     // DKG Phase Management
     // ========================================
-    
-    enum class DKGPhase(val value: Int) {
-        UNDEFINED(0),
-        DEALING(1),
-        VERIFYING(2), 
-        COMPLETED(3),
-        FAILED(4),
-        SIGNED(5)
-    }
-
-    enum class ThresholdSigningStatus(val value: Int) {
-        UNSPECIFIED(0),
-        COLLECTING_SIGNATURES(1),
-        AGGREGATING(2),
-        COMPLETED(3),
-        EXPIRED(5);
-
-        companion object {
-            fun fromValue(value: Int): ThresholdSigningStatus =
-                values().firstOrNull { it.value == value } ?: UNSPECIFIED
-        }
-    }
     
     private fun waitForDKGPhase(pair: com.productscience.LocalInferencePair, targetPhase: DKGPhase, epochId: Long, maxAttempts: Int = 20) {
         var currentPhase: DKGPhase? = null
@@ -520,47 +499,70 @@ class BLSDKGSuccessTest : TestermintTest() {
         Logger.info("Total slots: ${blsData.iTotalSlots}, Threshold: ${blsData.tSlotsDegree}, Total weight: $totalWeight%")
     }
     
-    // ========================================
-    // Data Classes (Based on actual protobuf types)
-    // ========================================
-    
-    data class EpochBLSData(
-        val epochId: Long,
-        val iTotalSlots: Int,
-        val tSlotsDegree: Int,
-        val participants: List<BLSParticipantInfo>,
-        val dkgPhase: DKGPhase,
-        val dealingPhaseDeadlineBlock: Long,
-        val verifyingPhaseDeadlineBlock: Long,
-        val groupPublicKey: ByteArray?,
-        val dealerParts: List<DealerPartStorage>,
-        val verificationSubmissions: List<VerificationVectorSubmission>,
-        val validDealers: List<Boolean>,
-        val validationSignature: ByteArray?
-    )
-    
-    data class BLSParticipantInfo(
-        val address: String,
-        val percentageWeight: Double,
-        val secp256k1PublicKey: ByteArray,
-        val slotStartIndex: Int,
-        val slotEndIndex: Int
-    )
-    
-    data class DealerPartStorage(
-        val dealerAddress: String,
-        val commitments: List<ByteArray>,
-        val participantShares: List<EncryptedSharesForParticipant>
-    )
-    
-    data class EncryptedSharesForParticipant(
-        val encryptedShares: List<ByteArray>
-    )
-    
-    data class VerificationVectorSubmission(
-        val dealerValidity: List<Boolean>
-    )
 }
+
+// ========================================
+// Data Classes and Enums (Based on actual protobuf types)
+// ========================================
+
+enum class DKGPhase(val value: Int) {
+    UNDEFINED(0),
+    DEALING(1),
+    VERIFYING(2), 
+    COMPLETED(3),
+    FAILED(4),
+    SIGNED(5)
+}
+
+enum class ThresholdSigningStatus(val value: Int) {
+    UNSPECIFIED(0),
+    COLLECTING_SIGNATURES(1),
+    AGGREGATING(2),
+    COMPLETED(3),
+    EXPIRED(5);
+
+    companion object {
+        fun fromValue(value: Int): ThresholdSigningStatus =
+            values().firstOrNull { it.value == value } ?: UNSPECIFIED
+    }
+}
+
+data class EpochBLSData(
+    val epochId: Long,
+    val iTotalSlots: Int,
+    val tSlotsDegree: Int,
+    val participants: List<BLSParticipantInfo>,
+    val dkgPhase: DKGPhase,
+    val dealingPhaseDeadlineBlock: Long,
+    val verifyingPhaseDeadlineBlock: Long,
+    val groupPublicKey: ByteArray?,
+    val dealerParts: List<DealerPartStorage>,
+    val verificationSubmissions: List<VerificationVectorSubmission>,
+    val validDealers: List<Boolean>,
+    val validationSignature: ByteArray?
+)
+
+data class BLSParticipantInfo(
+    val address: String,
+    val percentageWeight: Double,
+    val secp256k1PublicKey: ByteArray,
+    val slotStartIndex: Int,
+    val slotEndIndex: Int
+)
+
+data class DealerPartStorage(
+    val dealerAddress: String,
+    val commitments: List<ByteArray>,
+    val participantShares: List<EncryptedSharesForParticipant>
+)
+
+data class EncryptedSharesForParticipant(
+    val encryptedShares: List<ByteArray>
+)
+
+data class VerificationVectorSubmission(
+    val dealerValidity: List<Boolean>
+)
 
 // ========================================
 // Extension Functions for ApplicationCLI
@@ -570,7 +572,7 @@ class BLSDKGSuccessTest : TestermintTest() {
  * Extension function to query BLS epoch data from the chain
  * This implements the actual gRPC query to the BLS module
  */
-fun com.productscience.ApplicationCLI.queryEpochBLSData(epochId: Long): BLSDKGSuccessTest.EpochBLSData? {
+fun com.productscience.ApplicationCLI.queryEpochBLSData(epochId: Long): EpochBLSData? {
     return try {
         // Query the BLS module for epoch data using the established pattern
         val result: Map<String, Any> = this.execAndParse(
@@ -603,7 +605,7 @@ fun com.productscience.ApplicationCLI.queryEpochBLSData(epochId: Long): BLSDKGSu
  * Helper function to parse query results into EpochBLSData
  * Parses the JSON response from the CLI query
  */
-private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessTest.EpochBLSData? {
+private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? {
     return try {
         // The CLI response structure is: { "epoch_data": { ... } }
         @Suppress("UNCHECKED_CAST")
@@ -642,16 +644,16 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessT
             is String -> phase.toIntOrNull() ?: 0
             else -> 0
         }
-        val dkgPhase = BLSDKGSuccessTest.DKGPhase.values().find { it.value == dkgPhaseNum } 
-            ?: BLSDKGSuccessTest.DKGPhase.UNDEFINED
+        val dkgPhase = DKGPhase.values().find { it.value == dkgPhaseNum } 
+            ?: DKGPhase.UNDEFINED
         
         // Parse participants
         @Suppress("UNCHECKED_CAST")
         val participantsList = (epochData["participants"] as? List<Map<String, Any>>) ?: emptyList()
         val participants = participantsList.map { participantMap ->
-            BLSDKGSuccessTest.BLSParticipantInfo(
+            BLSParticipantInfo(
                 address = participantMap["address"] as? String ?: "",
-                percentageWeight = (participantMap["percentage_weight"] as? String ?: "0").toDouble() / 1_000_000_000_000_000_000.0,  // Convert from Cosmos SDK decimal (18 decimal places) to actual percentage
+                percentageWeight = (participantMap["percentage_weight"] as? String ?: "0").toDouble(),  // Already in percentage format (0-100)
                 secp256k1PublicKey = parseByteArrayFromChain(participantMap["secp256k1_public_key"]),
                 slotStartIndex = when (val value = participantMap["slot_start_index"]) {
                     is String -> value.toIntOrNull() ?: 0
@@ -689,10 +691,10 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessT
                 val encryptedSharesList = (sharesMap["encrypted_shares"] as? List<Any>) ?: emptyList()
                 Logger.debug("Raw encrypted shares from chain: ${encryptedSharesList.take(1).map { it?.javaClass?.simpleName }}") // Log first share type
                 val encryptedShares = encryptedSharesList.map { parseByteArrayFromChain(it) }
-                BLSDKGSuccessTest.EncryptedSharesForParticipant(encryptedShares)
+                EncryptedSharesForParticipant(encryptedShares)
             }
             
-            BLSDKGSuccessTest.DealerPartStorage(
+            DealerPartStorage(
                 dealerAddress = dealerAddress,
                 commitments = commitments,
                 participantShares = participantShares
@@ -707,7 +709,7 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessT
             val dealerValidityList = (submissionMap["dealer_validity"] as? List<Boolean>) ?: emptyList()
             if (dealerValidityList.isEmpty()) return@mapNotNull null // Skip empty entries (participants who haven't submitted verification vectors)
             
-            BLSDKGSuccessTest.VerificationVectorSubmission(dealerValidityList)
+            VerificationVectorSubmission(dealerValidityList)
         }
         
         // Parse valid dealers
@@ -717,7 +719,7 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): BLSDKGSuccessT
         // Parse validation signature
         val validationSignature = parseByteArrayFromChain(epochData["validation_signature"])
         
-        BLSDKGSuccessTest.EpochBLSData(
+        EpochBLSData(
             epochId = epochId,
             iTotalSlots = iTotalSlots,
             tSlotsDegree = tSlotsDegree,
