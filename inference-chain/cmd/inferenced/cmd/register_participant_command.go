@@ -2,18 +2,23 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
+	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 type RegisterParticipantDto struct {
@@ -31,36 +36,114 @@ type InferenceParticipantResponse struct {
 
 // extractAddressFromPubKey derives a cosmos address from a base64-encoded public key
 func extractAddressFromPubKey(pubKeyBase64 string) (string, error) {
+	if strings.TrimSpace(pubKeyBase64) == "" {
+		return "", fmt.Errorf("public key cannot be empty")
+	}
+
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyBase64)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode public key: %w", err)
+	}
+
+	if len(pubKeyBytes) == 0 {
+		return "", fmt.Errorf("decoded public key is empty")
 	}
 
 	pubKey := &secp256k1.PubKey{Key: pubKeyBytes}
 	return sdk.AccAddress(pubKey.Address()).String(), nil
 }
 
+// fetchConsensusKeyFromNode retrieves the validator consensus public key from the chain node's RPC status endpoint
+// Uses DAPI_CHAIN_NODE__URL environment variable (automatically set in api/node containers)
+// Returns the key as a base64-encoded string, consistent with the expected format
+func fetchConsensusKeyFromNode() (string, error) {
+	// Get chain node URL from environment variable (automatically set in api/node containers)
+	chainNodeUrl := os.Getenv("DAPI_CHAIN_NODE__URL")
+	if chainNodeUrl == "" {
+		return "", fmt.Errorf("DAPI_CHAIN_NODE__URL environment variable is not set. Auto-fetch is only available when running from api/node containers. Please provide consensus key manually using --consensus-key flag")
+	}
+
+	// Create RPC client with connection timeout
+	client, err := rpcclient.New(chainNodeUrl, "/websocket")
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to chain node at %s. Please verify the node is running and accessible: %w", chainNodeUrl, err)
+	}
+
+	// Create context with timeout for the RPC call
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Get validator status from the node
+	result, err := client.Status(ctx)
+	if err != nil {
+		return "", fmt.Errorf("node RPC endpoint not responding. Please check if the node is properly configured: %w", err)
+	}
+
+	// Check if validator info is available
+	if result.ValidatorInfo.PubKey == nil {
+		return "", fmt.Errorf("node does not have validator information. Please provide consensus key manually using --consensus-key flag")
+	}
+
+	// Extract the validator public key
+	validatorKey := result.ValidatorInfo.PubKey
+
+	// Get the raw bytes directly from the PubKey
+	keyBytes := validatorKey.Bytes()
+	if len(keyBytes) == 0 {
+		return "", fmt.Errorf("received invalid response from node status endpoint: validator key is empty")
+	}
+
+	// Encode as base64 string
+	consensusKeyBase64 := base64.StdEncoding.EncodeToString(keyBytes)
+
+	return consensusKeyBase64, nil
+}
+
 func RegisterNewParticipantCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "register-new-participant <node-url> <account-public-key> <consensus-key>",
+		Use:   "register-new-participant <node-url> <account-public-key>",
 		Short: "Register a new participant with the seed node",
 		Long: `Register a new participant with the seed node.
 
 The account address will be automatically derived from the account public key.
 All communication happens via HTTP API calls to the seed node.
 
+The consensus key can be provided explicitly using the --consensus-key flag, or it will be
+automatically fetched from the chain node when running from within api containers.
+
 Arguments:
   node-url                   Your node's public URL (e.g., http://my-node:8080)
   account-public-key         Base64-encoded account public key (from keyring output)
-  consensus-key    Base64-encoded validator consensus public key (from node status)
 
-Example:
+Flags:
+  --node-address             Seed node address for participant registration (required)
+  --consensus-key            Base64-encoded validator consensus public key (optional)
+                            If not provided, will be auto-fetched from chain node
+
+Environment Variables:
+  DAPI_CHAIN_NODE__URL       Chain node RPC URL (automatically set in api containers)
+
+Troubleshooting:
+  - Auto-fetch fails: Ensure DAPI_CHAIN_NODE__URL is set and chain node is running
+  - Connection errors: Verify node accessibility and proper configuration
+  - Invalid key errors: Use --consensus-key flag to provide key manually
+  - Missing validator info: Node may not be configured as validator, use manual key
+  
+Examples:
+  # Auto-fetch consensus key from 'api' container (requires 'node' container running and DAPI_CHAIN_NODE__URL set):
+  # DAPI_CHAIN_NODE__URL is automatically set when containers are created
   inferenced register-new-participant \
     http://my-node:8080 \
     "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
-    "x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11FKXOpWRmAA=" \
+    --node-address http://195.242.13.239:8000
+
+  # Provide explicit consensus key (for manual/external usage):
+  inferenced register-new-participant \
+    http://my-node:8080 \
+    "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
+    --consensus-key "x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11FKXOpWRmAA=" \
     --node-address http://195.242.13.239:8000`,
-		Args: cobra.ExactArgs(3),
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			nodeAddress, err := cmd.Flags().GetString(NodeAddress)
 			if err != nil {
@@ -70,13 +153,54 @@ Example:
 				return errors.New("node address is required (use --node-address flag)")
 			}
 
+			// Get consensus key from flag (optional)
+			consensusKey, err := cmd.Flags().GetString("consensus-key")
+			if err != nil {
+				return err
+			}
+
 			nodeUrl := args[0]
 			accountPubKey := args[1]
-			validatorConsensusKey := args[2]
 
 			accountAddress, err := extractAddressFromPubKey(accountPubKey)
 			if err != nil {
 				return fmt.Errorf("failed to extract address from account public key: %w", err)
+			}
+
+			// Task 4.3: Implement conditional consensus key logic
+			var validatorConsensusKey string
+			var keySource string
+
+			if strings.TrimSpace(consensusKey) != "" {
+				// Use provided consensus key (explicit mode)
+				validatorConsensusKey = strings.TrimSpace(consensusKey)
+				keySource = "provided"
+
+				// Validate the provided consensus key
+				_, err := utils.SafeCreateED25519ValidatorKey(validatorConsensusKey)
+				if err != nil {
+					return fmt.Errorf("invalid consensus key provided: %w", err)
+				}
+
+				cmd.Printf("Using provided consensus key (validated)\n")
+			} else {
+				// Auto-fetch consensus key from chain node (api/node containers only)
+				keySource = "auto-fetched"
+				cmd.Printf("No consensus key provided, attempting to auto-fetch from chain node...\n")
+
+				fetchedKey, err := fetchConsensusKeyFromNode()
+				if err != nil {
+					return fmt.Errorf("failed to auto-fetch consensus key: %w", err)
+				}
+
+				// Validate the fetched consensus key
+				_, err = utils.SafeCreateED25519ValidatorKey(fetchedKey)
+				if err != nil {
+					return fmt.Errorf("auto-fetched consensus key is invalid: %w. Please provide a valid consensus key manually using --consensus-key flag", err)
+				}
+
+				validatorConsensusKey = fetchedKey
+				cmd.Printf("Successfully auto-fetched and validated consensus key from chain node\n")
 			}
 
 			requestBody := RegisterParticipantDto{
@@ -91,7 +215,7 @@ Example:
 			cmd.Printf("  Node URL: %s\n", nodeUrl)
 			cmd.Printf("  Account Address: %s\n", accountAddress)
 			cmd.Printf("  Account Public Key: %s\n", accountPubKey)
-			cmd.Printf("  Validator Consensus Key: %s\n", validatorConsensusKey)
+			cmd.Printf("  Validator Consensus Key: %s (%s)\n", validatorConsensusKey, keySource)
 			cmd.Printf("  Seed Node Address: %s\n", nodeAddress)
 
 			return sendRegisterNewParticipantRequest(cmd, nodeAddress, &requestBody)
@@ -100,6 +224,8 @@ Example:
 
 	cmd.Flags().String(NodeAddress, "", "Seed node address to send the request to. Example: http://195.242.13.239:8000")
 	cmd.MarkFlagRequired(NodeAddress)
+
+	cmd.Flags().String("consensus-key", "", "Base64-encoded validator consensus public key (optional). If not provided, will be auto-fetched from node status endpoint")
 
 	return cmd
 }
