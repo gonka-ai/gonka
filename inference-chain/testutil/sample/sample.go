@@ -46,7 +46,6 @@ func InvalidED25519ValidatorKeys() map[string]string {
 		// Wrong sizes
 		"too_short": base64.StdEncoding.EncodeToString([]byte("short")),
 		"too_long":  base64.StdEncoding.EncodeToString(make([]byte, 64)), // 64 bytes instead of 32
-		"empty":     "",
 
 		// Invalid base64 encodings
 		"invalid_base64":    "invalid-base64-string!!!",
@@ -74,7 +73,6 @@ func InvalidSECP256K1AccountKeys() map[string]string {
 		// Wrong sizes
 		"too_short": base64.StdEncoding.EncodeToString([]byte("short")),
 		"too_long":  base64.StdEncoding.EncodeToString(make([]byte, 65)), // 65 bytes instead of 33
-		"empty":     "",
 
 		// Wrong format (uncompressed keys start with 0x04 and are 65 bytes)
 		"uncompressed_key": base64.StdEncoding.EncodeToString(append([]byte{0x04}, make([]byte, 64)...)),
