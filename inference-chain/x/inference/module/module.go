@@ -156,6 +156,12 @@ func (AppModule) ConsensusVersion() uint64 { return 3 }
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
 func (am AppModule) BeginBlock(_ context.Context) error {
+	// TODO
+	// if текущий блок == active participants.block_height - 1 {
+	//  - получить app Hash и validators commit из header, записать в active participants current epoch
+	//
+	// }
+
 	return nil
 }
 
