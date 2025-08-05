@@ -3,6 +3,7 @@ package public
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal"
 	"decentralized-api/internal/server/middleware"
@@ -28,7 +29,8 @@ func NewServer(
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
 	trainingExecutor *training.Executor,
-	blockQueue *BridgeQueue) *Server {
+	blockQueue *BridgeQueue,
+	phaseTracker *chainphase.ChainPhaseTracker) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
@@ -44,7 +46,7 @@ func NewServer(
 		blockQueue:       blockQueue,
 	}
 
-	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder)
+	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/v1/")
