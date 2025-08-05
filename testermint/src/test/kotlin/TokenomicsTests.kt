@@ -83,6 +83,9 @@ class TokenomicsTests : TestermintTest() {
         val currentBalance = firstJoin.node.getSelfBalance("nicoin")
         // greater, because it's done validation work at some point, no doubt.
         assertThat(currentBalance - initialBalance).isGreaterThan(standardizedExpectedReward)
+        
+        // Mark for reboot to reset parameters for subsequent tests
+        genesis.markNeedsReboot()
     }
 
     private fun getTopMinerReward(localCluster: LocalCluster): Long {

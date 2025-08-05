@@ -51,6 +51,15 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     go build -mod=readonly -tags muslc -ldflags "$LDFLAGS" \
     -o ./build/dapi \
     && patchelf --set-rpath '$ORIGIN:$ORIGIN/current:/root/.dapi/cosmovisor/current' ./build/dapi
+
+# TO FIX: temporary to have both binaries in api image
+RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
+    cd /app/inference-chain && \
+    CGO_ENABLED=1 CC=gcc \
+    go build -mod=readonly -tags muslc -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inference-chaind" \
+    -o ./build/inferenced ./cmd/inferenced/main.go \
+    && patchelf --set-rpath '$ORIGIN:$ORIGIN/current:/root/.inference/cosmovisor/current' ./build/inferenced
+
 RUN mkdir /build_output
 ################################################################################
 # Binary Exporter stage (for --output optimization)
@@ -58,6 +67,7 @@ RUN mkdir /build_output
 FROM scratch AS binary-exporter
 # Copy all required files to a flat structure
 COPY --from=builder /app/decentralized-api/build/dapi /build_output/decentralized-api
+COPY --from=builder /app/inference-chain/build/inferenced /build_output/inferenced
 COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /build_output/libwasmvm_muslc.x86_64.a
 COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 
@@ -71,7 +81,7 @@ ARG GOOS
 ARG GOARCH
 
 RUN apk update && \
-    apk add --no-cache sed ca-certificates jq libgcc musl-dev && \
+    apk add --no-cache sed ca-certificates jq libgcc musl-dev curl && \
     rm -rf /var/cache/apk/*
 
 WORKDIR /root
@@ -84,6 +94,7 @@ ENV DAEMON_DOWNLOAD_RETRIES=-1
 
 # Copy over binaries from the build-env
 COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
+COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
 COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor

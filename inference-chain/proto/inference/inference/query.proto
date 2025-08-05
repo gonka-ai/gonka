@@ -336,6 +336,33 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/count_po_c_validations_at_height/{blockHeight}";
   
   }
+
+  // Dynamic pricing queries (Task 7.1)
+  rpc GetModelPerTokenPrice (QueryGetModelPerTokenPriceRequest) returns (QueryGetModelPerTokenPriceResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/model_per_token_price/{model_id}";
+
+  }
+
+  rpc GetAllModelPerTokenPrices (QueryGetAllModelPerTokenPricesRequest) returns (QueryGetAllModelPerTokenPricesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_model_per_token_prices";
+
+  }
+
+  rpc GetModelCapacity (QueryGetModelCapacityRequest) returns (QueryGetModelCapacityResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/model_capacity/{model_id}";
+
+  }
+
+  rpc GetAllModelCapacities (QueryGetAllModelCapacitiesRequest) returns (QueryGetAllModelCapacitiesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_model_capacities";
+
+  }
+
+  // Queries all authz grantees with specific message type for an account
+  rpc GranteesByMessageType (QueryGranteesByMessageTypeRequest) returns (QueryGranteesByMessageTypeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -837,3 +864,57 @@ message QueryCountPoCvalidationsAtHeightResponse {
   uint64 count = 1;
 }
 
+// Dynamic pricing query messages
+message QueryGetModelPerTokenPriceRequest {
+  string model_id = 1;
+}
+
+message QueryGetModelPerTokenPriceResponse {
+  uint64 price = 1;
+  bool found = 2;
+}
+
+message QueryGetAllModelPerTokenPricesRequest {}
+
+message ModelPrice {
+  string model_id = 1;
+  uint64 price = 2;
+}
+
+message QueryGetAllModelPerTokenPricesResponse {
+  repeated ModelPrice model_prices = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryGetModelCapacityRequest {
+  string model_id = 1;
+}
+
+message QueryGetModelCapacityResponse {
+  uint64 capacity = 1;
+  bool found = 2;
+}
+
+message QueryGetAllModelCapacitiesRequest {}
+
+message QueryGetAllModelCapacitiesResponse {
+  repeated ModelCapacity model_capacities = 1 [(gogoproto.nullable) = false];
+}
+
+message ModelCapacity {
+  string model_id = 1;
+  uint64 capacity = 2;
+}
+
+message QueryGranteesByMessageTypeRequest {
+  string granter_address   = 1;
+  string message_type_url  = 2;
+}
+
+message Grantee {
+  string address = 1;
+  string pub_key = 2;
+}
+
+message QueryGranteesByMessageTypeResponse {
+  repeated Grantee grantees = 1;
+}

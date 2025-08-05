@@ -50,5 +50,6 @@ message Inference {
   string transfer_signature = 29;
   string execution_signature = 30;
   string original_prompt = 31;
+  uint64 per_token_price = 32; // Locked-in per-token price when inference started (for dynamic pricing)
 }
 

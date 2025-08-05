@@ -1,0 +1,91 @@
+syntax = "proto3";
+package inference.collateral;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "inference/collateral/params.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "inference/collateral/unbonding.proto";
+import "inference/collateral/collateral_balance.proto";
+
+option go_package = "github.com/productscience/inference/x/collateral/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/productscience/inference/collateral/params";
+  }
+
+  // Queries a specific participant's active collateral.
+  rpc Collateral(QueryCollateralRequest) returns (QueryCollateralResponse) {
+    option (google.api.http).get = "/productscience/inference/collateral/collateral/{participant}";
+  }
+
+  // Queries all active collateral.
+  rpc AllCollaterals(QueryAllCollateralsRequest) returns (QueryAllCollateralsResponse) {
+    option (google.api.http).get = "/productscience/inference/collateral/collateral";
+  }
+
+  // Queries a specific participant's unbonding collateral.
+  rpc UnbondingCollateral(QueryUnbondingCollateralRequest) returns (QueryUnbondingCollateralResponse) {
+    option (google.api.http).get = "/productscience/inference/collateral/unbonding/{participant}";
+  }
+
+  // Queries all unbonding collateral.
+  rpc AllUnbondingCollaterals(QueryAllUnbondingCollateralsRequest) returns (QueryAllUnbondingCollateralsResponse) {
+    option (google.api.http).get = "/productscience/inference/collateral/unbonding";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryCollateralRequest is the request type for the Query/Collateral RPC method.
+message QueryCollateralRequest {
+  string participant = 1;
+}
+
+// QueryCollateralResponse is the response type for the Query/Collateral RPC method.
+message QueryCollateralResponse {
+  cosmos.base.v1beta1.Coin amount = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryAllCollateralsRequest is the request type for the Query/AllCollaterals RPC method.
+message QueryAllCollateralsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryAllCollateralsResponse is the response type for the Query/AllCollaterals RPC method.
+message QueryAllCollateralsResponse {
+  repeated CollateralBalance collateral = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// QueryUnbondingCollateralRequest is the request type for the Query/UnbondingCollateral RPC method.
+message QueryUnbondingCollateralRequest {
+  string participant = 1;
+}
+
+// QueryUnbondingCollateralResponse is the response type for the Query/UnbondingCollateral RPC method.
+message QueryUnbondingCollateralResponse {
+  repeated UnbondingCollateral unbondings = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryAllUnbondingCollateralsRequest is the request type for the Query/AllUnbondingCollaterals RPC method.
+message QueryAllUnbondingCollateralsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryAllUnbondingCollateralsResponse is the response type for the Query/AllUnbondingCollaterals RPC method.
+message QueryAllUnbondingCollateralsResponse {
+  repeated UnbondingCollateral unbondings = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

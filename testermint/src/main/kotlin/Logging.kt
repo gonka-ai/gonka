@@ -191,3 +191,7 @@ class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
 fun logSection(name: String) {
     Logger.info("TestSection:$name")
 }
+
+fun logHighlight(text: String) {
+    Logger.warn("TestHighlight:$text")
+}

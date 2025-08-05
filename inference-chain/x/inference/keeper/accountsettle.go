@@ -88,6 +88,11 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 }
 
 func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, previousEpochPocStartHeight uint64) error {
+	if pocBlockHeight == 0 {
+		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "pocBlockHeight", pocBlockHeight, "skipping")
+		return nil
+	}
+
 	k.LogInfo("SettleAccounts", types.Settle, "pocBlockHeight", pocBlockHeight)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
@@ -110,27 +115,91 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 	for _, seedSig := range data.MemberSeedSignatures {
 		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
 	}
+
+	// Check governance flag to determine which reward system to use
+	params := k.GetParams(ctx)
+	var amounts []*SettleResult
+	var rewardAmount int64
 	settleParameters := k.GetSettleParameters(ctx)
 	k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
-	amounts, subsidyResult, err := GetSettleAmounts(participants.Participant, settleParameters)
-	if err != nil {
-		k.LogError("Error getting settle amounts", types.Settle, "error", err)
-		return err
+
+	if params.BitcoinRewardParams.UseBitcoinRewards {
+		// Use Bitcoin-style fixed reward system with its own parameters
+		k.LogInfo("Using Bitcoin-style reward system", types.Settle)
+		var bitcoinResult BitcoinResult
+		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(participants.Participant, &data, params.BitcoinRewardParams, settleParameters)
+		if err != nil {
+			k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
+		}
+		rewardAmount = bitcoinResult.Amount
+	} else {
+		// Use current WorkCoins-based variable reward system with its own parameters
+		k.LogInfo("Using current WorkCoins-based reward system", types.Settle)
+		var subsidyResult SubsidyResult
+		amounts, subsidyResult, err = GetSettleAmounts(participants.Participant, settleParameters)
+		if err != nil {
+			k.LogError("Error getting settle amounts", types.Settle, "error", err)
+		}
+		rewardAmount = subsidyResult.Amount
+		// Handle cutoff logic internally for current system
+		if subsidyResult.CrossedCutoff {
+			k.LogInfo("Crossed subsidy cutoff", types.Settle, "amount", subsidyResult.Amount)
+			k.ReduceSubsidyPercentage(ctx)
+		}
 	}
-	err = k.MintRewardCoins(ctx, subsidyResult.Amount, "subsidy")
+
+	err = k.MintRewardCoins(ctx, rewardAmount, "reward_distribution")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
 		return err
 	}
-	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(subsidyResult.Amount)})
-	if subsidyResult.CrossedCutoff {
-		k.LogInfo("Crossed subsidy cutoff", types.Settle, "amount", subsidyResult.Amount)
-		k.ReduceSubsidyPercentage(ctx)
+	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
+
+	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(participants.Participant))
+	for _, participant := range participants.Participant {
+		k.LogDebug("Checking downtime for participant", types.Settle, "participant", participant.Address, "missed_requests", participant.CurrentEpochStats.MissedRequests, "inference_count", participant.CurrentEpochStats.InferenceCount)
+		// TODO: Check if it is better to move this function outside the settleAccounts function.
+		// Check for downtime and slash if necessary.
+		k.CheckAndSlashForDowntime(ctx, &participant)
+	}
+
+	for i, participant := range participants.Participant {
+		// amount should have the same order as participants
+		amount := amounts[i]
+
+		if participant.Status != types.ParticipantStatus_INVALID {
+			participant.EpochsCompleted += 1
+		}
+		// TODO: Check if we need to reset status
+		k.BankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, participant.Address, "balance", sdk.NewInt64Coin(types.BaseCoin, participant.CoinBalance), "settling")
+		participant.CoinBalance = 0
+		participant.CurrentEpochStats.EarnedCoins = 0
+		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
+		epochPerformance := types.EpochPerformanceSummary{
+			EpochStartHeight:      pocBlockHeight,
+			ParticipantId:         participant.Address,
+			InferenceCount:        participant.CurrentEpochStats.InferenceCount,
+			MissedRequests:        participant.CurrentEpochStats.MissedRequests,
+			EarnedCoins:           amount.Settle.WorkCoins,
+			RewardedCoins:         amount.Settle.RewardCoins,
+			ValidatedInferences:   participant.CurrentEpochStats.ValidatedInferences,
+			InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
+			Claimed:               false,
+		}
+		k.SetEpochPerformanceSummary(ctx, epochPerformance)
+		participant.CurrentEpochStats = &types.CurrentEpochStats{}
+		k.SetParticipant(ctx, participant)
 	}
 
 	for _, amount := range amounts {
+		// TODO: Check if we have to store 0 or error settle amount as well, as it store seed signature, which we may use somewhere
 		if amount.Error != nil {
 			k.LogError("Error calculating settle amounts", types.Settle, "error", amount.Error, "participant", amount.Settle.Participant)
+			continue
+		}
+		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins
+		if totalPayment == 0 {
+			k.LogDebug("No payment needed for participant", types.Settle, "address", amount.Settle.Participant)
 			continue
 		}
 
@@ -138,47 +207,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 		if found {
 			amount.Settle.SeedSignature = seedSignature
 		}
-		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins
-		if totalPayment == 0 {
-			k.LogDebug("No payment needed for participant", types.Settle, "address", amount.Settle.Participant)
-			continue
-		}
-		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
-		participant, found := k.GetParticipant(ctx, amount.Settle.Participant)
-		if !found {
-			k.LogError("Participant not found", types.Settle, "address", amount.Settle.Participant)
-			continue
-		}
-		participant.EpochsCompleted += 1
-		k.LogBalance(participant.Address, 0-participant.CoinBalance, 0, "paid")
-		participant.CoinBalance = 0
-		participant.CurrentEpochStats.EarnedCoins = 0
 
-		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
-		k.SetEpochPerformanceSummary(ctx,
-			types.EpochPerformanceSummary{
-				EpochStartHeight:      pocBlockHeight,
-				ParticipantId:         participant.Address,
-				InferenceCount:        participant.CurrentEpochStats.InferenceCount,
-				MissedRequests:        participant.CurrentEpochStats.MissedRequests,
-				EarnedCoins:           amount.Settle.WorkCoins,
-				RewardedCoins:         amount.Settle.RewardCoins,
-				ValidatedInferences:   participant.CurrentEpochStats.ValidatedInferences,
-				InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
-				Claimed:               false,
-			})
-		participant.CurrentEpochStats = &types.CurrentEpochStats{}
-		k.SetParticipant(ctx, participant)
 		amount.Settle.PocStartHeight = pocBlockHeight
-		previousSettle, found := k.GetSettleAmount(ctx, amount.Settle.Participant)
-		if found {
-			// No claim, burn it!
-			err = k.BurnCoins(ctx, int64(previousSettle.GetTotalCoins()), "no_claim:"+amount.Settle.Participant)
-			if err != nil {
-				k.LogError("Error burning coins", types.Settle, "error", err)
-			}
-		}
-		k.SetSettleAmount(ctx, *amount.Settle)
+		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
+		k.SetSettleAmountWithBurn(ctx, *amount.Settle)
 	}
 
 	if previousEpochPocStartHeight == 0 {
@@ -186,15 +218,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 	}
 
 	k.LogInfo("Burning old settle amounts", types.Settle, "previousEpochPocStartHeight", previousEpochPocStartHeight)
-	allSettleAmounts := k.GetAllSettleAmount(ctx)
-	for _, settleAmount := range allSettleAmounts {
-		if settleAmount.PocStartHeight < previousEpochPocStartHeight {
-			err = k.BurnCoins(ctx, int64(settleAmount.GetTotalCoins()), "no_claim:"+settleAmount.Participant)
-			if err != nil {
-				k.LogError("Error burning old settle amount", types.Settle, "error", err)
-			}
-			k.RemoveSettleAmount(ctx, settleAmount.Participant)
-		}
+	err = k.BurnOldSettleAmounts(ctx, previousEpochPocStartHeight)
+	if err != nil {
+		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
 	}
 	return nil
 }
@@ -211,6 +237,7 @@ func GetSettleAmounts(participants []types.Participant, tokenParams *SettleParam
 	distributions = append(distributions, rewardDistribution)
 	for _, p := range participants {
 		settle, err := getSettleAmount(&p, distributions)
+		// We have to create amount record for each participant in the same order as participants
 		amounts = append(amounts, &SettleResult{
 			Settle: settle,
 			Error:  err,

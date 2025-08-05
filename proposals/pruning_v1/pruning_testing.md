@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-The Inference-Ignite blockchain implements pruning of Proof of Computation (PoC) data to maintain chain efficiency and reduce storage requirements. PoC data includes PoCBatch and PoCValidation objects that are stored on the chain. After a certain threshold of epochs, this data is pruned (removed) from the chain state.
+The Gonka blockchain implements pruning of Proof of Computation (PoC) data to maintain chain efficiency and reduce storage requirements. PoC data includes PoCBatch and PoCValidation objects that are stored on the chain. After a certain threshold of epochs, this data is pruned (removed) from the chain state.
 
 Currently, there is no straightforward way to verify that pruning has occurred correctly in end-to-end (e2e) tests. We need a mechanism to confirm that PoC data has been properly pruned after the pruning threshold has been reached.
 
@@ -76,4 +76,4 @@ This will generate the necessary boilerplate code for the queries, which will th
 
 ## Conclusion
 
-By implementing these new queries, we will enable e2e testing of PoC pruning, ensuring that the pruning logic is working correctly and that PoC data is being properly removed from the chain state after the pruning threshold has been reached. This will improve the reliability and maintainability of the Inference-Ignite blockchain.
+By implementing these new queries, we will enable e2e testing of PoC pruning, ensuring that the pruning logic is working correctly and that PoC data is being properly removed from the chain state after the pruning threshold has been reached. This will improve the reliability and maintainability of the Gonka.
