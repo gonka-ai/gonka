@@ -247,54 +247,44 @@ For 3 agents: ~14 requests/second each (conservative estimate)
 > **Note**: Equal distribution is simpler but may create inefficiencies when node weights vary significantly.
 
 
-## Bandwidth Tracking Approaches
+### Initial Estimation + Expiration Block
+**How it works**: 
+1. Estimate KB based on request parameters
+2. Calculate expiration block (start block + request lifespan)
+3. Record estimated usage at the expiration block as deadline
+4. Check acceptance by averaging usage across the window [current block : expiration block]
 
-Three different approaches to track and limit bandwidth usage:
-
-### Option 1: Initial Estimation + Expiration Block
-**How it works**: Estimate KB based on request parameters, reserve bandwidth until expiration block
 ```go
-requestKB := float64(promptTokens)*0.0023 + float64(maxTokens)*0.64  // Assume worst case
-committedKB[blockHeight] += requestKB  // Reserve until expiration
+// Estimate request size
+estimatedKB := float64(promptTokens)*0.0023 + float64(maxTokens)*0.64
+
+// Record at expiration block (deadline)
+expirationBlock := startBlock + requestLifespanBlocks
+usagePerBlock[expirationBlock] += estimatedKB
+
+// Check acceptance: average window usage vs limit
+totalUsage := sum(usagePerBlock[currentBlock : expirationBlock])
+avgUsage := totalUsage / windowSize
+canAccept := avgUsage + newRequestAvgImpact <= limitsPerBlockKB
 ```
+
+**Logic**: Since inference will be recorded on-chain somewhere within the window (likely at the end), we check if the **average capacity** across the entire window stays under limits. This allows flexible timing while ensuring chain capacity constraints.
 
 **Pros**:
 - **Predictive**: Can prevent accepting requests before limits exceeded
+- **Window-based averaging**: Handles timing uncertainty in chain recording
 - **Simple implementation**: No proxy instrumentation needed
 - **Fail-fast**: Immediate feedback to users
 
 **Cons**:
 - **Over-estimation**: Reserves for max_tokens but most responses much shorter
 - **Static assumptions**: Fixed KB/token ratios may drift over time
-- **Block-based expiration**: May hold bandwidth longer than actual completion time
-
-### Option 2: Real KB Tracking via Proxy
-**How it works**: Measure actual bytes transferred through proxy, track real KB per block
-```go
-// In proxy when response completes:
-actualKB := len(responsePayload) / 1024.0
-actualKBPerBlock[currentBlock] += actualKB
-
-// For admission control:
-recentAvgKB := getRecentAverage(3)  // Last 3 blocks
-return recentAvgKB < nodeLimit * 0.8  // Throttle at 80%
-```
-
-**Pros**:
-- **Accurate**: Tracks real bandwidth consumption
-- **Adaptive**: Automatically adjusts to actual usage patterns
-- **No over-reservation**: Only counts actual data transferred
-
-**Cons**:
-- **Reactive only**: Can only throttle after measuring, not prevent beforehand
-- **Implementation complexity**: Requires proxy instrumentation
-- **Memory tracking**: Must store actual payload sizes over time windows
 
 ---
 
 **Recommendation**: Start with **Option 1** for simplicity and reliability, then consider **Option 2** if more precision needed.
 
-### Phase 1: Payload Optimization
+### Phase 2: Payload Optimization
 **Objective**: Reduce on-chain data size by 60-80%
 
 **Changes**:
@@ -305,7 +295,7 @@ return recentAvgKB < nodeLimit * 0.8  // Throttle at 80%
   - Duplicate `original_prompt` fields
   - Unnecessary metadata
 
-### Phase 2: Off-chain Response Storage
+### Phase 3: Off-chain Response Storage
 **Objective**: Eliminate response payload storage on-chain until validation
 
 **Protocol**:

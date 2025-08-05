@@ -76,11 +76,11 @@ func (bl *BandwidthLimiter) CanAcceptRequest(blockHeight int64, promptTokens, ma
 	estimatedKB := float64(promptTokens)*bl.kbPerInputToken + float64(maxTokens)*bl.kbPerOutputToken
 
 	totalUsage := 0.0
-	for i := blockHeight; i < blockHeight+bl.requestLifespanBlocks; i++ {
+	for i := blockHeight; i <= blockHeight+bl.requestLifespanBlocks; i++ {
 		totalUsage += bl.usagePerBlock[i]
 	}
-	avgUsage := totalUsage / float64(bl.requestLifespanBlocks)
-	estimatedKBPerBlock := estimatedKB / float64(bl.requestLifespanBlocks)
+	avgUsage := totalUsage / float64(bl.requestLifespanBlocks+1)
+	estimatedKBPerBlock := estimatedKB / float64(bl.requestLifespanBlocks+1)
 
 	logging.Info("CanAcceptRequest", types.Config,
 		"avgUsage", avgUsage,
@@ -238,7 +238,7 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 
 	limitsPerBlockKB := bandwidthParams.EstimatedLimitsPerBlockKb
 	if limitsPerBlockKB == 0 {
-		limitsPerBlockKB = 1024
+		limitsPerBlockKB = 21 * 1024
 	}
 
 	kbPerInputToken := bandwidthParams.KbPerInputToken
