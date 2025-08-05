@@ -49,13 +49,5 @@ func (msg *MsgSubmitNewUnfundedParticipant) ValidateBasic() error {
 		}
 	}
 
-	// Validate WorkerKey (SECP256K1) if provided
-	if msg.WorkerKey != "" {
-		_, err := utils.SafeCreateSECP256K1AccountKey(msg.WorkerKey)
-		if err != nil {
-			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid worker key: %s", err)
-		}
-	}
-
 	return nil
 }

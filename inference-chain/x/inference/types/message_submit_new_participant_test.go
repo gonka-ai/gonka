@@ -65,21 +65,6 @@ func TestMsgSubmitNewParticipant_ValidateBasic(t *testing.T) {
 		})
 	}
 
-	// Add test cases for invalid worker keys
-	for name, invalidKey := range sample.InvalidSECP256K1AccountKeys() {
-		tests = append(tests, struct {
-			name string
-			msg  MsgSubmitNewParticipant
-			err  error
-		}{
-			name: "invalid worker key: " + name,
-			msg: MsgSubmitNewParticipant{
-				Creator:   validCreator,
-				WorkerKey: invalidKey,
-			},
-			err: sdkerrors.ErrInvalidPubKey,
-		})
-	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.msg.ValidateBasic()
