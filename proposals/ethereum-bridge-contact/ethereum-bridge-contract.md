@@ -38,7 +38,7 @@ This document describes the Ethereum smart contract that serves as the bridge en
 2. Encode data using abi.encodePacked for consistent hashing
 3. Compute message hash: keccak256(encoded_data)
 4. Retrieve group public key for specified epoch_id
-5. Verify BLS signature against group public key using precompiled contract
+5. Verify BLS signature against group public key using precompiled contract (with operation domain separation)
 6. Check request_id hasn't been processed for this epoch_id
 7. Execute withdrawal if signature valid and request not processed
 8. Record request_id as processed for this epoch_id
@@ -316,7 +316,7 @@ struct WithdrawalCommand {
 
 1. **Epoch Validation**: Verify group key exists for specified `epochId` (`epochGroupKeys[epochId].length > 0`)
 2. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, recipient, tokenContract, amount)`
+3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, WITHDRAW_OPERATION, recipient, tokenContract, amount)`
 4. **Balance Check**: Ensure contract has sufficient token or ETH balance
 5. **Execution**: Transfer tokens or ETH to recipient address
    - **ETH withdrawals**: When `tokenContract == address(this)`, transfer ETH using `call{value:}`
@@ -411,5 +411,117 @@ uint64[] public activeRequestEpochs;  // Ordered list of epochs with processed r
 
 - Upgrade mechanism
 - Performance optimizations
+
+## Extended Functionality: WGNK ERC-20 Token Integration
+
+### 7. WGNK (Wrapped Gonka) ERC-20 Implementation
+
+**Dual Purpose Contract:**
+
+This contract serves as both the Ethereum bridge and the ERC-20 token contract for WGNK (Wrapped Gonka). This unified design creates a seamless bridge experience where the contract itself is the wrapped token, eliminating the need for separate token and bridge contracts.
+
+**ERC-20 Standard Compliance:**
+
+- **Token Metadata**: Name "Wrapped Gonka", Symbol "WGNK", Decimals matching native Gonka
+- **Standard Functions**: `totalSupply`, `balanceOf`, `transfer`, `approve`, `transferFrom`, `allowance`
+- **Events**: Standard `Transfer` and `Approval` events for full ERC-20 compatibility
+- **Storage**: Standard ERC-20 mappings for balances and allowances
+
+**Auto-Burn Mechanism:**
+
+When WGNK tokens are transferred to the contract's own address, they are automatically burned instead of being credited to the contract's balance. This provides an intuitive UX where users "send tokens to the bridge" to initiate burning for bridge-back operations.
+
+```solidity
+// Enhanced transfer logic with auto-burn
+function transfer(address to, uint256 amount) public override returns (bool) {
+    if (to == address(this)) {
+        // Auto-burn: sending tokens to contract burns them
+        _burn(msg.sender, amount);
+        emit WGNKBurned(msg.sender, amount, block.timestamp);
+        return true;
+    } else {
+        // Standard ERC-20 transfer
+        return super.transfer(to, amount);
+    }
+}
+```
+
+**BLS-Validated Minting:**
+
+New minting operation that accepts BLS threshold signatures to mint WGNK tokens directly to recipients. This enables validators to mint WGNK when users bridge from the native chain.
+
+```solidity
+struct MintCommand {
+    uint64 epochId;           // 8 bytes - epoch for signature validation
+    bytes32 requestId;        // 32 bytes - unique request identifier from source chain
+    address recipient;        // 20 bytes - Ethereum address to receive WGNK
+    uint256 amount;          // 32 bytes - WGNK amount to mint
+    bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
+}
+
+function mintWithSignature(MintCommand calldata cmd) external;
+```
+
+**Minting Validation Flow:**
+
+1. **State Check**: Only allowed in `NORMAL_OPERATION` state
+2. **Epoch Validation**: Verify group key exists for specified `epochId`
+3. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
+4. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, MINT_OPERATION, recipient, amount, )`
+5. **Execution**: Mint WGNK tokens to recipient's balance, increase total supply
+6. **Record Processing**: Mark `requestId` as processed for this `epochId`
+
+**Integration with Existing Systems:**
+
+- **Bridge Operations**: All existing withdrawal functionality preserved for other ERC-20 tokens and ETH
+- **BLS Infrastructure**: Reuses epoch-based group key management and signature verification
+- **Request Tracking**: Uses same request ID system to prevent double-minting
+- **State Management**: WGNK operations suspended during admin control (except standard transfers between users)
+
+**Enhanced Event System:**
+
+```solidity
+// New events for WGNK operations
+event WGNKMinted(uint64 indexed epochId, bytes32 indexed requestId, address indexed recipient, uint256 amount);
+event WGNKBurned(address indexed from, uint256 amount, uint256 timestamp);
+
+// Standard ERC-20 events
+event Transfer(address indexed from, address indexed to, uint256 value);
+event Approval(address indexed owner, address indexed spender, uint256 value);
+```
+
+**Complete Bridge Flow Integration:**
+
+1. **Native to Ethereum**:
+   - User locks native Gonka on source chain
+   - Validators generate BLS signature for mint command
+   - Anyone calls `mintWithSignature` to mint WGNK to user's Ethereum address
+
+2. **Ethereum to Native**:
+   - User transfers WGNK to contract address (auto-burn triggered)
+   - Off-chain bridge detects `WGNKBurned` event
+   - Native Gonka unlocked on source chain
+
+**Storage Optimization:**
+
+```solidity
+// Additional ERC-20 storage alongside existing bridge storage
+mapping(address => uint256) private _balances;
+mapping(address => mapping(address => uint256)) private _allowances;
+uint256 private _totalSupply;
+
+// Reuse existing structures
+// - epochGroupKeys: for both withdrawal and mint signature verification
+// - processedRequests: for both withdrawal and mint replay protection
+// - epochMeta: state management applies to both bridge and WGNK operations
+```
+
+**Security Considerations:**
+
+- **Operation Domain Separation**: Each operation type (withdraw/mint) includes a unique constant in the message hash to prevent signature reuse between different operations
+- **Dual Validation**: Both minting and withdrawal operations use same BLS security model
+- **State Isolation**: Admin control suspends bridge operations but allows standard ERC-20 transfers
+- **Burn Safety**: Auto-burn is permissionless and irreversible by design (intended behavior)
+- **Request Isolation**: Separate request ID namespaces for minting vs withdrawal prevent cross-operation replay attacks
 
 This specification provides a comprehensive foundation for a secure, decentralized bridge contract while maintaining necessary administrative controls for emergency situations.
