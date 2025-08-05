@@ -9,7 +9,7 @@ export ML_GRPC_SERVER_PORT=9003
 export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 rm -r "prod-local" || true
-export PUBLIC_URL="http://${KEY_NAME}-api:8080"
+export PUBLIC_URL="http://${KEY_NAME}-api:9000"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
@@ -50,7 +50,7 @@ export ML_GRPC_SERVER_PORT=9013
 export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
-export PUBLIC_URL="http://${KEY_NAME}-api:8080"
+export PUBLIC_URL="http://${KEY_NAME}-api:9010"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 ./launch_add_network_node.sh
 
@@ -64,6 +64,6 @@ export ML_GRPC_SERVER_PORT=9023
 export WIREMOCK_PORT=8092
 export RPC_PORT=8102
 export P2P_PORT=8202
-export PUBLIC_URL="http://${KEY_NAME}-api:8080"
+export PUBLIC_URL="http://${KEY_NAME}-api:9020"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 ./launch_add_network_node.sh

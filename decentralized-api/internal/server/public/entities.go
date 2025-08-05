@@ -48,7 +48,7 @@ type ActiveParticipantWithProof struct {
 	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
 	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
 	Validators              []*comettypes.Validator  `json:"validators"`
-	Block                   []*comettypes.Block      `json:"block"`
+	Block                   *comettypes.Block        `json:"block"`
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 

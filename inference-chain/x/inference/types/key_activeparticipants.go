@@ -27,12 +27,3 @@ func ActiveParticipantsFullKey(epoch uint64) []byte {
 
 	return key
 }
-
-func ActiveParticipantsKey(epoch uint64) []byte {
-	var key []byte
-
-	key = append(key, sdk.Uint64ToBigEndian(epoch)...)
-	key = append(key, []byte("/")...)
-
-	return key
-}
