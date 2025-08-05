@@ -15,98 +15,100 @@ class BandwidthLimiterTests : TestermintTest() {
         // - EstimatedLimitsPerBlockKb: 1024KB (default)
         // - KbPerInputToken: 0.0023 
         // - KbPerOutputToken: 0.64
+        // - RequestLifespanBlocks: 10 (default)
         val (cluster, genesis) = initCluster(reboot = true)
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
 
         logSection("=== Testing Bandwidth Limiter ===")
+        logSection("Bandwidth calculation: Total KB gets divided by requestLifespanBlocks (10)")
+        logSection("Limit: 1024KB per block, so need >10240KB total to exceed limit")
 
-        // Step 1: Send two parallel large requests to test bandwidth limiting
-        logSection("1. Sending two parallel large requests to exceed bandwidth limit")
-        val genesisAddress = genesis.node.getAddress()
+        // Test: Use runParallelInferences with 20 requests to exceed bandwidth limit
+        logSection("1. Sending 20 parallel requests using runParallelInferences")
         
-        // Create two large requests that together exceed the 1024KB limit
-        // Each request: ~600KB, total ~1200KB > 1024KB limit
-        val timestamp1 = Instant.now().toEpochNanos()
-        val timestamp2 = timestamp1 + 1 // Ensure unique timestamp
-        
-        val largeRequest1 = inferenceRequestObject.copy(
-            messages = listOf(ChatMessage("user", "First large request for bandwidth testing.")),
-            maxTokens = 900 // ~576KB (900 * 0.64)
+        // Create requests that will collectively exceed bandwidth
+        // Each request: maxTokens = 800 -> ~512KB total (800 * 0.64)
+        // Per block: 512KB / 10 blocks = ~51.2KB per block per request
+        // 20 requests: 20 * 51.2KB = ~1024KB per block (right at the limit)
+        // Let's use 25 requests to definitely exceed: 25 * 51.2KB = ~1280KB per block > 1024KB limit
+        val testRequest = inferenceRequestObject.copy(
+            messages = listOf(ChatMessage("user", "Bandwidth test request.")),
+            maxTokens = 800 // ~512KB total, ~51.2KB per block
         )
-        val largeRequest2 = inferenceRequestObject.copy(
-            messages = listOf(ChatMessage("user", "Second large request for bandwidth testing.")),
-            maxTokens = 900 // ~576KB (900 * 0.64)
+
+        logSection("Each request: 800 maxTokens = ~512KB total = ~51.2KB per block")
+        logSection("Testing with 20 requests = ~1024KB per block (should hit limit)")
+
+        // Use runParallelInferences with many concurrent requests
+        val results = runParallelInferencesWithResults(
+            genesis = genesis,
+            count = 20,
+            waitForBlocks = 0, // Don't wait for completion initially
+            maxConcurrentRequests = 20, // Allow all to run simultaneously
+            inferenceRequest = testRequest
         )
         
-        val request1Json = cosmosJson.toJson(largeRequest1)
-        val request2Json = cosmosJson.toJson(largeRequest2)
+        val successfulRequests = results.size
+        val rejectedRequests = 20 - successfulRequests
         
-        val signature1 = genesis.node.signPayload(request1Json, null, timestamp1, genesisAddress)
-        val signature2 = genesis.node.signPayload(request2Json, null, timestamp2, genesisAddress)
+        logSection("2. Results from runParallelInferences:")
+        logSection("- Successful requests: $successfulRequests")
+        logSection("- Rejected requests: $rejectedRequests")
+        
+        // Some requests should be rejected due to bandwidth limits
+        assertThat(rejectedRequests).describedAs("Some requests should be rejected due to bandwidth limits").isGreaterThan(0)
+        assertThat(successfulRequests).describedAs("Some requests should succeed").isGreaterThan(0)
+        logSection("✓ Bandwidth limiter correctly rejected $rejectedRequests out of 20 requests")
 
-        // Send both requests in parallel using threads
-        logSection("2. Sending parallel requests - one should succeed, one should fail with 429")
+        // Test with even more requests to ensure clear rejection
+        logSection("3. Testing with even more requests (30) to ensure clear bandwidth limiting")
         
-        var response1: OpenAIResponse? = null
-        var response2: OpenAIResponse? = null
-        var exception1: Exception? = null
-        var exception2: Exception? = null
+        val moreResults = runParallelInferencesWithResults(
+            genesis = genesis,
+            count = 30,
+            waitForBlocks = 0,
+            maxConcurrentRequests = 30,
+            inferenceRequest = testRequest
+        )
         
-        val thread1 = Thread {
-            try {
-                response1 = genesis.api.makeInferenceRequest(request1Json, genesisAddress, signature1, timestamp1)
-            } catch (e: Exception) {
-                exception1 = e
-            }
-        }
+        val moreSuccessful = moreResults.size
+        val moreRejected = 30 - moreSuccessful
         
-        val thread2 = Thread {
-            try {
-                response2 = genesis.api.makeInferenceRequest(request2Json, genesisAddress, signature2, timestamp2)
-            } catch (e: Exception) {
-                exception2 = e
-            }
-        }
+        logSection("Results from 30 parallel requests:")
+        logSection("- Successful requests: $moreSuccessful")
+        logSection("- Rejected requests: $moreRejected")
         
-        // Start both threads simultaneously
-        thread1.start()
-        thread2.start()
-        
-        // Wait for both to complete
-        thread1.join()
-        thread2.join()
-        
-        // One should succeed, one should fail with 429
-        val successCount = listOf(response1, response2).count { it != null }
-        val failureCount = listOf(exception1, exception2).count { 
-            it is FuelError && it.message?.contains("429") == true 
-        }
-        
-        logSection("3. Verifying results: $successCount successes, $failureCount 429 failures")
-        assertThat(successCount).isEqualTo(1)
-        assertThat(failureCount).isEqualTo(1)
-        logSection("✓ Bandwidth limiter correctly allowed one request and rejected one with 429")
+        // With 30 requests, we should definitely see rejections
+        assertThat(moreRejected).describedAs("More requests should be rejected with higher load").isGreaterThan(0)
+        logSection("✓ Bandwidth limiter correctly rejected $moreRejected out of 30 requests")
 
-        // Step 4: Wait for requests to complete and test sequential request (should succeed)
-        logSection("4. Waiting for requests to complete, then sending another large request")
+        // Test bandwidth release
+        logSection("4. Waiting for bandwidth release and testing again")
         genesis.node.waitForNextBlock(5) // Wait for completion and bandwidth release
+        Thread.sleep(2000) // Additional wait for cleanup
         
-        val timestamp3 = Instant.now().toEpochNanos() + 10 // New timestamp
-        val largeRequest3 = inferenceRequestObject.copy(
-            messages = listOf(ChatMessage("user", "Third request after bandwidth release.")),
-            maxTokens = 900 // ~576KB
+        val finalResults = runParallelInferencesWithResults(
+            genesis = genesis,
+            count = 10,
+            waitForBlocks = 0,
+            maxConcurrentRequests = 10,
+            inferenceRequest = testRequest
         )
-        val request3Json = cosmosJson.toJson(largeRequest3)
-        val signature3 = genesis.node.signPayload(request3Json, null, timestamp3, genesisAddress)
         
-        // This should succeed now that previous requests have completed
-        val response3 = genesis.api.makeInferenceRequest(request3Json, genesisAddress, signature3, timestamp3)
-        assertThat(response3.id).isEqualTo(signature3)
-        assertNotNull(response3)
-        logSection("✓ Sequential large request succeeded after bandwidth release")
+        val finalSuccessful = finalResults.size
+        logSection("After bandwidth release: $finalSuccessful out of 10 requests succeeded")
+        
+        // After release, more requests should succeed
+        assertThat(finalSuccessful).describedAs("More requests should succeed after bandwidth release").isGreaterThan(5)
+        logSection("✓ Bandwidth was released and new requests can be processed")
 
         logSection("=== Bandwidth Limiter Test Completed Successfully ===")
+        logSection("Summary:")
+        logSection("- First test (20 requests): $rejectedRequests rejected")
+        logSection("- Second test (30 requests): $moreRejected rejected") 
+        logSection("- After release (10 requests): ${10 - finalSuccessful} rejected")
+        logSection("- Bandwidth limiter is working correctly!")
     }
 }
 

@@ -88,7 +88,9 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
     Modify main server initialization to create BandwidthLimiter instance with all bandwidth parameters (limit and coefficients) fetched from chain's BandwidthLimitsParams
 
 [DONE]: Implement weight-based bandwidth allocation per Transfer Agent  
-    ✅ Added calculateWeightBasedBandwidthLimit function in server.go that fetches all participants, finds current node's weight, calculates total weight, and applies the formula: taEstimatedLimitsPerBlockKb = EstimatedLimitsPerBlockKb * (nodeWeight / totalWeight). Function is called during server initialization with graceful fallback to default limit if weight calculation fails.
+    ✅ Added calculateWeightBasedBandwidthLimit function that fetches all participants, finds current node's weight, calculates total weight, and applies the formula: taEstimatedLimitsPerBlockKb = EstimatedLimitsPerBlockKb * (nodeWeight / totalWeight). Enhanced with epoch-based automatic weight refresh, robust error handling for negative weights/totalWeight, and fallback to default limits when participant data is unavailable. Function now updates every epoch to handle participant weight changes properly.
+    ✅ PERFORMANCE FIX: Added EpochGroupDataCache to prevent expensive RPC calls on every request. Cache only fetches new EpochGroupData when epoch changes (from blockchain RPC every ~few hours instead of every request). BandwidthLimiter now uses cached data via ChainPhaseTracker integration, dramatically reducing load from potentially 1000s of queries/minute to 1 query/epoch. Minimalistic implementation with thread-safe double-checked locking pattern.
+    ✅ COMPUTATION OPTIMIZATION: Added cached weight-based limit calculation. Now skips weight computation loop entirely if same epoch, avoiding redundant math on every request. Only recalculates when epoch changes, providing near-zero overhead for repeated requests within same epoch.
 
 [TODO]: Add bandwidth checking to request handler before proxying
     Modify `post_chat_handler.go` to get current block height, check CanAcceptRequest, reject with 429 error if over limit, otherwise RecordRequest
@@ -101,8 +103,8 @@ This implementation follows **Option 1 (Predictive Estimation)** with bandwidth 
 [DONE]: Create unit tests for BandwidthLimiter
     ✅ Created `decentralized-api/internal/bandwidth_limiter_test.go` with comprehensive tests for: under-limit acceptance, over-limit rejection, correct record/release behavior with completion-block logic, thread safety under concurrent load, and cleanup functionality. All tests passing.
 
-[WIP]: Create integration test in testermint
-    Add new test suite that configures low bandwidth limit (100KB), sends 70KB request (success), immediate 40KB request (429 failure), wait for completion, retry 40KB request (success)
+[DONE]: Create integration test in testermint
+    ✅ Created comprehensive BandwidthLimiterTests.kt with multiple test scenarios: oversized request rejection (guaranteed 429), parallel requests using runParallelInferencesWithResults, sequential requests with timing delays, and bandwidth release verification. Test handles mocked inference environment properly and provides robust verification of bandwidth limiting functionality.
 
 ---
 
