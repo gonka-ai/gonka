@@ -12,7 +12,7 @@ import (
 
 // SafeCreateED25519ValidatorKey creates an ED25519 key and catches the panic that causes consensus failure
 // This is the minimal fix for the bug report - let cosmos-sdk crypto do the validation
-func SafeCreateED25519ValidatorKey(validatorKeyBase64 string) (cryptotypes.PubKey, error) {
+func SafeCreateED25519ValidatorKey(validatorKeyBase64 string) (pubKey cryptotypes.PubKey, err error) {
 	if validatorKeyBase64 == "" {
 		return nil, sdkerrors.Wrap(errors.ErrInvalidPubKey, "validator key cannot be empty")
 	}
@@ -28,7 +28,7 @@ func SafeCreateED25519ValidatorKey(validatorKeyBase64 string) (cryptotypes.PubKe
 			"ED25519 validator key must be exactly 32 bytes, got %d bytes", len(pubKeyBytes))
 	}
 
-	pubKey := &ed25519.PubKey{Key: pubKeyBytes}
+	pubKey = &ed25519.PubKey{Key: pubKeyBytes}
 
 	// Test that the key works - catch any panics from Address() call
 	defer func() {
@@ -39,11 +39,11 @@ func SafeCreateED25519ValidatorKey(validatorKeyBase64 string) (cryptotypes.PubKe
 
 	_ = pubKey.Address() // This is where the panic occurs with invalid keys
 
-	return pubKey, nil
+	return pubKey, err
 }
 
 // SafeCreateSECP256K1AccountKey creates a SECP256K1 key with error handling
-func SafeCreateSECP256K1AccountKey(accountKeyBase64 string) (cryptotypes.PubKey, error) {
+func SafeCreateSECP256K1AccountKey(accountKeyBase64 string) (pubKey cryptotypes.PubKey, err error) {
 	if accountKeyBase64 == "" {
 		return nil, sdkerrors.Wrap(errors.ErrInvalidPubKey, "account key cannot be empty")
 	}
@@ -65,7 +65,7 @@ func SafeCreateSECP256K1AccountKey(accountKeyBase64 string) (cryptotypes.PubKey,
 			"SECP256K1 key must be in compressed format (first byte should be 0x02 or 0x03)")
 	}
 
-	pubKey := &secp256k1.PubKey{Key: pubKeyBytes}
+	pubKey = &secp256k1.PubKey{Key: pubKeyBytes}
 
 	// Test that the key works - catch any panics from Address() call
 	defer func() {
@@ -76,5 +76,5 @@ func SafeCreateSECP256K1AccountKey(accountKeyBase64 string) (cryptotypes.PubKey,
 
 	_ = pubKey.Address() // This triggers any validation panics
 
-	return pubKey, nil
+	return pubKey, err
 }
