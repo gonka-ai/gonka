@@ -146,10 +146,8 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 	// Add chain_id (32 bytes)
 	encodedData = append(encodedData, chainIdBytes...)
 
-	// Add new_epoch_id (uint64 -> 8 bytes big endian)
-	newEpochBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(newEpochBytes, newEpochID)
-	encodedData = append(encodedData, newEpochBytes...)
+	// Note: Removed new_epoch_id from hash as it doesn't provide additional security
+	// Format: abi.encodePacked(previous_epoch_id, chain_id, data[0], data[1], data[2])
 
 	// Add data[0] (first 32 bytes of group public key)
 	encodedData = append(encodedData, groupPublicKey[0:32]...)
