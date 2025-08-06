@@ -5,16 +5,21 @@ set -ex
 # This script collects all gentx files and injects them into the
 # intermediate genesis file, producing the final launch-ready genesis.
 
-STATE_DIR="/root/.inference"
+BASE_DIR="/data"
+STATE_DIR="$BASE_DIR/.inference"
 APP_NAME="inferenced"
-GENTX_DIR_COLLECTED="/root/gentx_collected"
-INTERMEDIATE_GENESIS_DIR="/root/intermediate_genesis"
-FINAL_GENESIS_DIR="/root/final_genesis"
+GENTX_DIR_COLLECTED="$BASE_DIR/gentx_collected"
+INTERMEDIATE_GENESIS_DIR="$BASE_DIR/intermediate_genesis_output"
+FINAL_GENESIS_DIR="$BASE_DIR/final_genesis_output"
 
-# 1. Place the intermediate genesis file in the config directory
+# 1. Initialize a temporary state dir for the collect-gentxs command
+# We don't need to run init, just create the structure.
+mkdir -p "$STATE_DIR/config"
+
+# 2. Place the intermediate genesis file in the config directory
 cp "$INTERMEDIATE_GENESIS_DIR/genesis-intermediate.json" "$STATE_DIR/config/genesis.json"
 
-# 2. Copy all collected gentx files into the config/gentx directory
+# 3. Copy all collected gentx files into the config/gentx directory
 GENTX_TARGET_DIR="$STATE_DIR/config/gentx"
 mkdir -p "$GENTX_TARGET_DIR"
 
@@ -26,11 +31,11 @@ fi
 cp "$GENTX_DIR_COLLECTED"/*.json "$GENTX_TARGET_DIR/"
 echo "Copied all gentx files to $GENTX_TARGET_DIR"
 
-# 3. Collect the gentxs to produce the final genesis file
+# 4. Collect the gentxs to produce the final genesis file
 echo "Collecting gentxs..."
 $APP_NAME genesis collect-gentxs --home "$STATE_DIR"
 
-# 4. Copy the final genesis file to the output directory for distribution
+# 5. Copy the final genesis file to the output directory for distribution
 mkdir -p "$FINAL_GENESIS_DIR"
 cp "$STATE_DIR/config/genesis.json" "$FINAL_GENESIS_DIR/genesis-final.json"
 

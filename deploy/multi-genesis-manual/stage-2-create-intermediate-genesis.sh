@@ -5,12 +5,15 @@ set -ex
 # This script initializes a new chain and adds all collected validator
 # accounts to the genesis file, creating an "intermediate" genesis.
 
-STATE_DIR="/root/.inference"
+# All paths are relative to the /data directory inside the container.
+BASE_DIR="/data"
+STATE_DIR="$BASE_DIR/.inference"
 APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-8"
 COIN_DENOM="nicoin"
-ADDRESSES_DIR="/root/addresses_collected"
-OUTPUT_DIR="/root/intermediate_genesis"
+ADDRESSES_DIR="$BASE_DIR/addresses_collected"
+OUTPUT_DIR="$BASE_DIR/intermediate_genesis_output"
+GENESIS_OVERRIDES_PATH="$BASE_DIR/genesis_overrides.json"
 
 # 1. Initialize a new chain
 $APP_NAME init coordinator-node --chain-id "$CHAIN_ID" --home "$STATE_DIR"
@@ -28,8 +31,8 @@ for addr_file in "$ADDRESSES_DIR"/*; do
 done
 
 # 3. Apply any genesis overrides
-if [ -f "/root/genesis_overrides.json" ]; then
-    jq -s '.[0] * .[1]' "$STATE_DIR/config/genesis.json" /root/genesis_overrides.json > "$STATE_DIR/config/genesis.json.tmp"
+if [ -f "$GENESIS_OVERRIDES_PATH" ]; then
+    jq -s '.[0] * .[1]' "$STATE_DIR/config/genesis.json" "$GENESIS_OVERRIDES_PATH" > "$STATE_DIR/config/genesis.json.tmp"
     mv "$STATE_DIR/config/genesis.json.tmp" "$STATE_DIR/config/genesis.json"
     echo "Applied genesis overrides."
 fi
