@@ -1,109 +1,120 @@
-# Multi-Validator Genesis Deployment (Manual Process)
+# Multi-Validator Genesis Deployment (Manual, Staged Process)
 
-This guide outlines the manual, multi-machine process for launching a new network with multiple genesis validators. It is designed for a scenario where each validator is on a separate machine and coordination is done manually.
+This guide outlines the manual, multi-stage process for launching a new network with multiple genesis validators. This process is robust and explicit, ensuring all participants are synchronized at each step. It is the recommended procedure for a real-world, multi-machine launch.
 
-## Overview
+## Overview of the Stages
 
-The process is divided into three main phases:
+The process is divided into several distinct stages, with specific actions for validators and the coordinator.
 
-1.  **Phase 1: Key & Gentx Generation (All Validators)**
-    Each validator operator (including the coordinator) runs a script to generate their keys and a genesis transaction (`gentx`). The output is a set of files that must be securely communicated to the coordinator.
+*   **Stage 1: Key Generation (All Validators)**
+    *   Each validator generates their keys and sends their public address to the coordinator.
 
-2.  **Phase 2: Genesis Creation (Coordinator Only)**
-    The coordinator collects the files from all validators, places them in a specific directory structure, and runs a script to assemble the final `genesis.json`. The coordinator then starts their node and distributes the `genesis.json` to all other validators.
+*   **Stage 2: Create Intermediate Genesis (Coordinator Only)**
+    *   The coordinator collects all addresses and creates an *intermediate* `genesis.json` containing the initial account balances for everyone.
 
-3.  **Phase 3: Launching Validator Nodes (Validators Only)**
-    Once they receive the final `genesis.json`, the other validator operators can configure and launch their nodes.
+*   **Stage 3: Gentx Generation (All Validators)**
+    *   The coordinator distributes the `genesis-intermediate.json`.
+    *   Each validator uses it to generate their `gentx` (genesis transaction) and sends it back to the coordinator.
+
+*   **Stage 4: Assemble Final Genesis (Coordinator Only)**
+    *   The coordinator collects all `gentx` files and runs a final script to produce the `genesis-final.json`.
+
+*   **Stage 5: Launch (All Validators)**
+    *   The coordinator distributes the `genesis-final.json`, and all validators launch their nodes.
+
+---
 
 ## Detailed Steps
 
-### Phase 1: Generate Validator Keys and `gentx`
+### Stage 1: Generate Validator Key
 
-This step must be performed by **every** genesis validator, including the one who will act as the coordinator.
+*   **Action**: To be performed by **every** genesis validator (including the coordinator).
+*   **Goal**: Create your keys and send your public address to the coordinator.
 
-1.  **Prepare the environment**:
-    Create a directory for your validator's files. For example:
-    ```bash
-    mkdir -p ~/validator-files
-    ```
-
-2.  **Run the generation script**:
-    Use the following `docker run` command to execute the `generate-validator-files.sh` script. This command mounts your local directory into the container and runs the script, which packages all the necessary files into `~/validator-files`.
-
-    *   Replace `~/validator-files` with the absolute path to your directory.
-    *   Set the `MONIKER` environment variable to a unique name for your validator.
+1.  Create a local directory for your files (e.g., `mkdir -p ~/validator-1-files`).
+2.  Run the `stage-1-generate-key.sh` script via Docker. This will create your keys and place your address and private consensus key in your local directory.
 
     ```bash
     docker run --rm -it \
-        -v ~/validator-files:/output \
-        -v ./deploy/multi-genesis-manual/generate-validator-files.sh:/root/generate-validator-files.sh \
-        -e MONIKER="your-node-moniker" \
-        ghcr.io/product-science/inferenced:0.1.21 \
-        sh /root/generate-validator-files.sh
+        -v ~/validator-1-files:/output \
+        -e MONIKER="validator-1" \
+        -v ./deploy/multi-genesis-manual/stage-1-generate-key.sh:/root/stage-1.sh \
+        ghcr.io/product-science/inferenced:latest \
+        sh /root/stage-1.sh
     ```
-    If you encounter an architecture error (e.g., `no matching manifest`), try using the `:latest` tag for the image.
+    **IMPORTANT**: The script will output a 24-word mnemonic phrase. **Save this phrase somewhere safe and offline.** You will need it in Stage 3.
 
-3.  **Verify the Output**:
-    After the script finishes, your `~/validator-files` directory should contain:
-    *   `gentx/`: A directory containing your `gentx-....json` file.
-    *   `priv_validator_key.json`: The private key for your consensus node. **KEEP THIS SECRET.**
-    *   `address.txt`: The public address of your cold key.
+3.  **Send the `address.txt` file** from `~/validator-1-files` to the coordinator. Keep the `priv_validator_key.json` file safe and private.
 
-4.  **Send files to the Coordinator**:
-    Securely transmit the contents of `~/validator-files/gentx/` and `~/validator-files/address.txt` to the person designated as the coordinator.
+### Stage 2: Create Intermediate Genesis
 
-### Phase 2: Create and Distribute Genesis (Coordinator)
+*   **Action**: To be performed by the **Coordinator only**.
+*   **Goal**: Create a `genesis-intermediate.json` file with all validators' accounts.
 
-1.  **Collect Files**:
-    Create a directory structure like this:
-
+1.  Create a directory structure for collecting files:
     ```
     ./coordinator-data/
-    ├── gentx/
-    │   ├── gentx-validator1.json
-    │   ├── gentx-validator2.json
-    │   └── gentx-coordinator.json
-    └── addresses/
-        ├── validator1.address
-        ├── validator2.address
+    └── addresses_collected/
+        ├── validator-1.address
         └── coordinator.address
     ```
-    Place the files received from all validators (and your own from Phase 1) into the `gentx` and `addresses` subdirectories.
-
-2.  **Run the Coordinator Docker Compose**:
-    Use the provided `docker-compose.coordinator.yml` to launch the coordinator.
+2.  Place all received `address.txt` files into the `addresses_collected` directory.
+3.  Run the `stage-2-create-intermediate-genesis.sh` script. This will generate the `genesis-intermediate.json`.
 
     ```bash
-    docker-compose -f deploy/multi-genesis-manual/docker-compose.coordinator.yml up
+    docker run --rm -it \
+        -v ./coordinator-data/addresses_collected:/root/addresses_collected \
+        -v ./coordinator-data:/root/intermediate_genesis \
+        -v ./deploy/multi-genesis-manual/genesis_overrides.json:/root/genesis_overrides.json \
+        -v ./deploy/multi-genesis-manual/stage-2-create-intermediate-genesis.sh:/root/stage-2.sh \
+        ghcr.io/product-science/inferenced:latest \
+        sh /root/stage-2.sh
     ```
-    This will start the coordinator node. The `init-docker-genesis-coordinator.sh` script will automatically create the final `genesis.json` and place it in the `./coordinator-data/final_genesis` directory on your host machine.
+4.  **Distribute the `genesis-intermediate.json`** file (located in `./coordinator-data/`) to all validators.
 
-3.  **Distribute `genesis.json`**:
-    Send the final `genesis.json` file to all other validator operators.
+### Stage 3: Generate Gentx
 
-### Phase 3: Launch Validator Nodes
+*   **Action**: To be performed by **every** genesis validator.
+*   **Goal**: Use the intermediate genesis to create your `gentx` file.
 
-This step is for all non-coordinator validators.
-
-1.  **Prepare your node's directory**:
-    Create a directory for your node, e.g., `~/my-node`. Inside it, create `config` and `tmkms` subdirectories.
-    ```bash
-    mkdir -p ~/my-node/config
-    mkdir -p ~/my-node/tmkms
-    ```
-
-2.  **Place Files**:
-    *   Copy the final `genesis.json` received from the coordinator into `~/my-node/config/`.
-    *   Copy the `priv_validator_key.json` you generated in Phase 1 into `~/my-node/config/`.
-    *   Copy the `init-docker-validator.sh` script into `~/my-node/`.
-    *   Create a `config.env` file (using the provided `config.env.template`) in `~/my-node/` and fill in the `P2P_PERSISTENT_PEERS` and `P2P_SEEDS` variables.
-
-3.  **Launch your node**:
-    Navigate to your `~/my-node` directory and run the validator Docker Compose.
+1.  Place the `genesis-intermediate.json` you received from the coordinator into your local validator directory (e.g., `~/validator-1-files`).
+2.  Run the `stage-3-create-gentx.sh` script. You will be prompted to enter the 24-word mnemonic phrase you saved from Stage 1.
 
     ```bash
-    cd ~/my-node
-    docker-compose -f /path/to/repo/deploy/multi-genesis-manual/docker-compose.validator.yml up -d
+    docker run --rm -it \
+        -v ~/validator-1-files:/output \
+        -e MONIKER="validator-1" \
+        -v ./deploy/multi-genesis-manual/stage-3-create-gentx.sh:/root/stage-3.sh \
+        ghcr.io/product-science/inferenced:latest \
+        sh /root/stage-3.sh
+    ```
+3.  **Send the generated `gentx` file** (located in `~/validator-1-files/gentx/`) back to the coordinator.
+
+### Stage 4: Assemble Final Genesis
+
+*   **Action**: To be performed by the **Coordinator only**.
+*   **Goal**: Collect all `gentx` files and produce the final `genesis.json`.
+
+1.  Create a directory for the collected `gentx` files:
+    ```
+    ./coordinator-data/gentx_collected/
+    ```
+2.  Place all received `gentx` files into that directory.
+3.  Run the `stage-4-assemble-final-genesis.sh` script.
+
+    ```bash
+    docker run --rm -it \
+        -v ./coordinator-data:/root/intermediate_genesis \
+        -v ./coordinator-data/gentx_collected:/root/gentx_collected \
+        -v ./coordinator-data:/root/final_genesis \
+        -v ./deploy/multi-genesis-manual/stage-4-assemble-final-genesis.sh:/root/stage-4.sh \
+        ghcr.io/product-science/inferenced:latest \
+        sh /root/stage-4.sh
     ```
 
-This will start your validator and `tmkms` services, connecting you to the network.
+### Stage 5: Launch!
+
+1.  **Distribute the Final Genesis**: The coordinator takes the `genesis-final.json` from `./coordinator-data/` and distributes it to all validators. **Use a checksum to verify integrity!**
+2.  **All Validators**: Prepare your node's directory as described in the `docker-compose.validator.yml` file's comments. Place the `genesis-final.json` as `config/genesis.json`, place your `priv_validator_key.json` in `tmkms/`, and create your `config.env`.
+3.  **Launch your node** using `docker-compose -f deploy/multi-genesis-manual/docker-compose.validator.yml up -d`.
+4.  **Coordinator**: The coordinator can launch their node using the same `docker-compose.validator.yml` after setting up their own directory.
