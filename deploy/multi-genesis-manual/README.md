@@ -36,7 +36,7 @@ The process is divided into several distinct stages, with specific actions for v
 
     ```bash
     MONIKER="validator-1"
-    PATH="~/validator-1-files"
+    PATH="./multigen-tests/val-1"
     docker run --rm -it \
         -v "$PATH":/output \
         -e MONIKER="$MONIKER" \
