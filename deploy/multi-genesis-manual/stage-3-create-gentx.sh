@@ -3,39 +3,37 @@ set -ex
 
 # --- STAGE 3: Create Gentx (All Validators) ---
 # This script creates the genesis transaction (gentx) for a single validator.
-# It requires the 'genesis-intermediate.json' from the coordinator.
+# It uses the file-based keyring created in Stage 1.
 
 : "${MONIKER?MONIKER environment variable is not set}"
-OUTPUT_DIR="/output"
-STATE_DIR="/tmp/inference"
+# The entire state, including the keyring, is expected to be in the output directory.
+STATE_DIR="/output"
 APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-8"
 KEYRING_BACKEND="file"
 KEY_NAME_COLD="validator-cold"
+# Password for the file-based keyring. Can be overridden.
+KEYRING_PASSWORD=${KEYRING_PASSWORD:-"password"}
 
-# 1. Initialize a temporary node directory
-$APP_NAME init "$MONIKER" --chain-id "$CHAIN_ID" --home "$STATE_DIR" > /dev/null
 
-# 2. Place the intermediate genesis file where the app can find it
-cp "$OUTPUT_DIR/genesis-intermediate.json" "$STATE_DIR/config/genesis.json"
+# 1. Place the intermediate genesis file where the app can find it.
+# This overwrites the dummy genesis.json created in Stage 1.
+cp "$STATE_DIR/genesis-intermediate.json" "$STATE_DIR/config/genesis.json"
 
-# 3. Re-create the same cold key to sign the gentx
-# (The keyring is temporary, so we need to recover the key to sign)
-echo "You will now be prompted to enter the mnemonic phrase for your cold key."
-$APP_NAME keys add "$KEY_NAME_COLD" --keyring-backend "$KEYRING_BACKEND" --home "$STATE_DIR" --recover
-
-# 4. Create the genesis transaction
+# 2. Create the genesis transaction.
+# The key is read from the file keyring in the mounted STATE_DIR.
 echo "Creating genesis transaction (gentx)..."
-$APP_NAME genesis gentx "$KEY_NAME_COLD" 1000000nicoin \
+printf "%s\n" "$KEYRING_PASSWORD" | $APP_NAME genesis gentx "$KEY_NAME_COLD" 1000000nicoin \
     --chain-id "$CHAIN_ID" \
     --keyring-backend "$KEYRING_BACKEND" \
     --home "$STATE_DIR"
 
-# 5. Package the gentx file for the coordinator
-mkdir -p "$OUTPUT_DIR/gentx"
-cp "$STATE_DIR/config/gentx/"*.json "$OUTPUT_DIR/gentx/"
+# 3. Rename the gentx file for easier identification by the coordinator.
+GENTX_FILE=$(ls "$STATE_DIR/config/gentx/"*.json)
+mv "$GENTX_FILE" "$STATE_DIR/gentx-$MONIKER.json"
+
 
 echo "---"
-echo "Gentx file created: $OUTPUT_DIR/gentx/"
+echo "Gentx file created: $STATE_DIR/gentx-$MONIKER.json"
 echo "---"
-echo "Next step: Send the generated gentx JSON file back to the coordinator."
+echo "Next step: Send the generated gentx JSON file ('gentx-$MONIKER.json') back to the coordinator."
