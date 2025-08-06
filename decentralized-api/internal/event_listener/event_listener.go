@@ -291,55 +291,56 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 	}
 
 	actions, ok := event.Result.Events["message.action"]
-	if !ok || len(actions) == 0 {
+	if !ok {
 		// Handle the missing key or empty slice.
 		// For example, log an error, return from the function, etc.
 		logging.Info("No message.action event found", types.EventProcessing, "event", event)
 		return // or handle it accordingly
 	}
 
-	action := actions[0]
-	logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
-	// Get the keys of the map event.Result.Events:
-	//for key := range event.Result.Events {
-	//	for i, attr := range event.Result.Events[key] {
-	//		logging.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
-	//	}
-	//}
-	switch action {
-	case startInferenceAction, finishInferenceAction:
-		if el.isNodeSynced() {
-			el.validator.SampleInferenceToValidate(
-				event.Result.Events["inference_finished.inference_id"],
-				el.transactionRecorder,
-			)
-		}
-	case validationAction:
-		if el.isNodeSynced() {
-			el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
-		}
-	case submitGovProposalAction:
-		proposalIdOrNil := event.Result.Events["proposal_id"]
-		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
-	case trainingTaskAssignedAction:
-		if el.isNodeSynced() {
-			logging.Info("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
-			taskIds := event.Result.Events["training_task_assigned.task_id"]
-			if taskIds == nil {
-				logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
-				return
+	for _, action := range actions {
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
+		// Get the keys of the map event.Result.Events:
+		//for key := range event.Result.Events {
+		//	for i, attr := range event.Result.Events[key] {
+		//		logging.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
+		//	}
+		//}
+		switch action {
+		case startInferenceAction, finishInferenceAction:
+			if el.isNodeSynced() {
+				el.validator.SampleInferenceToValidate(
+					event.Result.Events["inference_finished.inference_id"],
+					el.transactionRecorder,
+				)
 			}
-			for _, taskId := range taskIds {
-				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
-				if err != nil {
-					logging.Error("Failed to parse task ID", types.Training, "error", err)
+		case validationAction:
+			if el.isNodeSynced() {
+				el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
+			}
+		case submitGovProposalAction:
+			proposalIdOrNil := event.Result.Events["proposal_id"]
+			logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
+		case trainingTaskAssignedAction:
+			if el.isNodeSynced() {
+				logging.Info("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
+				taskIds := event.Result.Events["training_task_assigned.task_id"]
+				if taskIds == nil {
+					logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
 					return
 				}
-				el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
+				for _, taskId := range taskIds {
+					taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
+					if err != nil {
+						logging.Error("Failed to parse task ID", types.Training, "error", err)
+						return
+					}
+					el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
+				}
 			}
+		default:
+			logging.Warn("Unhandled action received", types.EventProcessing, "action", action)
 		}
-	default:
-		logging.Warn("Unhandled action received", types.EventProcessing, "action", action)
 	}
 }
 

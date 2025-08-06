@@ -3,10 +3,11 @@ package completionapi
 import (
 	"bufio"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestProcessingJsonResponse(t *testing.T) {
@@ -54,6 +55,7 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	}
 
 	response, err := processor.GetResponse()
+	fmt.Printf("Response: %+v\n", response)
 	require.NoError(t, err, "GetResponse failed")
 	id, err := response.GetInferenceId()
 	require.Equal(t, dummyId, id, "expected inference id to be %s, got %s", dummyId, id)
@@ -70,6 +72,62 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	hash, err := response.GetHash()
 	require.NoError(t, err, "GetHash failed")
 	require.NotEmpty(t, hash, "expected hash to be not empty")
+}
+
+func TestCompletionTokenCountForStreamedResponseWithTokenIds(t *testing.T) {
+	dummyId := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyId)
+
+	events := readLines(t, "test_data/response_streamed_token_ids.txt")
+	require.NotEmpty(t, events, "Read 0 events from responseprocessor_test_data.txt")
+	for _, event := range events {
+		_, err := processor.ProcessStreamedResponse(event)
+		require.NoError(t, err, "failed to process a line of a streamed response")
+	}
+
+	response, err := processor.GetResponse()
+
+	enforcedTokens, err := response.GetEnforcedTokens()
+	require.NoError(t, err, "GetEnforcedTokens failed")
+	require.NotEmpty(t, enforcedTokens, "expected enforced tokens to be not empty")
+	require.Equal(t, 44, len(enforcedTokens.Tokens), "expected 1 enforced token")
+
+	require.NoError(t, err, "GetResponse failed")
+	model, err := response.GetModel()
+	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", model, "expected model to be %s, got %s", "Qwen/Qwen2.5-7B-Instruct", model)
+
+	hash, err := response.GetHash()
+	require.NoError(t, err, "GetHash failed")
+	require.NotEmpty(t, hash, "expected hash to be not empty")
+}
+
+func TestCompletionTokenCountForWholeResponseWithTokenIds(t *testing.T) {
+	dummyId := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyId)
+
+	responseBytes, err := loadJson("test_data/response_token_ids.json")
+	require.NoError(t, err, "failed to load json response")
+
+	_, err = processor.ProcessJsonResponse(responseBytes)
+	require.NoError(t, err, "failed to process json response")
+
+	response, err := processor.GetResponse()
+	require.NoError(t, err, "GetResponse failed")
+	model, err := response.GetModel()
+	require.NoError(t, err, "GetModel failed")
+	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", model, "expected model to be %s, got %s", "Qwen/Qwen2.5-7B-Instruct", model)
+	usage, err := response.GetUsage()
+	require.NoError(t, err, "GetUsage failed")
+	require.NotNil(t, usage, "expected usage to be not nil")
+
+	hash, err := response.GetHash()
+	require.NoError(t, err, "GetHash failed")
+	require.NotEmpty(t, hash, "expected hash to be not empty")
+
+	enforcedTokens, err := response.GetEnforcedTokens()
+	require.NoError(t, err, "GetEnforcedTokens failed")
+	require.NotEmpty(t, enforcedTokens, "expected enforced tokens to be not empty")
+	require.Equal(t, 28, len(enforcedTokens.Tokens), "expected 28 enforced tokens")
 }
 
 func readLines(t *testing.T, name string) []string {

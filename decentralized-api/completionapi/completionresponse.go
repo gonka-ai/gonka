@@ -5,8 +5,9 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"errors"
-	"github.com/productscience/inference/x/inference/types"
 	"strings"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type CompletionResponse interface {
@@ -18,6 +19,7 @@ type CompletionResponse interface {
 
 	// Validation-related methods
 	GetEnforcedStr() (string, error)
+	GetEnforcedTokens() (EnforcedTokens, error)
 	ExtractLogits() []Logprob
 }
 
@@ -71,6 +73,105 @@ func (r *JsonCompletionResponse) GetEnforcedStr() (string, error) {
 	}
 
 	return content, nil
+}
+
+type EnforcedToken struct {
+	Token     string   `json:"token"`
+	TopTokens []string `json:"top_tokens"`
+}
+
+type EnforcedTokens struct {
+	Tokens []EnforcedToken `json:"tokens"`
+}
+
+func (r *JsonCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
+	if len(r.Resp.Choices) == 0 {
+		logging.Error("JsonCompletionResponse has no choices for enforced tokens", types.Validation, "inference_id", r.Resp.ID)
+		return EnforcedTokens{}, errors.New("JsonCompletionResponse: no choices found")
+	}
+
+	if len(r.Resp.Choices) > 1 {
+		logging.Warn(
+			"More than one choice in a non-streamed inference response for enforced tokens, defaulting to first one",
+			types.Validation,
+			"inference_id",
+			r.Resp.ID,
+			"choices",
+			r.Resp.Choices,
+		)
+	}
+
+	var enforcedTokens EnforcedTokens
+	for _, c := range r.Resp.Choices[0].Logprobs.Content {
+		if c.TopLogprobs == nil {
+			continue
+		}
+
+		if len(c.TopLogprobs) == 0 {
+			logging.Error(
+				"Choice has no logprobs content for enforced tokens",
+				types.Validation,
+				"inference_id",
+				r.Resp.ID,
+			)
+			return EnforcedTokens{}, errors.New("JsonCompletionResponse: choice has no logprobs content")
+		}
+
+		var topTokens []string
+		for _, topToken := range c.TopLogprobs {
+			topTokens = append(topTokens, topToken.Token)
+		}
+		enforcedTokens.Tokens = append(enforcedTokens.Tokens, EnforcedToken{
+			Token:     c.Token,
+			TopTokens: topTokens,
+		})
+	}
+	return enforcedTokens, nil
+}
+
+func (r *StreamedCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
+	if len(r.Resp.Data) == 0 {
+		logging.Error("StreamedCompletionResponse has no data for enforced tokens", types.Validation)
+		return EnforcedTokens{}, ErrorNoDataAvailableInStreamedResponse
+	}
+
+	var enforcedTokens EnforcedTokens
+	for _, c := range r.Resp.Data {
+		if len(c.Choices) == 0 {
+			continue
+		}
+
+		if len(c.Choices) > 1 {
+			logging.Warn("More than one choice in a streamed inference response for enforced tokens, defaulting to first one", types.Validation, "inference_id", c.ID, "choices", c.Choices)
+		}
+
+		for _, choice := range c.Choices {
+			if choice.Logprobs.Content == nil {
+				continue
+			}
+
+			if len(choice.Logprobs.Content) == 0 {
+				logging.Error("Choice has no logprobs content for enforced tokens", types.Validation, "inference_id", c.ID)
+				return EnforcedTokens{}, errors.New("StreamedCompletionResponse: choice has no logprobs content")
+			}
+
+			var topTokens []string
+			for _, topToken := range choice.Logprobs.Content[0].TopLogprobs {
+				topTokens = append(topTokens, topToken.Token)
+			}
+			enforcedTokens.Tokens = append(enforcedTokens.Tokens, EnforcedToken{
+				Token:     choice.Logprobs.Content[0].Token,
+				TopTokens: topTokens,
+			})
+		}
+	}
+
+	if len(enforcedTokens.Tokens) == 0 {
+		logging.Error("No enforced tokens found in streamed response", types.Validation)
+		return EnforcedTokens{}, errors.New("StreamedCompletionResponse: no enforced tokens found")
+	}
+
+	return enforcedTokens, nil
 }
 
 func computeHash(content string) (string, error) {
