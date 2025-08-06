@@ -55,6 +55,8 @@ The process is divided into several distinct stages, with specific actions for v
         ghcr.io/product-science/inferenced:latest \
         sh /root/stage-1.sh
     ```
+    **IMPORTANT**: For testing purposes, the script saves the key's 24-word mnemonic phrase to `mnemonic.txt` in your validator directory. For a real launch, this file should be deleted after being backed up securely offline.
+
 3.  **Send the `address.txt` file** from your validator directory to the coordinator.
 
 ### Stage 2: Create Intermediate Genesis
