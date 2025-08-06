@@ -110,8 +110,6 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.module='inference'")
 	// All transactions originating from the BLS module
 	subscribeToEvents(el.ws, 3, "tm.event='Tx' AND message.module='bls'")
-	// Validation-specific flag (remains separate because it can originate from other modules)
-	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 
 	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
@@ -378,9 +376,13 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 			)
 		}
 	case validationAction:
-		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
-		if el.isNodeSynced() {
-			el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
+		// Only process validation transactions that need revalidation
+		needsRevalidation, hasFlag := event.Result.Events["inference_validation.needs_revalidation"]
+		if hasFlag && len(needsRevalidation) > 0 && needsRevalidation[0] == "true" {
+			logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
+			if el.isNodeSynced() {
+				el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
+			}
 		}
 	case submitGovProposalAction:
 		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
