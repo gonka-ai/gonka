@@ -192,14 +192,14 @@ docker compose up tmkms node proxy -d --no-deps
 
 ### 4.2 [From server]: Get Consensus Public Key
 
-Use 26657 port for your new `node` container to get Consensus Public Key
+Use inferenced for your new `node` container to get Consensus Public Key
 ```
-curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value'
+./inferenced comet show-validator | jq -r '.key'
 ```
 
 **Example output:**
 ```
-❯ curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value'
+) inferenced comet show-validator | jq -r '.key'
 IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
 ```
 

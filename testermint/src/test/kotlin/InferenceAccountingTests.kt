@@ -128,7 +128,7 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test immediate pre settle amounts`() {
-        val (_, genesis) = initCluster()
+        val (_, genesis) = initCluster(reboot = true)
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference")

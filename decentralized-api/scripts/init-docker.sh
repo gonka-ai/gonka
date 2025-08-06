@@ -28,7 +28,11 @@ if [ "${CREATE_KEY:-false}" = "true" ]; then
     --keyring-backend test \
     --keyring-dir /root/.inference
 
-  ACCOUNT_PUBKEY=$($APP_NAME keys show "$KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
+    $APP_NAME keys add "$KEY_NAME-COLD" \
+    --keyring-backend test \
+    --keyring-dir /root/.inference \
+
+  ACCOUNT_PUBKEY=$($APP_NAME keys show "$KEY_NAME-COLD" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
   export ACCOUNT_PUBKEY
   echo "Generated ACCOUNT_PUBKEY: $ACCOUNT_PUBKEY"
 fi
@@ -41,12 +45,12 @@ if [ -z "${ACCOUNT_PUBKEY-}" ]; then
 
   export KEYRING_BACKEND="test"
   # Check if the key exists
-  if inferenced keys show "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference >/dev/null 2>&1; then
-    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference | jq -r '.key')
+  if inferenced keys show "$KEY_NAME-COLD" --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference >/dev/null 2>&1; then
+    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME-COLD" --pubkey --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference | jq -r '.key')
     export ACCOUNT_PUBKEY
     echo "Extracted ACCOUNT_PUBKEY from existing key: $ACCOUNT_PUBKEY"
   else
-    echo "Error: Key '$KEY_NAME' not found and ACCOUNT_PUBKEY not provided"
+    echo "Error: Key '$KEY_NAME-COLD' not found and ACCOUNT_PUBKEY not provided"
     echo "Either set CREATE_KEY=true to create a new key, or provide ACCOUNT_PUBKEY, or ensure key '$KEY_NAME' exists"
     exit 1
   fi

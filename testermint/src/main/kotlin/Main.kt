@@ -294,6 +294,13 @@ fun makeInterruptedStreamingInferenceRequest(
 }
 
 fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): LocalInferencePair {
+    val genesisPair = pairs.first{it.name.contains("genesis")}
+    val genesisUrl = "http://genesis-api:9000"
+    val existingParticipants = pairs.first().api.getParticipants()
+    genesisPair.node.grantMlOpsPermissionsToWarmAccount()
+    pairs.filter { it.node.getAddress() !in existingParticipants.map { participant -> participant.id } }.forEach {
+        it.addSelfAsParticipant(listOf(defaultModel), genesisUrl)
+    }
     pairs.forEach {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
@@ -319,9 +326,9 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
     }
     val currentParticipants = highestFunded.api.getParticipants()
     for (pair in funded) {
-        if (currentParticipants.none { it.id == pair.node.getAddress() }) {
-            pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
-        }
+//        if (currentParticipants.none { it.id == pair.node.getAddress() }) {
+//            pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
+//        }
     }
     addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
 //    fundUnfunded(unfunded, highestFunded)

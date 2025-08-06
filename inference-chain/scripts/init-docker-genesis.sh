@@ -98,6 +98,10 @@ $APP_NAME keys \
     --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
     add "POOL_product_science_inc"
 
+$APP_NAME keys \
+   --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
+   add "$KEY_NAME-COLD"
+
 modify_genesis_file() {
   local json_file="$HOME/.inference/config/genesis.json"
   local override_file="$1"
@@ -124,8 +128,13 @@ MILLION_NATIVE="000000$NATIVE"
 echo "Adding the keys to the genesis account"
 $APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis add-genesis-account "$KEY_NAME-COLD" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
 
-$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
+#$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
+#  echo "Failed to create gentx"
+#  tail -f /dev/null
+#}
+$APP_NAME genesis gentx "$KEY_NAME-COLD" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }

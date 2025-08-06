@@ -95,7 +95,11 @@ data class ApplicationCLI(
                     error("State is stale, was identical for $staleTimeout. Wait failed for: $description")
                 }
                 previousState = currentState
-                Logger.debug("Current block is {}, continuing to wait for: {}", currentState.syncInfo.latestBlockHeight, description)
+                Logger.debug(
+                    "Current block is {}, continuing to wait for: {}",
+                    currentState.syncInfo.latestBlockHeight,
+                    description
+                )
                 Thread.sleep(1000)
             }
             // IDE says unreachable (and it's because of the timeout error in the while loop above,
@@ -146,23 +150,53 @@ data class ApplicationCLI(
         exec(listOf(config.execName, "version")).first()
     }
 
-    var accountKey: Validator? = null
-    fun getAddress(): String = wrapLog("getAddress", false) {
-        getAccountIfNeeded()
-        accountKey!!.address
+    var coldAccountKey: Validator? = null
+    var warmAccountKey: Validator? = null
+
+    fun getColdAddress(): String = wrapLog("getColdAddress", false) {
+        getColdAccountIfNeeded()
+        coldAccountKey!!.address
     }
 
-    private fun getAccountIfNeeded() {
-        if (accountKey == null) {
+    fun getWarmAddress(): String = wrapLog("getWarmAddress", false) {
+        getWarmAccountIfNeeded()
+        warmAccountKey!!.address
+    }
+
+    private fun getColdAccountIfNeeded() {
+        if (coldAccountKey == null) {
             val keys = getKeys()
-            accountKey = (keys.firstOrNull { it.type == "local" && !it.name.startsWith("POOL") } ?: keys.first())
+            val coldAccountName = config.pairName.trimStart('/') + "-COLD"
+            coldAccountKey = (keys.firstOrNull { it.name == coldAccountName }
+                ?: keys.firstOrNull { it.type == "local" && !it.name.startsWith("POOL") }
+                ?: keys.first())
         }
     }
 
-    fun getAccountName(): String = wrapLog("getAccountName", false) {
-        getAccountIfNeeded()
-        accountKey!!.name
+    private fun getWarmAccountIfNeeded() {
+        if (warmAccountKey == null) {
+            val keys = getKeys()
+            val warmAccountName = config.pairName.trimStart('/')
+            warmAccountKey = (keys.firstOrNull { it.name == warmAccountName }
+                ?: keys.firstOrNull { it.type == "local" && !it.name.startsWith("POOL") }
+                ?: keys.first())
+        }
     }
+
+    fun getColdAccountName(): String = wrapLog("getColdAccountName", false) {
+        getColdAccountIfNeeded()
+        coldAccountKey!!.name
+    }
+
+    fun getWarmAccountName(): String = wrapLog("getWarmAccountName", false) {
+        getWarmAccountIfNeeded()
+        warmAccountKey!!.name
+    }
+
+    // Backward compatibility methods - default to cold account
+    fun getAddress(): String = getColdAddress()
+    fun getAccountName(): String = getColdAccountName()
+    fun getPrivateKey(): String = getColdPrivateKey()
 
 
     // Use TypeToken to properly deserialize List<Validator>
@@ -183,11 +217,20 @@ data class ApplicationCLI(
         )
     }
 
-    fun getSelfBalance(denom: String = this.config.denom): Long = wrapLog("getSelfBalance", false) {
-        val account = getAddress()
+    fun getColdSelfBalance(denom: String = this.config.denom): Long = wrapLog("getColdSelfBalance", false) {
+        val account = getColdAddress()
         val balance = getBalance(account, denom)
         balance.balance.amount
     }
+
+    fun getWarmSelfBalance(denom: String = this.config.denom): Long = wrapLog("getWarmSelfBalance", false) {
+        val account = getWarmAddress()
+        val balance = getBalance(account, denom)
+        balance.balance.amount
+    }
+
+    // Backward compatibility - defaults to cold account
+    fun getSelfBalance(denom: String = this.config.denom): Long = getColdSelfBalance(denom)
 
     fun getBalance(address: String, denom: String): BalanceResponse = wrapLog("getBalance", false) {
         execAndParse(listOf("query", "bank", "balance", address, denom))
@@ -199,13 +242,14 @@ data class ApplicationCLI(
         if (output.contains("collateral not found")) {
             return@wrapLog Collateral(null, emptyList())
         }
-        
+
         return@wrapLog cosmosJson.fromJson(output, Collateral::class.java)
     }
 
-    fun queryUnbondingCollateral(address: String): UnbondingCollateralResponse = wrapLog("queryUnbondingCollateral", false) {
-        execAndParse(listOf("query", "collateral", "show-unbonding-collateral", address))
-    }
+    fun queryUnbondingCollateral(address: String): UnbondingCollateralResponse =
+        wrapLog("queryUnbondingCollateral", false) {
+            execAndParse(listOf("query", "collateral", "show-unbonding-collateral", address))
+        }
 
     fun queryCollateralParams(): CollateralParamsWrapper = wrapLog("queryCollateralParams", false) {
         execAndParse(listOf("query", "collateral", "params"))
@@ -220,14 +264,15 @@ data class ApplicationCLI(
         }
     }
 
-    fun queryTotalVestingAmount(address: String): TotalVestingAmountResponse = wrapLog("queryTotalVestingAmount", false) {
-        try {
-            execAndParse(listOf("query", "streamvesting", "total-vesting", address))
-        } catch (e: Exception) {
-            // Return null amount if not found
-            TotalVestingAmountResponse(null)
+    fun queryTotalVestingAmount(address: String): TotalVestingAmountResponse =
+        wrapLog("queryTotalVestingAmount", false) {
+            try {
+                execAndParse(listOf("query", "streamvesting", "total-vesting", address))
+            } catch (e: Exception) {
+                // Return null amount if not found
+                TotalVestingAmountResponse(null)
+            }
         }
-    }
 
     fun queryStreamVestingParams(): StreamVestingParamsWrapper = wrapLog("queryStreamVestingParams", false) {
         execAndParse(listOf("query", "streamvesting", "params"))
@@ -263,13 +308,48 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-top-miner"))
     }
 
+    fun registerNewParticipant(nodeUrl: String, accountPubKey: String, consensusKey: String, nodeAddress: String) =
+        wrapLog("registerNewParticipant", false) {
+            exec(
+                listOf(
+                    config.execName,
+                    "register-new-participant",
+                    nodeUrl,
+                    accountPubKey,
+                    "--consensus-key",
+                    consensusKey,
+                    "--node-address",
+                    nodeAddress
+                )
+            )
+        }
+
+    fun grantMlOpsPermissionsToWarmAccount() = wrapLog("grantMlOpsPermissions", false) {
+        val coldAccountName = this.getColdAccountName()
+        val operationAccountAddress = this.getWarmAddress()
+        exec(
+            listOf(
+                config.execName,
+                "tx",
+                "inference",
+                "grant-ml-ops-permissions",
+                coldAccountName,
+                operationAccountAddress,
+                "--from",
+                coldAccountName,
+                "--gas",
+                "2000000",
+            )
+        )
+    }
+
 
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
         val output = execCli(args, includeOutputFlag)
         return cosmosJson.fromJson(output, T::class.java)
     }
-    
+
     fun execCli(args: List<String>, includeOutputFlag: Boolean = true): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
@@ -333,7 +413,12 @@ data class ApplicationCLI(
         } ?: error("Could not extract signature from response: $response")
     }
 
-    fun signPayload(payload: String, accountAddress: String? = null, timestamp: Long? = null, endpointAccount: String? =null): String {
+    fun signPayload(
+        payload: String,
+        accountAddress: String? = null,
+        timestamp: Long? = null,
+        endpointAccount: String? = null
+    ): String {
         val parameters = listOfNotNull(
             config.execName,
             "signature",
@@ -383,7 +468,7 @@ data class ApplicationCLI(
 
 
     fun getTransactionJson(args: List<String>): String {
-        val from = this.getAccountName()
+        val from = this.getColdAccountName()
         Logger.info("Getting transaction json for account {}", from)
         val finalArgs = listOf(
             config.execName,
@@ -436,16 +521,35 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "model-per-token-price", modelId))
     }
 
-    fun getPocBatchCount(epochStartHeight:Long): Long = wrapLog("getPocBatchCount", infoLevel = false) {
-        execAndParse<Count>(listOf("query", "inference", "count-po-c-batches-at-height", epochStartHeight.toString())).count
+    fun getPocBatchCount(epochStartHeight: Long): Long = wrapLog("getPocBatchCount", infoLevel = false) {
+        execAndParse<Count>(
+            listOf(
+                "query",
+                "inference",
+                "count-po-c-batches-at-height",
+                epochStartHeight.toString()
+            )
+        ).count
     }
 
-    fun getPocValidationCount(epochStartHeight:Long): Long = wrapLog("getPocValidationCount", infoLevel = false) {
-        execAndParse<Count>(listOf("query", "inference", "count-po-c-validations-at-height", epochStartHeight.toString())).count
+    fun getPocValidationCount(epochStartHeight: Long): Long = wrapLog("getPocValidationCount", infoLevel = false) {
+        execAndParse<Count>(
+            listOf(
+                "query",
+                "inference",
+                "count-po-c-validations-at-height",
+                epochStartHeight.toString()
+            )
+        ).count
     }
 
-    fun getPrivateKey(): String = wrapLog("getPrivateKey", infoLevel = false) {
-        val accountName = this.getAccountName()
+    fun getColdPrivateKey(): String = wrapLog("getColdPrivateKey", infoLevel = false) {
+        val accountName = this.getColdAccountName()
+        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex")).first()
+    }
+
+    fun getWarmPrivateKey(): String = wrapLog("getWarmPrivateKey", infoLevel = false) {
+        val accountName = this.getWarmAccountName()
         exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex")).first()
     }
 

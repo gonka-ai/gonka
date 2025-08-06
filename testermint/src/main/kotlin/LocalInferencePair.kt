@@ -149,16 +149,19 @@ data class LocalInferencePair(
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
-    fun addSelfAsParticipant(models: List<String>) {
-        val status = node.getStatus()
-        val validatorInfo = status.validatorInfo
-        val pubKey: PubKey = validatorInfo.pubKey
-        val self = InferenceParticipant(
-            url = "http://$name-api:8080",
-            models = models,
-            validatorKey = pubKey.value
+    fun addSelfAsParticipant(models: List<String>, genesisApiUrl: String) {
+        val consensusPubkey = this.node.getValidatorInfo().key
+        this.node.getColdAddress()
+        val accountPublicKey = this.node.getKeys().first { it.name.contains("-COLD") }.pubkey.key
+        node.registerNewParticipant(
+            nodeUrl = this.api.getPublicUrl(),
+            accountPubKey = accountPublicKey,
+            consensusKey = consensusPubkey,
+            nodeAddress = genesisApiUrl,
         )
-        api.addInferenceParticipant(self)
+
+        Thread.sleep(5000)
+        node.grantMlOpsPermissionsToWarmAccount()
     }
 
     fun getEpochLength(): Long {
