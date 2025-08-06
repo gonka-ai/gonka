@@ -32,11 +32,18 @@ The process is divided into several distinct stages, with specific actions for v
 *   **Goal**: Create your keys and send your public address to the coordinator.
 
 1.  Create a local directory for your files (e.g., `mkdir -p ~/validator-1-files`).
+    For local testing on single machine you can use:
+    ```bash
+    cd multigen-tests
+    rm -rf validator-1 validator-2 validator-3 coordinator || true
+    mkdir validator-1 validator-2 validator-3 coordinator
+    cd ..
+    ```
 2.  Run the `stage-1-generate-key.sh` script via Docker. This will create your keys and place your address and private consensus key in your local directory.
 
     ```bash
-    MONIKER="validator-3"
-    VAL_DIR_PATH="./multigen-tests/val-3"
+    MONIKER="validator-1"
+    VAL_DIR_PATH="./multigen-tests/$MONIKER"
     docker run --rm -it \
         -v "$VAL_DIR_PATH":/output \
         -e MONIKER="$MONIKER" \
@@ -60,13 +67,15 @@ The process is divided into several distinct stages, with specific actions for v
         ├── validator-1.address
         └── coordinator.address
     ```
-2.  Place all received `address.txt` files into the `addresses_collected` directory.
-    If running local tests:
+2.      Place all `address.txt` files received from the other validators into the `addresses_collected` directory.
+    **Note**: The coordinator must also run the Stage 1 script to generate their own keys. They will then copy their own `address.txt` into this directory as well.
+
+    *Example for a local test:*
     ```bash
-    cp ./multigen-tests/val-1/address.txt ./coordinator-data/addresses_collected/validator-1.address
-    cp ./multigen-tests/val-2/address.txt ./coordinator-data/addresses_collected/validator-2.address
-    cp ./multigen-tests/val-3/address.txt ./coordinator-data/addresses_collected/validator-3.address
-    # Is that true?
+    # Copy addresses from all validators, including the coordinator
+    cp ./multigen-tests/validator-1/address.txt ./coordinator-data/addresses_collected/validator-1.address
+    cp ./multigen-tests/validator-2/address.txt ./coordinator-data/addresses_collected/validator-2.address
+    cp ./multigen-tests/validator-3/address.txt ./coordinator-data/addresses_collected/validator-3.address
     cp ./multigen-tests/coordinator/address.txt ./coordinator-data/addresses_collected/coordinator.address
     ```
 3.  Run the `stage-2-create-intermediate-genesis.sh` script. This will generate the `genesis-intermediate.json`.
