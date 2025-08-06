@@ -86,7 +86,6 @@ The process is divided into several distinct stages, with specific actions for v
     COORDINATOR_DIR_PATH="./multigen-tests/coordinator-data"
     docker run --rm -it \
         -v "$COORDINATOR_DIR_PATH:/data" \
-        -v ./deploy/multi-genesis-manual/genesis_overrides.json:/root/genesis_overrides.json \
         -v ./deploy/multi-genesis-manual/stage-2-create-intermediate-genesis.sh:/root/stage-2.sh \
         ghcr.io/product-science/inferenced:latest \
         sh /root/stage-2.sh
@@ -150,6 +149,7 @@ The process is divided into several distinct stages, with specific actions for v
         -v "$COORDINATOR_DIR_PATH/intermediate_genesis_output:/data/intermediate_genesis_output" \
         -v "$COORDINATOR_DIR_PATH/gentx_collected:/data/gentx_collected" \
         -v "$COORDINATOR_DIR_PATH:/data/final_genesis_output" \
+        -v ./deploy/multi-genesis-manual/genesis_overrides.json:/data/genesis_overrides.json \
         -v ./deploy/multi-genesis-manual/stage-4-assemble-final-genesis.sh:/root/stage-4.sh \
         ghcr.io/product-science/inferenced:latest \
         sh /root/stage-4.sh

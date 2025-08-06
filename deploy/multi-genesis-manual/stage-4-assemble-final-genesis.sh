@@ -35,7 +35,14 @@ echo "Copied all gentx files to $GENTX_TARGET_DIR"
 echo "Collecting gentxs..."
 $APP_NAME genesis collect-gentxs --home "$STATE_DIR"
 
-# 5. Copy the final genesis file to the output directory for distribution
+# 5. Apply final genesis overrides
+if [ -f "$BASE_DIR/genesis_overrides.json" ]; then
+    jq -s '.[0] * .[1]' "$STATE_DIR/config/genesis.json" "$BASE_DIR/genesis_overrides.json" > "$STATE_DIR/config/genesis.json.tmp"
+    mv "$STATE_DIR/config/genesis.json.tmp" "$STATE_DIR/config/genesis.json"
+    echo "Applied final genesis overrides."
+fi
+
+# 6. Copy the final genesis file to the output directory for distribution
 mkdir -p "$FINAL_GENESIS_DIR"
 cp "$STATE_DIR/config/genesis.json" "$FINAL_GENESIS_DIR/genesis-final.json"
 

@@ -30,14 +30,7 @@ for addr_file in "$ADDRESSES_DIR"/*; do
     $APP_NAME genesis add-genesis-account "$ACCOUNT_ADDR" 2000000"$COIN_DENOM" --home "$STATE_DIR"
 done
 
-# 3. Apply any genesis overrides
-if [ -f "$GENESIS_OVERRIDES_PATH" ]; then
-    jq -s '.[0] * .[1]' "$STATE_DIR/config/genesis.json" "$GENESIS_OVERRIDES_PATH" > "$STATE_DIR/config/genesis.json.tmp"
-    mv "$STATE_DIR/config/genesis.json.tmp" "$STATE_DIR/config/genesis.json"
-    echo "Applied genesis overrides."
-fi
-
-# 4. Copy the resulting genesis file to the output directory for distribution
+# 3. Copy the resulting genesis file to the output directory for distribution
 mkdir -p "$OUTPUT_DIR"
 cp "$STATE_DIR/config/genesis.json" "$OUTPUT_DIR/genesis-intermediate.json"
 
