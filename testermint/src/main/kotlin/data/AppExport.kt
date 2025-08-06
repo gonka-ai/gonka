@@ -64,6 +64,8 @@ data class InferenceParams(
     val bitcoinRewardParams: BitcoinRewardParams? = null,
     @SerializedName("dynamic_pricing_params")
     val dynamicPricingParams: DynamicPricingParams? = null,
+    @SerializedName("bandwidth_limits_params")
+    val bandwidthLimitsParams: BandwidthLimitsParams? = null,
 )
 
 data class TokenomicsParams(
@@ -172,6 +174,15 @@ data class ValidationParams(
     val missRequestsPenalty: Decimal,
     val timestampExpiration: Long,
     val timestampAdvance: Long,
+)
+
+data class BandwidthLimitsParams(
+    @SerializedName("estimated_limits_per_block_kb")
+    val estimatedLimitsPerBlockKb: Long,
+    @SerializedName("kb_per_input_token")
+    val kbPerInputToken: Decimal,
+    @SerializedName("kb_per_output_token")
+    val kbPerOutputToken: Decimal,
 )
 
 data class PocParams(

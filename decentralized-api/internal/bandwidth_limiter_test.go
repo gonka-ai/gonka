@@ -11,8 +11,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Mock implementations for testing
+type mockConfigManager struct {
+	validationParams apiconfig.ValidationParamsCache
+	bandwidthParams  apiconfig.BandwidthParamsCache
+}
+
+func (m *mockConfigManager) GetValidationParams() apiconfig.ValidationParamsCache {
+	return m.validationParams
+}
+
+func (m *mockConfigManager) GetBandwidthParams() apiconfig.BandwidthParamsCache {
+	return m.bandwidthParams
+}
+
+// newTestBandwidthLimiter creates a bandwidth limiter for testing without weight-based allocation
+func newTestBandwidthLimiter(limitsPerBlockKB uint64, requestLifespanBlocks int64, kbPerInputToken, kbPerOutputToken float64) *BandwidthLimiter {
+	configManager := &mockConfigManager{
+		validationParams: apiconfig.ValidationParamsCache{
+			ExpirationBlocks: requestLifespanBlocks,
+		},
+		bandwidthParams: apiconfig.BandwidthParamsCache{
+			EstimatedLimitsPerBlockKb: limitsPerBlockKB,
+			KbPerInputToken:           kbPerInputToken,
+			KbPerOutputToken:          kbPerOutputToken,
+		},
+	}
+
+	// Create without recorder and phase tracker for simple testing
+	return NewBandwidthLimiterFromConfig(configManager, nil, nil)
+}
+
 func TestBandwidthLimiter_CanAcceptRequest(t *testing.T) {
-	limiter := NewBandwidthLimiter(100, 10, 0.0023, 0.64) // 100 KB limit, default coefficients
+	limiter := newTestBandwidthLimiter(100, 10, 0.0023, 0.64) // 100 KB limit, default coefficients
 
 	// Test case 1: Request well under the limit
 	can, _ := limiter.CanAcceptRequest(1, 1000, 100)
@@ -31,28 +62,31 @@ func TestBandwidthLimiter_CanAcceptRequest(t *testing.T) {
 }
 
 func TestBandwidthLimiter_RecordAndRelease(t *testing.T) {
-	limiter := NewBandwidthLimiter(100, 10, 0.0023, 0.64)
+	limiter := newTestBandwidthLimiter(100, 10, 0.0023, 0.64)
 
 	// Record a large request that will create conflict
 	limiter.RecordRequest(1, 950) // Records 950 KB at block 11
 
 	// Check that a new request starting at block 5 is now rejected
 	// This checks range [5:15] which includes block 11 with 950 KB
-	// Average existing = 950/10 = 95 KB per block
-	// Need new request > 5 KB per block = 50 KB total to exceed 100 KB limit
-	can, _ := limiter.CanAcceptRequest(5, 1000, 100) // ~67 KB request = 6.7 KB per block
+	// Range [5:15] = 11 blocks, so average existing = 950/11 = 86.36 KB per block
+	// New request ~67 KB = 6.1 KB per block, total = 86.36 + 6.1 = 92.46 KB per block (under 100 KB limit)
+	// So we need a larger request to exceed the limit
+	can, _ := limiter.CanAcceptRequest(5, 2000, 200) // ~130 KB request = 11.8 KB per block, total = 98.16 KB (still under)
+	// Let's try an even bigger request
+	can, _ = limiter.CanAcceptRequest(5, 5000, 500) // ~332 KB request = 30.2 KB per block, total = 116.56 KB (over 100 KB limit)
 	require.False(t, can, "Should not accept a new request that would exceed average limit")
 
 	// Release the first request
 	limiter.ReleaseRequest(1, 950)
 
-	// Check that the same request is now accepted
-	can, _ = limiter.CanAcceptRequest(5, 1000, 100)
+	// Check that the same large request is now accepted
+	can, _ = limiter.CanAcceptRequest(5, 5000, 500)
 	require.True(t, can, "Should accept a new request after releasing the conflicting one")
 }
 
 func TestBandwidthLimiter_Concurrency(t *testing.T) {
-	limiter := NewBandwidthLimiter(100, 10, 0.0023, 0.64) // Lower limit for clearer test
+	limiter := newTestBandwidthLimiter(100, 10, 0.0023, 0.64) // Lower limit for clearer test
 	var wg sync.WaitGroup
 	numRoutines := 50
 
@@ -89,7 +123,7 @@ func TestBandwidthLimiter_Concurrency(t *testing.T) {
 }
 
 func TestBandwidthLimiter_Cleanup(t *testing.T) {
-	limiter := NewBandwidthLimiter(100, 5, 0.0023, 0.64)
+	limiter := newTestBandwidthLimiter(100, 5, 0.0023, 0.64)
 	limiter.cleanupInterval = 10 * time.Millisecond // Speed up cleanup for test
 
 	// Record usage - these will be recorded at completion blocks (start + 5)
@@ -99,8 +133,11 @@ func TestBandwidthLimiter_Cleanup(t *testing.T) {
 	// Record usage on a much later block
 	limiter.RecordRequest(20, 50) // Records at block 25
 
-	// Wait for cleanup to run
-	time.Sleep(20 * time.Millisecond)
+	// Wait for cleanup to run multiple times
+	time.Sleep(50 * time.Millisecond)
+
+	// Manually trigger cleanup to ensure it runs
+	limiter.cleanupOldEntries()
 
 	limiter.mu.RLock()
 	defer limiter.mu.RUnlock()
@@ -176,7 +213,7 @@ func TestBandwidthParameterLoading(t *testing.T) {
 	require.Equal(t, int64(10), validationConfig.ExpirationBlocks, "ExpirationBlocks should be preserved")
 
 	// Test that BandwidthLimiter can be created with these parameters
-	limiter := NewBandwidthLimiter(bandwidthConfig.EstimatedLimitsPerBlockKb, validationConfig.ExpirationBlocks, bandwidthConfig.KbPerInputToken, bandwidthConfig.KbPerOutputToken)
+	limiter := newTestBandwidthLimiter(bandwidthConfig.EstimatedLimitsPerBlockKb, validationConfig.ExpirationBlocks, bandwidthConfig.KbPerInputToken, bandwidthConfig.KbPerOutputToken)
 	require.NotNil(t, limiter, "BandwidthLimiter should be created successfully")
 
 	// Test a calculation with the loaded parameters

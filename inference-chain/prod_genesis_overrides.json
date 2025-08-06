@@ -28,7 +28,7 @@
           "set_new_validators_delay": "80"
         },
         "bandwidth_limits_params": {
-          "estimated_limits_per_block_kb": "1024",
+          "estimated_limits_per_block_kb": "21504",
           "kb_per_input_token": {
             "value": "23",
             "exponent": "-4"

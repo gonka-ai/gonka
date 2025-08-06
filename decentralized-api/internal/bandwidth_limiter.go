@@ -16,58 +16,24 @@ import (
 type BandwidthLimiter struct {
 	mu                    sync.RWMutex
 	limitsPerBlockKB      uint64
-	usagePerBlock         map[int64]float64 // blockHeight -> estimated KB
+	usagePerBlock         map[int64]float64
 	cleanupInterval       time.Duration
 	requestLifespanBlocks int64
+
 	// Configurable coefficients from chain parameters
 	kbPerInputToken  float64
 	kbPerOutputToken float64
 
-	// Simple weight-based allocation with caching
 	recorder              cosmosclient.CosmosMessageClient
 	defaultLimit          uint64
 	epochCache            *EpochGroupDataCache
-	phaseTracker          ChainPhaseTracker // for getting current epoch index
-	cachedLimitEpochIndex uint64            // epoch index for cached limit
-	cachedWeightLimit     uint64            // cached calculated limit
+	phaseTracker          ChainPhaseTracker
+	configManager         ConfigManager
+	cachedLimitEpochIndex uint64
+	cachedWeightLimit     uint64
 }
 
-// NewBandwidthLimiter creates a new BandwidthLimiter.
-func NewBandwidthLimiter(limitsPerBlockKB uint64, requestLifespanBlocks int64, kbPerInputToken, kbPerOutputToken float64) *BandwidthLimiter {
-	bl := &BandwidthLimiter{
-		limitsPerBlockKB:      limitsPerBlockKB,
-		usagePerBlock:         make(map[int64]float64),
-		cleanupInterval:       5 * time.Minute,
-		requestLifespanBlocks: requestLifespanBlocks,
-		kbPerInputToken:       kbPerInputToken,
-		kbPerOutputToken:      kbPerOutputToken,
-	}
-	go bl.startCleanupRoutine()
-	return bl
-}
-
-// NewBandwidthLimiterWithWeights creates a BandwidthLimiter with weight-based allocation
-func NewBandwidthLimiterWithWeights(recorder cosmosclient.CosmosMessageClient, defaultLimit uint64, requestLifespanBlocks int64, kbPerInputToken, kbPerOutputToken float64, phaseTracker ChainPhaseTracker) *BandwidthLimiter {
-	// Start with default limit - will be updated on first request
-	bl := &BandwidthLimiter{
-		limitsPerBlockKB:      defaultLimit,
-		usagePerBlock:         make(map[int64]float64),
-		cleanupInterval:       5 * time.Minute,
-		requestLifespanBlocks: requestLifespanBlocks,
-		kbPerInputToken:       kbPerInputToken,
-		kbPerOutputToken:      kbPerOutputToken,
-		recorder:              recorder,
-		defaultLimit:          defaultLimit,
-		epochCache:            NewEpochGroupDataCache(recorder),
-		phaseTracker:          phaseTracker,
-	}
-	go bl.startCleanupRoutine()
-	return bl
-}
-
-// CanAcceptRequest checks if a new request can be accepted based on estimated bandwidth.
 func (bl *BandwidthLimiter) CanAcceptRequest(blockHeight int64, promptTokens, maxTokens int) (bool, float64) {
-	// Update limits if we have weight-based allocation enabled
 	bl.maybeUpdateLimits()
 
 	bl.mu.RLock()
@@ -76,24 +42,32 @@ func (bl *BandwidthLimiter) CanAcceptRequest(blockHeight int64, promptTokens, ma
 	estimatedKB := float64(promptTokens)*bl.kbPerInputToken + float64(maxTokens)*bl.kbPerOutputToken
 
 	totalUsage := 0.0
+	windowSize := bl.requestLifespanBlocks + 1
 	for i := blockHeight; i <= blockHeight+bl.requestLifespanBlocks; i++ {
 		totalUsage += bl.usagePerBlock[i]
 	}
-	avgUsage := totalUsage / float64(bl.requestLifespanBlocks+1)
-	estimatedKBPerBlock := estimatedKB / float64(bl.requestLifespanBlocks+1)
+
+	avgUsage := totalUsage / float64(windowSize)
+	estimatedKBPerBlock := estimatedKB / float64(windowSize)
+	canAccept := avgUsage+estimatedKBPerBlock <= float64(bl.limitsPerBlockKB)
 
 	logging.Info("CanAcceptRequest", types.Config,
 		"avgUsage", avgUsage,
-		"estimatedKBPerBlock", estimatedKBPerBlock,
+		"estimatedKB", estimatedKBPerBlock,
 		"limitsPerBlockKB", bl.limitsPerBlockKB,
 		"requestLifespanBlocks", bl.requestLifespanBlocks,
 		"totalUsage", totalUsage)
 
-	return avgUsage+estimatedKBPerBlock <= float64(bl.limitsPerBlockKB), estimatedKB
+	if !canAccept {
+		logging.Info("Bandwidth limit exceeded", types.Config,
+			"avgUsage", avgUsage, "estimatedKB", estimatedKBPerBlock, "limit", bl.limitsPerBlockKB)
+	}
+
+	return canAccept, estimatedKB
 }
 
 func (bl *BandwidthLimiter) maybeUpdateLimits() {
-	if bl.epochCache == nil || bl.phaseTracker == nil {
+	if bl.phaseTracker == nil {
 		return
 	}
 
@@ -102,81 +76,131 @@ func (bl *BandwidthLimiter) maybeUpdateLimits() {
 		return
 	}
 
-	if newLimit, err := bl.calculateWeightBasedLimitFromCache(epochState.LatestEpoch.EpochIndex); err == nil {
-		bl.mu.Lock()
-		if bl.limitsPerBlockKB != newLimit {
-			oldLimit := bl.limitsPerBlockKB
-			bl.limitsPerBlockKB = newLimit
-			logging.Info("Updated bandwidth limit from cached epoch data", types.Config,
-				"oldLimit", oldLimit, "newLimit", newLimit, "epochIndex", epochState.LatestEpoch.EpochIndex)
-		}
-		bl.mu.Unlock()
+	currentEpochIndex := epochState.LatestEpoch.EpochIndex
+	if bl.cachedLimitEpochIndex == currentEpochIndex {
+		return
+	}
+
+	if bl.configManager != nil {
+		bl.updateParametersFromConfig()
+	}
+
+	bl.updateWeightBasedLimit(currentEpochIndex)
+}
+
+func (bl *BandwidthLimiter) updateParametersFromConfig() {
+	validationParams := bl.configManager.GetValidationParams()
+	bandwidthParams := bl.configManager.GetBandwidthParams()
+
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+
+	updated := false
+
+	if validationParams.ExpirationBlocks > 0 && bl.requestLifespanBlocks != validationParams.ExpirationBlocks {
+		bl.requestLifespanBlocks = validationParams.ExpirationBlocks
+		updated = true
+	}
+
+	if bandwidthParams.KbPerInputToken > 0 && bl.kbPerInputToken != bandwidthParams.KbPerInputToken {
+		bl.kbPerInputToken = bandwidthParams.KbPerInputToken
+		updated = true
+	}
+
+	if bandwidthParams.KbPerOutputToken > 0 && bl.kbPerOutputToken != bandwidthParams.KbPerOutputToken {
+		bl.kbPerOutputToken = bandwidthParams.KbPerOutputToken
+		updated = true
+	}
+
+	if bandwidthParams.EstimatedLimitsPerBlockKb > 0 && bl.defaultLimit != bandwidthParams.EstimatedLimitsPerBlockKb {
+		bl.defaultLimit = bandwidthParams.EstimatedLimitsPerBlockKb
+		updated = true
+	}
+
+	if updated {
+		logging.Info("Updated bandwidth parameters from config", types.Config,
+			"lifespanBlocks", bl.requestLifespanBlocks,
+			"kbPerInputToken", bl.kbPerInputToken,
+			"kbPerOutputToken", bl.kbPerOutputToken,
+			"defaultLimit", bl.defaultLimit)
 	}
 }
 
-func (bl *BandwidthLimiter) calculateWeightBasedLimitFromCache(currentEpochIndex uint64) (uint64, error) {
-	// Check if we already have cached limit for this epoch
-	if bl.cachedLimitEpochIndex == currentEpochIndex && bl.cachedWeightLimit > 0 {
-		return bl.cachedWeightLimit, nil
+func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
+	if bl.epochCache == nil || bl.recorder == nil {
+		logging.Warn("Epoch cache or recorder is nil, skipping weight-based limit update", types.Config)
+		return
 	}
 
+	if bl.cachedLimitEpochIndex == currentEpochIndex && bl.cachedWeightLimit > 0 {
+		return
+	}
+
+	newLimit := bl.calculateWeightBasedLimit(currentEpochIndex)
+
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+
+	if bl.limitsPerBlockKB != newLimit {
+		bl.limitsPerBlockKB = newLimit
+		logging.Info("Updated bandwidth limit", types.Config,
+			"newLimit", newLimit, "epoch", currentEpochIndex)
+	}
+}
+
+func (bl *BandwidthLimiter) calculateWeightBasedLimit(currentEpochIndex uint64) uint64 {
 	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
 	if err != nil {
-		logging.Warn("Failed to get cached epoch group data, using default limit", types.Config, "error", err)
-		return bl.defaultLimit, nil
+		logging.Warn("Failed to get epoch data, using default limit", types.Config, "error", err)
+		return bl.defaultLimit
 	}
 
 	if len(epochGroupData.ValidationWeights) == 0 {
-		logging.Warn("No validation weights found, using default limit", types.Config)
-		return bl.defaultLimit, nil
+		return bl.defaultLimit
 	}
 
-	currentNodeAddress := bl.recorder.GetAccountAddress()
-	var nodeWeight int64 = 0
-	var totalWeight int64 = 0
+	nodeAddress := bl.recorder.GetAccountAddress()
+	nodeWeight, totalWeight := bl.calculateWeights(epochGroupData.ValidationWeights, nodeAddress)
 
-	// Simple loop - only current epoch's active participants
-	for _, validationWeight := range epochGroupData.ValidationWeights {
-		totalWeight += validationWeight.Weight
-		if validationWeight.MemberAddress == currentNodeAddress {
-			nodeWeight = validationWeight.Weight
-		}
-	}
-
-	// Simple validation
 	if totalWeight <= 0 || nodeWeight <= 0 {
 		logging.Warn("Invalid weights, using default limit", types.Config,
 			"nodeWeight", nodeWeight, "totalWeight", totalWeight)
-		return bl.defaultLimit, nil
+		return bl.defaultLimit
 	}
 
-	// Simple calculation
 	adjustedLimit := uint64(float64(bl.defaultLimit) * float64(nodeWeight) / float64(totalWeight))
 
-	// Cache the calculated limit
 	bl.cachedLimitEpochIndex = currentEpochIndex
 	bl.cachedWeightLimit = adjustedLimit
 
-	logging.Info("Calculated weight-based limit using cached epoch data", types.Config,
+	logging.Info("Calculated weight-based limit", types.Config,
 		"nodeWeight", nodeWeight, "totalWeight", totalWeight,
-		"defaultLimit", bl.defaultLimit, "adjustedLimit", adjustedLimit,
-		"activeParticipants", len(epochGroupData.ValidationWeights),
-		"epochIndex", currentEpochIndex)
+		"adjustedLimit", adjustedLimit, "participants", len(epochGroupData.ValidationWeights))
 
-	return adjustedLimit, nil
+	return adjustedLimit
 }
 
-// RecordRequest records the estimated bandwidth usage at the completion block.
+func (bl *BandwidthLimiter) calculateWeights(weights []*types.ValidationWeight, nodeAddress string) (int64, int64) {
+	var nodeWeight, totalWeight int64
+
+	for _, weight := range weights {
+		totalWeight += weight.Weight
+		if weight.MemberAddress == nodeAddress {
+			nodeWeight = weight.Weight
+		}
+	}
+
+	return nodeWeight, totalWeight
+}
+
 func (bl *BandwidthLimiter) RecordRequest(startBlockHeight int64, estimatedKB float64) {
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
 
 	completionBlock := startBlockHeight + bl.requestLifespanBlocks
 	bl.usagePerBlock[completionBlock] += estimatedKB
-	logging.Info("Recorded request", types.Config, "startBlockHeight", startBlockHeight, "estimatedKB", estimatedKB, "completionBlock", completionBlock)
 }
 
-// ReleaseRequest subtracts the estimated bandwidth usage from the completion block.
 func (bl *BandwidthLimiter) ReleaseRequest(startBlockHeight int64, estimatedKB float64) {
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
@@ -184,14 +208,11 @@ func (bl *BandwidthLimiter) ReleaseRequest(startBlockHeight int64, estimatedKB f
 	completionBlock := startBlockHeight + bl.requestLifespanBlocks
 	bl.usagePerBlock[completionBlock] -= estimatedKB
 
-	logging.Info("Released request", types.Config, "startBlockHeight", startBlockHeight, "estimatedKB", estimatedKB, "completionBlock", completionBlock)
-
 	if bl.usagePerBlock[completionBlock] <= 0 {
 		delete(bl.usagePerBlock, completionBlock)
 	}
 }
 
-// startCleanupRoutine periodically removes old entries from the usage map.
 func (bl *BandwidthLimiter) startCleanupRoutine() {
 	ticker := time.NewTicker(bl.cleanupInterval)
 	defer ticker.Stop()
@@ -201,7 +222,6 @@ func (bl *BandwidthLimiter) startCleanupRoutine() {
 	}
 }
 
-// cleanupOldEntries removes entries older than the cleanup threshold.
 func (bl *BandwidthLimiter) cleanupOldEntries() {
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
@@ -225,8 +245,6 @@ func (bl *BandwidthLimiter) cleanupOldEntries() {
 	}
 }
 
-// NewBandwidthLimiterFromConfig creates a BandwidthLimiter with config parameters
-// MINIMALISTIC: Simple configuration loading with optional weight-based allocation
 func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosclient.CosmosMessageClient, phaseTracker ChainPhaseTracker) *BandwidthLimiter {
 	validationParams := configManager.GetValidationParams()
 	bandwidthParams := configManager.GetBandwidthParams()
@@ -238,7 +256,7 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 
 	limitsPerBlockKB := bandwidthParams.EstimatedLimitsPerBlockKb
 	if limitsPerBlockKB == 0 {
-		limitsPerBlockKB = 21 * 1024
+		limitsPerBlockKB = 21 * 1024 // 21MB default
 	}
 
 	kbPerInputToken := bandwidthParams.KbPerInputToken
@@ -251,18 +269,29 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 		kbPerOutputToken = 0.64
 	}
 
-	logging.Info("Creating bandwidth limiter", types.Config,
-		"limitsPerBlockKB", limitsPerBlockKB,
-		"requestLifespanBlocks", requestLifespanBlocks,
-		"kbPerInputToken", kbPerInputToken,
-		"kbPerOutputToken", kbPerOutputToken,
-		"weightBasedAllocation", recorder != nil)
+	bl := &BandwidthLimiter{
+		limitsPerBlockKB:      limitsPerBlockKB,
+		usagePerBlock:         make(map[int64]float64),
+		cleanupInterval:       30 * time.Second,
+		requestLifespanBlocks: requestLifespanBlocks,
+		kbPerInputToken:       kbPerInputToken,
+		kbPerOutputToken:      kbPerOutputToken,
+		recorder:              recorder,
+		defaultLimit:          limitsPerBlockKB,
+		phaseTracker:          phaseTracker,
+		configManager:         configManager,
+	}
 
 	if recorder != nil && phaseTracker != nil {
-		return NewBandwidthLimiterWithWeights(recorder, limitsPerBlockKB, requestLifespanBlocks, kbPerInputToken, kbPerOutputToken, phaseTracker)
-	} else {
-		return NewBandwidthLimiter(limitsPerBlockKB, requestLifespanBlocks, kbPerInputToken, kbPerOutputToken)
+		bl.epochCache = NewEpochGroupDataCache(recorder)
 	}
+
+	logging.Info("Bandwidth limiter initialized", types.Config,
+		"limit", limitsPerBlockKB, "lifespan", requestLifespanBlocks,
+		"weightBased", recorder != nil && phaseTracker != nil)
+
+	go bl.startCleanupRoutine()
+	return bl
 }
 
 type ConfigManager interface {
