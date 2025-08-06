@@ -49,7 +49,7 @@
           "min_validation_traffic_cutoff": "10"
         },
         "bandwidth_limits_params": {
-          "estimated_limits_per_block_kb": "21504",
+          "estimated_limits_per_block_kb": "43008",
           "kb_per_input_token": {
             "value": "23",
             "exponent": "-4"
