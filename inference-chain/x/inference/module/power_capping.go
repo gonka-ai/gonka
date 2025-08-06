@@ -45,8 +45,8 @@ func ApplyPowerCapping(ctx context.Context, k keeper.Keeper, activeParticipants 
 
 	// Get power capping parameters
 	maxIndividualPowerPercentage := k.GetMaxIndividualPowerPercentage(ctx)
-	if maxIndividualPowerPercentage == nil {
-		// If not set, return participants unchanged (no capping)
+	if maxIndividualPowerPercentage == nil || maxIndividualPowerPercentage.ToFloat() == 0.0 {
+		// If not set or set to 0, return participants unchanged (no capping)
 		totalPower := int64(0)
 		for _, participant := range activeParticipants {
 			totalPower += participant.Weight

@@ -16,22 +16,22 @@ func TestApplyGenesisEnhancement_ImmatureNetwork(t *testing.T) {
 
 	// Set up parameters for immature network
 	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
 		NetworkMaturityThreshold:     10_000_000, // 10M threshold
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:           true, // Feature enabled
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "genesis_validator", // Set genesis validator
-		GenesisEnhancementEnabled:    true,                // Feature enabled
-		// Required fields
-		TotalSupply:              1_000_000_000,
-		OriginatorSupply:         160_000_000,
-		TopRewardAmount:          120_000_000,
-		PreProgrammedSaleAmount:  120_000_000,
-		TopRewards:               3,
-		SupplyDenom:              "gonka",
-		TopRewardPeriod:          365 * 24 * 60 * 60,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -76,7 +76,7 @@ func TestApplyGenesisEnhancement_MatureNetwork(t *testing.T) {
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "genesis_validator",
-		GenesisEnhancementEnabled:    true, // Feature enabled
+		GenesisVetoEnabled:           true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -116,7 +116,7 @@ func TestApplyGenesisEnhancement_FeatureDisabled(t *testing.T) {
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "genesis_validator",
-		GenesisEnhancementEnabled:    false, // Feature disabled
+		GenesisVetoEnabled:           false, // Feature disabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -153,7 +153,7 @@ func TestApplyGenesisEnhancement_NoGenesisValidator(t *testing.T) {
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "",   // No genesis validator
-		GenesisEnhancementEnabled:    true, // Feature enabled
+		GenesisVetoEnabled:           true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -190,7 +190,7 @@ func TestApplyGenesisEnhancement_GenesisValidatorNotFound(t *testing.T) {
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "nonexistent_validator",
-		GenesisEnhancementEnabled:    true, // Feature enabled
+		GenesisVetoEnabled:           true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -227,7 +227,7 @@ func TestApplyGenesisEnhancement_SingleParticipant(t *testing.T) {
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "genesis_validator",
-		GenesisEnhancementEnabled:    true, // Feature enabled
+		GenesisVetoEnabled:           true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -303,7 +303,7 @@ func TestApplyGenesisEnhancement_DifferentMultipliers(t *testing.T) {
 				GenesisVetoMultiplier:        types.DecimalFromFloat(tt.multiplier),
 				MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 				FirstGenesisValidatorAddress: "genesis_validator",
-				GenesisEnhancementEnabled:    true, // Feature enabled
+				GenesisVetoEnabled:           true, // Feature enabled
 				// Required fields
 				TotalSupply:              1_000_000_000,
 				OriginatorSupply:         160_000_000,
@@ -354,7 +354,7 @@ func TestApplyGenesisEnhancement_ValidatorIdentityPreserved(t *testing.T) {
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "genesis_validator",
-		GenesisEnhancementEnabled:    true, // Feature enabled
+		GenesisVetoEnabled:           true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,

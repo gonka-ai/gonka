@@ -102,7 +102,7 @@ fun checkParticipantWeights(
 ) {
     appCli.getValidators().validators.forEach { v ->
         when (v.consensusPubkey.value) {
-            genesisParticipantKey.key -> assertThat(v.tokens).isEqualTo(20)
+            genesisParticipantKey.key -> assertThat(v.tokens).isEqualTo(13) // Used to be 20, but now capped at 40% for 3 network nodes
             else -> assertThat(v.tokens).isEqualTo(10)
         }
     }

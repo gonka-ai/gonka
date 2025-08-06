@@ -15,22 +15,22 @@ func TestApplyPowerCapping_Basic(t *testing.T) {
 
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
 		NetworkMaturityThreshold:     10_000_000,
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:           true,                         // Feature enabled
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30), // 30% limit
 		FirstGenesisValidatorAddress: "",
-		GenesisEnhancementEnabled:    true, // Feature enabled
-		// Required fields
-		TotalSupply:              1_000_000_000,
-		OriginatorSupply:         160_000_000,
-		TopRewardAmount:          120_000_000,
-		PreProgrammedSaleAmount:  120_000_000,
-		TopRewards:               3,
-		SupplyDenom:              "gonka",
-		TopRewardPeriod:          365 * 24 * 60 * 60,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -61,22 +61,22 @@ func TestApplyPowerCapping_NoCappingNeeded(t *testing.T) {
 
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
 		NetworkMaturityThreshold:     10_000_000,
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:           true, // Feature enabled
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "",
-		GenesisEnhancementEnabled:    true, // Feature enabled
-		// Required fields
-		TotalSupply:              1_000_000_000,
-		OriginatorSupply:         160_000_000,
-		TopRewardAmount:          120_000_000,
-		PreProgrammedSaleAmount:  120_000_000,
-		TopRewards:               3,
-		SupplyDenom:              "gonka",
-		TopRewardPeriod:          365 * 24 * 60 * 60,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -103,22 +103,22 @@ func TestApplyPowerCapping_SingleParticipant(t *testing.T) {
 
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
 		NetworkMaturityThreshold:     10_000_000,
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:           true, // Feature enabled
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "",
-		GenesisEnhancementEnabled:    true, // Feature enabled
-		// Required fields
-		TotalSupply:              1_000_000_000,
-		OriginatorSupply:         160_000_000,
-		TopRewardAmount:          120_000_000,
-		PreProgrammedSaleAmount:  120_000_000,
-		TopRewards:               3,
-		SupplyDenom:              "gonka",
-		TopRewardPeriod:          365 * 24 * 60 * 60,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -149,22 +149,22 @@ func TestApplyPowerCapping_SortingAlgorithm(t *testing.T) {
 
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
 		NetworkMaturityThreshold:     10_000_000,
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:           true, // Feature enabled
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "",
-		GenesisEnhancementEnabled:    true, // Feature enabled
-		// Required fields
-		TotalSupply:              1_000_000_000,
-		OriginatorSupply:         160_000_000,
-		TopRewardAmount:          120_000_000,
-		PreProgrammedSaleAmount:  120_000_000,
-		TopRewards:               3,
-		SupplyDenom:              "gonka",
-		TopRewardPeriod:          365 * 24 * 60 * 60,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -215,11 +215,6 @@ func TestApplyPowerCapping_ParameterNotSet(t *testing.T) {
 
 	// Set up parameters WITHOUT MaxIndividualPowerPercentage
 	genesisParams := types.GenesisOnlyParams{
-		NetworkMaturityThreshold: 10_000_000,
-		GenesisVetoMultiplier:    types.DecimalFromFloat(0.52),
-		// MaxIndividualPowerPercentage: NOT SET - should disable capping
-		FirstGenesisValidatorAddress: "",
-		GenesisEnhancementEnabled:    true,
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -231,6 +226,11 @@ func TestApplyPowerCapping_ParameterNotSet(t *testing.T) {
 		TopRewardPayouts:         12,
 		TopRewardPayoutsPerMiner: 4,
 		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
+		NetworkMaturityThreshold: 10_000_000,
+		GenesisVetoMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:       true,
+		// MaxIndividualPowerPercentage: NOT SET - should disable capping
+		FirstGenesisValidatorAddress: "",
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -258,22 +258,22 @@ func TestApplyPowerCapping_PowerConservation(t *testing.T) {
 
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
 		NetworkMaturityThreshold:     10_000_000,
 		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		GenesisVetoEnabled:           true, // Feature enabled
 		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 		FirstGenesisValidatorAddress: "",
-		GenesisEnhancementEnabled:    true, // Feature enabled
-		// Required fields
-		TotalSupply:              1_000_000_000,
-		OriginatorSupply:         160_000_000,
-		TopRewardAmount:          120_000_000,
-		PreProgrammedSaleAmount:  120_000_000,
-		TopRewards:               3,
-		SupplyDenom:              "gonka",
-		TopRewardPeriod:          365 * 24 * 60 * 60,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -293,4 +293,46 @@ func TestApplyPowerCapping_PowerConservation(t *testing.T) {
 	for _, participant := range result.CappedParticipants {
 		require.GreaterOrEqual(t, participant.Weight, int64(0), "No participant should have negative power")
 	}
+}
+
+func TestApplyPowerCapping_ZeroPercentage_NoLimitApplied(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Set genesis parameters with MaxIndividualPowerPercentage = 0 (no limit)
+	genesisParams := types.GenesisOnlyParams{
+		NetworkMaturityThreshold:     10_000_000,
+		GenesisVetoMultiplier:        types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.0), // Zero means no limit
+		FirstGenesisValidatorAddress: "",
+		GenesisVetoEnabled:           true,
+		// Required fields
+		TotalSupply:              1_000_000_000,
+		OriginatorSupply:         160_000_000,
+		TopRewardAmount:          120_000_000,
+		PreProgrammedSaleAmount:  120_000_000,
+		TopRewards:               3,
+		SupplyDenom:              "gonka",
+		TopRewardPeriod:          365 * 24 * 60 * 60,
+		TopRewardPayouts:         12,
+		TopRewardPayoutsPerMiner: 4,
+		TopRewardMaxDuration:     4 * 365 * 24 * 60 * 60,
+	}
+	k.SetGenesisOnlyParams(ctx, &genesisParams)
+
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: "participant1", Weight: 1000},
+		{Index: "participant2", Weight: 2000},
+		{Index: "participant3", Weight: 9000}, // Would normally be capped, but zero percentage means no limit
+	}
+
+	result := inference.ApplyPowerCapping(ctx, k, activeParticipants)
+
+	// With zero percentage, no capping should be applied
+	require.False(t, result.WasCapped, "No capping should be applied when MaxIndividualPowerPercentage is 0")
+	require.Equal(t, int64(12000), result.TotalPower, "Total power should remain unchanged")
+
+	// Verify all participants maintain their original power
+	require.Equal(t, int64(1000), result.CappedParticipants[0].Weight, "Participant 1 should maintain original power")
+	require.Equal(t, int64(2000), result.CappedParticipants[1].Weight, "Participant 2 should maintain original power")
+	require.Equal(t, int64(9000), result.CappedParticipants[2].Weight, "Participant 3 should maintain original power (no capping)")
 }

@@ -18,7 +18,7 @@ type GenesisEnhancementResult struct {
 // ShouldApplyGenesisEnhancement checks if network maturity and validator identification conditions are met
 func ShouldApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, totalNetworkPower int64, computeResults []stakingkeeper.ComputeResult) bool {
 	// Enhancement only applies if feature is enabled
-	if !k.GetGenesisEnhancementEnabled(ctx) {
+	if !k.GetGenesisVetoEnabled(ctx) {
 		return false
 	}
 

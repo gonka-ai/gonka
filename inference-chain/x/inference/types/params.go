@@ -69,7 +69,7 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 		TopRewardPayoutsPerMiner:     4,
 		TopRewardMaxDuration:         year * 4,
 		MaxIndividualPowerPercentage: DecimalFromFloat(0.25),
-		GenesisEnhancementEnabled:    true, // Enable genesis enhancement by default
+		GenesisVetoEnabled:           true, // Enable genesis veto by default
 		NetworkMaturityThreshold:     2_000_000,
 		GenesisVetoMultiplier:        DecimalFromFloat(0.52),
 		FirstGenesisValidatorAddress: "", // Empty by default - must be set in genesis file

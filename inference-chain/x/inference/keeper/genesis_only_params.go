@@ -74,12 +74,12 @@ func (k Keeper) GetFirstGenesisValidatorAddress(ctx context.Context) string {
 	return params.FirstGenesisValidatorAddress
 }
 
-// GetGenesisEnhancementEnabled returns whether genesis enhancement is enabled from GenesisOnlyParams
-func (k Keeper) GetGenesisEnhancementEnabled(ctx context.Context) bool {
+// GetGenesisVetoEnabled returns whether genesis veto is enabled from GenesisOnlyParams
+func (k Keeper) GetGenesisVetoEnabled(ctx context.Context) bool {
 	params, found := k.GetGenesisOnlyParams(ctx)
 	if !found {
 		// Return default value if not found (false)
 		return false
 	}
-	return params.GenesisEnhancementEnabled
+	return params.GenesisVetoEnabled
 }
