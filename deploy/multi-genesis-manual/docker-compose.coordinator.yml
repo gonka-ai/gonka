@@ -1,0 +1,21 @@
+services:
+  coordinator:
+    image: ghcr.io/product-science/inferenced:0.1.21
+    container_name: coordinator
+    restart: "no"
+    command: ["sh", "/root/init-docker-genesis-coordinator.sh"]
+    volumes:
+      - ./init-docker-genesis-coordinator.sh:/root/init-docker-genesis-coordinator.sh
+      - ./genesis_overrides.json:/root/genesis_overrides.json
+      - ./coordinator-data/gentx:/root/gentx_collected
+      - ./coordinator-data/addresses:/root/addresses_collected
+      - ./coordinator-data/final_genesis:/root/final_genesis
+      - coordinator_state:/root/.inference
+    ports:
+      - "26656:26656"
+      - "26657:26657"
+      - "1317:1317"
+      - "9090:9090"
+
+volumes:
+  coordinator_state:

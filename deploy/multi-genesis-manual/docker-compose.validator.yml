@@ -1,0 +1,32 @@
+services:
+  validator:
+    image: ghcr.io/product-science/inferenced:0.1.21
+    container_name: validator
+    restart: always
+    command: ["sh", "/root/init-docker-validator.sh"]
+    volumes:
+      # Mount the entire config directory from the host
+      - ./config:/root/.inference/config
+      # Mount the init script
+      - ./init-docker-validator.sh:/root/init-docker-validator.sh
+      # Mount the tmkms directory, which will be populated by the init script
+      - ./tmkms:/root/.tmkms
+    env_file:
+      - ./config.env
+    ports:
+      - "26656:26656"
+      - "26657:26657"
+    expose:
+      - "26658" # TMKMS port
+    depends_on:
+      - tmkms
+
+  tmkms:
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.21
+    container_name: tmkms
+    restart: always
+    environment:
+      - VALIDATOR_LISTEN_ADDRESS=tcp://validator:26658
+    volumes:
+      # Mount the tmkms directory, which contains the private key
+      - ./tmkms:/root/.tmkms
