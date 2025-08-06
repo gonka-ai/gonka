@@ -206,30 +206,44 @@ IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
 
 ### 4.3 [Any machine]: Register participant via `register-new-participant`
 
-This command doesn't require signing from either the cold or warm private key and can be executed on any machine.  
-The command should be used like:
+This command doesn't require signing from either the cold or warm private key and can be executed on any machine.
+
+#### Auto-Fetch Mode (Recommended for API containers)
+When running from within API containers, the consensus key can be automatically fetched from the chain node:
 ```
 ./inferenced register-new-participant \
     <new-node-url> \
     <account-public-key> \
-    <consensus-key>
     --node-address $SEED_API_URL
 ```
 
-**Example output:**
+#### Manual Mode (For external usage)
+For external usage or when auto-fetch is not available, provide the consensus key explicitly:
+```
+./inferenced register-new-participant \
+    <new-node-url> \
+    <account-public-key> \
+    --consensus-key <consensus-key> \
+    --node-address $SEED_API_URL
+```
+
+**Note**: Auto-fetch mode requires the `DAPI_CHAIN_NODE__URL` environment variable to be set (automatically configured in API containers). If auto-fetch fails, the command will provide clear guidance on using manual mode.
+
+#### Example: Auto-Fetch Mode (from API container)
 
 ```
 ❯ ./inferenced register-new-participant \
     http://36.189.234.237:19252 \
     "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
-    "IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=" \
     --node-address http://36.189.234.237:19250
 
+No consensus key provided, attempting to auto-fetch from chain node...
+Successfully auto-fetched and validated consensus key from chain node
 Registering new participant:
   Node URL: http://36.189.234.237:19252
   Account Address: gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
   Account Public Key: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY
-  Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
+  Validator Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA= (auto-fetched)
   Seed Node Address: http://36.189.234.237:19250
 Sending registration request to http://36.189.234.237:19250/v1/participants
 Response status code: 200
@@ -239,6 +253,52 @@ Waiting for participant to be available (timeout: 30 seconds)...
 Found participant with pubkey: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY (balance: 0)
 Participant is now available at http://36.189.234.237:19250/v1/participants/gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
 ```
+
+#### Example: Manual Mode (external usage)
+
+```
+❯ ./inferenced register-new-participant \
+    http://36.189.234.237:19252 \
+    "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
+    --consensus-key "IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=" \
+    --node-address http://36.189.234.237:19250
+
+Using provided consensus key (validated)
+Registering new participant:
+  Node URL: http://36.189.234.237:19252
+  Account Address: gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
+  Account Public Key: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY
+  Validator Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA= (provided)
+  Seed Node Address: http://36.189.234.237:19250
+Sending registration request to http://36.189.234.237:19250/v1/participants
+Response status code: 200
+Participant registration successful.
+Waiting for participant to be available (timeout: 30 seconds)...
+..
+Found participant with pubkey: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY (balance: 0)
+Participant is now available at http://36.189.234.237:19250/v1/participants/gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
+```
+
+#### Troubleshooting `register-new-participant`
+
+**Auto-fetch fails with environment variable error:**
+- Ensure you're running from within an API container where `DAPI_CHAIN_NODE__URL` is automatically set
+- For external usage, use manual mode with `--consensus-key` flag
+
+**Auto-fetch fails with connection error:**
+- Verify the chain node is running and accessible
+- Check network connectivity between API container and chain node
+- Use manual mode as fallback
+
+**Invalid consensus key error:**
+- Ensure the consensus key is exactly 32 bytes when base64-decoded (ED25519 requirement)
+- Verify the key was obtained from the correct chain node status endpoint
+- For manual debugging, use: `curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value'`
+
+**Missing validator information:**
+- The node may not be configured as a validator
+- Ensure TMKMS and node containers are running properly
+- Use manual mode with explicit consensus key from TMKMS
 
 ### 5. [Local machine]: Grant Permissions to ML Operational Key
 
