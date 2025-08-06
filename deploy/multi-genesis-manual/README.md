@@ -42,7 +42,7 @@ The process is divided into several distinct stages, with specific actions for v
 2.  Run the `stage-1-generate-key.sh` script via Docker. This will create your keys and place your address and private consensus key in your local directory.
 
     ```bash
-    MONIKER="validator-1"
+    MONIKER="coordinator"
     VAL_DIR_PATH="./multigen-tests/$MONIKER"
     docker run --rm -it \
         -v "$VAL_DIR_PATH":/output \
@@ -72,18 +72,22 @@ The process is divided into several distinct stages, with specific actions for v
 
     *Example for a local test:*
     ```bash
+    # Reset dirs
+    rm -rf ./multigen-tests/coordinator-data/addresses_collected || true
+    mkdir -p ./multigen-tests/coordinator-data/addresses_collected
     # Copy addresses from all validators, including the coordinator
-    cp ./multigen-tests/validator-1/address.txt ./coordinator-data/addresses_collected/validator-1.address
-    cp ./multigen-tests/validator-2/address.txt ./coordinator-data/addresses_collected/validator-2.address
-    cp ./multigen-tests/validator-3/address.txt ./coordinator-data/addresses_collected/validator-3.address
-    cp ./multigen-tests/coordinator/address.txt ./coordinator-data/addresses_collected/coordinator.address
+    cp ./multigen-tests/validator-1/address.txt ./multigen-tests/coordinator-data/addresses_collected/validator-1.address
+    cp ./multigen-tests/validator-2/address.txt ./multigen-tests/coordinator-data/addresses_collected/validator-2.address
+    cp ./multigen-tests/validator-3/address.txt ./multigen-tests/coordinator-data/addresses_collected/validator-3.address
+    cp ./multigen-tests/coordinator/address.txt ./multigen-tests/coordinator-data/addresses_collected/coordinator.address
     ```
 3.  Run the `stage-2-create-intermediate-genesis.sh` script. This will generate the `genesis-intermediate.json`.
 
     ```bash
+    COORDINATOR_DIR_PATH="./multigen-tests/coordinator-data"
     docker run --rm -it \
-        -v ./coordinator-data/addresses_collected:/root/addresses_collected \
-        -v ./coordinator-data:/root/intermediate_genesis \
+        -v "$COORDINATOR_DIR_PATH"/addresses_collected:/root/addresses_collected \
+        -v "$COORDINATOR_DIR_PATH":/root/intermediate_genesis \
         -v ./deploy/multi-genesis-manual/genesis_overrides.json:/root/genesis_overrides.json \
         -v ./deploy/multi-genesis-manual/stage-2-create-intermediate-genesis.sh:/root/stage-2.sh \
         ghcr.io/product-science/inferenced:latest \
