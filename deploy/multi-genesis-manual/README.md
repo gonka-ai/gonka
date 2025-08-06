@@ -138,7 +138,30 @@ The process is divided into several distinct stages, with specific actions for v
 
 ### Stage 5: Launch!
 
-1.  **Distribute the Final Genesis**: The coordinator takes the `genesis-final.json` from `./coordinator-data/` and distributes it to all validators. **Use a checksum to verify integrity!**
-2.  **All Validators**: Prepare your node's directory as described in the `docker-compose.validator.yml` file's comments. Place the `genesis-final.json` as `config/genesis.json`, place your `priv_validator_key.json` in `tmkms/`, and create your `config.env`.
-3.  **Launch your node** using `docker-compose -f deploy/multi-genesis-manual/docker-compose.validator.yml up -d`.
-4.  **Coordinator**: The coordinator can launch their node using the same `docker-compose.validator.yml` after setting up their own directory.
+*   **Action**: To be performed by **every** validator, including the coordinator.
+*   **Goal**: Start your node and connect to the network.
+
+1.  **Distribute the Final Genesis**: The coordinator takes the `genesis-final.json` from their local `./multigen-tests/coordinator-data/` directory and distributes it to all validators. **Use a checksum to verify integrity!**
+
+2.  **Prepare your Node's Launch Directory**: Each validator must create a launch directory on their machine. For example, `~/validator-1-launch/`. Inside this directory, you need to set up the following structure:
+    ```
+    ~/validator-1-launch/
+    ├── config/
+    │   └── genesis.json  (This is the genesis-final.json, renamed)
+    ├── tmkms/
+    │   └── priv_validator_key.json (The private key from Stage 1)
+    ├── start-node.sh (Copy of the script from the repo)
+    └── config.env (See template for details)
+    ```
+    *   Place the **final `genesis.json`** into the `config/` subdirectory.
+    *   Place the **`priv_validator_key.json`** you generated in Stage 1 into the `tmkms/` subdirectory.
+    *   Copy the `deploy/multi-genesis-manual/start-node.sh` script into the root of your launch directory.
+    *   Create a `config.env` file. You can copy `deploy/multi-genesis-manual/config.env.template` and fill it out with the `P2P_PERSISTENT_PEERS` list of all other genesis validators.
+
+3.  **Launch your Node**:
+    Navigate to your launch directory and run the `docker-compose.validator.yml`.
+    ```bash
+    cd ~/validator-1-launch/
+    docker-compose -f /path/to/repo/deploy/multi-genesis-manual/docker-compose.validator.yml up -d
+    ```
+4.  **Repeat for All Nodes**: Every validator, including the coordinator, follows these same steps in Stage 5 to launch their node.

@@ -1,16 +1,22 @@
+# This docker-compose file is used to LAUNCH a validator node in Stage 5,
+# after the final genesis.json has been created and distributed.
+# Both regular validators and the coordinator will use this to start their nodes.
+
 services:
   validator:
-    image: ghcr.io/product-science/inferenced:0.1.21
+    image: ghcr.io/product-science/inferenced:latest
     container_name: validator
     restart: always
-    command: ["sh", "/root/init-docker-validator.sh"]
+    # The command is to run the start-node.sh script.
+    command: ["sh", "/root/start-node.sh"]
     volumes:
-      # Mount the entire config directory from the host
+      # Mount the config directory containing the final genesis.json.
       - ./config:/root/.inference/config
-      # Mount the init script
-      - ./init-docker-validator.sh:/root/init-docker-validator.sh
-      # Mount the tmkms directory, which will be populated by the init script
+      # Mount the tmkms directory containing the validator's private key.
       - ./tmkms:/root/.tmkms
+      # Mount the start script.
+      - ./start-node.sh:/root/start-node.sh
+    # This file contains the P2P peer list.
     env_file:
       - ./config.env
     ports:
@@ -26,7 +32,8 @@ services:
     container_name: tmkms
     restart: always
     environment:
+      # This tells TMKMS where to find the validator node.
       - VALIDATOR_LISTEN_ADDRESS=tcp://validator:26658
     volumes:
-      # Mount the tmkms directory, which contains the private key
+      # This must contain the priv_validator_key.json generated in Stage 1.
       - ./tmkms:/root/.tmkms
