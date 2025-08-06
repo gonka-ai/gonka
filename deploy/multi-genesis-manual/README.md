@@ -47,7 +47,7 @@ The process is divided into several distinct stages, with specific actions for v
     *For a single validator:*
     ```bash
     # Replace with your moniker and directory path
-    MONIKER="coordinator"
+    MONIKER="validator-3"
     VAL_DIR_PATH="./multigen-tests/$MONIKER"
     
     docker run --rm -it \
@@ -86,7 +86,7 @@ The process is divided into several distinct stages, with specific actions for v
     COORDINATOR_DIR_PATH="./multigen-tests/coordinator-data"
     docker run --rm -it \
         -v "$COORDINATOR_DIR_PATH:/data" \
-        -v ./deploy/multi-genesis-manual/genesis_overrides.json:/data/genesis_overrides.json \
+        -v ./deploy/multi-genesis-manual/genesis_overrides.json:/root/genesis_overrides.json \
         -v ./deploy/multi-genesis-manual/stage-2-create-intermediate-genesis.sh:/root/stage-2.sh \
         ghcr.io/product-science/inferenced:latest \
         sh /root/stage-2.sh
