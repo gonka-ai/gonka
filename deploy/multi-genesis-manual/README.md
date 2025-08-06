@@ -42,7 +42,7 @@ The process is divided into several distinct stages, with specific actions for v
 2.  Run the `stage-1-generate-key.sh` script via Docker. This will create your keys and place your address and private consensus key in your local directory.
 
     ```bash
-    MONIKER="coordinator"
+    MONIKER="validator-3"
     VAL_DIR_PATH="./multigen-tests/$MONIKER"
     docker run --rm -it \
         -v "$VAL_DIR_PATH":/output \
@@ -86,8 +86,7 @@ The process is divided into several distinct stages, with specific actions for v
     ```bash
     COORDINATOR_DIR_PATH="./multigen-tests/coordinator-data"
     docker run --rm -it \
-        -v "$COORDINATOR_DIR_PATH:/data/addresses_collected" \
-        -v "$COORDINATOR_DIR_PATH:/data/intermediate_genesis_output" \
+        -v "$COORDINATOR_DIR_PATH:/data" \
         -v ./deploy/multi-genesis-manual/genesis_overrides.json:/data/genesis_overrides.json \
         -v ./deploy/multi-genesis-manual/stage-2-create-intermediate-genesis.sh:/root/stage-2.sh \
         ghcr.io/product-science/inferenced:latest \
@@ -103,10 +102,21 @@ The process is divided into several distinct stages, with specific actions for v
 1.  Place the `genesis-intermediate.json` you received from the coordinator into your local validator directory (e.g., `~/validator-1-files`).
 2.  Run the `stage-3-create-gentx.sh` script. You will be prompted to enter the 24-word mnemonic phrase you saved from Stage 1.
 
+    When running locally:
     ```bash
+    cp ./multigen-tests/coordinator-data/intermediate_genesis_output/genesis-intermediate.json ./multigen-tests/validator-1/
+    cp ./multigen-tests/coordinator-data/intermediate_genesis_output/genesis-intermediate.json ./multigen-tests/validator-2/
+    cp ./multigen-tests/coordinator-data/intermediate_genesis_output/genesis-intermediate.json ./multigen-tests/validator-3/
+    ```
+
+    Then run the script:
+    
+    ```bash
+    MONIKER="validator-1"
+    DIR_PATH="./multigen-tests/$MONIKER"
     docker run --rm -it \
-        -v ~/validator-1-files:/output \
-        -e MONIKER="validator-1" \
+        -v "$DIR_PATH:/output" \
+        -e MONIKER="$MONIKER" \
         -v ./deploy/multi-genesis-manual/stage-3-create-gentx.sh:/root/stage-3.sh \
         ghcr.io/product-science/inferenced:latest \
         sh /root/stage-3.sh
