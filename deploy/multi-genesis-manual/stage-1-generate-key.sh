@@ -9,7 +9,7 @@ set -ex
 OUTPUT_DIR="/output"
 STATE_DIR="/tmp/inference"
 APP_NAME="inferenced"
-KEYRING_BACKEND="test"
+KEYRING_BACKEND="file"
 KEY_NAME_COLD="validator-cold"
 
 # 1. Initialize a temporary node directory to get a clean keyring

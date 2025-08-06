@@ -35,9 +35,11 @@ The process is divided into several distinct stages, with specific actions for v
 2.  Run the `stage-1-generate-key.sh` script via Docker. This will create your keys and place your address and private consensus key in your local directory.
 
     ```bash
+    MONIKER="validator-1"
+    PATH="~/validator-1-files"
     docker run --rm -it \
-        -v ~/validator-1-files:/output \
-        -e MONIKER="validator-1" \
+        -v "$PATH":/output \
+        -e MONIKER="$MONIKER" \
         -v ./deploy/multi-genesis-manual/stage-1-generate-key.sh:/root/stage-1.sh \
         ghcr.io/product-science/inferenced:latest \
         sh /root/stage-1.sh
