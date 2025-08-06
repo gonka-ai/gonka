@@ -25,13 +25,6 @@ import (
 )
 
 const (
-	finishInferenceAction           = "/inference.inference.MsgFinishInference"
-	startInferenceAction            = "/inference.inference.MsgStartInference"
-	validationAction                = "/inference.inference.MsgValidation"
-	trainingTaskAssignedAction      = "/inference.inference.MsgAssignTrainingTask"
-	submitGovProposalAction         = "/cosmos.gov.v1.MsgSubmitProposal"
-	requestThresholdSignatureAction = "/inference.bls.MsgRequestThresholdSignature"
-
 	// BLS Typed Event Types (from EmitTypedEvent)
 	blsKeyGenerationInitiatedEvent    = "inference.bls.EventKeyGenerationInitiated"
 	blsVerifyingPhaseStartedEvent     = "inference.bls.EventVerifyingPhaseStarted"
@@ -110,6 +103,8 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.module='inference'")
 	// All transactions originating from the BLS module
 	subscribeToEvents(el.ws, 3, "tm.event='Tx' AND message.module='bls'")
+	// authz transactions
+	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND message.action='/cosmos.authz.v1beta1.MsgExec'")
 
 	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
@@ -347,68 +342,53 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 		return
 	}
 
-	// Check for transaction-specific BLS events (only threshold signing events are emitted from message processing)
 	el.handleBLSTransactionEvents(event, name)
 
-	actions, ok := event.Result.Events["message.action"]
-	if !ok || len(actions) == 0 {
-		// Handle the missing key or empty slice.
-		// For example, log an error, return from the function, etc.
-		logging.Info("No message.action event found", types.EventProcessing, "event", event)
-		return // or handle it accordingly
+	events := event.Result.Events
+
+	el.handleInferenceFinished(events, name)
+	el.handleInferenceValidation(events, name)
+	el.handleSubmitProposal(events, name)
+	el.handleTrainingTaskAssigned(events, name)
+}
+
+func (el *EventListener) handleInferenceFinished(events map[string][]string, name string) {
+	if inferenceIDs, ok := events["inference_finished.inference_id"]; ok && len(inferenceIDs) > 0 {
+		logging.Info("Handling 'inference_finished' event", types.EventProcessing, "worker", name)
+		if el.isNodeSynced() {
+			el.validator.SampleInferenceToValidate(inferenceIDs, el.transactionRecorder)
+		}
 	}
+}
 
-	action := actions[0]
-	// Get the keys of the map event.Result.Events:
-	//for key := range event.Result.Events {
-	//	for i, attr := range event.Result.Events[key] {
-	//		logging.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
-	//	}
-	//}
+func (el *EventListener) handleInferenceValidation(events map[string][]string, name string) {
+	if needsRevalidation, ok := events["inference_validation.needs_revalidation"]; ok && len(needsRevalidation) > 0 && needsRevalidation[0] == "true" {
+		logging.Info("Handling 'inference_validation' event that needs revalidation", types.EventProcessing, "worker", name)
+		if el.isNodeSynced() {
+			el.validator.VerifyInvalidation(events, el.transactionRecorder)
+		}
+	}
+}
 
-	switch action {
-	case startInferenceAction, finishInferenceAction:
-		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
+func (el *EventListener) handleSubmitProposal(events map[string][]string, name string) {
+	if proposalIDs, ok := events["submit_proposal.proposal_id"]; ok && len(proposalIDs) > 0 {
+		logging.Info("Handling 'submit_proposal' event", types.EventProcessing, "worker", name, "proposalId", proposalIDs[0])
+	}
+}
+
+func (el *EventListener) handleTrainingTaskAssigned(events map[string][]string, name string) {
+	if taskIds, ok := events["training_task_assigned.task_id"]; ok && len(taskIds) > 0 {
+		logging.Info("Handling 'training_task_assigned' event", types.EventProcessing, "worker", name)
 		if el.isNodeSynced() {
-			el.validator.SampleInferenceToValidate(
-				event.Result.Events["inference_finished.inference_id"],
-				el.transactionRecorder,
-			)
-		}
-	case validationAction:
-		// Only process validation transactions that need revalidation
-		needsRevalidation, hasFlag := event.Result.Events["inference_validation.needs_revalidation"]
-		if hasFlag && len(needsRevalidation) > 0 && needsRevalidation[0] == "true" {
-			logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
-			if el.isNodeSynced() {
-				el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
-			}
-		}
-	case submitGovProposalAction:
-		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
-		proposalIdOrNil := event.Result.Events["proposal_id"]
-		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
-	case trainingTaskAssignedAction:
-		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
-		if el.isNodeSynced() {
-			logging.Info("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
-			taskIds := event.Result.Events["training_task_assigned.task_id"]
-			if taskIds == nil {
-				logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
-				return
-			}
 			for _, taskId := range taskIds {
 				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
 				if err != nil {
 					logging.Error("Failed to parse task ID", types.Training, "error", err)
-					return
+					continue // Continue to the next task ID
 				}
 				el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
 			}
 		}
-	case requestThresholdSignatureAction:
-	default:
-		logging.Debug("Unhandled action received", types.EventProcessing, "action", action)
 	}
 }
 
