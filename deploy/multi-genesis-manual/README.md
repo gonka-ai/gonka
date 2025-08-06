@@ -35,8 +35,8 @@ The process is divided into several distinct stages, with specific actions for v
 2.  Run the `stage-1-generate-key.sh` script via Docker. This will create your keys and place your address and private consensus key in your local directory.
 
     ```bash
-    MONIKER="validator-1"
-    VAL_DIR_PATH="./multigen-tests/val-1"
+    MONIKER="validator-3"
+    VAL_DIR_PATH="./multigen-tests/val-3"
     docker run --rm -it \
         -v "$VAL_DIR_PATH":/output \
         -e MONIKER="$MONIKER" \
@@ -61,6 +61,14 @@ The process is divided into several distinct stages, with specific actions for v
         └── coordinator.address
     ```
 2.  Place all received `address.txt` files into the `addresses_collected` directory.
+    If running local tests:
+    ```bash
+    cp ./multigen-tests/val-1/address.txt ./coordinator-data/addresses_collected/validator-1.address
+    cp ./multigen-tests/val-2/address.txt ./coordinator-data/addresses_collected/validator-2.address
+    cp ./multigen-tests/val-3/address.txt ./coordinator-data/addresses_collected/validator-3.address
+    # Is that true?
+    cp ./multigen-tests/coordinator/address.txt ./coordinator-data/addresses_collected/coordinator.address
+    ```
 3.  Run the `stage-2-create-intermediate-genesis.sh` script. This will generate the `genesis-intermediate.json`.
 
     ```bash
