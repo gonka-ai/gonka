@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -458,13 +457,11 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 	var simVal float64
 	switch result.(type) {
 	case *DifferentLengthValidationResult:
-		log.Printf("Different length validation result")
-		// TODO: This is hack till we guarantee same tokenization
-		simVal = 1
+		logging.Warn("Different length validation result", types.Validation)
+		simVal = 0
 	case *DifferentTokensValidationResult:
-		log.Printf("Different tokens validation result")
-		// TODO: This is hack till we guarantee same tokenization
-		simVal = 1
+		logging.Warn("Different tokens validation result", types.Validation)
+		simVal = 0
 	case *SimilarityValidationResult:
 		simVal = result.(*SimilarityValidationResult).Value
 		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)
