@@ -35,9 +35,11 @@ The process is divided into several distinct stages, with specific actions for v
     *For local testing on a single machine, you can create a set of directories:*
     ```bash
     cd multigen-tests
-    rm -rf validator-1 validator-2 validator-3 coordinator || true
-    mkdir validator-1 validator-2 validator-3 coordinator
+    rm -rf validator-1 validator-2 validator-3 coordinator coordinator-data || true
+    mkdir validator-1 validator-2 validator-3 coordinator coordinator-data
     cd ..
+    echo "Cleared multigen-tests directories for local testing."
+    find multigen-tests
     ```
 
 2.  Run the `stage-1-generate-key.sh` script via Docker. This will initialize a full node directory, including your keys, in your local folder.
@@ -45,8 +47,8 @@ The process is divided into several distinct stages, with specific actions for v
     *For a single validator:*
     ```bash
     # Replace with your moniker and directory path
-    MONIKER="validator-1"
-    VAL_DIR_PATH="$HOME/validator-1-files"
+    MONIKER="coordinator"
+    VAL_DIR_PATH="./multigen-tests/$MONIKER"
     
     docker run --rm -it \
         -v "$VAL_DIR_PATH:/output" \
