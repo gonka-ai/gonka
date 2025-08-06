@@ -36,9 +36,9 @@ The process is divided into several distinct stages, with specific actions for v
 
     ```bash
     MONIKER="validator-1"
-    PATH="./multigen-tests/val-1"
+    VAL_DIR_PATH="./multigen-tests/val-1"
     docker run --rm -it \
-        -v "$PATH":/output \
+        -v "$VAL_DIR_PATH":/output \
         -e MONIKER="$MONIKER" \
         -v ./deploy/multi-genesis-manual/stage-1-generate-key.sh:/root/stage-1.sh \
         ghcr.io/product-science/inferenced:latest \
