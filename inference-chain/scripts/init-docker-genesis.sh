@@ -164,7 +164,7 @@ if [ -f "config_override.toml" ]; then
 fi
 
 echo "Key before TMKMS integration"
-docker exec node inferenced tendermint show-validator
+$APP_NAME tendermint show-validator
 cat "$STATE_DIR/config/priv_validator_key.json"
 cat "$STATE_DIR/data/priv_validator_state.json"
 
@@ -182,7 +182,7 @@ if [ -n "${TMKMS_PORT-}" ]; then
 fi
 
 echo "Key after TMKMS integration"
-docker exec node inferenced tendermint show-validator
+$APP_NAME tendermint show-validator
 cat "$STATE_DIR/config/priv_validator_key.json"
 cat "$STATE_DIR/data/priv_validator_state.json"
 
