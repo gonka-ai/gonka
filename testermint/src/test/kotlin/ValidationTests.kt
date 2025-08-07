@@ -23,7 +23,7 @@ class ValidationTests : TestermintTest() {
                 genesisSpec = createSpec(
                     epochLength = 100,
                     epochShift = 80
-                )
+                ),
             ),
             reboot = true
         )
@@ -31,7 +31,12 @@ class ValidationTests : TestermintTest() {
         genesis.node.waitForMinimumBlock(35)
         logSection("Making inference requests in parallel")
         val requests = 50
-        val statuses = runParallelInferences(genesis, requests, maxConcurrentRequests = requests)
+        val inferenceRequest = inferenceRequestObject.copy(
+            maxTokens = 20 // To not trigger bandwidth limit
+        )
+        val statuses = runParallelInferences(genesis, requests, maxConcurrentRequests = requests,
+            inferenceRequest = inferenceRequest
+        )
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")

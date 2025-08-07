@@ -206,6 +206,17 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return err
 	}
 
+	requestBlockHeight := status.SyncInfo.LatestBlockHeight
+	can, estimatedKB := s.bandwidthLimiter.CanAcceptRequest(requestBlockHeight, int(promptTokenCount), int(request.OpenAiRequest.MaxTokens))
+	if !can {
+		logging.Warn("Bandwidth limit exceeded", types.Inferences, "address", request.RequesterAddress)
+		url := s.configManager.GetApiConfig().PublicUrl
+		return echo.NewHTTPError(http.StatusTooManyRequests, "Transfer Agent capacity reached. Try another TA from "+url+"/v1/epochs/current/participants")
+	}
+
+	s.bandwidthLimiter.RecordRequest(requestBlockHeight, estimatedKB)
+	defer s.bandwidthLimiter.ReleaseRequest(requestBlockHeight, estimatedKB)
+
 	executor, err := s.getExecutorForRequest(ctx.Request().Context(), request.OpenAiRequest.Model)
 	if err != nil {
 		logging.Error("Failed to get executor", types.Inferences, "error", err)

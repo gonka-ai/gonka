@@ -32,6 +32,17 @@
         "set_new_validators_delay": "80",
         "inference_validation_cutoff": "50",
         "default_unit_of_compute_price": "100"
+        },
+        "bandwidth_limits_params": {
+          "estimated_limits_per_block_kb": "21504",
+          "kb_per_input_token": {
+            "value": "23",
+            "exponent": "-4"
+          },
+          "kb_per_output_token": {
+            "value": "64",
+            "exponent": "-2"
+          }
         }
       },
       "model_list": [
