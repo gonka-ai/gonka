@@ -13,6 +13,8 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgRequestThresholdSignature{},
 		&MsgSubmitPartialSignature{},
+		&MsgSubmitDealerPart{},
+		&MsgSubmitVerificationVector{},
 		&MsgUpdateParams{},
 	)
 	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
