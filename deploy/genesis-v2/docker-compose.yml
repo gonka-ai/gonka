@@ -25,8 +25,11 @@ services:
       - TGBOT_PRIVATE_KEY_PASS=defaultpassword
       - TMKMS_PORT=${TMKMS_PORT:-26658}
     volumes:
-      - /srv/dai/inference:/root/.inference
+      # FIXME: replace back
+      # - /srv/dai/inference:/root/.inference
+      - ./multigen-tests/genesis/node:/root/.inference
       - ./genesis-overrides.json:/root/genesis_overrides.json
+      - ./init-docker-genesis.sh:/root/init-docker-genesis.sh
     ports:
       - "26656:26656"
       - "26657:26657"
@@ -51,8 +54,11 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
       - NODE_CONFIG_PATH=/root/node_config.json
     volumes:
-      - /srv/dai/inference:/root/.inference
-      - /srv/dai/dapi:/root/.dapi
+      # FIXME: replace back
+      # - /srv/dai/inference:/root/.inference
+      # - /srv/dai/dapi:/root/.dapi
+      - ./multigen-tests/genesis/node:/root/.inference
+      - ./multigen-tests/genesis/api:/root/.dapi
       - ./node-config.json:/root/node_config.json
     ports:
       - "9000:9000"
