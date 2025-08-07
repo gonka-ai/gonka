@@ -2,6 +2,7 @@ package cosmosclient
 
 import (
 	"context"
+	"crypto/rand"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"encoding/base64"
@@ -31,6 +32,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -148,6 +150,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 
 type CosmosMessageClient interface {
 	SignBytes(seed []byte) ([]byte, error)
+	DecryptBytes(ciphertext []byte) ([]byte, error)
+	EncryptBytes(plaintext []byte) ([]byte, error)
 	StartInference(transaction *inference.MsgStartInference) error
 	FinishInference(transaction *inference.MsgFinishInference) error
 	ReportValidation(transaction *inference.MsgValidation) error
@@ -172,6 +176,11 @@ type CosmosMessageClient interface {
 	GetSignerAddress() string
 	GetCosmosClient() *cosmosclient.Client
 	GetKeyring() *keyring.Keyring
+	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
+	SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*blstypes.MsgSubmitVerificationVectorResponse, error)
+	SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error
+	SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error
+	NewBLSQueryClient() blstypes.QueryClient
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -212,6 +221,26 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 	accName := icc.ApiAccount.SignerAccount.Name
 	kr := *icc.GetKeyring()
 	bytes, _, err := kr.Sign(accName, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
+}
+
+func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error) {
+	name := icc.ApiAccount.SignerAccount.Name
+	// Use the new keyring Decrypt method
+	bytes, err := icc.Client.Context().Keyring.Decrypt(name, ciphertext, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
+}
+
+func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error) {
+	name := icc.ApiAccount.SignerAccount.Name
+	// Use the new keyring Encrypt method with rand.Reader
+	bytes, err := icc.Client.Context().Keyring.Encrypt(rand.Reader, name, plaintext, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -545,6 +574,45 @@ func SendTransactionBlocking[In proto.Message, Out proto.Message](ctx context.Co
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
 		return err
 	}
+	return nil
+}
 
+func (icc *InferenceCosmosClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	transaction.Creator = icc.Address
+	_, err := icc.SendTransaction(transaction)
 	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*blstypes.MsgSubmitVerificationVectorResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	response := blstypes.MsgSubmitVerificationVectorResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
+}
+
+func (icc *InferenceCosmosClient) SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error {
+	transaction.Creator = icc.Address
+	_, err := icc.SendTransaction(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error {
+	transaction := &blstypes.MsgSubmitPartialSignature{
+		Creator:          icc.Address,
+		RequestId:        requestId,
+		SlotIndices:      slotIndices,
+		PartialSignature: partialSignature,
+	}
+	_, err := icc.SendTransaction(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
+	return blstypes.NewQueryClient(icc.Client.Context())
 }
