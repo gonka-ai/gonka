@@ -163,6 +163,11 @@ if [ -f "config_override.toml" ]; then
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
 
+echo "Key before TMKMS integration"
+docker exec node inferenced tendermint show-validator
+cat "$STATE_DIR/config/priv_validator_key.json"
+cat "$STATE_DIR/data/priv_validator_state.json"
+
 # TMKMS integration ------------------------------------------------------------
 if [ -n "${TMKMS_PORT-}" ]; then
   echo "Configuring TMKMS (port $TMKMS_PORT)"
@@ -175,6 +180,11 @@ if [ -n "${TMKMS_PORT-}" ]; then
     -e "s|^priv_validator_state_file *=|# priv_validator_state_file =|" \
     "$STATE_DIR/config/config.toml"
 fi
+
+echo "Key after TMKMS integration"
+docker exec node inferenced tendermint show-validator
+cat "$STATE_DIR/config/priv_validator_key.json"
+cat "$STATE_DIR/data/priv_validator_state.json"
 
 update_configs
 
@@ -192,6 +202,8 @@ echo "Starting cosmovisor and the chain"
 
 cosmovisor run start &
 COSMOVISOR_PID=$!
+wait $COSMOVISOR_PID
+
 sleep 40 # wait for the first block
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
