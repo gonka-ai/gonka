@@ -34,3 +34,4 @@ prod-local/
 /testermint/downloads/
 /testermint/logs/
 balances-*.json
+multigen-tests/

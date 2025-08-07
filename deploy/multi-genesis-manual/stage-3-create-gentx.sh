@@ -18,8 +18,8 @@ KEY_NAME_COLD="validator-cold"
 cp "$STATE_DIR/genesis-intermediate.json" "$STATE_DIR/config/genesis.json"
 
 # 2. Recover the key using the mnemonic. This will be an interactive prompt.
-echo "You will now be prompted to enter the mnemonic phrase for your cold key from Stage 1."
-$APP_NAME keys add "$KEY_NAME_COLD" --keyring-backend "$KEYRING_BACKEND" --home "$STATE_DIR" --recover
+# echo "You will now be prompted to enter the mnemonic phrase for your cold key from Stage 1."
+# $APP_NAME keys add "$KEY_NAME_COLD" --keyring-backend "$KEYRING_BACKEND" --home "$STATE_DIR" --recover
 
 # 3. Create the genesis transaction. You will be prompted for the keyring password.
 echo "Creating genesis transaction (gentx)..."

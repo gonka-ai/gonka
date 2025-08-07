@@ -47,7 +47,7 @@ The process is divided into several distinct stages, with specific actions for v
     *For a single validator:*
     ```bash
     # Replace with your moniker and directory path
-    MONIKER="validator-3"
+    MONIKER="coordinator"
     VAL_DIR_PATH="./multigen-tests/$MONIKER"
     
     docker run --rm -it \
@@ -113,7 +113,7 @@ The process is divided into several distinct stages, with specific actions for v
     *For a single validator:*
     ```bash
     # Replace with your moniker and directory path
-    MONIKER="validator-1"
+    MONIKER="coordinator"
     VAL_DIR_PATH="./multigen-tests/$MONIKER"
 
     docker run --rm -it \
@@ -135,9 +135,11 @@ The process is divided into several distinct stages, with specific actions for v
     *For a local test:*
     ```bash
     COORDINATOR_DIR_PATH="./multigen-tests/coordinator-data"
+    rm -rf "$COORDINATOR_DIR_PATH/gentx_collected" || true
     mkdir -p "$COORDINATOR_DIR_PATH/gentx_collected"
     cp ./multigen-tests/validator-1/gentx-validator-1.json "$COORDINATOR_DIR_PATH/gentx_collected/"
     cp ./multigen-tests/validator-2/gentx-validator-2.json "$COORDINATOR_DIR_PATH/gentx_collected/"
+    cp ./multigen-tests/validator-3/gentx-validator-3.json "$COORDINATOR_DIR_PATH/gentx_collected/"
     cp ./multigen-tests/coordinator/gentx-coordinator.json "$COORDINATOR_DIR_PATH/gentx_collected/"
     ```
 
@@ -165,9 +167,10 @@ The process is divided into several distinct stages, with specific actions for v
 2.  **Prepare your Node's Launch Directory**: Your validator directory from Stage 1 is now your launch directory. You just need to update the genesis file and create your `config.env`.
     *For a local test, copy the final genesis to each validator's config directory:*
     ```bash
-    FINAL_GENESIS_PATH="./multigen-tests/coordinator-data/final_genesis_output/genesis-final.json"
+    FINAL_GENESIS_PATH="./multigen-tests/coordinator-data/genesis-final.json"
     cp "$FINAL_GENESIS_PATH" ./multigen-tests/validator-1/config/genesis.json
     cp "$FINAL_GENESIS_PATH" ./multigen-tests/validator-2/config/genesis.json
+    cp "$FINAL_GENESIS_PATH" ./multigen-tests/validator-3/config/genesis.json
     cp "$FINAL_GENESIS_PATH" ./multigen-tests/coordinator/config/genesis.json
     ```
     *   For each validator, copy the `priv_validator_key.json` into a new `tmkms/` subdirectory: `mkdir tmkms && mv priv_validator_key.json tmkms/`.
