@@ -14,9 +14,9 @@ const (
 	TxsToSendStream    = "txs_to_send"
 	TxsToObserveStream = "txs_to_observe"
 
-	storageDir = "/root/.dapi/.nats"
-	port       = 4222
-	host       = "0.0.0.0"
+	storageDir  = "/root/.dapi/.nats"
+	DefaultPort = 4222
+	DefaultHost = "0.0.0.0"
 )
 
 type NatsServer interface {
@@ -36,11 +36,11 @@ func NewServer(config apiconfig.NatsServerConfig) NatsServer {
 
 func (s *server) Start() error {
 	if s.conf.Host == "" {
-		s.conf.Host = host
+		s.conf.Host = DefaultHost
 	}
 
 	if s.conf.Port == 0 {
-		s.conf.Port = port
+		s.conf.Port = DefaultPort
 	}
 
 	logging.Info("starting nats server", types2.Messages, "port", s.conf.Port, "host", s.conf.Host)

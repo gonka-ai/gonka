@@ -121,8 +121,6 @@ data class DockerGroup(
             put("DAPI_API__PUBLIC_SERVER_PORT", "9000")
             put("DAPI_API__ML_SERVER_PORT", "9100")
             put("DAPI_API__ADMIN_SERVER_PORT", "9200")
-            put("DAPI_NATS__HOST", "0.0.0.0")
-            put("DAPI_NATS__PORT", "4222")
             put("DAPI_CHAIN_NODE__IS_GENESIS", isGenesis.toString().lowercase())
             put("NODE_CONFIG_PATH", "/root/node_config.json")
             put("NODE_CONFIG", nodeConfigFile)
