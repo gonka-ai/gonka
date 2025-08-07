@@ -1,0 +1,92 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "inference/bls/params.proto";
+import "inference/bls/types.proto";
+import "inference/bls/threshold_signing.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/params";
+  }
+  
+  // EpochBLSData queries complete BLS data for a specific epoch
+  rpc EpochBLSData(QueryEpochBLSDataRequest) returns (QueryEpochBLSDataResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/epoch_data/{epoch_id}";
+  }
+  
+  // SigningStatus queries the status of a specific threshold signing request
+  rpc SigningStatus(QuerySigningStatusRequest) returns (QuerySigningStatusResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/signing_status/{request_id}";
+  }
+  
+  // SigningHistory queries threshold signing requests with filtering and pagination
+  rpc SigningHistory(QuerySigningHistoryRequest) returns (QuerySigningHistoryResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/signing_history";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryEpochBLSDataRequest is request type for the Query/EpochBLSData RPC method.
+message QueryEpochBLSDataRequest {
+  // epoch_id identifies the DKG round to query complete data for
+  uint64 epoch_id = 1;
+}
+
+// QueryEpochBLSDataResponse is response type for the Query/EpochBLSData RPC method.
+message QueryEpochBLSDataResponse {
+  // epoch_data contains complete BLS data for the specified epoch
+  EpochBLSData epoch_data = 1 [(gogoproto.nullable) = false];
+}
+
+// QuerySigningStatusRequest is request type for the Query/SigningStatus RPC method.
+message QuerySigningStatusRequest {
+  // request_id uniquely identifies the threshold signing request (32 bytes)
+  bytes request_id = 1;
+}
+
+// QuerySigningStatusResponse is response type for the Query/SigningStatus RPC method.
+message QuerySigningStatusResponse {
+  // signing_request contains the complete threshold signing request data
+  ThresholdSigningRequest signing_request = 1 [(gogoproto.nullable) = false];
+}
+
+// QuerySigningHistoryRequest is request type for the Query/SigningHistory RPC method.
+message QuerySigningHistoryRequest {
+  // current_epoch_id filters requests by epoch (optional, 0 means all epochs)
+  uint64 current_epoch_id = 1;
+  
+  // status_filter filters requests by status (optional, UNDEFINED means all statuses)
+  ThresholdSigningStatus status_filter = 2;
+  
+  // pagination defines an optional pagination for the request
+  cosmos.base.query.v1beta1.PageRequest pagination = 3;
+}
+
+// QuerySigningHistoryResponse is response type for the Query/SigningHistory RPC method.
+message QuerySigningHistoryResponse {
+  // signing_requests contains the filtered threshold signing requests
+  repeated ThresholdSigningRequest signing_requests = 1 [(gogoproto.nullable) = false];
+  
+  // pagination defines the pagination in the response
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

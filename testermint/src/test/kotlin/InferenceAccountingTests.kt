@@ -179,7 +179,19 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `start comes after finish inference`() {
-        val (_, genesis) = initCluster()
+        val delayPruningSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::inferencePruningEpochThreshold] = 4L
+                    }
+                }
+            }
+        }
+        val delayPruningConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
+        )
+        val (_, genesis) = initCluster(config = delayPruningConfig, reboot = true)
         logSection("Clearing Claims")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -200,7 +212,19 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test post settle amounts`() {
-        val (_, genesis) = initCluster()
+        val delayPruningSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::inferencePruningEpochThreshold] = 4L
+                    }
+                }
+            }
+        }
+        val delayPruningConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
+        )
+        val (_, genesis) = initCluster(config = delayPruningConfig, reboot = true)
         logSection("Clearing claims")
         // If we don't wait until the next rewards claim, there may be lingering requests that mess with our math
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)

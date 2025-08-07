@@ -7,6 +7,7 @@ import (
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
+	comettypes "github.com/cometbft/cometbft/types"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/labstack/echo/v4"
@@ -131,20 +131,17 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		logging.Error("Failed to get block + 1", types.Participants, "error", err)
 	}
 
-	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
-	blockM1, err := rpcClient.Block(context.Background(), &heightM1)
-	if err != nil || blockM1 == nil {
-		logging.Error("Failed to get block - 1", types.Participants, "error", err)
-	}
-
 	vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 	if err != nil || vals == nil {
 		logging.Error("Failed to get validators", types.Participants, "error", err)
 		return nil, err
 	}
 
+	// we need to verify proof from block N using hash from N+1,
+	// because hash of block N is made after Commit() and stored in
+	// header of block N+1. It works so to make each block 'link' to previous and have chain of blocks.
 	if result.Response.ProofOps != nil {
-		s.verifyProof(epoch, result, block)
+		s.verifyProof(epoch, result, blockP1)
 	}
 
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
@@ -157,13 +154,18 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		}
 	}
 
+	var returnBlock *comettypes.Block
+	if blockP1 != nil {
+		returnBlock = blockP1.Block
+	}
+
 	return &ActiveParticipantWithProof{
 		ActiveParticipants:      activeParticipants,
 		Addresses:               addresses,
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                result.Response.ProofOps,
 		Validators:              vals.Validators,
-		Block:                   []*comettypes.Block{block.Block, blockM1.Block, blockP1.Block},
+		Block:                   returnBlock,
 	}, nil
 }
 
@@ -176,12 +178,12 @@ func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, bl
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
 	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
 	if err != nil {
-		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
+		logging.Error("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
 	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
 	if err != nil {
-		logging.Info("VerifyUsingMerkleProof failed", types.Participants, "error", err)
+		logging.Error("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
 }
 
@@ -256,16 +258,15 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	// 1. Data migration happened, and we can't validate pre-migration records recursively;
 	//    they are now signed by the validators active during the epoch.
 	// 2. The implemented proof system has a bug anyway and needs to be revisited
-	return result, nil
 
-	/*	blockHeight := activeParticipants.CreatedAtBlockHeight
-		result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
-		if err != nil {
-			logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
-			return nil, err
-		}
+	blockHeight := activeParticipants.CreatedAtBlockHeight
+	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
+	if err != nil {
+		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
+		return nil, err
+	}
 
-		return result, err*/
+	return result, err
 }
 
 func pubKeyToAddress3(pubKey string) (string, error) {

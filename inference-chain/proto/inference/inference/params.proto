@@ -18,6 +18,7 @@ message Params {
   CollateralParams collateral_params = 5;
   BitcoinRewardParams bitcoin_reward_params = 6;
   DynamicPricingParams dynamic_pricing_params = 7;
+  BandwidthLimitsParams bandwidth_limits_params = 8;
 }
 
 message GenesisOnlyParams {
@@ -77,6 +78,7 @@ message ValidationParams {
   Decimal miss_requests_penalty = 12;
   int64  timestamp_expiration = 13;  // Max time in seconds until timestamps are "too old"
   int64  timestamp_advance = 14;     // Max time in seconds until timestamps are "in the future"
+  uint64 estimated_limits_per_block_kb = 15; // Max estimated KB per block per Transfer Agent
 }
 
 message PocParams {
@@ -166,4 +168,18 @@ message DynamicPricingParams {
   uint64 grace_period_end_epoch = 7;
   // grace_period_per_token_price is the per-token price during grace period (default 0 for free)
   uint64 grace_period_per_token_price = 8;
+}
+
+// BandwidthLimitsParams defines the parameters for request bandwidth limitations.
+message BandwidthLimitsParams {
+  option (gogoproto.equal) = true;
+
+  // estimated_limits_per_block_kb is the maximum KB per block that can be consumed
+  uint64 estimated_limits_per_block_kb = 1;
+
+  // kb_per_input_token is the estimated KB per input token
+  Decimal kb_per_input_token = 2;
+
+  // kb_per_output_token is the estimated KB per output token
+  Decimal kb_per_output_token = 3;
 }

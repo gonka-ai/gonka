@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -42,4 +43,24 @@ func (k Keeper) GetV1Params(ctx context.Context) (params types.ParamsV1, err err
 		return types.ParamsV1{}, err
 	}
 	return params, nil
+}
+
+// GetBandwidthLimitsParams returns bandwidth limits parameters
+func (k Keeper) GetBandwidthLimitsParams(ctx context.Context) (*types.BandwidthLimitsParams, error) {
+	params := k.GetParams(ctx)
+	if params.BandwidthLimitsParams == nil {
+		// Return default values if not set
+		return &types.BandwidthLimitsParams{
+			EstimatedLimitsPerBlockKb: 1024, // Default 1MB per block
+			KbPerInputToken: &types.Decimal{
+				Value:    23, // 0.0023 = 23 × 10^(-4)
+				Exponent: -4,
+			},
+			KbPerOutputToken: &types.Decimal{
+				Value:    64, // 0.64 = 64 × 10^(-2)
+				Exponent: -2,
+			},
+		}, nil
+	}
+	return params.BandwidthLimitsParams, nil
 }

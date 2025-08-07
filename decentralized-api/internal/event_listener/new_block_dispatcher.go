@@ -170,13 +170,31 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 			validationParams := apiconfig.ValidationParamsCache{
 				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
 				TimestampAdvance:    params.Params.ValidationParams.TimestampAdvance,
+				ExpirationBlocks:    params.Params.ValidationParams.ExpirationBlocks,
 			}
+
 			logging.Debug("Updating validation parameters", types.Validation,
 				"timestampExpiration", validationParams.TimestampExpiration,
-				"timestampAdvance", validationParams.TimestampAdvance)
-			err = d.configManager.SetValidationParams(validationParams)
-			if err != nil {
-				logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+				"timestampAdvance", validationParams.TimestampAdvance,
+				"expirationBlocks", validationParams.ExpirationBlocks)
+
+			// Update bandwidth parameters separately
+			if params.Params.BandwidthLimitsParams != nil {
+				bandwidthParams := apiconfig.BandwidthParamsCache{
+					EstimatedLimitsPerBlockKb: params.Params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
+					KbPerInputToken:           params.Params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
+					KbPerOutputToken:          params.Params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
+				}
+
+				logging.Info("Updated bandwidth parameters from chain", types.Config,
+					"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
+					"kbPerInputToken", bandwidthParams.KbPerInputToken,
+					"kbPerOutputToken", bandwidthParams.KbPerOutputToken)
+
+				err = d.configManager.SetBandwidthParams(bandwidthParams)
+				if err != nil {
+					logging.Warn("Failed to update bandwidth parameters", types.Config, "error", err)
+				}
 			}
 		}
 	}

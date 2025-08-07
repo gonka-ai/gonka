@@ -1,0 +1,146 @@
+# BLS Signatures Plan Workflow Rules
+
+This document describes the structure and intended workflow for the `bls-signatures-plan.md` file in this project.
+
+## File Structure:
+
+The `bls-signatures-plan.md` file is organized into major sections using Markdown headings (##) and individual tasks using subheadings (###). Each task has a unique identifier and a status checkbox:
+
+```markdown
+## I. Initial Setup & Prerequisites
+
+### I.1 [ ] Create New Cosmos SDK Module (`bls`)
+*   Action: ...
+```
+
+## Task Status Tracking:
+
+- Each task is represented with a status checkbox `[ ]` before its identifier
+- The status can be updated by changing the checkbox:
+  - `[ ]` - Task not started
+  - `[x]` - Task completed
+  - `[~]` - Task in progress
+  - `[!]` - Task blocked or needs attention
+
+## Workflow Guidelines:
+
+1. **Sequential Task Execution**
+   - Work on one task at a time, following the sequence in the plan
+   - Before starting a new task, explicitly ask for approval
+   - Format: "Should I proceed with task [Task ID]: [Task Name]?"
+   - Wait for explicit approval before beginning work
+   - After approval, describe the planned implementation approach:
+     * What changes will be made
+     * Which files will be modified
+     * Any dependencies or prerequisites needed, and commands needed to be executed
+     * Potential challenges or considerations
+   - After describing the plan, mark task as in progress `[~]` before starting work
+
+2. **Task Completion Process**
+   - After completing a task, ask for permission to mark it as complete
+   - Format: "Can I mark task [Task ID]: [Task Name] as complete?"
+   - Only mark tasks as complete after receiving approval
+   - Update status from `[~]` to `[x]` after approval
+   - Include a brief summary of what was accomplished
+
+3. **Task Identification**
+   - Each task has a unique identifier (e.g., I.1, II.2, etc.)
+   - Tasks are organized hierarchically under major sections
+   - The identifier helps track progress and reference specific tasks
+   - Include task priority level (High/Medium/Low) in the identifier
+
+4. **Status Updates**
+   - Update the checkbox status `[ ]` to reflect the current state of the task
+   - Use appropriate status markers to indicate progress:
+     * `[ ]` - Not started
+     * `[~]` - In progress
+     * `[x]` - Completed
+     * `[!]` - Blocked/Needs attention
+     * `[?]` - Under review
+     * `[c]` - Needs clarification
+   - Add a timestamp for each status change
+   - Keep status updates current as work progresses
+
+5. **Task Dependencies**
+   - Tasks are ordered to show dependencies
+   - Complete tasks in the specified order
+   - If a task is blocked, mark it with `[!]` and note the dependency
+   - Document any discovered dependencies during implementation
+   - Update task order if new dependencies are found
+
+6. **Documentation**
+   - Each task includes:
+     * Action items
+     * Required files
+     * Implementation details
+     * Testing requirements
+     * Success criteria
+     * Known limitations
+   - Update documentation as implementation progresses
+   - Link to relevant pull requests or commits
+   - If task requirements are unclear:
+     * Mark task as `[c]` (needs clarification)
+     * List specific questions or points needing clarification
+     * Update task description with clarifications received
+     * Only proceed after all clarifications are addressed
+
+7. **Progress Tracking**
+   - Use the status checkboxes to track overall progress
+   - Review completed tasks to ensure all requirements are met
+   - Update status when moving between development phases
+   - Maintain a changelog of significant updates
+   - Track time spent on each task
+
+8. **Communication Protocol**
+   - Report blockers immediately with `[!]` status
+   - Provide regular progress updates for long-running tasks
+   - Document any assumptions made during implementation
+   - Flag any potential risks or concerns early
+   - Request clarification when requirements are unclear
+
+9. **Quality Assurance**
+   - Include testing requirements in task documentation
+   - Document edge cases and error scenarios
+   - Ensure code review requirements are met
+   - Verify all acceptance criteria are satisfied
+   - Update documentation with any implementation decisions
+
+10. **Review and Retrospective**
+    - Conduct regular progress reviews
+    - Document lessons learned
+    - Update workflow based on experience
+    - Share knowledge with team members
+    - Identify areas for process improvement
+
+## Best Practices:
+
+1. **Status Updates**
+   - Update task status promptly when work begins or completes
+   - Use appropriate status markers to indicate current state
+   - Document any blockers or issues in the task description
+
+2. **Task Organization**
+   - Keep tasks organized under their respective sections
+   - Maintain the hierarchical structure
+   - Add new tasks with appropriate identifiers
+
+3. **Documentation**
+   - Keep task descriptions clear and detailed
+   - Update documentation as implementation progresses
+   - Include relevant file paths and dependencies
+
+4. **Review Process**
+   - Review completed tasks before marking as done
+   - Ensure all requirements are met
+   - Update documentation as needed
+
+## Example Task States:
+
+```markdown
+### I.1 [ ] Task not started
+### I.2 [x] Task completed
+### I.3 [~] Task in progress
+### I.4 [!] Task blocked
+```
+
+This workflow ensures clear tracking of progress and maintains an organized development process for the BLS signatures implementation.

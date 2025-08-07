@@ -1,0 +1,41 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/bls/Params";
+  option (gogoproto.equal) = true;
+
+  // Total number of slots for DKG (e.g., 100 for PoC)
+  uint32 i_total_slots = 1;
+
+  // Polynomial degree offset (e.g., floor(i_total_slots / 2))
+  uint32 t_slots_degree_offset = 2;
+
+  // Duration in blocks for the dealing phase (e.g., 5 blocks for PoC)
+  int64 dealing_phase_duration_blocks = 3;
+
+  // Duration in blocks for the verification phase (e.g., 3 blocks for PoC)
+  int64 verification_phase_duration_blocks = 4;
+
+  // Duration in blocks for threshold signing deadline (e.g., 10 blocks for PoC)
+  int64 signing_deadline_blocks = 5;
+}
+
+// PartialSignature represents a partial signature from a single participant in threshold signing
+message PartialSignature {
+  // participant_address is the address of the participant who submitted this partial signature
+  string participant_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // slot_indices are the slot indices this participant is signing for (from their current epoch assignment)
+  repeated uint32 slot_indices = 2;
+  
+  // signature is the BLS partial signature (G1 point, 48-byte compressed format)
+  bytes signature = 3;
+}

@@ -6,6 +6,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/nats/server"
 	"decentralized-api/internal/poc"
@@ -129,7 +130,8 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
+	blsManager := bls.NewBlsManager(*recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsManager)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 
@@ -139,7 +141,7 @@ func main() {
 	// Bridge external block queue
 	blockQueue := pserver.NewBlockQueue(recorder)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue)
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

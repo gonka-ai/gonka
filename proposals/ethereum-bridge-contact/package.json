@@ -1,0 +1,49 @@
+{
+  "name": "ethereum-bridge-contract",
+  "version": "1.0.0",
+  "description": "Ethereum smart contract for cross-chain bridge using BLS threshold signatures",
+  "main": "BridgeContract.sol",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run deploy.js --network hardhat",
+    "deploy:sepolia": "hardhat run deploy.js --network sepolia",
+    "deploy:mainnet": "hardhat run deploy.js --network mainnet",
+    "verify": "hardhat verify",
+    "node": "hardhat node",
+    "coverage": "hardhat coverage",
+    "gas-report": "REPORT_GAS=true hardhat test",
+    "setup-genesis": "hardhat setup-genesis",
+    "bridge-status": "hardhat bridge-status",
+    "test-withdrawal": "hardhat test-withdrawal",
+    "clean": "hardhat clean"
+  },
+  "keywords": [
+    "ethereum",
+    "bridge",
+    "bls",
+    "threshold-signatures",
+    "cross-chain",
+    "defi"
+  ],
+  "author": "Bridge Development Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^3.0.0",
+    "@openzeppelin/contracts": "^4.9.0",
+    "hardhat": "^2.17.0",
+    "dotenv": "^16.0.0"
+  },
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/bridge-contracts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/bridge-contracts/issues"
+  },
+  "homepage": "https://github.com/your-org/bridge-contracts#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
