@@ -5,8 +5,6 @@ import "inference/inference/random_seed.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
-// TODO добавить новые поля:
-// валидаторы + signatures
 message ActiveParticipants {
   repeated ActiveParticipant participants = 1;
   uint64 epoch_group_id = 2; // DEPRECATED: the id of the group entity. Previously the key of the ActiveParticipants entity
@@ -15,8 +13,7 @@ message ActiveParticipants {
   int64 created_at_block_height = 5; // Same as effective_block_height???
   uint64 epoch_id = 6; // The current key of the ActiveParticipants entity
   string created_at_app_hash = 7;
-
-
+  repeated ValidatorCommit commit_validators = 8;
 }
 
 message ActiveParticipant {
@@ -26,4 +23,11 @@ message ActiveParticipant {
   string inference_url = 4;
   repeated string models = 5;
   RandomSeed seed = 6;
+}
+
+message ValidatorCommit {
+  string address = 1;
+  string pub_key = 2;
+  int64 voting_power = 3;
+  bytes signature = 4;
 }

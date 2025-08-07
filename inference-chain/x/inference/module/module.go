@@ -106,6 +106,7 @@ type AppModule struct {
 	accountKeeper  types.AccountKeeper
 	bankKeeper     types.BankKeeper
 	groupMsgServer types.GroupMessageKeeper
+	currentEpochId uint64
 }
 
 func NewAppModule(
@@ -155,13 +156,49 @@ func (AppModule) ConsensusVersion() uint64 { return 3 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
-func (am AppModule) BeginBlock(_ context.Context) error {
-	// TODO
-	// if текущий блок == active participants.block_height - 1 {
-	//  - получить app Hash и validators commit из header, записать в active participants current epoch
-	//
-	// }
+func (am AppModule) BeginBlock(ctx context.Context) error {
+	if am.currentEpochId != 0 {
+		particiapnts, found := am.keeper.GetActiveParticipants(ctx, am.currentEpochId)
+		if !found {
+			// TODO log
+			return nil
+		}
 
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		currentHeight := sdkCtx.BlockHeight()
+
+		if currentHeight == particiapnts.CreatedAtBlockHeight+1 && len(particiapnts.CommitValidators) == 0 {
+			header := sdkCtx.BlockHeader()
+
+			// Внимание: header относится к текущему блоку (N), но commit будет относиться к N-1
+			appHash := header.GetAppHash()
+		}
+
+		/*			am.keeper.GetValidatorsForHeight(ctx, commitHeight)
+
+					// Получаем валидаторов из staking / tendermint
+					validators := am.keeper.GetValidatorsForHeight(ctx, currentHeight-1)
+
+					var commits []*types.ValidatorCommit
+					for _, val := range validators {
+						// Предположим, что у тебя есть способ получить подпись за блок N-1
+						// (например, из CometBFT через event или отдельный кэш)
+						signature := am.keeper.GetValidatorSignatureForHeight(ctx, val.Address, currentHeight-1)
+
+						commits = append(commits, &types.ValidatorCommit{
+							Address:      val.Address,
+							PubKey:       val.PubKey,
+							VotingPower:  val.Power,
+							Signature:    signature,
+						})
+					}
+
+				}*/
+		// TODO
+		// if текущий блок == active participants.block_height - 1 {
+		//  - получить app Hash и validators commit из header, записать в active participants current epoch
+		// // }
+	}
 	return nil
 }
 
