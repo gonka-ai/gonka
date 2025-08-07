@@ -163,6 +163,19 @@ if [ -f "config_override.toml" ]; then
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
 
+# TMKMS integration ------------------------------------------------------------
+if [ -n "${TMKMS_PORT-}" ]; then
+  echo "Configuring TMKMS (port $TMKMS_PORT)"
+  rm -f "$STATE_DIR/config/priv_validator_key.json" \
+        "$STATE_DIR/data/priv_validator_state.json"
+
+  sed -i \
+    -e "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TMKMS_PORT}\"|" \
+    -e "s|^priv_validator_key_file *=|# priv_validator_key_file =|" \
+    -e "s|^priv_validator_state_file *=|# priv_validator_state_file =|" \
+    "$STATE_DIR/config/config.toml"
+fi
+
 update_configs
 
 echo "Init for cosmovisor"
