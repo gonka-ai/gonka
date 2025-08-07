@@ -192,7 +192,7 @@ echo "Starting cosmovisor and the chain"
 
 cosmovisor run start &
 COSMOVISOR_PID=$!
-sleep 20 # wait for the first block
+sleep 40 # wait for the first block
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
 if [ "$INIT_TGBOT" = "true" ]; then
