@@ -163,10 +163,12 @@ if [ -f "config_override.toml" ]; then
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
 
+set +e
 echo "Key before TMKMS integration"
 $APP_NAME tendermint show-validator
 cat "$STATE_DIR/config/priv_validator_key.json"
 cat "$STATE_DIR/data/priv_validator_state.json"
+set -e
 
 # TMKMS integration ------------------------------------------------------------
 if [ -n "${TMKMS_PORT-}" ]; then
@@ -181,10 +183,12 @@ if [ -n "${TMKMS_PORT-}" ]; then
     "$STATE_DIR/config/config.toml"
 fi
 
+set +e
 echo "Key after TMKMS integration"
 $APP_NAME tendermint show-validator
 cat "$STATE_DIR/config/priv_validator_key.json"
 cat "$STATE_DIR/data/priv_validator_state.json"
+set -e
 
 update_configs
 
