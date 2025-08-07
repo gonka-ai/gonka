@@ -51,7 +51,7 @@ func (bl *BandwidthLimiter) CanAcceptRequest(blockHeight int64, promptTokens, ma
 	estimatedKBPerBlock := estimatedKB / float64(windowSize)
 	canAccept := avgUsage+estimatedKBPerBlock <= float64(bl.limitsPerBlockKB)
 
-	logging.Info("CanAcceptRequest", types.Config,
+	logging.Debug("CanAcceptRequest", types.Config,
 		"avgUsage", avgUsage,
 		"estimatedKB", estimatedKBPerBlock,
 		"limitsPerBlockKB", bl.limitsPerBlockKB,
@@ -136,7 +136,7 @@ func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
 		return
 	}
 
-	newLimit := bl.calculateWeightBasedLimit(currentEpochIndex)
+	newLimit := bl.calculateUniformLimit(currentEpochIndex)
 
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
@@ -148,6 +148,17 @@ func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
 	}
 }
 
+func (bl *BandwidthLimiter) calculateUniformLimit(currentEpochIndex uint64) uint64 {
+	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
+	if err != nil {
+		logging.Warn("Failed to get epoch data, using default limit", types.Config, "error", err)
+		return bl.defaultLimit
+	}
+
+	return bl.defaultLimit / uint64(len(epochGroupData.ValidationWeights))
+}
+
+// Weigh based limits. We ignore it for now
 func (bl *BandwidthLimiter) calculateWeightBasedLimit(currentEpochIndex uint64) uint64 {
 	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
 	if err != nil {
