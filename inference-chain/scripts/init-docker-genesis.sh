@@ -202,6 +202,7 @@ echo "Starting cosmovisor and the chain"
 
 cosmovisor run start &
 COSMOVISOR_PID=$!
+# FIXME: move to the end of the script once fixed
 wait $COSMOVISOR_PID
 
 sleep 40 # wait for the first block
