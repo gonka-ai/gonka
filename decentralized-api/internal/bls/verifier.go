@@ -332,6 +332,7 @@ func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, 
 		decryptedShare, err := bm.decryptShare(encryptedShare)
 		if err != nil {
 			// This ciphertext didn't decrypt with our key, try the next one
+			logging.Info("Failed to decrypt share", inferenceTypes.BLS, "cipherIndex", cipherIndex, "error", err)
 			continue
 		}
 
