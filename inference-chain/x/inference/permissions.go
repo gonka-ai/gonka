@@ -10,6 +10,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 	// this line is used by starport scaffolding # 1
 )
@@ -35,6 +36,10 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgSubmitHardwareDiff{},
 	&types.MsgInvalidateInference{},
 	&types.MsgRevalidateInference{},
+	&blstypes.MsgSubmitDealerPart{},
+	&blstypes.MsgSubmitVerificationVector{},
+	&blstypes.MsgRequestThresholdSignature{},
+	&blstypes.MsgSubmitPartialSignature{},
 }
 
 func GrantMLOperationalKeyPermissionsToAccount(
