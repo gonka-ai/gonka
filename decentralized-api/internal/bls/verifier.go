@@ -206,13 +206,14 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		// Initialize dealer shares array
 		dealerSlotShares := make([]fr.Element, numSlots)
 		allSlotsValid := true
+		dealerKeyIndex := -1 // Track which key index works for this dealer
 
 		// Iterate over all slots for this dealer
 		for slotOffset := 0; slotOffset < numSlots; slotOffset++ {
 			slotIndex := verificationResult.SlotRange[0] + uint32(slotOffset)
 
 			// Try to decrypt share for this slot (may have multiple ciphertexts due to warm keys)
-			decryptedShare, err := bm.decryptShareForSlot(participantShares.EncryptedShares, slotOffset, numSlots, dealerIndex, slotIndex)
+			decryptedShare, keyIndex, err := bm.decryptShareForSlot(participantShares.EncryptedShares, slotOffset, numSlots, dealerIndex, slotIndex, dealerKeyIndex)
 			if err != nil {
 				logging.Warn(verifierLogTag+"Failed to decrypt any ciphertext for slot", inferenceTypes.BLS,
 					"dealerIndex", dealerIndex,
@@ -221,6 +222,9 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 				allSlotsValid = false
 				break
 			}
+
+			// Remember the key index that worked for this dealer
+			dealerKeyIndex = keyIndex
 
 			// Verify the share against dealer's commitments
 			isValid, err := bm.verifyShareAgainstCommitments(decryptedShare, slotIndex, dealerPart.Commitments)
@@ -297,10 +301,12 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 
 // decryptShareForSlot tries to decrypt a share for a specific slot, handling warm keys
 // For warm keys, multiple ciphertexts per slot are stored consecutively in the encrypted_shares array
-func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, numSlots, dealerIndex int, slotIndex uint32) (*fr.Element, error) {
+// Returns the decrypted share and the key index that worked (for reuse in subsequent slots)
+// dealerKeyIndex: -1 means try all keys, >= 0 means try this key index first
+func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, numSlots, dealerIndex int, slotIndex uint32, dealerKeyIndex int) (*fr.Element, int, error) {
 	totalCiphertexts := len(encryptedShares)
 	if totalCiphertexts == 0 {
-		return nil, fmt.Errorf("no encrypted shares available")
+		return nil, -1, fmt.Errorf("no encrypted shares available")
 	}
 
 	// Get our current public key for logging
@@ -308,7 +314,7 @@ func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, 
 
 	// Calculate keys per slot: totalCiphertexts = numSlots * keysPerSlot
 	if totalCiphertexts%numSlots != 0 {
-		return nil, fmt.Errorf("invalid encrypted shares array length: %d ciphertexts for %d slots (not evenly divisible)", totalCiphertexts, numSlots)
+		return nil, -1, fmt.Errorf("invalid encrypted shares array length: %d ciphertexts for %d slots (not evenly divisible)", totalCiphertexts, numSlots)
 	}
 
 	keysPerSlot := totalCiphertexts / numSlots
@@ -318,11 +324,29 @@ func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, 
 	endIndex := startIndex + keysPerSlot
 
 	if endIndex > totalCiphertexts {
-		return nil, fmt.Errorf("calculated ciphertext range [%d:%d] exceeds array bounds %d", startIndex, endIndex, totalCiphertexts)
+		return nil, -1, fmt.Errorf("calculated ciphertext range [%d:%d] exceeds array bounds %d", startIndex, endIndex, totalCiphertexts)
 	}
 
-	// Try each ciphertext for this slot until one decrypts successfully
-	for cipherIndex := startIndex; cipherIndex < endIndex; cipherIndex++ {
+	// If we already know which key index works, use it exclusively
+	if dealerKeyIndex >= 0 && dealerKeyIndex < keysPerSlot {
+		targetCipherIndex := startIndex + dealerKeyIndex
+		if len(encryptedShares[targetCipherIndex]) > 0 {
+			decryptedShare, err := bm.decryptShare(encryptedShares[targetCipherIndex])
+			if err == nil {
+				// Same key index worked again
+				return decryptedShare, dealerKeyIndex, nil
+			} else {
+				// Known key index failed - this is an error since all slots should use same key
+				return nil, -1, fmt.Errorf("failed to decrypt with known key index %d for slot %d: %w", dealerKeyIndex, slotIndex, err)
+			}
+		} else {
+			return nil, -1, fmt.Errorf("invalid ciphertext at known key index %d for slot %d", dealerKeyIndex, slotIndex)
+		}
+	}
+
+	// First slot: try each ciphertext until one decrypts successfully
+	for keyIndex := 0; keyIndex < keysPerSlot; keyIndex++ {
+		cipherIndex := startIndex + keyIndex
 		encryptedShare := encryptedShares[cipherIndex]
 		if len(encryptedShare) == 0 {
 			continue // Skip empty ciphertexts
@@ -335,12 +359,12 @@ func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, 
 			continue
 		}
 
-		// Successfully decrypted!
-		return decryptedShare, nil
+		// Successfully decrypted! Return both the share and the key index
+		return decryptedShare, keyIndex, nil
 	}
 
 	// If we get here, none of the ciphertexts for this slot could be decrypted
-	return nil, fmt.Errorf("failed to decrypt any of %d ciphertexts for slot %d with our key %s", keysPerSlot, slotIndex, ourPubKey)
+	return nil, -1, fmt.Errorf("failed to decrypt any of %d ciphertexts for slot %d with our key %s", keysPerSlot, slotIndex, ourPubKey)
 }
 
 // decryptShare decrypts an encrypted share using the cosmos-sdk keyring Decrypt API
