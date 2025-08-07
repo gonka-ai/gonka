@@ -1,5 +1,6 @@
 services:
   tmkms:
+    platform: linux/amd64
     image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.21
     container_name: tmkms
     restart: unless-stopped
@@ -9,6 +10,7 @@ services:
       - tmkms_data:/root/.tmkms
 
   node:
+    platform: linux/amd64
     image: ghcr.io/product-science/inferenced:0.1.21
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
@@ -39,6 +41,7 @@ services:
       - tmkms
 
   api:
+    platform: linux/amd64
     image: ghcr.io/product-science/api:0.1.21
     restart: always
     depends_on:
@@ -66,6 +69,7 @@ services:
       - "9200:9200"
 
   proxy:
+    platform: linux/amd64
     container_name: proxy
     image: ghcr.io/product-science/proxy:0.1.21
     ports:
@@ -89,6 +93,7 @@ services:
       start_period: 10s
 
   explorer:
+    platform: linux/amd64
     container_name: explorer
     image: ghcr.io/product-science/explorer:latest
     expose:
