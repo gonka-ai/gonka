@@ -12,7 +12,8 @@ services:
   node:
     platform: linux/amd64
     image: ghcr.io/product-science/inferenced:0.1.21
-    restart: always
+    # FIXME: enable restart
+    # restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
       - KEY_NAME=genesis
