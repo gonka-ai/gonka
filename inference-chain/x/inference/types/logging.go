@@ -25,6 +25,7 @@ const (
 	Balances        = 19
 	Stat            = 20
 	Pruning         = 21
+	BLS             = 22
 	Testing         = 255
 )
 
@@ -74,6 +75,8 @@ func (s SubSystem) String() string {
 		return "Testing"
 	case Pruning:
 		return "Pruning"
+	case BLS:
+		return "BLS"
 	default:
 		return "Unknown"
 	}

@@ -279,6 +279,16 @@ data class ApplicationAPI(
         return get(url, "v1/epochs/latest")
     }
 
+    fun requestThresholdSignature(request: RequestThresholdSignatureDto): String = wrapLog("RequestThresholdSignature", true) {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        postWithStringResponse(url, "admin/v1/bls/request", request)
+    }
+
+    fun queryBLSSigningStatus(requestId: String): SigningStatusWrapper = wrapLog("QueryBLSSigningStatus", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/bls/signatures/${requestId}")
+    }
+
     inline fun <reified Out : Any> get(url: String, path: String): Out {
         val response = Fuel.get("$url/$path")
             .responseObject<Out>(gsonDeserializer(cosmosJson))
