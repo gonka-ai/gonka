@@ -10,6 +10,7 @@ services:
       - tmkms_data:/root/.tmkms
 
   node:
+    container_name: node
     platform: linux/amd64
     image: ghcr.io/product-science/inferenced:0.1.21
     # FIXME: enable restart
