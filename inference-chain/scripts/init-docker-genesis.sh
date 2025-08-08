@@ -209,8 +209,13 @@ if [ "$GENESIS_RUN_STAGE" = "start" ]; then
   cp "/root/input-artifacts/genesis.json" "/root/.inference/config/genesis.json"
 
   if [ "$GENESIS_INDEX" = "0" ]; then
-    if [ ! -f "/root/input-artifacts/gentx" ]; then
-      echo "Error: /root/input-artifacts/gentx dir is required for the gentx stage, but was not found." >&2
+    if [ ! -d "/root/input-artifacts/gentx" ]; then
+      echo "Error: /root/input-artifacts/gentx directory is required for the start stage, but was not found." >&2
+      echo "Debug: contents of /root/input-artifacts (if present):" >&2
+      ls -la /root/input-artifacts >&2 || true
+      echo "Debug: mount entries for input-artifacts:" >&2
+      cat /proc/mounts | grep input-artifacts >&2 || true
+      echo "Debug: GENESIS_INDEX=$GENESIS_INDEX DATA_MOUNT_PATH=${DATA_MOUNT_PATH:-unset}" >&2
       exit 1
     fi
 
