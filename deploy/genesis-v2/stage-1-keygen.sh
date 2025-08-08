@@ -7,4 +7,4 @@ export KEY_NAME="genesis-$i"
 export DATA_MOUNT_PATH="./$BASE_DIR/node$i"
 export GENESIS_RUN_STAGE="keygen"
 
-docker-compose -p "$KEY_NAME" -f docker-compose.multigen.yml up tmkms node -d
+docker compose -p "$KEY_NAME" -f docker-compose.yml up tmkms node -d
