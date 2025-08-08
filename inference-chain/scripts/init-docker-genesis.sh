@@ -32,6 +32,7 @@ APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-7"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
+KEYRING_DIR="/root/keyring"
 
 update_configs() {
   if [ "${REST_API_ACTIVE:-}" = true ]; then
@@ -92,10 +93,10 @@ sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
 echo "Creating the key"
 # Create a key
 $APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_DIR" \
     add "$KEY_NAME"
 $APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_DIR" \
     add "POOL_product_science_inc"
 
 modify_genesis_file() {
