@@ -14,7 +14,7 @@ mkdir -p "$BASE_DIR/genesis-0/input-artifacts/addresses"
 docker compose -p "genesis-0" down || true
 
 # Copy addresses
-for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
+for i in $(seq 1 $(($NUM_VALIDATORS - 1))); do
   FROM="$BASE_DIR/genesis-$i/artifacts/address.txt"
   TO="$BASE_DIR/genesis-0/input-artifacts/addresses/address-$i.txt"
   cp "$FROM" "$TO"
