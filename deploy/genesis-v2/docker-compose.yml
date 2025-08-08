@@ -37,8 +37,8 @@ services:
       - ./genesis-overrides.json:/root/genesis_overrides.json
       - ./init-docker-genesis.sh:/root/init-docker-genesis.sh
     ports:
-      - "26656:26656"
-      - "26657:26657"
+      - "${P2P_PORT}:26656"
+      - "${RPC_PORT}:26657"
     expose:
       - "${TMKMS_PORT:-26658}"
     depends_on:
