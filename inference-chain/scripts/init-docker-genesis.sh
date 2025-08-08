@@ -238,6 +238,8 @@ if [ "$GENESIS_RUN_STAGE" = "start" ]; then
     output=$($APP_NAME genesis collect-gentxs 2>&1)
     echo "$output" | filter_cw20_code
 
+    modify_genesis_file 'root/input-artifacts/authz.json'
+
     echo "Collected gentxs and updated genesis.json"
     cp "$STATE_DIR/config/genesis.json" /root/artifacts/genesis-final.json
   else
