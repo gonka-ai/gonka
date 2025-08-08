@@ -32,7 +32,7 @@ APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-7"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
-KEYRING_DIR="/root/keyring"
+KEYRING_HOME="/root/keyring"
 
 update_configs() {
   if [ "${REST_API_ACTIVE:-}" = true ]; then
@@ -93,10 +93,10 @@ sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
 echo "Creating the key"
 # Create a key
 $APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_DIR" \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" \
     add "$KEY_NAME"
 $APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_DIR" \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" \
     add "POOL_product_science_inc"
 
 modify_genesis_file() {
@@ -207,8 +207,14 @@ echo "Starting cosmovisor and the chain"
 
 cosmovisor run start &
 COSMOVISOR_PID=$!
-# FIXME: move to the end of the script once fixed
-wait $COSMOVISOR_PID
+
+if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
+    sleep 10
+    echo "Querying validator pubkey, please write it down"
+    curl -X GET "http://localhost:26657/status"
+    echo "Keygen stage is set, exiting. You can tear down the container now."
+    exit 0
+fi
 
 sleep 40 # wait for the first block
 
