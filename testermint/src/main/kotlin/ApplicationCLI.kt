@@ -199,13 +199,13 @@ data class ApplicationCLI(
         warmAccountKey!!.name
     }
 
-    val keyringPassword = if (this.config.keyringBackend == "file") this.config.pairName.trimStart('/').padEnd(10, '0') else null
+    val passwordInjection = if (this.config.keyringBackend == "file") this.config.pairName.trimStart('/').padEnd(10, '0') + "\n" else null
     // Use TypeToken to properly deserialize List<Validator>
     fun getKeys(): List<Validator> = wrapLog("getKeys", false) {
         execAndParseWithType(
             object : TypeToken<List<Validator>>() {},
             listOf("keys", "list") + config.keychainParams,
-            password = keyringPassword
+            stdIn = passwordInjection
         )
     }
 
@@ -216,7 +216,7 @@ data class ApplicationCLI(
                 "add",
                 keyName
             ) + config.keychainParams,
-            password = keyringPassword
+            stdIn = passwordInjection
         )
     }
 
@@ -320,16 +320,16 @@ data class ApplicationCLI(
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
-    inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true, password:String? = null): T {
-        val output = execCli(args, includeOutputFlag, password)
+    inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true, stdIn:String? = null): T {
+        val output = execCli(args, includeOutputFlag, stdIn)
         return cosmosJson.fromJson(output, T::class.java)
     }
 
-    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, password:String? = null): String {
+    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, stdIn:String? = null): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
-        val response = exec(argsWithJson, password)
+        val response = exec(argsWithJson, stdIn)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
 
@@ -350,10 +350,10 @@ data class ApplicationCLI(
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
-    private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>, password:String? = null): T {
+    private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>, stdIn:String? = null): T {
         val argsWithJson = (listOf(config.execName) + args + "--output" + "json")
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
-        val response = exec(argsWithJson, password + "\n")
+        val response = exec(argsWithJson, stdIn)
         val output = response.joinToString("\n")
         Logger.debug("Output: {}", output)
         return cosmosJson.fromJson(output, typeToken.type)
@@ -555,12 +555,12 @@ data class ApplicationCLI(
 
     fun getColdPrivateKey(): String = wrapLog("getColdPrivateKey", infoLevel = false) {
         val accountName = this.getColdAccountName()
-        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"), keyringPassword).first()
+        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"), passwordInjection).first()
     }
 
     fun getWarmPrivateKey(): String = wrapLog("getWarmPrivateKey", infoLevel = false) {
         val accountName = this.getWarmAccountName()
-        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"), keyringPassword).first()
+        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"), passwordInjection).first()
     }
 
     fun requestThresholdSignature(
