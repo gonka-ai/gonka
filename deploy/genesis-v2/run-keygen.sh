@@ -16,8 +16,8 @@ mkdir -p $BASE_DIR/artifacts
 
 # Create directories for each node
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
-  mkdir -p "$BASE_DIR/node$i/keyring"
-  mkdir -p "$BASE_DIR/node$i/tmkms"
+  mkdir -p "$BASE_DIR/genesis-$i/keyring"
+  mkdir -p "$BASE_DIR/genesis-$i/tmkms"
 done
 
 echo "Running keygen for each validator..."
@@ -27,7 +27,7 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   echo "--- Generating keys for validator $i ---"
   
   export GENESIS_INDEX=$i
-  export KEY_NAME="validator$i"
+  export KEY_NAME="genesis-$i"
   export DATA_MOUNT_PATH="./$BASE_DIR/node$i"
 
   docker-compose -f docker-compose.multigen.yml up tmkms node -d
