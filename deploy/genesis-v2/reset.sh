@@ -1,5 +1,4 @@
 cp ../../inference-chain/scripts/init-docker-genesis.sh ./init-docker-genesis.sh
-rm -rf ../../multigen-tests/genesis
 rm -rf multigen-tests
 
 docker compose -p genesis-0 down --volumes

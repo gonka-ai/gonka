@@ -28,16 +28,16 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   
   export GENESIS_INDEX=$i
   export KEY_NAME="validator$i"
-  
-  docker-compose -f docker-compose.multigen.yml up --build
-  
+  export DATA_MOUNT_PATH="./$BASE_DIR/node$i"
+
+  docker-compose -f docker-compose.multigen.yml up tmkms node -d
+
   # Optional: stop the containers if you want to run them one by one
   # docker-compose -f docker-compose.multigen.yml down
-  
+
   echo "--- Keys for validator $i generated ---"
 done
 
 echo "All keys generated."
 echo "You can find the artifacts in the '$BASE_DIR/artifacts' directory."
 echo "Account and validator keys are in the respective '$BASE_DIR/node*/' directories."
-
