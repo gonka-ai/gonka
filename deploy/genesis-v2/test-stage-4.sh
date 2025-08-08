@@ -13,7 +13,7 @@ rm -rf "$BASE_DIR/genesis-0/input-artifacts/gentx" || true
 mkdir -p "$BASE_DIR/genesis-0/input-artifacts/gentx"
 
 rm "$BASE_DIR/genesis-0/input-artifacts/authz.json" || true
-./test-utils-gen-authz.sh \
+python3 test-utils-gen-authz.py \
   --dir "$BASE_DIR/genesis-0/input-artifacts/addresses" \
   --msgs "msgs.txt" \
   --out "$BASE_DIR/genesis-0/input-artifacts/authz.json" \
