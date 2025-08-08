@@ -29,4 +29,4 @@ echo "KEY_NAME=$KEY_NAME"
 echo "DATA_MOUNT_PATH=$DATA_MOUNT_PATH"
 echo "GENESIS_RUN_STAGE=$GENESIS_RUN_STAGE"
 
-docker compose -p "$KEY_NAME" -f docker-compose.yml up tmkms node -d
+docker compose -p "$KEY_NAME" -f docker-compose.yml up node -d
