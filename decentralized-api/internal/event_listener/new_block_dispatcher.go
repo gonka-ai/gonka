@@ -178,7 +178,11 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				"timestampAdvance", validationParams.TimestampAdvance,
 				"expirationBlocks", validationParams.ExpirationBlocks)
 
-			// Update bandwidth parameters separately
+			err = d.configManager.SetValidationParams(validationParams)
+			if err != nil {
+				logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+			}
+
 			if params.Params.BandwidthLimitsParams != nil {
 				bandwidthParams := apiconfig.BandwidthParamsCache{
 					EstimatedLimitsPerBlockKb: params.Params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
@@ -186,7 +190,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					KbPerOutputToken:          params.Params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
 				}
 
-				logging.Info("Updated bandwidth parameters from chain", types.Config,
+				logging.Debug("Updated bandwidth parameters from chain", types.Config,
 					"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
 					"kbPerInputToken", bandwidthParams.KbPerInputToken,
 					"kbPerOutputToken", bandwidthParams.KbPerOutputToken)
