@@ -123,8 +123,12 @@ NATIVE="000000000$COIN_DENOM"
 MILLION_NATIVE="000000$NATIVE"
 
 echo "Adding the keys to the genesis account"
-$APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
-$APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" \
+  --keyring-backend $KEYRING_BACKEND \
+  --keyring-dir "$KEYRING_HOME"
+$APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" \
+  --keyring-backend $KEYRING_BACKEND \
+  --keyring-dir "$KEYRING_HOME"
 
 $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
   echo "Failed to create gentx"
@@ -138,7 +142,9 @@ TG_ACC=gonka1va4hlpg929n6hhg4wc8hl0g9yp4nheqxm6k9wr
 
 if [ "$INIT_TGBOT" = "true" ]; then
   echo "Adding the tgbot account"
-  $APP_NAME genesis add-genesis-account $TG_ACC "100$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+  $APP_NAME genesis add-genesis-account $TG_ACC "100$MILLION_NATIVE" \
+    --keyring-backend $KEYRING_BACKEND \
+    --keyring-home "$KEYRING_HOME"
 fi
 
 modify_genesis_file 'genesis_overrides.json'
