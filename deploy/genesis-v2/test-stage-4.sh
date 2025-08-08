@@ -11,7 +11,7 @@ NUM_VALIDATORS=${1:-3}
 # Copy all gentx to genesis-0
 for i in $(seq 1 $(($NUM_VALIDATORS - 1))); do
   # Copy all
-  cp "$BASE_DIR/genesis-$i/node/config/gentx/*.json" "$BASE_DIR/genesis-0/node/config/gentx/."
+  cp "$BASE_DIR/genesis-$i/node/config/gentx"/*.json "$BASE_DIR/genesis-0/node/config/gentx/"
 
   # Tear down any existing containers
   docker compose -p "genesis-$i" down
