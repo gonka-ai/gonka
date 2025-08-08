@@ -131,13 +131,16 @@ POOL_ADDRESS=$($APP_NAME keys show "POOL_product_science_inc" -a --keyring-backe
 echo "Address for POOL_product_science_inc is $POOL_ADDRESS"
 $APP_NAME genesis add-genesis-account "$POOL_ADDRESS" "160$MILLION_NATIVE"
 
-
-$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" || {
-  echo "Failed to create gentx"
-  tail -f /dev/null
-}
-output=$($APP_NAME genesis collect-gentxs 2>&1)
-echo "$output" | filter_cw20_code
+# Add accounts from /root/addresses
+if [ -d "/root/addresses" ]; then
+  for addr_file in /root/addresses/*.txt; do
+    if [ -f "$addr_file" ]; then
+      address=$(cat "$addr_file")
+      echo "Adding genesis account for address $address from $addr_file"
+      $APP_NAME genesis add-genesis-account "$address" "2$NATIVE"
+    fi
+  done
+fi
 
 # tgbot
 TG_ACC=gonka1va4hlpg929n6hhg4wc8hl0g9yp4nheqxm6k9wr
@@ -149,7 +152,22 @@ fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
+
+if [ "$GENESIS_RUN_STAGE" = "genesis-draft" ]; then
+  echo "Keygen stage is set, exiting. You can tear down the container now."
+  cp /root/.inference/config/genesis.json /root/artifacts/genesis-draft.json
+  exit 0
+fi
+
+$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" || {
+  echo "Failed to create gentx"
+  tail -f /dev/null
+}
+output=$($APP_NAME genesis collect-gentxs 2>&1)
+echo "$output" | filter_cw20_code
+
 echo "Genesis file created"
+
 echo "Setting up overrides for config.toml"
  # Process CONFIG_ environment variables
  for var in $(env | grep '^CONFIG_'); do
