@@ -257,6 +257,16 @@ if [ -f "config_override.toml" ]; then
     echo "Applying config overrides from config_override.toml"
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
+ 
+ # Ensure p2p.persistent_peers is applied if provided via env, and log the result
+ if [ -n "${CONFIG_p2p__persistent_peers-}" ]; then
+     echo "CONFIG_p2p__persistent_peers detected; applying to config (p2p.persistent_peers)"
+     $APP_NAME config set config p2p.persistent_peers "$CONFIG_p2p__persistent_peers" --skip-validate
+     echo "Verification: current p2p.persistent_peers line in $STATE_DIR/config/config.toml:"
+     grep -n '^[[:space:]]*persistent_peers[[:space:]]*=' "$STATE_DIR/config/config.toml" || echo "Warning: persistent_peers not found in config.toml"
+ else
+     echo "CONFIG_p2p__persistent_peers not set; leaving p2p.persistent_peers unchanged"
+ fi
 
 set +e
 echo "Key before TMKMS integration"
