@@ -19,4 +19,4 @@ done
 
 init_ports "0"
 export GENESIS_INDEX="0"
-./stage-4-run.sh
+./stage-4-start.sh
