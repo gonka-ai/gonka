@@ -90,14 +90,24 @@ sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
 #fi
 
 
-echo "Creating the key"
-# Create a key
-$APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" \
-    add "$KEY_NAME"
-$APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" \
-    add "POOL_product_science_inc"
+if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
+  echo "Creating keys (if they don't exist)..."
+
+  if ! $APP_NAME keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" >/dev/null 2>&1; then
+    echo "Key '$KEY_NAME' not found. Creating..."
+    $APP_NAME keys add "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME"
+  else
+    echo "Key '$KEY_NAME' already exists."
+  fi
+
+  # FIXME: should only be created by the 0 genesis
+  if ! $APP_NAME keys show "POOL_product_science_inc" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" >/dev/null 2>&1; then
+    echo "Key 'POOL_product_science_inc' not found. Creating..."
+    $APP_NAME keys add "POOL_product_science_inc" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME"
+  else
+    echo "Key 'POOL_product_science_inc' already exists."
+  fi
+fi
 
 modify_genesis_file() {
   local json_file="$HOME/.inference/config/genesis.json"
