@@ -169,14 +169,25 @@ if [ "$GENESIS_RUN_STAGE" = "genesis-draft" ]; then
   exit 0
 fi
 
-$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" || {
-  echo "Failed to create gentx"
-  tail -f /dev/null
-}
-output=$($APP_NAME genesis collect-gentxs 2>&1)
-echo "$output" | filter_cw20_code
+# TODO: check if root/input-artifacts/genesis.json exists
+# If it does then override! copy to: /root/.inference/config/genesis.json
 
-echo "Genesis file created"
+if [ "$GENESIS_RUN_STAGE" == "gentx" ]; then
+  $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" || {
+    echo "Failed to create gentx"
+    tail -f /dev/null
+  }
+
+  echo "Genesis transaction is created. Exiting."
+  exit 1
+fi
+
+if [ "$GENESIS_RUN_STAGE" = "start" ]; then
+  if [ "$GENESIS_INDEX" = 0 ]; then
+    output=$($APP_NAME genesis collect-gentxs 2>&1)
+    echo "$output" | filter_cw20_code
+  fi
+fi
 
 echo "Setting up overrides for config.toml"
  # Process CONFIG_ environment variables
@@ -252,6 +263,11 @@ if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
 
     echo "Keygen stage is set, exiting. You can tear down the container now."
     exit 0
+fi
+
+if [ "$GENESIS_RUN_STAGE" != "start" ]; then
+    echo "Expected GENESIS_RUN_STAGE to be 'start'. Exiting."
+    exit 1
 fi
 
 sleep 40 # wait for the first block
