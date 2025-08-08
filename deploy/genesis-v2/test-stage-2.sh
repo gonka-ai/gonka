@@ -8,12 +8,15 @@ export BASE_DIR="./multigen-tests"
 # Number of validators to generate keys for
 NUM_VALIDATORS=${1:-3}
 
+rm -rf "$BASE_DIR/genesis-0/input-artifacts/addresses"
+mkdir -p "$BASE_DIR/genesis-0/input-artifacts/addresses"
+
 # Copy addresses
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   DIR="$BASE_DIR/genesis-$i"
 
   FROM="$DIR/genesis-$i/artifacts/address.txt"
-  TO="$BASE_DIR/genesis-0/addresses/address-$i.txt"
+  TO="$BASE_DIR/genesis-0/input-artifacts/addresses/address-$i.txt"
   cp "$FROM" "$TO"
   echo "Copied $FROM to $TO"
 done

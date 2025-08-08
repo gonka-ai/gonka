@@ -131,8 +131,8 @@ POOL_ADDRESS=$($APP_NAME keys show "POOL_product_science_inc" -a --keyring-backe
 echo "Address for POOL_product_science_inc is $POOL_ADDRESS"
 $APP_NAME genesis add-genesis-account "$POOL_ADDRESS" "160$MILLION_NATIVE"
 
-# Add accounts from /root/addresses
-if [ -d "/root/addresses" ]; then
+# Add accounts from /root/input-artifacts/addresses
+if [ -d "/root/input-artifacts/addresses" ]; then
   for addr_file in /root/addresses/*.txt; do
     if [ -f "$addr_file" ]; then
       address=$(cat "$addr_file")

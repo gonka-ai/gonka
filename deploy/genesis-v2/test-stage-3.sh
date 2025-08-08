@@ -8,8 +8,10 @@ export BASE_DIR="./multigen-tests"
 # Number of validators to generate keys for
 NUM_VALIDATORS=${1:-3}
 
-# Run keygen for each validator
+GENESIS_PATH="$BASE_DIR/genesis-0/artifacts/genesis-draft.json"
+# Distribute genesis
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
+  cp "$GENESIS_PATH" "$BASE_DIR/genesis-$i/artifacts/genesis-draft.json"
   # Tear down any existing containers
   docker compose -p "genesis-$i" down
 
