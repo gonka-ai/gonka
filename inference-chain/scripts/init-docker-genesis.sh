@@ -343,12 +343,7 @@ fi
 sleep 120 # wait for the first block
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
-if [ "$INIT_TGBOT" = "true" ]; then
-    if [ "$GENESIS_INDEX" != "0" ]; then
-        echo "INIT_TGBOT is set to true, but GENESIS_INDEX is not 0. Skipping tgbot initialization."
-        exit 0
-    fi
-
+if [ "$INIT_TGBOT" = "true" ] && [ "$GENESIS_INDEX" = "0" ]; then
     echo "Initializing tgbot account..."
 
     if [ -z "$TGBOT_PRIVATE_KEY_PASS" ]; then
@@ -361,7 +356,7 @@ if [ "$INIT_TGBOT" = "true" ]; then
     inferenced tx bank send $TG_ACC $TG_ACC 100nicoin --from tgbot --yes
     echo "✅ tgbot account successfully initialized!"
 else
-    echo "INIT_TGBOT is not set to true. Skipping tgbot initialization."
+    echo "Skipping tgbot initialization (INIT_TGBOT=$INIT_TGBOT, GENESIS_INDEX=$GENESIS_INDEX)"
 fi
 
 wait $COSMOVISOR_PID
