@@ -17,7 +17,7 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   # Tear down any existing containers
   docker compose -p "genesis-$i" down
 
-  echo "--- Generating keys for validator $i ---"
+  echo "--- Making gentx for genesis validator $i ---"
   GENESIS_INDEX="$i"
   echo "GENESIS_INDEX=$GENESIS_INDEX"
   export GENESIS_INDEX
@@ -25,7 +25,7 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   init_ports "$i"
   ./stage-3-gentx.sh
 
-  echo "--- Keys for validator $i generated ---"
+  echo "--- gentx for genesis validator $i generated ---"
 done
 
 echo "All keys generated."
