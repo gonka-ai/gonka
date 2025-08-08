@@ -177,7 +177,7 @@ fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
-modify_genesis_file 'root/input-artifacts/authz.json'
+modify_genesis_file '/root/input-artifacts/authz.json'
 
 if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     # To do a test keygen run we need a non-empty validator set
@@ -238,7 +238,7 @@ if [ "$GENESIS_RUN_STAGE" = "start" ]; then
     output=$($APP_NAME genesis collect-gentxs 2>&1)
     echo "$output" | filter_cw20_code
 
-    modify_genesis_file 'root/input-artifacts/authz.json'
+    modify_genesis_file '/root/input-artifacts/authz.json'
 
     echo "Collected gentxs and updated genesis.json"
     cp "$STATE_DIR/config/genesis.json" /root/artifacts/genesis-final.json
