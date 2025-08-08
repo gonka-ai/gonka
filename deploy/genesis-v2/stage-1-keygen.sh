@@ -16,7 +16,7 @@ export KEY_NAME="genesis-$GENESIS_INDEX"
 export DATA_MOUNT_PATH="$BASE_DIR/genesis-$GENESIS_INDEX"
 export GENESIS_RUN_STAGE="keygen"
 
-echo "Starting keygen"
+echo "Starting for $GENESIS_RUN_STAGE"
 echo "KEY_NAME=$KEY_NAME"
 echo "DATA_MOUNT_PATH=$DATA_MOUNT_PATH"
 echo "GENESIS_RUN_STAGE=$GENESIS_RUN_STAGE"
