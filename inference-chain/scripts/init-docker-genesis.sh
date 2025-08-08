@@ -159,7 +159,7 @@ if [ "$GENESIS_RUN_STAGE" = "genesis-draft" ]; then
   exit 0
 fi
 
-$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME" || {
+$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }

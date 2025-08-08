@@ -31,6 +31,7 @@
         "poc_validation_duration": "20",
         "set_new_validators_delay": "80",
         "inference_validation_cutoff": "50",
+        "inference_pruning_epoch_threshold": "2",
         "default_unit_of_compute_price": "100"
         }
       },
