@@ -12,7 +12,10 @@ NUM_VALIDATORS=${1:-3}
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   DIR="$BASE_DIR/genesis-$i"
 
-  cp "$DIR/genesis-$i/artifacts/address.txt" "$BASE_DIR/genesis-0/addresses/address-$i.txt"
+  FROM="$DIR/genesis-$i/artifacts/address.txt"
+  TO="$BASE_DIR/genesis-0/addresses/address-$i.txt"
+  cp "$FROM" "$TO"
+  echo "Copied $FROM to $TO"
 done
 
 export GENESIS_INDEX=0
