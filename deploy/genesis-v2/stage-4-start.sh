@@ -34,6 +34,13 @@ if [ "$GENESIS_INDEX" != "0" ]; then
     echo "Warning: $NODE_ID_FILE not found; starting without persistent peers."
     unset CONFIG_p2p__persistent_peers
   fi
+
+  # Provide RPC endpoint of genesis-0 for fetching genesis.json inside containers
+  GEN0_RPC_PORT=$((26657 + 0 * 10))
+  : "${HOST_ACCESS_ADDR:?HOST_ACCESS_ADDR must be set to the host IP/DNS reachable from containers}"
+  export GENESIS0_RPC_HOST="$HOST_ACCESS_ADDR"
+  export GENESIS0_RPC_PORT="$GEN0_RPC_PORT"
+  echo "Propagating GENESIS0_RPC_HOST=$GENESIS0_RPC_HOST GENESIS0_RPC_PORT=$GENESIS0_RPC_PORT"
 fi
 
 echo "Starting for $GENESIS_RUN_STAGE"

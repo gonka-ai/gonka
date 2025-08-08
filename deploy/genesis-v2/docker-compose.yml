@@ -17,6 +17,8 @@ services:
     environment:
       - GENESIS_RUN_STAGE=${GENESIS_RUN_STAGE:-keygen}
       - GENESIS_INDEX=${GENESIS_INDEX:-0}
+      - GENESIS0_RPC_HOST=${GENESIS0_RPC_HOST:-}
+      - GENESIS0_RPC_PORT=${GENESIS0_RPC_PORT:-}
       - KEY_NAME=genesis
       - SNAPSHOT_INTERVAL=1000
       - SNAPSHOT_KEEP_RECENT=5

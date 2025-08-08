@@ -3,6 +3,7 @@ set -e
 set -x
 
 source test-utils.sh
+export HOST_ACCESS_ADDR=${HOST_ACCESS_ADDR:-127.0.0.1}
 export BASE_DIR="./multigen-tests"
 
 # Number of validators to generate keys for

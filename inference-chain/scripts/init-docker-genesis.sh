@@ -225,7 +225,33 @@ if [ "$GENESIS_RUN_STAGE" = "start" ]; then
     output=$($APP_NAME genesis collect-gentxs 2>&1)
     echo "$output" | filter_cw20_code
   else
-    echo "TODO: download genesis.json from the first node!"
+    echo "Fetching genesis.json from the first node (genesis-0)"
+    if [ -z "${GENESIS0_RPC_HOST-}" ] || [ -z "${GENESIS0_RPC_PORT-}" ]; then
+      echo "Error: GENESIS0_RPC_HOST and GENESIS0_RPC_PORT must be set in the environment for non-zero genesis nodes." >&2
+      echo "Hint: export them before 'docker compose up' or via compose environment." >&2
+      exit 1
+    fi
+    GENESIS_ENDPOINT="http://${GENESIS0_RPC_HOST}:${GENESIS0_RPC_PORT}/genesis"
+
+    echo "Attempting to download from: ${GENESIS_ENDPOINT}"
+    attempts=0
+    max_attempts=30
+    until [ $attempts -ge $max_attempts ]
+    do
+      if wget -qO - "${GENESIS_ENDPOINT}" | jq -e -c '.result.genesis' > "/root/.inference/config/genesis.json"; then
+        echo "Downloaded and saved genesis.json from genesis-0"
+        break
+      fi
+      attempts=$((attempts+1))
+      echo "genesis-0 not ready yet (attempt ${attempts}/${max_attempts}), retrying in 2s..."
+      sleep 2
+    done
+
+    if [ $attempts -ge $max_attempts ]; then
+      echo "Error: Failed to fetch genesis.json from ${GENESIS_ENDPOINT} after ${max_attempts} attempts." >&2
+      echo "Debug: try: wget -qO - ${GENESIS_ENDPOINT} | jq ." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -318,7 +344,7 @@ if [ "$GENESIS_RUN_STAGE" != "start" ]; then
     exit 1
 fi
 
-sleep 40 # wait for the first block
+sleep 120 # wait for the first block
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
 if [ "$INIT_TGBOT" = "true" ]; then
