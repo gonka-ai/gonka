@@ -2,22 +2,47 @@ package com.productscience
 
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
+import com.github.dockerjava.okhttp.OkDockerHttpClient
 import org.tinylog.kotlin.Logger
+import java.net.URI
+import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 data class DockerExecutor(val containerId: String, val config: ApplicationConfig) : CliExecutor {
     private val dockerClient = DockerClientBuilder.getInstance().build()
-    override fun exec(args: List<String>): List<String> {
-        val execCreateCmdResponse = dockerClient.execCreateCmd(containerId)
-            .withAttachStdout(true)
-            .withAttachStderr(true)
-            .withTty(true)
-            .withCmd(*args.toTypedArray())
-            .exec()
-
+        
+    override fun exec(args: List<String>, stdin: String?): List<String> {
         val output = ExecCaptureOutput()
         Logger.trace("Executing command: {}", args.joinToString(" "))
+        
+        val execCmd = if (stdin != null) {
+            // Use shell to pass stdin via printf
+            val stdinEscaped = stdin.replace("'", "'\\''")  // Escape single quotes
+            val fullCommand = "printf '%s' '$stdinEscaped' | ${args.joinToString(" ")}"
+            dockerClient.execCreateCmd(containerId)
+                .withAttachStdout(true)
+                .withAttachStderr(true)
+                .withAttachStdin(false)
+                .withTty(false)
+                .withCmd("/bin/sh", "-c", fullCommand)
+        } else {
+            dockerClient.execCreateCmd(containerId)
+                .withAttachStdout(true)
+                .withAttachStderr(true)
+                .withAttachStdin(false)
+                .withTty(false)
+                .withCmd(*args.toTypedArray())
+        }
+        
+        val execCreateCmdResponse = execCmd.exec()
         val execResponse = dockerClient.execStartCmd(execCreateCmdResponse.id).exec(output)
-        execResponse.awaitCompletion()
+        
+        val completed = execResponse.awaitCompletion(60, TimeUnit.SECONDS)
+        if (!completed) {
+            Logger.warn("Command timed out after 60 seconds: {}", args.joinToString(" "))
+            throw RuntimeException("Docker exec command timed out: ${args.joinToString(" ")}")
+        }
+        
         Logger.trace("Command complete: output={}", output.output)
         return output.output
     }
@@ -27,6 +52,7 @@ data class DockerExecutor(val containerId: String, val config: ApplicationConfig
         dockerClient.killContainerCmd(containerId).exec()
         dockerClient.removeContainerCmd(containerId).exec()
     }
+    
     override fun createContainer(doNotStartChain: Boolean) {
         this.killNameConflicts()
         Logger.info("Creating container,  id={}", containerId)
@@ -50,5 +76,4 @@ data class DockerExecutor(val containerId: String, val config: ApplicationConfig
             }
         }
     }
-
 }

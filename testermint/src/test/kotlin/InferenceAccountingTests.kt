@@ -83,7 +83,7 @@ class InferenceAccountingTests : TestermintTest() {
         val seed = Random.nextInt()
         val payload = inference.copy(seed = seed).toJson()
         val timestamp = Instant.now().toEpochNanos()
-        val address = genesis.node.getAddress()
+        val address = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(payload, address, timestamp, endpointAccount = address)
 
 
@@ -128,7 +128,7 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test immediate pre settle amounts`() {
-        val (_, genesis) = initCluster()
+        val (_, genesis) = initCluster(reboot = true)
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference")
@@ -249,7 +249,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster.withConsumer("consumer1") { consumer ->
             val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getAddress())
+            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getColdAddress())
             assertThat(result).isNotNull
             val inference = genesis.waitForInference(result.id, finished = true)
             assertNotNull(inference, "Inference never finished")
@@ -267,15 +267,15 @@ class InferenceAccountingTests : TestermintTest() {
     private fun getFailingInference(
         cluster: LocalCluster,
         requestingNode: LocalInferencePair = cluster.genesis,
-        requester: String? = cluster.genesis.node.getAddress(),
-        taAddress: String = requestingNode.node.getAddress(),
+        requester: String? = cluster.genesis.node.getColdAddress(),
+        taAddress: String = requestingNode.node.getColdAddress(),
     ): List<InferencePayload> {
         var failed = false
         val results: MutableList<InferencePayload> = mutableListOf()
         while (!failed) {
             val currentBlock = cluster.genesis.getCurrentBlockHeight()
             try {
-                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getAddress())
+                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getColdAddress())
                 cluster.genesis.node.waitForNextBlock()
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {
@@ -307,7 +307,7 @@ class InferenceAccountingTests : TestermintTest() {
         logSection("Making inference that will fail")
         val balanceAtStart = genesis.node.getSelfBalance()
         val startLastRewardedEpoch = getRewardCalculationEpochIndex(genesis)
-        logSection("Genesis test start - Balance: $balanceAtStart, Epoch: $startLastRewardedEpoch, Address: ${genesis.node.getAddress()}")
+        logSection("Genesis test start - Balance: $balanceAtStart, Epoch: $startLastRewardedEpoch, Address: ${genesis.node.getColdAddress()}")
         val timeoutsAtStart = genesis.node.getInferenceTimeouts()
         cluster.allPairs.forEach { it.mock?.setInferenceResponse("This is invalid json!!!") }
         var failure: Exception? = null
@@ -349,7 +349,7 @@ class InferenceAccountingTests : TestermintTest() {
         // Calculate expected balance change due to epoch rewards in bitcoin like rewards logic
         val expectedChange = calculateExpectedChangeFromEpochRewards(
             genesis, 
-            genesis.node.getAddress(),
+            genesis.node.getColdAddress(),
             startEpochIndex = startLastRewardedEpoch,
             currentEpochIndex = currentLastRewardedEpoch,
             failureEpoch = null
@@ -382,7 +382,7 @@ class InferenceAccountingTests : TestermintTest() {
                 val result = consumer.pair.makeInferenceRequest(
                     inferenceRequest,
                     consumer.address,
-                    taAddress = genesis.node.getAddress()
+                    taAddress = genesis.node.getColdAddress()
                 )
             } catch(e: com.github.kittinunf.fuel.core.FuelError) {
                 failure = e

@@ -6,6 +6,7 @@ import com.productscience.Consumer.Companion.create
 import com.productscience.data.AppState
 import com.productscience.data.Spec
 import com.productscience.data.UnfundedInferenceParticipant
+import okhttp3.internal.toImmutableList
 import org.tinylog.Logger
 import java.io.File
 import java.nio.file.FileSystemException
@@ -74,19 +75,100 @@ data class DockerGroup(
             .also { it.environment().putAll(envMap) }
     }
 
+    val warmKeyPassword = this.keyName.padEnd(10, '0')
+
+    // return the pubkey for the cold key
+    fun createColdKey(): String {
+        val command = listOf(
+            "docker", "compose",
+            "-p", keyName
+        ) + composeFiles.flatMap { listOf("-f", it) } + listOf(
+            "--project-directory", workingDirectory,
+            "run", "--rm", "--no-deps", "api",
+            "sh", "-c",
+            """printf '%s\n%s\n' "${warmKeyPassword}" "${warmKeyPassword}" | inferenced keys add $keyName --keyring-backend file"""
+        )
+
+        val process = ProcessBuilder(command)
+            .directory(File(workingDirectory))
+            .also { it.environment().putAll(getCommonEnvMap(useSnapshots)) }
+            .start()
+
+        val output = process.inputStream.bufferedReader().readText()
+        val errorOutput = process.errorStream.bufferedReader().readText()
+
+        process.waitFor()
+
+        Logger.info("Cold key created: $output", "")
+        if (errorOutput.isNotBlank()) Logger.warn("Errors during warm key creation: $errorOutput", "")
+
+        val pubkeyRegex = """"key":"([^"]+)"""".toRegex()
+        return pubkeyRegex.find(output)?.groupValues?.get(1)
+            ?: throw IllegalStateException("Could not extract pubkey from output: $output")
+    }
+
+    fun createWarmKey(): String {
+        val command = listOf(
+            "docker", "compose",
+            "-p", keyName
+        ) + composeFiles.flatMap { listOf("-f", it) } + listOf(
+            "--project-directory", workingDirectory,
+            "run", "--rm", "--no-deps", "api",
+            "sh", "-c",
+            """printf '%s\n%s\n' "${warmKeyPassword}" "${warmKeyPassword}" | inferenced keys add $keyName-WARM --keyring-backend file"""
+        )
+
+        val process = ProcessBuilder(command)
+            .directory(File(workingDirectory))
+            .also { it.environment().putAll(getCommonEnvMap(useSnapshots)) }
+            .start()
+
+        val output = process.inputStream.bufferedReader().readText()
+        val errorOutput = process.errorStream.bufferedReader().readText()
+
+        process.waitFor()
+
+        Logger.info("Warm key created: $output", "")
+        if (errorOutput.isNotBlank()) Logger.warn("Errors during warm key creation: $errorOutput", "")
+
+        return output
+    }
+
     fun init() {
-        tearDownExisting()
         setupFiles()
+        val accountPubKey = if (!isGenesis) {
+            val accountPubkey = createColdKey()
+            createWarmKey()
+            accountPubkey
+        } else ""
         val composeArgs = mutableListOf("compose", "-p", keyName)
         composeFiles.forEach { file ->
             composeArgs.addAll(listOf("-f", file))
         }
-        composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d"))
+        composeArgs.addAll(listOf("--project-directory", workingDirectory))
+        composeArgs.addAll(listOf( "up", "-d"))
+        val baseArgs = composeArgs.toImmutableList()
+        if (!isGenesis) {
+            // This will allow us to get our consensus key and add the participant BEFORE we launch the API
+            composeArgs.add("chain-node")
+        }
         val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
         val process = dockerProcess.start()
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
+        if (!isGenesis) {
+            Thread.sleep(Duration.ofSeconds(10))
+
+            val containers = getRawContainers(config)
+            val node = containers.getCli(this.keyName) ?: error("Could not find node container for keyName=${this.keyName}")
+            val validatorKey = node.getValidatorInfo().key
+            node.registerNewParticipant(publicUrl, accountPubKey, validatorKey, this.genesisGroup?.apiUrl ?: "http://genesis-api:9000")
+            val startRemainingArgs = baseArgs + listOf("api", "mock-server", "proxy")
+            this.coldAccountPubkey = node.getColdPubKey()
+            dockerProcess(*startRemainingArgs.toTypedArray()).start().waitFor()
+            Thread.sleep(Duration.ofSeconds(10))
+        }
         // Just register the log events
         getLocalInferencePairs(config)
         print(
@@ -111,9 +193,18 @@ data class DockerGroup(
         dockerProcess(*composeArgs.toTypedArray()).start().waitFor()
     }
 
+    var coldAccountPubkey: String? = null
+
     private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
         return buildMap {
+            coldAccountPubkey?.let {
+                put("ACCOUNT_PUBKEY", it)
+                put("KEYRING_BACKEND", "file")
+                put("KEYRING_PASSWORD", warmKeyPassword)
+                put("CREATE_KEY", "false")
+            }
             put("KEY_NAME", keyName)
+            put("KEYRING_PASSWORD", warmKeyPassword)
             put("NODE_HOST", "$keyName-node")
             put("DAPI_API__POC_CALLBACK_URL", pocCallbackUrl)
             put("DAPI_API__PUBLIC_URL", publicUrl)
@@ -144,6 +235,7 @@ data class DockerGroup(
                     put("RPC_SERVER_URL_2", it.rpcUrl.replace("genesis", "join1"))
                 }
                 put("SEED_NODE_RPC_URL", it.rpcUrl)
+                put("DAPI_CHAIN_NODE__URL", it.rpcUrl)
                 put("SEED_NODE_P2P_URL", it.p2pUrl)
                 put("SEED_API_URL", it.apiUrl)
             }
@@ -316,11 +408,12 @@ fun initCluster(
         config.copy(genesisSpec = config.genesisSpec?.merge(mergeSpec))
     } ?: config
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
-    val cluster = setupLocalCluster(joinCount, finalConfig, reboot || rebootFlagOn)
-    Thread.sleep(50000)
-    try {
+    val cluster = try {
+        val c = setupLocalCluster(joinCount, finalConfig, reboot || rebootFlagOn)
+        Thread.sleep(50000)
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs, resetMlNodes = resetMlNodes)
+        initialize(c.allPairs, resetMlNodes = resetMlNodes)
+        c
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {
@@ -333,14 +426,13 @@ fun initCluster(
     }
     logSection("Cluster Initialized")
     cluster.allPairs.forEach {
-        Logger.info("${it.name} has account ${it.node.getAddress()}", "")
+        Logger.info("${it.name} has account ${it.node.getColdAddress()}", "")
     }
     return cluster to cluster.genesis
 }
 
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
     val currentCluster = getLocalCluster(config)
-    val size = currentCluster?.joinPairs?.size ?: 0
     if (!reboot && clusterMatchesConfig(currentCluster, joinCount, config)) {
         return currentCluster
     } else {
@@ -432,6 +524,7 @@ class Consumer(val name: String, val pair: LocalInferencePair, val address: Stri
                 listOf()
             )
             cli.createContainer(doNotStartChain = true)
+            // PRTODO: This needs to use the file? Or override the test
             val newKey = cli.createKey(name)
             localCluster.genesis.api.addUnfundedInferenceParticipant(
                 UnfundedInferenceParticipant(
