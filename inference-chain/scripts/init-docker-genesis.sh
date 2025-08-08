@@ -217,7 +217,10 @@ COSMOVISOR_PID=$!
 if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     sleep 10
     echo "Querying validator pubkey, please write it down"
-    curl -X GET "http://localhost:26657/status"
+
+    curl -X GET "http://localhost:26657/status" > /root/artifacts/validator_pubkey.json
+    echo GENESIS_ADDRESS > /root/artifacts/address.txt
+
     echo "Keygen stage is set, exiting. You can tear down the container now."
     exit 0
 fi
