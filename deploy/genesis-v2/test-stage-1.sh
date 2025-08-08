@@ -2,6 +2,8 @@
 set -e
 set -x
 
+source test-utils.sh
+
 # Number of validators to generate keys for
 NUM_VALIDATORS=${1:-3}
 
@@ -29,6 +31,7 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   echo "GENESIS_INDEX=$GENESIS_INDEX"
   export GENESIS_INDEX
 
+  init_ports "$i"
   ./stage-1-keygen.sh
 
   # Optional: stop the containers if you want to run them one by one

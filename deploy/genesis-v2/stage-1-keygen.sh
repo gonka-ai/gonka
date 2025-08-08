@@ -3,8 +3,6 @@ if [ -z "$GENESIS_INDEX" ]; then
   exit 1
 fi
 
-source test-utils.sh
-
 echo "Running stage-1-keygen.sh for genesis-$GENESIS_INDEX"
 
 export KEY_NAME="genesis-$GENESIS_INDEX"
