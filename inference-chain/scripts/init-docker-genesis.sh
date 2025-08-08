@@ -132,7 +132,7 @@ echo "Address for POOL_product_science_inc is $POOL_ADDRESS"
 $APP_NAME genesis add-genesis-account "$POOL_ADDRESS" "160$MILLION_NATIVE"
 
 
-$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
+$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-dir "$KEYRING_HOME" || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }
