@@ -2,6 +2,7 @@ if [ -z "$GENESIS_INDEX" ]; then
   echo "GENESIS_INDEX is not set. Please set it to the index of the validator."
   exit 1
 fi
+export GENESIS_INDEX
 
 if [ -z "$BASE_DIR" ]; then
   echo "BASE_DIR is not set. Please set it to the base directory for test artifacts."
@@ -23,5 +24,6 @@ echo "Starting for $GENESIS_RUN_STAGE"
 echo "KEY_NAME=$KEY_NAME"
 echo "DATA_MOUNT_PATH=$DATA_MOUNT_PATH"
 echo "GENESIS_RUN_STAGE=$GENESIS_RUN_STAGE"
+echo "GENESIS_INDEX=$GENESIS_INDEX"
 
 docker compose -p "$KEY_NAME" -f docker-compose.yml up -d

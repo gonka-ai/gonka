@@ -16,6 +16,7 @@ services:
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
       - GENESIS_RUN_STAGE=${GENESIS_RUN_STAGE:-keygen}
+      - GENESIS_INDEX=${GENESIS_INDEX:-0}
       - KEY_NAME=genesis
       - SNAPSHOT_INTERVAL=1000
       - SNAPSHOT_KEEP_RECENT=5

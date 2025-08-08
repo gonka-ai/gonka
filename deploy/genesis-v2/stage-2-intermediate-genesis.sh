@@ -2,6 +2,7 @@ if [ -z "$GENESIS_INDEX" ]; then
   echo "GENESIS_INDEX is not set. Please set it to the index of the validator."
   exit 1
 fi
+export GENESIS_INDEX
 
 if [ "$GENESIS_INDEX" != 0 ]; then
   echo "Stage 2 should only be run for genesis-0. Current GENESIS_INDEX is $GENESIS_INDEX."

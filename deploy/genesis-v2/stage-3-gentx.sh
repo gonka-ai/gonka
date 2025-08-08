@@ -2,6 +2,7 @@ if [ -z "$GENESIS_INDEX" ]; then
   echo "GENESIS_INDEX is not set. Please set it to the index of the validator."
   exit 1
 fi
+export GENESIS_INDEX
 
 if [ -z "$BASE_DIR" ]; then
   echo "BASE_DIR is not set. Please set it to the base directory for test artifacts."

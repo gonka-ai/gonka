@@ -2,6 +2,7 @@ if [ -z "$GENESIS_INDEX" ]; then
   echo "GENESIS_INDEX is not set. Please set it to the index of the validator."
   exit 1
 fi
+export GENESIS_INDEX
 
 echo "Running stage-1-keygen.sh for genesis-$GENESIS_INDEX"
 
