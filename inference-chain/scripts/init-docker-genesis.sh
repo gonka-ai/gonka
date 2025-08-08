@@ -142,8 +142,11 @@ echo "Address for POOL_product_science_inc is $POOL_ADDRESS"
 $APP_NAME genesis add-genesis-account "$POOL_ADDRESS" "160$MILLION_NATIVE"
 
 # Add accounts from /root/input-artifacts/addresses
+echo "Scanning for genesis accounts in /root/input-artifacts/addresses"
 if [ -d "/root/input-artifacts/addresses" ]; then
+  echo "Found /root/input-artifacts/addresses directory, adding accounts from there"
   for addr_file in /root/addresses/*.txt; do
+    echo "Processing file: $addr_file"
     if [ -f "$addr_file" ]; then
       address=$(cat "$addr_file")
       echo "Adding genesis account for address $address from $addr_file"
