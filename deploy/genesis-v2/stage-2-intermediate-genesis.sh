@@ -19,7 +19,8 @@ export KEY_NAME="genesis-$GENESIS_INDEX"
 export DATA_MOUNT_PATH="$BASE_DIR/genesis-$GENESIS_INDEX"
 export GENESIS_RUN_STAGE="genesis-draft"
 
-echo "Clearing any previous genesis data"
+echo "Clearing any previous runs"
+docker compose -p "$KEY_NAME" down || true
 rm -rf "${DATA_MOUNT_PATH}/node"
 rm -rf "${DATA_MOUNT_PATH}/api"
 

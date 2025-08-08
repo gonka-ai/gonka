@@ -11,6 +11,8 @@ NUM_VALIDATORS=${1:-3}
 rm -rf "$BASE_DIR/genesis-0/input-artifacts/addresses"
 mkdir -p "$BASE_DIR/genesis-0/input-artifacts/addresses"
 
+docker compose -p "genesis-0" down || true
+
 # Copy addresses
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   DIR="$BASE_DIR/genesis-$i"
