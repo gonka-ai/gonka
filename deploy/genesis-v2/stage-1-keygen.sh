@@ -5,8 +5,9 @@ fi
 
 echo "Running stage-1-keygen.sh for genesis-$GENESIS_INDEX"
 
+BASE_DIR="./multigen-tests"
 export KEY_NAME="genesis-$GENESIS_INDEX"
-export DATA_MOUNT_PATH="./$BASE_DIR/genesis-$GENESIS_INDEX"
+export DATA_MOUNT_PATH="$BASE_DIR/genesis-$GENESIS_INDEX"
 export GENESIS_RUN_STAGE="keygen"
 
 echo "Starting keygen"
