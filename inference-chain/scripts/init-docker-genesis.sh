@@ -327,6 +327,10 @@ if [ "$GENESIS_RUN_STAGE" != "start" ]; then
     exit 1
 fi
 
+sleep 30
+
+wget -qO - "http://localhost:26657/status" | tee /root/artifacts/validator_pubkey_final.json
+
 sleep 120 # wait for the first block
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
