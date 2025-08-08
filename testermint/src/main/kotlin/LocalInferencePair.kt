@@ -473,7 +473,12 @@ data class LocalInferencePair(
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
-        return submitTransaction(this.node.getTransactionJson(args))
+        val submittedTransaction = this.node.sendTransactionDirectly(args)
+        return if (waitForProcessed) {
+            this.node.waitForTxProcessed(submittedTransaction.txhash)
+        } else {
+            submittedTransaction
+        }
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
@@ -581,7 +586,9 @@ data class LocalInferencePair(
                         proposal
                     )
                 )
-            ).getProposalId()!!
+            ).also { if (it.code != 0)
+                throw RuntimeException("Transaction failed: code=${it.code}, txhash=${it.txhash}, rawLog=${it.rawLog}")
+            }.getProposalId()!!
             this.makeGovernanceDeposit(proposalId, minDeposit)
             logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")
             cluster.allPairs.forEach {

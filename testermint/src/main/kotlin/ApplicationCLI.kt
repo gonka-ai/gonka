@@ -11,7 +11,7 @@ import java.time.Duration
 import java.time.Instant
 
 interface CliExecutor {
-    fun exec(args: List<String>, stdin:String?): List<String>
+    fun exec(args: List<String>, stdin: String?): List<String>
     fun createContainer(doNotStartChain: Boolean = false)
     fun kill()
 }
@@ -199,7 +199,9 @@ data class ApplicationCLI(
         warmAccountKey!!.name
     }
 
-    val passwordInjection = if (this.config.keyringBackend == "file") this.config.pairName.trimStart('/').padEnd(10, '0') + "\n" else null
+    val passwordInjection =
+        if (this.config.keyringBackend == "file") this.config.pairName.trimStart('/').padEnd(10, '0') + "\n" else null
+
     // Use TypeToken to properly deserialize List<Validator>
     fun getKeys(): List<Validator> = wrapLog("getKeys", false) {
         execAndParseWithType(
@@ -320,12 +322,16 @@ data class ApplicationCLI(
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
-    inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true, stdIn:String? = null): T {
+    inline fun <reified T> execAndParse(
+        args: List<String>,
+        includeOutputFlag: Boolean = true,
+        stdIn: String? = null
+    ): T {
         val output = execCli(args, includeOutputFlag, stdIn)
         return cosmosJson.fromJson(output, T::class.java)
     }
 
-    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, stdIn:String? = null): String {
+    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, stdIn: String? = null): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
@@ -350,7 +356,7 @@ data class ApplicationCLI(
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
-    private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>, stdIn:String? = null): T {
+    private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>, stdIn: String? = null): T {
         val argsWithJson = (listOf(config.execName) + args + "--output" + "json")
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson, stdIn)
@@ -477,6 +483,28 @@ data class ApplicationCLI(
     }
 
 
+    fun sendTransactionDirectly(args: List<String>, useColdAccount: Boolean = true): TxResponse {
+        val from = if (useColdAccount) this.getColdAccountName() else this.getWarmAccountName()
+        Logger.info("Sending transaction!")
+        val finalArgs = listOf("tx") + args + listOf(
+            "--keyring-backend",
+            this.config.keyringBackend,
+            "--keyring-dir=/root/${config.stateDirName}",
+            "--yes",
+            "--unordered",
+            "--timeout-duration",
+            "60s",
+            "--gas",
+            "2000000",
+            "--gas-adjustment",
+            "5.0",
+            "--from",
+            from
+        )
+        return execAndParse(finalArgs, stdIn = passwordInjection)
+
+    }
+
     fun getTransactionJson(args: List<String>): String {
         val from = this.getColdAccountName()
         Logger.info("Getting transaction json for account {}", from)
@@ -555,12 +583,18 @@ data class ApplicationCLI(
 
     fun getColdPrivateKey(): String = wrapLog("getColdPrivateKey", infoLevel = false) {
         val accountName = this.getColdAccountName()
-        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"), passwordInjection).first()
+        exec(
+            listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"),
+            passwordInjection
+        ).first()
     }
 
     fun getWarmPrivateKey(): String = wrapLog("getWarmPrivateKey", infoLevel = false) {
         val accountName = this.getWarmAccountName()
-        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"), passwordInjection).first()
+        exec(
+            listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"),
+            passwordInjection
+        ).first()
     }
 
     fun requestThresholdSignature(
@@ -584,7 +618,7 @@ data class ApplicationCLI(
             "--keyring-dir", "/root/${config.stateDirName}",
             "--yes"
         )
-        
+
         execAndParse(finalArgs)
     }
 

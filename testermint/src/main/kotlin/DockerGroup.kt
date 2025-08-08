@@ -162,6 +162,7 @@ data class DockerGroup(
 
             val containers = getRawContainers(config)
             val node = containers.getCli(this.keyName) ?: error("Could not find node container for keyName=${this.keyName}")
+            Thread.sleep(Duration.ofSeconds(5))
             val validatorKey = node.getValidatorInfo().key
             node.registerNewParticipant(publicUrl, accountPubKey, validatorKey, this.genesisGroup?.apiUrl ?: "http://genesis-api:9000")
             val startRemainingArgs = baseArgs + listOf("api", "mock-server", "proxy")
