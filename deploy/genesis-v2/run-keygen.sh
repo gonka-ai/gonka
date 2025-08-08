@@ -30,7 +30,7 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   export KEY_NAME="genesis-$i"
   export DATA_MOUNT_PATH="./$BASE_DIR/node$i"
 
-  docker-compose -f docker-compose.multigen.yml up tmkms node -d
+  docker-compose -p "$KEY_NAME" -f docker-compose.multigen.yml up tmkms node -d
 
   # Optional: stop the containers if you want to run them one by one
   # docker-compose -f docker-compose.multigen.yml down
