@@ -15,9 +15,7 @@ docker compose -p "genesis-0" down || true
 
 # Copy addresses
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
-  DIR="$BASE_DIR/genesis-$i"
-
-  FROM="$DIR/genesis-$i/artifacts/address.txt"
+  FROM="$BASE_DIR/genesis-$i/artifacts/address.txt"
   TO="$BASE_DIR/genesis-0/input-artifacts/addresses/address-$i.txt"
   cp "$FROM" "$TO"
   echo "Copied $FROM to $TO"
