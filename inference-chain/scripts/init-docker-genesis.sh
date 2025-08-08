@@ -310,14 +310,6 @@ if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     wget -qO - "http://localhost:26657/status" | tee /root/artifacts/validator_pubkey.json
     echo "$GENESIS_ADDRESS" > /root/artifacts/address.txt
 
-    # Save node_id for persistent peers composition
-    if command -v jq >/dev/null 2>&1; then
-      jq -r '.result.node_info.id // empty' /root/artifacts/validator_pubkey.json > /root/artifacts/node_id.txt || true
-      echo "Saved node_id to /root/artifacts/node_id.txt"
-    else
-      echo "jq is not available; cannot extract node_id."
-    fi
-
     echo "Keygen stage is set, exiting. You can tear down the container now."
     exit 0
 fi
@@ -330,6 +322,13 @@ fi
 sleep 30
 
 wget -qO - "http://localhost:26657/status" | tee /root/artifacts/validator_pubkey_final.json
+# Save node_id for persistent peers composition
+if command -v jq >/dev/null 2>&1; then
+  jq -r '.result.node_info.id // empty' /root/artifacts/validator_pubkey_final.json > /root/artifacts/node_id.txt || true
+  echo "Saved node_id to /root/artifacts/node_id.txt"
+else
+  echo "jq is not available; cannot extract node_id."
+fi
 
 sleep 120 # wait for the first block
 
