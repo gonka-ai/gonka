@@ -33,7 +33,7 @@ transform_pubkey() {
 
   local json_input="$1"
 
-  echo "$json_input" | jq -c '
+  cat "$json_input" | jq -c '
     .result.validator_info.pub_key |
     if .type == "tendermint/PubKeyEd25519" then
       {

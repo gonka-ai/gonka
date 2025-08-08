@@ -188,7 +188,7 @@ if [ "$GENESIS_RUN_STAGE" = "gentx" ]; then
   echo "Found /root/input-artifacts/genesis.json. Overriding the default genesis file."
   cp "/root/input-artifacts/genesis.json" "/root/.inference/config/genesis.json"
 
-  $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" --pubkey "$VALIDATOR_PUBKEY" || {
+  $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" --pubkey "$(cat /root/input-artifacts/validator_pubkey_formatted.json)" || {
     echo "Failed to create gentx"
     tail -f /dev/null
   }

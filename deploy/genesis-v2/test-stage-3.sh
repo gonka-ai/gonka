@@ -12,8 +12,7 @@ GENESIS_PATH="$BASE_DIR/genesis-0/artifacts/genesis-draft.json"
 # Distribute genesis
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   cp "$GENESIS_PATH" "$BASE_DIR/genesis-$i/input-artifacts/genesis.json"
-  transform_pubkey "$BASE_DIR/genesis-$i/artifacts/validator_pubkey.json"
-  # TODO: get the result of the function and put it in the input-artifacts directory
+  transform_pubkey "$BASE_DIR/genesis-$i/artifacts/validator_pubkey.json" > "$BASE_DIR/genesis-$i/input-artifacts/validator_pubkey_formatted.json"
 
   # Tear down any existing containers
   docker compose -p "genesis-$i" down
