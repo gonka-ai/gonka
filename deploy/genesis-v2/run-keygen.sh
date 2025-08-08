@@ -29,6 +29,7 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   export GENESIS_INDEX=$i
   export KEY_NAME="genesis-$i"
   export DATA_MOUNT_PATH="./$BASE_DIR/node$i"
+  export GENESIS_RUN_STAGE="keygen"
 
   docker-compose -p "$KEY_NAME" -f docker-compose.multigen.yml up tmkms node -d
 
