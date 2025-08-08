@@ -34,7 +34,7 @@
         "default_unit_of_compute_price": "100"
         },
         "bandwidth_limits_params": {
-          "estimated_limits_per_block_kb": "21504",
+          "estimated_limits_per_block_kb": "10752",
           "kb_per_input_token": {
             "value": "23",
             "exponent": "-4"

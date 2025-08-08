@@ -318,10 +318,18 @@ func validateRequest(request *ChatRequest, status *coretypes.ResultStatus, confi
 		"requestTimestamp", request.Timestamp)
 
 	if requestOffset > timestampExpirationNs {
+		logging.Warn("Request timestamp is too old", types.Inferences,
+			"inferenceId", request.InferenceId,
+			"offset", time.Duration(requestOffset).String(),
+			"status", status)
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
 	}
 
 	if requestOffset < -timestampAdvanceNs {
+		logging.Warn("Request timestamp is in the future", types.Inferences,
+			"inferenceId", request.InferenceId,
+			"offset", time.Duration(requestOffset).String(),
+			"status", status)
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
 	}
 

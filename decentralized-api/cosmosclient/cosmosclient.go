@@ -257,7 +257,8 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error) {
 	name := icc.apiAccount.SignerAccount.Name
 	// Use the new keyring Decrypt method
-	bytes, err := icc.manager.GetClientContext().Keyring.Decrypt(name, ciphertext, nil, nil)
+	kr := *icc.GetKeyring()
+	bytes, err := kr.Decrypt(name, ciphertext, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +268,8 @@ func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error
 func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error) {
 	name := icc.apiAccount.SignerAccount.Name
 	// Use the new keyring Encrypt method with rand.Reader
-	bytes, err := icc.manager.GetClientContext().Keyring.Encrypt(rand.Reader, name, plaintext, nil, nil)
+	kr := *icc.GetKeyring()
+	bytes, err := kr.Encrypt(rand.Reader, name, plaintext, nil, nil)
 	if err != nil {
 		return nil, err
 	}

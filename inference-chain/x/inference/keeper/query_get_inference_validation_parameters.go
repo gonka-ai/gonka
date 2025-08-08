@@ -31,7 +31,7 @@ func (k Keeper) GetInferenceValidationParameters(goCtx context.Context, req *typ
 		k.LogWarn("No previous Epoch Group found", types.EpochGroup)
 	}
 
-	k.LogInfo("GetInferenceValidationParameters", types.Validation, "currentEpochGroup", currentEpochGroup.GroupData.EpochGroupId, "previousEpochGroup", previousEpochGroup.GroupData.EpochGroupId)
+	k.LogDebug("GetInferenceValidationParameters", types.Validation, "currentEpochGroup", currentEpochGroup.GroupData.EpochGroupId, "previousEpochGroup", previousEpochGroup.GroupData.EpochGroupId)
 	validations := make([]*types.InferenceValidationDetails, 0)
 	for _, id := range req.Ids {
 		validation, found := k.GetInferenceValidationDetails(ctx, currentEpochGroup.GroupData.EpochId, id)
