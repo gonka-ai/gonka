@@ -13,6 +13,7 @@ from pow.compute.utils import (
 )
 from pow.compute.worker import Worker
 from pow.models.utils import Params
+from pow.compute.autobs import get_batch_size_from_memory
 from common.logger import create_logger
 from common.trackable_task import ITrackableTask
 
@@ -45,7 +46,11 @@ class Controller:
         self.phase = phase
         self.model_init_event = ctx.Event()
         self.devices = devices
-
+        
+        target_memory_usage = 0.9
+        batch_size = get_batch_size_from_memory(target_memory_usage=target_memory_usage,
+                                                     device_id=idx)
+        logger.info(f"Batch size: {batch_size}, target memory usage: {target_memory_usage*100}%")
         self.process = ctx.Process(
             target=self._worker_process,
             args=(

@@ -81,7 +81,7 @@ class Compute(BaseCompute):
         self.executor = ThreadPoolExecutor(max_workers=24)
         self.next_batch_future: Future = None
         self.next_public_key: str = None
-
+        #does it need to be a list?
         self.device = torch.device(self.devices[0])
 
     def _prepare_batch(

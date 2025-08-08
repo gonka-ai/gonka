@@ -19,8 +19,8 @@
   generate_prompts: true
   num_prompts: 100
   prompt_length: 2000
-  num_tasks: 100
-  num_runners: 10
+  num_tasks: 200
+  num_runners: 30
   max_tokens: 300
   seed: 1
   node_url: "http://36.189.234.237:19252"
@@ -62,8 +62,8 @@
   generate_prompts: true
   num_prompts: 20
   prompt_length: 45000
-  num_tasks: 20
-  num_runners: 10
+  num_tasks: 40
+  num_runners: 20
   max_tokens: 1000
   seed: 3
   node_url: "http://36.189.234.237:19252"
@@ -76,8 +76,8 @@
   generate_prompts: true
   num_prompts: 40
   prompt_length: 45000
-  num_tasks: 40
-  num_runners: 5
+  num_tasks: 60
+  num_runners: 10
   max_tokens: 1000
   seed: 2
   node_url: "http://36.189.234.237:19252"

@@ -21,6 +21,21 @@ services:
             - capabilities: [gpu]
               device_ids: ["${GPU_DEVICE_ID:-0}"]
 
+  autobs-test:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/pow/Dockerfile
+      target: test
+    working_dir: /app/packages/pow/tests
+    command: python memory_profile_test.py
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              device_ids: ["${GPU_DEVICE_ID:-0}"]
+
   integration-tests:
     <<: *common-config
     build:

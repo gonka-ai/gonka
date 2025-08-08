@@ -102,6 +102,7 @@ def test_exclusive_services(
 
     train_client.stop()
 
+    print("Setting up inference")
     inference_client.inference_setup(model_name, "bfloat16")
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
