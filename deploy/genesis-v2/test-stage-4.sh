@@ -8,10 +8,13 @@ export BASE_DIR="./multigen-tests"
 # Number of validators to generate keys for
 NUM_VALIDATORS=${1:-3}
 
+rm -rf "$BASE_DIR/genesis-0/input-artifacts/gentx"
+mkdir -p "$BASE_DIR/genesis-0/input-artifacts/gentx"
+
 # Copy all gentx to genesis-0
-for i in $(seq 1 $(($NUM_VALIDATORS - 1))); do
+for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   # Copy all
-  cp "$BASE_DIR/genesis-$i/node/config/gentx"/*.json "$BASE_DIR/genesis-0/node/config/gentx/"
+  cp "$BASE_DIR/genesis-$i/node/config/gentx"/*.json "$BASE_DIR/genesis-0/input-artifacts/gentx/."
 
   # Tear down any existing containers
   docker compose -p "genesis-$i" down

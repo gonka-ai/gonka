@@ -209,6 +209,14 @@ if [ "$GENESIS_RUN_STAGE" = "start" ]; then
   cp "/root/input-artifacts/genesis.json" "/root/.inference/config/genesis.json"
 
   if [ "$GENESIS_INDEX" = "0" ]; then
+    if [ ! -f "/root/input-artifacts/gentx" ]; then
+      echo "Error: /root/input-artifacts/gentx dir is required for the gentx stage, but was not found." >&2
+      exit 1
+    fi
+
+    rm -rf "$STATE_DIR/config/gentx"
+    cp -r /root/input-artifacts/gentx "$STATE_DIR/config/gentx"
+
     output=$($APP_NAME genesis collect-gentxs 2>&1)
     echo "$output" | filter_cw20_code
   else
