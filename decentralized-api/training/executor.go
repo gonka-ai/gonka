@@ -56,7 +56,7 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 	slog.Info(logTagExecutor+"Processing task assigned event", "taskId", taskId)
 	queryClient := e.cosmosClient.NewInferenceQueryClient()
 	req := types.QueryTrainingTaskRequest{Id: taskId}
-	resp, err := queryClient.TrainingTask(*e.cosmosClient.GetContext(), &req)
+	resp, err := queryClient.TrainingTask(e.cosmosClient.GetContext(), &req)
 
 	if err != nil {
 		logging.Error(logTagExecutor+"Error fetching task", types.Training, "taskId", taskId, "error", err)

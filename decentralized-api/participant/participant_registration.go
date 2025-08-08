@@ -39,7 +39,7 @@ func participantExists(recorder cosmosclient.CosmosMessageClient) (bool, error) 
 
 	// TODO: check participant state, compute diff and update?
 	// 	Or implement some ways to periodically (or by request) update the participant state
-	response, err := queryClient.Participant(*recorder.GetContext(), request)
+	response, err := queryClient.Participant(recorder.GetContext(), request)
 	if err != nil {
 		if strings.Contains(err.Error(), "code = NotFound") {
 			logging.Info("Participant does not exist", types.Participants, "Address", recorder.GetAccountAddress(), "err", err)

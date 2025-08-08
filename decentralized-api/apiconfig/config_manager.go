@@ -71,6 +71,10 @@ func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	return cm.currentConfig.Api
 }
 
+func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
+	return cm.currentConfig.Nats
+}
+
 func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
 	nodes := make([]InferenceNodeConfig, len(cm.currentConfig.Nodes))
 	copy(nodes, cm.currentConfig.Nodes)

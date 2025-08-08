@@ -106,7 +106,7 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 
 	// Submit the group key validation signature
 	msg := &blstypes.MsgSubmitGroupKeyValidationSignature{
-		Creator:          bm.cosmosClient.Address,
+		Creator:          bm.cosmosClient.GetAddress(),
 		NewEpochId:       newEpochID,
 		SlotIndices:      slotIndices,
 		PartialSignature: partialSignature,

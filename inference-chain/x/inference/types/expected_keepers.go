@@ -13,7 +13,7 @@ import (
 	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
-// AccountKeeper defines the expected interface for the Account module.
+// AccountKeeper defines the expected interface for the account module.
 type AccountKeeper interface {
 	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI // only used for simulation
 	GetModuleAddress(moduleName string) sdk.AccAddress

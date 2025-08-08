@@ -87,7 +87,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 	}
 
 	logging.Debug("Processing DKG key generation initiated", inferenceTypes.BLS,
-		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", bm.cosmosClient.Address)
+		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", bm.cosmosClient.GetAddress())
 
 	// Parse participants from event
 	participants, err := bm.parseParticipantsFromEvent(event)
@@ -98,7 +98,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 	// Check if this node is a participant
 	isParticipant := false
 	for _, participant := range participants {
-		if participant.Address == bm.cosmosClient.Address {
+		if participant.Address == bm.cosmosClient.GetAddress() {
 			isParticipant = true
 			break
 		}
@@ -106,7 +106,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 
 	if !isParticipant {
 		logging.Debug("Not a participant in this DKG round", inferenceTypes.BLS,
-			"epochID", epochID, "address", bm.cosmosClient.Address)
+			"epochID", epochID, "address", bm.cosmosClient.GetAddress())
 		return nil
 	}
 
@@ -126,7 +126,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 	}
 
 	logging.Info("Successfully submitted dealer part", inferenceTypes.BLS,
-		"epochID", epochID, "dealer", bm.cosmosClient.Address)
+		"epochID", epochID, "dealer", bm.cosmosClient.GetAddress())
 
 	return nil
 }
@@ -259,7 +259,7 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	}
 
 	dealerPart := &types.MsgSubmitDealerPart{
-		Creator:                        bm.cosmosClient.Address,
+		Creator:                        bm.cosmosClient.GetAddress(),
 		EpochId:                        epochID,
 		Commitments:                    commitments,
 		EncryptedSharesForParticipants: encryptedSharesForParticipants,

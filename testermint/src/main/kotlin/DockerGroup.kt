@@ -41,6 +41,7 @@ data class DockerGroup(
     val publicPort: Int,
     val mlPort: Int,
     val adminPort: Int,
+    val natsPort: Int,
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
     val mockExternalPort: Int,
@@ -127,6 +128,7 @@ data class DockerGroup(
             put("PUBLIC_SERVER_PORT", publicPort.toString())
             put("ML_SERVER_PORT", mlPort.toString())
             put("ADMIN_SERVER_PORT", adminPort.toString())
+            put("NATS_SERVER_PORT", natsPort.toString())
             put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", mockExternalPort.toString())
@@ -219,7 +221,7 @@ fun createDockerGroup(
 ): DockerGroup {
     val keyName = if (iteration == 0) GENESIS_KEY_NAME else "join$joinIter"
     val nodeConfigFile = config.nodeConfigFileByKeyName[keyName]
-        .let { fileOrNull: String? -> fileOrNull ?: "node_payload_mock-server_$keyName.json" }
+        .let { fileOrNull: String? -> fileOrNull ?: "node_payload_mock_server_$keyName.json" }
         .let { file: String -> "$LOCAL_TEST_NET_DIR/$file" }
     val repoRoot = getRepoRoot()
 
@@ -248,6 +250,7 @@ fun createDockerGroup(
         publicPort = 9000 + iteration,
         mlPort = 9001 + iteration,
         adminPort = 9002 + iteration,
+        natsPort = 9004 + iteration,
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
         mockExternalPort = 8090 + iteration,

@@ -62,7 +62,7 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreReco
 	}
 	response := inference.MsgSubmitTrainingKvRecordResponse{}
 
-	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, msg, &response)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(msg, &response)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -122,7 +122,7 @@ func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRe
 		Req:     req,
 	}
 	resp := inference.MsgJoinTrainingResponse{}
-	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -137,7 +137,7 @@ func (s *Server) GetJoinTrainingStatus(ctx context.Context, req *inference.JoinT
 		Req:     req,
 	}
 	resp := inference.MsgJoinTrainingStatusResponse{}
-	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -157,7 +157,7 @@ func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequ
 		Req:     req,
 	}
 	resp := inference.MsgTrainingHeartbeatResponse{}
-	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -198,14 +198,14 @@ func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierReques
 		Req:     req,
 	}
 	resp := inference.MsgSetBarrierResponse{}
-	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
 	}
-
 	return resp.Resp, nil
 }
+
 func (s *Server) GetBarrierStatus(ctx context.Context, req *inference.GetBarrierStatusRequest) (*inference.GetBarrierStatusResponse, error) {
 	logging.Info("GetBarrierStatus called", types.Training)
 

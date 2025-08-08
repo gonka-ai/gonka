@@ -62,7 +62,7 @@ func (s *Server) postRequestThresholdSignature(c echo.Context) error {
 		Data:           body.Data,
 	}
 
-	_, err := s.recorder.SendTransaction(msg)
+	_, err := s.recorder.SendTransactionAsyncNoRetry(msg)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to send transaction: "+err.Error())
 	}

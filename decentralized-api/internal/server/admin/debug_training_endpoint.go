@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"decentralized-api/cosmosclient"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
 	"net/http"
@@ -35,12 +34,10 @@ func (s *Server) postDummyTrainingTask(ctx echo.Context) error {
 			Assignees:   assignees,
 		},
 	}
-	dst := inference.MsgCreateDummyTrainingTaskResponse{}
-
-	err := cosmosclient.SendTransactionBlocking(*s.recorder.GetContext(), s.recorder, msg, &dst)
+	dst := &inference.MsgCreateDummyTrainingTaskResponse{}
+	err := s.recorder.SendTransactionSyncNoRetry(msg, dst)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err)
 	}
-
 	return ctx.JSON(http.StatusOK, dst)
 }
