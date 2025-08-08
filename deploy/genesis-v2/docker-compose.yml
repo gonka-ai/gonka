@@ -35,6 +35,7 @@ services:
       # - /srv/dai/inference:/root/.inference
       - ${DATA_MOUNT_PATH}/keyring:/root/keyring
       - ${DATA_MOUNT_PATH}/node:/root/.inference
+      - ${DATA_MOUNT_PATH}/artifacts:/root/artifacts
       - ./genesis-overrides.json:/root/genesis_overrides.json
       - ./init-docker-genesis.sh:/root/init-docker-genesis.sh
     ports:
