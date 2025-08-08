@@ -23,3 +23,9 @@ done
 init_ports "0"
 export GENESIS_INDEX="0"
 ./stage-4-start.sh
+
+for i in $(seq 1 $(($NUM_VALIDATORS - 1))); do
+  init_ports "$i"
+  export GENESIS_INDEX="$i"
+  ./stage-4-start.sh
+done
