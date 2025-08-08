@@ -3,6 +3,7 @@ set -e
 set -x
 
 source test-utils.sh
+export BASE_DIR="./multigen-tests"
 
 # Number of validators to generate keys for
 NUM_VALIDATORS=${1:-3}

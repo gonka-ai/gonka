@@ -5,7 +5,13 @@ fi
 
 echo "Running stage-1-keygen.sh for genesis-$GENESIS_INDEX"
 
-BASE_DIR="./multigen-tests"
+if [ -z "$BASE_DIR" ]; then
+  echo "BASE_DIR is not set. Please set it to the base directory for test artifacts."
+  BASE_DIR="."
+else
+  echo "Using BASE_DIR: $BASE_DIR"
+fi
+
 export KEY_NAME="genesis-$GENESIS_INDEX"
 export DATA_MOUNT_PATH="$BASE_DIR/genesis-$GENESIS_INDEX"
 export GENESIS_RUN_STAGE="keygen"
