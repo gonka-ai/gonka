@@ -33,8 +33,8 @@ services:
     volumes:
       # FIXME: replace back
       # - /srv/dai/inference:/root/.inference
-      - ./multigen-tests/genesis/keyring:/root/keyring
-      - ./multigen-tests/genesis/node:/root/.inference
+      - ${DATA_MOUNT_PATH}/keyring:/root/keyring
+      - ${DATA_MOUNT_PATH}/node:/root/.inference
       - ./genesis-overrides.json:/root/genesis_overrides.json
       - ./init-docker-genesis.sh:/root/init-docker-genesis.sh
     ports:
@@ -65,8 +65,8 @@ services:
       # FIXME: replace back
       # - /srv/dai/inference:/root/.inference
       # - /srv/dai/dapi:/root/.dapi
-      - ./multigen-tests/genesis/node:/root/.inference
-      - ./multigen-tests/genesis/api:/root/.dapi
+      - ${DATA_MOUNT_PATH}/node:/root/.inference
+      - ${DATA_MOUNT_PATH}/api:/root/.dapi
       - ./node-config.json:/root/node_config.json
     ports:
       - "9000:9000"
