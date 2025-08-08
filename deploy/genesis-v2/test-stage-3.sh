@@ -23,9 +23,6 @@ for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   init_ports "$i"
   ./stage-3-gentx.sh
 
-  # Optional: stop the containers if you want to run them one by one
-  # docker-compose -f docker-compose.multigen.yml down
-
   echo "--- Keys for validator $i generated ---"
 done
 
