@@ -163,6 +163,17 @@ fi
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
 
+if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
+    # To do a test keygen run we need a non-empty validator set
+    $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" || {
+      echo "Failed to create gentx"
+      tail -f /dev/null
+    }
+
+    output=$($APP_NAME genesis collect-gentxs 2>&1)
+    echo "$output" | filter_cw20_code
+fi
+
 if [ "$GENESIS_RUN_STAGE" = "genesis-draft" ]; then
   echo "Keygen stage is set, exiting. You can tear down the container now."
   cp /root/.inference/config/genesis.json /root/artifacts/genesis-draft.json
@@ -186,7 +197,7 @@ if [ "$GENESIS_RUN_STAGE" = "gentx" ]; then
 fi
 
 if [ "$GENESIS_RUN_STAGE" = "start" ]; then
-  if [ "$GENESIS_INDEX" = 0 ]; then
+  if [ "$GENESIS_INDEX" = "0" ]; then
     output=$($APP_NAME genesis collect-gentxs 2>&1)
     echo "$output" | filter_cw20_code
   fi
