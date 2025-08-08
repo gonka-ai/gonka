@@ -4,6 +4,7 @@ import (
 	"decentralized-api/cosmosclient"
 	cosmos_client "decentralized-api/cosmosclient"
 
+	"fmt"
 	"io"
 	"log/slog"
 	"sort"
