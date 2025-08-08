@@ -317,6 +317,11 @@ sleep 40 # wait for the first block
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
 if [ "$INIT_TGBOT" = "true" ]; then
+    if [ "$GENESIS_INDEX" != "0" ]; then
+        echo "INIT_TGBOT is set to true, but GENESIS_INDEX is not 0. Skipping tgbot initialization."
+        exit 0
+    fi
+
     echo "Initializing tgbot account..."
 
     if [ -z "$TGBOT_PRIVATE_KEY_PASS" ]; then

@@ -70,10 +70,10 @@ services:
       - ${DATA_MOUNT_PATH}/node:/root/.inference
       - ${DATA_MOUNT_PATH}/api:/root/.dapi
       - ./node-config.json:/root/node_config.json
-    ports:
-      - "9000:9000"
-      - "9100:9100"
-      - "9200:9200"
+    #ports:
+    #  - "9000:9000"
+    #  - "9100:9100"
+    #  - "9200:9200"
 
   proxy:
     platform: linux/amd64
