@@ -21,6 +21,7 @@ type (
 		validatorSet types.ValidatorSet
 		group        types.GroupMessageKeeper
 		Staking      types.StakingKeeper
+		BlsKeeper    types.BlsKeeper
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
 		authority     string
@@ -44,6 +45,7 @@ func NewKeeper(
 	validatorSet types.ValidatorSet,
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
+	blsKeeper types.BlsKeeper,
 	collateralKeeper types.CollateralKeeper,
 	streamvestingKeeper types.StreamVestingKeeper,
 	authzKeeper types.AuthzKeeper,
@@ -65,6 +67,7 @@ func NewKeeper(
 		Staking:             staking,
 		AccountKeeper:       accountKeeper,
 		AuthzKeeper:         authzKeeper,
+		BlsKeeper:           blsKeeper,
 		collateralKeeper:    collateralKeeper,
 		streamvestingKeeper: streamvestingKeeper,
 		getWasmKeeper:       getWasmKeeper,

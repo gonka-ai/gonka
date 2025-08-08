@@ -195,7 +195,6 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	if err := s.validateRequester(ctx.Request().Context(), request, requester, promptTokenCount); err != nil {
 		return err
 	}
-
 	status, err := s.recorder.GetCosmosClient().Status(context.Background())
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
@@ -205,6 +204,17 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	if err := validateRequest(request, status, s.configManager); err != nil {
 		return err
 	}
+
+	requestBlockHeight := status.SyncInfo.LatestBlockHeight
+	can, estimatedKB := s.bandwidthLimiter.CanAcceptRequest(requestBlockHeight, int(promptTokenCount), int(request.OpenAiRequest.MaxTokens))
+	if !can {
+		logging.Warn("Bandwidth limit exceeded", types.Inferences, "address", request.RequesterAddress)
+		url := s.configManager.GetApiConfig().PublicUrl
+		return echo.NewHTTPError(http.StatusTooManyRequests, "Transfer Agent capacity reached. Try another TA from "+url+"/v1/epochs/current/participants")
+	}
+
+	s.bandwidthLimiter.RecordRequest(requestBlockHeight, estimatedKB)
+	defer s.bandwidthLimiter.ReleaseRequest(requestBlockHeight, estimatedKB)
 
 	executor, err := s.getExecutorForRequest(ctx.Request().Context(), request.OpenAiRequest.Model)
 	if err != nil {
@@ -307,10 +317,18 @@ func validateRequest(request *ChatRequest, status *coretypes.ResultStatus, confi
 		"requestTimestamp", request.Timestamp)
 
 	if requestOffset > timestampExpirationNs {
+		logging.Warn("Request timestamp is too old", types.Inferences,
+			"inferenceId", request.InferenceId,
+			"offset", time.Duration(requestOffset).String(),
+			"status", status)
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
 	}
 
 	if requestOffset < -timestampAdvanceNs {
+		logging.Warn("Request timestamp is in the future", types.Inferences,
+			"inferenceId", request.InferenceId,
+			"offset", time.Duration(requestOffset).String(),
+			"status", status)
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
 	}
 

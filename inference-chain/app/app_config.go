@@ -1,8 +1,9 @@
 package app
 
 import (
-	bookkeepermodulev1 "github.com/productscience/inference/api/inference/bookkeeper/module"
 	"time"
+
+	bookkeepermodulev1 "github.com/productscience/inference/api/inference/bookkeeper/module"
 
 	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 
@@ -58,8 +59,11 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	blsmodulev1 "github.com/productscience/inference/api/inference/bls/module"
 	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
 	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
+	_ "github.com/productscience/inference/x/bls/module" // import for side-effects
+	blstypes "github.com/productscience/inference/x/bls/types"
 	_ "github.com/productscience/inference/x/bookkeeper/module" // import for side-effects
 	bookkeepermoduletypes "github.com/productscience/inference/x/bookkeeper/types"
 	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
@@ -106,6 +110,7 @@ var (
 		circuittypes.ModuleName,
 		// chain modules
 		bookkeepermoduletypes.ModuleName,
+		blstypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
@@ -134,6 +139,7 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		blstypes.ModuleName,
 		bookkeepermoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
@@ -157,6 +163,7 @@ var (
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
 		// chain modules
+		blstypes.ModuleName,
 		bookkeepermoduletypes.ModuleName,
 		collateralmoduletypes.ModuleName,
 		inferencemoduletypes.ModuleName,
@@ -336,6 +343,10 @@ var (
 					SimpleEntry: true,
 					LogLevel:    "info",
 				}),
+			},
+			{
+				Name:   blstypes.ModuleName,
+				Config: appconfig.WrapAny(&blsmodulev1.Module{}),
 			},
 			{
 				Name:   inferencemoduletypes.ModuleName,

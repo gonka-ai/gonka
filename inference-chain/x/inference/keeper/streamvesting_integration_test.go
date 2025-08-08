@@ -21,6 +21,7 @@ import (
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	streamvestingkeeper "github.com/productscience/inference/x/streamvesting/keeper"
@@ -71,6 +72,16 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		bookkeepingBankKeeper, // bank escrow keeper
 	)
 
+	// Create a BLS keeper for testing (similar to testutil/keeper/inference.go)
+	blsStoreKey := storetypes.NewKVStoreKey("bls")
+	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
+	blsKeeper := blskeeper.NewKeeper(
+		cdc,
+		runtime.NewKVStoreService(blsStoreKey),
+		keepertest.PrintlnLogger{},
+		authority.String(),
+	)
+
 	inferenceKeeper := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(inferenceStoreKey),
@@ -82,6 +93,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		validatorSet,
 		stakingKeeper,
 		accountKeeper,
+		blsKeeper,
 		collateralKeeper,
 		svKeeper,
 		authzKeeper,
