@@ -3,11 +3,6 @@ if [ -z "$GENESIS_INDEX" ]; then
   exit 1
 fi
 
-if [ "$GENESIS_INDEX" != 0 ]; then
-  echo "Stage 2 should only be run for genesis-0. Current GENESIS_INDEX is $GENESIS_INDEX."
-  exit 1
-fi
-
 if [ -z "$BASE_DIR" ]; then
   echo "BASE_DIR is not set. Please set it to the base directory for test artifacts."
   BASE_DIR="."
@@ -17,7 +12,7 @@ fi
 
 export KEY_NAME="genesis-$GENESIS_INDEX"
 export DATA_MOUNT_PATH="$BASE_DIR/genesis-$GENESIS_INDEX"
-export GENESIS_RUN_STAGE="genesis-draft"
+export GENESIS_RUN_STAGE="gentx"
 
 echo "Clearing any previous runs"
 docker compose -p "$KEY_NAME" down || true

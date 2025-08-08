@@ -175,7 +175,7 @@ if [ -f "/root/input-artifacts/genesis.json" ]; then
   cp "/root/input-artifacts/genesis.json" "/root/.inference/config/genesis.json"
 fi
 
-if [ "$GENESIS_RUN_STAGE" == "gentx" ]; then
+if [ "$GENESIS_RUN_STAGE" = "gentx" ]; then
   $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" --pubkey "$VALIDATOR_PUBKEY" || {
     echo "Failed to create gentx"
     tail -f /dev/null

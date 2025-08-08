@@ -11,7 +11,7 @@ NUM_VALIDATORS=${1:-3}
 GENESIS_PATH="$BASE_DIR/genesis-0/artifacts/genesis-draft.json"
 # Distribute genesis
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
-  cp "$GENESIS_PATH" "$BASE_DIR/genesis-$i/artifacts/genesis-draft.json"
+  cp "$GENESIS_PATH" "$BASE_DIR/genesis-$i/input-artifacts/genesis.json"
   # Tear down any existing containers
   docker compose -p "genesis-$i" down
 
