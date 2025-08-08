@@ -89,7 +89,7 @@ sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
 #  sed -i 's/^log_level = "info"/log_level = "debug"/' "$STATE_DIR/config/config.toml"
 #fi
 
-
+KEY_NAME_WARM="${KEY_NAME}_warm"
 if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
   echo "Creating keys (if they don't exist)..."
 
@@ -98,6 +98,13 @@ if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     $APP_NAME keys add "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME"
   else
     echo "Key '$KEY_NAME' already exists."
+  fi
+
+  if ! $APP_NAME keys show "$KEY_NAME_WARM" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" >/dev/null 2>&1; then
+    echo "Key '$KEY_NAME_WARM' not found. Creating..."
+    $APP_NAME keys add "$KEY_NAME_WARM" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME"
+  else
+    echo "Key '$KEY_NAME_WARM' already exists."
   fi
 
   # FIXME: should only be created by the 0 genesis
@@ -133,11 +140,16 @@ NATIVE="000000000$COIN_DENOM"
 MILLION_NATIVE="000000$NATIVE"
 
 echo "Adding the keys to the genesis account"
-GENESIS_ADDRESS=$($APP_NAME keys show "$KEY_NAME" -a --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME")
+GENESIS_ADDRESS=$($APP_NAME keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME")
 echo "Address for $KEY_NAME is $GENESIS_ADDRESS"
 $APP_NAME genesis add-genesis-account "$GENESIS_ADDRESS" "2$NATIVE"
 
-POOL_ADDRESS=$($APP_NAME keys show "POOL_product_science_inc" -a --keyring-backend $KEYRING_BACKEND --keyring-dir "$KEYRING_HOME")
+echo "Adding the keys to the genesis warm account"
+GENESIS_WARM_ADDRESS=$($APP_NAME keys show "$KEY_NAME_WARM" -a --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME")
+echo "Address for $KEY_NAME_WARM is $GENESIS_WARM_ADDRESS"
+$APP_NAME genesis add-genesis-account "$GENESIS_WARM_ADDRESS" "2$NATIVE"
+
+POOL_ADDRESS=$($APP_NAME keys show "POOL_product_science_inc" -a --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME")
 echo "Address for POOL_product_science_inc is $POOL_ADDRESS"
 $APP_NAME genesis add-genesis-account "$POOL_ADDRESS" "160$MILLION_NATIVE"
 
@@ -165,6 +177,7 @@ fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
+modify_genesis_file 'root/input-artifacts/authz.json'
 
 if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     # To do a test keygen run we need a non-empty validator set
@@ -319,6 +332,7 @@ if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     echo "Querying validator pubkey, printing to log and saving to artifacts..."
     wget -qO - "http://localhost:26657/status" | tee /root/artifacts/validator_pubkey.json
     echo "$GENESIS_ADDRESS" > /root/artifacts/address.txt
+    echo "$GENESIS_WARM_ADDRESS" > /root/artifacts/address_warm.txt
 
     echo "Keygen stage is set, exiting. You can tear down the container now."
     exit 0

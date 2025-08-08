@@ -19,6 +19,11 @@ for i in $(seq 1 $(($NUM_VALIDATORS - 1))); do
   TO="$BASE_DIR/genesis-0/input-artifacts/addresses/address-$i.txt"
   cp "$FROM" "$TO"
   echo "Copied $FROM to $TO"
+
+  FROM="$BASE_DIR/genesis-$i/artifacts/address_warm.txt"
+  TO="$BASE_DIR/genesis-0/input-artifacts/addresses/address-$i-warm.txt"
+  cp "$FROM" "$TO"
+  echo "Copied $FROM to $TO"
 done
 
 export GENESIS_INDEX=0
