@@ -243,6 +243,8 @@ dependencies {
     implementation("org.apache.tuweni:tuweni-crypto:2.3.0")
     implementation("org.bouncycastle:bcprov-jdk15to18:1.78") // or latest
     implementation("org.bitcoinj:bitcoinj-core:0.16.2") // or latest version
+    implementation("com.github.docker-java:docker-java-transport-httpclient5:3.3.4")
+    implementation("com.github.docker-java:docker-java-transport-okhttp:3.3.4")
 
 // Kubernetes Java client
     implementation("io.kubernetes:client-java:18.0.1")

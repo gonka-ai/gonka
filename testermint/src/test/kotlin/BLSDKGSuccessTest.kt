@@ -89,12 +89,15 @@ class BLSDKGSuccessTest : TestermintTest() {
         val allPairs = listOf(genesis) + cluster.joinPairs
         
         // Trigger complete DKG flow
+        logSection("Triggering DKG Init")
         triggerDKGInitiation(genesis)
         
         // Capture epoch ID once to avoid race conditions
+        logSection("Waiting for DKG Phase")
         val epochId = getCurrentEpochId(genesis)
         waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
-        
+
+        logSection("Verifying BLS State from all nodes")
         // Query BLS state from all nodes
         val blsDataFromNodes = allPairs.map { pair ->
             pair.name to queryEpochBLSData(pair, epochId)
@@ -112,8 +115,6 @@ class BLSDKGSuccessTest : TestermintTest() {
             assertThat(blsData?.tSlotsDegree).isEqualTo(referenceData?.tSlotsDegree)
             Logger.info("Node $nodeName has consistent BLS state")
         }
-        
-        logSection("BLS state consistency validated across all nodes")
     }
     
     @Test

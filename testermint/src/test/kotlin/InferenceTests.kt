@@ -17,7 +17,7 @@ class InferenceTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(
             inferenceRequest,
             accountAddress = null,
@@ -36,7 +36,7 @@ class InferenceTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(
             inferenceRequest,
             accountAddress = null,
@@ -53,7 +53,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `submit raw transaction`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(
             inferenceRequest,
             accountAddress = null,
@@ -92,7 +92,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `submit duplicate transaction`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -121,7 +121,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `submit StartInference with bad dev signature`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -147,7 +147,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `submit StartInference with bad TA signature`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -176,7 +176,7 @@ class InferenceTests : TestermintTest() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
 
         assertThatThrownBy {
@@ -190,7 +190,7 @@ class InferenceTests : TestermintTest() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val valid = genesis.api.makeInferenceRequest(inferenceRequest, genesisAddress, signature, timestamp)
         assertThat(valid.id).isEqualTo(signature)
@@ -208,7 +208,7 @@ class InferenceTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -242,7 +242,7 @@ class InferenceTests : TestermintTest() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -263,7 +263,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `executor validates TA signature`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -284,7 +284,7 @@ class InferenceTests : TestermintTest() {
     fun `executor rejects old timestamp`() {
         val params = genesis.getParams()
         val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -307,7 +307,7 @@ class InferenceTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -338,7 +338,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `direct finish inference works`() {
         val finishTimestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val finishSignature = genesis.node.signPayload(inferenceRequest + finishTimestamp.toString() + genesisAddress, null)
         val finishTaSignature =
             genesis.node.signPayload(inferenceRequest + finishTimestamp.toString() + genesisAddress + genesisAddress, null)
@@ -365,7 +365,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `finish inference validates dev signature`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -391,7 +391,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `finish inference validates ta signature`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
@@ -417,7 +417,7 @@ class InferenceTests : TestermintTest() {
     @Test
     fun `finish inference validates ea signature`() {
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)

@@ -213,7 +213,7 @@ class KubernetesTests : TestermintTest() {
             k8sPairs.forEach {
                 it.api.getParticipants()
                 it.api.getNodes()
-                it.node.getAddress()
+                it.node.getColdAddress()
             }
         }
     }

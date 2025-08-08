@@ -63,7 +63,7 @@ class UpgradeTests : TestermintTest() {
         cluster.allPairs.forEach {
             it.api.getParticipants()
             it.api.getNodes()
-            it.node.getAddress()
+            it.node.getColdAddress()
         }
 
     }
@@ -118,7 +118,7 @@ class UpgradeTests : TestermintTest() {
         cluster.allPairs.forEach {
             it.api.getParticipants()
             it.api.getNodes()
-            it.node.getAddress()
+            it.node.getColdAddress()
         }
 
     }

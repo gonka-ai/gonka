@@ -173,7 +173,7 @@ class DynamicPricingTest : TestermintTest() {
         assertThat(newPrice).isGreaterThan(1000L)
         logSection("Submit raw StartInference")
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(
             inferenceRequest,
             accountAddress = null,

@@ -304,7 +304,8 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
 
         it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
         it.getParams()
-        it.node.getAddress()
+        it.node.getColdAddress()
+        it.node.getWarmAddress()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
@@ -319,17 +320,17 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
     }
     val currentParticipants = highestFunded.api.getParticipants()
     for (pair in funded) {
-        if (currentParticipants.none { it.id == pair.node.getAddress() }) {
+        if (currentParticipants.none { it.id == pair.node.getColdAddress() }) {
             pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
         }
     }
-    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
+//    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
 //    fundUnfunded(unfunded, highestFunded)
 
     highestFunded.node.waitForNextBlock()
     pairs.forEach { pair ->
         pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt() + 2) {
-            val address = pair.node.getAddress()
+            val address = pair.node.getColdAddress()
             val stats = pair.node.getParticipantCurrentStats()
             val weight = stats.participantCurrentStats?.find { it.participantId == address }?.weight ?: 0
             weight != 0L
@@ -373,7 +374,7 @@ private fun addUnfundedDirectly(
     highestFunded: LocalInferencePair,
 ) {
     for (pair in unfunded) {
-        if (currentParticipants.none { it.id == pair.node.getAddress() }) {
+        if (currentParticipants.none { it.id == pair.node.getColdAddress() }) {
             val selfKey = pair.node.getKeys()[0]
             val status = pair.node.getStatus()
             val validatorInfo = status.validatorInfo

@@ -86,7 +86,7 @@ class VestingGovernanceTests : TestermintTest() {
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         
         // Claim some rewards to verify they use the new vesting periods  
-        val participantAddress = genesis.node.getAddress()
+        val participantAddress = genesis.node.getColdAddress()
         
         // Make an inference request and claim rewards
         val inferenceResult = getInferenceResult(genesis)
@@ -96,16 +96,14 @@ class VestingGovernanceTests : TestermintTest() {
         
         // The vesting schedule should reflect the new vesting periods for different reward types
         logSection("New Vesting Schedule: ${vestingSchedule}")
-        
-        // Verify new rewards use updated vesting periods
-        if (vestingSchedule.vestingSchedule?.epochAmounts?.isNotEmpty() == true) {
-            val epochCount = vestingSchedule.vestingSchedule.epochAmounts.size
+
+        vestingSchedule.vestingSchedule?.epochAmounts?.takeIf { it.isNotEmpty() }?.let { epochAmounts ->
+            val epochCount = epochAmounts.size
             logSection("Verified: New rewards vest over $epochCount epochs (updated from 2 epochs)")
             // Note: The exact epoch count depends on which reward type was earned
             // Could be 5 (work), 10 (reward), or 15 (top miner) epochs
             assertThat(epochCount).isIn(5, 10, 15)
         }
-        
         logSection("=== Vesting Parameter Governance Test Completed Successfully ===")
     }
 } 
