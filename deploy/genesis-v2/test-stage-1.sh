@@ -8,23 +8,6 @@ export BASE_DIR="./multigen-tests"
 # Number of validators to generate keys for
 NUM_VALIDATORS=${1:-3}
 
-# Base directory for test artifacts
-# BASE_DIR="multigen-tests"
-
-# echo "Preparing directories for $NUM_VALIDATORS validators..."
-
-# Clean up previous run
-# rm -rf $BASE_DIR
-# mkdir -p $BASE_DIR/artifacts
-
-# Create directories for each node
-#for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
-#  mkdir -p "$BASE_DIR/genesis-$i/keyring"
-#  mkdir -p "$BASE_DIR/genesis-$i/tmkms"
-#done
-
-#echo "Running keygen for each validator..."
-
 # Run keygen for each validator
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   echo "--- Generating keys for validator $i ---"
