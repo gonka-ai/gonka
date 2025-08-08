@@ -180,13 +180,14 @@ if [ "$GENESIS_RUN_STAGE" = "genesis-draft" ]; then
   exit 0
 fi
 
-# If a genesis file is provided in the input artifacts, use it to override the default.
-if [ -f "/root/input-artifacts/genesis.json" ]; then
+if [ "$GENESIS_RUN_STAGE" = "gentx" ]; then
+  if [ ! -f "/root/input-artifacts/genesis.json" ]; then
+    echo "Error: /root/input-artifacts/genesis.json is required for the gentx stage, but was not found." >&2
+    exit 1
+  fi
   echo "Found /root/input-artifacts/genesis.json. Overriding the default genesis file."
   cp "/root/input-artifacts/genesis.json" "/root/.inference/config/genesis.json"
-fi
 
-if [ "$GENESIS_RUN_STAGE" = "gentx" ]; then
   $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$KEYRING_HOME" --pubkey "$VALIDATOR_PUBKEY" || {
     echo "Failed to create gentx"
     tail -f /dev/null
