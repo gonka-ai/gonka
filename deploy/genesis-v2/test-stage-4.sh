@@ -28,7 +28,7 @@ export GENESIS_INDEX="0"
 sleep 30
 
 for i in $(seq 1 $(($NUM_VALIDATORS - 1))); do
-  cp "$BASE_DIR/genesis-0/artifacts/genesis-final.json" "$BASE_DIR/genesis-$i/input-artifacts/gentx/genesis-final.json"
+  cp "$BASE_DIR/genesis-0/artifacts/genesis-final.json" "$BASE_DIR/genesis-$i/input-artifacts/genesis-final.json"
 
   init_ports "$i"
   export GENESIS_INDEX="$i"
