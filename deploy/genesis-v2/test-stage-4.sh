@@ -12,6 +12,13 @@ NUM_VALIDATORS=${1:-3}
 rm -rf "$BASE_DIR/genesis-0/input-artifacts/gentx" || true
 mkdir -p "$BASE_DIR/genesis-0/input-artifacts/gentx"
 
+rm "$BASE_DIR/genesis-0/input-artifacts/authz.json" || true
+./test-utils-gen-authz-grants.sh \
+  --dir "$BASE_DIR/genesis-0/input-artifacts/addresses" \
+  --msgs "msgs.txt" \
+  --out "$BASE_DIR/genesis-0/input-artifacts/authz.json" \
+  --days 365
+
 # Copy all gentx to genesis-0
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   # Copy all
