@@ -198,9 +198,18 @@ if [ "$GENESIS_RUN_STAGE" = "gentx" ]; then
 fi
 
 if [ "$GENESIS_RUN_STAGE" = "start" ]; then
+  if [ ! -f "/root/input-artifacts/genesis.json" ]; then
+    echo "Error: /root/input-artifacts/genesis.json is required for the gentx stage, but was not found." >&2
+    exit 1
+  fi
+  echo "Found /root/input-artifacts/genesis.json. Overriding the default genesis file."
+  cp "/root/input-artifacts/genesis.json" "/root/.inference/config/genesis.json"
+
   if [ "$GENESIS_INDEX" = "0" ]; then
     output=$($APP_NAME genesis collect-gentxs 2>&1)
     echo "$output" | filter_cw20_code
+  else
+    echo "TODO: download genesis.json from the first node!"
   fi
 fi
 
