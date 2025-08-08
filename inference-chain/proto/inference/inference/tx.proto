@@ -11,7 +11,7 @@ import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
-import "inference/inference/bridge_transaction.proto";
+import "inference/inference/bridge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -47,6 +47,10 @@ service Msg {
   rpc JoinTrainingStatus               (MsgJoinTrainingStatus              ) returns (MsgJoinTrainingStatusResponse              );
   rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask         ) returns (MsgCreateDummyTrainingTaskResponse         );
   rpc BridgeExchange                   (MsgBridgeExchange                  ) returns (MsgBridgeExchangeResponse                  );
+  rpc RegisterBridgeAddresses          (MsgRegisterBridgeAddresses         ) returns (MsgRegisterBridgeAddressesResponse         );
+  rpc RegisterLiquidityPool            (MsgRegisterLiquidityPool           ) returns (MsgRegisterLiquidityPoolResponse           );
+  rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata           ) returns (MsgRegisterTokenMetadataResponse           );
+  rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading    ) returns (MsgApproveBridgeTokenForTradingResponse    );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -361,3 +365,44 @@ message MsgBridgeExchange {
 message MsgBridgeExchangeResponse {
   string id = 1;  // Unique bridge transaction ID (originChain_blockNumber_receiptIndex)
 }
+
+message MsgRegisterBridgeAddresses {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority              = 1;
+  string chainName              = 2;
+  repeated string addresses     = 3;
+}
+
+message MsgRegisterBridgeAddressesResponse {}
+
+message MsgRegisterTokenMetadata {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string chainId = 2;
+  string contractAddress = 3;
+  string name = 4;
+  string symbol = 5;
+  uint32 decimals = 6;
+  bool overwrite = 7;
+}
+
+message MsgRegisterTokenMetadataResponse {}
+
+message MsgApproveBridgeTokenForTrading {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority              = 1;
+  string chainId                = 2;  // e.g. "ethereum"
+  string contractAddress        = 3;  // original chain contract address
+}
+
+message MsgApproveBridgeTokenForTradingResponse {}
+
+message MsgRegisterLiquidityPool {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority              = 1;
+  string code_id                = 2;
+  string label                  = 3;
+  string instantiate_msg        = 4;  // JSON string for contract instantiation
+}
+
+message MsgRegisterLiquidityPoolResponse {}

@@ -166,6 +166,7 @@ type CosmosMessageClient interface {
 	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	BridgeExchange(transaction *types.MsgBridgeExchange) error
+	GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error)
 	NewInferenceQueryClient() types.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -369,6 +370,20 @@ func (icc *InferenceCosmosClient) BridgeExchange(transaction *types.MsgBridgeExc
 	transaction.Validator = icc.Address
 	_, err := icc.SendTransaction(transaction)
 	return err
+}
+
+// GetBridgeAddresses retrieves all bridge addresses for a specific chain
+func (icc *InferenceCosmosClient) GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error) {
+	queryClient := icc.NewInferenceQueryClient()
+
+	resp, err := queryClient.BridgeAddressesByChain(ctx, &types.QueryBridgeAddressesByChainRequest{
+		ChainId: chainId,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Addresses, nil
 }
 
 var accountRetriever = authtypes.AccountRetriever{}

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/CosmWasm/wasmd/x/wasm"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	wasmvmtypes "github.com/CosmWasm/wasmvm/v2/types"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -49,7 +49,7 @@ import (
 )
 
 // registerLegacyModules register IBC and WASM keepers and non dependency inject modules.
-func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts []wasmkeeper.Option) wasmtypes.WasmConfig {
+func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts []wasmkeeper.Option) {
 	// set up non depinject support modules store keys
 	if err := app.RegisterStores(
 		storetypes.NewKVStoreKey(capabilitytypes.StoreKey),
@@ -139,6 +139,9 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		app.MsgServiceRouter(),
 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 	)
+	// Set the query router for the ICA host keeper
+	app.ICAHostKeeper.WithQueryRouter(app.GRPCQueryRouter())
+
 	app.ICAControllerKeeper = icacontrollerkeeper.NewKeeper(
 		app.appCodec,
 		app.GetKey(icacontrollertypes.StoreKey),
@@ -159,9 +162,19 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 
 	homePath := cast.ToString(appOpts.Get(flags.FlagHome))
 	wasmDir := filepath.Join(homePath, "wasm")
-	wasmConfig, err := wasm.ReadWasmConfig(appOpts)
-	if err != nil {
-		panic(fmt.Sprintf("error while reading wasm config: %s", err))
+
+	// Create default node config and VM config for wasmd v0.54.2
+	nodeConfig := wasmtypes.DefaultNodeConfig()
+	vmConfig := wasmtypes.VMConfig{
+		WasmLimits: wasmvmtypes.WasmLimits{
+			InitialMemoryLimitPages: nil,
+			TableSizeLimitElements:  nil,
+			MaxImports:              nil,
+			MaxFunctions:            nil,
+			MaxFunctionParams:       nil,
+			MaxTotalFunctionParams:  nil,
+			MaxFunctionResults:      nil,
+		},
 	}
 
 	availableCapabilities := strings.Join(AllCapabilities(), ",")
@@ -180,8 +193,9 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		app.MsgServiceRouter(),
 		app.GRPCQueryRouter(),
 		wasmDir,
-		wasmConfig,
-		availableCapabilities,
+		nodeConfig,
+		vmConfig,
+		strings.Split(availableCapabilities, ","),
 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 		wasmOpts...,
 	)
@@ -233,7 +247,6 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	); err != nil {
 		panic(err)
 	}
-	return wasmConfig
 }
 
 // Since the IBC and WASM modules don't support dependency injection, we need to

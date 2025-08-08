@@ -1,0 +1,61 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message BridgeContractAddress {
+  string id = 1;
+  string chainId = 2;
+  string address = 3;
+}
+
+// TokenMetadata is used for pre-configuring known tokens before they are bridged
+message BridgeTokenMetadata {
+  string chainId = 1;            // e.g. "ethereum"
+  string contractAddress = 2;    // original chain contract address
+  string name = 3;               // token name
+  string symbol = 4;             // token symbol
+  uint32 decimals = 5;           // token decimals
+}
+
+// BridgeTradeApprovedToken defines which tokens are approved for trading through liquidity pool
+// This separates trading approval from token metadata, allowing governance control over trading
+message BridgeTradeApprovedToken {
+  string chainId = 1;            // e.g. "ethereum"
+  string contractAddress = 2;    // original chain contract address
+}
+
+enum BridgeTransactionStatus {
+  BRIDGE_PENDING = 0;
+  BRIDGE_COMPLETED = 1;
+}
+
+message BridgeTransaction {
+  string id = 1;                  
+  string chainId = 2;             
+  string contractAddress = 3;        
+  string ownerAddress = 4;           
+  string amount = 5;                 
+  int64 blockHeight = 6;            
+  int64 timestamp = 7;              
+  BridgeTransactionStatus status = 8;
+  repeated string validators = 9;    
+  uint32 validationCount = 10;       
+  string blockNumber = 11;          // block number where the transaction occurred on the origin chain
+  string receiptIndex = 12;         // index of the transaction receipt in the block
+  string receiptsRoot = 13;         // merkle root of receipts trie for transaction verification
+}
+
+// Stores mapping between external chain tokens and their CW20 counterparts
+message BridgeWrappedTokenContract {
+  string chainId = 1;           
+  string contractAddress = 2;        
+  string wrappedContractAddress = 3;           
+}
+
+// Bridge groups all bridge-related entities under a single parent structure
+message Bridge {
+  repeated BridgeContractAddress      contract_addresses      = 1;
+  repeated BridgeTokenMetadata        token_metadata          = 2;
+  repeated BridgeTradeApprovedToken   trade_approved_tokens   = 3;
+}

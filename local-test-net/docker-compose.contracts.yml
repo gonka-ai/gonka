@@ -1,0 +1,7 @@
+services:
+  chain-node:
+    volumes:
+      - ../inference-chain/contracts/liquidity-pool:/root/liquidity-pool
+    environment:
+      - CONTRACT_DIR=/root/liquidity-pool 
+      - DEPLOY_LIQUIDITY_POOL=true 

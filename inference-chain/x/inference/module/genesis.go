@@ -55,6 +55,25 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetModel(ctx, &elem)
 	}
 
+	// Set all bridge contract addresses from genesis
+	for _, elem := range genState.Bridge.ContractAddresses {
+		k.SetBridgeContractAddress(ctx, *elem)
+	}
+
+	// Set all bridge token metadata from genesis
+	for _, elem := range genState.Bridge.TokenMetadata {
+		k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
+			Name:     elem.Name,
+			Symbol:   elem.Symbol,
+			Decimals: uint8(elem.Decimals),
+		})
+	}
+
+	// Set all bridge trade approved tokens from genesis
+	for _, elem := range genState.Bridge.TradeApprovedTokens {
+		k.SetBridgeTradeApprovedToken(ctx, *elem)
+	}
+
 	// Observability: end of InitGenesis
 	k.LogInfo("InitGenesis: completed", types.System)
 
@@ -208,6 +227,30 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		genesis.CosmWasmParams = contractsParams
 	}
 	genesis.ModelList = getModels(&ctx, &k)
+	// Export bridge data
+	contractAddresses := k.GetAllBridgeContractAddresses(ctx)
+	contractAddressPtrs := make([]*types.BridgeContractAddress, len(contractAddresses))
+	for i := range contractAddresses {
+		contractAddressPtrs[i] = &contractAddresses[i]
+	}
+
+	tokenMetadata := k.GetAllBridgeTokenMetadata(ctx)
+	tokenMetadataPtrs := make([]*types.BridgeTokenMetadata, len(tokenMetadata))
+	for i := range tokenMetadata {
+		tokenMetadataPtrs[i] = &tokenMetadata[i]
+	}
+
+	tradeApprovedTokens := k.GetAllBridgeTradeApprovedTokens(ctx)
+	tradeApprovedTokenPtrs := make([]*types.BridgeTradeApprovedToken, len(tradeApprovedTokens))
+	for i := range tradeApprovedTokens {
+		tradeApprovedTokenPtrs[i] = &tradeApprovedTokens[i]
+	}
+
+	genesis.Bridge = &types.Bridge{
+		ContractAddresses:   contractAddressPtrs,
+		TokenMetadata:       tokenMetadataPtrs,
+		TradeApprovedTokens: tradeApprovedTokenPtrs,
+	}
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

@@ -45,6 +45,10 @@ const (
 	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
 	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
 	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
+	Msg_RegisterBridgeAddresses_FullMethodName          = "/inference.inference.Msg/RegisterBridgeAddresses"
+	Msg_RegisterLiquidityPool_FullMethodName            = "/inference.inference.Msg/RegisterLiquidityPool"
+	Msg_RegisterTokenMetadata_FullMethodName            = "/inference.inference.Msg/RegisterTokenMetadata"
+	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
 )
 
 // MsgClient is the client API for Msg service.
@@ -79,6 +83,10 @@ type MsgClient interface {
 	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error)
+	RegisterBridgeAddresses(ctx context.Context, in *MsgRegisterBridgeAddresses, opts ...grpc.CallOption) (*MsgRegisterBridgeAddressesResponse, error)
+	RegisterLiquidityPool(ctx context.Context, in *MsgRegisterLiquidityPool, opts ...grpc.CallOption) (*MsgRegisterLiquidityPoolResponse, error)
+	RegisterTokenMetadata(ctx context.Context, in *MsgRegisterTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterTokenMetadataResponse, error)
+	ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error)
 }
 
 type msgClient struct {
@@ -323,6 +331,42 @@ func (c *msgClient) BridgeExchange(ctx context.Context, in *MsgBridgeExchange, o
 	return out, nil
 }
 
+func (c *msgClient) RegisterBridgeAddresses(ctx context.Context, in *MsgRegisterBridgeAddresses, opts ...grpc.CallOption) (*MsgRegisterBridgeAddressesResponse, error) {
+	out := new(MsgRegisterBridgeAddressesResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterBridgeAddresses_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterLiquidityPool(ctx context.Context, in *MsgRegisterLiquidityPool, opts ...grpc.CallOption) (*MsgRegisterLiquidityPoolResponse, error) {
+	out := new(MsgRegisterLiquidityPoolResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterLiquidityPool_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterTokenMetadata(ctx context.Context, in *MsgRegisterTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterTokenMetadataResponse, error) {
+	out := new(MsgRegisterTokenMetadataResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterTokenMetadata_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error) {
+	out := new(MsgApproveBridgeTokenForTradingResponse)
+	err := c.cc.Invoke(ctx, Msg_ApproveBridgeTokenForTrading_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -355,6 +399,10 @@ type MsgServer interface {
 	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error)
+	RegisterBridgeAddresses(context.Context, *MsgRegisterBridgeAddresses) (*MsgRegisterBridgeAddressesResponse, error)
+	RegisterLiquidityPool(context.Context, *MsgRegisterLiquidityPool) (*MsgRegisterLiquidityPoolResponse, error)
+	RegisterTokenMetadata(context.Context, *MsgRegisterTokenMetadata) (*MsgRegisterTokenMetadataResponse, error)
+	ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -439,6 +487,18 @@ func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreat
 }
 func (UnimplementedMsgServer) BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BridgeExchange not implemented")
+}
+func (UnimplementedMsgServer) RegisterBridgeAddresses(context.Context, *MsgRegisterBridgeAddresses) (*MsgRegisterBridgeAddressesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterBridgeAddresses not implemented")
+}
+func (UnimplementedMsgServer) RegisterLiquidityPool(context.Context, *MsgRegisterLiquidityPool) (*MsgRegisterLiquidityPoolResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterLiquidityPool not implemented")
+}
+func (UnimplementedMsgServer) RegisterTokenMetadata(context.Context, *MsgRegisterTokenMetadata) (*MsgRegisterTokenMetadataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterTokenMetadata not implemented")
+}
+func (UnimplementedMsgServer) ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproveBridgeTokenForTrading not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -921,6 +981,78 @@ func _Msg_BridgeExchange_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RegisterBridgeAddresses_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterBridgeAddresses)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterBridgeAddresses(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterBridgeAddresses_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterBridgeAddresses(ctx, req.(*MsgRegisterBridgeAddresses))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterLiquidityPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterLiquidityPool)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterLiquidityPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterLiquidityPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterLiquidityPool(ctx, req.(*MsgRegisterLiquidityPool))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterTokenMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterTokenMetadata)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterTokenMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterTokenMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterTokenMetadata(ctx, req.(*MsgRegisterTokenMetadata))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_ApproveBridgeTokenForTrading_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgApproveBridgeTokenForTrading)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ApproveBridgeTokenForTrading(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ApproveBridgeTokenForTrading_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ApproveBridgeTokenForTrading(ctx, req.(*MsgApproveBridgeTokenForTrading))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1031,6 +1163,22 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BridgeExchange",
 			Handler:    _Msg_BridgeExchange_Handler,
+		},
+		{
+			MethodName: "RegisterBridgeAddresses",
+			Handler:    _Msg_RegisterBridgeAddresses_Handler,
+		},
+		{
+			MethodName: "RegisterLiquidityPool",
+			Handler:    _Msg_RegisterLiquidityPool_Handler,
+		},
+		{
+			MethodName: "RegisterTokenMetadata",
+			Handler:    _Msg_RegisterTokenMetadata_Handler,
+		},
+		{
+			MethodName: "ApproveBridgeTokenForTrading",
+			Handler:    _Msg_ApproveBridgeTokenForTrading_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

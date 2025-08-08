@@ -1,0 +1,36 @@
+[package]
+name = "wrapped-token"
+version = "0.1.0"
+authors = ["Inference Team"]
+edition = "2021"
+description = "Custom CW20 bridge token contract for cross-chain token management"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
+
+[features]
+# for more explicit tests, cargo test --features=backtraces
+backtraces = ["cosmwasm-std/backtraces"]
+
+[dependencies]
+cosmwasm-schema = "1.5.0"
+cosmwasm-std = { version = "1.5.0", features = ["stargate"] }
+cw-storage-plus = "1.2.0"
+cw2 = "1.1.0"
+schemars = "0.8.12"
+serde = { version = "1.0.184", default-features = false, features = ["derive"] }
+thiserror = { version = "1.0.44" }
+
+[dev-dependencies]
+cw-multi-test = "0.20.0"

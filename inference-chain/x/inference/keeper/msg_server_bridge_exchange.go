@@ -36,12 +36,12 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	// Parse the amount to ensure it's valid
 	_, ok := new(big.Int).SetString(msg.Amount, 10)
 	if !ok {
-		k.LogError("Invalid amount", types.Messages, "amount", msg.Amount)
+		k.LogError("Bridge exchange: Invalid amount", types.Messages, "amount", msg.Amount)
 		return nil, fmt.Errorf("invalid amount: %s", msg.Amount)
 	}
 
 	// Get current epoch group and active participants
-	currentEpochGroup, error := k.Keeper.GetCurrentEpochGroup(goCtx)
+	currentEpochGroup, error := k.GetCurrentEpochGroup(goCtx)
 	if error != nil {
 		k.LogError(
 			"Bridge exchange: unable to get current epoch group",
@@ -50,9 +50,10 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("unable to get current epoch group: %v", error)
 	}
 
-	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochGroup.GroupData.EpochGroupId)
-
+	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochGroup.GroupData.EpochId)
 	if !found {
+		k.LogError("Bridge exchange: No active participants found for current epoch", types.Messages,
+			"epochGroupId", currentEpochGroup.GroupData.EpochGroupId)
 		return nil, fmt.Errorf("no active participants found for current epoch")
 	}
 
@@ -91,6 +92,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		k.LogError("Bridge exchange: Validator not in active participants", types.Messages, "validator", msg.Validator)
 		return nil, fmt.Errorf("validator not in active participants")
 	}
+	k.LogInfo("Bridge exchange: Validator is active participant", types.Messages, "validator", msg.Validator)
 
 	// Check if this transaction has already been processed
 	existingTx, found := k.GetBridgeTransaction(ctx, msg.OriginChain, msg.BlockNumber, msg.ReceiptIndex)
@@ -98,6 +100,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		// If exists, check if validator already validated
 		for _, validator := range existingTx.Validators {
 			if validator == msg.Validator {
+				k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
 				return nil, fmt.Errorf("validator has already validated this transaction")
 			}
 		}
@@ -159,11 +162,10 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	// Create new bridge transaction
 	bridgeTx := &types.BridgeTransaction{
 		Id:              "", // Will be set by SetBridgeTransaction
-		OriginChain:     msg.OriginChain,
+		ChainId:         msg.OriginChain,
 		ContractAddress: msg.ContractAddress,
 		OwnerAddress:    msg.OwnerAddress,
 		Amount:          msg.Amount,
-		Recipient:       msg.OwnerAddress, // The original owner should receive the bridged tokens
 		BlockHeight:     ctx.BlockHeight(),
 		Timestamp:       ctx.BlockTime().Unix(),
 		Status:          types.BridgeTransactionStatus_BRIDGE_PENDING,
@@ -177,7 +179,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 
 	k.LogInfo("Bridge exchange: New transaction created",
 		types.Messages,
-		"originChain", msg.OriginChain,
+		"chainId", msg.OriginChain,
 		"blockNumber", msg.BlockNumber,
 		"receiptIndex", msg.ReceiptIndex,
 		"validator", msg.Validator,

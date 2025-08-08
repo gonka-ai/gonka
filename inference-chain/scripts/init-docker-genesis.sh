@@ -27,11 +27,11 @@ fi
 echo "Using the following arguments"
 echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
-KEY_NAME="genesis"
-APP_NAME="inferenced"
-CHAIN_ID="gonka-testnet-7"
-COIN_DENOM="nicoin"
-STATE_DIR="/root/.inference"
+export KEY_NAME="genesis"
+export APP_NAME="inferenced"
+export CHAIN_ID="gonka-testnet-7"
+export COIN_DENOM="nicoin"
+export STATE_DIR="/root/.inference"
 
 update_configs() {
   if [ "${REST_API_ACTIVE:-}" = true ]; then
@@ -122,7 +122,7 @@ NATIVE="000000000$COIN_DENOM"
 MILLION_NATIVE="000000$NATIVE"
 
 echo "Adding the keys to the genesis account"
-$APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis add-genesis-account "$KEY_NAME" "122$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 
 $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
@@ -181,6 +181,92 @@ cosmovisor run start &
 COSMOVISOR_PID=$!
 sleep 20 # wait for the first block
 
+# Deploy Liquidity Pool Contract at Genesis
+deploy_liquidity_pool() {
+  echo "Deploying Liquidity Pool Contract at Genesis..."
+  
+  if [ ! -d "/root/liquidity-pool" ]; then
+    echo "Liquidity pool directory not found at /root/liquidity-pool"
+    return
+  fi
+  
+    cd /root/liquidity-pool
+    
+  # Build contract if WASM doesn't exist
+  if [ ! -f "artifacts/liquidity_pool.wasm" ]; then
+    echo "Building liquidity pool contract..."
+    if [ -f "./build.sh" ]; then
+      ./build.sh || echo "Failed to build contract"
+    fi
+  fi
+  
+  # Wait for chain to be ready before deploying
+  echo "Waiting for chain to be ready..."
+  for i in {1..30}; do
+    if $APP_NAME query bank balances $($APP_NAME keys show "$KEY_NAME" -a --keyring-backend $KEYRING_BACKEND) >/dev/null 2>&1; then
+      echo "Chain is ready"
+      break
+    fi
+    echo "Waiting for chain... ($i/30)"
+    sleep 2
+  done
+  
+  echo "Funding community pool with 120M tokens for liquidity pool..."
+  fund_output=$($APP_NAME tx distribution fund-community-pool "120000000000000000$COIN_DENOM" \
+    --from "$KEY_NAME" \
+    --keyring-backend "$KEYRING_BACKEND" \
+    --chain-id "$CHAIN_ID" \
+    --gas auto \
+    --gas-adjustment 1.3 \
+    --fees "1000$COIN_DENOM" \
+    --yes 2>&1)
+  fund_status=$?
+
+  if [ $fund_status -ne 0 ]; then
+    echo "Community pool funding failed with exit code $fund_status."
+    echo "See transaction output above for details."
+    exit 1
+  fi
+    
+  sleep 5  # Wait for transaction to be processed
+    
+  # Deploy liquidity pool contract
+  echo "Step 1: Deploying liquidity pool contract..."
+  if ! sh ./deploy.sh; then
+    echo "Deploy failed, stopping workflow"
+    return
+  fi
+  echo "Step 1: Deploy successful"
+    
+  echo "Step 2: Voting on contract proposal..."
+  if ! sh ./vote.sh; then
+    echo "Vote failed, stopping workflow"
+    return
+  fi
+  echo "Step 2: Vote successful"
+  
+  echo "Step 3: Funding the contract..."
+  if ! sh ./funding.sh; then
+    echo "Funding failed, stopping workflow"
+    return
+  fi
+  echo "Step 3: Funding successful"
+  
+  echo "Step 4: Voting on funding contract..."
+  if ! sh ./vote.sh; then
+    echo "Funding vote failed"
+    return
+  fi
+  echo "Step 4: Funding vote successful"
+}
+
+# Deploy liquidity pool if enabled
+if [ "${DEPLOY_LIQUIDITY_POOL:-}" = "true" ]; then
+  deploy_liquidity_pool
+else
+  echo "Skipping liquidity pool deployment (DEPLOY_LIQUIDITY_POOL not set to true)"
+fi
+
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
 if [ "$INIT_TGBOT" = "true" ]; then
     echo "Initializing tgbot account..."
@@ -193,7 +279,7 @@ if [ "$INIT_TGBOT" = "true" ]; then
     echo "$TGBOT_PRIVATE_KEY_PASS" | inferenced keys import tgbot tgbot_private_key.json
 
     inferenced tx bank send $TG_ACC $TG_ACC 100nicoin --from tgbot --yes
-    echo "✅ tgbot account successfully initialized!"
+    echo "tgbot account successfully initialized!"
 else
     echo "INIT_TGBOT is not set to true. Skipping tgbot initialization."
 fi

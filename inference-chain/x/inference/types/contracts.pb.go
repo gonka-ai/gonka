@@ -76,94 +76,8 @@ func (m *CosmWasmParams) GetCw20CodeId() uint64 {
 	return 0
 }
 
-// Stores mapping between external chain tokens and their CW20 counterparts
-type ExternalTokenContract struct {
-	ExternalChain    string `protobuf:"bytes,1,opt,name=external_chain,json=externalChain,proto3" json:"external_chain,omitempty"`
-	ExternalContract string `protobuf:"bytes,2,opt,name=external_contract,json=externalContract,proto3" json:"external_contract,omitempty"`
-	Cw20Contract     string `protobuf:"bytes,3,opt,name=cw20_contract,json=cw20Contract,proto3" json:"cw20_contract,omitempty"`
-	Name             string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
-	Symbol           string `protobuf:"bytes,5,opt,name=symbol,proto3" json:"symbol,omitempty"`
-	Decimals         uint32 `protobuf:"varint,6,opt,name=decimals,proto3" json:"decimals,omitempty"`
-}
-
-func (m *ExternalTokenContract) Reset()         { *m = ExternalTokenContract{} }
-func (m *ExternalTokenContract) String() string { return proto.CompactTextString(m) }
-func (*ExternalTokenContract) ProtoMessage()    {}
-func (*ExternalTokenContract) Descriptor() ([]byte, []int) {
-	return fileDescriptor_15e3e4d970cdc3ff, []int{1}
-}
-func (m *ExternalTokenContract) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *ExternalTokenContract) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_ExternalTokenContract.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *ExternalTokenContract) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ExternalTokenContract.Merge(m, src)
-}
-func (m *ExternalTokenContract) XXX_Size() int {
-	return m.Size()
-}
-func (m *ExternalTokenContract) XXX_DiscardUnknown() {
-	xxx_messageInfo_ExternalTokenContract.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_ExternalTokenContract proto.InternalMessageInfo
-
-func (m *ExternalTokenContract) GetExternalChain() string {
-	if m != nil {
-		return m.ExternalChain
-	}
-	return ""
-}
-
-func (m *ExternalTokenContract) GetExternalContract() string {
-	if m != nil {
-		return m.ExternalContract
-	}
-	return ""
-}
-
-func (m *ExternalTokenContract) GetCw20Contract() string {
-	if m != nil {
-		return m.Cw20Contract
-	}
-	return ""
-}
-
-func (m *ExternalTokenContract) GetName() string {
-	if m != nil {
-		return m.Name
-	}
-	return ""
-}
-
-func (m *ExternalTokenContract) GetSymbol() string {
-	if m != nil {
-		return m.Symbol
-	}
-	return ""
-}
-
-func (m *ExternalTokenContract) GetDecimals() uint32 {
-	if m != nil {
-		return m.Decimals
-	}
-	return 0
-}
-
 func init() {
 	proto.RegisterType((*CosmWasmParams)(nil), "inference.inference.CosmWasmParams")
-	proto.RegisterType((*ExternalTokenContract)(nil), "inference.inference.ExternalTokenContract")
 }
 
 func init() {
@@ -171,28 +85,21 @@ func init() {
 }
 
 var fileDescriptor_15e3e4d970cdc3ff = []byte{
-	// 331 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x5c, 0x91, 0x4f, 0x4b, 0x02, 0x41,
-	0x18, 0xc6, 0x9d, 0xda, 0x44, 0x07, 0x95, 0x9a, 0xfe, 0xb0, 0x18, 0x6c, 0x8b, 0x12, 0x08, 0x81,
-	0x46, 0xd1, 0xa5, 0x63, 0x4b, 0x87, 0x4e, 0xc5, 0x52, 0x04, 0x5d, 0x64, 0x9c, 0x9d, 0x74, 0xc9,
-	0x99, 0x57, 0x66, 0x46, 0xd2, 0x6f, 0xd1, 0x47, 0xe8, 0xe3, 0x74, 0xf4, 0xe8, 0x31, 0xf4, 0xd2,
-	0xc7, 0x08, 0xc7, 0xd9, 0x35, 0xba, 0x3d, 0xef, 0xf3, 0xfc, 0x66, 0xde, 0x07, 0x5e, 0xdc, 0x4c,
-	0xe5, 0x2b, 0x57, 0x5c, 0x32, 0xde, 0xd9, 0x28, 0x06, 0xd2, 0x28, 0xca, 0x8c, 0x6e, 0x8f, 0x14,
-	0x18, 0x20, 0xfb, 0x79, 0xd4, 0xce, 0x55, 0xfd, 0xa0, 0x0f, 0x7d, 0xb0, 0x79, 0x67, 0xa5, 0xd6,
-	0x68, 0xe3, 0x09, 0xd7, 0x22, 0xd0, 0xe2, 0x99, 0x6a, 0xf1, 0x40, 0x15, 0x15, 0x9a, 0x1c, 0xe3,
-	0x32, 0x7b, 0xbf, 0x38, 0xef, 0x32, 0x48, 0xb8, 0x8f, 0x42, 0xd4, 0xaa, 0xc4, 0xa5, 0x95, 0x11,
-	0x41, 0xc2, 0x49, 0x88, 0x2b, 0x79, 0xd8, 0x4d, 0x13, 0x7f, 0x2b, 0x44, 0x2d, 0x2f, 0xc6, 0x59,
-	0x7e, 0x97, 0x5c, 0x7b, 0x3f, 0x9f, 0x27, 0xa8, 0x31, 0x47, 0xf8, 0xf0, 0x76, 0x62, 0xb8, 0x92,
-	0x74, 0xf8, 0x08, 0x6f, 0x5c, 0x46, 0xae, 0x22, 0x39, 0xc5, 0x35, 0xee, 0x82, 0x2e, 0x1b, 0xd0,
-	0x54, 0xda, 0x1d, 0xe5, 0xb8, 0x9a, 0xb9, 0xd1, 0xca, 0x24, 0x67, 0x78, 0x6f, 0x83, 0xb9, 0xb7,
-	0x76, 0x5b, 0x39, 0xde, 0xcd, 0xc9, 0xec, 0xcf, 0x26, 0xae, 0xba, 0x56, 0x0e, 0xdc, 0xb6, 0x60,
-	0x65, 0x5d, 0xcb, 0x41, 0x04, 0x7b, 0x92, 0x0a, 0xee, 0x7b, 0x36, 0xb3, 0x9a, 0x1c, 0xe1, 0xa2,
-	0x9e, 0x8a, 0x1e, 0x0c, 0xfd, 0x1d, 0xeb, 0xba, 0x89, 0xd4, 0x71, 0x29, 0xe1, 0x2c, 0x15, 0x74,
-	0xa8, 0xfd, 0x62, 0x88, 0x5a, 0xd5, 0x38, 0x9f, 0x6f, 0xee, 0xbf, 0x16, 0x01, 0x9a, 0x2d, 0x02,
-	0xf4, 0xbd, 0x08, 0xd0, 0xc7, 0x32, 0x28, 0xcc, 0x96, 0x41, 0x61, 0xbe, 0x0c, 0x0a, 0x2f, 0x57,
-	0xfd, 0xd4, 0x0c, 0xc6, 0xbd, 0x36, 0x03, 0xd1, 0x19, 0x29, 0x48, 0xc6, 0xcc, 0x68, 0x96, 0xfe,
-	0xbb, 0xd5, 0xe4, 0x8f, 0x36, 0xd3, 0x11, 0xd7, 0xbd, 0xa2, 0xbd, 0xc4, 0xe5, 0x6f, 0x00, 0x00,
-	0x00, 0xff, 0xff, 0x8c, 0x56, 0x45, 0x22, 0xdb, 0x01, 0x00, 0x00,
+	// 210 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x52, 0xce, 0xcc, 0x4b, 0x4b,
+	0x2d, 0x4a, 0xcd, 0x4b, 0x4e, 0xd5, 0x47, 0xb0, 0x92, 0xf3, 0xf3, 0x4a, 0x8a, 0x12, 0x93, 0x4b,
+	0x8a, 0xf5, 0x0a, 0x8a, 0xf2, 0x4b, 0xf2, 0x85, 0x84, 0xe1, 0x52, 0x7a, 0x70, 0x96, 0x94, 0x48,
+	0x7a, 0x7e, 0x7a, 0x3e, 0x58, 0x5e, 0x1f, 0xc4, 0x82, 0x28, 0x55, 0x0a, 0xe5, 0xe2, 0x73, 0xce,
+	0x2f, 0xce, 0x0d, 0x4f, 0x2c, 0xce, 0x0d, 0x48, 0x2c, 0x4a, 0xcc, 0x2d, 0x16, 0x92, 0xe6, 0xe2,
+	0x4c, 0x2e, 0x37, 0x32, 0x88, 0x4f, 0xce, 0x4f, 0x49, 0x95, 0x60, 0x54, 0x60, 0xd4, 0xe0, 0x09,
+	0xe2, 0x00, 0x09, 0x38, 0xe7, 0xa7, 0xa4, 0x0a, 0x29, 0x70, 0xf1, 0xc0, 0x25, 0xe3, 0x33, 0x53,
+	0x24, 0x98, 0x14, 0x18, 0x35, 0x58, 0x82, 0xb8, 0x60, 0xf2, 0x9e, 0x29, 0x56, 0x2c, 0x2f, 0x16,
+	0xc8, 0x33, 0x3a, 0xf9, 0x9f, 0x78, 0x24, 0xc7, 0x78, 0xe1, 0x91, 0x1c, 0xe3, 0x83, 0x47, 0x72,
+	0x8c, 0x13, 0x1e, 0xcb, 0x31, 0x5c, 0x78, 0x2c, 0xc7, 0x70, 0xe3, 0xb1, 0x1c, 0x43, 0x94, 0x69,
+	0x7a, 0x66, 0x49, 0x46, 0x69, 0x92, 0x5e, 0x72, 0x7e, 0xae, 0x7e, 0x41, 0x51, 0x7e, 0x4a, 0x69,
+	0x72, 0x49, 0x71, 0x72, 0x26, 0x9a, 0x87, 0x2a, 0x90, 0xd8, 0x25, 0x95, 0x05, 0xa9, 0xc5, 0x49,
+	0x6c, 0x60, 0xe7, 0x1a, 0x03, 0x02, 0x00, 0x00, 0xff, 0xff, 0x01, 0xfb, 0xc9, 0x92, 0x00, 0x01,
+	0x00, 0x00,
 }
 
 func (this *CosmWasmParams) Equal(that interface{}) bool {
@@ -257,69 +164,6 @@ func (m *CosmWasmParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *ExternalTokenContract) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *ExternalTokenContract) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *ExternalTokenContract) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.Decimals != 0 {
-		i = encodeVarintContracts(dAtA, i, uint64(m.Decimals))
-		i--
-		dAtA[i] = 0x30
-	}
-	if len(m.Symbol) > 0 {
-		i -= len(m.Symbol)
-		copy(dAtA[i:], m.Symbol)
-		i = encodeVarintContracts(dAtA, i, uint64(len(m.Symbol)))
-		i--
-		dAtA[i] = 0x2a
-	}
-	if len(m.Name) > 0 {
-		i -= len(m.Name)
-		copy(dAtA[i:], m.Name)
-		i = encodeVarintContracts(dAtA, i, uint64(len(m.Name)))
-		i--
-		dAtA[i] = 0x22
-	}
-	if len(m.Cw20Contract) > 0 {
-		i -= len(m.Cw20Contract)
-		copy(dAtA[i:], m.Cw20Contract)
-		i = encodeVarintContracts(dAtA, i, uint64(len(m.Cw20Contract)))
-		i--
-		dAtA[i] = 0x1a
-	}
-	if len(m.ExternalContract) > 0 {
-		i -= len(m.ExternalContract)
-		copy(dAtA[i:], m.ExternalContract)
-		i = encodeVarintContracts(dAtA, i, uint64(len(m.ExternalContract)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.ExternalChain) > 0 {
-		i -= len(m.ExternalChain)
-		copy(dAtA[i:], m.ExternalChain)
-		i = encodeVarintContracts(dAtA, i, uint64(len(m.ExternalChain)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
 func encodeVarintContracts(dAtA []byte, offset int, v uint64) int {
 	offset -= sovContracts(v)
 	base := offset
@@ -343,38 +187,6 @@ func (m *CosmWasmParams) Size() (n int) {
 	}
 	if m.Cw20CodeId != 0 {
 		n += 1 + sovContracts(uint64(m.Cw20CodeId))
-	}
-	return n
-}
-
-func (m *ExternalTokenContract) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.ExternalChain)
-	if l > 0 {
-		n += 1 + l + sovContracts(uint64(l))
-	}
-	l = len(m.ExternalContract)
-	if l > 0 {
-		n += 1 + l + sovContracts(uint64(l))
-	}
-	l = len(m.Cw20Contract)
-	if l > 0 {
-		n += 1 + l + sovContracts(uint64(l))
-	}
-	l = len(m.Name)
-	if l > 0 {
-		n += 1 + l + sovContracts(uint64(l))
-	}
-	l = len(m.Symbol)
-	if l > 0 {
-		n += 1 + l + sovContracts(uint64(l))
-	}
-	if m.Decimals != 0 {
-		n += 1 + sovContracts(uint64(m.Decimals))
 	}
 	return n
 }
@@ -463,235 +275,6 @@ func (m *CosmWasmParams) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.Cw20CodeId |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipContracts(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthContracts
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *ExternalTokenContract) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowContracts
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ExternalTokenContract: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ExternalTokenContract: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ExternalChain", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowContracts
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthContracts
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthContracts
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ExternalChain = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ExternalContract", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowContracts
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthContracts
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthContracts
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ExternalContract = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Cw20Contract", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowContracts
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthContracts
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthContracts
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Cw20Contract = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowContracts
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthContracts
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthContracts
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Name = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Symbol", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowContracts
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthContracts
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthContracts
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Symbol = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 6:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Decimals", wireType)
-			}
-			m.Decimals = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowContracts
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Decimals |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

@@ -20,6 +20,11 @@ func GenerateGenesis(mockContracts bool) *GenesisState {
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
 		CosmWasmParams:    contractsParams,
+		Bridge: &Bridge{
+			ContractAddresses:   []*BridgeContractAddress{},
+			TokenMetadata:       []*BridgeTokenMetadata{},
+			TradeApprovedTokens: []*BridgeTradeApprovedToken{},
+		},
 	}
 }
 

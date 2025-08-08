@@ -18,6 +18,7 @@ import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
 import "inference/inference/partial_upgrade.proto";
 import "inference/inference/contracts.proto";
+import "inference/inference/bridge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -29,4 +30,5 @@ message GenesisState {
            GenesisOnlyParams          genesis_only_params            =  2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
   repeated Model                      model_list                     =  3 [(gogoproto.nullable) = false] ;
            CosmWasmParams             cosm_wasm_params               =  4 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+           Bridge                     bridge                         =  5;
 }

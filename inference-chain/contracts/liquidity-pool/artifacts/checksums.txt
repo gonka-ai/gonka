@@ -1,0 +1,1 @@
+b1595384124db14ca01528304ecaafe9f02918c50c4b217dc424622fb7bcfa0f  liquidity_pool.wasm
