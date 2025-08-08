@@ -354,7 +354,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 
 func (el *EventListener) handleInferenceFinished(events map[string][]string, name string) {
 	if inferenceIDs, ok := events["inference_finished.inference_id"]; ok && len(inferenceIDs) > 0 {
-		logging.Info("Handling 'inference_finished' event", types.EventProcessing, "worker", name)
+		logging.Debug("Handling 'inference_finished' event", types.EventProcessing, "worker", name)
 		if el.isNodeSynced() {
 			el.validator.SampleInferenceToValidate(inferenceIDs, el.transactionRecorder)
 		}
@@ -363,7 +363,7 @@ func (el *EventListener) handleInferenceFinished(events map[string][]string, nam
 
 func (el *EventListener) handleInferenceValidation(events map[string][]string, name string) {
 	if needsRevalidation, ok := events["inference_validation.needs_revalidation"]; ok && len(needsRevalidation) > 0 && needsRevalidation[0] == "true" {
-		logging.Info("Handling 'inference_validation' event that needs revalidation", types.EventProcessing, "worker", name)
+		logging.Debug("Handling 'inference_validation' event that needs revalidation", types.EventProcessing, "worker", name)
 		if el.isNodeSynced() {
 			el.validator.VerifyInvalidation(events, el.transactionRecorder)
 		}
@@ -372,13 +372,13 @@ func (el *EventListener) handleInferenceValidation(events map[string][]string, n
 
 func (el *EventListener) handleSubmitProposal(events map[string][]string, name string) {
 	if proposalIDs, ok := events["submit_proposal.proposal_id"]; ok && len(proposalIDs) > 0 {
-		logging.Info("Handling 'submit_proposal' event", types.EventProcessing, "worker", name, "proposalId", proposalIDs[0])
+		logging.Debug("Handling 'submit_proposal' event", types.EventProcessing, "worker", name, "proposalId", proposalIDs[0])
 	}
 }
 
 func (el *EventListener) handleTrainingTaskAssigned(events map[string][]string, name string) {
 	if taskIds, ok := events["training_task_assigned.task_id"]; ok && len(taskIds) > 0 {
-		logging.Info("Handling 'training_task_assigned' event", types.EventProcessing, "worker", name)
+		logging.Debug("Handling 'training_task_assigned' event", types.EventProcessing, "worker", name)
 		if el.isNodeSynced() {
 			for _, taskId := range taskIds {
 				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)

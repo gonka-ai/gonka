@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
@@ -78,13 +79,13 @@ func (k Keeper) setInferenceStatsByModel(ctx context.Context, developer string, 
 }
 
 func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer string, infStats types.InferenceStats, currentEpochId, prevEpochId uint64) {
-	k.LogInfo("stat set by epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId, "previously_known_epoch_id", prevEpochId)
+	k.LogDebug("stat set by epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId, "previously_known_epoch_id", prevEpochId)
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsDevelopersByEpoch))
 
 	// === CASE 1: inference already exists, but was tagged by different epoch ===
 	if prevEpochId != 0 && prevEpochId != currentEpochId {
-		k.LogInfo("stat set by epoch: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
+		k.LogDebug("stat set by epoch: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
 		oldKey := developerByEpochKey(developer, prevEpochId)
 		if bz := epochStore.Get(oldKey); bz != nil {
 			var oldStats types.DeveloperStatsByEpoch
@@ -96,7 +97,7 @@ func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer 
 	}
 
 	// === CASE 2: create new record or update existing with current_epoch_id ===
-	k.LogInfo("stat set by epoch: new record or same epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
+	k.LogDebug("stat set by epoch: new record or same epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
 	newKey := developerByEpochKey(developer, currentEpochId)
 	var newStats types.DeveloperStatsByEpoch
 	if bz := epochStore.Get(newKey); bz != nil {
@@ -115,5 +116,5 @@ func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer 
 		newStats.InferenceIds = append(newStats.InferenceIds, infStats.InferenceId)
 		epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
 	}
-	k.LogInfo("stat set by epoch: inference successfully added to epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
+	k.LogDebug("stat set by epoch: inference successfully added to epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
 }
