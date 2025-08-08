@@ -1,10 +1,10 @@
 ## Multi-Genesis Setup Plan
 
-This document defines the high-level design and operational plan to run a multi-genesis network with multiple genesis validators using a single script controlled by `RUN_MODE`. It is optimized to work both for local multi-project Docker Compose setups and for production across different machines.
+This document defines the high-level design and operational plan to run a multi-genesis network with multiple genesis validators using a single script controlled by `GENESIS_RUN_STAGE`. It is optimized to work both for local multi-project Docker Compose setups and for production across different machines.
 
 ### Objectives
 - **Enable multi-genesis bootstrapping** across N validators with manual artifact exchange between stages.
-- **Use one script** (`inference-chain/scripts/init-docker-genesis.sh`) with `RUN_MODE` gating behavior.
+- **Use one script** (`inference-chain/scripts/init-docker-genesis.sh`) with `GENESIS_RUN_STAGE` gating behavior.
 - **Mirror production** in local testing by running separate compose projects per node and connecting over the host network.
 
 ### Components
@@ -16,7 +16,7 @@ This document defines the high-level design and operational plan to run a multi-
 Define these environment variables per node. Defaults should remain as in the current script unless specified.
 
 - Identity/role
-  - `RUN_MODE`: `keygen | intermediate_genesis | gentx | start | restart`
+  - `GENESIS_RUN_STAGE`: `keygen | intermediate_genesis | gentx | start | restart`
   - `GENESIS_ROLE`: `coordinator | validator` (optional if using index)
   - `GENESIS_INDEX`: integer; `0` designates coordinator
   - `KEY_NAME`: key alias; use as node moniker as well
@@ -53,9 +53,9 @@ Define these environment variables per node. Defaults should remain as in the cu
 - `genesis/final_genesis.json`
 - `peers/persistent_peers.txt`
 
-## RUN_MODE Behaviors
+## GENESIS_RUN_STAGE Behaviors
 
-### RUN_MODE=keygen (all validators, including coordinator)
+### GENESIS_RUN_STAGE=keygen (all validators, including coordinator)
 - Inputs: `KEY_NAME`, `GENESIS_INDEX`, derived ports
 - Actions:
   - Create account key in `KEYRING_HOME` (always use `--keyring-dir "$KEYRING_HOME"`).
@@ -67,7 +67,7 @@ Define these environment variables per node. Defaults should remain as in the cu
   - Wipe `NODE_HOME` afterwards; keep `TMKMS_HOME` and `KEYRING_HOME`.
 - Outputs: The three artifacts per validator.
 
-### RUN_MODE=intermediate_genesis (coordinator only)
+### GENESIS_RUN_STAGE=intermediate_genesis (coordinator only)
 - Inputs: `addresses/*.txt` (collected manually from validators)
 - Actions:
   - Fresh `NODE_HOME`; run `init` and add all addresses using current denom/amounts.
@@ -75,7 +75,7 @@ Define these environment variables per node. Defaults should remain as in the cu
   - Wipe `NODE_HOME` afterwards.
 - Outputs: `intermediate_genesis.json`.
 
-### RUN_MODE=gentx (all validators)
+### GENESIS_RUN_STAGE=gentx (all validators)
 - Inputs:
   - `genesis/intermediate_genesis.json` (placed manually into this node)
   - Own `validators/<name>/val_pubkey.json`
@@ -87,7 +87,7 @@ Define these environment variables per node. Defaults should remain as in the cu
   - Wipe `NODE_HOME` (recommended) after writing gentx.
 - Outputs: `gentx` for each validator.
 
-### RUN_MODE=start
+### GENESIS_RUN_STAGE=start
 - Coordinator:
   - Inputs: all `gentxs/*.json` (collected manually), `intermediate_genesis.json`.
   - Actions:
@@ -100,7 +100,7 @@ Define these environment variables per node. Defaults should remain as in the cu
   - Inputs: `genesis/final_genesis.json`, `peers/persistent_peers.txt` (moved manually).
   - Actions: install final genesis; set `p2p.persistent_peers` from file or env; start cosmovisor/node.
 
-### RUN_MODE=restart
+### GENESIS_RUN_STAGE=restart
 - Inputs: existing `NODE_HOME` (from a running network)
 - Actions: start cosmovisor only; no initialization.
 
@@ -130,20 +130,20 @@ Define these environment variables per node. Defaults should remain as in the cu
 - Allow duplicate IPs locally via `CONFIG_p2p__allow_duplicate_ip=true`.
 
 ## Local Runbook (Manual Artifact Movement)
-1) All nodes: `RUN_MODE=keygen`
+1) All nodes: `GENESIS_RUN_STAGE=keygen`
    - Collect each node’s `account_addr.txt`, `val_pubkey.json`, `node_id.txt`.
-2) Coordinator: `RUN_MODE=intermediate_genesis`
+2) Coordinator: `GENESIS_RUN_STAGE=intermediate_genesis`
    - Produce `genesis/intermediate_genesis.json`.
 3) Distribute `intermediate_genesis.json` to all nodes.
-4) All nodes: `RUN_MODE=gentx`
+4) All nodes: `GENESIS_RUN_STAGE=gentx`
    - Produce `gentxs/<name>.json`.
 5) Collect all `gentxs/*.json` on coordinator.
-6) Coordinator: `RUN_MODE=start`
+6) Coordinator: `GENESIS_RUN_STAGE=start`
    - Produce `genesis/final_genesis.json` and `peers/persistent_peers.txt`; start node.
 7) Distribute `final_genesis.json` and `persistent_peers.txt` to validators.
-8) Validators: `RUN_MODE=start`
+8) Validators: `GENESIS_RUN_STAGE=start`
    - Start nodes.
-9) Any node restarts: `RUN_MODE=restart`.
+9) Any node restarts: `GENESIS_RUN_STAGE=restart`.
 
 ## Production Notes
 - Same stages and artifacts as local. Do not share Docker networks across machines.
@@ -152,7 +152,7 @@ Define these environment variables per node. Defaults should remain as in the cu
 
 ## Implementation Tasks
 1) Script scaffolding
-   - Add `RUN_MODE`, `GENESIS_INDEX|GENESIS_ROLE`, path/port envs, and derived port calculation.
+   - Add `GENESIS_RUN_STAGE`, `GENESIS_INDEX|GENESIS_ROLE`, path/port envs, and derived port calculation.
    - Ensure all key commands use `--keyring-dir "$KEYRING_HOME"`.
 
 2) Keygen mode

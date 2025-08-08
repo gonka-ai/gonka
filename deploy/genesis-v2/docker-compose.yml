@@ -17,6 +17,7 @@ services:
     # restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
+      - GENESIS_RUN_STAGE=${GENESIS_RUN_STAGE:-keygen}
       - KEY_NAME=genesis
       - SNAPSHOT_INTERVAL=1000
       - SNAPSHOT_KEEP_RECENT=5
@@ -31,6 +32,7 @@ services:
     volumes:
       # FIXME: replace back
       # - /srv/dai/inference:/root/.inference
+      - ./multigen-tests/genesis/keyring:/root/keyring
       - ./multigen-tests/genesis/node:/root/.inference
       - ./genesis-overrides.json:/root/genesis_overrides.json
       - ./init-docker-genesis.sh:/root/init-docker-genesis.sh
