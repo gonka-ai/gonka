@@ -218,9 +218,8 @@ if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
     sleep 10
     echo "Querying validator pubkey, please write it down"
 
-    echo "Doing wget"
-    wget "http://localhost:26657/status"
-    wget "http://localhost:26657/status" > /root/artifacts/validator_pubkey.json
+    echo "Querying validator pubkey, printing to log and saving to artifacts..."
+    wget -qO - "http://localhost:26657/status" | tee /root/artifacts/validator_pubkey.json
     echo "$GENESIS_ADDRESS" > /root/artifacts/address.txt
 
     echo "Keygen stage is set, exiting. You can tear down the container now."
