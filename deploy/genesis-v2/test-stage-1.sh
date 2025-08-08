@@ -25,8 +25,10 @@ NUM_VALIDATORS=${1:-3}
 # Run keygen for each validator
 for i in $(seq 0 $(($NUM_VALIDATORS - 1))); do
   echo "--- Generating keys for validator $i ---"
+  GENESIS_INDEX="$i"
+  echo "GENESIS_INDEX=$GENESIS_INDEX"
+  export GENESIS_INDEX
 
-  export GENESIS_INDEX="$i"
   ./stage-1-keygen.sh
 
   # Optional: stop the containers if you want to run them one by one
