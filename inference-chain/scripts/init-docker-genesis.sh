@@ -215,7 +215,7 @@ cosmovisor run start &
 COSMOVISOR_PID=$!
 
 if [ "$GENESIS_RUN_STAGE" = "keygen" ]; then
-    sleep 10
+    sleep 30
     echo "Querying validator pubkey, please write it down"
 
     echo "Querying validator pubkey, printing to log and saving to artifacts..."
