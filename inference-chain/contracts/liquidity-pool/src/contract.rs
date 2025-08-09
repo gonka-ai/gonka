@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    entry_point, from_json, to_json_binary, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,
-    StdResult, Uint128, Uint256, QueryRequest, StakingQuery, GrpcQuery,
+    entry_point, from_json, to_json_binary, to_json_vec, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,
+    StdError, StdResult, Uint128, QueryRequest, StakingQuery, GrpcQuery, ContractResult, SystemResult,
 };
 use prost::Message; // For proto encoding/decoding
 use cw2::set_contract_version;
@@ -9,7 +9,7 @@ use crate::error::ContractError;
 use crate::msg::{
     ConfigResponse, Cw20ReceiveMsg, DailyStatsResponse, ExecuteMsg, InstantiateMsg,
     NativeBalanceResponse, PricingInfoResponse, PurchaseTokenMsg, QueryMsg, 
-    TestBridgeValidationResponse, TokenCalculationResponse, BlockHeightResponse,
+    TestBridgeValidationResponse, TokenCalculationResponse, BlockHeightResponse, RawGrpcResponse,
 };
 use crate::state::{
     calculate_current_price, calculate_current_tier_usd, calculate_tokens_for_usd,
@@ -34,55 +34,41 @@ const CONTRACT_NAME: &str = "inference-liquidity-pool";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Helper function to validate if a token is a legitimate bridge token for trading
-fn validate_wrapped_token_for_trade(deps: Deps, token_denom: &str) -> Result<bool, ContractError> {
+// Accepts either a raw CW20 address (bech32) or a value prefixed with "cw20:"
+fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Result<bool, ContractError> {
     deps.api.debug(&format!(
-        "lp: validate_wrapped_token_for_trade start token_denom={}",
-        token_denom
+        "lp: validate_wrapped_token_for_trade start token_identifier={}",
+        token_identifier
     ));
-    // For CW20 tokens, extract the contract address from the denomination
-    // CW20 tokens typically have format "cw20:cosmos1abc123..."
-    if !token_denom.starts_with("cw20:") {
-        // If it's not a CW20 token, it can't be a bridge token
-        deps.api.debug("lp: token_denom is not cw20, returning false");
-        return Ok(false);
-    }
 
-    let contract_address = token_denom.strip_prefix("cw20:").unwrap_or(token_denom);
+    // For compatibility: allow both "cw20:<bech32>" and raw bech32 addresses
+    let contract_address = token_identifier
+        .strip_prefix("cw20:")
+        .unwrap_or(token_identifier);
     deps.api.debug(&format!(
         "lp: extracted cw20 contract_address={}",
         contract_address
     ));
 
-    // Construct the proto request
+    // Construct the proto request (prost) and send via generic gRPC helper
     let proto_request = QueryValidateWrappedTokenForTradeRequest {
         contract_address: contract_address.to_string(),
     };
     let mut buf = Vec::new();
-    proto_request.encode(&mut buf).map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("Failed to encode QueryValidateWrappedTokenForTradeRequest: {}", e))))?;
+    proto_request
+        .encode(&mut buf)
+        .map_err(|e| ContractError::Std(StdError::msg(format!(
+            "Failed to encode QueryValidateWrappedTokenForTradeRequest: {}",
+            e
+        ))))?;
 
-    // Use GrpcQuery to make the gRPC query
-    let grpc_query = GrpcQuery {
-        path: "/inference.inference.Query/ValidateWrappedTokenForTrade".to_string(),
-        data: Binary::from(buf),
-    };
-
-    // Serialize the GrpcQuery to bytes
-    let query_bytes = to_json_binary(&grpc_query)
-        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("Failed to serialize GrpcQuery: {}", e))))?;
-
-    // Execute the gRPC query using raw_query
-    deps.api.debug("lp: issuing raw_query for ValidateWrappedTokenForTrade");
-    let response_data = match deps.querier.raw_query(query_bytes.as_slice()) {
-        cosmwasm_std::SystemResult::Ok(cosmwasm_std::ContractResult::Ok(data)) => data,
-        cosmwasm_std::SystemResult::Ok(cosmwasm_std::ContractResult::Err(e)) => {
-            deps.api.debug(&format!("lp: gRPC query failed: {}", e));
-            return Err(ContractError::Std(cosmwasm_std::StdError::msg(format!("gRPC query failed: {}", e))));
-        }
-        cosmwasm_std::SystemResult::Err(e) => {
-            deps.api.debug(&format!("lp: gRPC query system error: {}", e));
-            return Err(ContractError::Std(cosmwasm_std::StdError::msg(format!("gRPC query system error: {}", e))));
-        }
-    };
+    deps.api.debug("lp: issuing query_grpc for ValidateWrappedTokenForTrade");
+    let response_data = query_grpc(
+        deps,
+        "/inference.inference.Query/ValidateWrappedTokenForTrade",
+        Binary::from(buf),
+    )
+    .map_err(|e| ContractError::Std(e))?;
 
     // Decode the response
     let response: QueryValidateWrappedTokenForTradeResponse = QueryValidateWrappedTokenForTradeResponse::decode(response_data.as_slice())
@@ -237,7 +223,7 @@ fn receive_cw20(
     ));
     
     // CRITICAL: Validate this is a legitimate bridge token for trading by checking the cosmos module
-    if !validate_wrapped_token_for_trade(deps.as_ref(), &format!("cw20:{}", cw20_contract))? {
+    if !validate_wrapped_token_for_trade(deps.as_ref(), &cw20_contract)? {
         deps.api.debug("lp: validate_wrapped_token_for_trade returned false");
         return Err(ContractError::TokenNotAccepted {
             token: format!("CW20 contract {} is not a legitimate bridge token approved for trading", cw20_contract),
@@ -679,6 +665,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::BlockHeight {} => {
             to_json_binary(&query_block_height(env)?)
         }
+        QueryMsg::TestApprovedTokens {} => {
+            to_json_binary(&query_test_approved_tokens(deps)?)
+        }
     }
 }
 
@@ -706,6 +695,39 @@ fn query_test_bridge_validation(deps: Deps, cw20_contract: String) -> StdResult<
 
 fn query_block_height(env: Env) -> StdResult<BlockHeightResponse> {
     Ok(BlockHeightResponse { height: env.block.height })
+}
+
+fn query_test_approved_tokens(deps: Deps) -> StdResult<RawGrpcResponse> {
+    // Empty request protobuf: QueryApprovedTokensForTradeRequest {}
+    let data = query_grpc(
+        deps,
+        "/inference.inference.Query/ApprovedTokensForTrade",
+        Binary::from(Vec::<u8>::new()),
+    )?;
+    Ok(RawGrpcResponse { data })
+}
+
+// Generic helpers for gRPC queries using raw_query serialization pattern
+fn query_grpc(deps: Deps, path: &str, data: Binary) -> StdResult<Binary> {
+    let request = QueryRequest::Grpc(GrpcQuery {
+        path: path.to_string(),
+        data,
+    });
+    query_raw(deps, &request)
+}
+
+fn query_raw(deps: Deps, request: &QueryRequest<GrpcQuery>) -> StdResult<Binary> {
+    let raw = to_json_vec(request)
+        .map_err(|e| StdError::msg(format!("Serializing QueryRequest: {e}")))?;
+    match deps.querier.raw_query(&raw) {
+        SystemResult::Err(system_err) => Err(StdError::msg(format!(
+            "Querier system error: {system_err}"
+        ))),
+        SystemResult::Ok(ContractResult::Err(contract_err)) => Err(StdError::msg(
+            format!("Querier contract error: {contract_err}")
+        )),
+        SystemResult::Ok(ContractResult::Ok(value)) => Ok(value),
+    }
 }
 
 fn query_daily_stats(deps: Deps, env: Env) -> StdResult<DailyStatsResponse> {

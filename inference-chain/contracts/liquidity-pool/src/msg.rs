@@ -89,6 +89,9 @@ pub enum QueryMsg {
     /// Return the current block height
     #[returns(BlockHeightResponse)]
     BlockHeight {},
+    /// Test gRPC call to fetch approved tokens for trade; returns raw protobuf bytes
+    #[returns(RawGrpcResponse)]
+    TestApprovedTokens {},
 }
 
 #[cw_serde]
@@ -150,4 +153,9 @@ pub struct TestBridgeValidationResponse {
 #[cw_serde]
 pub struct BlockHeightResponse {
     pub height: u64,
+}
+
+#[cw_serde]
+pub struct RawGrpcResponse {
+    pub data: Binary,
 }

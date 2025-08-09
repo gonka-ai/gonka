@@ -19,6 +19,7 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
+	proto "github.com/cosmos/gogoproto/proto"
 	"github.com/cosmos/ibc-go/modules/capability"
 	capabilitykeeper "github.com/cosmos/ibc-go/modules/capability/keeper"
 	capabilitytypes "github.com/cosmos/ibc-go/modules/capability/types"
@@ -44,12 +45,13 @@ import (
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 	solomachine "github.com/cosmos/ibc-go/v8/modules/light-clients/06-solomachine"
 	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/spf13/cast"
 	// this line is used by starport scaffolding # ibc/app/import
 )
 
 // registerLegacyModules register IBC and WASM keepers and non dependency inject modules.
-func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts []wasmkeeper.Option) {
+func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts []wasmkeeper.Option) wasmtypes.NodeConfig {
 	// set up non depinject support modules store keys
 	if err := app.RegisterStores(
 		storetypes.NewKVStoreKey(capabilitytypes.StoreKey),
@@ -74,6 +76,8 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	app.ParamsKeeper.Subspace(icacontrollertypes.SubModuleName).WithKeyTable(icacontrollertypes.ParamKeyTable())
 	app.ParamsKeeper.Subspace(icahosttypes.SubModuleName).WithKeyTable(icahosttypes.ParamKeyTable())
 
+	authAddr := authtypes.NewModuleAddress(govtypes.ModuleName).String()
+
 	// add capability keeper and ScopeToModule for ibc module
 	app.CapabilityKeeper = capabilitykeeper.NewKeeper(
 		app.AppCodec(),
@@ -95,7 +99,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		app.StakingKeeper,
 		app.UpgradeKeeper,
 		scopedIBCKeeper,
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		authAddr,
 	)
 
 	// Register the proposal types
@@ -123,7 +127,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		app.AccountKeeper,
 		app.BankKeeper,
 		scopedIBCTransferKeeper,
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		authAddr,
 	)
 
 	// Create interchain account keepers
@@ -137,7 +141,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		app.AccountKeeper,
 		scopedICAHostKeeper,
 		app.MsgServiceRouter(),
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		authAddr,
 	)
 	// Set the query router for the ICA host keeper
 	app.ICAHostKeeper.WithQueryRouter(app.GRPCQueryRouter())
@@ -151,7 +155,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		app.IBCKeeper.PortKeeper,
 		scopedICAControllerKeeper,
 		app.MsgServiceRouter(),
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		authAddr,
 	)
 	app.GovKeeper.SetLegacyRouter(govRouter)
 
@@ -164,7 +168,10 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	wasmDir := filepath.Join(homePath, "wasm")
 
 	// Create default node config and VM config for wasmd v0.54.2
-	nodeConfig := wasmtypes.DefaultNodeConfig()
+	nodeConfig, err := wasm.ReadNodeConfig(appOpts)
+	if err != nil {
+		panic(err)
+	}
 	vmConfig := wasmtypes.VMConfig{
 		WasmLimits: wasmvmtypes.WasmLimits{
 			InitialMemoryLimitPages: nil,
@@ -176,6 +183,13 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 			MaxFunctionResults:      nil,
 		},
 	}
+
+	acceptedGrpc := AcceptedGrpcQueries()
+	querierOpts := wasmkeeper.WithQueryPlugins(
+		&wasmkeeper.QueryPlugins{
+			Grpc: wasmkeeper.AcceptListGrpcQuerier(acceptedGrpc, app.GRPCQueryRouter(), app.AppCodec()),
+		})
+	wasmOpts = append(wasmOpts, querierOpts)
 
 	availableCapabilities := strings.Join(AllCapabilities(), ",")
 	app.WasmKeeper = wasmkeeper.NewKeeper(
@@ -196,7 +210,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		nodeConfig,
 		vmConfig,
 		strings.Split(availableCapabilities, ","),
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		authAddr,
 		wasmOpts...,
 	)
 
@@ -247,6 +261,8 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	); err != nil {
 		panic(err)
 	}
+
+	return nodeConfig
 }
 
 // Since the IBC and WASM modules don't support dependency injection, we need to
@@ -275,6 +291,18 @@ func RegisterLegacyModules(registry cdctypes.InterfaceRegistry) map[string]appmo
 	return modules
 }
 
+// AcceptedGrpcQueries enumerates gRPC requests contracts are allowed to issue
+func AcceptedGrpcQueries() wasmkeeper.AcceptedQueries {
+	return wasmkeeper.AcceptedQueries{
+		"/inference.inference.Query/ApprovedTokensForTrade": func() proto.Message {
+			return &inferencetypes.QueryApprovedTokensForTradeRequest{}
+		},
+		"/inference.inference.Query/ValidateWrappedTokenForTrade": func() proto.Message {
+			return &inferencetypes.QueryValidateWrappedTokenForTradeRequest{}
+		},
+	}
+}
+
 // AllCapabilities returns all capabilities available with the current wasmvm
 // See https://github.com/CosmWasm/cosmwasm/blob/main/docs/CAPABILITIES-BUILT-IN.md
 // This functionality is going to be moved upstream: https://github.com/CosmWasm/wasmvm/issues/425
@@ -287,5 +315,6 @@ func AllCapabilities() []string {
 		"cosmwasm_1_2",
 		"cosmwasm_1_3",
 		"cosmwasm_1_4",
+		"cosmwasm_2_0",
 	}
 }

@@ -349,7 +349,7 @@ func New(
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
 	// register legacy modules
-	app.registerLegacyModules(appOpts, wasmOpts)
+	nodeConfig := app.registerLegacyModules(appOpts, wasmOpts)
 
 	// register streaming services
 	if err := app.RegisterStreamingServices(appOpts, app.kvStoreKeys()); err != nil {
@@ -381,7 +381,6 @@ func New(
 	app.sm.RegisterStoreDecoders()
 
 	// Create default node config for wasmd v0.54.2
-	nodeConfig := wasmtypes.DefaultNodeConfig()
 	app.setAnteHandler(app.txConfig, nodeConfig, app.GetKey(wasmtypes.StoreKey))
 
 	// Setup upgrade handlers if needed
