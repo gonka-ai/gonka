@@ -170,6 +170,10 @@ pub enum QueryMsg {
     /// Only with "mintable" extension. Returns who can mint and the hard cap on total tokens after minting.
     #[returns(MinterResponse)]
     Minter {},
+
+    /// Test gRPC call to fetch approved tokens for trade; returns raw protobuf bytes
+    #[returns(RawGrpcResponse)]
+    TestApprovedTokens {},
 }
 
 #[cw_serde]
@@ -233,6 +237,11 @@ pub enum LogoInfo {
 #[cw_serde]
 pub struct DownloadLogoResponse {
     pub mime_type: String,
+    pub data: Binary,
+}
+
+#[cw_serde]
+pub struct RawGrpcResponse {
     pub data: Binary,
 }
 

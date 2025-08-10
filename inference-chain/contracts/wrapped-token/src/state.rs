@@ -36,6 +36,16 @@ pub const LOGO: Item<Logo> = Item::new("logo");
 pub const BALANCES: Map<&Addr, Uint128> = Map::new("balance");
 pub const ALLOWANCES: Map<(&Addr, &Addr), AllowanceResponse> = Map::new("allowance");
 
+// Optional metadata override that can be updated post-instantiate by admin
+#[cw_serde]
+pub struct TokenMetadataOverride {
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+}
+
+pub const TOKEN_METADATA: Item<TokenMetadataOverride> = Item::new("token_metadata");
+
 #[cw_serde]
 pub struct AllowanceResponse {
     pub allowance: Uint128,

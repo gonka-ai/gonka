@@ -185,9 +185,11 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	}
 
 	acceptedGrpc := AcceptedGrpcQueries()
+	acceptedStargate := AcceptedStargateQueries()
 	querierOpts := wasmkeeper.WithQueryPlugins(
 		&wasmkeeper.QueryPlugins{
-			Grpc: wasmkeeper.AcceptListGrpcQuerier(acceptedGrpc, app.GRPCQueryRouter(), app.AppCodec()),
+			Grpc:     wasmkeeper.AcceptListGrpcQuerier(acceptedGrpc, app.GRPCQueryRouter(), app.AppCodec()),
+			Stargate: wasmkeeper.AcceptListStargateQuerier(acceptedStargate, app.GRPCQueryRouter(), app.AppCodec()),
 		})
 	wasmOpts = append(wasmOpts, querierOpts)
 
@@ -295,10 +297,22 @@ func RegisterLegacyModules(registry cdctypes.InterfaceRegistry) map[string]appmo
 func AcceptedGrpcQueries() wasmkeeper.AcceptedQueries {
 	return wasmkeeper.AcceptedQueries{
 		"/inference.inference.Query/ApprovedTokensForTrade": func() proto.Message {
-			return &inferencetypes.QueryApprovedTokensForTradeRequest{}
+			return &inferencetypes.QueryApprovedTokensForTradeResponse{}
 		},
 		"/inference.inference.Query/ValidateWrappedTokenForTrade": func() proto.Message {
-			return &inferencetypes.QueryValidateWrappedTokenForTradeRequest{}
+			return &inferencetypes.QueryValidateWrappedTokenForTradeResponse{}
+		},
+	}
+}
+
+// AcceptedStargateQueries enumerates Stargate responses contracts are allowed to decode
+func AcceptedStargateQueries() wasmkeeper.AcceptedQueries {
+	return wasmkeeper.AcceptedQueries{
+		"/inference.inference.Query/ApprovedTokensForTrade": func() proto.Message {
+			return &inferencetypes.QueryApprovedTokensForTradeResponse{}
+		},
+		"/inference.inference.Query/ValidateWrappedTokenForTrade": func() proto.Message {
+			return &inferencetypes.QueryValidateWrappedTokenForTradeResponse{}
 		},
 	}
 }

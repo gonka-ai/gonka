@@ -6,7 +6,8 @@ FROM ghcr.io/product-science/bridge-prysm:latest AS prysm-source
 
 # Final image
 FROM alpine:latest
-RUN apk add --no-cache ca-certificates openssl bash curl
+# coreutils provides stdbuf for line-buffering Prysm logs
+RUN apk add --no-cache ca-certificates openssl bash curl coreutils
 
 # Copy Geth binary from prebuilt container
 COPY --from=geth-source /usr/local/bin/geth /usr/local/bin/

@@ -25,7 +25,7 @@ library = []
 
 [dependencies]
 cosmwasm-schema = "3.0.1"
-cosmwasm-std = { version = "3.0.1", features = ["staking", "cosmwasm_2_0"] }
+cosmwasm-std = { version = "3.0.1", features = ["staking", "cosmwasm_2_0", "stargate"] }
 cw-storage-plus = "3.0.0"
 cw2 = "3.0.0"
 schemars = "0.8.12"

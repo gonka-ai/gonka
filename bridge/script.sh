@@ -1,5 +1,7 @@
 #!/bin/sh
 set -e
+# Ensure we can detect failures within pipelines when supported
+set -o pipefail 2>/dev/null || true
 
 # Allow configuring internal ports per-container (no host exposure)
 # Defaults match client defaults to preserve existing behavior
@@ -12,6 +14,9 @@ PRYSM_P2P_UDP_PORT=${PRYSM_P2P_UDP_PORT:-12000}
 
 # Create log directories
 mkdir -p /var/log/geth /var/log/prysm
+# Define Prysm log file paths (raw and formatted)
+PRYSM_RAW_LOG=/var/log/prysm/beacon.raw.log
+PRYSM_FORMATTED_LOG=/var/log/prysm/beacon.log
 
 echo "Initializing Ethereum Bridge Service Version 0.1.0"
 
@@ -103,6 +108,27 @@ stop_process() {
     fi
 }
 
+describe_exit() {
+    # Print a human-readable reason for a process exit code
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        echo "exited cleanly (code 0)"
+        return 0
+    fi
+    if [ "$exit_code" -ge 128 ] 2>/dev/null; then
+        local signal=$((exit_code - 128))
+        case "$signal" in
+            9)  echo "terminated by SIGKILL (9) — likely OOMKilled" ;;
+            11) echo "terminated by SIGSEGV (11) — segmentation fault" ;;
+            6)  echo "terminated by SIGABRT (6) — abort" ;;
+            15) echo "terminated by SIGTERM (15)" ;;
+            *)  echo "terminated by signal $signal (exit $exit_code)" ;;
+        esac
+    else
+        echo "exited with status $exit_code"
+    fi
+}
+
 
 # Wait up to N seconds for a PID to stay alive (handles immediate crash-on-start)
 wait_until_alive() {
@@ -182,21 +208,51 @@ start_prysm() {
         echo "Force clear DB enabled (set DEBUG=true to disable)"
     fi
 
-    beacon-chain \
-        --accept-terms-of-use \
-        $FORCE_CLEAR \
-        --checkpoint-sync-url=$BEACON_STATE_URL \
-        --execution-endpoint=http://127.0.0.1:$GETH_AUTHRPC_PORT \
-        --datadir $PRYSM_DATA_DIR \
-        --p2p-tcp-port=$PRYSM_P2P_TCP_PORT \
-        --p2p-udp-port=$PRYSM_P2P_UDP_PORT \
-        --jwt-secret $JWT_SECRET_PATH 2>&1 | /tmp/log_formatters/prysm_formatter.sh > /var/log/prysm/beacon.log &
-    
+    # Truncate raw log on each (re)start to make crash context clear
+    : > "$PRYSM_RAW_LOG"
+
+    # Start Prysm and redirect its stdout/stderr directly to the raw log
+    if command -v stdbuf >/dev/null 2>&1; then
+        stdbuf -oL -eL \
+        beacon-chain \
+            --accept-terms-of-use \
+            $FORCE_CLEAR \
+            --checkpoint-sync-url=$BEACON_STATE_URL \
+            --execution-endpoint=http://127.0.0.1:$GETH_AUTHRPC_PORT \
+            --datadir $PRYSM_DATA_DIR \
+            --p2p-tcp-port=$PRYSM_P2P_TCP_PORT \
+            --p2p-udp-port=$PRYSM_P2P_UDP_PORT \
+            --jwt-secret $JWT_SECRET_PATH >> "$PRYSM_RAW_LOG" 2>&1 &
+    else
+        beacon-chain \
+            --accept-terms-of-use \
+            $FORCE_CLEAR \
+            --checkpoint-sync-url=$BEACON_STATE_URL \
+            --execution-endpoint=http://127.0.0.1:$GETH_AUTHRPC_PORT \
+            --datadir $PRYSM_DATA_DIR \
+            --p2p-tcp-port=$PRYSM_P2P_TCP_PORT \
+            --p2p-udp-port=$PRYSM_P2P_UDP_PORT \
+            --jwt-secret $JWT_SECRET_PATH >> "$PRYSM_RAW_LOG" 2>&1 &
+    fi
+
     PRYSM_PID=$!
+    PRYSM_EXIT_STATUS=""  # reset any previous exit code
+
+    # (Re)start log formatter to transform raw Prysm logs into the formatted file
+    if [ -n "$PRYSM_FORMATTER_PID" ]; then
+        stop_process "Prysm log formatter" "$PRYSM_FORMATTER_PID"
+    fi
+    tail -n +1 -F "$PRYSM_RAW_LOG" | /tmp/log_formatters/prysm_formatter.sh > "$PRYSM_FORMATTED_LOG" &
+    PRYSM_FORMATTER_PID=$!
+
     if wait_until_alive "$PRYSM_PID" 3; then
         echo "Prysm beacon chain started with PID: $PRYSM_PID"
     else
         echo "Prysm failed to stay alive after start (PID: $PRYSM_PID)"
+        # Capture immediate failure reason if available
+        if wait "$PRYSM_PID" 2>/dev/null; then
+            PRYSM_EXIT_STATUS=$?
+        fi
         return 1
     fi
 }
@@ -208,6 +264,7 @@ restart_processes() {
     # Kill existing processes if they exist
     stop_process "Geth" "$GETH_PID"
     stop_process "Prysm" "$PRYSM_PID"
+    stop_process "Prysm log formatter" "$PRYSM_FORMATTER_PID"
     
     # Start processes in correct order (Geth first, then Prysm)
     if start_geth; then
@@ -237,9 +294,25 @@ check_and_restart_processes() {
     
     # Check Prysm
     if [ -n "$PRYSM_PID" ] && ! kill -0 $PRYSM_PID 2>/dev/null; then
-        echo "Prysm process (PID: $PRYSM_PID) died"
+        # Retrieve and report the exit status, once
+        if [ -z "$PRYSM_EXIT_STATUS" ]; then
+            if wait $PRYSM_PID 2>/dev/null; then
+                PRYSM_EXIT_STATUS=$?
+            else
+                PRYSM_EXIT_STATUS=$?
+            fi
+        fi
+        echo "Prysm process (PID: $PRYSM_PID) $(describe_exit ${PRYSM_EXIT_STATUS:-"unknown"})"
+        # Show recent raw logs to aid debugging
+        if [ -f "$PRYSM_RAW_LOG" ]; then
+            echo "--- Last 100 lines of Prysm raw log ---"
+            tail -n 100 "$PRYSM_RAW_LOG" | sed 's/^/PRSM: /'
+            echo "--- End Prysm raw log excerpt ---"
+        fi
         prysm_died=true
         restart_needed=true
+        # Stop formatter if still running; it will be restarted with Prysm
+        stop_process "Prysm log formatter" "$PRYSM_FORMATTER_PID"
     fi
     
     # Restart if either process died
@@ -275,6 +348,7 @@ tail_logs
 
 # Trap to handle termination
 trap "echo 'Received termination signal, shutting down...'; kill $GETH_PID $PRYSM_PID $TAIL_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+trap "echo 'Received termination signal, shutting down...'; kill $GETH_PID $PRYSM_PID $PRYSM_FORMATTER_PID $TAIL_PID 2>/dev/null; exit 0" SIGTERM SIGINT
 
 # Main loop to keep container running and check process health
 echo "Bridge service started. Monitoring processes..."

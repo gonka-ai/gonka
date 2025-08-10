@@ -92,6 +92,12 @@ pub enum QueryMsg {
     /// Test gRPC call to fetch approved tokens for trade; returns raw protobuf bytes
     #[returns(RawGrpcResponse)]
     TestApprovedTokens {},
+    /// Test Stargate call to fetch approved tokens for trade; returns raw protobuf bytes
+    #[returns(RawGrpcResponse)]
+    TestApprovedTokensStargate {},
+    /// Test bridge validation via Stargate with a provided CW20 contract address
+    #[returns(TestBridgeValidationResponse)]
+    TestBridgeValidationStargate { cw20_contract: String },
 }
 
 #[cw_serde]
