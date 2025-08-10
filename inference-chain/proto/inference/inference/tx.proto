@@ -51,6 +51,7 @@ service Msg {
   rpc RegisterLiquidityPool            (MsgRegisterLiquidityPool           ) returns (MsgRegisterLiquidityPoolResponse           );
   rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata           ) returns (MsgRegisterTokenMetadataResponse           );
   rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading    ) returns (MsgApproveBridgeTokenForTradingResponse    );
+  rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal         ) returns (MsgRequestBridgeWithdrawalResponse         );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -406,3 +407,17 @@ message MsgRegisterLiquidityPool {
 }
 
 message MsgRegisterLiquidityPoolResponse {}
+
+message MsgRequestBridgeWithdrawal {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator                 = 1; // User requesting withdrawal
+  string wrapped_contract_address = 2; // CW20 wrapped token contract address
+  string amount                  = 3; // Amount to withdraw (as string to handle large numbers)
+  string destination_address     = 4; // Ethereum address to receive tokens
+}
+
+message MsgRequestBridgeWithdrawalResponse {
+  string request_id    = 1; // Generated request ID (transaction hash)
+  uint64 epoch_id      = 2; // Current epoch ID used for signature
+  string bls_request_id = 3; // BLS signing request ID
+}

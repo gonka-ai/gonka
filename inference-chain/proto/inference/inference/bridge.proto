@@ -18,11 +18,11 @@ message BridgeTokenMetadata {
   uint32 decimals = 5;           // token decimals
 }
 
-// BridgeTradeApprovedToken defines which tokens are approved for trading through liquidity pool
-// This separates trading approval from token metadata, allowing governance control over trading
-message BridgeTradeApprovedToken {
-  string chainId = 1;            // e.g. "ethereum"
-  string contractAddress = 2;    // original chain contract address
+// BridgeTokenReference defines a reference to a token on an external chain
+// Used for various purposes: trade approval, reverse index lookups, etc.
+message BridgeTokenReference {
+  string chainId = 1;            // e.g. "ethereum" - external chain identifier
+  string contractAddress = 2;    // external chain contract address
 }
 
 enum BridgeTransactionStatus {
@@ -57,5 +57,5 @@ message BridgeWrappedTokenContract {
 message Bridge {
   repeated BridgeContractAddress      contract_addresses      = 1;
   repeated BridgeTokenMetadata        token_metadata          = 2;
-  repeated BridgeTradeApprovedToken   trade_approved_tokens   = 3;
+  repeated BridgeTokenReference       trade_approved_tokens   = 3;
 }

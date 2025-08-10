@@ -117,7 +117,7 @@ fn update_metadata(
         .add_attribute("decimals", decimals.to_string()))
 }
 
-// Special bridge withdraw function: validate via gRPC (WIP), then burn via cw20-base
+// Special bridge withdraw function
 fn withdraw(
     deps: DepsMut,
     env: Env,
@@ -131,16 +131,6 @@ fn withdraw(
         });
     }
 
-    // WIP bridge validation: attempt a harmless gRPC call; mark attribute only
-    let validation_attr = match query_grpc(
-        deps.as_ref(),
-        "/inference.inference.Query/ApprovedTokensForTrade",
-        Binary::from(Vec::<u8>::new()),
-    ) {
-        Ok(_) => "ok",
-        Err(_) => "skipped",
-    };
-
     // Delegate to cw20-base burn
     let mut resp = cw20_base_contract::execute(
         deps,
@@ -151,7 +141,6 @@ fn withdraw(
 
     resp = resp
         .add_attribute("method", "withdraw")
-        .add_attribute("bridge_validation", validation_attr)
         .add_attribute("burn_amount", amount);
 
     Ok(resp)

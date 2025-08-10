@@ -83,6 +83,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgRegisterLiquidityPool{},
 	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgRequestBridgeWithdrawal{},
+	)
 	// this line is used by starport scaffolding # 3
 
 	registry.RegisterImplementations((*sdk.Msg)(nil),

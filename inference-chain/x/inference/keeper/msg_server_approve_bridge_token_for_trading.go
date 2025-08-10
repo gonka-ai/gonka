@@ -25,7 +25,7 @@ func (k msgServer) ApproveBridgeTokenForTrading(goCtx context.Context, msg *type
 	}
 
 	// Create the approved token record
-	approvedToken := types.BridgeTradeApprovedToken{
+	approvedToken := types.BridgeTokenReference{
 		ChainId:         msg.ChainId,
 		ContractAddress: msg.ContractAddress,
 	}

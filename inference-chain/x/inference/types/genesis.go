@@ -23,7 +23,7 @@ func GenerateGenesis(mockContracts bool) *GenesisState {
 		Bridge: &Bridge{
 			ContractAddresses:   []*BridgeContractAddress{},
 			TokenMetadata:       []*BridgeTokenMetadata{},
-			TradeApprovedTokens: []*BridgeTradeApprovedToken{},
+			TradeApprovedTokens: []*BridgeTokenReference{},
 		},
 	}
 }

@@ -49,6 +49,7 @@ const (
 	Msg_RegisterLiquidityPool_FullMethodName            = "/inference.inference.Msg/RegisterLiquidityPool"
 	Msg_RegisterTokenMetadata_FullMethodName            = "/inference.inference.Msg/RegisterTokenMetadata"
 	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
+	Msg_RequestBridgeWithdrawal_FullMethodName          = "/inference.inference.Msg/RequestBridgeWithdrawal"
 )
 
 // MsgClient is the client API for Msg service.
@@ -87,6 +88,7 @@ type MsgClient interface {
 	RegisterLiquidityPool(ctx context.Context, in *MsgRegisterLiquidityPool, opts ...grpc.CallOption) (*MsgRegisterLiquidityPoolResponse, error)
 	RegisterTokenMetadata(ctx context.Context, in *MsgRegisterTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterTokenMetadataResponse, error)
 	ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error)
+	RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error)
 }
 
 type msgClient struct {
@@ -367,6 +369,15 @@ func (c *msgClient) ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApp
 	return out, nil
 }
 
+func (c *msgClient) RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error) {
+	out := new(MsgRequestBridgeWithdrawalResponse)
+	err := c.cc.Invoke(ctx, Msg_RequestBridgeWithdrawal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -403,6 +414,7 @@ type MsgServer interface {
 	RegisterLiquidityPool(context.Context, *MsgRegisterLiquidityPool) (*MsgRegisterLiquidityPoolResponse, error)
 	RegisterTokenMetadata(context.Context, *MsgRegisterTokenMetadata) (*MsgRegisterTokenMetadataResponse, error)
 	ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error)
+	RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -499,6 +511,9 @@ func (UnimplementedMsgServer) RegisterTokenMetadata(context.Context, *MsgRegiste
 }
 func (UnimplementedMsgServer) ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApproveBridgeTokenForTrading not implemented")
+}
+func (UnimplementedMsgServer) RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestBridgeWithdrawal not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1053,6 +1068,24 @@ func _Msg_ApproveBridgeTokenForTrading_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RequestBridgeWithdrawal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRequestBridgeWithdrawal)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RequestBridgeWithdrawal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RequestBridgeWithdrawal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RequestBridgeWithdrawal(ctx, req.(*MsgRequestBridgeWithdrawal))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1179,6 +1212,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ApproveBridgeTokenForTrading",
 			Handler:    _Msg_ApproveBridgeTokenForTrading_Handler,
+		},
+		{
+			MethodName: "RequestBridgeWithdrawal",
+			Handler:    _Msg_RequestBridgeWithdrawal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -241,7 +241,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	}
 
 	tradeApprovedTokens := k.GetAllBridgeTradeApprovedTokens(ctx)
-	tradeApprovedTokenPtrs := make([]*types.BridgeTradeApprovedToken, len(tradeApprovedTokens))
+	tradeApprovedTokenPtrs := make([]*types.BridgeTokenReference, len(tradeApprovedTokens))
 	for i := range tradeApprovedTokens {
 		tradeApprovedTokenPtrs[i] = &tradeApprovedTokens[i]
 	}

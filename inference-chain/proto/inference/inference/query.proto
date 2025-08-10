@@ -932,7 +932,7 @@ message QueryCountPoCvalidationsAtHeightResponse {
 message QueryApprovedTokensForTradeRequest {}
 
 message QueryApprovedTokensForTradeResponse {
-  repeated BridgeTradeApprovedToken approved_tokens = 1 [(gogoproto.nullable) = false];
+  repeated BridgeTokenReference approved_tokens = 1 [(gogoproto.nullable) = false];
 }
 
 // Dynamic pricing query messages

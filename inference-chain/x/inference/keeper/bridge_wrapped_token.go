@@ -40,9 +40,10 @@ type Marketing struct {
 }
 
 const (
-	TokenContractKeyPrefix = "TokenContract/"
-	TokenCodeIDKey         = "TokenCodeID"
-	TokenMetadataKeyPrefix = "TokenMetadata/"
+	TokenContractKeyPrefix          = "TokenContract/"
+	TokenCodeIDKey                  = "TokenCodeID"
+	TokenMetadataKeyPrefix          = "TokenMetadata/"
+	WrappedContractReverseKeyPrefix = "WrappedContractReverse/" // Index by wrapped contract address
 )
 
 // TokenMetadata represents additional token metadata that can be stored in chain state
@@ -245,14 +246,19 @@ func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWr
 		panic(fmt.Sprintf("invalid wrapped token contract data: %v", err))
 	}
 
-	// Normalize contract address to lowercase for consistent storage
+	// Normalize contract addresses to lowercase for consistent storage
 	normalizedContract := strings.ToLower(contract.ContractAddress)
+	normalizedWrappedContract := strings.ToLower(contract.WrappedContractAddress)
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	key := []byte(TokenContractKeyPrefix + contract.ChainId + "/" + normalizedContract)
 
+	// Store the main mapping: chainId/contractAddress -> BridgeWrappedTokenContract
+	key := []byte(TokenContractKeyPrefix + contract.ChainId + "/" + normalizedContract)
 	bz := k.cdc.MustMarshal(&contract)
 	store.Set(key, bz)
+
+	// Store the reverse index: wrappedContractAddress -> chainId/contractAddress
+	k.setWrappedContractReverseIndex(ctx, normalizedWrappedContract, contract.ChainId, normalizedContract)
 
 	k.LogInfo("Bridge exchange: Wrapped token contract stored successfully",
 		types.Messages,
@@ -401,6 +407,54 @@ func (k Keeper) GetWrappedTokenContract(ctx sdk.Context, externalChain, external
 		return types.BridgeWrappedTokenContract{}, false
 	}
 	return contract, true
+}
+
+// setWrappedContractReverseIndex stores the reverse index mapping
+func (k Keeper) setWrappedContractReverseIndex(ctx sdk.Context, wrappedContractAddress, chainId, contractAddress string) {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+
+	// Create reverse index key: WrappedContractReverse/wrappedAddress
+	reverseKey := []byte(WrappedContractReverseKeyPrefix + wrappedContractAddress)
+
+	// Create the reverse index proto message
+	reverseIndex := types.BridgeTokenReference{
+		ChainId:         chainId,
+		ContractAddress: contractAddress,
+	}
+
+	// Marshal and store the protobuf message
+	bz := k.cdc.MustMarshal(&reverseIndex)
+	store.Set(reverseKey, bz)
+}
+
+// GetWrappedTokenContractByWrappedAddress retrieves a wrapped token contract by its wrapped contract address
+func (k Keeper) GetWrappedTokenContractByWrappedAddress(ctx sdk.Context, wrappedContractAddress string) (types.BridgeWrappedTokenContract, bool) {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+
+	// Normalize wrapped contract address to lowercase
+	normalizedWrappedContract := strings.ToLower(wrappedContractAddress)
+
+	// Look up the reverse index
+	reverseKey := []byte(WrappedContractReverseKeyPrefix + normalizedWrappedContract)
+	bz := store.Get(reverseKey)
+	if bz == nil {
+		return types.BridgeWrappedTokenContract{}, false
+	}
+
+	// Unmarshal the reverse index protobuf message
+	var reverseIndex types.BridgeTokenReference
+	err := k.cdc.Unmarshal(bz, &reverseIndex)
+	if err != nil {
+		// Log error - corrupted index
+		k.LogError("Bridge exchange: Failed to unmarshal reverse index entry",
+			types.Messages,
+			"wrappedContractAddress", wrappedContractAddress,
+			"error", err)
+		return types.BridgeWrappedTokenContract{}, false
+	}
+
+	// Now get the actual contract using the original lookup
+	return k.GetWrappedTokenContract(ctx, reverseIndex.ChainId, reverseIndex.ContractAddress)
 }
 
 // GetTokenCodeID retrieves the stored CW20 code ID, uploading code if needed
@@ -705,7 +759,7 @@ const (
 )
 
 // SetBridgeTradeApprovedToken stores a bridge trade approved token
-func (k Keeper) SetBridgeTradeApprovedToken(ctx sdk.Context, approvedToken types.BridgeTradeApprovedToken) {
+func (k Keeper) SetBridgeTradeApprovedToken(ctx sdk.Context, approvedToken types.BridgeTokenReference) {
 	// Validate input data before saving
 	if err := k.validateBridgeTradeApprovedToken(&approvedToken); err != nil {
 		k.LogError("Bridge exchange: Failed to save bridge trade approved token - validation failed",
@@ -732,7 +786,7 @@ func (k Keeper) SetBridgeTradeApprovedToken(ctx sdk.Context, approvedToken types
 }
 
 // validateBridgeTradeApprovedToken validates the approved token data before saving
-func (k Keeper) validateBridgeTradeApprovedToken(approvedToken *types.BridgeTradeApprovedToken) error {
+func (k Keeper) validateBridgeTradeApprovedToken(approvedToken *types.BridgeTokenReference) error {
 	if approvedToken == nil {
 		return fmt.Errorf("approvedToken cannot be nil")
 	}
@@ -787,15 +841,15 @@ func (k Keeper) HasBridgeTradeApprovedToken(ctx sdk.Context, chainId, contractAd
 }
 
 // GetAllBridgeTradeApprovedTokens retrieves all bridge trade approved tokens
-func (k Keeper) GetAllBridgeTradeApprovedTokens(ctx sdk.Context) []types.BridgeTradeApprovedToken {
+func (k Keeper) GetAllBridgeTradeApprovedTokens(ctx sdk.Context) []types.BridgeTokenReference {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	pstore := prefix.NewStore(storeAdapter, []byte(BridgeTradeApprovedTokenKeyPrefix))
 	iterator := pstore.Iterator(nil, nil)
 	defer iterator.Close()
 
-	var approvedTokens []types.BridgeTradeApprovedToken
+	var approvedTokens []types.BridgeTokenReference
 	for ; iterator.Valid(); iterator.Next() {
-		var approvedToken types.BridgeTradeApprovedToken
+		var approvedToken types.BridgeTokenReference
 		err := k.cdc.Unmarshal(iterator.Value(), &approvedToken)
 		if err != nil {
 			// Log the error but continue processing other tokens
