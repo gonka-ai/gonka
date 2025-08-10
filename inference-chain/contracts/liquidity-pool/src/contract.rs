@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     entry_point, from_json, to_json_binary, to_json_vec, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,
-    StdError, StdResult, Uint128, QueryRequest, StakingQuery, GrpcQuery, ContractResult, SystemResult, Empty,
+    StdError, StdResult, Uint128, QueryRequest, StakingQuery, GrpcQuery, ContractResult, SystemResult, Empty, WasmMsg,
 };
 use prost::Message; // For proto encoding/decoding
 use cw2::set_contract_version;
@@ -12,7 +12,7 @@ use crate::msg::{
     TestBridgeValidationResponse, TokenCalculationResponse, BlockHeightResponse, RawGrpcResponse,
 };
 use crate::state::{
-    calculate_current_price, calculate_current_tier_usd, calculate_tokens_for_usd,
+    calculate_current_price, calculate_current_tier, calculate_tokens_for_usd, calculate_multi_tier_purchase,
     Config, DailyStats, PricingConfig,
     CONFIG, DAILY_STATS, PRICING_CONFIG,
 };
@@ -111,6 +111,25 @@ fn get_native_denom(deps: Deps) -> Result<String, ContractError> {
     }
 }
 
+// Helper function to create CW20 transfer message
+fn create_cw20_transfer_msg(
+    cw20_contract: String,
+    recipient: String,
+    amount: Uint128,
+) -> Result<WasmMsg, ContractError> {
+    let transfer_msg_str = format!(
+        r#"{{"transfer":{{"recipient":"{}","amount":"{}"}}}}"#,
+        recipient,
+        amount
+    );
+    
+    Ok(WasmMsg::Execute {
+        contract_addr: cw20_contract,
+        msg: Binary::from(transfer_msg_str.as_bytes()),
+        funds: vec![],
+    })
+}
+
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
@@ -147,7 +166,7 @@ pub fn instantiate(
         daily_limit_bp: daily_limit_bp,
         is_paused: false,
         total_supply: total_supply,
-        total_sold: Uint128::zero(),
+        total_tokens_sold: Uint128::zero(),
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -155,7 +174,7 @@ pub fn instantiate(
     // Use defaults for pricing fields if None
     let pricing_config = PricingConfig {
         base_price_usd: msg.base_price_usd.unwrap_or(Uint128::from(25000u128)),
-        tokens_per_tier: msg.tokens_per_tier.unwrap_or(Uint128::from(10_000_000u128)),
+        tokens_per_tier: msg.tokens_per_tier.unwrap_or(Uint128::from(3_000_000_000_000_000u128)),
         tier_multiplier: msg.tier_multiplier.unwrap_or(Uint128::from(1300u128)),
     };
 
@@ -165,7 +184,8 @@ pub fn instantiate(
     let current_day = env.block.time.seconds() / 86400;
     let daily_stats = DailyStats {
         current_day,
-        sold_today: Uint128::zero(),
+        usd_received_today: Uint128::zero(),
+        tokens_sold_today: Uint128::zero(),
     };
     DAILY_STATS.save(deps.storage, &daily_stats)?;
 
@@ -190,9 +210,6 @@ pub fn execute(
         ExecuteMsg::UpdateDailyLimit { daily_limit_bp } => {
             update_daily_limit(deps, info, daily_limit_bp)
         }
-        ExecuteMsg::UpdateExchangeRates { rates } => update_exchange_rates(deps, info, rates),
-        ExecuteMsg::AddAcceptedToken { denom, rate } => add_accepted_token(deps, info, denom, rate),
-        ExecuteMsg::RemoveAcceptedToken { denom } => remove_accepted_token(deps, info, denom),
         ExecuteMsg::WithdrawNativeTokens { amount, recipient } => {
             withdraw_native_tokens(deps, info, amount, recipient)
         }
@@ -260,7 +277,8 @@ fn receive_cw20(
     // Reset daily stats if it's a new day
     if daily_stats.current_day != current_day {
         daily_stats.current_day = current_day;
-        daily_stats.sold_today = Uint128::zero();
+        daily_stats.usd_received_today = Uint128::zero();
+        daily_stats.tokens_sold_today = Uint128::zero();
     }
 
     // For wrapped bridge tokens, treat amount as micro-USD (1:1 with amount)
@@ -271,31 +289,37 @@ fn receive_cw20(
         return Err(ContractError::ZeroAmount {});
     }
 
-    // Calculate current tier and price
-    let current_tier = calculate_current_tier_usd(config.total_sold, pricing_config.tokens_per_tier, pricing_config.base_price_usd);
-    let current_price = calculate_current_price(
-        pricing_config.base_price_usd,
-        current_tier,
-        pricing_config.tier_multiplier,
+    // Calculate multi-tier purchase: handles purchases spanning multiple tiers
+    let (tokens_to_buy, actual_usd_to_spend, start_tier, end_tier, average_price) = calculate_multi_tier_purchase(
+        usd_value,
+        config.total_tokens_sold,
+        &pricing_config,
     );
 
-    // Calculate how many tokens can be bought
-    let tokens_to_buy = calculate_tokens_for_usd(usd_value, current_price);
+    // Verify we can spend ALL the USD received (no partial spending allowed)
+    if actual_usd_to_spend != usd_value {
+        deps.api.debug(&format!(
+            "lp: Cannot spend full USD amount - requested: {}, can spend: {}",
+            usd_value, actual_usd_to_spend
+        ));
+        // This shouldn't happen with proper multi-tier calculation, but safety check
+        return Err(ContractError::Std(StdError::msg(
+            format!("Cannot process full USD amount: requested {}, can only process {}", 
+                    usd_value, actual_usd_to_spend)
+        )));
+    }
 
     if tokens_to_buy.is_zero() {
         return Err(ContractError::ZeroAmount {});
     }
 
-    // Check daily limit - convert to USD value
-    let daily_limit_usd = match config
+    // Check daily limit - pure token-based approach
+    let daily_token_limit = match config
         .total_supply
         .checked_mul(Uint128::from(config.daily_limit_bp))
     {
         Ok(amount) => match amount.checked_div(Uint128::from(10000u128)) {
-            Ok(limit) => {
-                // Convert token limit to USD limit using current price
-                limit.checked_mul(current_price).unwrap_or_default()
-            },
+            Ok(limit) => limit,
             Err(_) => return Err(ContractError::InvalidBasisPoints {
                 value: config.daily_limit_bp,
             }),
@@ -305,14 +329,20 @@ fn receive_cw20(
         }),
     };
 
-    let available_today = daily_limit_usd.checked_sub(daily_stats.sold_today).unwrap_or_default();
+    let tokens_available_today = daily_token_limit
+        .checked_sub(daily_stats.tokens_sold_today)
+        .unwrap_or_default();
 
-    if usd_value > available_today {
+    // Check daily limit: reject if exceeds available (no partial fills in CW20)
+    if tokens_to_buy > tokens_available_today {
         return Err(ContractError::DailyLimitExceeded {
-            available: available_today.u128(),
-            requested: usd_value.u128(),
+            available: tokens_available_today.u128(),
+            requested: tokens_to_buy.u128(),
         });
     }
+
+    // We're spending ALL the USD received (verified above)
+    let usd_amount_to_track = usd_value;
 
     // Check contract balance
     deps.api.debug("lp: querying contract native balance");
@@ -333,24 +363,29 @@ fn receive_cw20(
         });
     }
 
-    // Update daily stats and total sold
-    daily_stats.sold_today = daily_stats
-        .sold_today
-        .checked_add(usd_value)
+    // Update daily stats with both USD and token tracking
+    daily_stats.usd_received_today = daily_stats
+        .usd_received_today
+        .checked_add(usd_amount_to_track)
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {}", e))))?;
+    
+    daily_stats.tokens_sold_today = daily_stats
+        .tokens_sold_today
+        .checked_add(tokens_to_buy)
         .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {}", e))))?;
     
     let mut updated_config = config;
-    // FIX: Update total_sold with USD value, not token amount
-    updated_config.total_sold = updated_config
-        .total_sold
-        .checked_add(usd_value)
+    // Update total tokens sold (for tier calculation)
+    updated_config.total_tokens_sold = updated_config
+        .total_tokens_sold
+        .checked_add(tokens_to_buy)
         .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {}", e))))?;
 
     DAILY_STATS.save(deps.storage, &daily_stats)?;
     CONFIG.save(deps.storage, &updated_config)?;
 
-    // Send tokens to buyer
-    let send_msg = BankMsg::Send {
+    // Send native tokens to buyer
+    let send_native_msg = BankMsg::Send {
         to_address: buyer.clone(),
         amount: vec![Coin {
             denom: updated_config.native_denom.clone(),
@@ -358,17 +393,40 @@ fn receive_cw20(
         }],
     };
 
-    deps.api.debug("lp: building success response with BankMsg::Send");
-    Ok(Response::new()
-        .add_message(send_msg)
+    // Forward received CW20 tokens to governance module (admin)
+    let mut response = Response::new().add_message(send_native_msg);
+    
+    if !updated_config.admin.is_empty() {
+        let transfer_cw20_msg = create_cw20_transfer_msg(
+            cw20_contract.clone(),
+            updated_config.admin.clone(),
+            token_amount,
+        )?;
+        response = response.add_message(transfer_cw20_msg);
+        deps.api.debug(&format!(
+            "lp: forwarding CW20 tokens to governance admin={} amount={}",
+            updated_config.admin,
+            token_amount
+        ));
+    } else {
+        deps.api.debug("lp: no admin set, CW20 tokens remain in contract");
+    }
+
+    deps.api.debug("lp: building success response with native send and CW20 forward");
+    
+    Ok(response
         .add_attribute("method", "purchase_with_wrapped_token")
         .add_attribute("buyer", buyer)
         .add_attribute("wrapped_token_contract", cw20_contract)
         .add_attribute("wrapped_token_amount", token_amount)
         .add_attribute("tokens_purchased", tokens_to_buy)
-        .add_attribute("usd_value", usd_value)
-        .add_attribute("current_tier", current_tier.to_string())
-        .add_attribute("price_per_token", current_price))
+        .add_attribute("usd_received", usd_value)
+        .add_attribute("usd_spent", usd_amount_to_track)
+        .add_attribute("start_tier", start_tier.to_string())
+        .add_attribute("end_tier", end_tier.to_string())
+        .add_attribute("average_price_paid", average_price)
+        .add_attribute("tokens_available_today", tokens_available_today)
+        .add_attribute("cw20_forwarded_to", updated_config.admin))
 }
 
 fn pause_contract(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
@@ -425,73 +483,6 @@ fn update_daily_limit(
     Ok(Response::new()
         .add_attribute("method", "update_daily_limit")
         .add_attribute("new_limit_bp", daily_limit_bp.to_string())
-        .add_attribute("admin", info.sender))
-}
-
-fn update_exchange_rates(
-    deps: DepsMut,
-    info: MessageInfo,
-    rates: std::collections::HashMap<String, Uint128>,
-) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    if config.admin.is_empty() || info.sender.as_str() != config.admin {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    for (denom, rate) in rates {
-        if rate.is_zero() {
-            return Err(ContractError::InvalidExchangeRate { token: denom });
-        }
-        // ACCEPTED_TOKENS.save(deps.storage, denom, &rate)?;
-    }
-
-    Ok(Response::new()
-        .add_attribute("method", "update_exchange_rates")
-        .add_attribute("admin", info.sender))
-}
-
-fn add_accepted_token(
-    deps: DepsMut,
-    info: MessageInfo,
-    denom: String,
-    rate: Uint128,
-) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    if config.admin.is_empty() || info.sender.as_str() != config.admin {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    if rate.is_zero() {
-        return Err(ContractError::InvalidExchangeRate { token: denom });
-    }
-
-    // ACCEPTED_TOKENS.save(deps.storage, denom.clone(), &rate)?;
-
-    Ok(Response::new()
-        .add_attribute("method", "add_accepted_token")
-        .add_attribute("token", denom)
-        .add_attribute("rate", rate)
-        .add_attribute("admin", info.sender))
-}
-
-fn remove_accepted_token(
-    deps: DepsMut,
-    info: MessageInfo,
-    denom: String,
-) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    if config.admin.is_empty() || info.sender.as_str() != config.admin {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    // ACCEPTED_TOKENS.remove(deps.storage, denom.clone()); // 
-
-    Ok(Response::new()
-        .add_attribute("method", "remove_accepted_token")
-        .add_attribute("token", denom)
         .add_attribute("admin", info.sender))
 }
 
@@ -699,7 +690,7 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
         native_denom: config.native_denom,
         daily_limit_bp: config.daily_limit_bp,
         is_paused: config.is_paused,
-        total_sold: config.total_sold,
+        total_tokens_sold: config.total_tokens_sold,
     })
 }
 
@@ -821,21 +812,26 @@ fn query_daily_stats(deps: Deps, env: Env) -> StdResult<DailyStatsResponse> {
     // Reset if new day
     if daily_stats.current_day != current_day {
         daily_stats.current_day = current_day;
-        daily_stats.sold_today = Uint128::zero();
+        daily_stats.usd_received_today = Uint128::zero();
+        daily_stats.tokens_sold_today = Uint128::zero();
     }
 
-    let daily_limit = config
+    let daily_token_limit = config
         .total_supply
         .checked_mul(Uint128::from(config.daily_limit_bp))
         .map(|x| x.checked_div(Uint128::from(10000u128)).unwrap_or_default())
         .unwrap_or_default();
 
-    let available_today = daily_limit.checked_sub(daily_stats.sold_today).unwrap_or_default();
+    let tokens_available_today = daily_token_limit
+        .checked_sub(daily_stats.tokens_sold_today)
+        .unwrap_or_default();
 
     Ok(DailyStatsResponse {
         current_day: daily_stats.current_day,
-        sold_today: daily_stats.sold_today,
-        available_today,
+        usd_received_today: daily_stats.usd_received_today,
+        tokens_sold_today: daily_stats.tokens_sold_today,
+        tokens_available_today,
+        daily_token_limit,
         total_supply: config.total_supply,
     })
 }
@@ -853,16 +849,15 @@ fn query_pricing_info(deps: Deps) -> StdResult<PricingInfoResponse> {
     let config = CONFIG.load(deps.storage)?;
     let pricing_config = PRICING_CONFIG.load(deps.storage)?;
 
-    let current_tier = calculate_current_tier_usd(config.total_sold, pricing_config.tokens_per_tier, pricing_config.base_price_usd);
+    let current_tier = calculate_current_tier(config.total_tokens_sold, pricing_config.tokens_per_tier);
     let current_price = calculate_current_price(
         pricing_config.base_price_usd,
         current_tier,
         pricing_config.tier_multiplier,
     );
 
-    // Calculate next tier info - USD value needed for next tier
-    let usd_per_tier = pricing_config.tokens_per_tier.checked_mul(pricing_config.base_price_usd).unwrap_or_default();
-    let next_tier_at = usd_per_tier.checked_mul(Uint128::from((current_tier + 1) as u128)).unwrap_or(Uint128::zero());
+    // Calculate next tier info - token count needed for next tier
+    let next_tier_at = pricing_config.tokens_per_tier.checked_mul(Uint128::from((current_tier + 1) as u128)).unwrap_or(Uint128::zero());
     let next_tier_price = calculate_current_price(
         pricing_config.base_price_usd,
         current_tier + 1,
@@ -872,7 +867,7 @@ fn query_pricing_info(deps: Deps) -> StdResult<PricingInfoResponse> {
     Ok(PricingInfoResponse {
         current_tier,
         current_price_usd: current_price,
-        total_sold: config.total_sold,
+        total_tokens_sold: config.total_tokens_sold,
         tokens_per_tier: pricing_config.tokens_per_tier,
         base_price_usd: pricing_config.base_price_usd,
         tier_multiplier: pricing_config.tier_multiplier,
@@ -885,7 +880,7 @@ fn query_calculate_tokens(deps: Deps, usd_amount: Uint128) -> StdResult<TokenCal
     let config = CONFIG.load(deps.storage)?;
     let pricing_config = PRICING_CONFIG.load(deps.storage)?;
 
-    let current_tier = calculate_current_tier_usd(config.total_sold, pricing_config.tokens_per_tier, pricing_config.base_price_usd);
+    let current_tier = calculate_current_tier(config.total_tokens_sold, pricing_config.tokens_per_tier);
     let current_price = calculate_current_price(
         pricing_config.base_price_usd,
         current_tier,
@@ -904,8 +899,8 @@ fn query_calculate_tokens(deps: Deps, usd_amount: Uint128) -> StdResult<TokenCal
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{coins, from_binary, Addr};
+    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+    use cosmwasm_std::{coins, from_json, Addr, MessageInfo};
     use std::collections::HashMap;
 
     #[test]
@@ -916,13 +911,16 @@ mod tests {
         let msg = InstantiateMsg {
             admin: Some("admin".to_string()),
             daily_limit_bp: Some(Uint128::from(100u128)), // 1%
-            base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals
-            tokens_per_tier: Some(Uint128::from(10_000_000u128)), // 10 million
+            base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals for USD
+            tokens_per_tier: Some(Uint128::from(3_000_000_000_000_000u128)), // 3 million tokens (9 decimals)
             tier_multiplier: Some(Uint128::from(1300u128)), // 1.3x
             total_supply: Some(Uint128::from(120_000_000_000_000_000u128)), // 120M tokens
         };
 
-        let info = mock_info("creator", &[]);
+        let info = MessageInfo {
+            sender: Addr::unchecked("creator"),
+            funds: vec![], // same as &[] before
+        };
         let res = instantiate(deps.as_mut(), env, info, msg).unwrap();
 
         assert_eq!(res.attributes.len(), 4);
@@ -937,33 +935,42 @@ mod tests {
         let msg = InstantiateMsg {
             admin: Some("admin".to_string()),
             daily_limit_bp: Some(Uint128::from(100u128)),
-            base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals
-            tokens_per_tier: Some(Uint128::from(10_000_000u128)), // 10 million
+            base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals for USD
+            tokens_per_tier: Some(Uint128::from(3_000_000_000_000_000u128)), // 3 million tokens (9 decimals)
             tier_multiplier: Some(Uint128::from(1300u128)), // 1.3x
             total_supply: Some(Uint128::from(120_000_000_000_000_000u128)), // 120M tokens
         };
 
-        let info = mock_info("creator", &[]);
+        let info = MessageInfo {
+            sender: Addr::unchecked("creator"),
+            funds: vec![], // same as &[] before
+        };
         instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
 
         // Pause
         let pause_msg = ExecuteMsg::Pause {};
-        let info = mock_info("admin", &[]);
+        let info = MessageInfo {
+            sender: Addr::unchecked("admin"),
+            funds: vec![], // same as &[] before
+        };
         execute(deps.as_mut(), env.clone(), info, pause_msg).unwrap();
 
         // Check config
         let config: ConfigResponse =
-            from_binary(&query(deps.as_ref(), env.clone(), QueryMsg::Config {}).unwrap()).unwrap();
+            from_json(&query(deps.as_ref(), env.clone(), QueryMsg::Config {}).unwrap()).unwrap();
         assert!(config.is_paused);
 
         // Resume
         let resume_msg = ExecuteMsg::Resume {};
-        let info = mock_info("admin", &[]);
+        let info = MessageInfo {
+            sender: Addr::unchecked("admin"),
+            funds: vec![], // same as &[] before
+        };
         execute(deps.as_mut(), env.clone(), info, resume_msg).unwrap();
 
         // Check config
         let config: ConfigResponse =
-            from_binary(&query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
+            from_json(&query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
         assert!(!config.is_paused);
     }
 
@@ -976,18 +983,21 @@ mod tests {
         let msg = InstantiateMsg {
             admin: Some("admin".to_string()),
             daily_limit_bp: Some(Uint128::from(1000u128)), // 10%
-            base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals
-            tokens_per_tier: Some(Uint128::from(10_000_000u128)), // 10 million tokens per tier
+            base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals for USD
+            tokens_per_tier: Some(Uint128::from(3_000_000_000_000_000u128)), // 3 million tokens per tier (9 decimals)
             tier_multiplier: Some(Uint128::from(1300u128)), // 1.3x
             total_supply: Some(Uint128::from(120_000_000_000_000_000u128)), // 120M tokens
         };
 
-        let info = mock_info("creator", &[]);
+        let info = MessageInfo {
+            sender: Addr::unchecked("creator"),
+            funds: vec![], // same as &[] before
+        };
         instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
 
         // Test tier calculation for $100 USD (100,000,000 micro-units)
         let usd_amount = Uint128::from(100_000_000u128); // $100
-        let response: TokenCalculationResponse = from_binary(
+        let response: TokenCalculationResponse = from_json(
             &query(deps.as_ref(), env.clone(), QueryMsg::CalculateTokens { usd_amount }).unwrap()
         ).unwrap();
 
@@ -997,5 +1007,53 @@ mod tests {
         assert_eq!(response.current_tier, 0);
         assert_eq!(response.current_price, Uint128::from(25000u128)); // $0.025
         assert_eq!(response.tokens, Uint128::from(4_000_000_000u128)); // 4000 tokens for $100 (100,000,000 * 1,000,000 / 25,000)
+    }
+
+    #[test]
+    fn test_multi_tier_purchase() {
+        use crate::state::{calculate_multi_tier_purchase, PricingConfig};
+
+        // Test setup: 3M tokens per tier, $0.025 base price, 1.3x multiplier (token-based tiers)
+        let pricing_config = PricingConfig {
+            base_price_usd: Uint128::from(25000u128), // $0.025
+            tokens_per_tier: Uint128::from(3_000_000_000_000_000u128), // 3M tokens with 9 decimals
+            tier_multiplier: Uint128::from(1300u128), // 1.3x multiplier
+        };
+
+        // Test 1: Purchase within single tier
+        let (tokens, usd_spent, start_tier, end_tier, avg_price) = calculate_multi_tier_purchase(
+            Uint128::from(100_000_000u128), // $100
+            Uint128::zero(), // No tokens sold yet
+            &pricing_config,
+        );
+        // Should get 4000 tokens at $0.025 each
+        assert_eq!(tokens, Uint128::from(4_000_000_000_000u128)); // 4000 tokens (with 9 decimals)
+        assert_eq!(usd_spent, Uint128::from(100_000_000u128)); // $100
+        assert_eq!(start_tier, 0);
+        assert_eq!(end_tier, 0); // Still in same tier
+        assert_eq!(avg_price, Uint128::from(25000u128)); // $0.025
+
+        // Test 2: Purchase spanning two tiers
+        // Start with 2.5M tokens already sold (very close to tier boundary of 3M tokens)
+        // Use $20,000 to ensure we cross into tier 1
+        let (tokens, usd_spent, start_tier, end_tier, avg_price) = calculate_multi_tier_purchase(
+            Uint128::from(20_000_000_000u128), // $20,000 purchase
+            Uint128::from(2_500_000_000_000_000u128), // 2.5M tokens already sold (with 9 decimals)
+            &pricing_config,
+        );
+        
+        
+        // Should span two tiers:
+        // Tier 0: 0.5M tokens left at $0.025 = $12,500  
+        // Tier 1: $7,500 at $0.0325 = ~230,769 tokens
+        // Total: ~730,769 tokens
+        assert!(tokens > Uint128::from(700_000_000_000_000u128)); // > 700k tokens (9 decimals)  
+        assert!(tokens < Uint128::from(800_000_000_000_000u128)); // < 800k tokens (9 decimals)
+        assert_eq!(usd_spent, Uint128::from(20_000_000_000u128)); // Full $20,000 spent
+        assert_eq!(start_tier, 0); // Started in tier 0
+        assert_eq!(end_tier, 1); // Ended in tier 1
+        // Average price should be between $0.025 and $0.0325
+        assert!(avg_price > Uint128::from(25000u128)); // > $0.025
+        assert!(avg_price < Uint128::from(32500u128)); // < $0.0325
     }
 } 

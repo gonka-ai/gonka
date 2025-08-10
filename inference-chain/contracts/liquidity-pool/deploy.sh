@@ -81,10 +81,11 @@ fi
 
 echo "Using minimum deposit: ${MIN_DEPOSIT_AMOUNT}${COIN_DENOM}"
 
+# Note: total_supply uses 9 decimals for native tokens (120000000000000000000 = 120M tokens)
 jq -n --arg code_id "$CODE_ID" \
       --arg contract_label "$CONTRACT_LABEL" \
       --arg authority "$GOV_MODULE_ADDR" \
-      --arg instantiate_msg '{"daily_limit_bp": "1000", "total_supply": "120000000000000000"}' \
+      --arg instantiate_msg '{"admin": "'$GOV_MODULE_ADDR'", "daily_limit_bp": "1000", "total_supply": "120000000000000000000"}' \
       --arg deposit "${MIN_DEPOSIT_AMOUNT}${COIN_DENOM}" '
       ($code_id | tonumber) as $code_id_num |
       ($instantiate_msg | fromjson) as $instantiate_msg_obj |

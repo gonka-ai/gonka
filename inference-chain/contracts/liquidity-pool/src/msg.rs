@@ -8,9 +8,9 @@ pub struct InstantiateMsg {
     pub admin: Option<String>,
     /// Daily selling limit in basis points (1-10000, where 10000 = 100%)
     pub daily_limit_bp: Option<Uint128>,
-    /// Optional base price per token in USD (with 6 decimals, so 25000 = $0.025). Defaults to 25000.
+    /// Optional base price per token in USD (with 6 decimals for USD, so 25000 = $0.025). Defaults to 25000.
     pub base_price_usd: Option<Uint128>,
-    /// Optional tokens per tier (default: 10_000_000 for 10 million)
+    /// Optional tokens per tier with 9 decimals (default: 3_000_000_000_000_000 for 3 million tokens)
     pub tokens_per_tier: Option<Uint128>,
     /// Optional price multiplier for each tier (1300 = 1.3x, default: 1300)
     pub tier_multiplier: Option<Uint128>,
@@ -28,12 +28,6 @@ pub enum ExecuteMsg {
     Resume {},
     /// Admin: Update daily limit in basis points
     UpdateDailyLimit { daily_limit_bp: Option<Uint128> },
-    /// Admin: Update exchange rates for accepted tokens
-    UpdateExchangeRates { rates: HashMap<String, Uint128> },
-    /// Admin: Add new accepted token with exchange rate
-    AddAcceptedToken { denom: String, rate: Uint128 },
-    /// Admin: Remove accepted token
-    RemoveAcceptedToken { denom: String },
     /// Admin: Withdraw native tokens from contract
     WithdrawNativeTokens { amount: Uint128, recipient: String },
     /// Admin: Emergency withdraw all funds
@@ -106,14 +100,16 @@ pub struct ConfigResponse {
     pub native_denom: String,
     pub daily_limit_bp: Uint128,
     pub is_paused: bool,
-    pub total_sold: Uint128,
+    pub total_tokens_sold: Uint128,
 }
 
 #[cw_serde]
 pub struct DailyStatsResponse {
     pub current_day: u64,
-    pub sold_today: Uint128,
-    pub available_today: Uint128,
+    pub usd_received_today: Uint128,
+    pub tokens_sold_today: Uint128,
+    pub tokens_available_today: Uint128,
+    pub daily_token_limit: Uint128,
     pub total_supply: Uint128,
 }
 
@@ -131,7 +127,7 @@ pub struct NativeBalanceResponse {
 pub struct PricingInfoResponse {
     pub current_tier: u32,
     pub current_price_usd: Uint128,
-    pub total_sold: Uint128,
+    pub total_tokens_sold: Uint128,
     pub tokens_per_tier: Uint128,
     pub base_price_usd: Uint128,
     pub tier_multiplier: Uint128,
