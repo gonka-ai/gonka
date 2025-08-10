@@ -67,6 +67,8 @@ func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochG
 	return epochgroup.NewEpochGroup(
 		k.group,
 		k,
+		k,
+		k,
 		k.GetAuthority(),
 		k,
 		k,

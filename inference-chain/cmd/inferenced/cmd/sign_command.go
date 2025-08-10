@@ -5,16 +5,18 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
-	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/tx/signing"
-	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/spf13/cobra"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -133,7 +135,7 @@ func signPayload(cmd *cobra.Command, args []string) (err error) {
 
 	signer := &AccountSigner{
 		Addr:    addr,
-		Context: context,
+		Keyring: &context.Keyring,
 	}
 	signatureString, err := calculations.Sign(signer, components, calculations.Developer)
 	if err != nil {
@@ -257,7 +259,7 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 
 	signer := &AccountSigner{
 		Addr:    addr,
-		Context: context,
+		Keyring: &context.Keyring,
 	}
 	signatureString, err := calculations.Sign(signer, components, calculations.Developer)
 	if err != nil {
@@ -319,11 +321,12 @@ func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []by
 
 type AccountSigner struct {
 	Addr    sdk.AccAddress
-	Context client.Context
+	Keyring *keyring.Keyring
 }
 
 func (s *AccountSigner) SignBytes(data []byte) (string, error) {
-	outputBytes, _, err := s.Context.Keyring.SignByAddress(s.Addr, data, signing.SignMode_SIGN_MODE_DIRECT)
+	kr := *s.Keyring
+	outputBytes, _, err := kr.SignByAddress(s.Addr, data, signing.SignMode_SIGN_MODE_DIRECT)
 	if err != nil {
 		return "", err
 	}

@@ -22,6 +22,52 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
+// Wrapper message to enable double repeated structure for model-based MLNode organization
+type ModelMLNodes struct {
+	MlNodes []*MLNodeInfo `protobuf:"bytes,1,rep,name=ml_nodes,json=mlNodes,proto3" json:"ml_nodes,omitempty"`
+}
+
+func (m *ModelMLNodes) Reset()         { *m = ModelMLNodes{} }
+func (m *ModelMLNodes) String() string { return proto.CompactTextString(m) }
+func (*ModelMLNodes) ProtoMessage()    {}
+func (*ModelMLNodes) Descriptor() ([]byte, []int) {
+	return fileDescriptor_cd4d0434f36692fa, []int{0}
+}
+func (m *ModelMLNodes) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ModelMLNodes) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ModelMLNodes.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ModelMLNodes) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ModelMLNodes.Merge(m, src)
+}
+func (m *ModelMLNodes) XXX_Size() int {
+	return m.Size()
+}
+func (m *ModelMLNodes) XXX_DiscardUnknown() {
+	xxx_messageInfo_ModelMLNodes.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ModelMLNodes proto.InternalMessageInfo
+
+func (m *ModelMLNodes) GetMlNodes() []*MLNodeInfo {
+	if m != nil {
+		return m.MlNodes
+	}
+	return nil
+}
+
+// Not added to the Genesis, because at genesis it's constructed based on Participants
 type ActiveParticipants struct {
 	Participants         []*ActiveParticipant `protobuf:"bytes,1,rep,name=participants,proto3" json:"participants,omitempty"`
 	EpochGroupId         uint64               `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
@@ -29,15 +75,13 @@ type ActiveParticipants struct {
 	EffectiveBlockHeight int64                `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
 	CreatedAtBlockHeight int64                `protobuf:"varint,5,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"`
 	EpochId              uint64               `protobuf:"varint,6,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
-	CreatedAtAppHash     string               `protobuf:"bytes,7,opt,name=created_at_app_hash,json=createdAtAppHash,proto3" json:"created_at_app_hash,omitempty"`
-	CommitValidators     []*ValidatorCommit   `protobuf:"bytes,8,rep,name=commit_validators,json=commitValidators,proto3" json:"commit_validators,omitempty"`
 }
 
 func (m *ActiveParticipants) Reset()         { *m = ActiveParticipants{} }
 func (m *ActiveParticipants) String() string { return proto.CompactTextString(m) }
 func (*ActiveParticipants) ProtoMessage()    {}
 func (*ActiveParticipants) Descriptor() ([]byte, []int) {
-	return fileDescriptor_cd4d0434f36692fa, []int{0}
+	return fileDescriptor_cd4d0434f36692fa, []int{1}
 }
 func (m *ActiveParticipants) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -108,34 +152,21 @@ func (m *ActiveParticipants) GetEpochId() uint64 {
 	return 0
 }
 
-func (m *ActiveParticipants) GetCreatedAtAppHash() string {
-	if m != nil {
-		return m.CreatedAtAppHash
-	}
-	return ""
-}
-
-func (m *ActiveParticipants) GetCommitValidators() []*ValidatorCommit {
-	if m != nil {
-		return m.CommitValidators
-	}
-	return nil
-}
-
 type ActiveParticipant struct {
-	Index        string      `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	ValidatorKey string      `protobuf:"bytes,2,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
-	Weight       int64       `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
-	InferenceUrl string      `protobuf:"bytes,4,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
-	Models       []string    `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
-	Seed         *RandomSeed `protobuf:"bytes,6,opt,name=seed,proto3" json:"seed,omitempty"`
+	Index        string          `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	ValidatorKey string          `protobuf:"bytes,2,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	Weight       int64           `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
+	InferenceUrl string          `protobuf:"bytes,4,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
+	Models       []string        `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
+	Seed         *RandomSeed     `protobuf:"bytes,6,opt,name=seed,proto3" json:"seed,omitempty"`
+	MlNodes      []*ModelMLNodes `protobuf:"bytes,7,rep,name=ml_nodes,json=mlNodes,proto3" json:"ml_nodes,omitempty"`
 }
 
 func (m *ActiveParticipant) Reset()         { *m = ActiveParticipant{} }
 func (m *ActiveParticipant) String() string { return proto.CompactTextString(m) }
 func (*ActiveParticipant) ProtoMessage()    {}
 func (*ActiveParticipant) Descriptor() ([]byte, []int) {
-	return fileDescriptor_cd4d0434f36692fa, []int{1}
+	return fileDescriptor_cd4d0434f36692fa, []int{2}
 }
 func (m *ActiveParticipant) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -206,78 +237,17 @@ func (m *ActiveParticipant) GetSeed() *RandomSeed {
 	return nil
 }
 
-type ValidatorCommit struct {
-	Address     string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	PubKey      string `protobuf:"bytes,2,opt,name=pub_key,json=pubKey,proto3" json:"pub_key,omitempty"`
-	VotingPower int64  `protobuf:"varint,3,opt,name=voting_power,json=votingPower,proto3" json:"voting_power,omitempty"`
-	Signature   []byte `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
-}
-
-func (m *ValidatorCommit) Reset()         { *m = ValidatorCommit{} }
-func (m *ValidatorCommit) String() string { return proto.CompactTextString(m) }
-func (*ValidatorCommit) ProtoMessage()    {}
-func (*ValidatorCommit) Descriptor() ([]byte, []int) {
-	return fileDescriptor_cd4d0434f36692fa, []int{2}
-}
-func (m *ValidatorCommit) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *ValidatorCommit) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_ValidatorCommit.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *ValidatorCommit) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ValidatorCommit.Merge(m, src)
-}
-func (m *ValidatorCommit) XXX_Size() int {
-	return m.Size()
-}
-func (m *ValidatorCommit) XXX_DiscardUnknown() {
-	xxx_messageInfo_ValidatorCommit.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_ValidatorCommit proto.InternalMessageInfo
-
-func (m *ValidatorCommit) GetAddress() string {
+func (m *ActiveParticipant) GetMlNodes() []*ModelMLNodes {
 	if m != nil {
-		return m.Address
-	}
-	return ""
-}
-
-func (m *ValidatorCommit) GetPubKey() string {
-	if m != nil {
-		return m.PubKey
-	}
-	return ""
-}
-
-func (m *ValidatorCommit) GetVotingPower() int64 {
-	if m != nil {
-		return m.VotingPower
-	}
-	return 0
-}
-
-func (m *ValidatorCommit) GetSignature() []byte {
-	if m != nil {
-		return m.Signature
+		return m.MlNodes
 	}
 	return nil
 }
 
 func init() {
+	proto.RegisterType((*ModelMLNodes)(nil), "inference.inference.ModelMLNodes")
 	proto.RegisterType((*ActiveParticipants)(nil), "inference.inference.ActiveParticipants")
 	proto.RegisterType((*ActiveParticipant)(nil), "inference.inference.ActiveParticipant")
-	proto.RegisterType((*ValidatorCommit)(nil), "inference.inference.ValidatorCommit")
 }
 
 func init() {
@@ -285,42 +255,75 @@ func init() {
 }
 
 var fileDescriptor_cd4d0434f36692fa = []byte{
-	// 545 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x53, 0xc1, 0x6e, 0x13, 0x31,
-	0x10, 0xed, 0x92, 0x36, 0x69, 0x9c, 0x05, 0x5a, 0xa7, 0x4a, 0x17, 0x84, 0x96, 0x10, 0x0a, 0xca,
-	0x01, 0x52, 0xa9, 0xa1, 0x1f, 0x90, 0x72, 0xa0, 0x85, 0x03, 0xc5, 0x15, 0x1c, 0xb8, 0x58, 0x8e,
-	0xed, 0x64, 0xad, 0x26, 0x6b, 0xcb, 0xf6, 0xa6, 0xcd, 0x07, 0x70, 0xe7, 0xa7, 0x90, 0x38, 0xf6,
-	0xd8, 0x23, 0x4a, 0x7e, 0x04, 0xad, 0x37, 0xdd, 0x6e, 0xd2, 0xdc, 0x3c, 0x6f, 0xe6, 0xcd, 0xcc,
-	0x7b, 0xb6, 0xc1, 0x3b, 0x11, 0x0f, 0xb8, 0xe6, 0x31, 0xe5, 0x87, 0xf7, 0x27, 0x42, 0xad, 0x98,
-	0x70, 0x45, 0xb4, 0x15, 0x54, 0x28, 0x12, 0x5b, 0xd3, 0x51, 0x5a, 0x5a, 0x09, 0xeb, 0x79, 0x4d,
-	0x27, 0x3f, 0x3d, 0x7f, 0xb3, 0xae, 0x85, 0x26, 0x31, 0x93, 0x63, 0x6c, 0x38, 0x67, 0x19, 0xb7,
-	0xf5, 0xa7, 0x04, 0x60, 0xcf, 0x35, 0x3e, 0x2f, 0x34, 0x86, 0x9f, 0x81, 0x5f, 0x1c, 0x14, 0x78,
-	0xcd, 0x52, 0xbb, 0x76, 0xf4, 0xb6, 0xb3, 0x66, 0x52, 0xe7, 0x01, 0x1d, 0x2d, 0x71, 0xe1, 0x01,
-	0x78, 0xc2, 0x95, 0xa4, 0x11, 0x1e, 0x6a, 0x99, 0x28, 0x2c, 0x58, 0xf0, 0xa8, 0xe9, 0xb5, 0x37,
-	0x91, 0xef, 0xd0, 0x4f, 0x29, 0x78, 0xc6, 0x60, 0x17, 0x34, 0x94, 0xa4, 0xd8, 0x58, 0xa2, 0x2d,
-	0xee, 0x8f, 0x24, 0xbd, 0xc4, 0x11, 0x17, 0xc3, 0xc8, 0x06, 0xa5, 0xa6, 0xd7, 0x2e, 0xa1, 0xba,
-	0x92, 0xf4, 0x22, 0x4d, 0x9e, 0xa4, 0xb9, 0x53, 0x97, 0x82, 0x1f, 0x40, 0x83, 0x0f, 0x06, 0xdc,
-	0x2d, 0xb0, 0x4c, 0xda, 0x74, 0xa4, 0xbd, 0x3c, 0x5b, 0x64, 0x1d, 0x83, 0x7d, 0xaa, 0x39, 0xb1,
-	0x9c, 0x61, 0xb2, 0x32, 0x6b, 0x2b, 0xa3, 0x2d, 0xd2, 0xbd, 0xa5, 0x61, 0xcf, 0xc0, 0x76, 0xa6,
-	0x43, 0xb0, 0xa0, 0xec, 0x14, 0x54, 0x5c, 0x7c, 0xc6, 0xe0, 0x7b, 0x50, 0x2f, 0x74, 0x24, 0x4a,
-	0xe1, 0x88, 0x98, 0x28, 0xa8, 0x34, 0xbd, 0x76, 0x15, 0xed, 0xe4, 0xdd, 0x7a, 0x4a, 0x9d, 0x12,
-	0x13, 0xc1, 0x6f, 0x60, 0x97, 0xca, 0xf1, 0x58, 0x58, 0x3c, 0x21, 0x23, 0xc1, 0x88, 0x95, 0xda,
-	0x04, 0xdb, 0xce, 0xe2, 0x83, 0xb5, 0x16, 0xff, 0xb8, 0x2b, 0xfb, 0xe8, 0x68, 0x68, 0x27, 0xa3,
-	0xe7, 0xb0, 0x69, 0xdd, 0x7a, 0x60, 0xf7, 0xc1, 0x45, 0xc0, 0x3d, 0xb0, 0x25, 0x62, 0xc6, 0xaf,
-	0x03, 0xcf, 0x6d, 0x92, 0x05, 0xf0, 0x35, 0x78, 0x9c, 0xcf, 0xc5, 0x97, 0x7c, 0xea, 0xee, 0xa3,
-	0x8a, 0xfc, 0x1c, 0xfc, 0xc2, 0xa7, 0xb0, 0x01, 0xca, 0x57, 0x45, 0xff, 0x17, 0x51, 0x4a, 0xce,
-	0xf7, 0xc2, 0x89, 0x1e, 0x39, 0xa7, 0xab, 0xc8, 0xcf, 0xc1, 0xef, 0x7a, 0x94, 0x92, 0xc7, 0x92,
-	0xf1, 0x91, 0x09, 0xb6, 0x9a, 0xa5, 0x76, 0x15, 0x2d, 0x22, 0xd8, 0x05, 0x9b, 0xe9, 0xdb, 0x73,
-	0xf6, 0xd5, 0x8e, 0x5e, 0xae, 0xd5, 0x8a, 0xdc, 0x1b, 0xbd, 0xe0, 0x9c, 0x21, 0x57, 0xdc, 0xfa,
-	0xe5, 0x81, 0xa7, 0x2b, 0x06, 0xc0, 0x00, 0x54, 0x08, 0x63, 0x9a, 0x1b, 0xb3, 0x90, 0x76, 0x17,
-	0xc2, 0x7d, 0x50, 0x51, 0x49, 0xbf, 0x20, 0xab, 0xac, 0x92, 0x7e, 0x2a, 0xe8, 0x15, 0xf0, 0x27,
-	0xd2, 0x8a, 0x78, 0x88, 0x95, 0xbc, 0xe2, 0x7a, 0x21, 0xab, 0x96, 0x61, 0xe7, 0x29, 0x04, 0x5f,
-	0x80, 0xaa, 0x11, 0xc3, 0x98, 0xd8, 0x44, 0x73, 0xa7, 0xcb, 0x47, 0xf7, 0xc0, 0xc9, 0xd7, 0xbf,
-	0xb3, 0xd0, 0xbb, 0x99, 0x85, 0xde, 0xbf, 0x59, 0xe8, 0xfd, 0x9e, 0x87, 0x1b, 0x37, 0xf3, 0x70,
-	0xe3, 0x76, 0x1e, 0x6e, 0xfc, 0x3c, 0x1e, 0x0a, 0x1b, 0x25, 0xfd, 0x0e, 0x95, 0xe3, 0x43, 0xa5,
-	0x25, 0x4b, 0xa8, 0x35, 0x54, 0xac, 0xfc, 0xbd, 0xeb, 0xc2, 0xd9, 0x4e, 0x15, 0x37, 0xfd, 0xb2,
-	0xfb, 0x82, 0xdd, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff, 0xe8, 0x29, 0x99, 0x4f, 0xee, 0x03, 0x00,
-	0x00,
+	// 487 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x53, 0xcb, 0x6e, 0xd3, 0x40,
+	0x14, 0x8d, 0xf3, 0x6c, 0x86, 0x80, 0xc4, 0xb4, 0x0a, 0xa6, 0x0b, 0x13, 0xc2, 0x43, 0x16, 0x42,
+	0xae, 0x44, 0xe8, 0x06, 0xb1, 0x69, 0x37, 0x90, 0x42, 0x01, 0x4d, 0xc5, 0x86, 0xcd, 0x68, 0x32,
+	0x73, 0x93, 0x8c, 0x6a, 0x7b, 0xac, 0xf1, 0xa4, 0x34, 0x7f, 0xc1, 0x8a, 0x1f, 0x62, 0xc3, 0xb2,
+	0x4b, 0x96, 0x28, 0xf9, 0x11, 0xe4, 0x71, 0x64, 0x9c, 0xd6, 0xdd, 0xdd, 0xc7, 0x39, 0x77, 0xee,
+	0xb9, 0x3a, 0x83, 0x5e, 0xca, 0x78, 0x0a, 0x1a, 0x62, 0x0e, 0x07, 0xff, 0x23, 0xc6, 0x8d, 0xbc,
+	0x80, 0x84, 0x69, 0x23, 0xb9, 0x4c, 0x58, 0x6c, 0xd2, 0x20, 0xd1, 0xca, 0x28, 0xbc, 0x5b, 0x60,
+	0x82, 0x22, 0xda, 0x7f, 0x56, 0x35, 0x42, 0xb3, 0x58, 0xa8, 0x88, 0xa6, 0x00, 0x22, 0xe7, 0xee,
+	0xbf, 0xa8, 0x82, 0x41, 0xa2, 0xf8, 0x9c, 0xce, 0xb4, 0x5a, 0x24, 0x54, 0x30, 0xc3, 0x72, 0xec,
+	0xf0, 0x04, 0xf5, 0x4e, 0x95, 0x80, 0xf0, 0xf4, 0xe3, 0x27, 0x25, 0x20, 0xc5, 0x6f, 0xd0, 0x4e,
+	0x14, 0xd2, 0x38, 0x8b, 0x5d, 0x67, 0xd0, 0xf0, 0xef, 0xbc, 0x7a, 0x14, 0x54, 0xac, 0x12, 0xe4,
+	0xf8, 0x71, 0x3c, 0x55, 0xa4, 0x13, 0x85, 0x96, 0x3b, 0xfc, 0x55, 0x47, 0xf8, 0xc8, 0x0a, 0xfa,
+	0x52, 0x12, 0x84, 0x4f, 0x50, 0xaf, 0x2c, 0x70, 0x33, 0xf6, 0x79, 0xe5, 0xd8, 0x1b, 0x74, 0xb2,
+	0xc5, 0xc5, 0x4f, 0xd1, 0xbd, 0xb2, 0x10, 0x29, 0xdc, 0xfa, 0xc0, 0xf1, 0x9b, 0xa4, 0x67, 0xab,
+	0xef, 0xb2, 0xe2, 0x58, 0xe0, 0x11, 0xea, 0x27, 0x8a, 0xd3, 0xd4, 0x30, 0x6d, 0xe8, 0x24, 0x54,
+	0xfc, 0x9c, 0xce, 0x41, 0xce, 0xe6, 0xc6, 0x6d, 0x0c, 0x1c, 0xbf, 0x41, 0x76, 0x13, 0xc5, 0xcf,
+	0xb2, 0xe6, 0x71, 0xd6, 0x7b, 0x6f, 0x5b, 0xf8, 0x35, 0xea, 0xc3, 0x74, 0x0a, 0x76, 0x81, 0x6d,
+	0x52, 0xd3, 0x92, 0xf6, 0x8a, 0x6e, 0x99, 0x75, 0x88, 0x1e, 0x70, 0x0d, 0xcc, 0x80, 0xa0, 0xec,
+	0xda, 0x5b, 0xad, 0x9c, 0xb6, 0x69, 0x1f, 0x6d, 0x3d, 0xf6, 0x10, 0xed, 0xe4, 0x3a, 0xa4, 0x70,
+	0xdb, 0x56, 0x41, 0xc7, 0xe6, 0x63, 0x31, 0xfc, 0x59, 0x47, 0xf7, 0x6f, 0x9c, 0x01, 0xef, 0xa1,
+	0x96, 0x8c, 0x05, 0x5c, 0xba, 0xce, 0xc0, 0xf1, 0xbb, 0x24, 0x4f, 0xf0, 0x13, 0x74, 0xf7, 0x82,
+	0x85, 0x52, 0x30, 0xa3, 0x34, 0x3d, 0x87, 0xa5, 0xbd, 0x46, 0x97, 0xf4, 0x8a, 0xe2, 0x07, 0x58,
+	0xe2, 0x3e, 0x6a, 0x7f, 0x2f, 0xab, 0xdf, 0x64, 0x19, 0xb9, 0x38, 0x3c, 0x5d, 0xe8, 0xd0, 0xea,
+	0xec, 0x92, 0x5e, 0x51, 0xfc, 0xaa, 0xc3, 0x8c, 0x1c, 0x65, 0xfe, 0x48, 0xdd, 0xd6, 0xa0, 0xe1,
+	0x77, 0xc9, 0x26, 0xc3, 0x23, 0xd4, 0xcc, 0x1c, 0x67, 0x97, 0xbf, 0xcd, 0x23, 0xc4, 0x3a, 0xf3,
+	0x0c, 0x40, 0x10, 0x0b, 0xc6, 0x6f, 0x4b, 0xe6, 0xea, 0x58, 0x17, 0x3c, 0xae, 0x36, 0x57, 0xc9,
+	0x91, 0x85, 0xbd, 0x8e, 0x3f, 0xff, 0x5e, 0x79, 0xce, 0xd5, 0xca, 0x73, 0xfe, 0xae, 0x3c, 0xe7,
+	0xc7, 0xda, 0xab, 0x5d, 0xad, 0xbd, 0xda, 0x9f, 0xb5, 0x57, 0xfb, 0x76, 0x38, 0x93, 0x66, 0xbe,
+	0x98, 0x04, 0x5c, 0x45, 0x07, 0x89, 0x56, 0x62, 0xc1, 0x4d, 0xca, 0xe5, 0xb5, 0x0f, 0x70, 0x59,
+	0x8a, 0xcd, 0x32, 0x81, 0x74, 0xd2, 0xb6, 0x5f, 0x60, 0xf4, 0x2f, 0x00, 0x00, 0xff, 0xff, 0x0c,
+	0x8b, 0x44, 0x13, 0x9a, 0x03, 0x00, 0x00,
+}
+
+func (m *ModelMLNodes) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ModelMLNodes) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ModelMLNodes) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.MlNodes) > 0 {
+		for iNdEx := len(m.MlNodes) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.MlNodes[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintActiveparticipants(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0xa
+		}
+	}
+	return len(dAtA) - i, nil
 }
 
 func (m *ActiveParticipants) Marshal() (dAtA []byte, err error) {
@@ -343,27 +346,6 @@ func (m *ActiveParticipants) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.CommitValidators) > 0 {
-		for iNdEx := len(m.CommitValidators) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.CommitValidators[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintActiveparticipants(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x42
-		}
-	}
-	if len(m.CreatedAtAppHash) > 0 {
-		i -= len(m.CreatedAtAppHash)
-		copy(dAtA[i:], m.CreatedAtAppHash)
-		i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.CreatedAtAppHash)))
-		i--
-		dAtA[i] = 0x3a
-	}
 	if m.EpochId != 0 {
 		i = encodeVarintActiveparticipants(dAtA, i, uint64(m.EpochId))
 		i--
@@ -426,6 +408,20 @@ func (m *ActiveParticipant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.MlNodes) > 0 {
+		for iNdEx := len(m.MlNodes) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.MlNodes[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintActiveparticipants(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x3a
+		}
+	}
 	if m.Seed != nil {
 		{
 			size, err := m.Seed.MarshalToSizedBuffer(dAtA[:i])
@@ -476,55 +472,6 @@ func (m *ActiveParticipant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *ValidatorCommit) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *ValidatorCommit) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *ValidatorCommit) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Signature) > 0 {
-		i -= len(m.Signature)
-		copy(dAtA[i:], m.Signature)
-		i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.Signature)))
-		i--
-		dAtA[i] = 0x22
-	}
-	if m.VotingPower != 0 {
-		i = encodeVarintActiveparticipants(dAtA, i, uint64(m.VotingPower))
-		i--
-		dAtA[i] = 0x18
-	}
-	if len(m.PubKey) > 0 {
-		i -= len(m.PubKey)
-		copy(dAtA[i:], m.PubKey)
-		i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.PubKey)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.Address) > 0 {
-		i -= len(m.Address)
-		copy(dAtA[i:], m.Address)
-		i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.Address)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
 func encodeVarintActiveparticipants(dAtA []byte, offset int, v uint64) int {
 	offset -= sovActiveparticipants(v)
 	base := offset
@@ -536,6 +483,21 @@ func encodeVarintActiveparticipants(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+func (m *ModelMLNodes) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.MlNodes) > 0 {
+		for _, e := range m.MlNodes {
+			l = e.Size()
+			n += 1 + l + sovActiveparticipants(uint64(l))
+		}
+	}
+	return n
+}
+
 func (m *ActiveParticipants) Size() (n int) {
 	if m == nil {
 		return 0
@@ -562,16 +524,6 @@ func (m *ActiveParticipants) Size() (n int) {
 	}
 	if m.EpochId != 0 {
 		n += 1 + sovActiveparticipants(uint64(m.EpochId))
-	}
-	l = len(m.CreatedAtAppHash)
-	if l > 0 {
-		n += 1 + l + sovActiveparticipants(uint64(l))
-	}
-	if len(m.CommitValidators) > 0 {
-		for _, e := range m.CommitValidators {
-			l = e.Size()
-			n += 1 + l + sovActiveparticipants(uint64(l))
-		}
 	}
 	return n
 }
@@ -607,29 +559,11 @@ func (m *ActiveParticipant) Size() (n int) {
 		l = m.Seed.Size()
 		n += 1 + l + sovActiveparticipants(uint64(l))
 	}
-	return n
-}
-
-func (m *ValidatorCommit) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Address)
-	if l > 0 {
-		n += 1 + l + sovActiveparticipants(uint64(l))
-	}
-	l = len(m.PubKey)
-	if l > 0 {
-		n += 1 + l + sovActiveparticipants(uint64(l))
-	}
-	if m.VotingPower != 0 {
-		n += 1 + sovActiveparticipants(uint64(m.VotingPower))
-	}
-	l = len(m.Signature)
-	if l > 0 {
-		n += 1 + l + sovActiveparticipants(uint64(l))
+	if len(m.MlNodes) > 0 {
+		for _, e := range m.MlNodes {
+			l = e.Size()
+			n += 1 + l + sovActiveparticipants(uint64(l))
+		}
 	}
 	return n
 }
@@ -639,6 +573,90 @@ func sovActiveparticipants(x uint64) (n int) {
 }
 func sozActiveparticipants(x uint64) (n int) {
 	return sovActiveparticipants(uint64((x << 1) ^ uint64((int64(x) >> 63))))
+}
+func (m *ModelMLNodes) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowActiveparticipants
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ModelMLNodes: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ModelMLNodes: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MlNodes", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowActiveparticipants
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MlNodes = append(m.MlNodes, &MLNodeInfo{})
+			if err := m.MlNodes[len(m.MlNodes)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipActiveparticipants(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
 }
 func (m *ActiveParticipants) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
@@ -798,72 +816,6 @@ func (m *ActiveParticipants) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 7:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CreatedAtAppHash", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowActiveparticipants
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.CreatedAtAppHash = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 8:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CommitValidators", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowActiveparticipants
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.CommitValidators = append(m.CommitValidators, &ValidatorCommit{})
-			if err := m.CommitValidators[len(m.CommitValidators)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipActiveparticipants(dAtA[iNdEx:])
@@ -1097,171 +1049,38 @@ func (m *ActiveParticipant) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipActiveparticipants(dAtA[iNdEx:])
-			if err != nil {
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MlNodes", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowActiveparticipants
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MlNodes = append(m.MlNodes, &ModelMLNodes{})
+			if err := m.MlNodes[len(m.MlNodes)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *ValidatorCommit) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowActiveparticipants
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ValidatorCommit: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ValidatorCommit: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowActiveparticipants
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Address = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PubKey", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowActiveparticipants
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.PubKey = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field VotingPower", wireType)
-			}
-			m.VotingPower = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowActiveparticipants
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.VotingPower |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowActiveparticipants
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthActiveparticipants
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Signature = append(m.Signature[:0], dAtA[iNdEx:postIndex]...)
-			if m.Signature == nil {
-				m.Signature = []byte{}
 			}
 			iNdEx = postIndex
 		default:

@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory
  * Enum representing the possible states of the model.
  */
 enum class ModelState {
-    STARTED,
     POW,
     INFERENCE,
     TRAIN,
@@ -15,7 +14,7 @@ enum class ModelState {
     companion object {
         private val logger = LoggerFactory.getLogger(ModelState::class.java)
         // Default initial state
-        private var currentState: ModelState = STARTED
+        private var currentState: ModelState = STOPPED
 
         /**
          * Get the current state of the model.

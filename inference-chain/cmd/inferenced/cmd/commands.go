@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/productscience/inference/app"
+	inferencemodule "github.com/productscience/inference/x/inference/module"
 
 	wasmclient "github.com/CosmWasm/wasmd/x/wasm/client/cli"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
@@ -53,6 +54,7 @@ func initRootCmd(
 		keys.Commands(),
 		SignatureCommands(),
 		CreateClientCommand(),
+		RegisterNewParticipantCommand(),
 		DownloadGenesisCommand(),
 		SetSeedCommand(),
 		SetStateSync(),
@@ -122,6 +124,7 @@ func txCommand() *cobra.Command {
 		authcmd.GetDecodeCommand(),
 		authcmd.GetSimulateCmd(),
 		wasmclient.GetTxCmd(),
+		inferencemodule.GetTxCmd(),
 	)
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
 

@@ -15,6 +15,10 @@ message Params {
   ValidationParams validation_params = 2;
   PocParams poc_params = 3;
   TokenomicsParams tokenomics_params = 4;
+  CollateralParams collateral_params = 5;
+  BitcoinRewardParams bitcoin_reward_params = 6;
+  DynamicPricingParams dynamic_pricing_params = 7;
+  BandwidthLimitsParams bandwidth_limits_params = 8;
 }
 
 message GenesisOnlyParams {
@@ -38,6 +42,9 @@ message TokenomicsParams {
   Decimal current_subsidy_percentage = 3;
   Decimal top_reward_allowed_failure = 4;
   int64 top_miner_poc_qualification = 5;
+  uint64 work_vesting_period = 6;
+  uint64 reward_vesting_period = 7;
+  uint64 top_miner_vesting_period = 8;
 }
 
 message EpochParams {
@@ -50,6 +57,9 @@ message EpochParams {
   int64 poc_exchange_duration = 6;
   int64 poc_validation_delay = 7;
   int64 poc_validation_duration = 8;
+  int64 set_new_validators_delay = 9;
+  int64 inference_validation_cutoff = 10;
+  uint64 inference_pruning_epoch_threshold = 11;
 }
 
 message ValidationParams {
@@ -68,16 +78,108 @@ message ValidationParams {
   Decimal miss_requests_penalty = 12;
   int64  timestamp_expiration = 13;  // Max time in seconds until timestamps are "too old"
   int64  timestamp_advance = 14;     // Max time in seconds until timestamps are "in the future"
+  uint64 estimated_limits_per_block_kb = 15; // Max estimated KB per block per Transfer Agent
 }
 
 message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
+uint64 poc_data_pruning_epoch_threshold = 3;
 }
 
 message Decimal {
   option (gogoproto.equal) = true;
   int64 value = 1;
   int32 exponent = 2;
+}
+
+// CollateralParams defines the parameters for collateral slashing.
+message CollateralParams {
+  option (gogoproto.equal) = true;
+
+  // slash_fraction_invalid is the percentage of collateral to slash when a participant is marked INVALID.
+  Decimal slash_fraction_invalid = 1;
+
+  // slash_fraction_downtime is the percentage of collateral to slash for downtime.
+  Decimal slash_fraction_downtime = 2;
+
+  // downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
+  Decimal downtime_missed_percentage_threshold = 3;
+
+  uint64 grace_period_end_epoch = 4;
+
+  // BaseWeightRatio is the portion of potential weight granted unconditionally (0-1)
+  Decimal base_weight_ratio = 5;
+
+  // CollateralPerWeightUnit is the amount of collateral required per unit of weight
+  Decimal collateral_per_weight_unit = 6;
+}
+
+// BitcoinRewardParams defines the parameters for Bitcoin-style reward system.
+message BitcoinRewardParams {
+  option (gogoproto.equal) = true;
+
+  // use_bitcoin_rewards enables/disables the Bitcoin-style reward system (default: true for production, false for safe deployment)
+  bool use_bitcoin_rewards = 1;
+
+  // initial_epoch_reward is the base reward amount per epoch (in native tokens)
+  uint64 initial_epoch_reward = 2;
+
+  // decay_rate is the exponential decay rate per epoch for reward halving
+  Decimal decay_rate = 3;
+
+  // genesis_epoch is the starting epoch for Bitcoin-style calculations
+  uint64 genesis_epoch = 4;
+
+  // utilization_bonus_factor controls bonus multipliers for high-demand models (Phase 2)
+  Decimal utilization_bonus_factor = 5;
+
+  // full_coverage_bonus_factor is the multiplier for participants supporting all governance models (Phase 2)
+  Decimal full_coverage_bonus_factor = 6;
+
+  // partial_coverage_bonus_factor is the scaling factor for partial model coverage (Phase 2)
+  Decimal partial_coverage_bonus_factor = 7;
+}
+
+// DynamicPricingParams defines the parameters for the dynamic pricing system.
+message DynamicPricingParams {
+  option (gogoproto.equal) = true;
+
+  // stability_zone_lower_bound is the lower bound of the stability zone where price doesn't change (0-1)
+  Decimal stability_zone_lower_bound = 1;
+
+  // stability_zone_upper_bound is the upper bound of the stability zone where price doesn't change (0-1)
+  Decimal stability_zone_upper_bound = 2;
+
+  // price_elasticity controls price adjustment magnitude - determines maximum change at maximum utilization deviation (0-1)
+  Decimal price_elasticity = 3;
+
+  // utilization_window_duration is the time window in seconds for utilization calculation
+  uint64 utilization_window_duration = 4;
+
+  // min_per_token_price is the minimum per-token price floor to prevent zero pricing (in native token units)
+  uint64 min_per_token_price = 5;
+
+  // base_per_token_price is the initial per-token price after grace period (in native token units)
+  uint64 base_per_token_price = 6;
+
+  // grace_period_end_epoch is the epoch when free inference period ends
+  uint64 grace_period_end_epoch = 7;
+  // grace_period_per_token_price is the per-token price during grace period (default 0 for free)
+  uint64 grace_period_per_token_price = 8;
+}
+
+// BandwidthLimitsParams defines the parameters for request bandwidth limitations.
+message BandwidthLimitsParams {
+  option (gogoproto.equal) = true;
+
+  // estimated_limits_per_block_kb is the maximum KB per block that can be consumed
+  uint64 estimated_limits_per_block_kb = 1;
+
+  // kb_per_input_token is the estimated KB per input token
+  Decimal kb_per_input_token = 2;
+
+  // kb_per_output_token is the estimated KB per output token
+  Decimal kb_per_output_token = 3;
 }

@@ -1,17 +1,18 @@
 package keeper_test
 
 import (
+	"testing"
+
 	"github.com/productscience/inference/x/inference/calculations"
 	inference "github.com/productscience/inference/x/inference/module"
 	"go.uber.org/mock/gomock"
-	"testing"
 
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
-// NEEDREVIEW: for some reason this test is failing when run with other tests, but works fine when run alone.
 func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
@@ -30,7 +31,16 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(mockTransferAgent).Times(2)
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(mockExecutor).Times(1)
 
+	// For GranteesByMessageType calls (used by both FinishInference and StartInference)
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	// Disable grace period for tests so we get actual pricing instead of 0
+	params := k.GetParams(ctx)
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	k.SetParams(ctx, params)
+
 	payload := "promptPayload"
 	requestTimestamp := ctx.BlockTime().UnixNano()
 
@@ -45,7 +55,6 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	eaSignature, err := calculations.Sign(mockExecutor, components, calculations.ExecutorAgent)
 	require.NoError(t, err)
 
-	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -73,6 +82,9 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	require.Equal(t, uint64(10), savedInference.PromptTokenCount)
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)
+
+	model := types.Model{Id: "model1"}
+	StubModelSubgroup(t, ctx, k, mocks, &model)
 
 	// Now start the inference
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{

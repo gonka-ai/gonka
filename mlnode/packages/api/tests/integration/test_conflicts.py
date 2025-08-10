@@ -39,7 +39,7 @@ def train_config_dict():
 
 @pytest.fixture(scope="session")
 def model_name():
-    return "unsloth/llama-3-8b-Instruct"
+    return "Qwen/Qwen2.5-7B-Instruct"
 
 @pytest.fixture(scope="session")
 def pow_params():

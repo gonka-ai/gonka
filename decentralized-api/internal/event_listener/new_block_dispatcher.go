@@ -79,8 +79,8 @@ type SyncInfo struct {
 
 var DefaultReconciliationConfig = MlNodeReconciliationConfig{
 	Inference: &MlNodeStageReconciliationConfig{
-		BlockInterval: 10,
-		TimeInterval:  60 * time.Second,
+		BlockInterval: 5,
+		TimeInterval:  30 * time.Second,
 	},
 	PoC: &MlNodeStageReconciliationConfig{
 		BlockInterval: 1,
@@ -175,13 +175,35 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 			validationParams := apiconfig.ValidationParamsCache{
 				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
 				TimestampAdvance:    params.Params.ValidationParams.TimestampAdvance,
+				ExpirationBlocks:    params.Params.ValidationParams.ExpirationBlocks,
 			}
+
 			logging.Debug("Updating validation parameters", types.Validation,
 				"timestampExpiration", validationParams.TimestampExpiration,
-				"timestampAdvance", validationParams.TimestampAdvance)
+				"timestampAdvance", validationParams.TimestampAdvance,
+				"expirationBlocks", validationParams.ExpirationBlocks)
+
 			err = d.configManager.SetValidationParams(validationParams)
 			if err != nil {
 				logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+			}
+
+			if params.Params.BandwidthLimitsParams != nil {
+				bandwidthParams := apiconfig.BandwidthParamsCache{
+					EstimatedLimitsPerBlockKb: params.Params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
+					KbPerInputToken:           params.Params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
+					KbPerOutputToken:          params.Params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
+				}
+
+				logging.Debug("Updated bandwidth parameters from chain", types.Config,
+					"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
+					"kbPerInputToken", bandwidthParams.KbPerInputToken,
+					"kbPerOutputToken", bandwidthParams.KbPerOutputToken)
+
+				err = d.configManager.SetBandwidthParams(bandwidthParams)
+				if err != nil {
+					logging.Warn("Failed to update bandwidth parameters", types.Config, "error", err)
+				}
 			}
 		}
 	}
@@ -320,6 +342,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	epochContext := epochState.LatestEpoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
+
+	// Sync broker node state with the latest epoch data at the start of a transition check
+	if err := d.nodeBroker.UpdateNodeWithEpochData(&epochState); err != nil {
+		logging.Error("Failed to update node with epoch data, skipping phase transitions.", types.Stages, "error", err)
+		return
+	}
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {

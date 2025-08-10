@@ -1,7 +1,9 @@
 package com.productscience
 
+import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
+import com.productscience.data.toHexString
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
@@ -72,9 +74,9 @@ data class ApplicationCLI(
     }
 
     fun waitForState(
-        check: (status: NodeInfoResponse) -> Boolean,
         description: String,
         staleTimeout: Duration = Duration.ofSeconds(20),
+        check: (status: NodeInfoResponse) -> Boolean,
     ): NodeInfoResponse {
         return wrapLog("waitForState", false) {
             Logger.info("Waiting for state: {}", description)
@@ -106,8 +108,8 @@ data class ApplicationCLI(
     fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
         return wrapLog("waitForMinimumBlock", false) {
             waitForState(
-                { it.syncInfo.latestBlockHeight >= minBlockHeight },
-                "$waitingFor:block height $minBlockHeight"
+                "$waitingFor:block height $minBlockHeight",
+                check = { it.syncInfo.latestBlockHeight >= minBlockHeight }
             )
         }.syncInfo.latestBlockHeight
     }
@@ -123,8 +125,8 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference"))
     }
 
-    fun getInference(inferenceId: String): InferenceWrapper = wrapLog("getInference", false) {
-        execAndParse(listOf("query", "inference", "show-inference", inferenceId))
+    fun getInference(inferenceId: String): InferenceWrapper? = wrapLog("getInference", false) {
+        execAndParseNullable(listOf("query", "inference", "show-inference", inferenceId))
     }
 
     fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
@@ -192,6 +194,46 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
+    fun queryCollateral(address: String): Collateral = wrapLog("queryCollateral", false) {
+        val output = execCli(listOf("query", "collateral", "show-collateral", address))
+
+        if (output.contains("collateral not found")) {
+            return@wrapLog Collateral(null, emptyList())
+        }
+        
+        return@wrapLog cosmosJson.fromJson(output, Collateral::class.java)
+    }
+
+    fun queryUnbondingCollateral(address: String): UnbondingCollateralResponse = wrapLog("queryUnbondingCollateral", false) {
+        execAndParse(listOf("query", "collateral", "show-unbonding-collateral", address))
+    }
+
+    fun queryCollateralParams(): CollateralParamsWrapper = wrapLog("queryCollateralParams", false) {
+        execAndParse(listOf("query", "collateral", "params"))
+    }
+
+    fun queryVestingSchedule(address: String): VestingScheduleResponse = wrapLog("queryVestingSchedule", false) {
+        try {
+            execAndParse(listOf("query", "streamvesting", "vesting-schedule", address))
+        } catch (e: Exception) {
+            // Return empty schedule if not found
+            VestingScheduleResponse(null)
+        }
+    }
+
+    fun queryTotalVestingAmount(address: String): TotalVestingAmountResponse = wrapLog("queryTotalVestingAmount", false) {
+        try {
+            execAndParse(listOf("query", "streamvesting", "total-vesting", address))
+        } catch (e: Exception) {
+            // Return null amount if not found
+            TotalVestingAmountResponse(null)
+        }
+    }
+
+    fun queryStreamVestingParams(): StreamVestingParamsWrapper = wrapLog("queryStreamVestingParams", false) {
+        execAndParse(listOf("query", "streamvesting", "params"))
+    }
+
     fun getGovParams(): GovState = wrapLog("getGovParams", false) {
         execAndParse(listOf("query", "gov", "params"))
     }
@@ -222,20 +264,42 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-top-miner"))
     }
 
+    fun queryBLSEpochData(epochId: Long): EpochBLSDataWrapper = wrapLog("queryBLSEpochData", false) {
+        execAndParse(listOf("query", "bls", "epoch-data", epochId.toString()))
+    }
+
+    fun queryBLSSigningStatus(requestId: String): SigningStatusWrapper = wrapLog("queryBLSSigningStatus", false) {
+        execAndParse(listOf("query", "bls", "signing-status", requestId))
+    }
+
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
+        val output = execCli(args, includeOutputFlag)
+        return cosmosJson.fromJson(output, T::class.java)
+    }
+    
+    fun execCli(args: List<String>, includeOutputFlag: Boolean = true): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
+
         if (output.contains("inference is not ready; please wait for first block")) {
             throw NotReadyException()
         }
         // Extract JSON payload if output contains gas estimate
-        val jsonOutput = output.replace(Regex("^gas estimate: \\d+"), "")
-        return cosmosJson.fromJson(jsonOutput, T::class.java)
+        return output.replace(Regex("^gas estimate: \\d+"), "")
+    }
+
+    inline fun <reified T> execAndParseNullable(args: List<String>, includeOutputFlag: Boolean = true): T? {
+        return try {
+            execAndParse(args, includeOutputFlag)
+        } catch (e: JsonSyntaxException) {
+            Logger.debug("Failed to parse response: {}", e.message)
+            null
+        }
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
@@ -376,6 +440,51 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "gov", "proposals"))
     }
 
+    fun getModelPerTokenPrice(modelId: String): ModelPerTokenPriceResponse = wrapLog("getModelPerTokenPrice", false) {
+        execAndParse(listOf("query", "inference", "model-per-token-price", modelId))
+    }
+
+    fun getPocBatchCount(epochStartHeight:Long): Long = wrapLog("getPocBatchCount", infoLevel = false) {
+        execAndParse<Count>(listOf("query", "inference", "count-po-c-batches-at-height", epochStartHeight.toString())).count
+    }
+
+    fun getPocValidationCount(epochStartHeight:Long): Long = wrapLog("getPocValidationCount", infoLevel = false) {
+        execAndParse<Count>(listOf("query", "inference", "count-po-c-validations-at-height", epochStartHeight.toString())).count
+    }
+
+    fun getPrivateKey(): String = wrapLog("getPrivateKey", infoLevel = false) {
+        val accountName = this.getAccountName()
+        exec(listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex")).first()
+    }
+
+    fun requestThresholdSignature(
+        currentEpochId: Long,
+        chainId: String,
+        requestId: String,
+        data: List<String>
+    ): TxResponse = wrapLog("requestThresholdSignature", true) {
+        val from = this.getAccountName()
+        val baseArgs = listOf(
+            "tx", "bls", "request-threshold-signature",
+            currentEpochId.toString(),
+            chainId.toByteArray().toHexString(),
+            requestId.toByteArray().toHexString(),
+        ) + data.map { it.toByteArray().toHexString() }
+
+        val finalArgs = baseArgs + listOf(
+            "--from", from,
+            "--keyring-backend", "test",
+            "--chain-id", config.chainId,
+            "--keyring-dir", "/root/${config.stateDirName}",
+            "--yes"
+        )
+        
+        execAndParse(finalArgs)
+    }
+
+    data class Count(
+        val count: Long = 0
+    )
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)

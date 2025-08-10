@@ -14,6 +14,7 @@ import (
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/app"
+	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -57,6 +58,8 @@ func NewServer(
 	g.POST("models", s.registerModel)
 	g.POST("tx/send", s.sendTransaction)
 
+	g.POST("bls/request", s.postRequestThresholdSignature)
+
 	g.POST("debug/create-dummy-training-task", s.postDummyTrainingTask)
 
 	return s
@@ -69,6 +72,7 @@ func getCodec() *codec.ProtoCodec {
 	banktypes.RegisterInterfaces(interfaceRegistry)
 	v1.RegisterInterfaces(interfaceRegistry)
 	upgradetypes.RegisterInterfaces(interfaceRegistry)
+	collateraltypes.RegisterInterfaces(interfaceRegistry)
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 	return cdc
 }

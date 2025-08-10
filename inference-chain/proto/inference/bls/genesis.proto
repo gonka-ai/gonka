@@ -1,0 +1,22 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/bls/params.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// GenesisState defines the bls module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  
+  // active_epoch_id is the current epoch undergoing DKG process
+  // Only one epoch can have active DKG at a time
+  // 0 means no active DKG
+  uint64 active_epoch_id = 2;
+}

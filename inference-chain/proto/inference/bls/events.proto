@@ -1,0 +1,150 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "inference/bls/types.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// EventKeyGenerationInitiated is emitted when DKG is initiated for an epoch
+message EventKeyGenerationInitiated {
+  // epoch_id uniquely identifies this DKG round
+  uint64 epoch_id = 1;
+  
+  // i_total_slots is the total number of slots in the DKG
+  uint32 i_total_slots = 2;
+  
+  // t_slots_degree is the polynomial degree t for the threshold scheme
+  uint32 t_slots_degree = 3;
+  
+  // participants contains information about all participants in this DKG round
+  repeated BLSParticipantInfo participants = 4 [(gogoproto.nullable) = false];
+}
+
+// EventDealerPartSubmitted is emitted when a participant submits their dealer part
+message EventDealerPartSubmitted {
+  // epoch_id identifies the DKG round this dealer part belongs to
+  uint64 epoch_id = 1;
+  
+  // dealer_address is the address of the dealer who submitted their part
+  string dealer_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// EventVerifyingPhaseStarted is emitted when the DKG transitions to the verification phase
+message EventVerifyingPhaseStarted {
+  // epoch_id identifies the DKG round entering verification phase
+  uint64 epoch_id = 1;
+  
+  // verifying_phase_deadline_block is the block height deadline for the verification phase
+  uint64 verifying_phase_deadline_block = 2;
+  
+  // epoch_data contains the complete epoch BLS data at the time of transition
+  EpochBLSData epoch_data = 3 [(gogoproto.nullable) = false];
+}
+
+// EventDKGFailed is emitted when a DKG round fails
+message EventDKGFailed {
+  // epoch_id identifies the DKG round that failed
+  uint64 epoch_id = 1;
+  
+  // reason describes why the DKG failed
+  string reason = 2;
+  
+  // epoch_data contains the complete epoch BLS data at the time of failure
+  EpochBLSData epoch_data = 3 [(gogoproto.nullable) = false];
+}
+
+// EventVerificationVectorSubmitted is emitted when a participant submits their verification vector
+message EventVerificationVectorSubmitted {
+  // epoch_id identifies the DKG round this verification submission belongs to
+  uint64 epoch_id = 1;
+  
+  // participant_address is the address of the participant who submitted verification
+  string participant_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// EventGroupPublicKeyGenerated is emitted when the DKG completes successfully and group public key is computed
+message EventGroupPublicKeyGenerated {
+  // epoch_id uniquely identifies this DKG round
+  uint64 epoch_id = 1;
+  
+  // group_public_key is the final aggregated group public key (compressed G2 format, 96 bytes)
+  bytes group_public_key = 2;
+  
+  // i_total_slots is the total number of slots in the DKG
+  uint32 i_total_slots = 3;
+  
+  // t_slots_degree is the polynomial degree t for the threshold scheme
+  uint32 t_slots_degree = 4;
+  
+  // epoch_data contains the complete epoch BLS data at the time of completion
+  EpochBLSData epoch_data = 5 [(gogoproto.nullable) = false];
+
+  // chain_id is the chain ID for EIP-155 compatibility
+  string chain_id = 6;
+}
+
+// EventGroupKeyValidated is emitted when group key validation completes successfully
+message EventGroupKeyValidated {
+  // new_epoch_id identifies the epoch whose group public key was successfully validated
+  uint64 new_epoch_id = 1;
+  
+  // final_signature is the aggregated signature validating the new group public key (G1 point, 48-byte compressed)
+  bytes final_signature = 2;
+}
+
+// EventGroupKeyValidationFailed is emitted when group key validation fails
+message EventGroupKeyValidationFailed {
+  // new_epoch_id identifies the epoch whose group public key validation failed
+  uint64 new_epoch_id = 1;
+  
+  // reason describes why the validation failed
+  string reason = 2;
+}
+
+// EventThresholdSigningRequested is emitted when a new threshold signing request is created
+message EventThresholdSigningRequested {
+  // request_id uniquely identifies this threshold signing request
+  bytes request_id = 1;
+  
+  // current_epoch_id identifies the epoch being used for signing
+  uint64 current_epoch_id = 2;
+  
+  // encoded_data is the Ethereum-compatible abi.encodePacked result that participants will sign
+  bytes encoded_data = 3;
+  
+  // message_hash is the keccak256 hash of the encoded_data (pre-computed for participants)
+  bytes message_hash = 4;
+  
+  // deadline_block_height is the block height after which this request expires
+  int64 deadline_block_height = 5;
+}
+
+// EventThresholdSigningCompleted is emitted when threshold signing completes successfully
+message EventThresholdSigningCompleted {
+  // request_id identifies the threshold signing request that completed
+  bytes request_id = 1;
+  
+  // current_epoch_id identifies the epoch used for signing
+  uint64 current_epoch_id = 2;
+  
+  // final_signature is the aggregated BLS threshold signature (G1 point, 48-byte compressed)
+  bytes final_signature = 3;
+  
+  // participating_slots is the total number of slots that participated in the signing
+  uint32 participating_slots = 4;
+}
+
+// EventThresholdSigningFailed is emitted when threshold signing fails or expires
+message EventThresholdSigningFailed {
+  // request_id identifies the threshold signing request that failed
+  bytes request_id = 1;
+  
+  // current_epoch_id identifies the epoch used for signing
+  uint64 current_epoch_id = 2;
+  
+  // reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
+  string reason = 3;
+} 

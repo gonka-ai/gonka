@@ -17,6 +17,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 const val SERVER_TYPE_PUBLIC = "public"
 const val SERVER_TYPE_ML = "ml"
@@ -29,6 +30,8 @@ data class ApplicationAPI(
 ) : HasConfig {
     private fun urlFor(type: String): String =
         urls[type] ?: error("URL for type \"$type\" not found in ApplicationAPI")
+
+    fun getPublicUrl() = urlFor(SERVER_TYPE_PUBLIC)
 
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
@@ -66,7 +69,8 @@ data class ApplicationAPI(
 
     fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
-        val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
+        val encodedInferenceId = URLEncoder.encode(inferenceId, "UTF-8")
+        val response = Fuel.get("$url/v1/chat/completions/$encodedInferenceId")
             .responseObject<InferencePayload>(gsonDeserializer(cosmosJson))
         logResponse(response)
         response.third.get()
@@ -157,6 +161,12 @@ data class ApplicationAPI(
         val nodes = getNodes()
         nodes.forEach { removeNode(it.node.id) }
         addNode(node)
+    }
+
+    fun setNodesTo(nodes: List<InferenceNode>) {
+        val existingNodes = getNodes()
+        existingNodes.forEach { removeNode(it.node.id) }
+        addNodes(nodes)
     }
 
     fun getNodes(): List<NodeResponse> =
@@ -267,6 +277,16 @@ data class ApplicationAPI(
     fun getLatestEpoch(): EpochResponse {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         return get(url, "v1/epochs/latest")
+    }
+
+    fun requestThresholdSignature(request: RequestThresholdSignatureDto): String = wrapLog("RequestThresholdSignature", true) {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        postWithStringResponse(url, "admin/v1/bls/request", request)
+    }
+
+    fun queryBLSSigningStatus(requestId: String): SigningStatusWrapper = wrapLog("QueryBLSSigningStatus", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/bls/signatures/${requestId}")
     }
 
     inline fun <reified Out : Any> get(url: String, path: String): Out {

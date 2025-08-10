@@ -20,7 +20,7 @@ func (s *Server) registerModel(ctx echo.Context) error {
 	logging.Info("RegisterModel", types.Inferences, "authority", authority)
 	msg := &inference.MsgRegisterModel{
 		Authority:              authority,
-		ProposedBy:             s.recorder.GetAddress(),
+		ProposedBy:             s.recorder.GetAccountAddress(),
 		Id:                     body.Id,
 		UnitsOfComputePerToken: body.UnitsOfComputePerToken,
 	}

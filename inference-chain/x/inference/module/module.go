@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"sort"
-
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"cosmossdk.io/math"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -18,16 +17,20 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
+	"github.com/spf13/cobra"
 
 	// this line is used by starport scaffolding # 1
 
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	modulev1 "github.com/productscience/inference/api/inference/inference/module"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -42,6 +45,11 @@ var (
 	_ appmodule.AppModule       = (*AppModule)(nil)
 	_ appmodule.HasBeginBlocker = (*AppModule)(nil)
 	_ appmodule.HasEndBlocker   = (*AppModule)(nil)
+)
+
+const (
+	defaultInferencePruningThreshold = 4
+	defaultPocPruningThreshold       = 4
 )
 
 // ----------------------------------------------------------------------------
@@ -102,11 +110,11 @@ func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *r
 type AppModule struct {
 	AppModuleBasic
 
-	keeper         keeper.Keeper
-	accountKeeper  types.AccountKeeper
-	bankKeeper     types.BankKeeper
-	groupMsgServer types.GroupMessageKeeper
-	currentEpochId uint64
+	keeper           keeper.Keeper
+	accountKeeper    types.AccountKeeper
+	bankKeeper       types.BankKeeper
+	groupMsgServer   types.GroupMessageKeeper
+	collateralKeeper types.CollateralKeeper
 }
 
 func NewAppModule(
@@ -115,13 +123,15 @@ func NewAppModule(
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
 	groupMsgServer types.GroupMessageKeeper,
+	collateralKeeper types.CollateralKeeper,
 ) AppModule {
 	return AppModule{
-		AppModuleBasic: NewAppModuleBasic(cdc),
-		keeper:         keeper,
-		accountKeeper:  accountKeeper,
-		bankKeeper:     bankKeeper,
-		groupMsgServer: groupMsgServer,
+		AppModuleBasic:   NewAppModuleBasic(cdc),
+		keeper:           keeper,
+		accountKeeper:    accountKeeper,
+		bankKeeper:       bankKeeper,
+		groupMsgServer:   groupMsgServer,
+		collateralKeeper: collateralKeeper,
 	}
 }
 
@@ -152,53 +162,19 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
 // To avoid wrong/empty versions, the initial version should be set to 1.
-func (AppModule) ConsensusVersion() uint64 { return 3 }
+func (AppModule) ConsensusVersion() uint64 { return 4 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
 func (am AppModule) BeginBlock(ctx context.Context) error {
-	if am.currentEpochId != 0 {
-		particiapnts, found := am.keeper.GetActiveParticipants(ctx, am.currentEpochId)
-		if !found {
-			// TODO log
-			return nil
-		}
-
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		currentHeight := sdkCtx.BlockHeight()
-
-		if currentHeight == particiapnts.CreatedAtBlockHeight+1 && len(particiapnts.CommitValidators) == 0 {
-			header := sdkCtx.BlockHeader()
-
-			// Внимание: header относится к текущему блоку (N), но commit будет относиться к N-1
-			appHash := header.GetAppHash()
-		}
-
-		/*			am.keeper.GetValidatorsForHeight(ctx, commitHeight)
-
-					// Получаем валидаторов из staking / tendermint
-					validators := am.keeper.GetValidatorsForHeight(ctx, currentHeight-1)
-
-					var commits []*types.ValidatorCommit
-					for _, val := range validators {
-						// Предположим, что у тебя есть способ получить подпись за блок N-1
-						// (например, из CometBFT через event или отдельный кэш)
-						signature := am.keeper.GetValidatorSignatureForHeight(ctx, val.Address, currentHeight-1)
-
-						commits = append(commits, &types.ValidatorCommit{
-							Address:      val.Address,
-							PubKey:       val.PubKey,
-							VotingPower:  val.Power,
-							Signature:    signature,
-						})
-					}
-
-				}*/
-		// TODO
-		// if текущий блок == active participants.block_height - 1 {
-		//  - получить app Hash и validators commit из header, записать в active participants current epoch
-		// // }
+	// Update dynamic pricing for all models at the start of each block
+	// This ensures consistent pricing for all inferences processed in this block
+	err := am.keeper.UpdateDynamicPricing(ctx)
+	if err != nil {
+		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
+		// Don't return error - allow block processing to continue even if pricing update fails
 	}
+
 	return nil
 }
 
@@ -229,6 +205,7 @@ func (am AppModule) handleExpiredInference(ctx context.Context, inference types.
 		am.LogError("Error issuing refund", types.Inferences, "error", err)
 	}
 	am.keeper.SetInference(ctx, inference)
+	executor.CurrentEpochStats.MissedRequests++
 	am.keeper.SetParticipant(ctx, executor)
 }
 
@@ -270,6 +247,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
+	// Stage execution order for epoch transitions:
+	// 1. IsEndOfPoCValidationStage: Complete all epoch formation (onEndOfPoCValidationStage)
+	// 2. IsSetNewValidatorsStage: Switch validators and activate epoch (onSetNewValidatorsStage)
+	// This separation ensures clean boundaries between epoch preparation and validator switching
+	// and allow time for api nodes to load models on ml nodes.
+
+	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
+		am.LogInfo("onEndOfPoCValidationStage start", types.Stages, "blockHeight", blockHeight)
+		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
+	}
+
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
@@ -290,6 +278,28 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
+		}
+
+		// Prune old inferences
+		inferencePruningThreshold := am.keeper.GetParams(ctx).EpochParams.InferencePruningEpochThreshold
+		if inferencePruningThreshold == 0 {
+			am.LogInfo("Inference pruning threshold is 0, using default", types.Inferences, "threshold", defaultInferencePruningThreshold)
+			inferencePruningThreshold = defaultInferencePruningThreshold
+		}
+		pruneErr := am.keeper.PruneInferences(ctx, upcomingEpoch.Index, inferencePruningThreshold)
+		if pruneErr != nil {
+			am.LogError("Error pruning inferences", types.Inferences, "error", pruneErr)
+		}
+
+		// Prune old PoC data
+		pocPruningThreshold := am.keeper.GetParams(ctx).PocParams.PocDataPruningEpochThreshold
+		if pocPruningThreshold == 0 {
+			am.LogInfo("PoC pruning threshold is 0, using default", types.PoC, "threshold", defaultPocPruningThreshold)
+			pocPruningThreshold = defaultPocPruningThreshold
+		}
+		pocErr := am.keeper.PrunePoCData(ctx, upcomingEpoch.Index, pocPruningThreshold)
+		if pocErr != nil {
+			am.LogError("Error pruning PoC data", types.PoC, "error", pocErr)
 		}
 	}
 
@@ -315,7 +325,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 	return &types.Epoch{
 		Index:               getNextEpochIndex(prevEpoch),
-		PocStartBlockHeight: blockHeight,
+		PocStartBlockHeight: int64(blockHeight),
 	}
 }
 
@@ -323,11 +333,36 @@ func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
 }
 
-func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+// onEndOfPoCValidationStage handles all epoch formation logic at the end of PoC validation.
+// This stage is responsible for:
+// - Account settling from the previous epoch
+// - Computing new weights based on PoC results
+// - Setting models for participants (MLNode allocation)
+// - Registering top miners
+// - Setting active participants for the upcoming epoch
+// - Adding epoch members to the upcoming epoch group
+// This stage executes at IsEndOfPoCValidationStage(blockHeight) and must complete
+// before validator switching occurs in onSetNewValidatorsStage.
+func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight int64, blockTime int64) {
 	effectiveEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
 	if !found {
-		am.LogError("onSetNewValidatorsStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
+		am.LogError("onEndOfPoCValidationStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return
+	}
+
+	// Signal to the collateral module that the epoch has advanced.
+	// This will trigger its internal unbonding queue processing.
+	if am.keeper.GetCollateralKeeper() != nil {
+		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+	}
+
+	// Signal to the streamvesting module that the epoch has advanced.
+	// This will trigger vested token unlocking for the completed epoch.
+	if am.keeper.GetStreamVestingKeeper() != nil {
+		err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
+		}
 	}
 
 	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
@@ -338,41 +373,83 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight), previousEpochPocStartHeight)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
+
+	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+	if !found || upcomingEpoch == nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get upcoming epoch group", types.EpochGroup)
+		return
+	}
+
+	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
+	if activeParticipants == nil {
+		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
+		return
+	}
+
+	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
+	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
+		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
+		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
+		// which means participants will proceed with their unadjusted PotentialWeight.
+	}
+
+	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
+
+	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
+		return
+	}
+
+	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(activeParticipants)", len(activeParticipants))
+
+	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		Participants:        activeParticipants,
+		EpochGroupId:        upcomingEpoch.Index,
+		EpochId:             upcomingEpoch.Index,
+		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
+		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
+		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
+		CreatedAtBlockHeight: blockHeight,
+	})
+
+	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
+			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
+		return
+	}
+
+	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+
+	// Call BLS module to initiate key generation for the new epoch
+	am.InitiateBLSKeyGeneration(ctx, upcomingEpoch.Index, activeParticipants)
+}
+
+// onSetNewValidatorsStage handles validator switching and epoch group activation.
+// This stage is responsible for:
+// - Computing unit of compute price for the upcoming epoch
+// - Moving the upcoming epoch group to effective status
+// - Switching the active validator set
+// - Setting the effective epoch index
+// This stage executes at IsSetNewValidatorsStage(blockHeight) and should run after
+// all epoch formation logic has completed in onEndOfPoCValidationStage.
+// The stage focuses solely on validator switching, with all epoch preparation
+// handled by the previous stage for clean separation of concerns.
+func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+	am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 	if !found || upcomingEpoch == nil {
 		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup)
 		return
 	}
-
-	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
-	if activeParticipants == nil {
-		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil", types.PoC)
-		return
-	}
-
-	am.setModelsForParticipants(ctx, activeParticipants)
-
-	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
-	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
-		return
-	}
-
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.Stages,
-		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"len(activeParticipants)", len(activeParticipants))
-
-	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:         activeParticipants,
-		EpochGroupId:         upcomingEpoch.Index,
-		EpochId:              upcomingEpoch.Index,
-		PocStartBlockHeight:  upcomingEpoch.PocStartBlockHeight,
-		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
-		CreatedAtBlockHeight: blockHeight,
-	})
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
 	if err != nil {
@@ -381,10 +458,16 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+	// Cache model capacities for the new epoch to enable fast dynamic pricing calculations
+	err = am.keeper.CacheAllModelCapacities(ctx)
+	if err != nil {
+		am.LogError("Failed to cache model capacities for new epoch", types.Pricing, "error", err, "blockHeight", blockHeight)
+		// Don't return error - epoch transition should continue even if capacity caching fails
+	}
 
 	unitOfComputePrice, err := am.computePrice(ctx, *upcomingEpoch, upcomingEg)
 	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to compute price", types.Pricing, "error", err.Error())
 		return
 	}
 
@@ -401,6 +484,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
+		}
+		if p.Seed == nil {
+			am.LogError("onSetNewValidatorsStage: addEpochMembers. ILLEGAL STATE. Participant seed is nil. Skipping this participant", types.EpochGroup,
+				"participantIndex", p.Index)
+			continue
 		}
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
 		err = upcomingEg.AddMember(ctx, member)
@@ -464,6 +552,7 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 	}
 
 	reputation := calculations.CalculateReputation(&reputationContext)
+	am.LogInfo("ReputationCalculated", types.EpochGroup, "participantIndex", p.Index, "reputation", reputation)
 
 	return reputation, nil
 }
@@ -510,6 +599,21 @@ func (am AppModule) IsOnePerModuleType() {}
 // IsAppModule implements the appmodule.AppModule interface.
 func (am AppModule) IsAppModule() {}
 
+// GetTxCmd returns the transaction commands for this module
+func GetTxCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                        "inference",
+		Short:                      "Inference transaction subcommands",
+		DisableFlagParsing:         true,
+		SuggestionsMinimumDistance: 2,
+		RunE:                       client.ValidateCmd,
+	}
+
+	cmd.AddCommand(GrantMLOpsPermissionsCmd())
+
+	return cmd
+}
+
 // ----------------------------------------------------------------------------
 // App Wiring Setup
 // ----------------------------------------------------------------------------
@@ -529,13 +633,17 @@ type ModuleInputs struct {
 	Config       *modulev1.Module
 	Logger       log.Logger
 
-	AccountKeeper    types.AccountKeeper
-	BankKeeper       types.BankKeeper
-	BankEscrowKeeper types.BankEscrowKeeper
-	ValidatorSet     types.ValidatorSet
-	StakingKeeper    types.StakingKeeper
-	GroupServer      types.GroupMessageKeeper
-	GetWasmKeeper    func() wasmkeeper.Keeper `optional:"true"`
+	AccountKeeper       types.AccountKeeper
+	BankKeeper          types.BankKeeper
+	BankEscrowKeeper    types.BookkeepingBankKeeper
+	ValidatorSet        types.ValidatorSet
+	StakingKeeper       types.StakingKeeper
+	GroupServer         types.GroupMessageKeeper
+	BlsKeeper           types.BlsKeeper
+	CollateralKeeper    types.CollateralKeeper
+	StreamVestingKeeper types.StreamVestingKeeper
+	AuthzKeeper         authzkeeper.Keeper
+	GetWasmKeeper       func() wasmkeeper.Keeper `optional:"true"`
 }
 
 type ModuleOutputs struct {
@@ -564,6 +672,10 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ValidatorSet,
 		in.StakingKeeper,
 		in.AccountKeeper,
+		in.BlsKeeper,
+		in.CollateralKeeper,
+		in.StreamVestingKeeper,
+		in.AuthzKeeper,
 		in.GetWasmKeeper,
 	)
 
@@ -573,6 +685,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AccountKeeper,
 		in.BankKeeper,
 		in.GroupServer,
+		in.CollateralKeeper,
 	)
 
 	return ModuleOutputs{
@@ -602,29 +715,89 @@ func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...i
 	am.keeper.Logger().Debug(msg, kvWithSubsystem...)
 }
 
-func (am AppModule) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant) {
-	for _, p := range participants {
-		hardwareNodes, found := am.keeper.GetHardwareNodes(ctx, p.Index)
-		if !found {
-			p.Models = make([]string, 0)
+// initiateBLSKeyGeneration calls the BLS module to start DKG for the new epoch
+func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64, activeParticipants []*types.ActiveParticipant) {
+	if len(activeParticipants) == 0 {
+		am.LogWarn("No active participants for BLS key generation", types.EpochGroup, "epochID", epochID)
+		return
+	}
+
+	// Convert ActiveParticipants to ParticipantWithWeightAndKey format expected by BLS module
+	finalizedParticipants := make([]blstypes.ParticipantWithWeightAndKey, 0, len(activeParticipants))
+
+	// Calculate total weight to convert to percentages
+	totalWeight := int64(0)
+	for _, p := range activeParticipants {
+		totalWeight += p.Weight
+	}
+
+	if totalWeight == 0 {
+		am.LogError("Total weight is zero, cannot initiate BLS key generation", types.EpochGroup, "epochID", epochID)
+		return
+	}
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, ap := range activeParticipants {
+		accAddr, err := sdk.AccAddressFromBech32(ap.Index)
+		if err != nil {
+			am.LogError("Failed to parse participant address for BLS key generation", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID, "error", err)
 			continue
 		}
-		p.Models = getAllModels(hardwareNodes)
-	}
-}
 
-func getAllModels(nodes *types.HardwareNodes) []string {
-	modelMap := make(map[string]struct{})
-	for _, node := range nodes.HardwareNodes {
-		for _, model := range node.Models {
-			modelMap[model] = struct{}{}
+		account := am.accountKeeper.GetAccount(sdkCtx, accAddr)
+		if account == nil {
+			am.LogError("Account not found for BLS participant", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
+			continue
 		}
+
+		pubKey := account.GetPubKey()
+		if pubKey == nil {
+			am.LogError("Public key not found for BLS participant account", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		secpPubKey, ok := pubKey.(*secp256k1.PubKey)
+		if !ok || secpPubKey == nil {
+			am.LogError("Participant account public key is not secp256k1 for BLS", types.EpochGroup, "participantAddress", ap.Index, "keyType", pubKey.Type(), "epochID", epochID)
+			continue
+		}
+		pubKeyBytes := secpPubKey.Bytes()
+		if len(pubKeyBytes) == 0 {
+			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		// Use ap.Weight (from ActiveParticipant) as it's the computed weight for this epoch's DKG.
+		weightPercentage := math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+
+		blsParticipant := blstypes.ParticipantWithWeightAndKey{
+			Address:            ap.Index,
+			PercentageWeight:   weightPercentage,
+			Secp256k1PublicKey: pubKeyBytes,
+		}
+		finalizedParticipants = append(finalizedParticipants, blsParticipant)
+
+		am.LogInfo("Prepared participant for BLS key generation using AccountKeeper PubKey", types.EpochGroup,
+			"participant", ap.Index,
+			"weight", ap.Weight,
+			"percentage", weightPercentage.String(),
+			"epochID", epochID,
+			"keyLength", len(pubKeyBytes))
 	}
 
-	models := make([]string, 0, len(modelMap))
-	for model := range modelMap {
-		models = append(models, model)
+	if len(finalizedParticipants) == 0 {
+		am.LogError("No valid participants after conversion for BLS key generation", types.EpochGroup, "epochID", epochID)
+		return
 	}
-	sort.Strings(models)
-	return models
+
+	// Call the BLS module to initiate key generation
+	err := am.keeper.BlsKeeper.InitiateKeyGenerationForEpoch(sdkCtx, epochID, finalizedParticipants)
+	if err != nil {
+		am.LogError("Failed to initiate BLS key generation", types.EpochGroup, "epochID", epochID, "error", err.Error())
+		return
+	}
+
+	am.LogInfo("Successfully initiated BLS key generation", types.EpochGroup,
+		"epochID", epochID,
+		"participantCount", len(finalizedParticipants))
 }

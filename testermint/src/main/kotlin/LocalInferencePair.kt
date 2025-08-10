@@ -7,6 +7,7 @@ import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -72,7 +73,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
 }
 
 private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
-    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "0.0.0.0"
+    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "localhost"
     return "http://$privateUrl:${portMap[privatePort]?.publicPort}"
 }
 
@@ -142,7 +143,7 @@ fun attachDockerLogs(
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
-    val mock: IInferenceMock?,
+    val mock: IInferenceMock?, // FIXME: technically it's a list
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null,
@@ -177,6 +178,34 @@ data class LocalInferencePair(
     fun getEpochData(): EpochResponse {
         refreshMostRecentState()
         return this.mostRecentEpochData ?: error("No epoch data available")
+    }
+
+    fun getBalance(address: String): Long {
+        return this.node.getBalance(address, this.node.config.denom).balance.amount
+    }
+
+    fun queryCollateral(address: String): Collateral {
+        return this.node.queryCollateral(address)
+    }
+
+    fun depositCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "deposit-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
+    }
+
+    fun withdrawCollateral(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf(
+                "collateral",
+                "withdraw-collateral",
+                "${amount}${this.config.denom}",
+            )
+        )
     }
 
     fun makeInferenceRequest(
@@ -240,10 +269,11 @@ data class LocalInferencePair(
     data class WaitForStageResult(
         val stageBlock: Long,
         val stageBlockWithOffset: Long,
-        val currentBlock: Long
+        val currentBlock: Long,
+        val waitDuration: Duration,
     )
 
-    fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5) {
+    fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5): WaitForStageResult? {
         val epochData = getEpochData()
         val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
         val currentPhase = epochData.phase
@@ -255,27 +285,31 @@ data class LocalInferencePair(
                     "currentPhase=$currentPhase"
         }
 
-        if (getEpochData().phase != EpochPhase.Inference ||
-            startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
+        if (epochData.phase != EpochPhase.Inference ||
+            startOfNextPoc - currentBlockHeight < windowSizeInBlocks) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
-            waitForStage(EpochStage.SET_NEW_VALIDATORS)
+            return waitForStage(EpochStage.SET_NEW_VALIDATORS)
         } else {
             Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
+            return null
         }
     }
 
     fun waitForStage(stage: EpochStage, offset: Int = 1): WaitForStageResult {
         val stageBlock = getNextStage(stage)
         val stageBlockWithOffset = stageBlock + offset
+        val waitStart = Instant.now()
         val currentBlock = this.node.waitForMinimumBlock(
             stageBlockWithOffset,
             "stage $stage" + if (offset > 0) "+$offset)" else ""
         )
+        val waitEnd = Instant.now()
 
         return WaitForStageResult(
             stageBlock = stageBlock,
             stageBlockWithOffset = stageBlockWithOffset,
-            currentBlock = currentBlock
+            currentBlock = currentBlock,
+            waitDuration = Duration.between(waitStart, waitEnd),
         )
     }
 
@@ -344,6 +378,27 @@ data class LocalInferencePair(
 
     fun submitTransaction(transaction: Transaction, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitTransaction", true) {
         submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
+    }
+
+    fun waitForMlNodesToLoad(maxWaitAttempts: Int = 10, sleepTimeMillis: Long = 5_000L) {
+        var i = 0
+        while (true) {
+            val nodes = api.getNodes()
+            if (nodes.isNotEmpty() && nodes.all { n ->
+                n.state.currentStatus != "UNKNOWN" && n.state.intendedStatus != "UNKNOWN"
+            }) {
+                Logger.info("All nodes are loaded and ready. numNodes = ${nodes.size}. nodes = $nodes")
+                break
+            }
+
+            i++
+            if (i >= maxWaitAttempts) {
+                error("Waited for ${sleepTimeMillis * 10} ms for ml node to be ready, but it never was." +
+                        " Check if the mock server is running. pairName = ${name}. nodes = $nodes")
+            }
+
+            Thread.sleep(sleepTimeMillis)
+        }
     }
 
 
@@ -520,6 +575,16 @@ data class LocalInferencePair(
         }
     }
 
+    fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? = wrapLog("waitForInference", true) {
+        var inference: InferencePayload? = null
+        var tries = 0
+        while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
+            this.node.waitForNextBlock()
+            inference = this.api.getInferenceOrNull(inferenceId)
+            tries++
+        }
+        inference
+    }
 }
 
 data class ApplicationConfig(
@@ -535,7 +600,9 @@ data class ApplicationConfig(
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
     // execName accommodates upgraded chains.
-    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName"
+    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
+    val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
+    val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

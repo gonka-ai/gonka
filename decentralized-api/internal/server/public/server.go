@@ -3,7 +3,9 @@ package public
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/training"
 	"net/http"
@@ -18,6 +20,7 @@ type Server struct {
 	recorder         cosmosclient.CosmosMessageClient
 	trainingExecutor *training.Executor
 	blockQueue       *BridgeQueue
+	bandwidthLimiter *internal.BandwidthLimiter
 }
 
 // TODO: think about rate limits
@@ -26,7 +29,8 @@ func NewServer(
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
 	trainingExecutor *training.Executor,
-	blockQueue *BridgeQueue) *Server {
+	blockQueue *BridgeQueue,
+	phaseTracker *chainphase.ChainPhaseTracker) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
@@ -41,6 +45,8 @@ func NewServer(
 		trainingExecutor: trainingExecutor,
 		blockQueue:       blockQueue,
 	}
+
+	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/v1/")
@@ -64,6 +70,8 @@ func NewServer(
 
 	g.GET("pricing", s.getPricing)
 	g.GET("models", s.getModels)
+	g.GET("governance/pricing", s.getGovernancePricing)
+	g.GET("governance/models", s.getGovernanceModels)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
@@ -76,6 +84,12 @@ func NewServer(
 
 	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
+
+	// BLS Query Endpoints
+	blsGroup := g.Group("bls/")
+	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
+	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
+
 
 	g.GET("validators/:height", s.getValidatorsByBlock)
 	g.GET("block/:height", s.getBlock)

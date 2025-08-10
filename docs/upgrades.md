@@ -71,7 +71,7 @@ Since our system includes two binaries (chain app and decentralized API), we nee
 ## Upgrading Data in the Chain
 The recommended approach for upgrading data is illustrated in PR 84:
 
-https://github.com/product-science/inference-ignite/pull/84
+https://github.com/gonka-ai/gonka/pull/84
 
 #### Summary:
 1. Copy the unmodified .proto files for the data you are changing. Rename them with a V1 in front (or V2 if there is already a V1)

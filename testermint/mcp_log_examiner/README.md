@@ -54,7 +54,7 @@ The config file for MCP servers should look like:
       "command": "java",
       "args": [
         "-jar",
-        "{path_to_repo}/inference-ignite/testermint/mcp_log_examiner/build/libs/log-examiner-1.0-SNAPSHOT.jar"
+        "{path_to_repo}/gonka/testermint/mcp_log_examiner/build/libs/log-examiner-1.0-SNAPSHOT.jar"
       ],
       "autoApprove": [
         "load-log",
@@ -82,7 +82,7 @@ The format for the config should be similar to Cline. Note, though, that Claude 
       "command": "{path-to-java}/java/current/bin/java",
       "args": [
         "-jar",
-        "{path_to_repo}/inference-ignite/testermint/mcp_log_examiner/build/libs/log-examiner-1.0-SNAPSHOT.jar"
+        "{path_to_repo}/gonka/testermint/mcp_log_examiner/build/libs/log-examiner-1.0-SNAPSHOT.jar"
       ]
     }
   },

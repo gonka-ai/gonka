@@ -25,6 +25,8 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
@@ -32,21 +34,29 @@ import (
 
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
-	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	bankKeeper := NewMockBookkeepingBankKeeper(ctrl)
+	bankViewKeeper := NewMockBankKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSetMock := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock)
-	escrowKeeper.ExpectAny(context)
+	collateralMock := NewMockCollateralKeeper(ctrl)
+	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
+	authzKeeper := NewMockAuthzKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, bankKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, collateralMock, streamvestingMock, bankViewKeeper, authzKeeper)
+	bankKeeper.ExpectAny(context)
 	return mock, context
 }
 
 type InferenceMocks struct {
-	BankKeeper    *MockBankEscrowKeeper
-	AccountKeeper *MockAccountKeeper
-	GroupKeeper   *MockGroupMessageKeeper
-	StakingKeeper *MockStakingKeeper
+	BankKeeper          *MockBookkeepingBankKeeper
+	AccountKeeper       *MockAccountKeeper
+	GroupKeeper         *MockGroupMessageKeeper
+	StakingKeeper       *MockStakingKeeper
+	CollateralKeeper    *MockCollateralKeeper
+	StreamVestingKeeper *MockStreamVestingKeeper
+	BankViewKeeper      *MockBankKeeper
+	AuthzKeeper         *MockAuthzKeeper
 }
 
 func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
@@ -59,9 +69,9 @@ func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Contex
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
-	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any(), gomock.Any())
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any(), gomock.Any())
+	mocks.BankViewKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
 		Base: types.BaseCoin,
 		DenomUnits: []*banktypes.DenomUnit{
 			{
@@ -105,47 +115,70 @@ func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {
 	return types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
+		ModelList:         GenesisModelsTestList(),
 	}
 }
 
 func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
 	ctrl := gomock.NewController(t)
-	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	bankKeeper := NewMockBookkeepingBankKeeper(ctrl)
+	bankViewKeeper := NewMockBankKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSet := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock)
+	collateralMock := NewMockCollateralKeeper(ctrl)
+	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
+	authzKeeper := NewMockAuthzKeeper(ctrl)
+	keep, context := InferenceKeeperWithMock(t, bankKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, collateralMock, streamvestingMock, bankViewKeeper, authzKeeper)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
 	keep.SetGenesisOnlyParams(context, &genesisParams)
 	mocks := InferenceMocks{
-		BankKeeper:    escrowKeeper,
-		AccountKeeper: accountKeeperMock,
-		GroupKeeper:   groupMock,
-		StakingKeeper: stakingMock,
+		BankKeeper:          bankKeeper,
+		AccountKeeper:       accountKeeperMock,
+		GroupKeeper:         groupMock,
+		StakingKeeper:       stakingMock,
+		CollateralKeeper:    collateralMock,
+		StreamVestingKeeper: streamvestingMock,
+		BankViewKeeper:      bankViewKeeper,
+		AuthzKeeper:         authzKeeper,
 	}
 	return keep, context, mocks
 }
 
 func InferenceKeeperWithMock(
 	t testing.TB,
-	bankMock *MockBankEscrowKeeper,
+	bankMock *MockBookkeepingBankKeeper,
 	accountKeeper types.AccountKeeper,
 	validatorSet types.ValidatorSet,
 	groupMock types.GroupMessageKeeper,
 	stakingKeeper types.StakingKeeper,
+	collateralKeeper types.CollateralKeeper,
+	streamvestingKeeper types.StreamVestingKeeper,
+	bankViewMock *MockBankKeeper,
+	authzKeeper types.AuthzKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
+	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(storeKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+
+	// Create BLS keeper for testing
+	blsKeeper := blskeeper.NewKeeper(
+		cdc,
+		runtime.NewKVStoreService(blsStoreKey),
+		PrintlnLogger{},
+		authority.String(),
+	)
 
 	k := keeper.NewKeeper(
 		cdc,
@@ -153,11 +186,15 @@ func InferenceKeeperWithMock(
 		PrintlnLogger{},
 		authority.String(),
 		bankMock,
-		nil,
+		bankViewMock,
 		groupMock,
 		validatorSet,
 		stakingKeeper,
 		accountKeeper,
+		blsKeeper,
+		collateralKeeper,
+		streamvestingKeeper,
+		authzKeeper,
 		nil,
 	)
 
@@ -165,6 +202,11 @@ func InferenceKeeperWithMock(
 
 	// Initialize params
 	if err := k.SetParams(ctx, types.DefaultParams()); err != nil {
+		panic(err)
+	}
+
+	// Initialize BLS params
+	if err := blsKeeper.SetParams(ctx, blstypes.DefaultParams()); err != nil {
 		panic(err)
 	}
 

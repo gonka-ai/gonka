@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"errors"
 	"math"
 	"strconv"
 
@@ -15,18 +14,17 @@ const (
 	TokenCost = 1_000
 )
 
-var ModelToPassValue = map[string]float64{
-	"Qwen/Qwen2.5-7B-Instruct":    0.85,
-	"Qwen/QwQ-32B":                0.85,
-	"unsloth/llama-3-8b-Instruct": 0.85,
-}
-
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
+	k.LogInfo("Received MsgValidation", types.Validation,
+		"msg.Creator", msg.Creator,
+		"inferenceId", msg.InferenceId)
+
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	params := k.Keeper.GetParams(ctx)
 	inference, found := k.GetInference(ctx, msg.InferenceId)
 	if !found {
+		k.LogError("Inference not found", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, types.ErrInferenceNotFound
 	}
 
@@ -45,18 +43,24 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
 	if !found {
+		k.LogError("Executor participant not found", types.Validation, "participantId", inference.ExecutedBy)
 		return nil, types.ErrParticipantNotFound
 	}
 
 	if executor.Address == msg.Creator && !msg.Revalidation {
+		k.LogError("Participant cannot validate own inference", types.Validation, "participant", msg.Creator, "inferenceId", msg.InferenceId)
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passValue, ok := ModelToPassValue[inference.Model]
-	if !ok {
-		k.LogError("Model not supported", types.Validation, "model", inference.Model)
-		return nil, errors.New("Model " + inference.Model + " not supported")
+	model, err := k.GetEpochModel(ctx, inference.Model)
+	if err != nil {
+		k.LogError("Failed to get epoch model", types.Validation,
+			"model", inference.Model,
+			"inferenceId", msg.InferenceId,
+			"error", err)
+		return nil, err
 	}
+	passValue := model.ValidationThreshold.ToFloat()
 
 	passed := msg.Value > passValue
 	k.LogInfo(
@@ -70,6 +74,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
+		k.LogError("Failed to get current epoch group", types.Validation, "error", err)
 		return nil, err
 	}
 
@@ -86,7 +91,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 				executor.CoinBalance += adjustment.WorkAdjustment
 				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
 				k.LogInfo("Adjusting executor CoinBalance for validation", types.Balances, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", executor.CoinBalance)
-				k.LogBalance(executor.Address, adjustment.WorkAdjustment, executor.CoinBalance, "share_validation_executor:"+inference.InferenceId)
+				if adjustment.WorkAdjustment < 0 {
+					k.BankKeeper.LogSubAccountTransaction(ctx, msg.Creator, adjustment.ParticipantId, types.OwedSubAccount, types.GetCoin(-adjustment.WorkAdjustment), "share_validation_executor:"+inference.InferenceId)
+				}
 			} else {
 				worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
 				if !found {
@@ -96,7 +103,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 				worker.CoinBalance += adjustment.WorkAdjustment
 				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
 				k.LogInfo("Adjusting worker CoinBalance for validation", types.Balances, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
-				k.LogBalance(worker.Address, adjustment.WorkAdjustment, worker.CoinBalance, "share_validation_worker:"+inference.InferenceId)
+				if adjustment.WorkAdjustment < 0 {
+					k.BankKeeper.LogSubAccountTransaction(ctx, msg.Creator, adjustment.ParticipantId, types.OwedSubAccount, types.GetCoin(-adjustment.WorkAdjustment), "share_validation_executor:"+inference.InferenceId)
+				}
 				k.SetParticipant(ctx, worker)
 			}
 		}
@@ -114,7 +123,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 	// Where will we get this number? How much does it vary by model?
 
+	// Store the original status to check for a state transition to INVALID.
+	originalStatus := executor.Status
 	executor.Status = calculateStatus(params.ValidationParams, executor)
+
+	// Check for a status transition and slash if necessary.
+	k.CheckAndSlashForInvalidStatus(goCtx, originalStatus, &executor)
+
 	k.SetParticipant(ctx, executor)
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
