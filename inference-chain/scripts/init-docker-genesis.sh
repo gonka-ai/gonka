@@ -122,7 +122,7 @@ NATIVE="000000000$COIN_DENOM"
 MILLION_NATIVE="000000$NATIVE"
 
 echo "Adding the keys to the genesis account"
-$APP_NAME genesis add-genesis-account "$KEY_NAME" "122$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis add-genesis-account "$KEY_NAME" "120000002$NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 
 $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
@@ -181,25 +181,13 @@ cosmovisor run start &
 COSMOVISOR_PID=$!
 sleep 20 # wait for the first block
 
-# Deploy Liquidity Pool Contract at Genesis
-deploy_liquidity_pool() {
-  echo "Deploying Liquidity Pool Contract at Genesis..."
-  
-  if [ ! -d "/root/liquidity-pool" ]; then
-    echo "Liquidity pool directory not found at /root/liquidity-pool"
-    return
-  fi
-  
-    cd /root/liquidity-pool
-    
-  # Build contract if WASM doesn't exist
-  if [ ! -f "artifacts/liquidity_pool.wasm" ]; then
-    echo "Building liquidity pool contract..."
-    if [ -f "./build.sh" ]; then
-      ./build.sh || echo "Failed to build contract"
-    fi
-  fi
-  
+# Deploy bridge-related contracts at genesis (liquidity pool, wrapped-token)
+deploy_bridge_contracts() {
+  echo "Deploying bridge-related contracts at Genesis..."
+
+  CONTRACTS_DIR="/root/contracts"
+  VOTE_SCRIPT="$CONTRACTS_DIR/auto_vote.sh"
+
   # Wait for chain to be ready before deploying
   echo "Waiting for chain to be ready..."
   for i in {1..30}; do
@@ -211,6 +199,7 @@ deploy_liquidity_pool() {
     sleep 2
   done
   
+  # Fund community pool
   echo "Funding community pool with 120M tokens for liquidity pool..."
   fund_output=$($APP_NAME tx distribution fund-community-pool "120000000000000000$COIN_DENOM" \
     --from "$KEY_NAME" \
@@ -227,44 +216,42 @@ deploy_liquidity_pool() {
     echo "See transaction output above for details."
     exit 1
   fi
-    
-  sleep 5  # Wait for transaction to be processed
-    
-  # Deploy liquidity pool contract
-  echo "Step 1: Deploying liquidity pool contract..."
-  if ! sh ./deploy.sh; then
-    echo "Deploy failed, stopping workflow"
-    return
-  fi
-  echo "Step 1: Deploy successful"
-    
-  echo "Step 2: Voting on contract proposal..."
-  if ! sh ./vote.sh; then
-    echo "Vote failed, stopping workflow"
-    return
-  fi
-  echo "Step 2: Vote successful"
   
-  echo "Step 3: Funding the contract..."
-  if ! sh ./funding.sh; then
-    echo "Funding failed, stopping workflow"
-    return
+  sleep 5
+
+  # Deploy Liquidity Pool
+  echo "Step LP-1: Submitting LP deployment proposal via script..."
+  if ! sh "$CONTRACTS_DIR/deploy_liquidity_pool.sh"; then
+    echo "LP deploy script failed, skipping LP deployment"
+  else
+    sh "$VOTE_SCRIPT"
   fi
-  echo "Step 3: Funding successful"
-  
-  echo "Step 4: Voting on funding contract..."
-  if ! sh ./vote.sh; then
-    echo "Funding vote failed"
-    return
+
+  sleep 5
+
+  echo "Step LP-2: Funding LP contract..."
+  if ! sh "$CONTRACTS_DIR/fund_liquidity_pool.sh"; then
+    echo "LP deploy script failed, skipping LP deployment"
+  else
+    sh "$VOTE_SCRIPT"
   fi
-  echo "Step 4: Funding vote successful"
+
+  sleep 5
+
+  # Deploy Wrapped Token code id registration
+  echo "Step WT-1: Submitting Wrapped Token registration proposal via script..."
+  if ! sh "$CONTRACTS_DIR/deploy_wrapped_token.sh"; then
+    echo "Wrapped Token deploy script failed, skipping WT deployment"
+  else
+    sh "$VOTE_SCRIPT"
+  fi
 }
 
-# Deploy liquidity pool if enabled
-if [ "${DEPLOY_LIQUIDITY_POOL:-}" = "true" ]; then
-  deploy_liquidity_pool
+# Deploy bridge contracts if enabled
+if [ "${DEPLOY_BRIDGE_CONTRACTS:-}" = "true" ]; then
+  deploy_bridge_contracts
 else
-  echo "Skipping liquidity pool deployment (DEPLOY_LIQUIDITY_POOL not set to true)"
+  echo "Skipping bridge contracts deployment"
 fi
 
 # import private key for tgbot and sign tx to make tgbot public key registered n the network

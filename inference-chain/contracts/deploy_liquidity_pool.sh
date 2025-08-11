@@ -9,10 +9,14 @@ KEY_NAME="${KEY_NAME:-genesis}"
 KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
 COIN_DENOM="${COIN_DENOM:-nicoin}"
 
+# Verbose logging (set VERBOSE=1 to enable full JSON outputs)
+VERBOSE="${VERBOSE:-0}"
+
 echo "Using chain-id: $CHAIN_ID"
 
 # Contract details
-CONTRACT_WASM="artifacts/liquidity_pool.wasm"
+LP_DIR="$(cd "$(dirname "$0")/liquidity-pool" && pwd)"
+CONTRACT_WASM="$LP_DIR/artifacts/liquidity_pool.wasm"
 CONTRACT_LABEL="liquidity-pool-testnet"
 
 # Check if WASM exists
@@ -39,8 +43,10 @@ STORE_TX=$($APP_NAME tx wasm store "$CONTRACT_WASM" \
     --output json \
     --yes)
 
-echo "Store transaction result:"
-echo "$STORE_TX"
+if [ "$VERBOSE" = "1" ]; then
+    echo "Store transaction result:"
+    echo "$STORE_TX"
+fi
 
 
 TX_HASH=$(echo "$STORE_TX" | jq -r '.txhash')
@@ -125,8 +131,10 @@ if [ $EXIT_CODE -ne 0 ]; then
     exit 1
 fi
 
-echo "Proposal transaction result:"
-echo "$PROPOSAL_TX"
+if [ "$VERBOSE" = "1" ]; then
+    echo "Proposal transaction result:"
+    echo "$PROPOSAL_TX"
+fi
 
 # Check for errors in proposal submission
 TX_CODE=$(echo "$PROPOSAL_TX" | jq -r '.code // empty')

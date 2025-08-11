@@ -9,6 +9,9 @@ KEY_NAME="${KEY_NAME:-genesis}"
 KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
 COIN_DENOM="${COIN_DENOM:-nicoin}"
 
+# Verbose logging (set VERBOSE=1 to enable full JSON outputs and tracing)
+VERBOSE="${VERBOSE:-0}"
+
 # Funding amount: 120M AIC = 120,000,000,000,000,000 nicoin base units
 FUNDING_AMOUNT="120000000000000000"
 
@@ -134,7 +137,9 @@ jq -n --arg recipient "$LIQUIDITY_POOL_ADDR" \
 
 # Submit governance proposal
 echo "Submitting funding governance proposal..."
-set -x
+if [ "$VERBOSE" = "1" ]; then
+    set -x
+fi
 
 FUNDING_PROPOSAL_TX=$($APP_NAME tx gov submit-proposal \
     "$FUNDING_PROPOSAL_FILE" \
@@ -157,11 +162,13 @@ if [ $EXIT_CODE -ne 0 ]; then
     exit 1
 fi
 
-echo "Funding proposal transaction result:"
-echo "$FUNDING_PROPOSAL_TX"
-jq --version
-which jq
-cat "$FUNDING_PROPOSAL_FILE"
+if [ "$VERBOSE" = "1" ]; then
+    echo "Funding proposal transaction result:"
+    echo "$FUNDING_PROPOSAL_TX"
+    jq --version
+    which jq
+    cat "$FUNDING_PROPOSAL_FILE"
+fi
 
 # Check for errors in proposal submission
 TX_CODE=$(echo "$FUNDING_PROPOSAL_TX" | jq -r '.code // empty')

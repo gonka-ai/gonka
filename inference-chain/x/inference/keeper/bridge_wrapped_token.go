@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -41,7 +42,7 @@ type Marketing struct {
 
 const (
 	TokenContractKeyPrefix          = "TokenContract/"
-	TokenCodeIDKey                  = "TokenCodeID"
+	WrappedTokenCodeIDKey           = "WrappedTokenCodeID"
 	TokenMetadataKeyPrefix          = "TokenMetadata/"
 	WrappedContractReverseKeyPrefix = "WrappedContractReverse/" // Index by wrapped contract address
 )
@@ -457,46 +458,23 @@ func (k Keeper) GetWrappedTokenContractByWrappedAddress(ctx sdk.Context, wrapped
 	return k.GetWrappedTokenContract(ctx, reverseIndex.ChainId, reverseIndex.ContractAddress)
 }
 
-// GetTokenCodeID retrieves the stored CW20 code ID, uploading code if needed
-func (k Keeper) GetTokenCodeID(ctx sdk.Context) (uint64, bool) {
-	contractsParams, found := k.GetContractsParams(ctx)
-	if !found {
+func (k Keeper) GetWrappedTokenCodeID(ctx sdk.Context) (uint64, bool) {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	bz := store.Get([]byte(WrappedTokenCodeIDKey))
+	if bz == nil || len(bz) != 8 {
 		return 0, false
 	}
-
-	// Check if we have a code ID already
-	if contractsParams.Cw20CodeId > 0 {
-		return contractsParams.Cw20CodeId, true
-	}
-
-	// Check if we need to upload code
-	if len(contractsParams.Cw20Code) > 0 {
-		wasmKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
-
-		// Upload the code
-		codeID, _, err := wasmKeeper.Create(
-			ctx,
-			k.AccountKeeper.GetModuleAddress(types.ModuleName),
-			contractsParams.Cw20Code,
-			nil, // No instantiate permission
-		)
-		if err != nil {
-			// Log error but don't panic
-			return 0, false
-		}
-
-		// Update the code ID and clear code bytes to save state size
-		contractsParams.Cw20CodeId = codeID
-		contractsParams.Cw20Code = nil
-
-		// Store the updated ContractsParams
-		k.SetContractsParams(ctx, contractsParams)
-		return codeID, true
-	}
-
-	return 0, false
+	return binary.BigEndian.Uint64(bz), true
 }
 
+func (k Keeper) SetWrappedTokenCodeID(ctx sdk.Context, codeID uint64) {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, codeID)
+	store.Set([]byte(WrappedTokenCodeIDKey), buf)
+}
+
+// GetContractsParams returns the CosmWasmParams stored in module state, if any.
 func (k Keeper) GetContractsParams(ctx sdk.Context) (types.CosmWasmParams, bool) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	key := []byte("contracts_params")
@@ -504,24 +482,79 @@ func (k Keeper) GetContractsParams(ctx sdk.Context) (types.CosmWasmParams, bool)
 	if bz == nil {
 		return types.CosmWasmParams{}, false
 	}
-
-	var contractsParams types.CosmWasmParams
-	err := k.cdc.Unmarshal(bz, &contractsParams)
-	if err != nil {
-		// Log the error and return false
-		k.LogError("Bridge exchange: Failed to unmarshal contracts params",
-			types.Messages,
-			"error", err)
+	var params types.CosmWasmParams
+	if err := k.cdc.Unmarshal(bz, &params); err != nil {
+		k.LogError("Bridge exchange: Failed to unmarshal contracts params", types.Messages, "error", err)
 		return types.CosmWasmParams{}, false
 	}
-	return contractsParams, true
+	return params, true
 }
 
-func (k Keeper) SetContractsParams(ctx context.Context, contractsParams types.CosmWasmParams) {
+// SetContractsParams sets CosmWasmParams in module state. Kept for compatibility with app upgrades and genesis.
+func (k Keeper) SetContractsParams(ctx context.Context, params types.CosmWasmParams) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	key := []byte("contracts_params")
-	bz := k.cdc.MustMarshal(&contractsParams)
+	bz := k.cdc.MustMarshal(&params)
 	store.Set(key, bz)
+}
+
+// MigrateAllWrappedTokenContracts migrates all known wrapped token contract instances to the given code ID.
+// The module account is the admin of these instances, so it can invoke Migrate.
+// migrateMsg can be nil or an empty JSON object when no special migration data is needed.
+func (k Keeper) MigrateAllWrappedTokenContracts(ctx sdk.Context, newCodeID uint64, migrateMsg json.RawMessage) error {
+	// Iterate over all wrapped token mappings
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	pstore := prefix.NewStore(storeAdapter, []byte(TokenContractKeyPrefix))
+	iterator := pstore.Iterator(nil, nil)
+	defer iterator.Close()
+
+	permissionedKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
+	adminAddr := k.AccountKeeper.GetModuleAddress(types.ModuleName)
+	if len(migrateMsg) == 0 {
+		migrateMsg = json.RawMessage([]byte("{}"))
+	}
+
+	var firstErr error
+	for ; iterator.Valid(); iterator.Next() {
+		var contract types.BridgeWrappedTokenContract
+		if err := k.cdc.Unmarshal(iterator.Value(), &contract); err != nil {
+			// Corrupted entry, record error and continue
+			if firstErr == nil {
+				firstErr = fmt.Errorf("unmarshal wrapped token mapping: %w", err)
+			}
+			continue
+		}
+		wrappedAddr := contract.WrappedContractAddress
+		// Execute migrate on the contract
+		_, err := permissionedKeeper.Migrate(
+			ctx,
+			sdk.MustAccAddressFromBech32(wrappedAddr),
+			adminAddr,
+			newCodeID,
+			migrateMsg,
+		)
+		if err != nil {
+			// Record first error but continue migrating others
+			k.LogError("Bridge exchange: Failed to migrate wrapped token contract",
+				types.Messages,
+				"wrappedContract", wrappedAddr,
+				"newCodeID", newCodeID,
+				"error", err,
+			)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("migrate %s: %w", wrappedAddr, err)
+			}
+			continue
+		}
+
+		k.LogInfo("Bridge exchange: Migrated wrapped token contract",
+			types.Messages,
+			"wrappedContract", wrappedAddr,
+			"newCodeID", newCodeID,
+		)
+	}
+
+	return firstErr
 }
 
 func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contractAddress string) (string, error) {
@@ -532,8 +565,8 @@ func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contra
 		return contract.WrappedContractAddress, nil
 	}
 
-	// Get the stored CW20 code ID
-	codeID, found := k.GetTokenCodeID(ctx)
+	// Get the stored wrapped token code ID
+	codeID, found := k.GetWrappedTokenCodeID(ctx)
 	if !found {
 		return "", fmt.Errorf("CW20 code ID not found")
 	}

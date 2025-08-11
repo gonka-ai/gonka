@@ -52,6 +52,8 @@ service Msg {
   rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata           ) returns (MsgRegisterTokenMetadataResponse           );
   rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading    ) returns (MsgApproveBridgeTokenForTradingResponse    );
   rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal         ) returns (MsgRequestBridgeWithdrawalResponse         );
+  rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract    ) returns (MsgRegisterWrappedTokenContractResponse    );
+  rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens         ) returns (MsgMigrateAllWrappedTokensResponse         );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -420,4 +422,29 @@ message MsgRequestBridgeWithdrawalResponse {
   string request_id    = 1; // Generated request ID (transaction hash)
   uint64 epoch_id      = 2; // Current epoch ID used for signature
   string bls_request_id = 3; // BLS signing request ID
+}
+
+// SetCw20CodeId updates the code id used for new wrapped-token instantiations.
+message MsgRegisterWrappedTokenContract {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 code_id = 2;
+}
+
+message MsgRegisterWrappedTokenContractResponse {}
+
+// MigrateAllWrappedTokens migrates all known wrapped-token instances to new_code_id.
+// migrate_msg_json can be "{}" for no-op migrations.
+message MsgMigrateAllWrappedTokens {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 new_code_id = 2;
+  string migrate_msg_json = 3;
+  // Optional batch limit per call; 0 means migrate all.
+  uint32 limit = 4;
+}
+
+message MsgMigrateAllWrappedTokensResponse {
+  // number of contracts attempted; success/failure details are in logs/events
+  uint32 attempted = 1;
 }

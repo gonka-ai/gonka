@@ -93,6 +93,7 @@ COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/init-docker.sh /root/init-docker.sh
 COPY inference-chain/scripts/reset-state.sh /root/reset-state.sh
+COPY inference-chain/contracts /root/contracts
 COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY inference-chain/app_overrides.toml /root/app_overrides.toml
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
@@ -101,7 +102,8 @@ COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json
 COPY --from=builder /lib/libwasmvm_muslc.*.a /lib/
 COPY --from=builder /root/wrapped_token.wasm /root/wrapped_token.wasm
 
-RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh
+RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh \
+    && find /root/contracts -type f -name "*.sh" -exec chmod +x {} +
 
 EXPOSE 26656 26657 1317 9090
 

@@ -6,7 +6,7 @@ use cw20_base::contract as cw20_base_contract;
 use cw20_base::msg as cw20_base_msg;
 use cw_utils::Expiration as CwExpiration;
 use cw20::{EmbeddedLogo as CwEmbeddedLogo, Logo as CwLogo};
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 use cw_storage_plus::Item;
 use prost::Message as ProstMessage;
 
@@ -163,6 +163,30 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Minter {} => cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::Minter {}),
         QueryMsg::TestApprovedTokens {} => to_json_binary(&query_test_approved_tokens(deps)?),
     }
+}
+
+#[entry_point]
+pub fn migrate(
+    deps: DepsMut,
+    _env: Env,
+    _msg: Binary,
+) -> Result<Response, ContractError> {
+    let old = get_contract_version(deps.storage)
+        .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
+    if old.contract != CONTRACT_NAME {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "wrong contract: expected {} got {}",
+            CONTRACT_NAME, old.contract
+        ))));
+    }
+
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
+        .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
+
+    Ok(Response::new()
+        .add_attribute("action", "migrate")
+        .add_attribute("from_version", old.version)
+        .add_attribute("to_version", CONTRACT_VERSION))
 }
 
 // Generic helpers for gRPC queries using raw_query serialization pattern
