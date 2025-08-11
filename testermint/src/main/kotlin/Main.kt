@@ -321,11 +321,9 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
     val currentParticipants = highestFunded.api.getParticipants()
     for (pair in funded) {
         if (currentParticipants.none { it.id == pair.node.getColdAddress() }) {
-            pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
+            pair.addSelfAsParticipant(listOf(defaultModel))
         }
     }
-//    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
-//    fundUnfunded(unfunded, highestFunded)
 
     highestFunded.node.waitForNextBlock()
     pairs.forEach { pair ->
@@ -368,40 +366,16 @@ private fun resetMlNodesToDefault(pair: LocalInferencePair) {
     pair.api.setNodesTo(defaultNode)
 }
 
-private fun addUnfundedDirectly(
-    unfunded: List<LocalInferencePair>,
-    currentParticipants: List<Participant>,
-    highestFunded: LocalInferencePair,
-) {
-    for (pair in unfunded) {
-        if (currentParticipants.none { it.id == pair.node.getColdAddress() }) {
-            val selfKey = pair.node.getKeys()[0]
-            val status = pair.node.getStatus()
-            val validatorInfo = status.validatorInfo
-            val valPubKey: PubKey = validatorInfo.pubKey
-            Logger.debug("PubKey extracted pubkey={}", selfKey.pubkey)
-            highestFunded.api.addUnfundedInferenceParticipant(
-                UnfundedInferenceParticipant(
-                    url = "http://${pair.name}-api:8080",
-                    models = listOf("Qwen/Qwen2.5-7B-Instruct"),
-                    validatorKey = valPubKey.value,
-                    pubKey = selfKey.pubkey.key,
-                    address = selfKey.address,
-                )
-            )
-        }
-    }
-}
 
-private fun TxResponse.assertSuccess() {
+private fun TxResponse.assertSuccess(): TxResponse {
     if (code != 0) {
         throw IllegalStateException("Transaction failed: $rawLog")
     }
+    return this
 }
 
-val defaultFunding = 20_000_000L
 val cosmosJson: Gson = GsonBuilder()
-    .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+    .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationSerializer())
@@ -415,7 +389,7 @@ val cosmosJson: Gson = GsonBuilder()
     .create()
 
 val openAiJson: Gson = GsonBuilder()
-    .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+    .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .create()
@@ -424,7 +398,7 @@ val gsonCamelCase = createGsonWithTxMessageSerializers("com.productscience.data"
 
 fun createGsonWithTxMessageSerializers(packageName: String): Gson {
     return GsonBuilder()
-        .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
+        .setFieldNamingPolicy(FieldNamingPolicy.IDENTITY)
         .registerTypeAdapter(Instant::class.java, InstantDeserializer())
         .registerTypeAdapter(Duration::class.java, DurationDeserializer())
         .registerMessages(packageName, FieldNamingPolicy.IDENTITY)

@@ -27,10 +27,12 @@ class ParticipantTests : TestermintTest() {
         val addresses = cluster.allPairs.map {
             it.api.getPublicUrl() + ";" + it.node.getColdAddress()
         }
+
         val clipboardContent = buildString {
-            appendLine("GONKA_ENDPOINTS=" + addresses.joinToString(separator = ","))
+//            appendLine("GONKA_ENDPOINTS=" + addresses.joinToString(separator = ","))
             appendLine("GONKA_ADDRESS=" + genesis.node.getColdAddress())
             appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getColdPrivateKey())
+            appendLine("GONKA_SOURCE_URL=" + genesis.api.getPublicUrl())
         }
 
         Logger.warn(clipboardContent)
