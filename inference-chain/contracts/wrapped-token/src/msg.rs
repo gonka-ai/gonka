@@ -171,8 +171,8 @@ pub enum QueryMsg {
     #[returns(MinterResponse)]
     Minter {},
 
-    /// Test gRPC call to fetch approved tokens for trade; returns raw protobuf bytes
-    #[returns(RawGrpcResponse)]
+    /// Test gRPC call to fetch approved tokens for trade; returns JSON-normalized data
+    #[returns(ApprovedTokensForTradeJson)]
     TestApprovedTokens {},
 }
 
@@ -240,9 +240,16 @@ pub struct DownloadLogoResponse {
     pub data: Binary,
 }
 
+// JSON-normalized response for ApprovedTokensForTrade
 #[cw_serde]
-pub struct RawGrpcResponse {
-    pub data: Binary,
+pub struct ApprovedTokensForTradeJson {
+    pub approved_tokens: Vec<ApprovedTokenJson>,
+}
+
+#[cw_serde]
+pub struct ApprovedTokenJson {
+    pub chain_id: String,
+    pub contract_address: String,
 }
 
 #[cw_serde]

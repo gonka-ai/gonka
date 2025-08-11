@@ -30,6 +30,8 @@ thiserror = { version = "1.0.44" }
 cw20 = "2.0.0"
 cw20-base = { version = "2.0.0", features = ["library"] }
 cw-utils = "2.0.0"
+prost = "0.12"
+prost-derive = "0.12"
 
 [dev-dependencies]
 cw-multi-test = "2.2.2"

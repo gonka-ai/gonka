@@ -8,10 +8,12 @@ use cw_utils::Expiration as CwExpiration;
 use cw20::{EmbeddedLogo as CwEmbeddedLogo, Logo as CwLogo};
 use cw2::set_contract_version;
 use cw_storage_plus::Item;
+use prost::Message as ProstMessage;
 
 use crate::error::ContractError;
 use crate::msg::{
     BridgeInfoResponse, ExecuteMsg, InstantiateMsg, QueryMsg,
+    ApprovedTokensForTradeJson, ApprovedTokenJson,
 };
 use crate::state::{ BridgeInfo, BRIDGE_INFO };
 
@@ -194,11 +196,49 @@ fn query_bridge_info(deps: Deps) -> StdResult<BridgeInfoResponse> {
     })
 }
 
-fn query_test_approved_tokens(deps: Deps) -> StdResult<crate::msg::RawGrpcResponse> {
-    let data = query_grpc(
+fn query_test_approved_tokens(deps: Deps) -> StdResult<ApprovedTokensForTradeJson> {
+    let decoded: QueryApprovedTokensForTradeResponseProto = query_proto(
         deps,
         "/inference.inference.Query/ApprovedTokensForTrade",
-        Binary::from(Vec::<u8>::new()),
+        &EmptyRequest {},
     )?;
-    Ok(crate::msg::RawGrpcResponse { data })
+    let approved_tokens = decoded
+        .approved_tokens
+        .into_iter()
+        .map(|t| ApprovedTokenJson { chain_id: t.chain_id, contract_address: t.contract_address })
+        .collect();
+    Ok(ApprovedTokensForTradeJson { approved_tokens })
+}
+
+// Proto message types for ApprovedTokensForTrade response
+#[derive(Clone, PartialEq, ProstMessage)]
+pub struct BridgeTradeApprovedToken {
+    #[prost(string, tag = "1")]
+    pub chain_id: String,
+    #[prost(string, tag = "2")]
+    pub contract_address: String,
+}
+
+#[derive(Clone, PartialEq, ProstMessage)]
+pub struct QueryApprovedTokensForTradeResponseProto {
+    #[prost(message, repeated, tag = "1")]
+    pub approved_tokens: ::prost::alloc::vec::Vec<BridgeTradeApprovedToken>,
+}
+
+#[derive(Clone, PartialEq, ProstMessage)]
+pub struct EmptyRequest {}
+
+// Generic helper: encode request proto and decode response proto
+fn query_proto<TRequest, TResponse>(deps: Deps, path: &str, request: &TRequest) -> StdResult<TResponse>
+where
+    TRequest: ProstMessage,
+    TResponse: ProstMessage + Default,
+{
+    let mut buf = Vec::new();
+    request
+        .encode(&mut buf)
+        .map_err(|e| StdError::generic_err(format!("Encode request: {}", e)))?;
+    let bytes = query_grpc(deps, path, Binary::from(buf))?;
+    TResponse::decode(bytes.as_slice())
+        .map_err(|e| StdError::generic_err(format!("Decode response: {}", e)))
 }

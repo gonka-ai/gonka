@@ -84,14 +84,8 @@ pub enum QueryMsg {
     #[returns(BlockHeightResponse)]
     BlockHeight {},
     /// Test gRPC call to fetch approved tokens for trade; returns raw protobuf bytes
-    #[returns(RawGrpcResponse)]
+    #[returns(ApprovedTokensForTradeJson)]
     TestApprovedTokens {},
-    /// Test Stargate call to fetch approved tokens for trade; returns raw protobuf bytes
-    #[returns(RawGrpcResponse)]
-    TestApprovedTokensStargate {},
-    /// Test bridge validation via Stargate with a provided CW20 contract address
-    #[returns(TestBridgeValidationResponse)]
-    TestBridgeValidationStargate { cw20_contract: String },
 }
 
 #[cw_serde]
@@ -157,7 +151,14 @@ pub struct BlockHeightResponse {
     pub height: u64,
 }
 
+// JSON-normalized response for ApprovedTokensForTrade
 #[cw_serde]
-pub struct RawGrpcResponse {
-    pub data: Binary,
+pub struct ApprovedTokensForTradeJson {
+    pub approved_tokens: Vec<ApprovedTokenJson>,
+}
+
+#[cw_serde]
+pub struct ApprovedTokenJson {
+    pub chain_id: String,
+    pub contract_address: String,
 }

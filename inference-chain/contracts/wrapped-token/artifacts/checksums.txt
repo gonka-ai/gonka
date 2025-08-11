@@ -1,1 +1,1 @@
-f1cd255d3d7ccfdc4e33c3956b041c796b3b6847bbd7d2577e9cb074b5165339  wrapped_token.wasm
+cfcf31a50a9594d6d37d92eb09de3ae62d9100666254afeaa4d94390eb78aa04  wrapped_token.wasm

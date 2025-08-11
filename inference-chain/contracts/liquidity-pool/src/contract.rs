@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     entry_point, from_json, to_json_binary, to_json_vec, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,
-    StdError, StdResult, Uint128, QueryRequest, StakingQuery, GrpcQuery, ContractResult, SystemResult, Empty, WasmMsg,
+    StdError, StdResult, Uint128, QueryRequest, StakingQuery, GrpcQuery, ContractResult, SystemResult, WasmMsg,
 };
 use prost::Message; // For proto encoding/decoding
 use cw2::set_contract_version;
@@ -9,7 +9,8 @@ use crate::error::ContractError;
 use crate::msg::{
     ConfigResponse, Cw20ReceiveMsg, DailyStatsResponse, ExecuteMsg, InstantiateMsg,
     NativeBalanceResponse, PricingInfoResponse, PurchaseTokenMsg, QueryMsg, 
-    TestBridgeValidationResponse, TokenCalculationResponse, BlockHeightResponse, RawGrpcResponse,
+    TestBridgeValidationResponse, TokenCalculationResponse, BlockHeightResponse,
+    ApprovedTokensForTradeJson, ApprovedTokenJson,
 };
 use crate::state::{
     calculate_current_price, calculate_current_tier, calculate_tokens_for_usd, calculate_multi_tier_purchase,
@@ -45,6 +46,10 @@ pub struct QueryApprovedTokensForTradeResponseProto {
     pub approved_tokens: ::prost::alloc::vec::Vec<BridgeTradeApprovedToken>,
 }
 
+// Empty request for endpoints without fields
+#[derive(Clone, PartialEq, Message)]
+pub struct EmptyRequest {}
+
 const CONTRACT_NAME: &str = "inference-liquidity-pool";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -65,29 +70,17 @@ fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Resul
         contract_address
     ));
 
-    // Construct the proto request (prost) and send via generic gRPC helper
-    let proto_request = QueryValidateWrappedTokenForTradeRequest {
+    // Construct the proto request and send via generic helper
+    let request = QueryValidateWrappedTokenForTradeRequest {
         contract_address: contract_address.to_string(),
     };
-    let mut buf = Vec::new();
-    proto_request
-        .encode(&mut buf)
-        .map_err(|e| ContractError::Std(StdError::msg(format!(
-            "Failed to encode QueryValidateWrappedTokenForTradeRequest: {}",
-            e
-        ))))?;
-
     deps.api.debug("lp: issuing query_grpc for ValidateWrappedTokenForTrade");
-    let response_data = query_grpc(
+    let response: QueryValidateWrappedTokenForTradeResponse = query_proto(
         deps,
         "/inference.inference.Query/ValidateWrappedTokenForTrade",
-        Binary::from(buf),
+        &request,
     )
     .map_err(|e| ContractError::Std(e))?;
-
-    // Decode the response
-    let response: QueryValidateWrappedTokenForTradeResponse = QueryValidateWrappedTokenForTradeResponse::decode(response_data.as_slice())
-        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("Failed to decode QueryValidateWrappedTokenForTradeResponse: {}", e))))?;
     deps.api.debug(&format!(
         "lp: ValidateWrappedTokenForTrade response is_valid={}",
         response.is_valid
@@ -674,12 +667,6 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::TestApprovedTokens {} => {
             to_json_binary(&query_test_approved_tokens(deps)?)
         }
-        QueryMsg::TestApprovedTokensStargate {} => {
-            to_json_binary(&query_test_approved_tokens_stargate(deps)?)
-        }
-        QueryMsg::TestBridgeValidationStargate { cw20_contract } => {
-            to_json_binary(&query_test_bridge_validation_stargate(deps, cw20_contract)?)
-        }
     }
 }
 
@@ -709,52 +696,19 @@ fn query_block_height(env: Env) -> StdResult<BlockHeightResponse> {
     Ok(BlockHeightResponse { height: env.block.height })
 }
 
-fn query_test_approved_tokens(deps: Deps) -> StdResult<RawGrpcResponse> {
-    // Empty request protobuf: QueryApprovedTokensForTradeRequest {}
-    let proto_bytes = query_grpc(
+fn query_test_approved_tokens(deps: Deps) -> StdResult<ApprovedTokensForTradeJson> {
+    // Empty request protobuf
+    let decoded: QueryApprovedTokensForTradeResponseProto = query_proto(
         deps,
         "/inference.inference.Query/ApprovedTokensForTrade",
-        Binary::from(Vec::<u8>::new()),
+        &EmptyRequest::default(),
     )?;
-    // Decode raw protobuf into Rust struct, then normalize to JSON for consistency
-    let decoded: QueryApprovedTokensForTradeResponseProto = QueryApprovedTokensForTradeResponseProto::decode(proto_bytes.as_slice())
-        .map_err(|e| StdError::msg(format!("Decode QueryApprovedTokensForTradeResponse: {}", e)))?;
-    let json_bytes = to_json_vec(&decoded)
-        .map_err(|e| StdError::msg(format!("Serialize ApprovedTokensForTrade JSON: {}", e)))?;
-    Ok(RawGrpcResponse { data: Binary::from(json_bytes) })
-}
-
-fn query_test_approved_tokens_stargate(deps: Deps) -> StdResult<RawGrpcResponse> {
-    // Stargate path and empty request
-    let data = query_stargate(
-        deps,
-        "/inference.inference.Query/ApprovedTokensForTrade",
-        Binary::from(Vec::<u8>::new()),
-    )?;
-    Ok(RawGrpcResponse { data })
-}
-
-fn query_test_bridge_validation_stargate(deps: Deps, cw20_contract: String) -> StdResult<TestBridgeValidationResponse> {
-    // Accept either raw cw20 address or prefixed cw20:<addr>
-    let contract_address = cw20_contract.strip_prefix("cw20:").unwrap_or(&cw20_contract);
-
-    // Encode the same prost request as gRPC version
-    let proto_request = QueryValidateWrappedTokenForTradeRequest {
-        contract_address: contract_address.to_string(),
-    };
-    let mut buf = Vec::new();
-    proto_request
-        .encode(&mut buf)
-        .map_err(|e| StdError::msg(format!("Encode QueryValidateWrappedTokenForTradeRequest: {}", e)))?;
-
-    let response_data = query_stargate(
-        deps,
-        "/inference.inference.Query/ValidateWrappedTokenForTrade",
-        Binary::from(buf),
-    )?;
-    let response: QueryValidateWrappedTokenForTradeResponse = QueryValidateWrappedTokenForTradeResponse::decode(response_data.as_slice())
-        .map_err(|e| StdError::msg(format!("Decode QueryValidateWrappedTokenForTradeResponse: {}", e)))?;
-    Ok(TestBridgeValidationResponse { is_valid: response.is_valid })
+    let approved_tokens = decoded
+        .approved_tokens
+        .into_iter()
+        .map(|t| ApprovedTokenJson { chain_id: t.chain_id, contract_address: t.contract_address })
+        .collect();
+    Ok(ApprovedTokensForTradeJson { approved_tokens })
 }
 
 // Generic helpers for gRPC queries using raw_query serialization pattern
@@ -780,27 +734,19 @@ fn query_raw(deps: Deps, request: &QueryRequest<GrpcQuery>) -> StdResult<Binary>
     }
 }
 
-// Stargate variants mirror the raw query pattern but use Stargate envelope
-fn query_stargate(deps: Deps, path: &str, data: Binary) -> StdResult<Binary> {
-    let request = QueryRequest::Stargate {
-        path: path.to_string(),
-        data,
-    };
-    query_raw_stargate(deps, &request)
-}
-
-fn query_raw_stargate(deps: Deps, request: &QueryRequest<Empty>) -> StdResult<Binary> {
-    let raw = to_json_vec(request)
-        .map_err(|e| StdError::msg(format!("Serializing Stargate QueryRequest: {e}")))?;
-    match deps.querier.raw_query(&raw) {
-        SystemResult::Err(system_err) => Err(StdError::msg(format!(
-            "Querier system error: {system_err}"
-        ))),
-        SystemResult::Ok(ContractResult::Err(contract_err)) => Err(StdError::msg(
-            format!("Querier contract error: {contract_err}")
-        )),
-        SystemResult::Ok(ContractResult::Ok(value)) => Ok(value),
-    }
+// Generic helper: encode request proto and decode response proto
+fn query_proto<TRequest, TResponse>(deps: Deps, path: &str, request: &TRequest) -> StdResult<TResponse>
+where
+    TRequest: prost::Message,
+    TResponse: prost::Message + Default,
+{
+    let mut buf = Vec::new();
+    request
+        .encode(&mut buf)
+        .map_err(|e| StdError::msg(format!("Encode request: {}", e)))?;
+    let bytes = query_grpc(deps, path, Binary::from(buf))?;
+    TResponse::decode(bytes.as_slice())
+        .map_err(|e| StdError::msg(format!("Decode response: {}", e)))
 }
 
 fn query_daily_stats(deps: Deps, env: Env) -> StdResult<DailyStatsResponse> {
