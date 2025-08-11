@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,10 +23,12 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/version"
 	authclient "github.com/cosmos/cosmos-sdk/x/auth/client"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
 	"github.com/cosmos/cosmos-sdk/x/genutil/types"
 	"github.com/cosmos/cosmos-sdk/x/staking/client/cli"
 	"github.com/productscience/inference/api/inference/inference"
+	inferencepkg "github.com/productscience/inference/x/inference"
 	"github.com/productscience/inference/x/inference/utils"
 )
 
@@ -36,10 +39,13 @@ func GenTxCmd(mbm module.BasicManager, txEncCfg client.TxEncodingConfig, genBalI
 
 	cmd := &cobra.Command{
 		Use:   "gentx [key_name] [amount] --pubkey [base64_consensus_key] --ml-operational-address [ml_operational_address] --url [url]",
-		Short: "[CUSTOM] Generate a genesis tx carrying a self delegation",
+		Short: "[CUSTOM] Generate two genesis transactions: classic gentx and genparticipant",
 		Args:  cobra.ExactArgs(2),
-		Long: fmt.Sprintf(`[CUSTOM] Generate a genesis transaction that creates a validator,
-that is signed by the Account Key (cold key) in the Keyring referenced by a given name. A BASE64-encoded ED25519 consensus key and ML Operational address (warm key) are required.
+		Long: fmt.Sprintf(`[CUSTOM] Generate two genesis transactions:
+1. Classic gentx (config/gentx/gentx-[nodeID].json): Contains MsgCreateValidator
+2. Genparticipant (config/genparticipant/genparticipant-[nodeID].json): Contains MsgSubmitNewParticipant and authz grants
+
+Both transactions are signed by the Account Key (cold key) in the Keyring referenced by a given name. A BASE64-encoded ED25519 consensus key and ML Operational address (warm key) are required.
 The following default parameters are included:
     %s
 
@@ -178,66 +184,81 @@ $ %s gentx my-key-name 1000000nicoin --pubkey x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11F
 			// ref: https://github.com/cosmos/cosmos-sdk/issues/8177
 			createValCfg.Amount = amount
 
-			messages := make([]sdk.Msg, 0)
+			// === FIRST FILE: Classic gentx with MsgCreateValidator only ===
+			classicMessages := make([]sdk.Msg, 0)
+
 			// create a 'create-validator' message
-			txBldr, msg, err := cli.BuildCreateValidatorMsg(clientCtx, createValCfg, txFactory, true, valAdddressCodec)
+			_, createValidatorMsg, err := cli.BuildCreateValidatorMsg(clientCtx, createValCfg, txFactory, true, valAdddressCodec)
 			if err != nil {
 				return errors.Wrap(err, "failed to build create-validator message")
 			}
-			messages = append(messages, msg)
+			classicMessages = append(classicMessages, createValidatorMsg)
 
-			msg = &inference.MsgSubmitNewParticipant{
+			// Create and sign the classic gentx
+			classicTx, err := createAndSignTx(clientCtx, txFactory, name, classicMessages)
+			if err != nil {
+				return errors.Wrap(err, "failed to create classic gentx")
+			}
+
+			// Write classic gentx file
+			classicOutputDocument, err := makeClassicOutputFilepath(config.RootDir, nodeID)
+			if err != nil {
+				return errors.Wrap(err, "failed to create classic output file path")
+			}
+
+			if err := writeSignedGenTx(clientCtx, classicOutputDocument, classicTx); err != nil {
+				return errors.Wrap(err, "failed to write classic gentx")
+			}
+
+			cmd.PrintErrf("Classic genesis transaction written to %q\n", classicOutputDocument)
+
+			// === SECOND FILE: Genparticipant with MsgSubmitNewParticipant + Authz grants ===
+			genparticipantMessages := make([]sdk.Msg, 0)
+
+			// Add MsgSubmitNewParticipant
+			submitParticipantMsg := &inference.MsgSubmitNewParticipant{
 				Creator:      addr.String(),
 				Url:          urlStr,
 				ValidatorKey: utils.PubKeyToString(valPubKey),
 				WorkerKey:    "",
 			}
-			messages = append(messages, msg)
+			genparticipantMessages = append(genparticipantMessages, submitParticipantMsg)
 
-			// write the unsigned transaction to the buffer
-			w := bytes.NewBuffer([]byte{})
-			clientCtx = clientCtx.WithOutput(w)
+			// Add authz grant messages for ML operational permissions
+			// Grant permissions from cold key (operator) to warm key (ML operational address)
+			expirationTime := time.Now().Add(365 * 24 * time.Hour) // 1 year expiration
 
-			if m, ok := msg.(sdk.HasValidateBasic); ok {
-				if err := m.ValidateBasic(); err != nil {
-					return err
-				}
-			}
-
-			if err = txBldr.PrintUnsignedTx(clientCtx, messages...); err != nil {
-				return errors.Wrap(err, "failed to print unsigned std tx")
-			}
-
-			// read the transaction
-			stdTx, err := readUnsignedGenTxFile(clientCtx, w)
-			if err != nil {
-				return errors.Wrap(err, "failed to read unsigned gen tx file")
-			}
-
-			// sign the transaction and write it to the output file
-			txBuilder, err := clientCtx.TxConfig.WrapTxBuilder(stdTx)
-			if err != nil {
-				return fmt.Errorf("error creating tx builder: %w", err)
-			}
-
-			err = authclient.SignTx(txFactory, clientCtx, name, txBuilder, true, true)
-			if err != nil {
-				return errors.Wrap(err, "failed to sign std tx")
-			}
-
-			outputDocument, _ := cmd.Flags().GetString(flags.FlagOutputDocument)
-			if outputDocument == "" {
-				outputDocument, err = makeOutputFilepath(config.RootDir, nodeID)
+			for _, msgType := range inferencepkg.InferenceOperationKeyPerms {
+				authorization := authztypes.NewGenericAuthorization(sdk.MsgTypeURL(msgType))
+				grantMsg, err := authztypes.NewMsgGrant(
+					addr,                 // granter (cold key)
+					mlOperationalAddress, // grantee (warm key)
+					authorization,
+					&expirationTime,
+				)
 				if err != nil {
-					return errors.Wrap(err, "failed to create output file path")
+					return errors.Wrapf(err, "failed to create MsgGrant for %s", sdk.MsgTypeURL(msgType))
 				}
+				genparticipantMessages = append(genparticipantMessages, grantMsg)
 			}
 
-			if err := writeSignedGenTx(clientCtx, outputDocument, stdTx); err != nil {
-				return errors.Wrap(err, "failed to write signed gen tx")
+			// Create and sign the genparticipant tx
+			genparticipantTx, err := createAndSignTx(clientCtx, txFactory, name, genparticipantMessages)
+			if err != nil {
+				return errors.Wrap(err, "failed to create genparticipant tx")
 			}
 
-			cmd.PrintErrf("Genesis transaction written to %q\n", outputDocument)
+			// Write genparticipant file
+			genparticipantOutputDocument, err := makeGenparticipantOutputFilepath(config.RootDir, nodeID)
+			if err != nil {
+				return errors.Wrap(err, "failed to create genparticipant output file path")
+			}
+
+			if err := writeSignedGenTx(clientCtx, genparticipantOutputDocument, genparticipantTx); err != nil {
+				return errors.Wrap(err, "failed to write genparticipant tx")
+			}
+
+			cmd.PrintErrf("Genparticipant transaction written to %q\n", genparticipantOutputDocument)
 			return nil
 		},
 	}
@@ -257,13 +278,60 @@ $ %s gentx my-key-name 1000000nicoin --pubkey x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11F
 	return cmd
 }
 
-func makeOutputFilepath(rootDir, nodeID string) (string, error) {
+func makeClassicOutputFilepath(rootDir, nodeID string) (string, error) {
 	writePath := filepath.Join(rootDir, "config", "gentx")
 	if err := os.MkdirAll(writePath, 0o700); err != nil {
 		return "", fmt.Errorf("could not create directory %q: %w", writePath, err)
 	}
 
 	return filepath.Join(writePath, fmt.Sprintf("gentx-%v.json", nodeID)), nil
+}
+
+func makeGenparticipantOutputFilepath(rootDir, nodeID string) (string, error) {
+	writePath := filepath.Join(rootDir, "config", "genparticipant")
+	if err := os.MkdirAll(writePath, 0o700); err != nil {
+		return "", fmt.Errorf("could not create directory %q: %w", writePath, err)
+	}
+
+	return filepath.Join(writePath, fmt.Sprintf("genparticipant-%v.json", nodeID)), nil
+}
+
+func createAndSignTx(clientCtx client.Context, txFactory tx.Factory, keyName string, messages []sdk.Msg) (sdk.Tx, error) {
+	// write the unsigned transaction to the buffer
+	w := bytes.NewBuffer([]byte{})
+	clientCtx = clientCtx.WithOutput(w)
+
+	// Validate all messages
+	for _, msg := range messages {
+		if m, ok := msg.(sdk.HasValidateBasic); ok {
+			if err := m.ValidateBasic(); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := txFactory.PrintUnsignedTx(clientCtx, messages...); err != nil {
+		return nil, errors.Wrap(err, "failed to print unsigned std tx")
+	}
+
+	// read the transaction
+	stdTx, err := readUnsignedGenTxFile(clientCtx, w)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read unsigned gen tx file")
+	}
+
+	// sign the transaction
+	txBuilder, err := clientCtx.TxConfig.WrapTxBuilder(stdTx)
+	if err != nil {
+		return nil, fmt.Errorf("error creating tx builder: %w", err)
+	}
+
+	err = authclient.SignTx(txFactory, clientCtx, keyName, txBuilder, true, true)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to sign std tx")
+	}
+
+	return stdTx, nil
 }
 
 func readUnsignedGenTxFile(clientCtx client.Context, r io.Reader) (sdk.Tx, error) {

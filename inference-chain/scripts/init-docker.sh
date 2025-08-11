@@ -114,10 +114,15 @@ fi
 
 
 GENESIS_FILE="$STATE_DIR/config/genesis.json"
-if [ ! -f "$GENESIS_FILE" ]; then
+if [ !"${IS_GENESIS:-false}" = "true" ]; then
   output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
   echo "$output" | filter_cw20_code
 
+  touch "$INIT_FLAG"
+else
+  echo "Skipping genesis download, using genesis from the host"
+  sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
+  $STATE_DIR/config/config.toml
   touch "$INIT_FLAG"
 fi
 ###############################################################################
@@ -129,21 +134,22 @@ echo "Applying configuration at container start"
 [ -n "${P2P_EXTERNAL_ADDRESS-}" ] \
     && kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
 
-run "$APP_NAME" set-seeds "$STATE_DIR/config/config.toml" \
-     "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
+if [ "${IS_GENESIS:-false}" = "false" ]; then
+  run "$APP_NAME" set-seeds "$STATE_DIR/config/config.toml" \
+      "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
 
-run "$APP_NAME" set-statesync "$STATE_DIR/config/config.toml" \
-     "${SYNC_WITH_SNAPSHOTS:-false}"
+  run "$APP_NAME" set-statesync "$STATE_DIR/config/config.toml" \
+      "${SYNC_WITH_SNAPSHOTS:-false}"
 
-if [ "${SYNC_WITH_SNAPSHOTS:-false}" = "true" ]; then
-  need RPC_SERVER_URL_1
-  need RPC_SERVER_URL_2
-  run "$APP_NAME" set-statesync-rpc-servers "$STATE_DIR/config/config.toml" \
-       "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
-  run "$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" \
-       "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
+  if [ "${SYNC_WITH_SNAPSHOTS:-false}" = "true" ]; then
+    need RPC_SERVER_URL_1
+    need RPC_SERVER_URL_2
+    run "$APP_NAME" set-statesync-rpc-servers "$STATE_DIR/config/config.toml" \
+        "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
+    run "$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" \
+        "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
+  fi
 fi
-
 # Snapshot parameters ----------------------------------------------------------
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
 kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"

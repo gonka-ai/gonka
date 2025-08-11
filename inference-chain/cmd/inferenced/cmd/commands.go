@@ -19,6 +19,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	"github.com/cosmos/cosmos-sdk/x/crisis"
+	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 	"github.com/spf13/cobra"
@@ -71,6 +72,8 @@ func addModuleInitFlags(startCmd *cobra.Command) {
 }
 
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
+	gentxModule := basicManager[genutiltypes.ModuleName].(genutil.AppModuleBasic)
+
 	cmd := genutilcli.CommandsWithCustomMigrationMap(txConfig, basicManager, app.DefaultNodeHome, genutiltypes.MigrationMap{})
 
 	for _, subCmd := range cmd.Commands() {
@@ -81,6 +84,7 @@ func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, 
 	}
 
 	cmd.AddCommand(GenTxCmd(basicManager, txConfig, banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome, txConfig.SigningContext().ValidatorAddressCodec()))
+	cmd.AddCommand(PatchGenesisCmd(banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome, gentxModule.GenTxValidator, txConfig.SigningContext().ValidatorAddressCodec()))
 
 	for _, subCmd := range cmds {
 		cmd.AddCommand(subCmd)
