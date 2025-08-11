@@ -17,7 +17,7 @@ services:
       - PRYSM_DATA_DIR=/data/prysm
       - JWT_SECRET_PATH=/data/jwt/jwt.hex
       - BRIDGE_API_BASE=${BRIDGE_API_BASE:-http://${KEY_NAME}-api:9000}
-      - BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-/v1/bridge/block}
+      - BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-/admin/v1/bridge/block}
       - BRIDGE_GETADDRESSES=${BRIDGE_GETADDRESSES:-/v1/bridge/addresses}
       - BEACON_STATE_URL=${BEACON_STATE_URL:-https://beaconstate.ethstaker.cc/}
       # Internal-only ports (no host exposure)

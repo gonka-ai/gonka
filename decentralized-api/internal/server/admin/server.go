@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	pserver "decentralized-api/internal/server/public"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 
@@ -24,12 +25,14 @@ type Server struct {
 	configManager *apiconfig.ConfigManager
 	recorder      cosmos_client.CosmosMessageClient
 	cdc           *codec.ProtoCodec
+	blockQueue    *pserver.BridgeQueue
 }
 
 func NewServer(
 	recorder cosmos_client.CosmosMessageClient,
 	nodeBroker *broker.Broker,
-	configManager *apiconfig.ConfigManager) *Server {
+	configManager *apiconfig.ConfigManager,
+	blockQueue *pserver.BridgeQueue) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
@@ -40,6 +43,7 @@ func NewServer(
 		configManager: configManager,
 		recorder:      recorder,
 		cdc:           cdc,
+		blockQueue:    blockQueue,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -61,6 +65,9 @@ func NewServer(
 	g.POST("bls/request", s.postRequestThresholdSignature)
 
 	g.POST("debug/create-dummy-training-task", s.postDummyTrainingTask)
+
+	// Bridge
+	g.POST("bridge/block", s.postBridgeBlock)
 
 	return s
 }
