@@ -187,8 +187,9 @@ $ %s gentx my-key-name 1000000nicoin --pubkey x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11F
 			messages = append(messages, msg)
 
 			msg = &inference.MsgSubmitNewParticipant{
+				Creator:      addr.String(),
 				Url:          urlStr,
-				ValidatorKey: valPubKey.String(),
+				ValidatorKey: utils.PubKeyToString(valPubKey),
 				WorkerKey:    "",
 			}
 			messages = append(messages, msg)
