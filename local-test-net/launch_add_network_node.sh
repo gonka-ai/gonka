@@ -61,4 +61,4 @@ if [ "${PROXY_ACTIVE}" = "true" ]; then
   echo "Starting with proxy support"
 fi
 
-docker compose -p "$project_name" $COMPOSE_FILES up -d
+docker compose -p "$project_name" $COMPOSE_FILES up chain-node -d

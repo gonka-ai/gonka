@@ -103,13 +103,23 @@ if $FIRST_RUN; then
 
   update_configs
 
-  GENESIS_FILE="$STATE_DIR/config/genesis.json"
+  if [ "${INIT_ONLY}" = true ]; then
+    echo "Skipping genesis download"
+    rm -f "$STATE_DIR/config/priv_validator_key.json"
+    rm -f "$STATE_DIR/data/priv_validator_state.json"
+    touch "$INIT_FLAG"
+    exit 0
+  fi
+fi
+
+
+GENESIS_FILE="$STATE_DIR/config/genesis.json"
+if [ ! -f "$GENESIS_FILE" ]; then
   output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
   echo "$output" | filter_cw20_code
 
   touch "$INIT_FLAG"
 fi
-
 ###############################################################################
 # Configuration executed on every start
 ###############################################################################

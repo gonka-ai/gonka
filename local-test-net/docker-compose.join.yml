@@ -6,6 +6,7 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+      - INIT_ONLY=true
 
   api:
     environment:
