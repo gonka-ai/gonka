@@ -14,6 +14,7 @@ import (
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -48,6 +49,8 @@ type EventListener struct {
 	dispatcher          *OnNewBlockDispatcher
 	cancelFunc          context.CancelFunc
 
+	eventHandlers []EventHandler
+
 	ws *websocket.Conn
 }
 
@@ -72,6 +75,14 @@ func NewEventListener(
 		DefaultReconciliationConfig,
 	)
 
+	eventHandlers := []EventHandler{
+		&BlsTransactionEventHandler{},
+		&InferenceFinishedEventHandler{},
+		&InferenceValidationEventHandler{},
+		&SubmitProposalEventHandler{},
+		&TrainingTaskAssignedEventHandler{},
+	}
+
 	return &EventListener{
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
@@ -82,6 +93,7 @@ func NewEventListener(
 		dispatcher:          dispatcher,
 		cancelFunc:          cancelFunc,
 		blsManager:          blsManager,
+		eventHandlers:       eventHandlers,
 	}
 }
 
@@ -225,7 +237,7 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 			case mainQueue.In <- &event:
 				logging.Debug("Event successfully queued", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
 			default:
-				logging.Warn("Event channel full, dropping event", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
+				logging.Error("Event channel full, dropping event", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
 			}
 		}
 	}
@@ -288,10 +300,21 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 
 	case txEventType:
-		el.handleMessage(event, workerName)
+		if el.hasHandler(event) {
+			el.handleMessage(event, workerName)
+		}
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
 	}
+}
+
+func (el *EventListener) hasHandler(event *chainevents.JSONRPCResponse) bool {
+	for _, handler := range el.eventHandlers {
+		if handler.CanHandle(event) {
+			return true
+		}
+	}
+	return false
 }
 
 func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, workerName string) {
@@ -323,73 +346,123 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 	}
 }
 
-func (el *EventListener) handleBLSTransactionEvents(event *chainevents.JSONRPCResponse, workerName string) {
-	// Only handle threshold signing events in transaction events (emitted from message processing)
-	if requestIdValues := event.Result.Events[blsThresholdSigningRequestedEvent+".request_id"]; len(requestIdValues) > 0 {
-		logging.Info("Threshold signing requested event received (from transaction)", types.EventProcessing, "worker", workerName)
-		if el.isNodeSynced() {
-			err := el.blsManager.ProcessThresholdSigningRequested(event)
-			if err != nil {
-				logging.Error("Failed to process threshold signing requested event", types.EventProcessing, "error", err, "worker", workerName)
-			}
-		}
-	}
-}
-
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {
 		logging.Warn("Event height not reached yet, skipping", types.EventProcessing, "event", event)
 		return
 	}
 
-	el.handleBLSTransactionEvents(event, name)
-
-	events := event.Result.Events
-
-	el.handleInferenceFinished(events, name)
-	el.handleInferenceValidation(events, name)
-	el.handleSubmitProposal(events, name)
-	el.handleTrainingTaskAssigned(events, name)
-}
-
-func (el *EventListener) handleInferenceFinished(events map[string][]string, name string) {
-	if inferenceIDs, ok := events["inference_finished.inference_id"]; ok && len(inferenceIDs) > 0 {
-		logging.Debug("Handling 'inference_finished' event", types.EventProcessing, "worker", name)
-		if el.isNodeSynced() {
-			el.validator.SampleInferenceToValidate(inferenceIDs, el.transactionRecorder)
-		}
-	}
-}
-
-func (el *EventListener) handleInferenceValidation(events map[string][]string, name string) {
-	if needsRevalidation, ok := events["inference_validation.needs_revalidation"]; ok && len(needsRevalidation) > 0 && needsRevalidation[0] == "true" {
-		logging.Debug("Handling 'inference_validation' event that needs revalidation", types.EventProcessing, "worker", name)
-		if el.isNodeSynced() {
-			el.validator.VerifyInvalidation(events, el.transactionRecorder)
-		}
-	}
-}
-
-func (el *EventListener) handleSubmitProposal(events map[string][]string, name string) {
-	if proposalIDs, ok := events["submit_proposal.proposal_id"]; ok && len(proposalIDs) > 0 {
-		logging.Debug("Handling 'submit_proposal' event", types.EventProcessing, "worker", name, "proposalId", proposalIDs[0])
-	}
-}
-
-func (el *EventListener) handleTrainingTaskAssigned(events map[string][]string, name string) {
-	if taskIds, ok := events["training_task_assigned.task_id"]; ok && len(taskIds) > 0 {
-		logging.Debug("Handling 'training_task_assigned' event", types.EventProcessing, "worker", name)
-		if el.isNodeSynced() {
-			for _, taskId := range taskIds {
-				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
-				if err != nil {
-					logging.Error("Failed to parse task ID", types.Training, "error", err)
-					continue // Continue to the next task ID
-				}
-				el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
+	for _, handler := range el.eventHandlers {
+		if handler.CanHandle(event) {
+			logging.Info("Handling event", types.EventProcessing, "event", event, "handler", handler.GetName(), "worker", name)
+			err := handler.Handle(event, el)
+			if err != nil {
+				logging.Error("Failed to handle event", types.EventProcessing, "error", err, "event", event)
 			}
 		}
 	}
+}
+
+type EventHandler interface {
+	GetName() string
+	CanHandle(event *chainevents.JSONRPCResponse) bool
+	Handle(event *chainevents.JSONRPCResponse, el *EventListener) error
+}
+type BlsTransactionEventHandler struct{}
+
+func (e *BlsTransactionEventHandler) GetName() string {
+	return "bls_transaction"
+}
+
+func (e *BlsTransactionEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events[blsThresholdSigningRequestedEvent+".request_id"]) > 0
+}
+
+func (e *BlsTransactionEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.isNodeSynced() {
+		return el.blsManager.ProcessThresholdSigningRequested(event)
+	}
+	return nil
+}
+
+type InferenceFinishedEventHandler struct {
+}
+
+func (e *InferenceFinishedEventHandler) GetName() string {
+	return "inference_finished"
+}
+
+func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events["inference_finished.inference_id"]) > 0
+}
+
+func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.isNodeSynced() {
+		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
+	}
+	return nil
+}
+
+type InferenceValidationEventHandler struct {
+}
+
+func (e *InferenceValidationEventHandler) GetName() string {
+	return "inference_validation"
+}
+
+func (e *InferenceValidationEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	needsRevalidation := event.Result.Events["inference_validation.needs_revalidation"]
+	return len(needsRevalidation) > 0 && needsRevalidation[0] == "true"
+}
+
+func (e *InferenceValidationEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.isNodeSynced() {
+		el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
+	}
+	return nil
+}
+
+type SubmitProposalEventHandler struct{}
+
+func (e *SubmitProposalEventHandler) GetName() string {
+	return "submit_proposal"
+}
+
+func (e *SubmitProposalEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events["submit_proposal.proposal_id"]) > 0
+}
+
+func (e *SubmitProposalEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	proposalIds := event.Result.Events["submit_proposal.proposal_id"]
+	if len(proposalIds) == 0 {
+		return errors.New("proposal_id not found in event")
+	}
+	logging.Debug("Handling `submit_proposal` event", types.EventProcessing, "proposalId", proposalIds[0])
+	return nil
+}
+
+type TrainingTaskAssignedEventHandler struct{}
+
+func (e *TrainingTaskAssignedEventHandler) GetName() string {
+	return "training_task_assigned"
+}
+
+func (e *TrainingTaskAssignedEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events["training_task_assigned.task_id"]) > 0
+}
+
+func (e *TrainingTaskAssignedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.isNodeSynced() {
+		for _, taskId := range event.Result.Events["training_task_assigned.task_id"] {
+			taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
+			if err != nil {
+				logging.Error("Failed to parse task ID", types.Training, "error", err)
+				continue // Continue to the next task ID
+			}
+			el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
+		}
+	}
+	return nil
 }
 
 func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.ConfigManager, name string) bool {
