@@ -15,9 +15,12 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
+	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/server"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/cosmos/cosmos-sdk/x/genutil/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -70,7 +73,7 @@ func PatchGenesisCmd(genBalIterator types.GenesisBalancesIterator, defaultNodeHo
 				cmd.PrintErrf("Processing genparticipant file: %s\n", file)
 
 				// Read and decode the transaction
-				tx, err := readGenparticipantFile(clientCtx, file)
+				tx, err := readGenparticipantFile(clientCtx, appGenesis.ChainID, file)
 				if err != nil {
 					return errors.Wrapf(err, "failed to read genparticipant file %s", file)
 				}
@@ -138,7 +141,7 @@ func collectGenparticipantFiles(genParticipantDir string) ([]string, error) {
 }
 
 // readGenparticipantFile reads and decodes a genparticipant transaction file
-func readGenparticipantFile(clientCtx client.Context, filePath string) (sdk.Tx, error) {
+func readGenparticipantFile(clientCtx client.Context, chainID string, filePath string) (sdk.Tx, error) {
 	// Read the file
 	bz, err := os.ReadFile(filePath)
 	if err != nil {
@@ -149,6 +152,11 @@ func readGenparticipantFile(clientCtx client.Context, filePath string) (sdk.Tx, 
 	tx, err := clientCtx.TxConfig.TxJSONDecoder()(bz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode transaction from file %s: %w", filePath, err)
+	}
+
+	// Verify transaction signatures
+	if err := verifyTransactionSignatures(clientCtx, chainID, tx); err != nil {
+		return nil, fmt.Errorf("signature verification failed for file %s: %w", filePath, err)
 	}
 
 	return tx, nil
@@ -340,5 +348,82 @@ func addAuthzGrantToGenesis(cdc codec.Codec, genesisState map[string]json.RawMes
 		return fmt.Errorf("failed to marshal updated authz genesis: %w", err)
 	}
 	genesisState["authz"] = updatedBz
+	return nil
+}
+
+// verifyTransactionSignatures verifies the signatures of a transaction using real cryptographic verification
+func verifyTransactionSignatures(clientCtx client.Context, chainID string, tx sdk.Tx) error {
+	// Ensure crypto types are registered for pubkey unpacking
+	if clientCtx.InterfaceRegistry != nil {
+		cryptocodec.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	}
+
+	// Encode the transaction to JSON and then decode back to get the protobuf structure
+	txBytes, err := clientCtx.TxConfig.TxJSONEncoder()(tx)
+	if err != nil {
+		return fmt.Errorf("failed to encode transaction to JSON: %w", err)
+	}
+
+	// Decode the JSON back to an sdk.Tx to ensure we have a proper transaction
+	decodedTx, err := clientCtx.TxConfig.TxJSONDecoder()(txBytes)
+	if err != nil {
+		return fmt.Errorf("failed to decode transaction from JSON: %w", err)
+	}
+
+	// Now encode to protobuf bytes to get the raw transaction
+	protoBytes, err := clientCtx.TxConfig.TxEncoder()(decodedTx)
+	if err != nil {
+		return fmt.Errorf("failed to encode transaction to protobuf: %w", err)
+	}
+
+	// Unmarshal the protobuf to get the transaction structure
+	var txProto txtypes.Tx
+	if err := clientCtx.Codec.Unmarshal(protoBytes, &txProto); err != nil {
+		return fmt.Errorf("failed to unmarshal transaction: %w", err)
+	}
+
+	if txProto.AuthInfo == nil || txProto.Body == nil {
+		return fmt.Errorf("transaction missing body or authinfo")
+	}
+	if len(txProto.Signatures) == 0 {
+		return fmt.Errorf("no signatures found in transaction")
+	}
+	if len(txProto.AuthInfo.SignerInfos) != len(txProto.Signatures) {
+		return fmt.Errorf("mismatch between number of signers (%d) and signatures (%d)",
+			len(txProto.AuthInfo.SignerInfos), len(txProto.Signatures))
+	}
+
+	// Recreate sign bytes
+	bodyBytes, err := clientCtx.Codec.Marshal(txProto.Body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tx body: %w", err)
+	}
+	authInfoBytes, err := clientCtx.Codec.Marshal(txProto.AuthInfo)
+	if err != nil {
+		return fmt.Errorf("failed to marshal auth info: %w", err)
+	}
+	signDoc := txtypes.SignDoc{BodyBytes: bodyBytes, AuthInfoBytes: authInfoBytes, ChainId: chainID, AccountNumber: 0}
+	signBytes, err := signDoc.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal sign doc: %w", err)
+	}
+
+	// Verify each signature
+	for i, signerInfo := range txProto.AuthInfo.SignerInfos {
+		signature := txProto.Signatures[i]
+		if signerInfo.PublicKey == nil {
+			return fmt.Errorf("signer %d has no public key", i)
+		}
+		var pubKey cryptotypes.PubKey
+		if err := clientCtx.Codec.UnpackAny(signerInfo.PublicKey, &pubKey); err != nil {
+			return fmt.Errorf("failed to unpack public key for signer %d: %w", i, err)
+		}
+		if !pubKey.VerifySignature(signBytes, signature) {
+			return fmt.Errorf("signature verification failed for signer %d", i)
+		}
+	}
+
+	fmt.Printf("Transaction signature verification passed for %d signatures, tx size: %d bytes\n",
+		len(txProto.Signatures), len(txBytes))
 	return nil
 }
