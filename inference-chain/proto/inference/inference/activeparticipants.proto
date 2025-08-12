@@ -23,7 +23,7 @@ message ActiveParticipants {
 
 message ActiveParticipant {
   string index = 1;
-  string validator_key = 2;
+  string validator_key = 2; // consensus address base64
   int64 weight = 3;
   string inference_url = 4;
   repeated string models = 5;

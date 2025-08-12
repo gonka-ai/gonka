@@ -2,8 +2,10 @@ package event_listener
 
 import (
 	"context"
+	"decentralized-api/internal/utils"
 	"errors"
 	"fmt"
+	"github.com/gonka-ai/gonka-utils/go/contracts"
 	"strconv"
 	"strings"
 	"time"
@@ -15,8 +17,8 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
-
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 )
@@ -24,6 +26,7 @@ import (
 // Minimal interface for query operations needed by the dispatcher
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
+	GetCurrentEpoch(ctx context.Context, req *types.QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*types.QueryGetCurrentEpochResponse, error)
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 }
 
@@ -53,15 +56,16 @@ type MlNodeReconciliationConfig struct {
 
 // OnNewBlockDispatcher orchestrates processing of new block events
 type OnNewBlockDispatcher struct {
-	nodeBroker           *broker.Broker
-	nodePocOrchestrator  poc.NodePoCOrchestrator
-	queryClient          ChainStateClient
-	phaseTracker         *chainphase.ChainPhaseTracker
-	reconciliationConfig MlNodeReconciliationConfig
-	getStatusFunc        StatusFunc
-	setHeightFunc        SetHeightFunc
-	randomSeedManager    poc.RandomSeedManager
-	configManager        *apiconfig.ConfigManager
+	nodeBroker             *broker.Broker
+	lastVerifiedAppHashHex string
+	nodePocOrchestrator    poc.NodePoCOrchestrator
+	queryClient            ChainStateClient
+	phaseTracker           *chainphase.ChainPhaseTracker
+	reconciliationConfig   MlNodeReconciliationConfig
+	getStatusFunc          StatusFunc
+	setHeightFunc          SetHeightFunc
+	randomSeedManager      poc.RandomSeedManager
+	configManager          *apiconfig.ConfigManager
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -99,15 +103,16 @@ func NewOnNewBlockDispatcher(
 	configManager *apiconfig.ConfigManager,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
-		nodeBroker:           nodeBroker,
-		nodePocOrchestrator:  nodePocOrchestrator,
-		queryClient:          queryClient,
-		phaseTracker:         phaseTracker,
-		reconciliationConfig: reconciliationConfig,
-		getStatusFunc:        getStatusFunc,
-		setHeightFunc:        setHeightFunc,
-		randomSeedManager:    randomSeedManager,
-		configManager:        configManager,
+		nodeBroker:             nodeBroker,
+		nodePocOrchestrator:    nodePocOrchestrator,
+		queryClient:            queryClient,
+		lastVerifiedAppHashHex: configManager.GetGenesisAppHash(),
+		phaseTracker:           phaseTracker,
+		reconciliationConfig:   reconciliationConfig,
+		getStatusFunc:          getStatusFunc,
+		setHeightFunc:          setHeightFunc,
+		randomSeedManager:      randomSeedManager,
+		configManager:          configManager,
 	}
 }
 
@@ -203,6 +208,8 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		}
 	}
 
+	d.verifyParticipantsChain(ctx, networkInfo.BlockHeight)
+
 	// Let's check in prod how often this happens
 	if networkInfo.BlockHeight != blockInfo.Height {
 		logging.Warn("Block height mismatch between event and network query", types.Stages,
@@ -252,6 +259,51 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	}
 
 	return nil
+}
+
+func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curHeight int64) {
+	logging.Info("verify participants", types.System,
+		"known_height", d.configManager.GetHeight(), "current_height", curHeight, "last_verified_app_hash", d.lastVerifiedAppHashHex)
+
+	//if d.lastVerifiedAppHashHex != "" && d.configManager.GetHeight() != curHeight-1 {
+	if d.lastVerifiedAppHashHex != "" {
+
+		logging.Info("verify participants: start", types.System)
+
+		rpcClient, err := cosmosclient.NewRpcClient(d.configManager.GetChainNodeConfig().Url)
+		if err != nil {
+			logging.Error("Failed to create rpc client", types.System, "error", err)
+			return
+		}
+
+		currEpoch, err := d.queryClient.GetCurrentEpoch(ctx, &types.QueryGetCurrentEpochRequest{})
+		if err != nil {
+			logging.Error("Failed to get current epoch", types.Participants, "error", err)
+			return
+		}
+
+		logging.Info("Current epoch resolved.", types.Participants, "epoch", currEpoch.Epoch)
+
+		data, err := utils.QueryActiveParticipants(rpcClient, currEpoch.Epoch)(ctx, "current")
+		if err != nil {
+			logging.Error("Failed to get current participants data", types.Participants, "error", err)
+			return
+		}
+
+		err = externalutils.VerifyParticipants(
+			ctx,
+			d.lastVerifiedAppHashHex,
+			func(ctx context.Context, epoch string) (*contracts.ActiveParticipantWithProof, error) {
+				return data, nil
+			},
+			utils.QueryValidators(rpcClient),
+			utils.QueryBlock(rpcClient))
+		if err != nil {
+			panic(err)
+		}
+		d.lastVerifiedAppHashHex = data.Block.AppHash.String()
+		logging.Info("verify participants successfully", types.Stages, "new_app_hash", d.lastVerifiedAppHashHex)
+	}
 }
 
 // NetworkInfo contains information queried from the network

@@ -66,4 +66,4 @@ export RPC_PORT=8102
 export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:9020"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_add_network_node.sh
+#./launch_add_network_node.sh

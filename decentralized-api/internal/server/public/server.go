@@ -90,6 +90,9 @@ func NewServer(
 	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
 	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
 
+
+	g.GET("validators/:height", s.getValidatorsByBlock)
+	g.GET("block/:height", s.getBlock)
 	return s
 }
 

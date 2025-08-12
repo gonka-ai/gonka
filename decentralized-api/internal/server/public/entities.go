@@ -49,7 +49,8 @@ type ActiveParticipantWithProof struct {
 	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
 	Validators              []*comettypes.Validator  `json:"validators"`
 	Block                   *comettypes.Block        `json:"block"`
-	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
+	BlockProof              *types.BlockProof        `json:"block_proof"`
+	//CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
 type ParticipantDto struct {

@@ -8,16 +8,18 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	comettypes "github.com/cometbft/cometbft/types"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"net/http"
-	"net/url"
 	"strconv"
+
+	// "github.com/gonka-ai/gonka-utils/go/contracts"
+	"net/url"
 	"strings"
 
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/codec"
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -110,6 +112,12 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		return nil, err
 	}
 
+	// activeParticipants, err := utils.QueryActiveParticipants(rpcClient, epoch)(context.Background(), fmt.Sprintf("%v", epoch))
+	// if err != nil {
+	// 	logging.Error("Failed to query active participants. Outer", types.Participants, "error", err)
+	// 	return nil, err
+	// }
+
 	var activeParticipants types.ActiveParticipants
 	if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
 		logging.Error("Failed to unmarshal active participant", types.Participants, "error", err)
@@ -119,9 +127,9 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		"epoch", epoch,
 		"activeParticipants", activeParticipants)
 
-	block, err := rpcClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
-	if err != nil || block == nil {
-		logging.Error("Failed to get block", types.Participants, "error", err)
+	resp, err := s.recorder.NewInferenceQueryClient().GetBlockProofByHeight(context.Background(), &types.QueryBlockProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
+	if err != nil {
+		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
 		return nil, err
 	}
 
@@ -141,7 +149,8 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 	// because hash of block N is made after Commit() and stored in
 	// header of block N+1. It works so to make each block 'link' to previous and have chain of blocks.
 	if result.Response.ProofOps != nil {
-		s.verifyProof(epoch, result, blockP1)
+		hash, _ := hex.DecodeString(resp.Proof.AppHashHex)
+		s.verifyProof(epoch, result, hash)
 	}
 
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
@@ -166,22 +175,23 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		ProofOps:                result.Response.ProofOps,
 		Validators:              vals.Validators,
 		Block:                   returnBlock,
+		BlockProof:              resp.Proof,
 	}, nil
 }
 
-func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, block *coretypes.ResultBlock) {
+func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, appHash []byte) {
 	dataKey := types.ActiveParticipantsFullKey(epoch)
 	// Build the key path used by proof verification. We percent-encode the raw
 	// binary key so the path is a valid UTF-8/URL string.
 	verKey := "/inference/" + url.PathEscape(string(dataKey))
 	// verKey2 := string(result.Response.Key)
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
-	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
+	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, appHash, verKey, result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
-	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
+	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, appHash, "inference", string(dataKey), result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
