@@ -70,7 +70,7 @@ services:
       - GETH_DATA_DIR=/data/geth
       - PRYSM_DATA_DIR=/data/prysm
       - JWT_SECRET_PATH=/data/jwt/jwt.hex
-      - BRIDGE_API_BASE=http://api:9000
+      - BRIDGE_API_BASE=http://api:9200
       - BRIDGE_POSTBLOCK=/admin/v1/bridge/block
       - BRIDGE_GETADDRESSES=/v1/bridge/addresses
       - BEACON_STATE_URL=https://beaconstate.ethstaker.cc/
