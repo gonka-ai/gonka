@@ -14,6 +14,7 @@ import (
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -364,7 +365,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 
 type EventHandler interface {
 	GetName() string
-	CanHandle(even *chainevents.JSONRPCResponse) bool
+	CanHandle(event *chainevents.JSONRPCResponse) bool
 	Handle(event *chainevents.JSONRPCResponse, el *EventListener) error
 }
 type BlsTransactionEventHandler struct{}
@@ -432,7 +433,11 @@ func (e *SubmitProposalEventHandler) CanHandle(event *chainevents.JSONRPCRespons
 }
 
 func (e *SubmitProposalEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	logging.Debug("Handling `submit_proposal` event", types.EventProcessing, "proposalId", event.Result.Events["submit_proposal.proposal_id"][0])
+	proposalIds := event.Result.Events["submit_proposal.proposal_id"]
+	if len(proposalIds) == 0 {
+		return errors.New("proposal_id not found in event")
+	}
+	logging.Debug("Handling `submit_proposal` event", types.EventProcessing, "proposalId", proposalIds[0])
 	return nil
 }
 
