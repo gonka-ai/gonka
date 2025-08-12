@@ -180,6 +180,7 @@ data class DockerGroup(
                 validatorKey,
                 this.genesisGroup?.apiUrl ?: "http://genesis-api:9000"
             )
+            node.waitForNextBlock()
             node.grantMlOpsPermissionsToWarmAccount()
             val startRemainingArgs = baseArgs + listOf("api", "mock-server", "proxy")
             this.coldAccountPubkey = node.getColdPubKey()
@@ -452,7 +453,13 @@ fun initCluster(
 }
 
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
-    val currentCluster = getLocalCluster(config)
+    val currentCluster = try {
+        getLocalCluster(config)
+    } catch (e: InvalidClusterException) {
+        Logger.error(e, "Cluster is in invalid state, rebooting")
+        logSection("Invalid cluster, retrying")
+        null
+    }
     if (!reboot && clusterMatchesConfig(currentCluster, joinCount, config)) {
         return currentCluster
     } else {

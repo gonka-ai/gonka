@@ -64,6 +64,18 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.mockImageName }
     var foundPairs = 0
+    if (nodes.size != apis.size) {
+        Logger.error("Number of nodes (${nodes.size}) does not match number of APIs (${apis.size}). Tearing down containers")
+        nodes.forEach{
+            dockerClient.stopContainerCmd(it.id).exec()
+            dockerClient.removeContainerCmd(it.id).exec()
+        }
+        apis.forEach{
+            dockerClient.stopContainerCmd(it.id).exec()
+            dockerClient.removeContainerCmd(it.id).exec()
+        }
+        throw InvalidClusterException("Number of nodes (${nodes.size}) does not match number of APIs (${apis.size})")
+    }
     return nodes.mapNotNull { chainContainer ->
         foundPairs++
         val nameMatch = nameExtractor.find(chainContainer.names.first())
@@ -72,7 +84,9 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             return@mapNotNull null
         }
         val name = nameMatch.groupValues[1]
-        val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
+        val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } } ?: throw InvalidClusterException(
+            "Unable to find API container for $name"
+        )
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-mock-server" } }
         val configWithName = config.copy(pairName = name)
         val nodeLogs = attachDockerLogs(dockerClient, name, "node", chainContainer.id)
@@ -109,6 +123,8 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         )
     }
 }
+
+class InvalidClusterException(message: String) : RuntimeException(message)
 
 private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
     val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "localhost"
@@ -586,8 +602,9 @@ data class LocalInferencePair(
                         proposal
                     )
                 )
-            ).also { if (it.code != 0)
-                throw RuntimeException("Transaction failed: code=${it.code}, txhash=${it.txhash}, rawLog=${it.rawLog}")
+            ).also {
+                if (it.code != 0)
+                    throw RuntimeException("Transaction failed: code=${it.code}, txhash=${it.txhash}, rawLog=${it.rawLog}")
             }.getProposalId()!!
             this.makeGovernanceDeposit(proposalId, minDeposit)
             logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")

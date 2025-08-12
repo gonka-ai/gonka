@@ -380,7 +380,7 @@ data class ApplicationCLI(
             )
         }
 
-    fun grantMlOpsPermissionsToWarmAccount() = wrapLog("grantMlOpsPermissions", false) {
+    fun grantMlOpsPermissionsToWarmAccount(retries:Int = 3): Unit = wrapLog("grantMlOpsPermissions", false) {
         val coldAccountName = this.getColdAccountName()
         val operationAccountAddress = this.getWarmAddress()
         // NOTE: Can't be sent as a transaction, as it's not actually a transaction...
@@ -394,7 +394,12 @@ data class ApplicationCLI(
         val response = this.exec(commands, passwordInjection)
         val fullResponse = response.joinToString("\n")
         if (!fullResponse.contains("Transaction confirmed successfully!")) {
-            throw IllegalStateException("Failed to grant permissions to $coldAccountName for inference operations: $fullResponse")
+            if ((fullResponse.contains(NOT_READY_MESSAGE) || fullResponse.contains("not found: key not found")) && retries > 0) {
+                Thread.sleep(Duration.ofSeconds(5))
+                this.grantMlOpsPermissionsToWarmAccount(retries-1)
+            } else {
+                throw IllegalStateException("Failed to grant permissions to $coldAccountName for inference operations: $fullResponse")
+            }
         }
     }
 
