@@ -220,10 +220,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	if found {
 		genesis.GenesisOnlyParams = genesisOnlyParams
 	}
-	contractsParams, found := k.GetContractsParams(ctx)
-	if found {
-		genesis.CosmWasmParams = contractsParams
-	}
+
 	genesis.ModelList = getModels(&ctx, &k)
 	// Export bridge data
 	contractAddresses := k.GetAllBridgeContractAddresses(ctx)
