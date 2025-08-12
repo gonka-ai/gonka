@@ -38,8 +38,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	// Init empty TokenomicsData
 	k.SetTokenomicsData(ctx, types.TokenomicsData{})
 
-	k.SetContractsParams(ctx, genState.CosmWasmParams)
-
 	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
 
 	// this line is used by starport scaffolding # genesis/module/init

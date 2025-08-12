@@ -1,7 +1,6 @@
 package keeper
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -472,30 +471,6 @@ func (k Keeper) SetWrappedTokenCodeID(ctx sdk.Context, codeID uint64) {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, codeID)
 	store.Set([]byte(WrappedTokenCodeIDKey), buf)
-}
-
-// GetContractsParams returns the CosmWasmParams stored in module state, if any.
-func (k Keeper) GetContractsParams(ctx sdk.Context) (types.CosmWasmParams, bool) {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	key := []byte("contracts_params")
-	bz := store.Get(key)
-	if bz == nil {
-		return types.CosmWasmParams{}, false
-	}
-	var params types.CosmWasmParams
-	if err := k.cdc.Unmarshal(bz, &params); err != nil {
-		k.LogError("Bridge exchange: Failed to unmarshal contracts params", types.Messages, "error", err)
-		return types.CosmWasmParams{}, false
-	}
-	return params, true
-}
-
-// SetContractsParams sets CosmWasmParams in module state. Kept for compatibility with app upgrades and genesis.
-func (k Keeper) SetContractsParams(ctx context.Context, params types.CosmWasmParams) {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	key := []byte("contracts_params")
-	bz := k.cdc.MustMarshal(&params)
-	store.Set(key, bz)
 }
 
 // MigrateAllWrappedTokenContracts migrates all known wrapped token contract instances to the given code ID.
