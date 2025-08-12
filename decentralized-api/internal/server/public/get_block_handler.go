@@ -1,6 +1,7 @@
 package public
 
 import (
+	"context"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"github.com/labstack/echo/v4"
@@ -20,18 +21,24 @@ func (s *Server) getBlock(c echo.Context) error {
 		return ErrInvalidBlockHeight
 	}
 
-	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
+	resp, err := s.recorder.NewInferenceQueryClient().GetBlockProofByHeight(context.Background(), &types.QueryBlockProofRequest{ProofHeight: blockHeight})
 	if err != nil {
-		logging.Error("Failed to create rpc client", types.System, "error", err)
+		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
 		return err
 	}
 
-	block, err := rpcClient.Block(c.Request().Context(), &blockHeight)
-	if err != nil {
-		logging.Error("Failed to get validators", types.System, "error", err)
-		return err
-	}
-	return c.JSON(http.StatusOK, block)
+	/*	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
+		if err != nil {
+			logging.Error("Failed to create rpc client", types.System, "error", err)
+			return err
+		}
+
+		block, err := rpcClient.Block(c.Request().Context(), &blockHeight)
+		if err != nil {
+			logging.Error("Failed to get validators", types.System, "error", err)
+			return err
+		}*/
+	return c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) getValidatorsByBlock(c echo.Context) error {

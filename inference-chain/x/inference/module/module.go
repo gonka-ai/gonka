@@ -2,15 +2,17 @@ package inference
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -25,6 +27,7 @@ import (
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
+	"strings"
 
 	// this line is used by starport scaffolding # 1
 
@@ -175,6 +178,95 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		// Don't return error - allow block processing to continue even if pricing update fails
 	}
 
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	currentHeight := sdkCtx.BlockHeight()
+	am.LogInfo("BeginBlock: current height", types.System, "block height", currentHeight)
+	if currentHeight <= 0 {
+		return nil
+	}
+
+	target := currentHeight - 1
+	// TODO uncomment
+	/*	if !am.keeper.HasPendingProof(ctx, target) {
+		return nil
+	}*/
+
+	header := sdkCtx.BlockHeader()
+	appHashForTarget := header.GetAppHash()
+	voteInfos := sdkCtx.VoteInfos()
+
+	var (
+		totalPower  int64
+		signedPower int64
+	)
+
+	var prevParticipants types.ActiveParticipants
+	epoch, found := am.keeper.GetPreviousEpoch(ctx)
+	if found {
+		am.LogInfo("BeginBlock: found epoch", types.Participants, "epoch", epoch.GetIndex())
+		prevParticipants, _ = am.keeper.GetActiveParticipants(ctx, epoch.GetIndex())
+	}
+
+	commits := make([]*types.CommitInfo, 0, len(voteInfos))
+	type data struct {
+		pk     ed25519.PubKey
+		weight int64
+	}
+
+	vals := make(map[string]data)
+	for _, v := range prevParticipants.Participants {
+		if v.ValidatorKey == "" {
+			am.LogWarn("validator cons pub key is empty", types.Participants)
+			continue
+		}
+
+		keyBytes, err := base64.StdEncoding.DecodeString(v.ValidatorKey)
+		if err != nil {
+			am.LogError("Failed to unpack cons pub key", types.Participants, "error", err)
+			continue
+		}
+		pk := ed25519.PubKey(keyBytes)
+		addr := strings.ToUpper(pk.Address().String())
+		am.LogInfo("BeginBlock participant address", types.Participants, "consensus addr hex", addr)
+
+		vals[addr] = data{pk: pk, weight: v.Weight}
+	}
+
+	for _, v := range voteInfos {
+		var pubKey string
+		addr := strings.ToUpper(hex.EncodeToString(v.Validator.Address))
+		participantData, ok := vals[addr]
+		if !ok {
+			am.LogError("Failed to find validator for cons addrs", types.Participants, "consAddr", addr)
+		} else {
+			pubKey = base64.StdEncoding.EncodeToString(participantData.pk.Bytes())
+		}
+
+		commits = append(commits, &types.CommitInfo{
+			ValidatorAddress: addr,
+			ValidatorPubKey:  pubKey,
+			VotingPower:      v.Validator.Power,
+		})
+		totalPower += v.Validator.Power
+	}
+
+	proof := types.BlockProof{
+		CreatedAtBlockHeight: target,
+		AppHashHex:           strings.ToUpper(hex.EncodeToString(appHashForTarget)),
+		TotalVotingPower:     totalPower,
+		Commits:              commits,
+	}
+
+	if err := am.keeper.SetBlockProof(sdkCtx, proof); err != nil {
+		am.LogError("Failed to set BlockProof", types.Participants, "height", target, "error", err)
+		return nil
+	}
+
+	am.keeper.ClearPendingProof(sdkCtx, target)
+	am.LogInfo("BlockProof stored", types.Participants,
+		"created_at_block_height", target,
+		"total_power", totalPower,
+		"signed_power", signedPower)
 	return nil
 }
 
@@ -418,6 +510,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
 		CreatedAtBlockHeight: blockHeight,
 	})
+
+	am.keeper.SetPendingProof(ctx, blockHeight)
+	am.LogInfo("set pending proof on height", types.EpochGroup, "blockHeight", blockHeight)
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
 	if err != nil {
