@@ -44,6 +44,7 @@ jobs:
           images_to_manage=(
             "api ghcr.io/product-science/api decentralized-api-release"
             "node ghcr.io/product-science/inferenced inference-chain-release"
+            "tmkms ghcr.io/product-science/tmkms-softsign-with-keygen tmkms-release"
             # Add more images here in the same format to extend
           )
 
@@ -87,6 +88,7 @@ jobs:
           images_to_manage=(
             "api ghcr.io/product-science/api decentralized-api-release"
             "node ghcr.io/product-science/inferenced inference-chain-release"
+            "tmkms ghcr.io/product-science/tmkms-softsign-with-keygen tmkms-release"
             # Add more images here if their tags in kustomization.yaml need updating
           )
 
