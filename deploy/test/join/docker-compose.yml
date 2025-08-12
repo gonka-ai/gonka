@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.21
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.22.alphabridge
     container_name: tmkms
     restart: unless-stopped
     environment:
