@@ -83,11 +83,7 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 }
 
 func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager) error {
-	if config.GetChainNodeConfig().IsGenesis {
-		return registerGenesisParticipant(recorder, config)
-	} else {
-		return registerJoiningParticipant(recorder, config)
-	}
+	return nil
 }
 
 func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager) error {

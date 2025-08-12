@@ -149,7 +149,11 @@ if [ "${IS_GENESIS:-false}" = "false" ]; then
     run "$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" \
         "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
   fi
+else
+  sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
+  $STATE_DIR/config/config.toml
 fi
+
 # Snapshot parameters ----------------------------------------------------------
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
 kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
