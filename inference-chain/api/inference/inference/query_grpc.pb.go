@@ -68,6 +68,11 @@ const (
 	Query_PartialUpgradeAll_FullMethodName                         = "/inference.inference.Query/PartialUpgradeAll"
 	Query_BridgeTransaction_FullMethodName                         = "/inference.inference.Query/BridgeTransaction"
 	Query_BridgeTransactions_FullMethodName                        = "/inference.inference.Query/BridgeTransactions"
+	Query_BridgeAddressesByChain_FullMethodName                    = "/inference.inference.Query/BridgeAddressesByChain"
+	Query_LiquidityPool_FullMethodName                             = "/inference.inference.Query/LiquidityPool"
+	Query_WrappedTokenBalances_FullMethodName                      = "/inference.inference.Query/WrappedTokenBalances"
+	Query_ValidateWrappedTokenForTrade_FullMethodName              = "/inference.inference.Query/ValidateWrappedTokenForTrade"
+	Query_ApprovedTokensForTrade_FullMethodName                    = "/inference.inference.Query/ApprovedTokensForTrade"
 	Query_TrainingKvRecord_FullMethodName                          = "/inference.inference.Query/TrainingKvRecord"
 	Query_ListTrainingKvRecordKeys_FullMethodName                  = "/inference.inference.Query/ListTrainingKvRecordKeys"
 	Query_TrainingBarrier_FullMethodName                           = "/inference.inference.Query/TrainingBarrier"
@@ -167,6 +172,16 @@ type QueryClient interface {
 	BridgeTransaction(ctx context.Context, in *QueryGetBridgeTransactionRequest, opts ...grpc.CallOption) (*QueryGetBridgeTransactionResponse, error)
 	// Queries all bridge transactions
 	BridgeTransactions(ctx context.Context, in *QueryAllBridgeTransactionsRequest, opts ...grpc.CallOption) (*QueryAllBridgeTransactionsResponse, error)
+	// Queries bridge addresses by chain
+	BridgeAddressesByChain(ctx context.Context, in *QueryBridgeAddressesByChainRequest, opts ...grpc.CallOption) (*QueryBridgeAddressesByChainResponse, error)
+	// Queries the singleton liquidity pool
+	LiquidityPool(ctx context.Context, in *QueryLiquidityPoolRequest, opts ...grpc.CallOption) (*QueryLiquidityPoolResponse, error)
+	// Queries all wrapped token balances for a specific address
+	WrappedTokenBalances(ctx context.Context, in *QueryWrappedTokenBalancesRequest, opts ...grpc.CallOption) (*QueryWrappedTokenBalancesResponse, error)
+	// Validates a wrapped token for trading through liquidity pools
+	ValidateWrappedTokenForTrade(ctx context.Context, in *QueryValidateWrappedTokenForTradeRequest, opts ...grpc.CallOption) (*QueryValidateWrappedTokenForTradeResponse, error)
+	// Queries all approved bridge tokens for trading
+	ApprovedTokensForTrade(ctx context.Context, in *QueryApprovedTokensForTradeRequest, opts ...grpc.CallOption) (*QueryApprovedTokensForTradeResponse, error)
 	// Queries a list of TrainingKvRecord items.
 	TrainingKvRecord(ctx context.Context, in *QueryTrainingKvRecordRequest, opts ...grpc.CallOption) (*QueryTrainingKvRecordResponse, error)
 	// Queries a list of ListTrainingKvRecordKeys items.
@@ -639,6 +654,51 @@ func (c *queryClient) BridgeTransactions(ctx context.Context, in *QueryAllBridge
 	return out, nil
 }
 
+func (c *queryClient) BridgeAddressesByChain(ctx context.Context, in *QueryBridgeAddressesByChainRequest, opts ...grpc.CallOption) (*QueryBridgeAddressesByChainResponse, error) {
+	out := new(QueryBridgeAddressesByChainResponse)
+	err := c.cc.Invoke(ctx, Query_BridgeAddressesByChain_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) LiquidityPool(ctx context.Context, in *QueryLiquidityPoolRequest, opts ...grpc.CallOption) (*QueryLiquidityPoolResponse, error) {
+	out := new(QueryLiquidityPoolResponse)
+	err := c.cc.Invoke(ctx, Query_LiquidityPool_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) WrappedTokenBalances(ctx context.Context, in *QueryWrappedTokenBalancesRequest, opts ...grpc.CallOption) (*QueryWrappedTokenBalancesResponse, error) {
+	out := new(QueryWrappedTokenBalancesResponse)
+	err := c.cc.Invoke(ctx, Query_WrappedTokenBalances_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ValidateWrappedTokenForTrade(ctx context.Context, in *QueryValidateWrappedTokenForTradeRequest, opts ...grpc.CallOption) (*QueryValidateWrappedTokenForTradeResponse, error) {
+	out := new(QueryValidateWrappedTokenForTradeResponse)
+	err := c.cc.Invoke(ctx, Query_ValidateWrappedTokenForTrade_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ApprovedTokensForTrade(ctx context.Context, in *QueryApprovedTokensForTradeRequest, opts ...grpc.CallOption) (*QueryApprovedTokensForTradeResponse, error) {
+	out := new(QueryApprovedTokensForTradeResponse)
+	err := c.cc.Invoke(ctx, Query_ApprovedTokensForTrade_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) TrainingKvRecord(ctx context.Context, in *QueryTrainingKvRecordRequest, opts ...grpc.CallOption) (*QueryTrainingKvRecordResponse, error) {
 	out := new(QueryTrainingKvRecordResponse)
 	err := c.cc.Invoke(ctx, Query_TrainingKvRecord_FullMethodName, in, out, opts...)
@@ -832,6 +892,16 @@ type QueryServer interface {
 	BridgeTransaction(context.Context, *QueryGetBridgeTransactionRequest) (*QueryGetBridgeTransactionResponse, error)
 	// Queries all bridge transactions
 	BridgeTransactions(context.Context, *QueryAllBridgeTransactionsRequest) (*QueryAllBridgeTransactionsResponse, error)
+	// Queries bridge addresses by chain
+	BridgeAddressesByChain(context.Context, *QueryBridgeAddressesByChainRequest) (*QueryBridgeAddressesByChainResponse, error)
+	// Queries the singleton liquidity pool
+	LiquidityPool(context.Context, *QueryLiquidityPoolRequest) (*QueryLiquidityPoolResponse, error)
+	// Queries all wrapped token balances for a specific address
+	WrappedTokenBalances(context.Context, *QueryWrappedTokenBalancesRequest) (*QueryWrappedTokenBalancesResponse, error)
+	// Validates a wrapped token for trading through liquidity pools
+	ValidateWrappedTokenForTrade(context.Context, *QueryValidateWrappedTokenForTradeRequest) (*QueryValidateWrappedTokenForTradeResponse, error)
+	// Queries all approved bridge tokens for trading
+	ApprovedTokensForTrade(context.Context, *QueryApprovedTokensForTradeRequest) (*QueryApprovedTokensForTradeResponse, error)
 	// Queries a list of TrainingKvRecord items.
 	TrainingKvRecord(context.Context, *QueryTrainingKvRecordRequest) (*QueryTrainingKvRecordResponse, error)
 	// Queries a list of ListTrainingKvRecordKeys items.
@@ -1006,6 +1076,21 @@ func (UnimplementedQueryServer) BridgeTransaction(context.Context, *QueryGetBrid
 }
 func (UnimplementedQueryServer) BridgeTransactions(context.Context, *QueryAllBridgeTransactionsRequest) (*QueryAllBridgeTransactionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BridgeTransactions not implemented")
+}
+func (UnimplementedQueryServer) BridgeAddressesByChain(context.Context, *QueryBridgeAddressesByChainRequest) (*QueryBridgeAddressesByChainResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BridgeAddressesByChain not implemented")
+}
+func (UnimplementedQueryServer) LiquidityPool(context.Context, *QueryLiquidityPoolRequest) (*QueryLiquidityPoolResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LiquidityPool not implemented")
+}
+func (UnimplementedQueryServer) WrappedTokenBalances(context.Context, *QueryWrappedTokenBalancesRequest) (*QueryWrappedTokenBalancesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WrappedTokenBalances not implemented")
+}
+func (UnimplementedQueryServer) ValidateWrappedTokenForTrade(context.Context, *QueryValidateWrappedTokenForTradeRequest) (*QueryValidateWrappedTokenForTradeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ValidateWrappedTokenForTrade not implemented")
+}
+func (UnimplementedQueryServer) ApprovedTokensForTrade(context.Context, *QueryApprovedTokensForTradeRequest) (*QueryApprovedTokensForTradeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApprovedTokensForTrade not implemented")
 }
 func (UnimplementedQueryServer) TrainingKvRecord(context.Context, *QueryTrainingKvRecordRequest) (*QueryTrainingKvRecordResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingKvRecord not implemented")
@@ -1938,6 +2023,96 @@ func _Query_BridgeTransactions_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_BridgeAddressesByChain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryBridgeAddressesByChainRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BridgeAddressesByChain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_BridgeAddressesByChain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BridgeAddressesByChain(ctx, req.(*QueryBridgeAddressesByChainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_LiquidityPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryLiquidityPoolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).LiquidityPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_LiquidityPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).LiquidityPool(ctx, req.(*QueryLiquidityPoolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_WrappedTokenBalances_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryWrappedTokenBalancesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).WrappedTokenBalances(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_WrappedTokenBalances_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).WrappedTokenBalances(ctx, req.(*QueryWrappedTokenBalancesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ValidateWrappedTokenForTrade_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryValidateWrappedTokenForTradeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ValidateWrappedTokenForTrade(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ValidateWrappedTokenForTrade_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ValidateWrappedTokenForTrade(ctx, req.(*QueryValidateWrappedTokenForTradeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ApprovedTokensForTrade_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryApprovedTokensForTradeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ApprovedTokensForTrade(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ApprovedTokensForTrade_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ApprovedTokensForTrade(ctx, req.(*QueryApprovedTokensForTradeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_TrainingKvRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTrainingKvRecordRequest)
 	if err := dec(in); err != nil {
@@ -2356,6 +2531,26 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BridgeTransactions",
 			Handler:    _Query_BridgeTransactions_Handler,
+		},
+		{
+			MethodName: "BridgeAddressesByChain",
+			Handler:    _Query_BridgeAddressesByChain_Handler,
+		},
+		{
+			MethodName: "LiquidityPool",
+			Handler:    _Query_LiquidityPool_Handler,
+		},
+		{
+			MethodName: "WrappedTokenBalances",
+			Handler:    _Query_WrappedTokenBalances_Handler,
+		},
+		{
+			MethodName: "ValidateWrappedTokenForTrade",
+			Handler:    _Query_ValidateWrappedTokenForTrade_Handler,
+		},
+		{
+			MethodName: "ApprovedTokensForTrade",
+			Handler:    _Query_ApprovedTokensForTrade_Handler,
 		},
 		{
 			MethodName: "TrainingKvRecord",

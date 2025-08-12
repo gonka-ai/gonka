@@ -47,4 +47,5 @@ var (
 	ErrEpochNotFound                           = sdkerrors.Register(ModuleName, 1136, "epoch not found")
 	ErrIllegalState                            = sdkerrors.Register(ModuleName, 1137, "illegal state for the operation requested")
 	ErrInvalidValidationThreshold              = sdkerrors.Register(ModuleName, 1138, "validation threshold must be in [0, 100] range")
+	ErrBridgeAddressNotFound                   = sdkerrors.Register(ModuleName, 1139, "bridge addresses not found")
 )

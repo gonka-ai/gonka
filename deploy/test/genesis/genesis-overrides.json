@@ -91,6 +91,41 @@
         "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
         "supply_denom": "nicoin"
+      },
+      "bridge": {
+        "contract_addresses": [
+          {
+            "id": "ethereum_1",
+            "chainId": "ethereum",
+            "address": "0x87490233DB4EF48B6E3eef9C5B97Cdf772E25571"
+          }
+        ],
+        "token_metadata": [
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "name": "Tether USD",
+            "symbol": "USDT",
+            "decimals": 6
+          },
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0xa0b86a33e6441d2c50b5eda2c20ed0b1f5e3d80c",
+            "name": "USD Coin",
+            "symbol": "USDC",
+            "decimals": 6
+          }
+        ],
+        "trade_approved_tokens": [
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0xdac17f958d2ee523a2206206994597c13d831ec7"
+          },
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0xa0b86a33e6441d2c50b5eda2c20ed0b1f5e3d80c"
+          }
+        ]
       }
     }
   }

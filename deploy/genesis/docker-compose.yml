@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.21
+    image: ghcr.io/product-science/inferenced:0.1.22.alphabridge
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -17,12 +17,13 @@ services:
     volumes:
       - /srv/dai/inference:/root/.inference
       - ./genesis-overrides.json:/root/genesis_overrides.json
+      - ${CONTRACTS_DIR_HOST:-../../inference-chain/contracts}:/root/contracts
     ports:
       - "26656:26656"
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.21
+    image: ghcr.io/product-science/api:0.1.22.alphabridge
     restart: always
     depends_on:
       - node
@@ -45,9 +46,38 @@ services:
       - "9100:9100"
       - "9200:9200"
 
+  bridge:
+    container_name: bridge
+    image: ghcr.io/product-science/bridge-ethereum:0.1.22.alphabridge
+    restart: unless-stopped
+    environment:
+      - GETH_DATA_DIR=/data/geth
+      - PRYSM_DATA_DIR=/data/prysm
+      - JWT_SECRET_PATH=/data/jwt/jwt.hex
+      - BRIDGE_API_BASE=http://api:9000
+      - BRIDGE_POSTBLOCK=/admin/v1/bridge/block
+      - BRIDGE_GETADDRESSES=/v1/bridge/addresses
+      - BEACON_STATE_URL=https://beaconstate.ethstaker.cc/
+      - GETH_HTTP_PORT=8545
+      - GETH_AUTHRPC_PORT=8551
+      - GETH_P2P_PORT=30303
+      - GETH_DISCOVERY_PORT=30303
+      - PRYSM_P2P_TCP_PORT=13000
+      - PRYSM_P2P_UDP_PORT=12000
+      - PERSISTENT_DB_DIR=/persistent-db
+      - DEBUG=true
+    volumes:
+      - /srv/dai/ethereum/geth:/data/geth
+      - /srv/dai/ethereum/prysm:/data/prysm
+      - /srv/dai/ethereum/jwt:/data/jwt
+      - /srv/dai/ethereum/logs:/var/log
+      - /srv/dai/ethereum/persistent-db:/persistent-db
+    depends_on:
+      - api
+
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.21
+    image: ghcr.io/product-science/proxy:0.1.22.alphabridge
     ports:
       - "${API_PORT:-8000}:80"
     environment:

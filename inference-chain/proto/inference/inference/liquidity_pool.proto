@@ -1,0 +1,10 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message LiquidityPool {
+  string address      = 1;  // Contract address of the liquidity pool
+  uint64 codeId       = 2;  // Contract code id
+  uint64 block_height = 3;  // Block height when pool was registered
+} 

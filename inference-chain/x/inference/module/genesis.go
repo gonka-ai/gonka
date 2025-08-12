@@ -38,8 +38,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	// Init empty TokenomicsData
 	k.SetTokenomicsData(ctx, types.TokenomicsData{})
 
-	k.SetContractsParams(ctx, genState.CosmWasmParams)
-
 	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
 
 	// this line is used by starport scaffolding # genesis/module/init
@@ -53,6 +51,25 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		elem.ProposedBy = k.GetAuthority()
 		k.SetModel(ctx, &elem)
+	}
+
+	// Set all bridge contract addresses from genesis
+	for _, elem := range genState.Bridge.ContractAddresses {
+		k.SetBridgeContractAddress(ctx, *elem)
+	}
+
+	// Set all bridge token metadata from genesis
+	for _, elem := range genState.Bridge.TokenMetadata {
+		k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
+			Name:     elem.Name,
+			Symbol:   elem.Symbol,
+			Decimals: uint8(elem.Decimals),
+		})
+	}
+
+	// Set all bridge trade approved tokens from genesis
+	for _, elem := range genState.Bridge.TradeApprovedTokens {
+		k.SetBridgeTradeApprovedToken(ctx, *elem)
 	}
 
 	// Observability: end of InitGenesis
@@ -203,11 +220,32 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	if found {
 		genesis.GenesisOnlyParams = genesisOnlyParams
 	}
-	contractsParams, found := k.GetContractsParams(ctx)
-	if found {
-		genesis.CosmWasmParams = contractsParams
-	}
+
 	genesis.ModelList = getModels(&ctx, &k)
+	// Export bridge data
+	contractAddresses := k.GetAllBridgeContractAddresses(ctx)
+	contractAddressPtrs := make([]*types.BridgeContractAddress, len(contractAddresses))
+	for i := range contractAddresses {
+		contractAddressPtrs[i] = &contractAddresses[i]
+	}
+
+	tokenMetadata := k.GetAllBridgeTokenMetadata(ctx)
+	tokenMetadataPtrs := make([]*types.BridgeTokenMetadata, len(tokenMetadata))
+	for i := range tokenMetadata {
+		tokenMetadataPtrs[i] = &tokenMetadata[i]
+	}
+
+	tradeApprovedTokens := k.GetAllBridgeTradeApprovedTokens(ctx)
+	tradeApprovedTokenPtrs := make([]*types.BridgeTokenReference, len(tradeApprovedTokens))
+	for i := range tradeApprovedTokens {
+		tradeApprovedTokenPtrs[i] = &tradeApprovedTokens[i]
+	}
+
+	genesis.Bridge = &types.Bridge{
+		ContractAddresses:   contractAddressPtrs,
+		TokenMetadata:       tokenMetadataPtrs,
+		TradeApprovedTokens: tradeApprovedTokenPtrs,
+	}
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

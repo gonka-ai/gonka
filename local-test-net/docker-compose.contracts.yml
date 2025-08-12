@@ -1,0 +1,7 @@
+services:
+  chain-node:
+    volumes:
+      - ../inference-chain/contracts/:/root/contracts
+    environment:
+      - CONTRACT_DIR=/root/contracts 
+      - DEPLOY_BRIDGE_CONTRACTS=true 

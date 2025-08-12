@@ -112,6 +112,10 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     uint64 public constant MAX_STORED_EPOCHS = 365;  // 365 epochs = 365 days
     uint64 public constant TIMEOUT_DURATION = 30 days;
 
+    // Chain ID constants for cross-chain replay protection
+    bytes32 public immutable GONKA_CHAIN_ID;    // Source chain identifier (e.g., keccak256("gonka-mainnet-v1"))
+    bytes32 public immutable ETHEREUM_CHAIN_ID; // This chain identifier (e.g., bytes32(uint256(1)))
+
     // BLS signature verification (using Ethereum's native precompiles)
     address constant BLS_PRECOMPILE = 0x000000000000000000000000000000000000000f;
     
@@ -156,7 +160,11 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // CONSTRUCTOR
     // =============================================================================
 
-    constructor() ERC20("Wrapped Gonka", "WGNK") {
+    constructor(bytes32 _gonkaChainId, bytes32 _ethereumChainId) ERC20("Wrapped Gonka", "WGNK") {
+        // Set immutable chain IDs for cross-chain replay protection
+        GONKA_CHAIN_ID = _gonkaChainId;
+        ETHEREUM_CHAIN_ID = _ethereumChainId;
+        
         // Start in admin control state - requires genesis epoch setup
         epochMeta.currentState = ContractState.ADMIN_CONTROL;
         epochMeta.latestEpochId = 0;
@@ -265,9 +273,19 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert RequestAlreadyProcessed();
         }
 
-        // 3. Signature Verification: Use cached group key with operation domain separation
+        // 3. Signature Verification: Use cached group key with dual chain ID protection
+        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, tokenContract, amount]
         bytes32 messageHash = keccak256(
-            abi.encodePacked(cmd.epochId, cmd.requestId, WITHDRAW_OPERATION, cmd.recipient, cmd.tokenContract, cmd.amount)
+            abi.encodePacked(
+                cmd.epochId,        // Gonka epoch
+                GONKA_CHAIN_ID,     // Gonka chain identifier (prevents cross-Gonka-chain replays)
+                cmd.requestId,      // Unique request ID
+                ETHEREUM_CHAIN_ID,  // This Ethereum chain ID (prevents cross-Ethereum-chain replays)
+                WITHDRAW_OPERATION, // Operation type
+                cmd.recipient,      // Withdrawal details
+                cmd.tokenContract,
+                cmd.amount
+            )
         );
         
         if (!_verifyBLSSignature(groupKey, messageHash, cmd.signature)) {
@@ -316,9 +334,18 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert RequestAlreadyProcessed();
         }
 
-        // 3. Signature Verification: Use cached group key with operation domain separation
+        // 3. Signature Verification: Use cached group key with dual chain ID protection
+        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, MINT_OPERATION, recipient, amount]
         bytes32 messageHash = keccak256(
-            abi.encodePacked(cmd.epochId, cmd.requestId, MINT_OPERATION, cmd.recipient, cmd.amount)
+            abi.encodePacked(
+                cmd.epochId,        // Gonka epoch
+                GONKA_CHAIN_ID,     // Gonka chain identifier (prevents cross-Gonka-chain replays)
+                cmd.requestId,      // Unique request ID
+                ETHEREUM_CHAIN_ID,  // This Ethereum chain ID (prevents cross-Ethereum-chain replays)
+                MINT_OPERATION,     // Operation type
+                cmd.recipient,      // Mint details
+                cmd.amount
+            )
         );
         
         if (!_verifyBLSSignature(groupKey, messageHash, cmd.signature)) {

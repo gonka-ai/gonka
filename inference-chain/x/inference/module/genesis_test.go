@@ -11,7 +11,7 @@ import (
 )
 
 func TestGenesis(t *testing.T) {
-	baseGenesis := types.MockedGenesis()
+	baseGenesis := types.DefaultGenesis()
 	genesisState := types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),

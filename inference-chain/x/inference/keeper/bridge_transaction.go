@@ -15,16 +15,16 @@ const (
 )
 
 // generateBridgeTransactionKey creates a unique key for bridge transactions
-// Format: originChain_blockNumber_receiptIndex
-func generateBridgeTransactionKey(originChain, blockNumber, receiptIndex string) string {
-	return fmt.Sprintf("%s_%s_%s", originChain, blockNumber, receiptIndex)
+// Format: chainId_blockNumber_receiptIndex
+func generateBridgeTransactionKey(chainId, blockNumber, receiptIndex string) string {
+	return fmt.Sprintf("%s_%s_%s", chainId, blockNumber, receiptIndex)
 }
 
 // HasBridgeTransaction checks if a bridge transaction has been processed
-func (k Keeper) HasBridgeTransaction(ctx context.Context, originChain, blockNumber, receiptIndex string) bool {
+func (k Keeper) HasBridgeTransaction(ctx context.Context, chainId, blockNumber, receiptIndex string) bool {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte(BridgeTransactionKeyPrefix))
-	key := generateBridgeTransactionKey(originChain, blockNumber, receiptIndex)
+	key := generateBridgeTransactionKey(chainId, blockNumber, receiptIndex)
 	return store.Has([]byte(key))
 }
 
@@ -33,8 +33,8 @@ func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransa
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte(BridgeTransactionKeyPrefix))
 
-	// Generate proper unique key
-	key := generateBridgeTransactionKey(tx.OriginChain, tx.BlockNumber, tx.ReceiptIndex)
+	// Generate proper unique key using chainId
+	key := generateBridgeTransactionKey(tx.ChainId, tx.BlockNumber, tx.ReceiptIndex)
 
 	// Update the Id field to match our storage key for consistency
 	tx.Id = key
@@ -44,10 +44,10 @@ func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransa
 }
 
 // GetBridgeTransaction retrieves a bridge transaction
-func (k Keeper) GetBridgeTransaction(ctx context.Context, originChain, blockNumber, receiptIndex string) (*types.BridgeTransaction, bool) {
+func (k Keeper) GetBridgeTransaction(ctx context.Context, chainId, blockNumber, receiptIndex string) (*types.BridgeTransaction, bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte(BridgeTransactionKeyPrefix))
-	key := generateBridgeTransactionKey(originChain, blockNumber, receiptIndex)
+	key := generateBridgeTransactionKey(chainId, blockNumber, receiptIndex)
 	bz := store.Get([]byte(key))
 	if bz == nil {
 		return nil, false

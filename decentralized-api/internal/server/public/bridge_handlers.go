@@ -4,6 +4,7 @@ import (
 	"decentralized-api/cosmosclient"
 	cosmos_client "decentralized-api/cosmosclient"
 
+	"fmt"
 	"io"
 	"log/slog"
 	"sort"
@@ -334,4 +335,38 @@ func (s *Server) getBridgeStatus(c echo.Context) error {
 	}
 
 	return c.JSON(200, response)
+}
+
+// getBridgeAddresses returns bridge addresses for a specific chain by name
+func (s *Server) getBridgeAddresses(c echo.Context) error {
+	chainName := c.QueryParam("chain")
+
+	if chainName == "" {
+		return c.JSON(400, map[string]string{
+			"error": "Chain parameter is required (e.g., 'ethereum', 'polygon')",
+		})
+	}
+
+	// Use chainName directly as chainId
+	chainId := chainName
+
+	// Get addresses for this chain
+	addresses, err := s.recorder.GetBridgeAddresses(c.Request().Context(), chainId)
+	if err != nil {
+		return c.JSON(500, map[string]string{
+			"error": fmt.Sprintf("Failed to get addresses for chain '%s': %v", chainName, err),
+		})
+	}
+
+	// Convert to simple address list for API response
+	var addressList []string
+	for _, item := range addresses {
+		addressList = append(addressList, item.Address)
+	}
+
+	return c.JSON(200, map[string]interface{}{
+		"chain_name": chainName,
+		"chain_id":   chainId,
+		"addresses":  addressList,
+	})
 }

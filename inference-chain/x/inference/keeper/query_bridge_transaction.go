@@ -18,7 +18,11 @@ func (k Keeper) BridgeTransaction(goCtx context.Context, req *types.QueryGetBrid
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	bridgeTx, found := k.GetBridgeTransaction(ctx, req.OriginChain, req.BlockNumber, req.ReceiptIndex)
+
+	// Use originChain directly as chainId
+	chainId := req.OriginChain
+
+	bridgeTx, found := k.GetBridgeTransaction(ctx, chainId, req.BlockNumber, req.ReceiptIndex)
 	if !found {
 		return nil, status.Error(codes.NotFound, "bridge transaction not found")
 	}
