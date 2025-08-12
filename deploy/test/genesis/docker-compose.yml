@@ -18,7 +18,7 @@ services:
     volumes:
       - /srv/dai/inference:/root/.inference
       - ./genesis-overrides.json:/root/genesis_overrides.json
-      - ${CONTRACTS_DIR_HOST:-../../inference-chain/contracts}:/root/contracts
+      - ${CONTRACTS_DIR_HOST:-../../../inference-chain/contracts}:/root/contracts
     ports:
       - "5000:26656"
       - "26657:26657"
