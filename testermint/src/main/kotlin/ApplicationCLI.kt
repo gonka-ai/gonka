@@ -3,7 +3,6 @@ package com.productscience
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
-import com.productscience.data.toHexString
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
@@ -384,20 +383,19 @@ data class ApplicationCLI(
     fun grantMlOpsPermissionsToWarmAccount() = wrapLog("grantMlOpsPermissions", false) {
         val coldAccountName = this.getColdAccountName()
         val operationAccountAddress = this.getWarmAddress()
-        exec(
-            listOf(
-                config.execName,
-                "tx",
-                "inference",
-                "grant-ml-ops-permissions",
-                coldAccountName,
-                operationAccountAddress,
-                "--from",
-                coldAccountName,
-                "--gas",
-                "2000000",
-            )
-        )
+        // NOTE: Can't be sent as a transaction, as it's not actually a transaction...
+        val commands = listOf(
+            this.config.execName,
+            "tx",
+            "inference",
+            "grant-ml-ops-permissions",
+            coldAccountName,
+            operationAccountAddress) + getTransactionArgs(coldAccountName)
+        val response = this.exec(commands, passwordInjection)
+        val fullResponse = response.joinToString("\n")
+        if (!fullResponse.contains("Transaction confirmed successfully!")) {
+            throw IllegalStateException("Failed to grant permissions to $coldAccountName for inference operations: $fullResponse")
+        }
     }
 
 
@@ -486,24 +484,26 @@ data class ApplicationCLI(
     fun sendTransactionDirectly(args: List<String>, useColdAccount: Boolean = true): TxResponse {
         val from = if (useColdAccount) this.getColdAccountName() else this.getWarmAccountName()
         Logger.info("Sending transaction!")
-        val finalArgs = listOf("tx") + args + listOf(
-            "--keyring-backend",
-            this.config.keyringBackend,
-            "--keyring-dir=/root/${config.stateDirName}",
-            "--yes",
-            "--unordered",
-            "--timeout-duration",
-            "60s",
-            "--gas",
-            "2000000",
-            "--gas-adjustment",
-            "5.0",
-            "--from",
-            from
-        )
+        val finalArgs = listOf("tx") + args + getTransactionArgs(from)
         return execAndParse(finalArgs, stdIn = passwordInjection)
 
     }
+
+    private fun getTransactionArgs(from: String) = listOf(
+        "--keyring-backend",
+        this.config.keyringBackend,
+        "--keyring-dir=/root/${config.stateDirName}",
+        "--yes",
+        "--unordered",
+        "--timeout-duration",
+        "60s",
+        "--gas",
+        "2000000",
+        "--gas-adjustment",
+        "5.0",
+        "--from",
+        from
+    )
 
     fun getTransactionJson(args: List<String>): String {
         val from = this.getColdAccountName()
