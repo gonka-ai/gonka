@@ -25,6 +25,7 @@ services:
       - CONFIG_p2p__dial_timeout=30s
       - TMKMS_PORT=${TMKMS_PORT:-26658}
       - REST_API_ACTIVE=true
+      - INIT_ONLY=${INIT_ONLY}
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
