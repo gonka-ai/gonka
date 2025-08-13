@@ -165,7 +165,7 @@ data class DockerGroup(
             val containers = getRawContainers(config)
             val node =
                 containers.getCli(this.pairName) ?: error("Could not find node container for keyName=${this.pairName}")
-            val validatorKey = (1..3).fold<Int, String?>(null) { acc, _ ->
+            val validatorKey = (1..5).fold<Int, String?>(null) { acc, _ ->
                 acc ?: try {
                     node.getValidatorInfo().key
                 } catch (e: com.google.gson.JsonSyntaxException) {
