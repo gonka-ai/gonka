@@ -7,6 +7,7 @@ import (
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 )
 
 // ParticipantPowerInfo represents a participant with power for sorting and capping
@@ -45,7 +46,7 @@ func ApplyPowerCapping(ctx context.Context, k keeper.Keeper, activeParticipants 
 
 	// Get power capping parameters
 	maxIndividualPowerPercentage := k.GetMaxIndividualPowerPercentage(ctx)
-	if maxIndividualPowerPercentage == nil || maxIndividualPowerPercentage.ToFloat() == 0.0 {
+	if maxIndividualPowerPercentage == nil || maxIndividualPowerPercentage.ToDecimal().IsZero() {
 		// If not set or set to 0, return participants unchanged (no capping)
 		totalPower := int64(0)
 		for _, participant := range activeParticipants {
@@ -78,14 +79,14 @@ func ApplyPowerCapping(ctx context.Context, k keeper.Keeper, activeParticipants 
 // Algorithm: Sort powers, iterate from smallest to largest, detect threshold, calculate cap
 func calculateOptimalCap(activeParticipants []*types.ActiveParticipant, totalPower int64, maxPercentage *types.Decimal) ([]*types.ActiveParticipant, int64, bool) {
 	participantCount := len(activeParticipants)
-	maxPercentageFloat := maxPercentage.ToFloat()
+	maxPercentageDecimal := maxPercentage.ToDecimal()
 
 	// Handle small networks with dynamic limits
 	if participantCount < 4 {
 		// For small networks, use higher limits to ensure functionality
-		adjustedLimit := calculateSmallNetworkLimit(participantCount)
-		if adjustedLimit > maxPercentageFloat {
-			maxPercentageFloat = adjustedLimit
+		adjustedLimit := calculateSmallNetworkLimitDecimal(participantCount)
+		if adjustedLimit.GreaterThan(maxPercentageDecimal) {
+			maxPercentageDecimal = adjustedLimit
 		}
 	}
 
@@ -112,20 +113,32 @@ func calculateOptimalCap(activeParticipants []*types.ActiveParticipant, totalPow
 		currentPower := participantPowers[k].Power
 		weightedTotal := sumPrev + currentPower*int64(participantCount-k)
 
-		// Check if current power exceeds threshold
-		threshold := maxPercentageFloat * float64(weightedTotal)
-		if float64(currentPower) > threshold {
+		// Check if current power exceeds threshold using decimal arithmetic
+		// threshold = max_percentage * weighted_total
+		weightedTotalDecimal := decimal.NewFromInt(weightedTotal)
+		threshold := maxPercentageDecimal.Mul(weightedTotalDecimal)
+		currentPowerDecimal := decimal.NewFromInt(currentPower)
+
+		if currentPowerDecimal.GreaterThan(threshold) {
 			// Found threshold position - calculate cap
 			// Formula: x = (max_percentage * sum_of_previous_steps) / (1 - max_percentage * (N-k))
-			numerator := maxPercentageFloat * float64(sumPrev)
-			denominator := 1.0 - maxPercentageFloat*float64(participantCount-k)
+			sumPrevDecimal := decimal.NewFromInt(sumPrev)
+			numerator := maxPercentageDecimal.Mul(sumPrevDecimal)
+
+			// Calculate denominator: 1 - max_percentage * (N-k)
+			remainingParticipants := decimal.NewFromInt(int64(participantCount - k))
+			maxPercentageTimesRemaining := maxPercentageDecimal.Mul(remainingParticipants)
+			denominator := decimal.NewFromInt(1).Sub(maxPercentageTimesRemaining)
+
 			// Note: denominator is guaranteed > 0 if threshold condition is met,
 			// adding this for safety
-			if denominator <= 0 {
+			if denominator.LessThanOrEqual(decimal.Zero) {
 				cap = currentPower
 				break
 			}
-			cap = int64(numerator / denominator)
+
+			capDecimal := numerator.Div(denominator)
+			cap = capDecimal.IntPart()
 			break
 		}
 
@@ -144,17 +157,17 @@ func calculateOptimalCap(activeParticipants []*types.ActiveParticipant, totalPow
 	return cappedParticipants, finalTotalPower, true
 }
 
-// calculateSmallNetworkLimit returns higher limits for small networks
-func calculateSmallNetworkLimit(participantCount int) float64 {
+// calculateSmallNetworkLimitDecimal returns higher limits for small networks using decimal arithmetic
+func calculateSmallNetworkLimitDecimal(participantCount int) decimal.Decimal {
 	switch participantCount {
 	case 1:
-		return 1.0 // 100% - single participant
+		return decimal.NewFromFloat(1.0) // 100% - single participant
 	case 2:
-		return 0.50 // 50% - two participants
+		return decimal.NewFromFloat(0.50) // 50% - two participants
 	case 3:
-		return 0.40 // 40% - three participants
+		return decimal.NewFromFloat(0.40) // 40% - three participants
 	default:
-		return 0.30 // 30% - four or more participants
+		return decimal.NewFromFloat(0.30) // 30% - four or more participants
 	}
 }
 

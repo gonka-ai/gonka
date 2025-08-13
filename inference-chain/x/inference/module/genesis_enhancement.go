@@ -6,6 +6,7 @@ import (
 
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/shopspring/decimal"
 )
 
 // GenesisEnhancementResult represents the result of genesis validator enhancement
@@ -109,10 +110,12 @@ func calculateEnhancedPower(ctx context.Context, k keeper.Keeper, computeResults
 			// Calculate other participants' total power
 			otherParticipantsTotal := totalNetworkPower - result.Power
 
-			// Calculate enhanced power for first genesis validator
+			// Calculate enhanced power for first genesis validator using decimal arithmetic
 			// enhanced_power = other_participants_total * 0.52
-			multiplierFloat := genesisVetoMultiplier.ToFloat()
-			enhancedGenesisPower := int64(float64(otherParticipantsTotal) * multiplierFloat)
+			multiplierDecimal := genesisVetoMultiplier.ToDecimal()
+			otherParticipantsTotalDecimal := decimal.NewFromInt(otherParticipantsTotal)
+			enhancedGenesisPowerDecimal := otherParticipantsTotalDecimal.Mul(multiplierDecimal)
+			enhancedGenesisPower := enhancedGenesisPowerDecimal.IntPart()
 
 			// Apply enhancement to first genesis validator
 			enhancedResults[i].Power = enhancedGenesisPower
