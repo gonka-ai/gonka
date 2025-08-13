@@ -41,6 +41,12 @@ func LoadDefaultConfigManager() (*ConfigManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = manager.Write()
+	if err != nil {
+		log.Printf("Error writing config: %+v", err)
+		return nil, err
+	}
+	log.Printf("Saved loaded config: %+v", manager.currentConfig)
 	return &manager, nil
 }
 
@@ -58,6 +64,7 @@ func (cm *ConfigManager) Load() error {
 		return err
 	}
 	cm.currentConfig = config
+	log.Printf("Saved loaded config: %+v", cm.currentConfig)
 	return nil
 }
 

@@ -6,7 +6,7 @@ services:
     environment:
       - VALIDATOR_LISTEN_ADDRESS=tcp://node:${TMKMS_PORT:-26658}
     volumes:
-      - tmkms_data:/root/.tmkms
+      - .tmkms:/root/.tmkms
 
   node:
     container_name: node

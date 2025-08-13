@@ -114,15 +114,14 @@ fi
 
 
 GENESIS_FILE="$STATE_DIR/config/genesis.json"
-if [ !"${IS_GENESIS:-false}" = "true" ]; then
-  output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
-  echo "$output" | filter_cw20_code
-
-  touch "$INIT_FLAG"
-else
+if [ "${IS_GENESIS:-false}" = "true" ]; then
   echo "Skipping genesis download, using genesis from the host"
   sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
   $STATE_DIR/config/config.toml
+  touch "$INIT_FLAG"
+else
+  output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
+  echo "$output" | filter_cw20_code
   touch "$INIT_FLAG"
 fi
 ###############################################################################
