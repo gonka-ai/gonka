@@ -14,6 +14,7 @@ services:
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
+      - ../genesis.json:/root/genesis.json
     environment:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}

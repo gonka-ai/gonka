@@ -116,6 +116,8 @@ fi
 GENESIS_FILE="$STATE_DIR/config/genesis.json"
 if [ "${IS_GENESIS:-false}" = "true" ]; then
   echo "Skipping genesis download, using genesis from the host"
+  cp /root/genesis.json $GENESIS_FILE
+  echo "Genesis file copied from the host to $GENESIS_FILE (sha256sum: $(sha256sum $GENESIS_FILE), size: $(stat -c%s $GENESIS_FILE))"
   sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
   $STATE_DIR/config/config.toml
   touch "$INIT_FLAG"
