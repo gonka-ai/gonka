@@ -1,35 +1,65 @@
-# Genesis Ceremony
+# Gonka Genesis Ceremony
 
-The genesis ceremony is a coordinated process to bootstrap the Gonka blockchain with a pre-defined set of initial validators and an agreed-upon genesis.json file.
+The genesis ceremony is a coordinated process to bootstrap the Gonka blockchain with a pre-defined set of initial validators and an agreed-upon genesis.json file.   
+This ceremony is important because it establishes the network's foundational security, ensures fair participation among validators, and creates a verifiable starting point for the blockchain.
 
 ## Overview
 
-The ceremony involves multiple rounds to prepare the initial genesis.json file. All rounds are conducted transparently through GitHub, ensuring public visibility and accountability.
+**Goal**: Participants (validators) submit validator information and offline transaction files (gentx and genparticipant) via PRs; the Coordinator aggregates and verifies these inputs to publish the final, agreed `genesis.json` with a scheduled `genesis_time` and recorded hash.
 
-Key aspects:
-- The ceremony is coordinated by a designated Coordinator
-- Validators participate by providing their data via GitHub Pull Requests
-- The final genesis.json hash is recorded both on-chain and in the repository for full auditability
-- The process ensures consensus among all initial validators before chain launch
+The ceremony proceeds through clearly defined phases to produce an auditable, shared `genesis.json`. All collaboration happens via GitHub PRs for full transparency and accountability.
+
+**Key aspects:**
+
+- A designated Coordinator runs the process
+- Participants (validators) provide required data via GitHub PRs
+- The final `genesis.json` hash is recorded in the repo (and may be referenced on-chain) for auditability
+- The process ensures consensus among all initial validators before launch
+- Terminology: "Participant" and "Validator" refer to the same role in this document
+- Roles align with `quickstart.md` terminology: Participants operate a Network Node (chain + API) and ML Node; the Coordinator aggregates and verifies using code in this repository
+
 
 ## Prerequisites
 
-Before participating in the ceremony, each validator must:
+Before participating in the ceremony, each participant (validator) must:
 
-1. **Fork this repository** and create a validator directory
-2. **Set up server infrastructure** with proper key management
-3. **Review the quickstart guide** at [Gonka Quickstart](https://gonka.ai/participant/quickstart), download models, setup env variables
+1. **Fork** [the Gonka Repository](https://github.com/gonka-ai/gonka/) to your GitHub account
 
-### Initial Setup
+2. **Choose a participant (validator) name** and create your validator directory:
+   ```bash
+   cp -r genesis/validators/template genesis/validators/<YOUR_VALIDATOR_NAME>
+   ```
+   This directory will be used for sharing information and transactions during the ceremony.
 
-Create your validator directory:
-```bash
-mkdir -p genesis/validators/<YOUR_VALIDATOR_NAME>
-```
+3. **Complete the setup guide** by following [Gonka Quickstart](https://gonka.ai/participant/quickstart) through step **1. Pull Docker Images (Containers)**. This ensures required tools and images are available. Do not broadcast any transactions during the ceremony; you will generate offline files for PRs.
 
-Use the template structure from [genesis/validators/template](genesis/validators/template).
+4. Confirm readiness:
+   - `inferenced` CLI is installed locally and your Account Cold Key is created
+   - Containers are pulled, models downloaded, and environment variables (`config.env`) are configured
+
 
 ## Ceremony Process
+
+The ceremony follows a 5-phase process:
+
+- **Phase 1 [Validators]**: Prepare Account Key and initial server setup; open PR with validator information (including node ID, ML operational address, and consensus pubkey)
+- **Phase 2 [Coordinator]**: Aggregate validator info and publish `genesis.json` draft for review
+- **Phase 3 [Validators]**: Generate offline `gentx` and `genparticipant` files from the draft; open PR with files
+- **Phase 4 [Coordinator]**: Verify and collect transactions, patch `genesis.json`, set `genesis_time`
+- **Phase 5 [Validators]**: Retrieve final `genesis.json`, verify hash, and launch nodes before `genesis_time`
+
+### Deploy Scripts
+
+To simplify the process, the deploy scripts for the Ceremony will be in [/deploy/join](/deploy/join) directory of [the Gonka Repository](https://github.com/gonka-ai/gonka/).  
+The deploy scripts are the same as the standard join flow from `quickstart.md`. During the ceremony, the Coordinator will adjust the following environment variables to enable genesis-specific behavior:
+
+- `INIT_ONLY` — initialize data directories and prepare configs without starting the full stack
+- `GENESIS_SEEDS` — seed node address list used for initial P2P connectivity at launch
+- `IS_GENESIS` — toggle genesis-only paths (e.g., hash verification, bootstrap behavior) in compose/scripts
+
+Location: these variables are set by the Coordinator in `deploy/join/docker-compose.yml`. Validators should not change them.
+
+Once **Phase 5** is finished and the chain has launched, the variables above are removed from the repo by the Coordinator as they're not required further.
 
 ### 1. [Validators]: Account Key Registration
 
