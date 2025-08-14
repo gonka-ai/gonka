@@ -442,28 +442,28 @@ inference module
 - MsgInvalidateInference
     - Types: x/inference/types/message_invalidate_inference.go
     - Handler: x/inference/keeper/msg_server_invalidate_inference.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgRevalidateInference
     - Types: x/inference/types/message_revalidate_inference.go
     - Handler: x/inference/keeper/msg_server_revalidate_inference.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgClaimRewards
     - Types: x/inference/types/message_claim_rewards.go
     - Handler: x/inference/keeper/msg_server_claim_rewards.go
-    - [ ] Implement/extend ValidateBasic
-    - [ ] Tests
+    - [x] Implement/extend ValidateBasic
+    - [x] Tests
 - MsgSubmitPocBatch
     - Types: x/inference/types/message_submit_poc_batch.go
     - Handler: x/inference/keeper/msg_server_submit_poc_batch.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgSubmitPocValidation
     - Types: x/inference/types/message_submit_poc_validation.go
     - Handler: x/inference/keeper/msg_server_submit_poc_validation.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgSubmitSeed
     - Types: x/inference/types/message_submit_seed.go
     - Handler: x/inference/keeper/msg_server_submit_seed.go
