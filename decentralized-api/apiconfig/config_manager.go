@@ -64,7 +64,6 @@ func (cm *ConfigManager) Load() error {
 		return err
 	}
 	cm.currentConfig = config
-	log.Printf("Saved loaded config: %+v", cm.currentConfig)
 	return nil
 }
 

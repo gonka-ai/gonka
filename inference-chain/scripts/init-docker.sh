@@ -17,7 +17,6 @@ fail() {
 
 need() { eval ": \${$1:?Environment variable $1 is required}"; }
 
-# treat 0 (“changed”) and 3 (“already correct”) as success
 ok_rc() { [ "$1" -eq 0 ] || [ "$1" -eq 3 ]; }
 
 run() {
@@ -52,12 +51,16 @@ filter_cw20_code() {
 need KEY_NAME
 need SEED_NODE_RPC_URL
 need SEED_NODE_P2P_URL
+need P2P_EXTERNAL_ADDRESS
 
 APP_NAME="${APP_NAME:-inferenced}"
 KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
 CHAIN_ID="${CHAIN_ID:-gonka-testnet-7}"
 COIN_DENOM="${COIN_DENOM:-icoin}"
 STATE_DIR="${STATE_DIR:-/root/.inference}"
+INIT_ONLY="${INIT_ONLY:-false}"
+IS_GENESIS="${IS_GENESIS:-false}"
+
 
 SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-10}"
 SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
@@ -68,6 +71,25 @@ update_configs() {
     "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
   else
     echo "Skipping update node config"
+  fi
+}
+
+configure_tmkms() {
+  if [ -n "${TMKMS_PORT-}" ]; then
+    echo "Configuring TMKMS (port $TMKMS_PORT)"
+    
+    # Remove local validator key files (TMKMS will handle signing)
+    rm -f "$STATE_DIR/config/priv_validator_key.json" \
+          "$STATE_DIR/data/priv_validator_state.json"
+
+    # Set TMKMS connection address using kv command
+    kv config priv_validator_laddr "tcp://0.0.0.0:${TMKMS_PORT}"
+
+    # Comment out local validator key file settings (sed still needed for commenting)
+    sed -i \
+      -e "s|^priv_validator_key_file *=|# priv_validator_key_file =|" \
+      -e "s|^priv_validator_state_file *=|# priv_validator_state_file =|" \
+      "$STATE_DIR/config/config.toml"
   fi
 }
 
@@ -85,80 +107,70 @@ fi
 # One-time initialisation
 ###############################################################################
 if $FIRST_RUN; then
-  echo "Initialising node (first run)"
-  output=$("$APP_NAME" init --overwrite --chain-id "$CHAIN_ID" \
-                       --default-denom "$COIN_DENOM" my-node 2>&1)
-  exit_code=$?
-  if [ $exit_code -ne 0 ]; then
-      echo "Error: '$APP_NAME init' failed with exit code $exit_code"
-      echo "Output:"
-      echo "$output"
-      exit $exit_code
+  # Initialize node only if config.toml does not exist
+  CONFIG_FILE="$STATE_DIR/config/config.toml"
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Initialising node (first run)"
+    output=$(
+      "$APP_NAME" init --chain-id "$CHAIN_ID" --default-denom "$COIN_DENOM" my-node 2>&1
+    )
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo "Error: '$APP_NAME init' failed with exit code $exit_code"
+        echo "Output:"
+        echo "$output"
+        exit $exit_code
+    fi
+    echo "$output" | filter_cw20_code
+
+    kv client chain-id "$CHAIN_ID"
+    kv client keyring-backend "$KEYRING_BACKEND"
+    kv app minimum-gas-prices "0${COIN_DENOM}"
+    kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS"
+    configure_tmkms
+    update_configs
+  else
+    echo "Node already initialised, skipping initialisation"
   fi
-  echo "$output" | filter_cw20_code
 
-  kv client chain-id "$CHAIN_ID"
-  kv client keyring-backend "$KEYRING_BACKEND"
-  kv app minimum-gas-prices "0${COIN_DENOM}"
+  # If not genesis, download it from the seed node
+  GENESIS_FILE="$STATE_DIR/config/genesis.json"
+  if [ "${IS_GENESIS:-false}" = "false" ]; then
+    output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
+    echo "$output" | filter_cw20_code
 
-  update_configs
+    run "$APP_NAME" set-seeds "$STATE_DIR/config/config.toml" \
+        "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
 
-  if [ "${INIT_ONLY}" = true ]; then
-    echo "Skipping genesis download"
-    rm -f "$STATE_DIR/config/priv_validator_key.json"
-    rm -f "$STATE_DIR/data/priv_validator_state.json"
-    touch "$INIT_FLAG"
-    exit 0
+    run "$APP_NAME" set-statesync "$STATE_DIR/config/config.toml" \
+        "${SYNC_WITH_SNAPSHOTS:-false}"
+
+    if [ "${SYNC_WITH_SNAPSHOTS:-false}" = "true" ]; then
+      need RPC_SERVER_URL_1
+      need RPC_SERVER_URL_2
+      run "$APP_NAME" set-statesync-rpc-servers "$STATE_DIR/config/config.toml" \
+          "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
+      run "$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" \
+          "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
+    fi
+  else
+    cp /root/genesis.json "$GENESIS_FILE"
   fi
+
+  chmod a-wx "$GENESIS_FILE"
+  touch "$INIT_FLAG"
 fi
 
-
-GENESIS_FILE="$STATE_DIR/config/genesis.json"
-if [ "${IS_GENESIS:-false}" = "true" ]; then
-  echo "Skipping genesis download, using genesis from the host"
-  cp /root/genesis.json $GENESIS_FILE
-  echo "Genesis file copied from the host to $GENESIS_FILE (sha256sum: $(sha256sum $GENESIS_FILE), size: $(stat -c%s $GENESIS_FILE))"
-  sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
-  $STATE_DIR/config/config.toml
-  touch "$INIT_FLAG"
-else
-  output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
-  echo "$output" | filter_cw20_code
-  touch "$INIT_FLAG"
-fi
 ###############################################################################
 # Configuration executed on every start
 ###############################################################################
 echo "Applying configuration at container start"
 
-# Seed / state-sync settings ---------------------------------------------------
-[ -n "${P2P_EXTERNAL_ADDRESS-}" ] \
-    && kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
-
-if [ "${IS_GENESIS:-false}" = "false" ]; then
-  run "$APP_NAME" set-seeds "$STATE_DIR/config/config.toml" \
-      "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
-
-  run "$APP_NAME" set-statesync "$STATE_DIR/config/config.toml" \
-      "${SYNC_WITH_SNAPSHOTS:-false}"
-
-  if [ "${SYNC_WITH_SNAPSHOTS:-false}" = "true" ]; then
-    need RPC_SERVER_URL_1
-    need RPC_SERVER_URL_2
-    run "$APP_NAME" set-statesync-rpc-servers "$STATE_DIR/config/config.toml" \
-        "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
-    run "$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" \
-        "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
-  fi
-else
-  sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
-  $STATE_DIR/config/config.toml
-fi
-
 # Snapshot parameters ----------------------------------------------------------
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
 kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
-sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' $STATE_DIR/config/config.toml
+kv config rpc.laddr "tcp://0.0.0.0:26657"
+
 
 # CONFIG_* environment overrides ----------------------------------------------
 (
@@ -167,23 +179,6 @@ sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' $STATE_DIR
   key=${raw_key#CONFIG_}; key=${key//__/.}
   kv config "$key" "$raw_val" --skip-validate
 done
-
-# File-based overrides ---------------------------------------------------------
-[ -f config_overrides.toml ] \
-  && run "$APP_NAME" patch-toml "$STATE_DIR/config/config.toml" config_overrides.toml
-
-# TMKMS integration ------------------------------------------------------------
-if [ -n "${TMKMS_PORT-}" ]; then
-  echo "Configuring TMKMS (port $TMKMS_PORT)"
-  rm -f "$STATE_DIR/config/priv_validator_key.json" \
-        "$STATE_DIR/data/priv_validator_state.json"
-
-  sed -i \
-    -e "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TMKMS_PORT}\"|" \
-    -e "s|^priv_validator_key_file *=|# priv_validator_key_file =|" \
-    -e "s|^priv_validator_state_file *=|# priv_validator_state_file =|" \
-    "$STATE_DIR/config/config.toml"
-fi
 
 update_configs
 

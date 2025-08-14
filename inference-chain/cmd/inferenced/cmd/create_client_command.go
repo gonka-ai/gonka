@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
-
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/keys"
 	"github.com/spf13/cobra"
+	"io"
+	"net/http"
+	"strings"
 )
 
 func CreateClientCommand() *cobra.Command {
