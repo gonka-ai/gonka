@@ -549,27 +549,27 @@ bls module
 - MsgUpdateParams
     - Types: x/bls/types/msg_update_params.go
     - Handler: x/bls/keeper/msg_update_params.go
-    - [ ] Ensure ValidateBasic
+    - [x] Ensure ValidateBasic
 - MsgSubmitDealerPart
     - Types: x/bls/types/message_submit_dealer_part.go
     - Handler: x/bls/keeper/msg_server_dealer.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 - MsgSubmitVerificationVector
     - Types: x/bls/types/message_submit_verification_vector.go
     - Handler: x/bls/keeper/msg_server_verifier.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 - MsgSubmitGroupKeyValidationSignature
     - Types: x/bls/types/message_submit_group_key_validation_signature.go
     - Handler: x/bls/keeper/msg_server_group_validation.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 - MsgSubmitPartialSignature
     - Types: x/bls/types/message_submit_partial_signature.go
     - Handler: x/bls/keeper/msg_server_threshold_signing.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 - MsgRequestThresholdSignature
     - Types: x/bls/types/message_request_threshold_signature.go
     - Handler: x/bls/keeper/msg_server_threshold_signing.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 
 collateral module
 - MsgUpdateParams
