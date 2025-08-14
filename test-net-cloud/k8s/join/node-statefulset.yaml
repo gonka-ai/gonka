@@ -67,6 +67,8 @@ spec:
           value: "26658"
         - name: REST_API_ACTIVE
           value: "true"  # Enable REST API server for explorer
+        - name: TESTS
+          value: "true"
         volumeMounts:
         - name: inference-data
           mountPath: /root/.inference # Shared data with API
