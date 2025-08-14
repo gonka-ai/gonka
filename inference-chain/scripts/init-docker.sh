@@ -45,6 +45,37 @@ filter_cw20_code() {
   '
 }
 
+configure_genesis_seeds() {
+  need GENESIS_SEEDS
+  
+  echo "Configuring genesis seeds"
+  NODE_ID=$("$APP_NAME" tendermint show-node-id)
+  echo "Current node ID: $NODE_ID"
+  echo "Filtering seeds for node ID: $NODE_ID"
+  
+  local filtered_seeds=""
+  IFS=',' read -ra SEED_ARRAY <<< "$GENESIS_SEEDS"
+  for seed in "${SEED_ARRAY[@]}"; do
+    seed_id=$(echo "$seed" | cut -d'@' -f1)
+    if [ "$seed_id" != "$NODE_ID" ]; then
+      if [ -z "$filtered_seeds" ]; then
+        filtered_seeds="$seed"
+      else
+        filtered_seeds="$filtered_seeds,$seed"
+      fi
+    else
+      echo "Filtered out own node ID: $seed"
+    fi
+  done
+  
+  if [ -n "$filtered_seeds" ]; then
+    echo "Setting filtered seeds: $filtered_seeds"
+    kv config p2p.seeds "$filtered_seeds" --skip-validate
+  else
+    fail "No seeds to set after filtering - cannot start without peer seeds"
+  fi
+}
+
 ###############################################################################
 # Required / default environment
 ###############################################################################
@@ -156,6 +187,8 @@ if $FIRST_RUN; then
     fi
   else
     cp /root/genesis.json "$GENESIS_FILE"
+    
+    configure_genesis_seeds
   fi
 
   chmod a-wx "$GENESIS_FILE"
