@@ -24,12 +24,12 @@ services:
       - CONFIG_p2p__allow_duplicate_ip=true
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
-      - CONFIG_p2p__seeds="95eaa717121aa0bf4fd6864393354ee56a191d11@36.189.234.237:19255,48243a68ff60de1691de3af46d51e8745afb78d8@36.189.234.237:19257,9b55383237fbcccb552a9f16bf6881cf3a9b29e4@36.189.234.237:19237"
+      - CONFIG_p2p__seeds="1fc386c853b72b67de12b6c0b7b88dda01ae1386@36.189.234.237:19255,1fdc42b0bd8e6c3f65f1b35f75ae80f401b11a1d@36.189.234.237:19257,51cc3ecac012821d6c57af636279494a7991081a@36.189.234.237:19237"
       - TMKMS_PORT=${TMKMS_PORT:-26658}
       - REST_API_ACTIVE=true
       - INIT_ONLY=${INIT_ONLY}
       - IS_GENESIS=true
-      - INIT_ONLY=true
+      - INIT_ONLY=false
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
