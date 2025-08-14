@@ -1,60 +1,90 @@
-# GENTX Ceremony
+# Genesis Ceremony
 
-The genesis ceremony is designed to start chain with pre-defined set of inital validators with initial genesis.json file which eveerybody agreed on.   
+The genesis ceremony is a coordinated process to bootstrap the Gonka blockchain with a pre-defined set of initial validators and an agreed-upon genesis.json file.
 
-The process consist of several rounds to prepare initial genesis.json. All rounds are publicly available and github are publicly available.
+## Overview
 
-When initial genesis.json is created, it's hash will be recorded in the blockchain and in the repository which will allow to track full state changes
+The ceremony involves multiple rounds to prepare the initial genesis.json file. All rounds are conducted transparently through GitHub, ensuring public visibility and accountability.
 
-> more words about ceremoney 
+Key aspects:
+- The ceremony is coordinated by a designated Coordinator
+- Validators participate by providing their data via GitHub Pull Requests
+- The final genesis.json hash is recorded both on-chain and in the repository for full auditability
+- The process ensures consensus among all initial validators before chain launch
 
+## Prerequisites
 
-The ceremony is held by Coordinator which prepare initial genesis.json and collect gentxs from initial Validators
-During the ceremony, Validators should provide their data via GitHub PRs.
+Before participating in the ceremony, each validator must:
 
-Before the start, each Validator should make fork of that repository and create directory genesis/validators/<NAME> in [genesis/validators/](genesis/validators/) by template [genesis/validators/template](genesis/validators/template).
+1. **Fork this repository** and create a validator directory
+2. **Set up server infrastructure** with proper key management
+3. **Review the quickstart guide** at [Gonka Quickstart](https://gonka.ai/participant/quickstart), download models, setup env variables
 
-Details about the setup of server, key management can be found at the [Quickstart](https://gonka.ai/participant/quickstart). 
+### Initial Setup
 
-
-## Plan
-
-### 1. [Validators]: Create Account Cold Key
-
-1. Create Account Cold Key
-2. Add PubKey into genesis/validators/<NAME>/README.md:
-
+Create your validator directory:
+```bash
+mkdir -p genesis/validators/<YOUR_VALIDATOR_NAME>
 ```
-Account Public Key: <PubKey>
-```
-3. Create PR into gonka repo
 
-### 2. [Coordinator]: Merge All PRs and Prepare `genesis.json` draft
+Use the template structure from [genesis/validators/template](genesis/validators/template).
 
-...
+## Ceremony Process
 
-### 3. [Validators]: Prepare GENTX and GENPARTICIPANT files
+### 1. [Validators]: Account Key Registration
 
-#### [Server]: Initialize node and get nodeId
-```
+#### Steps:
+1. **Generate Account Cold Key**
+   ```bash
+   # Generate your account key using the appropriate method
+   # Keep this key secure - it will be used for validator operations
+   ```
+
+2. **Submit Public Key**
+   Create `genesis/validators/<YOUR_NAME>/README.md` with:
+   ```markdown
+   # Validator: <YOUR_NAME>
+   
+   Account Public Key: <YOUR_PUBKEY>
+   ```
+
+3. **Create Pull Request**
+   Submit a PR to the gonka repository with your validator information.
+
+### 2. [Coordinator]: Genesis Draft Preparation
+
+The coordinator will:
+- Review and merge all validator PRs
+- Prepare the initial genesis.json draft
+- Distribute the draft for validator review and approval
+
+### 3. [Validators]: GENTX and GENPARTICIPANT Generation
+
+This phase involves generating the necessary transaction files for chain initialization.
+
+#### [Server]: Initialize Node and Get Node ID
+```bash
 docker compose run --rm node
-51a9df752b60f565fe061a115b6494782447dc1f
+# Expected output example:
+# 51a9df752b60f565fe061a115b6494782447dc1f
 ```
 
-#### [Server]: Get Consensus Public Key
-```
+#### [Server]: Extract Consensus Public Key
+```bash
 docker compose up -d tmkms && docker compose run --rm --entrypoint /bin/sh tmkms -c "tmkms-pubkey"
-/wTVavYr5OCiVssIT3Gc5nsfIH0lP1Rqn/zeQtq4CvQ=
+# Expected output example:
+# /wTVavYr5OCiVssIT3Gc5nsfIH0lP1Rqn/zeQtq4CvQ=
 ```
 
-#### [Server]: Create ML Operational Key
-```
+#### [Server]: Generate ML Operational Key
+```bash
 docker compose run --rm --no-deps -it api /bin/sh
-address: gonka1z7w7kqukkek7n6yenwu826mqwz8yjuf2u62wm2
+# Expected output example:
+# address: gonka1z7w7kqukkek7n6yenwu826mqwz8yjuf2u62wm2
 ```
 
-#### [Local]: Create and sign GENTX and GENPARTICIPANT files
-```
+#### [Local]: Create GENTX and GENPARTICIPANT Files
+```bash
 ./inferenced genesis gentx \
     --home ./702103 \
     --keyring-backend file \
@@ -62,13 +92,96 @@ address: gonka1z7w7kqukkek7n6yenwu826mqwz8yjuf2u62wm2
     --pubkey /wTVavYr5OCiVssIT3Gc5nsfIH0lP1Rqn/zeQtq4CvQ= \
     --ml-operational-address gonka1z7w7kqukkek7n6yenwu826mqwz8yjuf2u62wm2 \
     --url http://36.189.234.237:19256 \
-    --moniker "mynode-702103" --chain-id gonka-testnet-7 \
+    --moniker "mynode-702103" \
+    --chain-id gonka-testnet-7 \
     --node-id 51a9df752b60f565fe061a115b6494782447dc1f
 ```
 
-Create PR into gonka repo with files in:
-- genesis/validators/<NAME>/gentx-***.json
-- genesis/validators/<NAME>/genparticipant-***.json
+#### [Local]: Submit Generated Files
 
+Create a PR with the following files:
+- `genesis/validators/<YOUR_NAME>/gentx-*.json`
+- `genesis/validators/<YOUR_NAME>/genparticipant-*.json`
 
-### [Coordinator]: Prepare final `genesis.json`
+Update your `genesis/validators/<YOUR_NAME>/README.md`:
+```markdown
+# Validator: <YOUR_NAME>
+
+Account Public Key: <YOUR_PUBKEY>
+Node ID: <YOUR_NODE_ID>
+P2P Address: <YOUR_P2P_ADDRESS>
+```
+
+### 4. [Coordinator]: Final Genesis Preparation
+
+#### Collect Genesis Transactions
+```bash
+./inferenced genesis collect-gentxs --home inference --gentx-dir gentxs
+```
+
+#### Process Participant Registrations
+```bash
+./inferenced genesis patch-genesis --home inference --genparticipant-dir genparticipants
+```
+
+#### Configure Network Seeds
+- Set `GENESIS_SEEDS` variable in docker-compose.yml
+- Set `INIT_ONLY` to `false`
+
+### 5. [Validators]: Chain Launch
+
+The blockchain will begin producing blocks at the `genesis_time` specified in the genesis.json file.
+
+#### Launch Steps:
+1. **Update Configuration**
+   ```bash
+   # Pull the latest genesis.json from GitHub
+   git pull origin main
+   ```
+
+2. **Update Containers**
+   ```bash
+   # Pull latest container images (includes genesis.json hash verification)
+   docker compose pull
+   ```
+
+3. **Launch Validator Node**
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Verify Launch Status**
+   Check for this message in your node container logs:
+   ```
+   INF Genesis time is in the future. Sleeping until then... genTime=2025-08-14T09:13:39Z module=server
+   ```
+
+#### Important Notes:
+- The API container may restart multiple times until the node container is fully operational
+- Monitor logs carefully during the launch phase
+- Ensure your system time is synchronized with UTC
+
+### 6. [Coordinator]: Post-Launch Cleanup
+
+Remove genesis-specific variables from docker-compose.yml configuration files to transition to normal operation mode.
+
+## Troubleshooting
+
+### Common Issues:
+- **Time synchronization**: Ensure your server time is accurate
+- **Network connectivity**: Verify P2P connectivity with other validators
+- **Key management**: Double-check all keys are properly generated and accessible
+- **Docker issues**: Ensure all containers can communicate properly
+
+### Support:
+For technical support during the ceremony, please:
+1. Check the logs for specific error messages
+2. Consult the [Quickstart Guide](https://gonka.ai/participant/quickstart)
+3. Contact the coordinator through the designated communication channels
+
+## Security Considerations
+
+- Keep your account cold keys secure and offline when not needed
+- Use TMKMS for consensus key management in production
+- Verify all genesis.json hashes before proceeding
+- Maintain secure communication channels during the ceremony
