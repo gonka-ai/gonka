@@ -132,6 +132,11 @@ if $FIRST_RUN; then
   else
     echo "Node already initialised, skipping initialisation"
   fi
+  if [ "${INIT_ONLY:-false}" = "true" ]; then
+    echo "Initialisation complete"
+    echo "nodeId: $(inferenced tendermint show-node-id)"
+    exit 0
+  fi
 
   # If not genesis, download it from the seed node
   GENESIS_FILE="$STATE_DIR/config/genesis.json"

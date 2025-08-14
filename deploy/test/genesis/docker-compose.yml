@@ -28,6 +28,7 @@ services:
       - REST_API_ACTIVE=true
       - INIT_ONLY=${INIT_ONLY}
       - IS_GENESIS=true
+      - INIT_ONLY=true
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
