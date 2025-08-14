@@ -125,7 +125,11 @@ echo "Adding the keys to the genesis account"
 $APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 
-$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
+$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" \
+  --moniker "mynode" \
+  --url "tmp" \
+  --ml-operational-address "gonka17pwrcnldrtkulkt8p8a5ymwp5sz9eclgvlm38e" \
+  || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }
