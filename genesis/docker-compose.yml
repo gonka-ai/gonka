@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.22-alpha3
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.21
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,26 +10,29 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.22-alpha3
+    image: ghcr.io/product-science/inferenced:0.1.21
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
-      - ../genesis.json:/root/genesis.json
     environment:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
+      - GENESIS_SEEDS=${GENESIS_SEEDS}
+      - SNAPSHOT_INTERVAL=1000
+      - SNAPSHOT_KEEP_RECENT=5
       - TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2000}
       - KEY_NAME=${KEY_NAME}
       - P2P_EXTERNAL_ADDRESS=${P2P_EXTERNAL_ADDRESS}
       - CONFIG_p2p__allow_duplicate_ip=true
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
-      - GENESIS_SEEDS="51a9df752b60f565fe061a115b6494782447dc1f@36.189.234.237:19255,3b5c7577c5a80f565fe061a115b6494782447dc1f@36.189.234.237:19257,e7aec1d4368b4fb863fa2ba49e4579bbfa11f01a@36.189.234.237:19237"
       - TMKMS_PORT=${TMKMS_PORT:-26658}
+      - SYNC_WITH_SNAPSHOTS=true
+      - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
+      - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=${INIT_ONLY}
+      - INIT_ONLY=true
       - IS_GENESIS=true
-      - INIT_ONLY=false
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
@@ -41,7 +44,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.22-alpha3
+    image: ghcr.io/product-science/api:0.1.21
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -49,10 +52,10 @@ services:
     depends_on:
       - node
     environment:
-      - KEY_NAME=${KEY_NAME} # WARM KEY
-      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY} # COLD KEY
-      - KEYRING_BACKEND=${KEYRING_BACKEND:-test}
-      - KEYRING_PASSWORD=${KEYRING_PASSWORD:-default}
+      - KEY_NAME=${KEY_NAME}
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
+      - KEYRING_BACKEND=file
+      - KEYRING_PASSWORD=${KEYRING_PASSWORD}
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
@@ -66,10 +69,10 @@ services:
       - "9100:9100"
       - "9200:9200"
     restart: always
-
+  
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.22-alpha3
+    image: ghcr.io/product-science/proxy:0.1.21
     ports:
       - "${API_PORT:-8000}:80"
     environment:
@@ -97,5 +100,3 @@ services:
       - "5173"
     restart: unless-stopped
 
-volumes:
-  tmkms_data:

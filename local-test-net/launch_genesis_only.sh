@@ -13,7 +13,6 @@ export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
 export PROXY_PORT=80
-export GENERATE_GENESIS=true
 mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
 mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
 cp ../testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
