@@ -6,9 +6,9 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
-      - TESTS=true
 
   api:
     environment:
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
       - CREATE_KEY=${CREATE_KEY:-true}
+      - TESTS=true

@@ -5,7 +5,6 @@ services:
       - IS_GENESIS=true
       - INIT_TGBOT=false
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
-      - TESTS=true
     ports:
       - "9090:9090"   # Additional gRPC port for genesis
       - "9091:9091"   # Additional gRPC-web port for genesis
@@ -14,3 +13,4 @@ services:
   api:
     environment:
       - DAPI_CHAIN_NODE__IS_GENESIS=true
+      - TESTS=true

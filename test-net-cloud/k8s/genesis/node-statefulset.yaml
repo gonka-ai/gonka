@@ -59,8 +59,6 @@ spec:
           value: "defaultpassword"
         - name: REST_API_ACTIVE
           value: "true"
-        - name: TESTS
-          value: "true"
         volumeMounts:
         - name: data
           mountPath: /root/.inference

@@ -11,7 +11,6 @@ services:
   chain-node:
     environment:
       - TMKMS_PORT=${TMKMS_PORT:-26658}
-      - TESTS=true
     expose:
       - "${TMKMS_PORT:-26658}"
     depends_on:

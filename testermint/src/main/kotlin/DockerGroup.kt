@@ -54,6 +54,7 @@ data class DockerGroup(
     val pocCallbackUrl: String = "http://$keyName-api:9100",
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
+    val p2pExternalAddress: String = "http://$keyName-node:26656",
 ) {
     val composeFiles = when (isGenesis) {
         true -> GENESIS_COMPOSE_FILES
@@ -137,6 +138,7 @@ data class DockerGroup(
             put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
             put("SNAPSHOT_INTERVAL", "100")
             put("SNAPSHOT_KEEP_RECENT", "5")
+            put("P2P_EXTERNAL_ADDRESS", p2pExternalAddress)
 
             genesisGroup?.let {
                 if (useSnapshots) {

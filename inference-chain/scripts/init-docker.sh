@@ -53,10 +53,26 @@ configure_genesis_seeds() {
   echo "Current node ID: $NODE_ID"
   echo "Filtering seeds for node ID: $NODE_ID"
   
-  local filtered_seeds=""
-  IFS=',' read -ra SEED_ARRAY <<< "$GENESIS_SEEDS"
-  for seed in "${SEED_ARRAY[@]}"; do
-    seed_id=$(echo "$seed" | cut -d'@' -f1)
+  filtered_seeds=""
+  
+  # Use portable shell approach to split comma-separated values
+  seeds_remaining="$GENESIS_SEEDS"
+  while [ -n "$seeds_remaining" ]; do
+    # Extract first seed
+    case "$seeds_remaining" in
+      *,*)
+        seed="${seeds_remaining%%,*}"
+        seeds_remaining="${seeds_remaining#*,}"
+        ;;
+      *)
+        seed="$seeds_remaining"
+        seeds_remaining=""
+        ;;
+    esac
+    
+    # Extract node ID from seed (part before @)
+    seed_id="${seed%%@*}"
+    
     if [ "$seed_id" != "$NODE_ID" ]; then
       if [ -z "$filtered_seeds" ]; then
         filtered_seeds="$seed"
