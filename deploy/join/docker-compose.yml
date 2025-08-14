@@ -1,22 +1,24 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.21
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.22-alpha3
     container_name: tmkms
     restart: unless-stopped
     environment:
       - VALIDATOR_LISTEN_ADDRESS=tcp://node:${TMKMS_PORT:-26658}
     volumes:
-      - tmkms_data:/root/.tmkms
+      - .tmkms:/root/.tmkms
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.21
+    image: ghcr.io/product-science/inferenced:0.1.22-alpha3
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
+      - ../../genesis/genesis.json:/root/genesis.json
     environment:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
+      - GENESIS_SEEDS=${GENESIS_SEEDS}
       - SNAPSHOT_INTERVAL=1000
       - SNAPSHOT_KEEP_RECENT=5
       - TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2000}
@@ -30,6 +32,8 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
+      - INIT_ONLY=true
+      - IS_GENESIS=true
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
@@ -41,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.21
+    image: ghcr.io/product-science/api:0.1.22-alpha3
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -69,7 +73,7 @@ services:
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.21
+    image: ghcr.io/product-science/proxy:0.1.22-alpha3
     ports:
       - "${API_PORT:-8000}:80"
     environment:
@@ -97,5 +101,3 @@ services:
       - "5173"
     restart: unless-stopped
 
-volumes:
-  tmkms_data:
