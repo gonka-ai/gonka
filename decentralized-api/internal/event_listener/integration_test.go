@@ -153,6 +153,11 @@ type MockQueryClient struct {
 	mock.Mock
 }
 
+func (m *MockQueryClient) GetCurrentEpoch(ctx context.Context, req *types.QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*types.QueryGetCurrentEpochResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
 	args := m.Called(ctx, req)
 	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)

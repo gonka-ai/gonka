@@ -81,6 +81,8 @@ const (
 	Query_GetAllModelCapacities_FullMethodName                     = "/inference.inference.Query/GetAllModelCapacities"
 	Query_GranteesByMessageType_FullMethodName                     = "/inference.inference.Query/GranteesByMessageType"
 	Query_GetBlockProofByHeight_FullMethodName                     = "/inference.inference.Query/GetBlockProofByHeight"
+	Query_SetValidatorsProofWithHeight_FullMethodName              = "/inference.inference.Query/SetValidatorsProofWithHeight"
+	Query_GetValidatorsProofByHeight_FullMethodName                = "/inference.inference.Query/GetValidatorsProofByHeight"
 )
 
 // QueryClient is the client API for Query service.
@@ -190,6 +192,8 @@ type QueryClient interface {
 	// Queries all authz grantees with specific message type for an account
 	GranteesByMessageType(ctx context.Context, in *QueryGranteesByMessageTypeRequest, opts ...grpc.CallOption) (*QueryGranteesByMessageTypeResponse, error)
 	GetBlockProofByHeight(ctx context.Context, in *QueryBlockProofRequest, opts ...grpc.CallOption) (*QueryBlockProofResponse, error)
+	SetValidatorsProofWithHeight(ctx context.Context, in *QuerySetValidatorsProofRequest, opts ...grpc.CallOption) (*QuerySetValidatorsProofResponse, error)
+	GetValidatorsProofByHeight(ctx context.Context, in *QueryGetValidatorsProofRequest, opts ...grpc.CallOption) (*QueryGetValidatorsProofResponse, error)
 }
 
 type queryClient struct {
@@ -758,6 +762,24 @@ func (c *queryClient) GetBlockProofByHeight(ctx context.Context, in *QueryBlockP
 	return out, nil
 }
 
+func (c *queryClient) SetValidatorsProofWithHeight(ctx context.Context, in *QuerySetValidatorsProofRequest, opts ...grpc.CallOption) (*QuerySetValidatorsProofResponse, error) {
+	out := new(QuerySetValidatorsProofResponse)
+	err := c.cc.Invoke(ctx, Query_SetValidatorsProofWithHeight_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetValidatorsProofByHeight(ctx context.Context, in *QueryGetValidatorsProofRequest, opts ...grpc.CallOption) (*QueryGetValidatorsProofResponse, error) {
+	out := new(QueryGetValidatorsProofResponse)
+	err := c.cc.Invoke(ctx, Query_GetValidatorsProofByHeight_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -865,6 +887,8 @@ type QueryServer interface {
 	// Queries all authz grantees with specific message type for an account
 	GranteesByMessageType(context.Context, *QueryGranteesByMessageTypeRequest) (*QueryGranteesByMessageTypeResponse, error)
 	GetBlockProofByHeight(context.Context, *QueryBlockProofRequest) (*QueryBlockProofResponse, error)
+	SetValidatorsProofWithHeight(context.Context, *QuerySetValidatorsProofRequest) (*QuerySetValidatorsProofResponse, error)
+	GetValidatorsProofByHeight(context.Context, *QueryGetValidatorsProofRequest) (*QueryGetValidatorsProofResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1057,6 +1081,12 @@ func (UnimplementedQueryServer) GranteesByMessageType(context.Context, *QueryGra
 }
 func (UnimplementedQueryServer) GetBlockProofByHeight(context.Context, *QueryBlockProofRequest) (*QueryBlockProofResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBlockProofByHeight not implemented")
+}
+func (UnimplementedQueryServer) SetValidatorsProofWithHeight(context.Context, *QuerySetValidatorsProofRequest) (*QuerySetValidatorsProofResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetValidatorsProofWithHeight not implemented")
+}
+func (UnimplementedQueryServer) GetValidatorsProofByHeight(context.Context, *QueryGetValidatorsProofRequest) (*QueryGetValidatorsProofResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetValidatorsProofByHeight not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2187,6 +2217,42 @@ func _Query_GetBlockProofByHeight_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_SetValidatorsProofWithHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QuerySetValidatorsProofRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).SetValidatorsProofWithHeight(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_SetValidatorsProofWithHeight_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).SetValidatorsProofWithHeight(ctx, req.(*QuerySetValidatorsProofRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetValidatorsProofByHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetValidatorsProofRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetValidatorsProofByHeight(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetValidatorsProofByHeight_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetValidatorsProofByHeight(ctx, req.(*QueryGetValidatorsProofRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2441,6 +2507,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBlockProofByHeight",
 			Handler:    _Query_GetBlockProofByHeight_Handler,
+		},
+		{
+			MethodName: "SetValidatorsProofWithHeight",
+			Handler:    _Query_SetValidatorsProofWithHeight_Handler,
+		},
+		{
+			MethodName: "GetValidatorsProofByHeight",
+			Handler:    _Query_GetValidatorsProofByHeight_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

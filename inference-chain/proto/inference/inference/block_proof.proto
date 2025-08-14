@@ -1,19 +1,42 @@
 syntax = "proto3";
+
 package inference.inference;
 
+import "gogoproto/gogo.proto";
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/productscience/inference/x/inference/types";
+
+option (gogoproto.stable_marshaler_all) = true;
+option (gogoproto.marshaler_all)        = true;
+option (gogoproto.sizer_all)            = true;
+option (gogoproto.unmarshaler_all)      = true;
 
 message CommitInfo {
   string validator_address = 1;
   string validator_pub_key = 2;
-  string operator_address = 3;
-  int64 voting_power = 4;
+  string operator_address  = 3;
+  int64 voting_power       = 4;
 }
 
 message BlockProof {
   int64 created_at_block_height = 1; // H
   string app_hash_hex           = 2; // Header(H).AppHash (from Header(H+1))
-  int64 total_voting_power        = 3;
-  int64 signed_voting_power       = 4;
-  repeated CommitInfo commits     = 5;
+  int64 total_voting_power      = 3;
+  int64 signed_voting_power     = 4;
+  repeated CommitInfo commits   = 5;
+}
+
+message SignatureInfo {
+  string signature_base64       = 1;
+  string validator_address_hex  = 2;
+  google.protobuf.Timestamp timestamp = 3 [
+    (gogoproto.stdtime) = true,
+    (gogoproto.nullable) = false
+  ];
+}
+
+message ValidatorsSignatures {
+  int64 block_height             = 1;
+  repeated SignatureInfo signatures = 2;
 }

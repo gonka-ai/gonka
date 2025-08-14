@@ -6,6 +6,7 @@ require (
 	cosmossdk.io/errors v1.0.2
 	cosmossdk.io/store v1.1.2
 	cosmossdk.io/x/upgrade v0.1.4
+	github.com/bufbuild/buf v1.34.0
 	github.com/cometbft/cometbft v0.38.17
 	github.com/consensys/gnark-crypto v0.18.0
 	github.com/cosmos/btcutil v1.0.5
@@ -70,8 +71,8 @@ require (
 	github.com/bgentry/speakeasy v0.2.0 // indirect
 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/bytedance/sonic v1.13.2 // indirect
-	github.com/bytedance/sonic/loader v0.2.4 // indirect
+	github.com/bytedance/sonic v1.14.0 // indirect
+	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

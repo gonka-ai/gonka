@@ -4,11 +4,18 @@ import (
 	"context"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"strconv"
 )
+
+type temporaryResponse struct {
+	blockProof           *types.BlockProof
+	validatorsSignatures *types.ValidatorsSignatures
+	cosmosBlock          *coretypes.ResultBlock
+}
 
 func (s *Server) getBlock(c echo.Context) error {
 	blockHeightParam := c.Param("height")
@@ -21,23 +28,36 @@ func (s *Server) getBlock(c echo.Context) error {
 		return ErrInvalidBlockHeight
 	}
 
-	resp, err := s.recorder.NewInferenceQueryClient().GetBlockProofByHeight(context.Background(), &types.QueryBlockProofRequest{ProofHeight: blockHeight})
+	cl := s.recorder.NewInferenceQueryClient()
+	blockProof, err := cl.GetBlockProofByHeight(context.Background(), &types.QueryBlockProofRequest{ProofHeight: blockHeight})
 	if err != nil {
 		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
 		return err
 	}
 
-	/*	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
-		if err != nil {
-			logging.Error("Failed to create rpc client", types.System, "error", err)
-			return err
-		}
+	signatures, err := cl.GetValidatorsProofByHeight(context.Background(), &types.QueryGetValidatorsProofRequest{ProofHeight: blockHeight})
+	if err != nil {
+		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
+		return err
+	}
 
-		block, err := rpcClient.Block(c.Request().Context(), &blockHeight)
-		if err != nil {
-			logging.Error("Failed to get validators", types.System, "error", err)
-			return err
-		}*/
+	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
+	if err != nil {
+		logging.Error("Failed to create rpc client", types.System, "error", err)
+		return err
+	}
+
+	block, err := rpcClient.Block(c.Request().Context(), &blockHeight)
+	if err != nil {
+		logging.Error("Failed to get validators", types.System, "error", err)
+		return err
+	}
+
+	resp := temporaryResponse{
+		blockProof:           blockProof.Proof,
+		validatorsSignatures: signatures.Proof,
+		cosmosBlock:          block,
+	}
 	return c.JSON(http.StatusOK, resp)
 }
 

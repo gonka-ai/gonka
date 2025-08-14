@@ -279,6 +279,8 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 		// Process using the new dispatcher
 		ctx := context.Background() // We could pass this from caller if needed
+		el.collectBlockSignatures(event)
+
 		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
 		if err != nil {
 			logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
@@ -333,6 +335,48 @@ func (el *EventListener) handleBLSTransactionEvents(event *chainevents.JSONRPCRe
 				logging.Error("Failed to process threshold signing requested event", types.EventProcessing, "error", err, "worker", workerName)
 			}
 		}
+	}
+}
+
+func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCResponse) {
+	block := chainevents.FinalizedBlock{}
+	d, err := json.Marshal(event.Result.Data.Value)
+	if err != nil {
+		logging.Error("Failed to marshal event.Result.Data.Value", types.System, "error", err)
+		return
+	}
+	err = json.Unmarshal(d, &block)
+	if err != nil {
+		logging.Error("Failed to unmarshal event.Result.Data.Value to block", types.System, "error", err)
+		return
+	}
+
+	logging.Error("collectBlockSignatures: start preparing signatures", types.System, "height", block.Block.LastCommit.Height)
+
+	height, err := strconv.ParseInt(block.Block.LastCommit.Height, 10, 64)
+	if err != nil {
+		logging.Error("Failed to parse block height to int", types.System, "height", block.Block.LastCommit.Height, "error", err)
+	}
+
+	proof := types.ValidatorsSignatures{BlockHeight: height, Signatures: make([]*types.SignatureInfo, 0)}
+	for _, sign := range block.Block.LastCommit.Signatures {
+		logging.Error("Preparing signature to send", types.System,
+			"sign_ts", sign.Timestamp,
+			"signature", sign.Signature,
+			"height", height,
+			"validator_address", sign.ValidatorAddress)
+
+		proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
+			SignatureBase64:     sign.Signature,
+			ValidatorAddressHex: sign.ValidatorAddress,
+			Timestamp:           sign.Timestamp,
+		})
+	}
+
+	cl := el.transactionRecorder.NewInferenceQueryClient()
+	if _, err := cl.SetValidatorsProofWithHeight(context.Background(), &types.QuerySetValidatorsProofRequest{Proof: &proof}); err != nil {
+		// TODO what to do if node is down
+		logging.Error("Failed to set validators proof", types.System, "error", err)
 	}
 }
 
