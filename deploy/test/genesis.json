@@ -1,7 +1,7 @@
 {
   "app_name": "inference-chaind",
   "app_version": "bf1137c5",
-  "genesis_time": "2025-08-14T00:50:38.844787000Z",
+  "genesis_time": "2025-08-14T00:59:38.844787000Z",
   "chain_id": "gonka-testnet-7",
   "initial_height": 1,
   "app_hash": null,

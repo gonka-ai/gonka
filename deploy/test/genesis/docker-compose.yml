@@ -24,6 +24,7 @@ services:
       - CONFIG_p2p__allow_duplicate_ip=true
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
+      - CONFIG_p2p__seeds="95eaa717121aa0bf4fd6864393354ee56a191d11@36.189.234.237:19255,48243a68ff60de1691de3af46d51e8745afb78d8@36.189.234.237:19257,9b55383237fbcccb552a9f16bf6881cf3a9b29e4@36.189.234.237:19237"
       - TMKMS_PORT=${TMKMS_PORT:-26658}
       - REST_API_ACTIVE=true
       - INIT_ONLY=${INIT_ONLY}
