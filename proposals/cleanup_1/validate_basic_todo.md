@@ -467,13 +467,13 @@ inference module
 - MsgSubmitSeed
     - Types: x/inference/types/message_submit_seed.go
     - Handler: x/inference/keeper/msg_server_submit_seed.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgSubmitUnitOfComputePriceProposal
     - Types: x/inference/types/message_submit_unit_of_compute_price_proposal.go
     - Handler: x/inference/keeper/msg_server_submit_unit_of_compute_price_proposal.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgRegisterModel
     - Types: x/inference/types/message_register_model.go
     - Handler: x/inference/keeper/msg_server_register_model.go
@@ -492,18 +492,18 @@ inference module
 - MsgCreatePartialUpgrade
     - Types: x/inference/types/message_create_partial_upgrade.go
     - Handler: x/inference/keeper/msg_server_create_partial_upgrade.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgClaimTrainingTaskForAssignment
     - Types: x/inference/types/message_claim_training_task_for_assignment.go
     - Handler: x/inference/keeper/msg_server_claim_training_task_for_assignment.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgAssignTrainingTask
     - Types: x/inference/types/message_assign_training_task.go
     - Handler: x/inference/keeper/msg_server_assign_training_task.go
-    - [ ] Extend ValidateBasic (task_id, assignees)
-    - [ ] Tests
+    - [x] Extend ValidateBasic (task_id, assignees)
+    - [x] Tests
 - MsgSubmitTrainingKvRecord
     - Types: x/inference/types/message_submit_training_kv_record.go
     - Handler: x/inference/keeper/msg_server_submit_training_kv_record.go

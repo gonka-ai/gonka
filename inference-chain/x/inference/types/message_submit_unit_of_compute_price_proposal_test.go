@@ -18,12 +18,14 @@ func TestMsgSubmitUnitOfComputePriceProposal_ValidateBasic(t *testing.T) {
 			name: "invalid address",
 			msg: MsgSubmitUnitOfComputePriceProposal{
 				Creator: "invalid_address",
+				Price:   1,
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address and price",
 			msg: MsgSubmitUnitOfComputePriceProposal{
 				Creator: sample.AccAddress(),
+				Price:   1,
 			},
 		},
 	}
