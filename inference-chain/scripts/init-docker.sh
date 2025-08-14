@@ -79,8 +79,7 @@ configure_tmkms() {
     echo "Configuring TMKMS (port $TMKMS_PORT)"
     
     # Remove local validator key files (TMKMS will handle signing)
-    rm -f "$STATE_DIR/config/priv_validator_key.json" \
-          "$STATE_DIR/data/priv_validator_state.json"
+    rm -f "$STATE_DIR/config/priv_validator_key.json"
 
     sed -i \
       -e "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TMKMS_PORT}\"|" \
