@@ -170,6 +170,9 @@ func applyGenparticipantTxsToGenesis(cdc codec.Codec, appGenesis *types.AppGenes
 		return fmt.Errorf("failed to unmarshal genesis state: %w", err)
 	}
 
+	// Collect unique ML operational addresses that need accounts
+	mlOperationalAddresses := make(map[string]bool)
+
 	// Process each transaction
 	for _, tx := range txs {
 		msgs := tx.GetMsgs()
@@ -181,6 +184,8 @@ func applyGenparticipantTxsToGenesis(cdc codec.Codec, appGenesis *types.AppGenes
 					return fmt.Errorf("failed to add participant to genesis: %w", err)
 				}
 			case *authztypes.MsgGrant:
+				// Collect ML operational addresses for account creation
+				mlOperationalAddresses[m.Grantee] = true
 				// Handle MsgGrant - add to authz module state
 				if err := addAuthzGrantToGenesis(cdc, genesisState, m); err != nil {
 					return fmt.Errorf("failed to add authz grant to genesis: %w", err)
@@ -188,6 +193,13 @@ func applyGenparticipantTxsToGenesis(cdc codec.Codec, appGenesis *types.AppGenes
 			default:
 				return fmt.Errorf("unexpected message type in genparticipant transaction: %T", msg)
 			}
+		}
+	}
+
+	// Add ML operational key accounts to auth module accounts section
+	for mlAddress := range mlOperationalAddresses {
+		if err := addAccountToGenesis(cdc, genesisState, mlAddress); err != nil {
+			return fmt.Errorf("failed to add ML operational account %s to genesis: %w", mlAddress, err)
 		}
 	}
 
@@ -348,6 +360,74 @@ func addAuthzGrantToGenesis(cdc codec.Codec, genesisState map[string]json.RawMes
 		return fmt.Errorf("failed to marshal updated authz genesis: %w", err)
 	}
 	genesisState["authz"] = updatedBz
+	return nil
+}
+
+// addAccountToGenesis adds an ML operational key account to the auth module accounts section
+func addAccountToGenesis(cdc codec.Codec, genesisState map[string]json.RawMessage, accountAddress string) error {
+	// Validate the account address format
+	_, err := sdk.AccAddressFromBech32(accountAddress)
+	if err != nil {
+		return fmt.Errorf("invalid account address format: %s", accountAddress)
+	}
+
+	// Local view of auth genesis state
+	type authGenesisState struct {
+		Params   json.RawMessage   `json:"params"`
+		Accounts []json.RawMessage `json:"accounts"`
+	}
+
+	// Fetch existing auth state
+	modBz, ok := genesisState["auth"]
+	if !ok {
+		return fmt.Errorf("auth module state not found in genesis")
+	}
+
+	var authGS authGenesisState
+	if err := json.Unmarshal(modBz, &authGS); err != nil {
+		return fmt.Errorf("failed to unmarshal auth genesis: %w", err)
+	}
+
+	// Check if account already exists
+	for _, accountRaw := range authGS.Accounts {
+		var account map[string]interface{}
+		if err := json.Unmarshal(accountRaw, &account); err != nil {
+			continue // Skip malformed accounts
+		}
+		if existingAddress, ok := account["address"].(string); ok && existingAddress == accountAddress {
+			// Account already exists, skip creation
+			return nil
+		}
+	}
+
+	// Find the next available account number
+	nextAccountNumber := len(authGS.Accounts)
+
+	// Create new BaseAccount for ML operational key
+	newAccount := map[string]interface{}{
+		"@type":          "/cosmos.auth.v1beta1.BaseAccount",
+		"address":        accountAddress,
+		"pub_key":        nil,
+		"account_number": fmt.Sprintf("%d", nextAccountNumber),
+		"sequence":       "0",
+	}
+
+	// Marshal the new account
+	newAccountBytes, err := json.Marshal(newAccount)
+	if err != nil {
+		return fmt.Errorf("failed to marshal new account: %w", err)
+	}
+
+	// Add to accounts list
+	authGS.Accounts = append(authGS.Accounts, newAccountBytes)
+
+	// Marshal back and place into app state
+	updatedBz, err := json.Marshal(authGS)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated auth genesis: %w", err)
+	}
+
+	genesisState["auth"] = updatedBz
 	return nil
 }
 
