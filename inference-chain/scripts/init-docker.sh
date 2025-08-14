@@ -82,11 +82,8 @@ configure_tmkms() {
     rm -f "$STATE_DIR/config/priv_validator_key.json" \
           "$STATE_DIR/data/priv_validator_state.json"
 
-    # Set TMKMS connection address using kv command
-    kv config priv_validator_laddr "tcp://0.0.0.0:${TMKMS_PORT}"
-
-    # Comment out local validator key file settings (sed still needed for commenting)
     sed -i \
+      -e "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TMKMS_PORT}\"|" \
       -e "s|^priv_validator_key_file *=|# priv_validator_key_file =|" \
       -e "s|^priv_validator_state_file *=|# priv_validator_state_file =|" \
       "$STATE_DIR/config/config.toml"
@@ -121,12 +118,12 @@ if $FIRST_RUN; then
         echo "$output"
         exit $exit_code
     fi
-    echo "$output" | filter_cw20_code
 
     kv client chain-id "$CHAIN_ID"
     kv client keyring-backend "$KEYRING_BACKEND"
     kv app minimum-gas-prices "0${COIN_DENOM}"
-    kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS"
+    kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
+    sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' $STATE_DIR/config/config.toml
     configure_tmkms
     update_configs
   else
@@ -174,7 +171,6 @@ echo "Applying configuration at container start"
 # Snapshot parameters ----------------------------------------------------------
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
 kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
-kv config rpc.laddr "tcp://0.0.0.0:26657"
 
 
 # CONFIG_* environment overrides ----------------------------------------------
