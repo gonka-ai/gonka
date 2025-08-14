@@ -417,27 +417,27 @@ inference module
 - MsgStartInference
     - Types: x/inference/types/message_start_inference.go
     - Handler: x/inference/keeper/msg_server_start_inference.go
-    - [ ] Implement/extend ValidateBasic
+    - [x] Implement/extend ValidateBasic
     - [ ] Tests
 - MsgFinishInference
     - Types: x/inference/types/message_finish_inference.go
     - Handler: x/inference/keeper/msg_server_finish_inference.go
-    - [ ] Implement/extend ValidateBasic
+    - [x] Implement/extend ValidateBasic
     - [ ] Tests
 - MsgSubmitNewParticipant
     - Types: x/inference/types/message_submit_new_participant.go
     - Handler: x/inference/keeper/msg_server_submit_new_participant.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
     - [ ] Tests
 - MsgValidation
     - Types: x/inference/types/message_validation.go
     - Handler: x/inference/keeper/msg_server_validation.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
     - [ ] Tests
 - MsgSubmitNewUnfundedParticipant
     - Types: x/inference/types/message_submit_new_unfunded_participant.go
     - Handler: x/inference/keeper/msg_server_submit_new_unfunded_participant.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
     - [ ] Tests
 - MsgInvalidateInference
     - Types: x/inference/types/message_invalidate_inference.go
@@ -575,15 +575,15 @@ collateral module
 - MsgUpdateParams
     - Types: x/collateral/types/msg_update_params.go
     - Handler: x/collateral/keeper/msg_update_params.go
-    - [ ] Ensure ValidateBasic
+    - [x] Ensure ValidateBasic
 - MsgDepositCollateral
-    - Types: x/collateral/types/message_deposit_collateral.go
+    - Types: x/collateral/types/msg_deposit_collateral.go
     - Handler: x/collateral/keeper/msg_server_deposit_collateral.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 - MsgWithdrawCollateral
-    - Types: x/collateral/types/message_withdraw_collateral.go
+    - Types: x/collateral/types/msg_withdraw_collateral.go
     - Handler: x/collateral/keeper/msg_server_withdraw_collateral.go
-    - [ ] Implement ValidateBasic
+    - [x] Implement ValidateBasic
 
 bookkeeper module
 - MsgUpdateParams
@@ -595,7 +595,7 @@ streamvesting module
 - MsgUpdateParams
     - Types: x/streamvesting/types/msg_update_params.go
     - Handler: x/streamvesting/keeper/msg_update_params.go
-    - [ ] Ensure ValidateBasic
+    - [x] Ensure ValidateBasic
 
 ---
 

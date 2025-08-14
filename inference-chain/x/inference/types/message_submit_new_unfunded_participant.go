@@ -5,6 +5,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/utils"
+	"strings"
 )
 
 var _ sdk.Msg = &MsgSubmitNewUnfundedParticipant{}
@@ -20,34 +21,43 @@ func NewMsgSubmitNewUnfundedParticipant(creator string, address string, url stri
 }
 
 func (msg *MsgSubmitNewUnfundedParticipant) ValidateBasic() error {
-	_, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err != nil {
+	// creator address (required)
+	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
-
-	// Validate Address field if provided
-	if msg.Address != "" {
-		_, err := sdk.AccAddressFromBech32(msg.Address)
-		if err != nil {
-			return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid address (%s)", err)
+	// address required and valid
+	if strings.TrimSpace(msg.Address) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "address is required")
+	}
+	if _, err := sdk.AccAddressFromBech32(msg.Address); err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid address (%s)", err)
+	}
+	// URL required and format checked
+	if strings.TrimSpace(msg.Url) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "url is required")
+	}
+	if err := utils.ValidateURL("url", msg.Url); err != nil {
+		return err
+	}
+	// PubKey required: SECP256K1 compressed account key
+	if strings.TrimSpace(msg.PubKey) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidPubKey, "invalid pub key: empty or whitespace")
+	}
+	if _, err := utils.SafeCreateSECP256K1AccountKey(msg.PubKey); err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid pub key: %s", err)
+	}
+	// ValidatorKey required: ED25519
+	if strings.TrimSpace(msg.ValidatorKey) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidPubKey, "invalid validator key: empty or whitespace")
+	}
+	if _, err := utils.SafeCreateED25519ValidatorKey(msg.ValidatorKey); err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid validator key: %s", err)
+	}
+	// WorkerKey is optional: if provided (non-empty after trim), must be SECP256K1 compressed
+	if strings.TrimSpace(msg.WorkerKey) != "" {
+		if _, err := utils.SafeCreateSECP256K1AccountKey(msg.WorkerKey); err != nil {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid worker key: %s", err)
 		}
 	}
-
-	// Validate PubKey (SECP256K1 account key) if provided
-	if msg.PubKey != "" {
-		_, err := utils.SafeCreateSECP256K1AccountKey(msg.PubKey)
-		if err != nil {
-			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid pub key: %s", err)
-		}
-	}
-
-	// Validate ValidatorKey (ED25519)
-	if msg.ValidatorKey != "" {
-		_, err := utils.SafeCreateED25519ValidatorKey(msg.ValidatorKey)
-		if err != nil {
-			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid validator key: %s", err)
-		}
-	}
-
 	return nil
 }
