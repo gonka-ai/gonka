@@ -1,10 +1,11 @@
 package types
 
 import (
+	"strings"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
-	"strings"
 )
 
 var _ sdk.Msg = &MsgCreatePartialUpgrade{}
@@ -28,8 +29,8 @@ func (msg *MsgCreatePartialUpgrade) ValidateBasic() error {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "height must be > 0")
 	}
 	// apiBinariesJson required (no schema validation here)
-	if strings.TrimSpace(msg.ApiBinariesJson) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "apiBinariesJson is required")
+	if strings.TrimSpace(msg.ApiBinariesJson) == "" && strings.TrimSpace(msg.NodeVersion) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "either apiBinariesJson or nodeVersion must be set")
 	}
 	return nil
 }
