@@ -8,6 +8,7 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - REST_API_ACTIVE=${REST_API_ACTIVE:-false}
+      - P2P_EXTERNAL_ADDRESS=${P2P_EXTERNAL_ADDRESS}
       - SNAPSHOT_INTERVAL=100
       - SNAPSHOT_KEEP_RECENT=5
       - DEBUG=false

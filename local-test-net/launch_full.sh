@@ -48,6 +48,7 @@ export P2P_PORT=8201
 export PROXY_PORT=81
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
 export PROXY_ACTIVE=true
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
@@ -66,6 +67,7 @@ export P2P_PORT=8202
 export PROXY_PORT=82
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
 export PROXY_ACTIVE=true
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT

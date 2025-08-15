@@ -20,7 +20,6 @@ chain-venv/
 prod-genesis/
 prod-local/
 /payload.json
-/genesis
 /prod-local/genesis
 /inference-chain/output/
 /decentralized-api/output/

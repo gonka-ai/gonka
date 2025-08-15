@@ -6,12 +6,14 @@
     "poc_port": 8080,
     "max_concurrent": 500,
     "models": {
-      "Qwen/Qwen2.5-7B-Instruct": {
+      "Qwen/QwQ-32B": {
         "args": [
           "--quantization",
           "fp8",
-          "--gpu-memory-utilization",
-          "0.9"
+          "--tensor-parallel-size",
+          "4",
+          "--kv-cache-dtype",
+          "fp8"
         ]
       }
     }

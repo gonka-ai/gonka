@@ -29,4 +29,5 @@ message GenesisState {
            GenesisOnlyParams          genesis_only_params            =  2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
   repeated Model                      model_list                     =  3 [(gogoproto.nullable) = false] ;
            CosmWasmParams             cosm_wasm_params               =  4 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+  repeated Participant                participant_list               =  5 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }

@@ -10,8 +10,10 @@
         "args": [
           "--quantization",
           "fp8",
-          "--gpu-memory-utilization",
-          "0.9"
+          "--tensor-parallel-size",
+          "4",
+          "--pipeline-parallel-size",
+          "2"
         ]
       }
     }

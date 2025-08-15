@@ -5,6 +5,9 @@ ENV RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"
 RUN apt-get update && apt-get install -y \
   libusb-1.0-0-dev \
   pkg-config \
+  python3 \
+  python3-cryptography \
+  python3-nacl \
   --no-install-recommends && \
   rm -rf /var/lib/apt/lists/*
 
@@ -18,6 +21,9 @@ ARG TMKMS_TOML=tmkms.toml
 COPY ${TMKMS_TOML} /app/tmkms_init_data/tmkms.toml
 COPY docker/init.sh /root/init.sh
 RUN chmod +x /root/init.sh
+
+COPY pubkey.py /usr/local/bin/tmkms-pubkey
+RUN chmod +x /usr/local/bin/tmkms-pubkey
 
 ENV WITHKEYGEN=true
 ENTRYPOINT ["/root/init.sh"]
