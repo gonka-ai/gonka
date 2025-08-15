@@ -12,9 +12,15 @@ type Config struct {
 	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
 	MLNodeKeyConfig    MLNodeKeyConfig       `koanf:"ml_node_key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
+	Nats               NatsServerConfig      `koanf:"nats"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
 	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 	BandwidthParams    BandwidthParamsCache  `koanf:"bandwidth_params"`
+}
+
+type NatsServerConfig struct {
+	Host string `koanf:"host"`
+	Port int    `koanf:"port"`
 }
 
 type NodeVersionStack struct {

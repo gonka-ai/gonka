@@ -9,7 +9,7 @@ import (
 
 func (s *Server) getModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	// Get the current epoch group to find out which models are active.
 	currentEpoch, err := queryClient.CurrentEpochGroupData(context, &types.QueryCurrentEpochGroupDataRequest{})
@@ -44,7 +44,7 @@ func (s *Server) getModels(ctx echo.Context) error {
 
 func (s *Server) getGovernanceModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	modelsResponse, err := queryClient.ModelsAll(context, &types.QueryModelsAllRequest{})
 	if err != nil {

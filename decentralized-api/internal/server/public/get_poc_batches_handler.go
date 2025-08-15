@@ -22,7 +22,7 @@ func (s *Server) getPoCBatches(c echo.Context) error {
 	logging.Debug("Requesting PoC batches.", types.PoC, "epoch", value)
 
 	queryClient := s.recorder.NewInferenceQueryClient()
-	response, err := queryClient.PocBatchesForStage(*s.recorder.GetContext(), &types.QueryPocBatchesForStageRequest{
+	response, err := queryClient.PocBatchesForStage(s.recorder.GetContext(), &types.QueryPocBatchesForStageRequest{
 		BlockHeight: value,
 	})
 	if err != nil {

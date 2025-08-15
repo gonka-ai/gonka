@@ -37,7 +37,7 @@ func (s *Server) sendTransaction(ctx echo.Context) error {
 
 	logging.Info("Unpacked message", types.Messages, "Message", msg)
 
-	txResp, err := s.recorder.SendTransaction(msg.(sdk.Msg))
+	txResp, err := s.recorder.SendTransactionAsyncNoRetry(msg.(sdk.Msg))
 	if err != nil {
 		return err
 	}
