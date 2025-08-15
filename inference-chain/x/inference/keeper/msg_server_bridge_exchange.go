@@ -118,20 +118,23 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			"currentValidations", existingTx.ValidationCount)
 
 		// Check if we have majority
-		requiredValidators := (len(activeParticipants.Participants) * 2) / 3
+		requiredValidators := (2*len(activeParticipants.Participants) + 2) / 3
 
 		if existingTx.ValidationCount >= uint32(requiredValidators) {
-			existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
+			// Only process completion once to avoid duplicate mints
+			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
+				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
 
-			// Handle token minting for completed transaction
-			if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
-				k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
-					types.Messages,
-					"error", err,
-					"originChain", msg.OriginChain,
-					"blockNumber", msg.BlockNumber,
-					"receiptIndex", msg.ReceiptIndex)
-				return nil, err
+				// Handle token minting for completed transaction
+				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
+					k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
+						types.Messages,
+						"error", err,
+						"originChain", msg.OriginChain,
+						"blockNumber", msg.BlockNumber,
+						"receiptIndex", msg.ReceiptIndex)
+					return nil, err
+				}
 			}
 
 			k.LogInfo("Bridge exchange: transaction reached majority validation",

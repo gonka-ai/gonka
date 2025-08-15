@@ -15,7 +15,7 @@ use crate::msg::{
     BridgeInfoResponse, ExecuteMsg, InstantiateMsg, QueryMsg,
     ApprovedTokensForTradeJson, ApprovedTokenJson,
 };
-use crate::state::{ BridgeInfo, BRIDGE_INFO };
+use crate::state::{ BridgeInfo, BRIDGE_INFO, TOKEN_METADATA, TokenMetadataOverride };
 
 // Admin storage: stores the address of the contract admin (instantiator)
 pub const ADMIN: Item<Addr> = Item::new("admin");
@@ -33,6 +33,9 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     // Persist bridge info (extra state)
     BRIDGE_INFO.save(deps.storage, &BridgeInfo { chain_id: msg.chain_id.clone(), contract_address: msg.contract_address.clone() })?;
+
+    // Initialize internal admin to the instantiator address
+    ADMIN.save(deps.storage, &info.sender)?;
 
     // Map our instantiate to cw20-base InstantiateMsg (use placeholders if needed)
     let cw20_init = cw20_base_msg::InstantiateMsg {
@@ -109,8 +112,11 @@ fn update_metadata(
         return Err(ContractError::Unauthorized {});
     }
 
-    // Delegate metadata update via cw20-base marketing/metadata if desired.
-    // For now, just produce an event (could be extended to store in custom state if needed).
+
+    TOKEN_METADATA.save(
+        deps.storage,
+        &TokenMetadataOverride { name: name.clone(), symbol: symbol.clone(), decimals },
+    )?;
 
     Ok(Response::new()
         .add_attribute("method", "update_metadata")
@@ -152,9 +158,23 @@ fn withdraw(
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::BridgeInfo {} => to_json_binary(&query_bridge_info(deps)?),
-        // Delegate all cw20 queries to cw20-base
         QueryMsg::Balance { address } => cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::Balance { address }),
-        QueryMsg::TokenInfo {} => cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::TokenInfo {}),
+        QueryMsg::TokenInfo {} => {
+            let base_bin = cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::TokenInfo {})?;
+            let mut base: cw20::TokenInfoResponse = cosmwasm_std::from_json(base_bin.clone())?;
+            if let Some(override_md) = TOKEN_METADATA.may_load(deps.storage)? {
+                base.name = override_md.name;
+                base.symbol = override_md.symbol;
+                base.decimals = override_md.decimals;
+            }
+            let resp = crate::msg::TokenInfoResponse {
+                name: base.name,
+                symbol: base.symbol,
+                decimals: base.decimals,
+                total_supply: base.total_supply,
+            };
+            to_json_binary(&resp)
+        },
         QueryMsg::Allowance { owner, spender } => cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::Allowance { owner, spender }),
         QueryMsg::AllAllowances { owner, start_after, limit } => cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::AllAllowances { owner, start_after, limit }),
         QueryMsg::AllAccounts { start_after, limit } => cw20_base_contract::query(deps, env, cw20_base_msg::QueryMsg::AllAccounts { start_after, limit }),
