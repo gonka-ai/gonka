@@ -99,7 +99,6 @@ if $FIRST_RUN; then
 
   kv client chain-id "$CHAIN_ID"
   kv client keyring-backend "$KEYRING_BACKEND"
-  kv app minimum-gas-prices "0${COIN_DENOM}"
 
   update_configs
 
@@ -133,6 +132,8 @@ if [ "${SYNC_WITH_SNAPSHOTS:-false}" = "true" ]; then
   run "$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" \
        "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
 fi
+
+kv app minimum-gas-prices "0${COIN_DENOM}"
 
 # Snapshot parameters ----------------------------------------------------------
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"

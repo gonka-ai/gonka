@@ -9,7 +9,7 @@ SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi
 
 ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
-  -X github.com/cosmos/cosmos-sdk/version.AppName=inference-chaind \
+  -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced \
   -X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
   -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 

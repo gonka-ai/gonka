@@ -1,53 +1,79 @@
 services:
-  node:
-    image: ghcr.io/product-science/inferenced:0.1.21
-    restart: always
-    command: ["sh", "./init-docker-genesis.sh"]
+  tmkms:
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.22-alpha3
+    container_name: tmkms
+    restart: unless-stopped
     environment:
-      - KEY_NAME=genesis
+      - VALIDATOR_LISTEN_ADDRESS=tcp://node:${TMKMS_PORT:-26658}
+    volumes:
+      - .tmkms:/root/.tmkms
+
+  node:
+    container_name: node
+    image: ghcr.io/product-science/inferenced:0.1.22-alpha3
+    command: ["sh", "./init-docker.sh"]
+    volumes:
+      - .inference:/root/.inference
+      - ../../genesis/genesis.json:/root/genesis.json
+    environment:
+      - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
+      - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
       - SNAPSHOT_INTERVAL=1000
       - SNAPSHOT_KEEP_RECENT=5
-      - NODE_CONFIG_PATH=/root/node_config.json
-      - P2P_EXTERNAL_ADDRESS=tcp://195.242.13.239:26656
+      - TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2000}
+      - KEY_NAME=${KEY_NAME}
+      - P2P_EXTERNAL_ADDRESS=${P2P_EXTERNAL_ADDRESS}
       - CONFIG_p2p__allow_duplicate_ip=true
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
-      - INIT_TGBOT=true
-      - TGBOT_PRIVATE_KEY_PASS=defaultpassword
-    volumes:
-      - /srv/dai/inference:/root/.inference
-      - ./genesis-overrides.json:/root/genesis_overrides.json
+      - TMKMS_PORT=${TMKMS_PORT:-26658}
+      - SYNC_WITH_SNAPSHOTS=true
+      - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
+      - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
+      - REST_API_ACTIVE=true
+      - INIT_ONLY=false
+      - IS_GENESIS=true
+      - GENESIS_SEEDS=decb9b96899921349fae2222af97e2c673c74996@36.189.234.237:19255,9574517bb92127f95d01ba014ea54aea7d563ed5@36.189.234.237:19257,25d86b593706ac856bc6f5c2619af47db95444f6@36.189.234.237:19237
     ports:
-      - "26656:26656"
-      - "26657:26657"
+      - "5000:26656" #p2p
+      - "26657:26657" #rpc
+    expose:
+      - "${TMKMS_PORT:-26658}"
+    depends_on:
+      - tmkms
+    restart: always
 
   api:
-    image: ghcr.io/product-science/api:0.1.21
-    restart: always
+    container_name: api
+    image: ghcr.io/product-science/api:0.1.22-alpha3
+    volumes:
+      - .inference:/root/.inference
+      - .dapi:/root/.dapi
+      - ${NODE_CONFIG:-./node-config.json}:/root/node_config.json
     depends_on:
       - node
     environment:
-      - KEY_NAME=genesis
-      - DAPI_API__POC_CALLBACK_URL=http://10.0.0.1:9100
-      - DAPI_API__PUBLIC_URL=http://195.242.13.239:8000
-      - DAPI_CHAIN_NODE__IS_GENESIS=true
-      - DAPI_CHAIN_NODE__URL=http://10.0.0.1:26657
+      - KEY_NAME=${KEY_NAME}
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
+      - KEYRING_BACKEND=file
+      - KEYRING_PASSWORD=${KEYRING_PASSWORD}
+      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
+      - DAPI_CHAIN_NODE__URL=${DAPI_CHAIN_NODE__URL}
+      - DAPI_CHAIN_NODE__P2P_URL=${DAPI_CHAIN_NODE__P2P_URL}
+      - NODE_CONFIG_PATH=/root/node_config.json
       - DAPI_API__PUBLIC_SERVER_PORT=9000
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
-      - NODE_CONFIG_PATH=/root/node_config.json
-    volumes:
-      - /srv/dai/inference:/root/.inference
-      - /srv/dai/dapi:/root/.dapi
-      - ./node-config.json:/root/node_config.json
     ports:
-      - "9000:9000"
       - "9100:9100"
       - "9200:9200"
-
+    restart: always
+  
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.21
+    image: ghcr.io/product-science/proxy:0.1.22-alpha3
     ports:
       - "${API_PORT:-8000}:80"
     environment:
@@ -74,3 +100,4 @@ services:
     expose:
       - "5173"
     restart: unless-stopped
+

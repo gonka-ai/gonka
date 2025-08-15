@@ -65,12 +65,64 @@ func (x *_GenesisState_3_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_GenesisState_5_list)(nil)
+
+type _GenesisState_5_list struct {
+	list *[]*Participant
+}
+
+func (x *_GenesisState_5_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_5_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_5_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*Participant)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_5_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*Participant)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_5_list) AppendMutable() protoreflect.Value {
+	v := new(Participant)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_5_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_5_list) NewElement() protoreflect.Value {
+	v := new(Participant)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_5_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_GenesisState                     protoreflect.MessageDescriptor
 	fd_GenesisState_params              protoreflect.FieldDescriptor
 	fd_GenesisState_genesis_only_params protoreflect.FieldDescriptor
 	fd_GenesisState_model_list          protoreflect.FieldDescriptor
 	fd_GenesisState_cosm_wasm_params    protoreflect.FieldDescriptor
+	fd_GenesisState_participant_list    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -80,6 +132,7 @@ func init() {
 	fd_GenesisState_genesis_only_params = md_GenesisState.Fields().ByName("genesis_only_params")
 	fd_GenesisState_model_list = md_GenesisState.Fields().ByName("model_list")
 	fd_GenesisState_cosm_wasm_params = md_GenesisState.Fields().ByName("cosm_wasm_params")
+	fd_GenesisState_participant_list = md_GenesisState.Fields().ByName("participant_list")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisState)(nil)
@@ -171,6 +224,12 @@ func (x *fastReflection_GenesisState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if len(x.ParticipantList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_5_list{list: &x.ParticipantList})
+		if !f(fd_GenesisState_participant_list, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -194,6 +253,8 @@ func (x *fastReflection_GenesisState) Has(fd protoreflect.FieldDescriptor) bool 
 		return len(x.ModelList) != 0
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		return x.CosmWasmParams != nil
+	case "inference.inference.GenesisState.participant_list":
+		return len(x.ParticipantList) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -218,6 +279,8 @@ func (x *fastReflection_GenesisState) Clear(fd protoreflect.FieldDescriptor) {
 		x.ModelList = nil
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		x.CosmWasmParams = nil
+	case "inference.inference.GenesisState.participant_list":
+		x.ParticipantList = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -249,6 +312,12 @@ func (x *fastReflection_GenesisState) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		value := x.CosmWasmParams
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.GenesisState.participant_list":
+		if len(x.ParticipantList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_5_list{})
+		}
+		listValue := &_GenesisState_5_list{list: &x.ParticipantList}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -279,6 +348,10 @@ func (x *fastReflection_GenesisState) Set(fd protoreflect.FieldDescriptor, value
 		x.ModelList = *clv.list
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		x.CosmWasmParams = value.Message().Interface().(*CosmWasmParams)
+	case "inference.inference.GenesisState.participant_list":
+		lv := value.List()
+		clv := lv.(*_GenesisState_5_list)
+		x.ParticipantList = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -320,6 +393,12 @@ func (x *fastReflection_GenesisState) Mutable(fd protoreflect.FieldDescriptor) p
 			x.CosmWasmParams = new(CosmWasmParams)
 		}
 		return protoreflect.ValueOfMessage(x.CosmWasmParams.ProtoReflect())
+	case "inference.inference.GenesisState.participant_list":
+		if x.ParticipantList == nil {
+			x.ParticipantList = []*Participant{}
+		}
+		value := &_GenesisState_5_list{list: &x.ParticipantList}
+		return protoreflect.ValueOfList(value)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -345,6 +424,9 @@ func (x *fastReflection_GenesisState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.GenesisState.cosm_wasm_params":
 		m := new(CosmWasmParams)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.GenesisState.participant_list":
+		list := []*Participant{}
+		return protoreflect.ValueOfList(&_GenesisState_5_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -432,6 +514,12 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 			l = options.Size(x.CosmWasmParams)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if len(x.ParticipantList) > 0 {
+			for _, e := range x.ParticipantList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -460,6 +548,22 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.ParticipantList) > 0 {
+			for iNdEx := len(x.ParticipantList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.ParticipantList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x2a
+			}
 		}
 		if x.CosmWasmParams != nil {
 			encoded, err := options.Marshal(x.CosmWasmParams)
@@ -710,6 +814,40 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ParticipantList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ParticipantList = append(x.ParticipantList, &Participant{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.ParticipantList[len(x.ParticipantList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -769,6 +907,7 @@ type GenesisState struct {
 	GenesisOnlyParams *GenesisOnlyParams `protobuf:"bytes,2,opt,name=genesis_only_params,json=genesisOnlyParams,proto3" json:"genesis_only_params,omitempty"`
 	ModelList         []*Model           `protobuf:"bytes,3,rep,name=model_list,json=modelList,proto3" json:"model_list,omitempty"`
 	CosmWasmParams    *CosmWasmParams    `protobuf:"bytes,4,opt,name=cosm_wasm_params,json=cosmWasmParams,proto3" json:"cosm_wasm_params,omitempty"`
+	ParticipantList   []*Participant     `protobuf:"bytes,5,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
 }
 
 func (x *GenesisState) Reset() {
@@ -819,6 +958,13 @@ func (x *GenesisState) GetCosmWasmParams() *CosmWasmParams {
 	return nil
 }
 
+func (x *GenesisState) GetParticipantList() []*Participant {
+	if x != nil {
+		return x.ParticipantList
+	}
+	return nil
+}
+
 var File_inference_inference_genesis_proto protoreflect.FileDescriptor
 
 var file_inference_inference_genesis_proto_rawDesc = []byte{
@@ -865,7 +1011,7 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x75, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x23, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x73, 0x2e, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x22, 0xcc, 0x02, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74,
+	0x74, 0x6f, 0x22, 0xa4, 0x03, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74,
 	0x61, 0x74, 0x65, 0x12, 0x3e, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20,
 	0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
@@ -886,19 +1032,24 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x73, 0x6d, 0x57, 0x61, 0x73, 0x6d,
 	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a,
 	0x01, 0x52, 0x0e, 0x63, 0x6f, 0x73, 0x6d, 0x57, 0x61, 0x73, 0x6d, 0x50, 0x61, 0x72, 0x61, 0x6d,
-	0x73, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47,
-	0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63,
-	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca,
-	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06,
-	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x73, 0x12, 0x56, 0x0a, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
+	0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42, 0x09, 0xc8,
+	0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x0f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63,
+	0x69, 0x70, 0x61, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f,
+	0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
+	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
+	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
+	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -920,17 +1071,19 @@ var file_inference_inference_genesis_proto_goTypes = []interface{}{
 	(*GenesisOnlyParams)(nil), // 2: inference.inference.GenesisOnlyParams
 	(*Model)(nil),             // 3: inference.inference.Model
 	(*CosmWasmParams)(nil),    // 4: inference.inference.CosmWasmParams
+	(*Participant)(nil),       // 5: inference.inference.Participant
 }
 var file_inference_inference_genesis_proto_depIdxs = []int32{
 	1, // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
 	2, // 1: inference.inference.GenesisState.genesis_only_params:type_name -> inference.inference.GenesisOnlyParams
 	3, // 2: inference.inference.GenesisState.model_list:type_name -> inference.inference.Model
 	4, // 3: inference.inference.GenesisState.cosm_wasm_params:type_name -> inference.inference.CosmWasmParams
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	5, // 4: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_genesis_proto_init() }

@@ -21,7 +21,7 @@
     },
     "inference": {
       "params": {
-        "epochParams": {
+        "epoch_params": {
           "epoch_length": "115",
           "epoch_multiplier": "1",
           "epoch_shift": "100",

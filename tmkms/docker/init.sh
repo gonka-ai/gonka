@@ -50,6 +50,9 @@ elif [ "${WITHKEYGEN:-false}" = "true" ] && [ -f "$TARGET_DIR/secrets/priv_valid
   echo "Key $TARGET_DIR/secrets/priv_validator_key.softsign already exists. WITHKEYGEN is true, but skipping generation."
 fi
 
+pubkey=$(tmkms-pubkey --json)
+echo "Pubkey:\n$pubkey"
+
 # For the import_keys case, the priv_validator_key.softsign should have been copied from TEMPLATE_DIR.
 # If it's not there, and we are not in keygen mode, it's an issue.
 if [ "${WITHKEYGEN:-false}" = "false" ] && [ ! -f "$TARGET_DIR/secrets/priv_validator_key.softsign" ]; then
