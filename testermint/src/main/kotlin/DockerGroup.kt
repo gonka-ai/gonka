@@ -56,7 +56,7 @@ data class DockerGroup(
     val pocCallbackUrl: String = "http://$pairName-api:9100",
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
-    val p2pExternalAddress: String = "http://$keyName-node:26656",
+    val p2pExternalAddress: String = "http://$pairName-node:26656",
 ) {
     val warmKeyName = "$pairName-WARM"
     val coldKeyName = pairName
