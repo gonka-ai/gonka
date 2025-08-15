@@ -4,6 +4,9 @@ import com.github.dockerjava.api.async.ResultCallback
 import com.github.dockerjava.api.model.Frame
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
+import java.io.Closeable
+import java.io.OutputStream
+import java.lang.reflect.Method
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
@@ -181,8 +184,9 @@ fun extractTimestamp(entireLine: String): Instant? {
     }
 }
 
-class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
+class ExecCaptureOutput() : ResultCallback.Adapter<Frame>() {
     val output = mutableListOf<String>()
+    
     override fun onNext(frame: Frame) {
         output.add(String(frame.payload).trim())
     }

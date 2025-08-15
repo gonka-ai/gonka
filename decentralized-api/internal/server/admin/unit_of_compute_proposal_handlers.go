@@ -38,7 +38,7 @@ func (s *Server) getUnitOfComputePriceProposal(ctx echo.Context) error {
 		Participant: s.recorder.GetAccountAddress(),
 	}
 
-	queryResponse, err := queryClient.GetUnitOfComputePriceProposal(*s.recorder.GetContext(), queryRequest)
+	queryResponse, err := queryClient.GetUnitOfComputePriceProposal(s.recorder.GetContext(), queryRequest)
 	if err != nil {
 		logging.Error("Failed to query unit of compute price proposal", types.Pricing, "error", err)
 		return err

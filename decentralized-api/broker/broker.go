@@ -57,11 +57,11 @@ func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	req := &types.QueryHardwareNodesRequest{
 		Participant: b.client.GetAccountAddress(),
 	}
-	return queryClient.HardwareNodes(*b.client.GetContext(), req)
+	return queryClient.HardwareNodes(b.client.GetContext(), req)
 }
 
 func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
-	_, err := b.client.SendTransaction(diff)
+	_, err := b.client.SendTransactionAsyncNoRetry(diff)
 	return err
 }
 
@@ -82,13 +82,13 @@ func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
 func (b *BrokerChainBridgeImpl) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	req := &types.QueryModelsAllRequest{}
-	return queryClient.ModelsAll(*b.client.GetContext(), req)
+	return queryClient.ModelsAll(b.client.GetContext(), req)
 }
 
 func (b *BrokerChainBridgeImpl) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	req := &types.QueryCurrentEpochGroupDataRequest{}
-	return queryClient.CurrentEpochGroupData(*b.client.GetContext(), req)
+	return queryClient.CurrentEpochGroupData(b.client.GetContext(), req)
 }
 
 func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
@@ -97,7 +97,7 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(pocHeight uint64, mod
 		PocStartBlockHeight: pocHeight,
 		ModelId:             modelId,
 	}
-	return queryClient.EpochGroupData(*b.client.GetContext(), req)
+	return queryClient.EpochGroupData(b.client.GetContext(), req)
 }
 
 type Broker struct {

@@ -173,7 +173,7 @@ class DynamicPricingTest : TestermintTest() {
         assertThat(newPrice).isGreaterThan(1000L)
         logSection("Submit raw StartInference")
         val timestamp = Instant.now().toEpochNanos()
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val signature = genesis.node.signPayload(
             inferenceRequest,
             accountAddress = null,
@@ -391,24 +391,40 @@ class DynamicPricingTest : TestermintTest() {
             // maxIncreasePerBlock = 1.0 + (maxExcessDeviation * elasticity)  
             // Use maxExcessDeviation specifically for price increases (high utilization scenario)
             val maxExcessDeviation = 1.0 - stabilityUpperBound  // e.g., 1.0 - 0.60 = 0.40
-            val maxDeficitDeviation = stabilityLowerBound - 0.0  // e.g., 0.40 - 0.0 = 0.40
-            val maxIncreasePerBlock = 1.0 + (maxExcessDeviation * priceElasticity)  // Use excess for increases
+            val maxIncreasePerBlock = 1.0 + (maxExcessDeviation * priceElasticity)
 
-            logSection("DPTEST: ELASTICITY_CALC - stability_bounds=($stabilityLowerBound-$stabilityUpperBound), max_excess=$maxExcessDeviation, max_deficit=$maxDeficitDeviation, max_increase_per_block=$maxIncreasePerBlock (${((maxIncreasePerBlock - 1.0) * 100).toInt()}%)")
+            // Proportional per-block factor (spec: linear w.r.t. deviation)
+            val utilizationExcess = estimatedUtilization - stabilityUpperBound
+            var perBlockFactor = 1.0 + (utilizationExcess * priceElasticity)
+            if (perBlockFactor > maxIncreasePerBlock) {
+                perBlockFactor = maxIncreasePerBlock
+            }
+
+            logSection("DPTEST: ELASTICITY_CALC - stability_bounds=($stabilityLowerBound-$stabilityUpperBound), excess=$utilizationExcess, per_block_factor=$perBlockFactor, max_increase_per_block=$maxIncreasePerBlock (${((maxIncreasePerBlock - 1.0) * 100).toInt()}%)")
 
             // Apply -3/+1 block buffer for realistic timing variations
-            // -3: Initial blocks may not reflect full load yet  
+            // -3: Initial blocks may not reflect full load yet
             // +1: Tests rarely run much longer than expected
             val minBlocks = maxOf(1, actualBlocksPassed - 3)
             val maxBlocks = actualBlocksPassed + 1
 
             logSection("DPTEST: BLOCK_BUFFER - actual_blocks=$actualBlocksPassed, range=$minBlocks-$maxBlocks")
 
-            // Calculate price range with actual max increase per block compounding
-            val minPriceIncrease = (minPrice * Math.pow(maxIncreasePerBlock, minBlocks.toDouble())).toLong()
-            val maxPriceIncrease = (minPrice * Math.pow(maxIncreasePerBlock, maxBlocks.toDouble())).toLong()
+            // Compound with integer truncation each block and enforce min price floor
+            // Previously we just used Math.pow, resulting in higher expectations than reality
+            fun compoundWithFloor(startPrice: Long, blocks: Int): Long {
+                var p = startPrice.toDouble()
+                repeat(blocks) {
+                    p = kotlin.math.floor(p * perBlockFactor)
+                }
+                return maxOf(minPrice.toLong(), p.toLong())
+            }
 
-            logSection("DPTEST: PRICE_PROJECTION - min_blocks=$minBlocks->$minPriceIncrease, max_blocks=$maxBlocks->$maxPriceIncrease")
+            val startPrice = minPrice.toLong() // assuming base/current == min for tests
+            val minPriceIncrease = compoundWithFloor(startPrice, minBlocks.toInt())
+            val maxPriceIncrease = compoundWithFloor(startPrice, maxBlocks.toInt())
+
+            logSection("DPTEST: PRICE_PROJECTION - per_block=$perBlockFactor, min_blocks=$minBlocks->$minPriceIncrease, max_blocks=$maxBlocks->$maxPriceIncrease")
 
             return Pair(minPriceIncrease, maxPriceIncrease)
         } else {

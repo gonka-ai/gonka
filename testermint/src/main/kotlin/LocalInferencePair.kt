@@ -13,6 +13,43 @@ import java.util.concurrent.ConcurrentHashMap
 
 val nameExtractor = "(.+)-node".toRegex()
 
+data class TestermintContainers(
+    val nodes: List<Container>,
+    val apis: List<Container>,
+    val mocks: List<Container>,
+    val config: ApplicationConfig
+) {
+    fun getApi(name: String): Container? = apis.find { it.names.any { it == "$name-api" || it == "/$name-api" } }
+    fun getMock(name: String): Container? =
+        mocks.find { it.names.any { it == "$name-mock-server" || it == "/$name-mock-server" } }
+
+    fun getNode(name: String): Container? = nodes.find { it.names.any { it == "$name-node" || it == "/$name-node" } }
+    fun getCli(name: String): ApplicationCLI? {
+        val dockerClient = DockerClientBuilder.getInstance().build()
+        val container = getNode(name) ?: return null
+        val configWithName = config.copy(pairName = name)
+        val nodeLogs = attachDockerLogs(dockerClient, name, "node", container.id)
+        val executor = DockerExecutor(container.id, configWithName)
+        return ApplicationCLI(configWithName, nodeLogs, executor, listOf())
+    }
+}
+
+fun getRawContainers(config: ApplicationConfig): TestermintContainers {
+    Logger.info("Getting local inference containers")
+    val dockerClient = DockerClientBuilder.getInstance()
+        .build()
+    val containers = dockerClient.listContainersCmd().exec()
+    Logger.info("Found ${containers.size} containers")
+    containers.forEach {
+        Logger.info("Container: ${it.names.first()} Status: ${it.state} Image: ${it.image} ID: ${it.id}")
+    }
+    val nodes: List<Container> =
+        containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
+    val apis = containers.filter { it.image == config.apiImageName }
+    val mocks = containers.filter { it.image == config.mockImageName }
+    return TestermintContainers(nodes, apis, mocks, config)
+}
+
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
     Logger.info("Getting local inference pairs")
     val dockerClient = DockerClientBuilder.getInstance()
@@ -22,10 +59,23 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     containers.forEach {
         Logger.info("Container: ${it.names.first()} Status: ${it.state} Image: ${it.image} ID: ${it.id}")
     }
-    val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
+    val nodes: List<Container> =
+        containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.mockImageName }
     var foundPairs = 0
+    if (nodes.size != apis.size) {
+        Logger.error("Number of nodes (${nodes.size}) does not match number of APIs (${apis.size}). Tearing down containers")
+        nodes.forEach{
+            dockerClient.stopContainerCmd(it.id).exec()
+            dockerClient.removeContainerCmd(it.id).exec()
+        }
+        apis.forEach{
+            dockerClient.stopContainerCmd(it.id).exec()
+            dockerClient.removeContainerCmd(it.id).exec()
+        }
+        throw InvalidClusterException("Number of nodes (${nodes.size}) does not match number of APIs (${apis.size})")
+    }
     return nodes.mapNotNull { chainContainer ->
         foundPairs++
         val nameMatch = nameExtractor.find(chainContainer.names.first())
@@ -34,7 +84,9 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             return@mapNotNull null
         }
         val name = nameMatch.groupValues[1]
-        val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
+        val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } } ?: throw InvalidClusterException(
+            "Unable to find API container for $name"
+        )
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-mock-server" } }
         val configWithName = config.copy(pairName = name)
         val nodeLogs = attachDockerLogs(dockerClient, name, "node", chainContainer.id)
@@ -71,6 +123,8 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         )
     }
 }
+
+class InvalidClusterException(message: String) : RuntimeException(message)
 
 private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
     val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "localhost"
@@ -212,10 +266,10 @@ data class LocalInferencePair(
         request: String,
         account: String? = null,
         timestamp: Long = Instant.now().toEpochNanos(),
-        taAddress: String = node.getAddress(),
+        taAddress: String = node.getColdAddress(),
     ): OpenAIResponse {
-        val signature = node.signPayload(request,account, timestamp = timestamp, endpointAccount = taAddress)
-        val address = node.getAddress()
+        val signature = node.signPayload(request, account, timestamp = timestamp, endpointAccount = taAddress)
+        val address = node.getColdAddress()
         return api.makeInferenceRequest(request, address, signature, timestamp)
     }
 
@@ -249,7 +303,7 @@ data class LocalInferencePair(
             request
         }
 
-        val address = node.getAddress()
+        val address = node.getColdAddress()
         val timestamp = Instant.now().toEpochNanos()
         val signature = node.signPayload(requestWithStream, account, timestamp = timestamp, endpointAccount = address)
         return api.createInferenceStreamConnection(requestWithStream, address, signature, timestamp)
@@ -286,7 +340,8 @@ data class LocalInferencePair(
         }
 
         if (epochData.phase != EpochPhase.Inference ||
-            startOfNextPoc - currentBlockHeight < windowSizeInBlocks) {
+            startOfNextPoc - currentBlockHeight < windowSizeInBlocks
+        ) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
             return waitForStage(EpochStage.SET_NEW_VALIDATORS)
         } else {
@@ -372,29 +427,33 @@ data class LocalInferencePair(
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
 
-    fun submitMessage(message: TxMessage, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitMessage", true) {
-        submitTransaction(Transaction(TransactionBody(listOf(message), "", 0)), waitForProcessed)
-    }
+    fun submitMessage(message: TxMessage, waitForProcessed: Boolean = true): TxResponse =
+        wrapLog("SubmitMessage", true) {
+            submitTransaction(Transaction(TransactionBody(listOf(message), "", 0)), waitForProcessed)
+        }
 
-    fun submitTransaction(transaction: Transaction, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitTransaction", true) {
-        submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
-    }
+    fun submitTransaction(transaction: Transaction, waitForProcessed: Boolean = true): TxResponse =
+        wrapLog("SubmitTransaction", true) {
+            submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
+        }
 
     fun waitForMlNodesToLoad(maxWaitAttempts: Int = 10, sleepTimeMillis: Long = 5_000L) {
         var i = 0
         while (true) {
             val nodes = api.getNodes()
             if (nodes.isNotEmpty() && nodes.all { n ->
-                n.state.currentStatus != "UNKNOWN" && n.state.intendedStatus != "UNKNOWN"
-            }) {
+                    n.state.currentStatus != "UNKNOWN" && n.state.intendedStatus != "UNKNOWN"
+                }) {
                 Logger.info("All nodes are loaded and ready. numNodes = ${nodes.size}. nodes = $nodes")
                 break
             }
 
             i++
             if (i >= maxWaitAttempts) {
-                error("Waited for ${sleepTimeMillis * 10} ms for ml node to be ready, but it never was." +
-                        " Check if the mock server is running. pairName = ${name}. nodes = $nodes")
+                error(
+                    "Waited for ${sleepTimeMillis * 10} ms for ml node to be ready, but it never was." +
+                            " Check if the mock server is running. pairName = ${name}. nodes = $nodes"
+                )
             }
 
             Thread.sleep(sleepTimeMillis)
@@ -430,7 +489,12 @@ data class LocalInferencePair(
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
-        return submitTransaction(this.node.getTransactionJson(args))
+        val submittedTransaction = this.node.sendTransactionDirectly(args)
+        return if (waitForProcessed) {
+            this.node.waitForTxProcessed(submittedTransaction.txhash)
+        } else {
+            submittedTransaction
+        }
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
@@ -538,7 +602,10 @@ data class LocalInferencePair(
                         proposal
                     )
                 )
-            ).getProposalId()!!
+            ).also {
+                if (it.code != 0)
+                    throw RuntimeException("Transaction failed: code=${it.code}, txhash=${it.txhash}, rawLog=${it.rawLog}")
+            }.getProposalId()!!
             this.makeGovernanceDeposit(proposalId, minDeposit)
             logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")
             cluster.allPairs.forEach {
@@ -575,16 +642,17 @@ data class LocalInferencePair(
         }
     }
 
-    fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? = wrapLog("waitForInference", true) {
-        var inference: InferencePayload? = null
-        var tries = 0
-        while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
-            this.node.waitForNextBlock()
-            inference = this.api.getInferenceOrNull(inferenceId)
-            tries++
+    fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? =
+        wrapLog("waitForInference", true) {
+            var inference: InferencePayload? = null
+            var tries = 0
+            while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
+                this.node.waitForNextBlock()
+                inference = this.api.getInferenceOrNull(inferenceId)
+                tries++
+            }
+            inference
         }
-        inference
-    }
 }
 
 data class ApplicationConfig(
@@ -604,8 +672,12 @@ data class ApplicationConfig(
     val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
     val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
 ) {
-    val mountDir = "./$chainId/$pairName:/root/$stateDirName"
-    val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")
+    val mountDir: String
+        get() = "./$chainId/$pairName:/root/$stateDirName"
+    val keyringBackend: String
+        get() = if (pairName.contains("genesis")) "test" else "file"
+    val keychainParams: List<String>
+        get() = listOf("--keyring-backend", keyringBackend, "--keyring-dir=/root/$stateDirName")
 }
 
 fun Instant.toEpochNanos(): Long {
