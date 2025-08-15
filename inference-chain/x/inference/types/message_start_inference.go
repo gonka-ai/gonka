@@ -1,11 +1,12 @@
 package types
 
 import (
+	"strings"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/utils"
-	"strings"
 )
 
 var _ sdk.Msg = &MsgStartInference{}
@@ -47,9 +48,6 @@ func (msg *MsgStartInference) ValidateBasic() error {
 	}
 	if strings.TrimSpace(msg.OriginalPrompt) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "original_prompt is required")
-	}
-	if strings.TrimSpace(msg.NodeVersion) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "node_version is required")
 	}
 	// request_timestamp must be > 0
 	if msg.RequestTimestamp <= 0 {

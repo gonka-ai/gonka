@@ -1,11 +1,12 @@
 package types
 
 import (
+	"strings"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/utils"
-	"strings"
 )
 
 var _ sdk.Msg = &MsgSubmitNewUnfundedParticipant{}
@@ -56,7 +57,7 @@ func (msg *MsgSubmitNewUnfundedParticipant) ValidateBasic() error {
 	}
 	// WorkerKey is optional: if provided (non-empty after trim), must be SECP256K1 compressed
 	if strings.TrimSpace(msg.WorkerKey) != "" {
-		if _, err := utils.SafeCreateSECP256K1AccountKey(msg.WorkerKey); err != nil {
+		if _, err := utils.SafeCreateED25519ValidatorKey(msg.WorkerKey); err != nil {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid worker key: %s", err)
 		}
 	}

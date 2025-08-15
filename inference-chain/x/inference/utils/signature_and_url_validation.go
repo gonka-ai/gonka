@@ -39,7 +39,7 @@ func ValidateURL(fieldName, raw string) error {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s must have scheme http or https", fieldName)
 	}
 	if u.Host == "" {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s must include a host", fieldName)
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s must include a host for %s", fieldName, raw)
 	}
 	return nil
 }

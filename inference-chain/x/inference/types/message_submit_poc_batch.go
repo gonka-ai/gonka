@@ -1,11 +1,12 @@
 package types
 
 import (
+	"math"
+	"strings"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
-	"math"
-	"strings"
 )
 
 var _ sdk.Msg = &MsgSubmitPocBatch{}
@@ -58,10 +59,6 @@ func (msg *MsgSubmitPocBatch) ValidateBasic() error {
 	// shape relation
 	if len(msg.Nonces) != len(msg.Dist) {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "nonces and dist must have the same length: %d != %d", len(msg.Nonces), len(msg.Dist))
-	}
-	// node_id required
-	if strings.TrimSpace(msg.NodeId) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "node_id is required")
 	}
 	return nil
 }

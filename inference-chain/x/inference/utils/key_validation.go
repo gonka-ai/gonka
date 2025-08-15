@@ -25,7 +25,7 @@ func SafeCreateED25519ValidatorKey(validatorKeyBase64 string) (pubKey cryptotype
 	// Check size - ED25519 keys must be exactly 32 bytes (this is the core issue)
 	if len(pubKeyBytes) != 32 {
 		return nil, sdkerrors.Wrapf(errors.ErrInvalidPubKey,
-			"ED25519 validator key must be exactly 32 bytes, got %d bytes", len(pubKeyBytes))
+			"ED25519 validator key must be exactly 32 bytes, got %d bytes for ", len(pubKeyBytes))
 	}
 
 	pubKey = &ed25519.PubKey{Key: pubKeyBytes}
