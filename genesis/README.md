@@ -169,6 +169,7 @@ This phase involves generating the necessary transaction files for chain initial
 - `MsgSubmitNewParticipant` - Registers your node as a network participant
 
 The gentx command requires the following variables from previous steps:
+
 - `<cold key name>` - name of Account Cold Key in local registry (e.g., "gonka-account-key" from Quickstart)
 - `<YOUR_VALIDATOR_NAME>` - the validator name chosen in the Prerequisites section
 - `<ml-operational-key-address-from-step-1.4>` - address of ML Operational Key from step 1.4
@@ -191,6 +192,7 @@ cp ./genesis/genesis-draft.json ~/.inference/config/genesis.json
 #### [Local]: Create GENTX and GENPARTICIPANT Files
 
 The `1nicoin` value represents an artificial consensus weight for the genesis transaction. The real validator weight will be determined during the first Proof of Compute (PoC) phase.
+
 ```bash
 ./inferenced genesis gentx \
     --keyring-backend file \
@@ -224,12 +226,14 @@ Genparticipant transaction written to "702121/config/genparticipant/genparticipa
 Copy the generated files to your validator directory and create a PR:
 
 1. Copy files to your validator directory:
+
    ```bash
    cp ~/.inference/config/gentx/gentx-<node-id>.json genesis/validators/<YOUR_VALIDATOR_NAME>/
    cp ~/.inference/config/genparticipant/genparticipant-<node-id>.json genesis/validators/<YOUR_VALIDATOR_NAME>/
    ```
 
 2. Create a PR with the following files:
+
    - `genesis/validators/<YOUR_VALIDATOR_NAME>/gentx-<node-id-from-step-1.2>.json`
    - `genesis/validators/<YOUR_VALIDATOR_NAME>/genparticipant-<node-id-from-step-1.2>.json`
 
@@ -249,16 +253,19 @@ After merging all transactions, the Coordinator sets the `genesis_time` to a fut
 Finally, the Coordinator commits the official `genesis.json` to the `genesis/` directory. The hash of this commit is then embedded into the source code to ensure all nodes start from the same verified state.
 
 #### [Coordinator Local]: Collect Genesis Transactions
+
 ```bash
 ./inferenced genesis collect-gentxs --gentx-dir gentxs
 ```
 
 #### [Coordinator]: Process Participant Registrations
+
 ```bash
 ./inferenced genesis patch-genesis --genparticipant-dir genparticipants
 ```
 
 #### [Coordinator]: Configure Network Seeds
+
 The Coordinator configures the initial network peering by setting the `GENESIS_SEEDS` variable in `deploy/join/docker-compose.yml`. This variable is a comma-separated list of validator node addresses, constructed using the `Node ID` and `P2P_EXTERNAL_ADDRESS` provided by each validator in their respective `README.md` files.
 
 Example format: `<node-id-1>@<P2P_EXTERNAL_ADDRESS_1>,<node-id-2>@<P2P_EXTERNAL_ADDRESS_2>,...`
