@@ -517,28 +517,28 @@ inference module
 - MsgTrainingHeartbeat
     - Types: x/inference/types/message_training_heartbeat.go
     - Handler: x/inference/keeper/msg_server_training_heartbeat.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgSetBarrier
     - Types: x/inference/types/message_set_barrier.go
     - Handler: x/inference/keeper/msg_server_set_barrier.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgJoinTrainingStatus
     - Types: x/inference/types/message_join_training_status.go
     - Handler: x/inference/keeper/msg_server_join_training_status.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgCreateDummyTrainingTask
     - Types: x/inference/types/message_create_dummy_training_task.go
     - Handler: x/inference/keeper/msg_server_create_dummy_training_task.go
-    - [ ] Implement ValidateBasic
-    - [ ] Tests
+    - [x] Implement ValidateBasic
+    - [x] Tests
 - MsgBridgeExchange
     - Types: x/inference/types/message_bridge_exchange.go
     - Handler: x/inference/keeper/msg_server_bridge_exchange.go
-    - [ ] Implement/extend ValidateBasic
-    - [ ] Tests
+    - [x] Implement/extend ValidateBasic
+    - [x] Tests
 - MsgUpdateParams (inference)
     - Types: x/inference/types/msg_update_params.go
     - Handler: x/inference/keeper/msg_update_params.go

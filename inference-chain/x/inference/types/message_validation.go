@@ -26,18 +26,19 @@ func (msg *MsgValidation) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
-	// all fields required
-	if strings.TrimSpace(msg.Id) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "id is required")
-	}
+	// minimally required fields per handler usage
 	if strings.TrimSpace(msg.InferenceId) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "inference_id is required")
 	}
-	if strings.TrimSpace(msg.ResponsePayload) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_payload is required")
+	// optional fields: if provided, they must not be only whitespace
+	if msg.Id != "" && strings.TrimSpace(msg.Id) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "id cannot be only whitespace")
 	}
-	if strings.TrimSpace(msg.ResponseHash) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_hash is required")
+	if msg.ResponsePayload != "" && strings.TrimSpace(msg.ResponsePayload) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_payload cannot be only whitespace")
+	}
+	if msg.ResponseHash != "" && strings.TrimSpace(msg.ResponseHash) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_hash cannot be only whitespace")
 	}
 	// value in [0,1]
 	if msg.Value < 0 || msg.Value > 1 {

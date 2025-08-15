@@ -22,19 +22,20 @@ func (msg *MsgSubmitNewParticipant) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
-	// url required and must be valid
-	if strings.TrimSpace(msg.Url) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "url is required")
+	// url optional; if provided, must be a valid http/https URL
+	if strings.TrimSpace(msg.Url) != "" {
+		if err := utils.ValidateURL("url", msg.Url); err != nil {
+			return err
+		}
 	}
-	if err := utils.ValidateURL("url", msg.Url); err != nil {
-		return err
-	}
-	// validator_key required and must be valid ED25519 (32 bytes base64)
-	if strings.TrimSpace(msg.ValidatorKey) == "" {
+	// validator_key optional; if provided, must be valid ED25519 (32 bytes base64)
+	if msg.ValidatorKey != "" && strings.TrimSpace(msg.ValidatorKey) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidPubKey, "invalid validator key: empty or whitespace")
 	}
-	if _, err := utils.SafeCreateED25519ValidatorKey(msg.ValidatorKey); err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid validator key: %s", err)
+	if strings.TrimSpace(msg.ValidatorKey) != "" {
+		if _, err := utils.SafeCreateED25519ValidatorKey(msg.ValidatorKey); err != nil {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid validator key: %s", err)
+		}
 	}
 	// worker_key is optional; if provided (non-empty after trim) it must be valid SECP256K1 compressed
 	if strings.TrimSpace(msg.WorkerKey) != "" {
