@@ -17,13 +17,21 @@ func TestMsgSubmitTrainingKvRecord_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgSubmitTrainingKvRecord{
-				Creator: "invalid_address",
+				Creator:     "invalid_address",
+				TaskId:      1,
+				Participant: sample.AccAddress(),
+				Key:         "k",
+				Value:       "v",
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address and fields",
 			msg: MsgSubmitTrainingKvRecord{
-				Creator: sample.AccAddress(),
+				Creator:     sample.AccAddress(),
+				TaskId:      1,
+				Participant: sample.AccAddress(),
+				Key:         "k",
+				Value:       "v",
 			},
 		},
 	}

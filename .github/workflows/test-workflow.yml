@@ -239,6 +239,30 @@ jobs:
           path: ./testermint/logs
           retention-days: 7  # Keep test logs for 1 week only
 
+      - name: Detect Unordered Nonce in Logs
+        if: always()
+        id: detect-unordered-nonce
+        run: |
+          set -e
+          # Search all files under logs for the exact text (ignore binary)
+          MATCHES=$(grep -RIl -F "failed to add unordered nonce" ./testermint/logs || true)
+          if [ -n "$MATCHES" ]; then
+            echo "Detected 'failed to add unordered nonce' in the following files:"
+            echo "$MATCHES"
+            # Expose to later steps
+            echo "HAS_UNORDERED_NONCE=true" >> "$GITHUB_ENV"
+            # Also keep list of files (for debugging if needed)
+            {
+              echo "UNORDERED_NONCE_FILES<<EOF"
+              echo "$MATCHES"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+            # Fail this step so the job is marked as failed
+            exit 1
+          else
+            echo "HAS_UNORDERED_NONCE=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Install XML utilities
         if: always()
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
@@ -299,6 +323,16 @@ jobs:
             done
           fi
           
+          # If unordered nonce error detected in logs, treat it as a failed test
+          if [ "${HAS_UNORDERED_NONCE:-false}" = "true" ]; then
+            FAILED=$((FAILED + 1))
+            if [ -z "$FAILED_TESTS" ]; then
+              FAILED_TESTS="Unordered Nonce Check (see Logs),"
+            else
+              FAILED_TESTS="${FAILED_TESTS}Unordered Nonce Check (see Logs),"
+            fi
+          fi
+
           # Clean up failed tests list (remove trailing comma)
           FAILED_TESTS=$(echo "$FAILED_TESTS" | sed 's/,$//')
           

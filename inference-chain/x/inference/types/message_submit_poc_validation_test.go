@@ -23,7 +23,17 @@ func TestMsgSubmitPocValidation_ValidateBasic(t *testing.T) {
 		}, {
 			name: "valid address",
 			msg: MsgSubmitPocValidation{
-				Creator: sample.AccAddress(),
+				Creator:                  sample.AccAddress(),
+				ParticipantAddress:       sample.AccAddress(),
+				PocStageStartBlockHeight: 1,
+				Nonces:                   []int64{0, 1, 2},
+				Dist:                     []float64{0.2, 0.3, 0.5},
+				ReceivedDist:             []float64{0.2, 0.3, 0.5},
+				RTarget:                  0.5,
+				FraudThreshold:           0.9,
+				NInvalid:                 0,
+				ProbabilityHonest:        0.8,
+				FraudDetected:            false,
 			},
 		},
 	}

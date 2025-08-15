@@ -18,12 +18,14 @@ func TestMsgJoinTrainingStatus_ValidateBasic(t *testing.T) {
 			name: "invalid address",
 			msg: MsgJoinTrainingStatus{
 				Creator: "invalid_address",
+				Req:     &JoinTrainingRequest{NodeId: "node-1", RunId: 1, OuterStep: 0},
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address and req",
 			msg: MsgJoinTrainingStatus{
 				Creator: sample.AccAddress(),
+				Req:     &JoinTrainingRequest{NodeId: "node-1", RunId: 1, OuterStep: 0},
 			},
 		},
 	}

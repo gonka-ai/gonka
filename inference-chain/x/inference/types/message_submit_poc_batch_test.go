@@ -23,7 +23,12 @@ func TestMsgSubmitPocBatch_ValidateBasic(t *testing.T) {
 		}, {
 			name: "valid address",
 			msg: MsgSubmitPocBatch{
-				Creator: sample.AccAddress(),
+				Creator:                  sample.AccAddress(),
+				PocStageStartBlockHeight: 1,
+				BatchId:                  "b1",
+				Nonces:                   []int64{0, 1},
+				Dist:                     []float64{0.3, 0.7},
+				NodeId:                   "node-1",
 			},
 		},
 	}

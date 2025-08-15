@@ -15,9 +15,13 @@ func NewMsgClaimTrainingTaskForAssignment(creator string) *MsgClaimTrainingTaskF
 }
 
 func (msg *MsgClaimTrainingTaskForAssignment) ValidateBasic() error {
-	_, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err != nil {
+	// signer
+	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
+	}
+	// task_id must be > 0
+	if msg.TaskId == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "task_id must be > 0")
 	}
 	return nil
 }

@@ -16,9 +16,13 @@ func NewMsgSubmitUnitOfComputePriceProposal(creator string, price uint64) *MsgSu
 }
 
 func (msg *MsgSubmitUnitOfComputePriceProposal) ValidateBasic() error {
-	_, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err != nil {
+	// signer
+	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
+	}
+	// price must be > 0
+	if msg.Price == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "price must be > 0")
 	}
 	return nil
 }

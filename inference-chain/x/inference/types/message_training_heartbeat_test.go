@@ -18,12 +18,14 @@ func TestMsgTrainingHeartbeat_ValidateBasic(t *testing.T) {
 			name: "invalid address",
 			msg: MsgTrainingHeartbeat{
 				Creator: "invalid_address",
+				Req:     &HeartbeatRequest{NodeId: "n1", RunId: 1, LocalRank: 0, Timestamp: 0, InnerStep: 0, OuterStep: 0, Epoch: 0},
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid",
 			msg: MsgTrainingHeartbeat{
 				Creator: sample.AccAddress(),
+				Req:     &HeartbeatRequest{NodeId: "n1", RunId: 1, LocalRank: 0, Timestamp: 0, InnerStep: 0, OuterStep: 0, Epoch: 0},
 			},
 		},
 	}

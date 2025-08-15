@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/base64"
 	"testing"
 
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -17,13 +18,33 @@ func TestMsgStartInference_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgStartInference{
-				Creator: "invalid_address",
+				Creator:           "invalid_address",
+				RequestedBy:       sample.AccAddress(),
+				AssignedTo:        sample.AccAddress(),
+				InferenceId:       base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				PromptHash:        "hash",
+				PromptPayload:     "payload",
+				OriginalPrompt:    "orig",
+				Model:             "model-x",
+				NodeVersion:       "v1",
+				RequestTimestamp:  1,
+				TransferSignature: base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid address",
 			msg: MsgStartInference{
-				Creator: sample.AccAddress(),
+				Creator:           sample.AccAddress(),
+				RequestedBy:       sample.AccAddress(),
+				AssignedTo:        sample.AccAddress(),
+				InferenceId:       base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				PromptHash:        "hash",
+				PromptPayload:     "payload",
+				OriginalPrompt:    "orig",
+				Model:             "model-x",
+				NodeVersion:       "v1",
+				RequestTimestamp:  1,
+				TransferSignature: base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 		},
 	}

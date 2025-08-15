@@ -1,31 +1,22 @@
 package types
 
 import (
-	"strings"
-
 	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	"math/big"
+	"regexp"
 )
 
 var _ sdk.Msg = &MsgBridgeExchange{}
 
-func NewMsgBridgeExchange(
-	validator string,
-	originChain string,
-	contractAddress string,
-	ownerAddress string,
-	amount string,
-	blockNumber string,
-	receiptIndex string,
-	receiptsRoot string,
-) *MsgBridgeExchange {
+func NewMsgBridgeExchange(validator string, originChain string, contractAddress string, ownerAddress string, ownerPubKey string, amount string, blockNumber string, receiptIndex string, receiptsRoot string) *MsgBridgeExchange {
 	return &MsgBridgeExchange{
 		Validator:       validator,
 		OriginChain:     originChain,
 		ContractAddress: contractAddress,
 		OwnerAddress:    ownerAddress,
+		OwnerPubKey:     ownerPubKey,
 		Amount:          amount,
 		BlockNumber:     blockNumber,
 		ReceiptIndex:    receiptIndex,
@@ -33,47 +24,51 @@ func NewMsgBridgeExchange(
 	}
 }
 
+var reDigits = regexp.MustCompile(`^[0-9]+$`)
+
 func (msg *MsgBridgeExchange) ValidateBasic() error {
-	_, err := sdk.AccAddressFromBech32(msg.Validator)
-	if err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
+	// validator bech32 signer
+	if _, err := sdk.AccAddressFromBech32(msg.Validator); err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid validator address (%s)", err)
 	}
-
-	if msg.OriginChain == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "origin chain cannot be empty")
+	// required non-empty strings
+	if len(msg.OriginChain) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "originChain is required")
 	}
-
-	if msg.ContractAddress == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "contract address cannot be empty")
+	if len(msg.ContractAddress) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "contractAddress is required")
 	}
-
-	if msg.OwnerAddress == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "owner address cannot be empty")
+	if len(msg.OwnerAddress) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "ownerAddress is required")
 	}
-
-	if msg.BlockNumber == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "block number cannot be empty")
+	if len(msg.OwnerPubKey) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "ownerPubKey is required")
 	}
-
-	if msg.ReceiptsRoot == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receipts root cannot be empty")
+	if len(msg.Amount) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount is required")
 	}
-
-	// Validate amount is a valid number
-	_, ok := math.NewIntFromString(msg.Amount)
-	if !ok {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "invalid amount")
+	if len(msg.BlockNumber) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "blockNumber is required")
 	}
-
-	// Require that OwnerPubKey is not empty
-	if msg.OwnerPubKey == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "owner pub key cannot be empty")
+	if len(msg.ReceiptIndex) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptIndex is required")
 	}
-
-	// Validate OwnerPubKey as a hex string (starts with "0x" and has even length)
-	if !strings.HasPrefix(msg.OwnerPubKey, "0x") || (len(msg.OwnerPubKey)-2)%2 != 0 {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "invalid owner pub key format (expected hex string starting with 0x)")
+	if len(msg.ReceiptsRoot) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptsRoot is required")
 	}
-
+	// numeric strings: blockNumber and receiptIndex must be unsigned integers
+	if !reDigits.MatchString(msg.BlockNumber) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "blockNumber must be a base-10 unsigned integer string")
+	}
+	if !reDigits.MatchString(msg.ReceiptIndex) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptIndex must be a base-10 unsigned integer string")
+	}
+	// amount must be a positive integer (no decimal point) in base-10
+	if !reDigits.MatchString(msg.Amount) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be a base-10 unsigned integer string")
+	}
+	if bi, ok := new(big.Int).SetString(msg.Amount, 10); !ok || bi.Sign() <= 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be > 0")
+	}
 	return nil
 }

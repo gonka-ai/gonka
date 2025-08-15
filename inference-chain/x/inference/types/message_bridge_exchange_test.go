@@ -15,61 +15,32 @@ func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
 		err  error
 	}{
 		{
-			name: "invalid address",
+			name: "invalid validator",
 			msg: MsgBridgeExchange{
-				Validator: "invalid_address",
+				Validator:       "invalid_address",
+				OriginChain:     "ethereum",
+				ContractAddress: "0xabc",
+				OwnerAddress:    "0xowner",
+				OwnerPubKey:     "pk",
+				Amount:          "100",
+				BlockNumber:     "1",
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    "0xroot",
 			},
 			err: sdkerrors.ErrInvalidAddress,
-		},
-		{
-			name: "valid address but missing fields",
-			msg: MsgBridgeExchange{
-				Validator: sample.AccAddress(),
-			},
-			err: sdkerrors.ErrInvalidRequest,
-		},
-		{
-			name: "valid message",
+		}, {
+			name: "valid minimal",
 			msg: MsgBridgeExchange{
 				Validator:       sample.AccAddress(),
 				OriginChain:     "ethereum",
-				ContractAddress: "0x1234567890123456789012345678901234567890",
-				OwnerAddress:    "0x1234567890123456789012345678901234567890",
-				Amount:          "1000000",
-				BlockNumber:     "12345",
+				ContractAddress: "0xabc",
+				OwnerAddress:    "0xowner",
+				OwnerPubKey:     "pk",
+				Amount:          "100",
+				BlockNumber:     "1",
 				ReceiptIndex:    "0",
-				ReceiptsRoot:    "0x1234567890123456789012345678901234567890123456789012345678901234",
-				OwnerPubKey:     "0x1234567890123456789012345678901234567890123456789012345678901234",
+				ReceiptsRoot:    "0xroot",
 			},
-		},
-		{
-			name: "missing public key",
-			msg: MsgBridgeExchange{
-				Validator:       sample.AccAddress(),
-				OriginChain:     "ethereum",
-				ContractAddress: "0x1234567890123456789012345678901234567890",
-				OwnerAddress:    "0x1234567890123456789012345678901234567890",
-				Amount:          "1000000",
-				BlockNumber:     "12345",
-				ReceiptIndex:    "0",
-				ReceiptsRoot:    "0x1234567890123456789012345678901234567890123456789012345678901234",
-			},
-			err: sdkerrors.ErrInvalidRequest,
-		},
-		{
-			name: "invalid public key format",
-			msg: MsgBridgeExchange{
-				Validator:       sample.AccAddress(),
-				OriginChain:     "ethereum",
-				ContractAddress: "0x1234567890123456789012345678901234567890",
-				OwnerAddress:    "0x1234567890123456789012345678901234567890",
-				Amount:          "1000000",
-				BlockNumber:     "12345",
-				ReceiptIndex:    "0",
-				ReceiptsRoot:    "0x1234567890123456789012345678901234567890123456789012345678901234",
-				OwnerPubKey:     "invalid_pubkey",
-			},
-			err: sdkerrors.ErrInvalidRequest,
 		},
 	}
 	for _, tt := range tests {

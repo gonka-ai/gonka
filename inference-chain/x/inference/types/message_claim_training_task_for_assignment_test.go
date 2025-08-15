@@ -18,12 +18,14 @@ func TestMsgClaimTrainingTaskForAssignment_ValidateBasic(t *testing.T) {
 			name: "invalid address",
 			msg: MsgClaimTrainingTaskForAssignment{
 				Creator: "invalid_address",
+				TaskId:  1,
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address and task_id",
 			msg: MsgClaimTrainingTaskForAssignment{
 				Creator: sample.AccAddress(),
+				TaskId:  1,
 			},
 		},
 	}
