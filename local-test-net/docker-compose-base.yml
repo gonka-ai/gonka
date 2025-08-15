@@ -22,12 +22,14 @@ services:
     image: ghcr.io/product-science/api
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./prod-local/${KEY_NAME}/.nats:/root/.nats
       - ./${NODE_CONFIG}:/root/node_config.json
     ports:
       - "${PUBLIC_SERVER_PORT}:9000"
       - "${ML_SERVER_PORT}:9100"
       - "${ADMIN_SERVER_PORT}:9200"
       - "${ML_GRPC_SERVER_PORT}:9300"
+      - "${NATS_SERVER_PORT}:4222"
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
@@ -39,7 +41,7 @@ services:
       - DAPI_API__ML_GRPC_SERVER_PORT=9300
       - DAPI_API__TEST_MODE=true
       - NODE_CONFIG_PATH=/root/node_config.json
-      - DEBUG=false
+      - DEBUG=true
     networks:
       - chain-public
 
@@ -60,4 +62,4 @@ services:
 
 networks:
   chain-public:
-    name: chain-public 
+    name: chain-public

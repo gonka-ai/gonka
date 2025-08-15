@@ -57,7 +57,7 @@ func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, reco
 
 	queryClient := recorder.NewInferenceQueryClient()
 
-	r, err := queryClient.Inference(recorder.Context, &types.QueryGetInferenceRequest{Index: inferenceId})
+	r, err := queryClient.Inference(recorder.GetContext(), &types.QueryGetInferenceRequest{Index: inferenceId})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
 		logging.Warn("Failed to query Inference for revalidation.", types.Validation, "error", err)
@@ -81,9 +81,9 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 
-	r, err := queryClient.GetInferenceValidationParameters(transactionRecorder.Context, &types.QueryGetInferenceValidationParametersRequest{
+	r, err := queryClient.GetInferenceValidationParameters(transactionRecorder.GetContext(), &types.QueryGetInferenceValidationParametersRequest{
 		Ids:       ids,
-		Requester: transactionRecorder.Address,
+		Requester: transactionRecorder.GetAddress(),
 	})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
@@ -91,7 +91,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 		return
 	}
 
-	params, err := queryClient.Params(transactionRecorder.Context, &types.QueryParamsRequest{})
+	params, err := queryClient.Params(transactionRecorder.GetContext(), &types.QueryParamsRequest{})
 	if err != nil {
 		logging.Error("Failed to get params", types.Validation, "error", err)
 		return
@@ -99,9 +99,10 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 
 	logInferencesToSample(r.Details)
 
+	address := transactionRecorder.GetAddress()
 	var toValidateIds []string
 	for _, inferenceWithExecutor := range r.Details {
-		if inferenceWithExecutor.ExecutorId == transactionRecorder.Address {
+		if inferenceWithExecutor.ExecutorId == address {
 			continue
 		}
 
@@ -117,7 +118,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 			uint32(r.ValidatorPower),
 			uint32(inferenceWithExecutor.ExecutorPower),
 			params.Params.ValidationParams)
-		logging.Info(message, types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed, "validator", transactionRecorder.Address)
+		logging.Info(message, types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed, "validator", transactionRecorder.GetAddress())
 		if shouldValidate {
 			toValidateIds = append(toValidateIds, inferenceWithExecutor.InferenceId)
 		}
@@ -126,7 +127,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 	logInferencesToValidate(toValidateIds)
 	for _, inf := range toValidateIds {
 		go func() {
-			response, err := queryClient.Inference(transactionRecorder.Context, &types.QueryGetInferenceRequest{Index: inf})
+			response, err := queryClient.Inference(transactionRecorder.GetContext(), &types.QueryGetInferenceRequest{Index: inf})
 			if err != nil {
 				logging.Error("Failed to get inference by id", types.Validation, "id", response, "error", err)
 				return
