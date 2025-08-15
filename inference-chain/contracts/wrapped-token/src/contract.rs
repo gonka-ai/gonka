@@ -17,8 +17,11 @@ use crate::msg::{
 };
 use crate::state::{ BridgeInfo, BRIDGE_INFO };
 
-// Admin storage: stores the address of the contract admin (instantiator)
+// Admin storage: stores the address of the contract admin (governance module)
 pub const ADMIN: Item<Addr> = Item::new("admin");
+
+// Creator storage: stores the address of the contract creator (inference module) 
+pub const CREATOR: Item<Addr> = Item::new("creator");
 
 const CONTRACT_NAME: &str = "wrapped-token";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -31,6 +34,16 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    
+    // Save creator (instantiator = inference module) - controls operations
+    CREATOR.save(deps.storage, &info.sender)?;
+    
+    // Save admin (WASM admin = governance module) - controls marketing and metadata
+    // Query contract info to get the WASM admin
+    let contract_info = deps.querier.query_wasm_contract_info(&env.contract.address)?;
+    let admin_addr = contract_info.admin.unwrap_or(info.sender.clone());
+    ADMIN.save(deps.storage, &admin_addr)?;
+    
     // Persist bridge info (extra state)
     BRIDGE_INFO.save(deps.storage, &BridgeInfo { chain_id: msg.chain_id.clone(), contract_address: msg.contract_address.clone() })?;
 
@@ -42,7 +55,14 @@ pub fn instantiate(
         decimals: 6,
         initial_balances: msg.initial_balances.into_iter().map(|c| cw20::Cw20Coin { address: c.address, amount: c.amount }).collect(),
         mint: msg.mint.map(|m| cw20::MinterResponse { minter: m.minter, cap: m.cap }),
-        marketing: None,
+        // Set marketing account to admin (governance module)
+        // This enables UpdateMarketing and UploadLogo functions for governance
+        marketing: Some(cw20_base_msg::InstantiateMarketingInfo {
+            project: Some("Gonka Wrapped Token".to_string()),
+            description: Some("Bridge-wrapped token for cross-chain transfers".to_string()),
+            marketing: Some(admin_addr.to_string()), // governance module controls marketing
+            logo: None,
+        }),
     };
     let resp = cw20_base_contract::instantiate(deps, env, info, cw20_init)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
@@ -61,8 +81,6 @@ pub fn execute(
     match msg {
         // Custom extras
         ExecuteMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
-        ExecuteMsg::UpdateMarketing { project, description, marketing } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::UpdateMarketing { project, description, marketing }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
-        ExecuteMsg::UploadLogo(logo) => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::UploadLogo(map_logo(logo))).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
         ExecuteMsg::UpdateMetadata { name, symbol, decimals } => update_metadata(deps, info, name, symbol, decimals),
         // Delegate all standard cw20 ops
         ExecuteMsg::Transfer { recipient, amount } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::Transfer { recipient, amount }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
@@ -74,6 +92,8 @@ pub fn execute(
         ExecuteMsg::TransferFrom { owner, recipient, amount } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::TransferFrom { owner, recipient, amount }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
         ExecuteMsg::SendFrom { owner, contract, amount, msg } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::SendFrom { owner, contract, amount, msg }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
         ExecuteMsg::BurnFrom { owner, amount } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::BurnFrom { owner, amount }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
+        ExecuteMsg::UpdateMarketing { project, description, marketing } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::UpdateMarketing { project, description, marketing }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
+        ExecuteMsg::UploadLogo(logo) => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::UploadLogo(map_logo(logo))).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
     }
 }
 
@@ -95,7 +115,7 @@ fn map_expiration(exp: Option<crate::msg::Expiration>) -> Option<CwExpiration> {
     })
 }
 
-/// Allows the admin to set the token metadata (name, symbol, decimals) after instantiation.
+/// Allows both creator (inference module) and admin (governance module) to update token metadata.
 fn update_metadata(
     deps: DepsMut,
     info: MessageInfo,
@@ -103,9 +123,15 @@ fn update_metadata(
     symbol: String,
     decimals: u8,
 ) -> Result<Response, ContractError> {
-    // Only admin may call
+    // Load both creator and admin addresses
+    let creator = CREATOR.load(deps.storage)?;
     let admin = ADMIN.load(deps.storage)?;
-    if info.sender != admin {
+    
+    // Allow both creator (inference module) and admin (governance module) to update metadata
+    let is_creator = info.sender == creator;
+    let is_admin = info.sender == admin;
+    
+    if !is_creator && !is_admin {
         return Err(ContractError::Unauthorized {});
     }
 
