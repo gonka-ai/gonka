@@ -1,4 +1,5 @@
 import requests
+from common.wait import wait_for_server
 
 
 class InferenceClient:
@@ -15,8 +16,12 @@ class InferenceClient:
             print(f"Response content: {response.text}")
             raise
         return response.json()
+
+    def wait_for_server(self, timeout=30):
+        wait_for_server(f"{self.base_url}", timeout)
     
     def inference_setup(self, model, dtype, additional_args=[]):
+        self.wait_for_server()
         return self._request("post", "/inference/up", json={
             "model": model,
             "dtype": dtype,

@@ -1,5 +1,5 @@
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:0.8.1 AS builder
+FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS builder
 
 ENV POETRY_VERSION=2.0.1 \
     PYTHONUNBUFFERED=1 \
@@ -27,14 +27,14 @@ RUN mkdir -p /app/packages/pow/src/pow && \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
-    python -m venv /app/packages/pow/.venv \
+    python3 -m venv /app/packages/pow/.venv \
     && . /app/packages/pow/.venv/bin/activate \
     && poetry install --no-interaction
 
 ################################################################################
 
 ARG USERNAME=pow
-FROM gcr.io/decentralized-ai/vllm:0.8.1 AS app
+FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS app
 
 ARG USERNAME
 ENV PYTHONUNBUFFERED=1 \
