@@ -204,8 +204,8 @@ func TestPatchGenesis_ApplyRealGenparticipantFile(t *testing.T) {
 		"authz":     azBz,
 	}
 
-	// Load the provided example genparticipant file
-	path := "/Users/morgachev/workspace/gonka/genesis/join1/config/genparticipant/genparticipant-6ef3844b2c71c89605f8165506c22478f303b068.json"
+	// Load the test genparticipant file from testdata
+	path := "testdata/genparticipant-test.json"
 	var txFile struct {
 		Body struct {
 			Messages []json.RawMessage `json:"messages"`
@@ -213,7 +213,7 @@ func TestPatchGenesis_ApplyRealGenparticipantFile(t *testing.T) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("example file not present: %v", err)
+		t.Fatalf("test data file not found: %v", err)
 	}
 	if err := json.Unmarshal(data, &txFile); err != nil {
 		t.Fatalf("failed to unmarshal example tx: %v", err)
