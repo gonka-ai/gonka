@@ -127,7 +127,7 @@ class InferenceTests : TestermintTest() {
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
         val message = MsgStartInference(
             creator = genesisAddress,
-            inferenceId = signature + "bad",
+            inferenceId = signature.invalidate(),
             promptHash = "not_verified",
             promptPayload = "Say Hello",
             model = "gpt-o3",
@@ -163,7 +163,7 @@ class InferenceTests : TestermintTest() {
             maxTokens = 500,
             promptTokenCount = 10,
             requestTimestamp = timestamp,
-            transferSignature = taSignature + "bad"
+            transferSignature = taSignature.invalidate()
         )
         val response = genesis.submitMessage(message)
         println(response)
@@ -250,7 +250,7 @@ class InferenceTests : TestermintTest() {
             genesis.api.makeExecutorInferenceRequest(
                 inferenceRequest,
                 genesisAddress,
-                signature + "wrong",
+                signature.invalidate(),
                 genesisAddress,
                 taSignature,
                 timestamp
@@ -273,7 +273,7 @@ class InferenceTests : TestermintTest() {
                 genesisAddress,
                 signature,
                 genesisAddress,
-                taSignature + "wrong",
+                taSignature.invalidate(),
                 timestamp
             )
         }.isInstanceOf(FuelError::class.java)
@@ -356,6 +356,7 @@ class InferenceTests : TestermintTest() {
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
             originalPrompt = inferenceRequest,
+            model = defaultModel
         )
         val response = genesis.submitMessage(finishMessage)
         println(response)
@@ -371,7 +372,7 @@ class InferenceTests : TestermintTest() {
             genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
         val message = MsgFinishInference(
             creator = genesisAddress,
-            inferenceId = signature + "wrong",
+            inferenceId = signature.invalidate(),
             promptTokenCount = 10,
             requestTimestamp = timestamp,
             transferSignature = taSignature,
@@ -382,6 +383,8 @@ class InferenceTests : TestermintTest() {
             executorSignature = taSignature,
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
+            model = defaultModel,
+            originalPrompt = inferenceRequest,
         )
         val response = genesis.submitMessage(message)
         println(response)
@@ -400,7 +403,7 @@ class InferenceTests : TestermintTest() {
             inferenceId = signature,
             promptTokenCount = 10,
             requestTimestamp = timestamp,
-            transferSignature = taSignature + "wrong",
+            transferSignature = taSignature.invalidate(),
             responseHash = "fjdsf",
             responsePayload = "AI is cool",
             completionTokenCount = 100,
@@ -408,6 +411,8 @@ class InferenceTests : TestermintTest() {
             executorSignature = taSignature,
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
+            model = "default",
+            originalPrompt = inferenceRequest
         )
         val response = genesis.submitMessage(message)
         println(response)
@@ -431,9 +436,11 @@ class InferenceTests : TestermintTest() {
             responsePayload = "AI is cool",
             completionTokenCount = 100,
             executedBy = genesisAddress,
-            executorSignature = taSignature + "wrong",
+            executorSignature = taSignature.invalidate(),
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
+            model = defaultModel,
+            originalPrompt = inferenceRequest,
         )
         val response = genesis.submitMessage(message)
         println(response)
@@ -456,8 +463,11 @@ class InferenceTests : TestermintTest() {
         lateinit var cluster: LocalCluster
         lateinit var genesis: LocalInferencePair
     }
-
 }
+
+private fun String.invalidate(): String =
+    (this.first()+1) + this.drop(1)
+
 
 fun Instant.toEpochNanos(): Long {
     return this.epochSecond * 1_000_000_000 + this.nano.toLong()
