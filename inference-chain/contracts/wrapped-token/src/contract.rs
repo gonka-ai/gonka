@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     entry_point, to_json_binary, to_json_vec, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response,
-    StdResult, QueryRequest, GrpcQuery, StdError, ContractResult, SystemResult, Uint128,
+    StdResult, QueryRequest, GrpcQuery, StdError, ContractResult, SystemResult, Uint128, CosmosMsg, WasmMsg,
 };
 use cw20_base::contract as cw20_base_contract;
 use cw20_base::msg as cw20_base_msg;
@@ -80,7 +80,7 @@ pub fn execute(
 ) -> Result<Response, ContractError> {
     match msg {
         // Custom extras
-        ExecuteMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
+        ExecuteMsg::Withdraw { amount, destination_address } => withdraw(deps, env, info, amount, destination_address),
         ExecuteMsg::UpdateMetadata { name, symbol, decimals } => update_metadata(deps, info, name, symbol, decimals),
         // Delegate all standard cw20 ops
         ExecuteMsg::Transfer { recipient, amount } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::Transfer { recipient, amount }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
@@ -151,6 +151,7 @@ fn withdraw(
     env: Env,
     info: MessageInfo,
     amount: Uint128,
+    destination_address: String,
 ) -> Result<Response, ContractError> {
     if amount.is_zero() {
         return Err(ContractError::InsufficientFunds {
@@ -159,19 +160,56 @@ fn withdraw(
         });
     }
 
+    // Validate destination address is not empty
+    if destination_address.trim().is_empty() {
+        return Err(ContractError::Std(StdError::generic_err("destination_address cannot be empty")));
+    }
+
     // Delegate to cw20-base burn
     let mut resp = cw20_base_contract::execute(
         deps,
-        env,
-        info,
+        env.clone(),
+        info.clone(),
         cw20_base_msg::ExecuteMsg::Burn { amount },
     ).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
 
+    // Create the bridge withdrawal message
+    let bridge_msg = create_bridge_withdrawal_msg(
+        env.contract.address.to_string(), // creator (this contract - will be the transaction signer)
+        info.sender.to_string(),          // user_address (the caller)
+        amount.to_string(),               // amount
+        destination_address.clone(),      // destination_address
+    )?;
+
     resp = resp
+        .add_message(bridge_msg)
         .add_attribute("method", "withdraw")
-        .add_attribute("burn_amount", amount);
+        .add_attribute("burn_amount", amount)
+        .add_attribute("destination_address", destination_address);
 
     Ok(resp)
+}
+
+// Helper function to create the bridge withdrawal message
+fn create_bridge_withdrawal_msg(
+    creator: String,
+    user_address: String,
+    amount: String,
+    destination_address: String,
+) -> Result<CosmosMsg, ContractError> {
+    // For now, we'll create a custom message that can be handled by the inference module
+    // This should be properly protobuf encoded in a production environment
+    let msg_data = format!(
+        "{{\"creator\":\"{}\",\"user_address\":\"{}\",\"amount\":\"{}\",\"destination_address\":\"{}\"}}",
+        creator, user_address, amount, destination_address
+    );
+
+    let stargate_msg = CosmosMsg::Stargate {
+        type_url: "/inference.inference.MsgRequestBridgeWithdrawal".to_string(),
+        value: Binary::from(msg_data.as_bytes()),
+    };
+
+    Ok(stargate_msg)
 }
 
 #[entry_point]
