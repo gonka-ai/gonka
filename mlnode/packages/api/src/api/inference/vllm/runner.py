@@ -4,6 +4,7 @@ import time
 import requests
 import gc
 import torch
+import sys
 from typing import Optional, List
 from abc import ABC, abstractmethod
 
@@ -33,8 +34,10 @@ class IVLLMRunner(ITrackableTask):
 
 class VLLMRunner(IVLLMRunner):
     VLLM_PYTHON_PATH = "/opt/venv/bin/python3"
-    VLLM_PORT = os.getenv("INFERENCE_PORT", 5000)
+    VLLM_PORT = int(os.getenv("INFERENCE_PORT", 5000))
     VLLM_HOST = "0.0.0.0"
+
+    MAX_INSTANCES = int(os.getenv("INFERENCE_MAX_INSTANCES", 128))
 
     def __init__(
         self,
@@ -46,52 +49,111 @@ class VLLMRunner(IVLLMRunner):
         self.model = model
         self.dtype = dtype
         self.additional_args = additional_args or []
-        self.process: Optional[subprocess.Popen] = None
+        self.processes: List[subprocess.Popen] = []
+        self.proxy_process: Optional[subprocess.Popen] = None
+
+    def _get_arg_value(self, name: str, default: int = 1) -> int:
+        if name in self.additional_args:
+            try:
+                idx = self.additional_args.index(name)
+                return int(self.additional_args[idx + 1])
+            except (ValueError, IndexError):
+                pass
+        return default
 
     def start(self):
-        if self.process:
+        if self.processes or self.proxy_process:
             raise RuntimeError("VLLMRunner is already running")
 
-        command = [
-            self.vllm_python_path,
-            "-m", "vllm.entrypoints.openai.api_server",
-            "--model", self.model,
-            "--dtype", self.dtype,
+        tp_size = self._get_arg_value("--tensor-parallel-size", default=1)
+        pp_size = self._get_arg_value("--pipeline-parallel-size", default=1)
+        gpus_per_instance = tp_size * pp_size
+        logger.info("gpus per instance: %d (tp_size: %d, pp_size: %d)", gpus_per_instance, tp_size, pp_size)
+        total_gpus = max(torch.cuda.device_count(), 1)
+        logger.info("total available gpus: %d", total_gpus)
+        instances = min(self.MAX_INSTANCES, max(1, total_gpus // gpus_per_instance))
+        logger.info("instances to start: %d", instances)
+
+        backend_ports = []
+        for i in range(instances):
+            port = self.VLLM_PORT + i + 1
+            backend_ports.append(port)
+            command = [
+                self.vllm_python_path,
+                "-m", "vllm.entrypoints.openai.api_server",
+                "--model", self.model,
+                "--dtype", self.dtype,
+                "--port", str(port),
+                "--host", self.VLLM_HOST
+            ] + self.additional_args
+
+            env = os.environ.copy()
+            env["VLLM_USE_V1"] = "0"
+
+            start_gpu = i * gpus_per_instance
+            if total_gpus > 0:
+                gpu_ids = list(range(start_gpu, start_gpu + gpus_per_instance))
+                env["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpu_ids)
+
+            logger.info("Starting vLLM instance %d on %s", i, env["CUDA_VISIBLE_DEVICES"])
+            process = subprocess.Popen(
+                command,
+                env=env,
+            )
+            self.processes.append(process)
+
+        proxy_command = [
+            sys.executable,
+            "-m", "api.inference.vllm.proxy",
             "--port", str(self.VLLM_PORT),
+            "--backend-ports", ",".join(str(p) for p in backend_ports),
             "--host", self.VLLM_HOST
-        ] + self.additional_args
+        ]
 
-        env = os.environ.copy()
-        env["VLLM_USE_V1"] = "0"
+        logger.info("Starting proxy (command: %s)", proxy_command)
 
-        self.process = subprocess.Popen(
-            command,
-            env=env,
+        self.proxy_process = subprocess.Popen(
+            proxy_command,
+            env=os.environ.copy(),
         )
 
         if not self._wait_for_server():
             raise RuntimeError(f"vLLM failed to start within the expected timeout: {self.get_error_if_exist()}")
 
-        logger.info("vLLM is up and running.")
+        logger.info("vLLM is up and running with %d instance(s).", instances)
 
     def stop(self):
-        if not self.process:
+        if not self.processes and not self.proxy_process:
             logger.warning("VLLMRunner stop called but no process is running.")
             return
 
-        logger.info("Stopping vLLM process...")
-        self.process.terminate()
+        logger.info("Stopping vLLM processes...")
+        for p in self.processes:
+            p.terminate()
 
-        try:
-            self.process.wait(timeout=TERMINATION_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            logger.warning("Termination timed out; forcefully killing vLLM process.")
-            self.process.kill()
-            self.process.wait()
+        if self.proxy_process:
+            self.proxy_process.terminate()
 
-        self.process = None
+        for p in self.processes:
+            try:
+                p.wait(timeout=TERMINATION_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                logger.warning("Termination timed out; forcefully killing vLLM process.")
+                p.kill()
+                p.wait()
+
+        if self.proxy_process:
+            try:
+                self.proxy_process.wait(timeout=TERMINATION_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                logger.warning("Termination timed out; forcefully killing proxy process.")
+                self.proxy_process.kill()
+                self.proxy_process.wait()
+
+        self.processes = []
+        self.proxy_process = None
         self._cleanup_gpu()
-        logger.info("vLLM process stopped.")
+        logger.info("vLLM processes stopped.")
 
     def _cleanup_gpu(self):
         logger.debug("Cleaning GPU memory...")
@@ -113,7 +175,9 @@ class VLLMRunner(IVLLMRunner):
         return False
 
     def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        if self.proxy_process is None or self.proxy_process.poll() is not None:
+            return False
+        return all(p.poll() is None for p in self.processes)
 
     def is_available(self) -> bool:
         if not self.is_running():
@@ -125,6 +189,13 @@ class VLLMRunner(IVLLMRunner):
             return False
 
     def get_error_if_exist(self) -> Optional[str]:
-        if self.process and self.process.stderr:
-            return self.process.stderr.read().strip()
+        for p in self.processes:
+            if p.stderr:
+                err = p.stderr.read().strip()
+                if err:
+                    return err
+        if self.proxy_process and self.proxy_process.stderr:
+            err = self.proxy_process.stderr.read().strip()
+            if err:
+                return err
         return None
