@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:0.8.1 AS base
+FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -60,7 +60,7 @@ RUN mkdir -p /app/packages/api/src/api \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
-    python -m venv /app/packages/api/.venv \
+    python3 -m venv /app/packages/api/.venv \
     && . /app/packages/api/.venv/bin/activate \
     && cd /app/packages/api \
     && poetry install --no-interaction \

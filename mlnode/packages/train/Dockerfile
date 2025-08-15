@@ -1,5 +1,5 @@
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:0.8.1 AS app
+FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS app
 
 ENV APP_PATH=/app/packages/train
 
@@ -58,7 +58,7 @@ COPY packages/train/third_party ${APP_PATH}/third_party
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
     cd ${APP_PATH} \
-    && python -m venv ${APP_PATH}/.venv \
+    && python3 -m venv ${APP_PATH}/.venv \
     && . ${APP_PATH}/.venv/bin/activate \
     && poetry install --no-interaction \
     && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.2cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
