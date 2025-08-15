@@ -47,7 +47,7 @@ func TestMsgSubmitNewUnfundedParticipant_ValidateBasic(t *testing.T) {
 				Url:          "https://example.com",
 				PubKey:       sample.ValidSECP256K1AccountKey(),
 				ValidatorKey: sample.ValidED25519ValidatorKey(),
-				WorkerKey:    sample.ValidSECP256K1AccountKey(),
+				WorkerKey:    sample.ValidED25519ValidatorKey(),
 			},
 		},
 	}

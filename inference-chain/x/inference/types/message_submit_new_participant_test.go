@@ -31,7 +31,7 @@ func TestMsgSubmitNewParticipant_ValidateBasic(t *testing.T) {
 				Creator:      validCreator,
 				Url:          "https://example.com",
 				ValidatorKey: sample.ValidED25519ValidatorKey(),
-				WorkerKey:    sample.ValidSECP256K1AccountKey(),
+				WorkerKey:    sample.ValidED25519ValidatorKey(),
 			},
 		},
 	}
