@@ -8,7 +8,9 @@ import org.assertj.core.api.SoftAssertions
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import kotlin.experimental.xor
 import kotlin.test.assertNotNull
+import java.util.Base64
 
 class InferenceTests : TestermintTest() {
     @Test
@@ -465,10 +467,16 @@ class InferenceTests : TestermintTest() {
     }
 }
 
-private fun String.invalidate(): String =
-    (this.first()+1) + this.drop(1)
+private fun String.invalidate(): String {
+    val decoder = Base64.getDecoder()
+    val encoder = Base64.getEncoder()
+    val bytes = decoder.decode(this)
 
+    // Flip one bit in the first byte
+    bytes[0] = bytes[0].xor(0x01)
 
+    return encoder.encodeToString(bytes)
+}
 fun Instant.toEpochNanos(): Long {
     return this.epochSecond * 1_000_000_000 + this.nano.toLong()
 }
