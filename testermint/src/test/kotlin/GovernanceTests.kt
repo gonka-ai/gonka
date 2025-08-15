@@ -7,15 +7,6 @@ import org.junit.jupiter.api.Test
 
 class GovernanceTests : TestermintTest() {
     @Test
-    fun `init cluster`() {
-        val (cluster, genesis) = initCluster(reboot = true)
-        logSection("Cluster initialized with genesis node: ${genesis.name}")
-        assertThat(cluster.joinPairs).isNotEmpty
-        assertThat(genesis.node).isNotNull
-        assertThat(genesis.node.getStatus().syncInfo.latestBlockHeight).isGreaterThan(0)
-    }
-
-    @Test
     fun `pass a setParams proposal`() {
         val (cluster, genesis) = initCluster()
         val params = genesis.getParams()

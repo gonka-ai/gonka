@@ -25,12 +25,12 @@ class ParticipantTests : TestermintTest() {
         // useful for testing gonka client
         val (cluster, genesis) = initCluster()
         val addresses = cluster.allPairs.map {
-            it.api.getPublicUrl() + ";" + it.node.getAddress()
+            it.api.getPublicUrl() + ";" + it.node.getColdAddress()
         }
         val clipboardContent = buildString {
             appendLine("GONKA_ENDPOINTS=" + addresses.joinToString(separator = ","))
-            appendLine("GONKA_ADDRESS=" + genesis.node.getAddress())
-            appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getPrivateKey())
+            appendLine("GONKA_ADDRESS=" + genesis.node.getColdAddress())
+            appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getColdPrivateKey())
         }
 
         Logger.warn(clipboardContent)
