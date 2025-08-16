@@ -19,21 +19,21 @@ all: build-docker
 build-docker:
 	$(eval PLATFORM=linux/amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=ghcr.io/product-science/bridge:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/bridge-ethereum:$(VERSION))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		echo "Setting latest tag..."; \
-		docker tag $(DOCKER_TAG) ghcr.io/product-science/bridge:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/bridge-ethereum:latest; \
 	fi
 
 docker-push:
 	@echo "--> pushing bridge docker image"
 	@echo "pushing to GitHub Container Registry"
-	@docker push ghcr.io/product-science/bridge:$(VERSION)
+	@docker push ghcr.io/product-science/bridge-ethereum:$(VERSION)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		echo "Setting latest tag..."; \
-		docker tag ghcr.io/product-science/bridge:$(VERSION) ghcr.io/product-science/bridge:latest; \
-		docker push ghcr.io/product-science/bridge:latest; \
+		docker tag ghcr.io/product-science/bridge-ethereum:$(VERSION) ghcr.io/product-science/bridge-ethereum:latest; \
+		docker push ghcr.io/product-science/bridge-ethereum:latest; \
 	fi
 
 release: build-docker
