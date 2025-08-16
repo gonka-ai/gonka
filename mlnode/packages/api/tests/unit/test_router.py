@@ -20,7 +20,8 @@ def client(mock_manager):
     return TestClient(app)
 
 def test_inference_up_already_running(client, mock_manager):
-    mock_manager.is_running.return_value = True
+    # Mock the behavior: initially running, then stopped after stop() call
+    mock_manager.is_running.side_effect = [True, False]  # First call returns True, second call returns False
 
     response = client.post("/inference/up", json={"model": "test-model", "dtype": "auto"})
     assert response.status_code == 200

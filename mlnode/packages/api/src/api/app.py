@@ -19,6 +19,7 @@ from api.service_management import (
 )
 from api.routes import router as api_router
 from api.watcher import watch_managers
+from api.proxy import ProxyMiddleware, start_vllm_proxy, stop_vllm_proxy, setup_vllm_proxy, start_backward_compatibility, stop_backward_compatibility
 
 
 WATCH_INTERVAL = 2
@@ -30,6 +31,8 @@ async def lifespan(app: FastAPI):
     app.state.pow_manager = PowManager()
     app.state.inference_manager = InferenceManager()
     app.state.train_manager = TrainManager()
+
+    await start_vllm_proxy()
 
     monitor_task = asyncio.create_task(
         watch_managers(
@@ -52,6 +55,9 @@ async def lifespan(app: FastAPI):
     if app.state.train_manager.is_running():
         app.state.train_manager.stop()
 
+    await stop_vllm_proxy()
+    await stop_backward_compatibility()
+
     monitor_task.cancel()
     try:
         await monitor_task
@@ -60,6 +66,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(ProxyMiddleware)
 
 app.include_router(
     pow_router,
