@@ -6,7 +6,6 @@ require (
 	cosmossdk.io/errors v1.0.2
 	cosmossdk.io/store v1.1.2
 	cosmossdk.io/x/upgrade v0.1.4
-	github.com/bufbuild/buf v1.34.0
 	github.com/cometbft/cometbft v0.38.17
 	github.com/consensys/gnark-crypto v0.18.0
 	github.com/cosmos/btcutil v1.0.5
@@ -14,7 +13,7 @@ require (
 	github.com/cosmos/ibc-go/v8 v8.2.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/golang/protobuf v1.5.4
-	github.com/gonka-ai/gonka-utils/go v0.0.0-20250803220145-149a2da98ccd
+	github.com/gonka-ai/gonka-utils/go v0.0.0-20250816090819-e5ccbf89cef4
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/ignite/cli/v28 v28.11.0

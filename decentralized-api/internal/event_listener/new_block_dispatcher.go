@@ -2,10 +2,8 @@ package event_listener
 
 import (
 	"context"
-	"decentralized-api/internal/utils"
 	"errors"
 	"fmt"
-	"github.com/gonka-ai/gonka-utils/go/contracts"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +16,6 @@ import (
 	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 )
@@ -208,7 +205,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		}
 	}
 
-	d.verifyParticipantsChain(ctx, networkInfo.BlockHeight)
+	// d.verifyParticipantsChain(ctx, networkInfo.BlockHeight)
 
 	// Let's check in prod how often this happens
 	if networkInfo.BlockHeight != blockInfo.Height {
@@ -261,7 +258,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	return nil
 }
 
-func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curHeight int64) {
+/*func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curHeight int64) {
 	logging.Info("verify participants", types.System,
 		"known_height", d.configManager.GetHeight(), "current_height", curHeight, "last_verified_app_hash", d.lastVerifiedAppHashHex)
 
@@ -304,7 +301,7 @@ func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curH
 		d.lastVerifiedAppHashHex = data.Block.AppHash.String()
 		logging.Info("verify participants successfully", types.Stages, "new_app_hash", d.lastVerifiedAppHashHex)
 	}
-}
+}*/
 
 // NetworkInfo contains information queried from the network
 type NetworkInfo struct {

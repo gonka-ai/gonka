@@ -36,7 +36,15 @@ message SignatureInfo {
   ];
 }
 
-message ValidatorsSignatures {
+message BlockID {
+  string hash = 1;
+  int64 part_set_header_total = 2;
+  string part_set_header_hash = 3;
+}
+
+message ValidatorsProof {
   int64 block_height             = 1;
-  repeated SignatureInfo signatures = 2;
+  int64 round = 2;
+  BlockID block_id = 3;
+  repeated SignatureInfo signatures = 4;
 }

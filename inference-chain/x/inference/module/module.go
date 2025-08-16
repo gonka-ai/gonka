@@ -16,6 +16,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -186,10 +187,10 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	}
 
 	target := currentHeight - 1
-	// TODO uncomment
-	/*	if !am.keeper.HasPendingProof(ctx, target) {
+
+	if !am.keeper.HasPendingProof(ctx, target) {
 		return nil
-	}*/
+	}
 
 	header := sdkCtx.BlockHeader()
 	appHashForTarget := header.GetAppHash()
@@ -201,10 +202,16 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	)
 
 	var prevParticipants types.ActiveParticipants
-	epoch, found := am.keeper.GetPreviousEpoch(ctx)
+
+	// new participants set is created in the end of CURRENT epoch
+	// current participants set will be PREVIOUS set for upcoming epoch
+	epochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
 	if found {
-		am.LogInfo("BeginBlock: found epoch", types.Participants, "epoch", epoch.GetIndex())
-		prevParticipants, _ = am.keeper.GetActiveParticipants(ctx, epoch.GetIndex())
+		am.LogInfo("BeginBlock: found epoch", types.Participants, "epoch", epochIndex)
+		prevParticipants, found = am.keeper.GetActiveParticipants(ctx, epochIndex)
+		if found {
+			am.LogInfo("BeginBlock: found participants for epoch", types.Participants, "epoch", epochIndex)
+		}
 	}
 
 	commits := make([]*types.CommitInfo, 0, len(voteInfos))
@@ -214,6 +221,29 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	}
 
 	vals := make(map[string]data)
+	if len(prevParticipants.Participants) == 0 {
+		am.LogInfo("BeginBlock: participants NOT for epoch, try to get info from validators", types.Participants, "epoch", epochIndex)
+
+		validators, err := am.keeper.Staking.GetAllValidators(ctx)
+		if err != nil {
+			am.LogError("BeginBlock: unable to get all validators", types.Participants, "epoch", epochIndex)
+		}
+		cdc := am.keeper.Codec()
+		for _, val := range validators {
+			var consPubKey cryptotypes.PubKey
+			if err := cdc.UnpackAny(val.ConsensusPubkey, &consPubKey); err != nil {
+				am.LogError("BeginBlock: unable to unpack validator public key", types.Participants, "epoch", epochIndex)
+			}
+
+			pk := ed25519.PubKey(consPubKey.Bytes())
+			addr := strings.ToUpper(pk.Address().String())
+
+			am.LogInfo("BeginBlock participant address from validator cons address", types.Participants, "consensus addr hex", addr)
+
+			vals[addr] = data{pk: pk, weight: val.Tokens.Int64()}
+		}
+	}
+
 	for _, v := range prevParticipants.Participants {
 		if v.ValidatorKey == "" {
 			am.LogWarn("validator cons pub key is empty", types.Participants)

@@ -3,8 +3,7 @@
 ################################################################################
 # Build the application
 ################################################################################
-FROM golang:1.23.2-alpine3.20 AS builder
-
+FROM golang:alpine AS builder
 ARG BUILD_FLAGS
 ARG GOOS
 ARG GOARCH

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -11,22 +12,12 @@ var (
 	ErrSignaturesNotFound = errors.New("signatures not found")
 )
 
-func (k Keeper) SetValidatorsProofWithHeight(ctx context.Context, req *types.QuerySetValidatorsProofRequest) (*types.QuerySetValidatorsProofResponse, error) {
-	if req.Proof.BlockHeight == 0 {
-		return nil, ErrEmptyBlockHeight
-	}
-
-	err := k.SetValidatorsSignatures(ctx, *req.Proof)
-	if err != nil {
-		return nil, err
-	}
-	return &types.QuerySetValidatorsProofResponse{}, nil
-}
-
 func (k Keeper) GetValidatorsProofByHeight(ctx context.Context, req *types.QueryGetValidatorsProofRequest) (*types.QueryGetValidatorsProofResponse, error) {
 	if req.GetProofHeight() == 0 {
 		return nil, ErrEmptyBlockHeight
 	}
+
+	fmt.Printf("GetValidatorsProofByHeight: block_height %v\n", req.GetProofHeight())
 
 	signatures, found := k.GetValidatorsSignatures(ctx, req.ProofHeight)
 	if !found {

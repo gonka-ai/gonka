@@ -1,9 +1,7 @@
 package utils
 
 import (
-	"context"
 	"decentralized-api/completionapi"
-	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/merkleproof"
 	"decentralized-api/utils"
@@ -11,13 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/cometbft/cometbft/crypto/tmhash"
-	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	comettypes "github.com/cometbft/cometbft/types"
-	"github.com/cosmos/cosmos-sdk/codec"
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	"github.com/gonka-ai/gonka-utils/go/contracts"
-	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"github.com/productscience/inference/x/inference/types"
 	"net/url"
 	"strings"
@@ -60,7 +52,7 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 	return hash, &response, nil
 }
 
-func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) externalutils.GetParticipantsFn {
+/*func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) externalutils.GetParticipantsFn {
 	return func(ctx context.Context, _ string) (*contracts.ActiveParticipantWithProof, error) {
 		dataKey := types.ActiveParticipantsFullKey(epochId)
 		result, err := cosmos_client.QueryByKey(rpcClient, "inference", dataKey)
@@ -159,13 +151,11 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) external
 			Addresses:               addresses,
 			ActiveParticipantsBytes: activeParticipantsBytes,
 			ProofOps:                result.Response.ProofOps,
-			Validators:              vals.Validators,
-			Block:                   returnBlock,
 		}, err
 	}
-}
+}*/
 
-func QueryValidators(rpcClient *rpcclient.HTTP) externalutils.GetValidatorsFn {
+/*func QueryValidators(rpcClient *rpcclient.HTTP) externalutils.GetValidatorsFn {
 	return func(ctx context.Context, height int64) (*contracts.BlockValidators, error) {
 		vals, err := rpcClient.Validators(context.Background(), &height, nil, nil)
 		if err != nil || vals == nil {
@@ -190,14 +180,15 @@ func QueryValidators(rpcClient *rpcclient.HTTP) externalutils.GetValidatorsFn {
 			Total:       vals.Total,
 		}, nil
 	}
-}
+}*/
 
-func QueryBlock(rpcClient *rpcclient.HTTP) externalutils.GetBlockFn {
-	return func(ctx context.Context, height int64) (*coretypes.ResultBlock, error) {
-		return rpcClient.Block(context.Background(), &height)
+/*
+	func QueryBlock(rpcClient *rpcclient.HTTP) externalutils.GetBlockFn {
+		return func(ctx context.Context, height int64) (*coretypes.ResultBlock, error) {
+			return rpcClient.Block(context.Background(), &height)
+		}
 	}
-}
-
+*/
 func pubKeyToAddress3(pubKey string) (string, error) {
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
 	if err != nil {

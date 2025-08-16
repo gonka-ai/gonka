@@ -7,21 +7,18 @@ import (
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
-	comettypes "github.com/cometbft/cometbft/types"
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	"net/http"
-	"strconv"
-
-	// "github.com/gonka-ai/gonka-utils/go/contracts"
-	"net/url"
-	"strings"
-
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/gonka-ai/gonka-utils/go/contracts"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 )
 
 func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
@@ -89,7 +86,7 @@ func (s *Server) resolveEpochFromContext(c echo.Context) (uint64, error) {
 	}
 }
 
-func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, error) {
+func (s *Server) getParticipants(epoch uint64) (*contracts.ActiveParticipantWithProof, error) {
 	// FIXME: now we can set active participants even for epoch 0, fix InitGenesis for that
 	if epoch == 0 {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "Epoch enumeration starts with 1")
@@ -127,29 +124,36 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		"epoch", epoch,
 		"activeParticipants", activeParticipants)
 
-	resp, err := s.recorder.NewInferenceQueryClient().GetBlockProofByHeight(context.Background(), &types.QueryBlockProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
+	cl := s.recorder.NewInferenceQueryClient()
+	ctx := context.Background()
+	blockProof, err := cl.GetBlockProofByHeight(ctx, &types.QueryBlockProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
 	if err != nil {
 		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
 		return nil, err
 	}
 
-	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
-	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
-	if err != nil || blockP1 == nil {
-		logging.Error("Failed to get block + 1", types.Participants, "error", err)
-	}
+	validatorsProof, _ := cl.GetValidatorsProofByHeight(ctx, &types.QueryGetValidatorsProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
 
-	vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
-	if err != nil || vals == nil {
-		logging.Error("Failed to get validators", types.Participants, "error", err)
-		return nil, err
-	}
+	/*
+	        heightP1 := activeParticipants.CreatedAtBlockHeight + 1
+	   	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
+	   	if err != nil || blockP1 == nil {
+	   		logging.Error("Failed to get block + 1", types.Participants, "error", err)
+	   	}*/
+
+	/*
+		    vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
+			if err != nil || vals == nil {
+				logging.Error("Failed to get validators", types.Participants, "error", err)
+				return nil, err
+			}
+	*/
 
 	// we need to verify proof from block N using hash from N+1,
 	// because hash of block N is made after Commit() and stored in
 	// header of block N+1. It works so to make each block 'link' to previous and have chain of blocks.
 	if result.Response.ProofOps != nil {
-		hash, _ := hex.DecodeString(resp.Proof.AppHashHex)
+		hash, _ := hex.DecodeString(blockProof.Proof.AppHashHex)
 		s.verifyProof(epoch, result, hash)
 	}
 
@@ -163,19 +167,78 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		}
 	}
 
-	var returnBlock *comettypes.Block
-	if blockP1 != nil {
-		returnBlock = blockP1.Block
+	finalParticipants := contracts.ActiveParticipants{
+		Participants:         make([]*contracts.ActiveParticipant, len(activeParticipants.Participants)),
+		EpochGroupId:         activeParticipants.EpochGroupId,
+		PocStartBlockHeight:  activeParticipants.PocStartBlockHeight,
+		EffectiveBlockHeight: activeParticipants.EffectiveBlockHeight,
+		CreatedAtBlockHeight: activeParticipants.CreatedAtBlockHeight,
+		EpochId:              activeParticipants.EpochId,
 	}
 
-	return &ActiveParticipantWithProof{
-		ActiveParticipants:      activeParticipants,
+	for i, participant := range activeParticipants.Participants {
+		addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+		finalParticipants.Participants[i] = &contracts.ActiveParticipant{
+			Index:        participant.Index,
+			ValidatorKey: participant.ValidatorKey,
+			Weight:       participant.Weight,
+			InferenceUrl: participant.InferenceUrl,
+			Models:       participant.Models,
+			Seed: &contracts.RandomSeed{
+				Participant: participant.Seed.Participant,
+				BlockHeight: participant.Seed.BlockHeight,
+				Signature:   participant.Seed.Signature,
+			},
+		}
+		if err != nil {
+			logging.Error("Failed to convert public key to address", types.Participants, "error", err)
+		}
+	}
+
+	block := &contracts.BlockProof{
+		CreatedAtBlockHeight: blockProof.Proof.CreatedAtBlockHeight,
+		AppHashHex:           blockProof.Proof.AppHashHex,
+		TotalVotingPower:     blockProof.Proof.TotalVotingPower,
+		Commits:              make([]*contracts.CommitInfo, 0),
+	}
+
+	for _, commit := range blockProof.Proof.Commits {
+		block.Commits = append(block.Commits, &contracts.CommitInfo{
+			ValidatorAddress: commit.ValidatorAddress,
+			ValidatorPubKey:  commit.ValidatorPubKey,
+			VotingPower:      commit.VotingPower,
+		})
+	}
+
+	var validators *contracts.ValidatorsProof
+	if validatorsProof != nil {
+		validators = &contracts.ValidatorsProof{
+			BlockHeight: validatorsProof.Proof.BlockHeight,
+			Round:       validatorsProof.Proof.Round,
+			BlockId: &contracts.BlockID{
+				Hash:               validatorsProof.Proof.BlockId.Hash,
+				PartSetHeaderTotal: validatorsProof.Proof.BlockId.PartSetHeaderTotal,
+				PartSetHeaderHash:  validatorsProof.Proof.BlockId.PartSetHeaderHash,
+			},
+			Signatures: make([]*contracts.SignatureInfo, 0),
+		}
+
+		for _, sign := range validatorsProof.Proof.Signatures {
+			validators.Signatures = append(validators.Signatures, &contracts.SignatureInfo{
+				SignatureBase64:     sign.SignatureBase64,
+				ValidatorAddressHex: sign.ValidatorAddressHex,
+				Timestamp:           sign.Timestamp,
+			})
+		}
+	}
+
+	return &contracts.ActiveParticipantWithProof{
+		ActiveParticipants:      finalParticipants,
 		Addresses:               addresses,
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                result.Response.ProofOps,
-		Validators:              vals.Validators,
-		Block:                   returnBlock,
-		BlockProof:              resp.Proof,
+		BlockProof:              block,
+		ValidatorsProof:         validators,
 	}, nil
 }
 

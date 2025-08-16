@@ -11,10 +11,10 @@ import (
 	"strconv"
 )
 
-type temporaryResponse struct {
-	blockProof           *types.BlockProof
-	validatorsSignatures *types.ValidatorsSignatures
-	cosmosBlock          *coretypes.ResultBlock
+type TemporaryResponse struct {
+	BlockProof           *types.BlockProof
+	ValidatorsSignatures *types.ValidatorsProof
+	CosmosBlock          *coretypes.ResultBlock
 }
 
 func (s *Server) getBlock(c echo.Context) error {
@@ -53,10 +53,10 @@ func (s *Server) getBlock(c echo.Context) error {
 		return err
 	}
 
-	resp := temporaryResponse{
-		blockProof:           blockProof.Proof,
-		validatorsSignatures: signatures.Proof,
-		cosmosBlock:          block,
+	resp := TemporaryResponse{
+		BlockProof:           blockProof.Proof,
+		ValidatorsSignatures: signatures.Proof,
+		CosmosBlock:          block,
 	}
 	return c.JSON(http.StatusOK, resp)
 }

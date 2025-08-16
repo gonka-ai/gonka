@@ -50,6 +50,7 @@ type ActiveParticipantWithProof struct {
 	Validators              []*comettypes.Validator  `json:"validators"`
 	Block                   *comettypes.Block        `json:"block"`
 	BlockProof              *types.BlockProof        `json:"block_proof"`
+	ValidatorsProof         *types.ValidatorsProof   `json:"validators_proof"`
 	//CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 

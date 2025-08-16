@@ -12,6 +12,7 @@ import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge_transaction.proto";
+import "inference/inference/block_proof.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -47,7 +48,9 @@ service Msg {
   rpc JoinTrainingStatus               (MsgJoinTrainingStatus              ) returns (MsgJoinTrainingStatusResponse              );
   rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask         ) returns (MsgCreateDummyTrainingTaskResponse         );
   rpc BridgeExchange                   (MsgBridgeExchange                  ) returns (MsgBridgeExchangeResponse                  );
+  rpc SubmitValidatorsProof            (MsgSubmitValidatorsProof           ) returns (MsgSubmitValidatorsProofResponse           );
 }
+
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
   option (cosmos.msg.v1.signer) =                             "authority";
@@ -361,3 +364,11 @@ message MsgBridgeExchange {
 message MsgBridgeExchangeResponse {
   string id = 1;  // Unique bridge transaction ID (originChain_blockNumber_receiptIndex)
 }
+
+message MsgSubmitValidatorsProof {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  ValidatorsProof proof = 2;
+}
+
+message MsgSubmitValidatorsProofResponse {}

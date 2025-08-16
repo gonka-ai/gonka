@@ -368,11 +368,7 @@ service Query {
   rpc GetBlockProofByHeight (QueryBlockProofRequest) returns (QueryBlockProofResponse) {
     option (google.api.http).get = "/productscience/inference/inference/block_proof/{proof_height}";
   }
-
-  rpc SetValidatorsProofWithHeight (QuerySetValidatorsProofRequest) returns (QuerySetValidatorsProofResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/validators_proof";
-  }
-
+  
   rpc GetValidatorsProofByHeight (QueryGetValidatorsProofRequest) returns (QueryGetValidatorsProofResponse) {
     option (google.api.http).get = "/productscience/inference/inference/validators_proof/{proof_height}";
   }
@@ -942,16 +938,10 @@ message QueryBlockProofResponse{
   BlockProof proof = 1;
 }
 
-message QuerySetValidatorsProofRequest{
-  ValidatorsSignatures proof = 1;
-}
-
-message QuerySetValidatorsProofResponse{}
-
 message QueryGetValidatorsProofRequest {
   int64 proof_height = 1;
 }
 
 message QueryGetValidatorsProofResponse{
-  ValidatorsSignatures proof = 1;
+  ValidatorsProof proof = 1;
 }
