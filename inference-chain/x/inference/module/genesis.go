@@ -40,7 +40,15 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	k.SetContractsParams(ctx, genState.CosmWasmParams)
 
-	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
+	// Set genesis only params from configuration
+	genesisOnlyParams := genState.GenesisOnlyParams
+	if genesisOnlyParams.FirstGenesisValidatorAddress != "" {
+		k.LogInfo("Using configured first genesis validator address", types.System, "address", genesisOnlyParams.FirstGenesisValidatorAddress)
+	} else {
+		k.LogInfo("No first genesis validator address configured - genesis enhancement will be disabled", types.System)
+	}
+
+	k.SetGenesisOnlyParams(ctx, &genesisOnlyParams)
 
 	// Import participants provided in genesis
 	for _, p := range genState.ParticipantList {

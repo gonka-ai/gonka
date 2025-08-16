@@ -57,17 +57,22 @@ const year = 365 * 24 * 60 * 60
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
-		TotalSupply:              1_000 * million * billion,
-		OriginatorSupply:         160 * million * billion,
-		TopRewardAmount:          120 * million * billion,
-		PreProgrammedSaleAmount:  120 * million * billion,
-		TopRewards:               3,
-		SupplyDenom:              BaseCoin,
-		StandardRewardAmount:     600 * million * billion,
-		TopRewardPeriod:          year,
-		TopRewardPayouts:         12,
-		TopRewardPayoutsPerMiner: 4,
-		TopRewardMaxDuration:     year * 4,
+		TotalSupply:                  1_000 * million * billion,
+		OriginatorSupply:             160 * million * billion,
+		TopRewardAmount:              120 * million * billion,
+		PreProgrammedSaleAmount:      120 * million * billion,
+		TopRewards:                   3,
+		SupplyDenom:                  BaseCoin,
+		StandardRewardAmount:         600 * million * billion,
+		TopRewardPeriod:              year,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         year * 4,
+		MaxIndividualPowerPercentage: DecimalFromFloat(0.25),
+		GenesisVetoEnabled:           true, // Enable genesis veto by default
+		NetworkMaturityThreshold:     2_000_000,
+		GenesisVetoMultiplier:        DecimalFromFloat(0.52),
+		FirstGenesisValidatorAddress: "", // Empty by default - must be set in genesis file
 	}
 }
 
