@@ -47,16 +47,15 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := types.DefaultGenesis()
 	genesis.Params = k.GetParams(ctx)
 
+	collateralBalances := make([]types.CollateralBalance, 0)
 	// Export all collateral balances
-	collateralMap := k.GetAllCollaterals(ctx)
-	collateralBalances := make([]types.CollateralBalance, 0, len(collateralMap))
-
-	for participant, amount := range collateralMap {
+	k.IterateCollaterals(ctx, func(participant sdk.AccAddress, amount sdk.Coin) (stop bool) {
 		collateralBalances = append(collateralBalances, types.CollateralBalance{
-			Participant: participant,
+			Participant: participant.String(),
 			Amount:      amount,
 		})
-	}
+		return false
+	})
 
 	genesis.CollateralBalanceList = collateralBalances
 

@@ -47,6 +47,7 @@ class CollateralTests : TestermintTest() {
         val params = participant.node.queryCollateralParams()
         val unbondingPeriod = params.params.unbondingPeriodEpochs.toLong()
         val expectedCompletionEpoch = epochBeforeWithdraw + unbondingPeriod
+        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $epochBeforeWithdraw + $unbondingPeriod)")
 
         participant.withdrawCollateral(depositAmount)
         participant.node.waitForNextBlock()

@@ -2,10 +2,10 @@ package keeper
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"strconv"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
@@ -30,6 +30,10 @@ type (
 
 		bankViewKeeper        types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
+		params                collections.Item[types.Params]
+		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
+		Schema                collections.Schema
+		CurrentEpoch          collections.Item[uint64]
 	}
 )
 
@@ -46,7 +50,9 @@ func NewKeeper(
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
-	return Keeper{
+	sb := collections.NewSchemaBuilder(storeService)
+
+	ak := Keeper{
 		cdc:          cdc,
 		storeService: storeService,
 		authority:    authority,
@@ -54,7 +60,17 @@ func NewKeeper(
 
 		bankViewKeeper:        bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
+		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
+		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
 	}
+	schema, err := sb.Build()
+	if err != nil {
+		panic(err)
+	}
+	ak.Schema = schema
+
+	return ak
 }
 
 // GetAuthority returns the module's authority.
@@ -69,74 +85,31 @@ func (k Keeper) Logger() log.Logger {
 
 // SetCollateral stores a participant's collateral amount
 func (k Keeper) SetCollateral(ctx context.Context, participantAddress sdk.AccAddress, amount sdk.Coin) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	store := k.storeService.OpenKVStore(sdkCtx)
-	bz, err := k.cdc.Marshal(&amount)
+	err := k.CollateralMap.Set(ctx, participantAddress, amount)
 	if err != nil {
-		panic(err)
-	}
-	err = store.Set(types.GetCollateralKey(participantAddress.String()), bz)
-	if err != nil {
+		k.Logger().Error("failed to set collateral", "participant", participantAddress, "amount", amount)
 		panic(err)
 	}
 }
 
 // GetCollateral retrieves a participant's collateral amount
 func (k Keeper) GetCollateral(ctx context.Context, participantAddress sdk.AccAddress) (sdk.Coin, bool) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	store := k.storeService.OpenKVStore(sdkCtx)
-	bz, err := store.Get(types.GetCollateralKey(participantAddress.String()))
-	if err != nil {
-		panic(err)
-	}
-	if bz == nil {
-		return sdk.Coin{}, false
-	}
-
-	var amount sdk.Coin
-	err = k.cdc.Unmarshal(bz, &amount)
-	if err != nil {
-		panic(err)
-	}
-	return amount, true
+	coin, err := k.CollateralMap.Get(ctx, participantAddress)
+	return coin, err == nil
 }
 
 // RemoveCollateral removes a participant's collateral from the store
 func (k Keeper) RemoveCollateral(ctx context.Context, participantAddress sdk.AccAddress) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	store := k.storeService.OpenKVStore(sdkCtx)
-	err := store.Delete(types.GetCollateralKey(participantAddress.String()))
+	k.CollateralMap.Remove(ctx, participantAddress)
+}
+
+func (k Keeper) IterateCollaterals(ctx context.Context, process func(address sdk.AccAddress, amount sdk.Coin) (stop bool)) {
+	err := k.CollateralMap.Walk(ctx, nil, func(address sdk.AccAddress, amount sdk.Coin) (bool, error) {
+		return process(address, amount), nil
+	})
 	if err != nil {
 		panic(err)
 	}
-}
-
-// GetAllCollaterals returns all collateral entries
-func (k Keeper) GetAllCollaterals(ctx context.Context) map[string]sdk.Coin {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(sdkCtx))
-	collateralStore := prefix.NewStore(storeAdapter, types.CollateralKey)
-	collateralMap := make(map[string]sdk.Coin)
-
-	iterator := collateralStore.Iterator(nil, nil)
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		// Extract participant address from the key
-		participantAddr := string(iterator.Key())
-
-		// Unmarshal the collateral amount
-		var amount sdk.Coin
-		err := k.cdc.Unmarshal(iterator.Value(), &amount)
-		if err != nil {
-			panic(err)
-		}
-
-		collateralMap[participantAddr] = amount
-	}
-
-	return collateralMap
 }
 
 // AddUnbondingCollateral stores an unbonding entry, adding to the amount if one already exists for the same participant and epoch.
@@ -259,23 +232,17 @@ func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress sd
 
 // GetCurrentEpoch retrieves the current epoch from the store.
 func (k Keeper) GetCurrentEpoch(ctx sdk.Context) uint64 {
-	store := k.storeService.OpenKVStore(ctx)
-	bz, err := store.Get(types.CurrentEpochKey)
+	value, err := k.CurrentEpoch.Get(ctx)
 	if err != nil {
 		panic(err)
 	}
-	if bz == nil {
-		return 0 // Default to epoch 0 if not set
-	}
-	return binary.BigEndian.Uint64(bz)
+	return value
 }
 
 // SetCurrentEpoch sets the current epoch in the store.
 func (k Keeper) SetCurrentEpoch(ctx sdk.Context, epoch uint64) {
-	store := k.storeService.OpenKVStore(ctx)
-	bz := make([]byte, 8)
-	binary.BigEndian.PutUint64(bz, epoch)
-	err := store.Set(types.CurrentEpochKey, bz)
+	k.Logger().Info("Setting current epoch in collateral module", "epoch", epoch)
+	err := k.CurrentEpoch.Set(ctx, epoch)
 	if err != nil {
 		panic(err)
 	}

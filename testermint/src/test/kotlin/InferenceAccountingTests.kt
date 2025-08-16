@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -24,7 +25,6 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     fun `test with maximum tokens`() {
         logSection("=== STARTING TEST: test with maximum tokens ===")
-        val (cluster, genesis) = initCluster()
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         
         val maxCompletionTokens = 100
@@ -128,7 +128,6 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test immediate pre settle amounts`() {
-        val (_, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference")
@@ -146,7 +145,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test prompt larger than max_tokens`() {
-        val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         cluster.allPairs.forEach {
             it.mock?.setInferenceResponse(
@@ -179,19 +177,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `start comes after finish inference`() {
-        val delayPruningSpec = spec {
-            this[AppState::inference] = spec<InferenceState> {
-                this[InferenceState::params] = spec<InferenceParams> {
-                    this[InferenceParams::epochParams] = spec<EpochParams> {
-                        this[EpochParams::inferencePruningEpochThreshold] = 4L
-                    }
-                }
-            }
-        }
-        val delayPruningConfig = inferenceConfig.copy(
-            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
-        )
-        val (_, genesis) = initCluster(config = delayPruningConfig, reboot = true)
         logSection("Clearing Claims")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -212,19 +197,6 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test post settle amounts`() {
-        val delayPruningSpec = spec {
-            this[AppState::inference] = spec<InferenceState> {
-                this[InferenceState::params] = spec<InferenceParams> {
-                    this[InferenceParams::epochParams] = spec<EpochParams> {
-                        this[EpochParams::inferencePruningEpochThreshold] = 4L
-                    }
-                }
-            }
-        }
-        val delayPruningConfig = inferenceConfig.copy(
-            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
-        )
-        val (_, genesis) = initCluster(config = delayPruningConfig, reboot = true)
         logSection("Clearing claims")
         // If we don't wait until the next rewards claim, there may be lingering requests that mess with our math
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -243,7 +215,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test consumer only participant`() {
-        val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         cluster.withConsumer("consumer1") { consumer ->
@@ -297,6 +268,35 @@ class InferenceAccountingTests : TestermintTest() {
             }
         }
         return results
+    }
+
+    companion object {
+        @JvmStatic
+        @BeforeAll
+        fun getCluster(): Unit {
+            val delayPruningSpec = spec {
+                this[AppState::inference] = spec<InferenceState> {
+                    this[InferenceState::params] = spec<InferenceParams> {
+                        this[InferenceParams::epochParams] = spec<EpochParams> {
+                            this[EpochParams::inferencePruningEpochThreshold] = 4L
+                        }
+                    }
+                }
+            }
+            val delayPruningConfig = inferenceConfig.copy(
+                genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
+            )
+
+            val (clus, gen) = initCluster(config = delayPruningConfig)
+            clus.allPairs.forEach { pair ->
+                pair.waitForMlNodesToLoad()
+            }
+            cluster = clus
+            genesis = gen
+        }
+
+        lateinit var cluster: LocalCluster
+        lateinit var genesis: LocalInferencePair
     }
 
 

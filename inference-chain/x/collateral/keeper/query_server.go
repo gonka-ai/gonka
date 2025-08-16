@@ -27,8 +27,8 @@ func (k Keeper) Collateral(c context.Context, req *types.QueryCollateralRequest)
 		return nil, status.Errorf(codes.InvalidArgument, "invalid participant address: %v", err)
 	}
 
-	collateral, found := k.GetCollateral(ctx, participantAddr)
-	if !found {
+	collateral, err := k.CollateralMap.Get(ctx, participantAddr)
+	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "collateral not found for participant %s", req.Participant)
 	}
 
@@ -40,23 +40,16 @@ func (k Keeper) AllCollaterals(c context.Context, req *types.QueryAllCollaterals
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	var collaterals []types.CollateralBalance
-	ctx := sdk.UnwrapSDKContext(c)
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	collateralStore := prefix.NewStore(store, types.CollateralKey)
-
-	pageRes, err := query.Paginate(collateralStore, req.Pagination, func(key []byte, value []byte) error {
-		var collateral types.CollateralBalance
-		collateral.Participant = string(key)
-		if err := k.cdc.Unmarshal(value, &collateral.Amount); err != nil {
-			return err
-		}
-
-		collaterals = append(collaterals, collateral)
-		return nil
-	})
-
+	collaterals, pageRes, err := query.CollectionPaginate(
+		c,
+		k.CollateralMap,
+		req.Pagination,
+		func(addr sdk.AccAddress, value sdk.Coin) (types.CollateralBalance, error) {
+			var collateral types.CollateralBalance
+			collateral.Participant = addr.String()
+			collateral.Amount = value
+			return collateral, nil
+		})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

@@ -3,6 +3,8 @@ package types
 import (
 	"encoding/binary"
 	"fmt"
+
+	"cosmossdk.io/collections"
 )
 
 const (
@@ -21,13 +23,13 @@ const (
 )
 
 var (
-	ParamsKey = []byte("p_collateral")
+	ParamsKey = collections.NewPrefix(0)
 
 	// CurrentEpochKey is the key to store the current epoch index for the collateral module
 	CurrentEpochKey = []byte("CurrentEpoch")
 
 	// CollateralKey is the prefix to store collateral for participants
-	CollateralKey = []byte("collateral/")
+	CollateralKey = collections.NewPrefix(2)
 
 	// UnbondingKey is the prefix for unbonding entries
 	// Format: unbonding/{completionEpoch}/{participantAddress}
