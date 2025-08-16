@@ -96,8 +96,11 @@ pub enum ExecuteMsg {
     BurnFrom { owner: String, amount: Uint128 },
     /// Only with "mintable" extension. Mint new tokens
     Mint { recipient: String, amount: Uint128 },
-    /// Special bridge withdraw function that burns tokens (placeholder for future bridge query)
-    Withdraw { amount: Uint128 },
+    /// Special bridge withdraw function that burns tokens and triggers bridge withdrawal
+    Withdraw { 
+        amount: Uint128,
+        destination_address: String, // Ethereum address to receive tokens
+    },
     UpdateMetadata {
         name: String,
         symbol: String,

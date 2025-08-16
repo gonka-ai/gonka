@@ -548,12 +548,13 @@ func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contra
 
 	// Prepare instantiate message for bridge token contract
 	// Note: name, symbol and decimals will be queried from chain metadata by the contract
+	// Note: admin role will be auto-detected from WASM admin by the contract
 	instantiateMsg := BridgeTokenInstantiateMsg{
 		ChainId:         chainId,
 		ContractAddress: contractAddress,
 		InitialBalances: []Balance{},
 		Mint: &MintInfo{
-			Minter: k.AccountKeeper.GetModuleAddress(types.ModuleName).String(),
+			Minter: k.AccountKeeper.GetModuleAddress(types.ModuleName).String(), // Inference module as minter
 		},
 	}
 
@@ -563,11 +564,12 @@ func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contra
 	}
 
 	// Instantiate the CW20 contract
+	governanceAddr := k.GetAuthority() // Governance module address for WASM admin
 	contractAddr, _, err := wasmKeeper.Instantiate(
 		ctx,
 		codeID,
-		k.AccountKeeper.GetModuleAddress(types.ModuleName),
-		k.AccountKeeper.GetModuleAddress(types.ModuleName),
+		k.AccountKeeper.GetModuleAddress(types.ModuleName), // Instantiator: inference module
+		sdk.MustAccAddressFromBech32(governanceAddr),       // Admin: governance module (for contract upgrades)
 		msgBz,
 		fmt.Sprintf("Bridged Token %s:%s", chainId, contractAddress),
 		sdk.NewCoins(),
