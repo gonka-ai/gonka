@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.22.betabridge
+    image: ghcr.io/product-science/inferenced:0.1.22.deltabridge
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -41,7 +41,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.22.betabridge
+    image: ghcr.io/product-science/api:0.1.22.deltabridge
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -69,7 +69,7 @@ services:
   
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge-ethereum:0.1.22.betabridge
+    image: ghcr.io/product-science/bridge-ethereum:0.1.22.deltabridge
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -98,7 +98,7 @@ services:
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.22.betabridge
+    image: ghcr.io/product-science/proxy:0.1.22.deltabridge
     ports:
       - "${API_PORT:-8000}:80"
     environment:
