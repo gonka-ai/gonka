@@ -87,6 +87,8 @@ import (
 	streamvestingmodulekeeper "github.com/productscience/inference/x/streamvesting/keeper"
 
 	bookkeepermodulekeeper "github.com/productscience/inference/x/bookkeeper/keeper"
+	restrictionsmodulekeeper "github.com/productscience/inference/x/restrictions/keeper"
+
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	// WASM
@@ -165,6 +167,7 @@ type App struct {
 	InferenceKeeper     inferencemodulekeeper.Keeper
 	CollateralKeeper    collateralmodulekeeper.Keeper
 	StreamvestingKeeper streamvestingmodulekeeper.Keeper
+	RestrictionsKeeper  restrictionsmodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
 
 	// simulation manager
@@ -309,6 +312,7 @@ func New(
 		&app.InferenceKeeper,
 		&app.CollateralKeeper,
 		&app.StreamvestingKeeper,
+		&app.RestrictionsKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
 		panic(err)
@@ -347,6 +351,10 @@ func New(
 	// }
 
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
+
+	// SendRestriction configuration is handled automatically through dependency injection
+	// The restrictions module provides its SendRestrictionFn with the "bank-send-restrictions" group tag
+	// The bank module automatically collects and applies all registered send restrictions
 
 	// register legacy modules
 	wasmConfig := app.registerLegacyModules(appOpts, wasmOpts)
