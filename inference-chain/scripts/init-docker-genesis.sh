@@ -134,8 +134,8 @@ $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NA
 # Get the warm key address for ML operations
 WARM_KEY_ADDRESS=$($APP_NAME keys show "$KEY_NAME_WARM" --address --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR")
 
-# Use PUBLIC_URL if set, otherwise default to "tmp"
-URL_VALUE="${PUBLIC_URL:-tmp}"
+# Use PUBLIC_URL if set, otherwise provide a reasonable default
+URL_VALUE="${PUBLIC_URL:-http://localhost:9000}"
 
 $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" \
   --moniker "mynode" \
