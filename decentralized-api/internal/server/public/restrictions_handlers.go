@@ -7,14 +7,7 @@ import (
 	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
-type EmergencyTransferRequest struct {
-	ExemptionId string `json:"exemption_id"`
-	FromAddress string `json:"from_address"`
-	ToAddress   string `json:"to_address"`
-	Amount      string `json:"amount"`
-	Denom       string `json:"denom"`
-}
-
+// Query-only handlers for restrictions module
 func (s *Server) getRestrictionsStatus(c echo.Context) error {
 	queryClient := s.recorder.NewRestrictionsQueryClient()
 	response, err := queryClient.TransferRestrictionStatus(c.Request().Context(), &restrictionstypes.QueryTransferRestrictionStatusRequest{})
@@ -45,26 +38,4 @@ func (s *Server) getRestrictionsExemptionUsage(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, response)
-}
-
-func (s *Server) postEmergencyTransfer(c echo.Context) error {
-	var req EmergencyTransferRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-
-	msg := &restrictionstypes.MsgExecuteEmergencyTransfer{
-		ExemptionId: req.ExemptionId,
-		FromAddress: req.FromAddress,
-		ToAddress:   req.ToAddress,
-		Amount:      req.Amount,
-		Denom:       req.Denom,
-	}
-
-	_, err := s.recorder.SendTransactionAsyncNoRetry(msg)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to submit emergency transfer: "+err.Error())
-	}
-
-	return c.JSON(http.StatusOK, map[string]string{"status": "submitted"})
 }

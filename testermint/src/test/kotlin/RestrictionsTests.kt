@@ -71,7 +71,7 @@ class RestrictionsTests : TestermintTest() {
 
         // SCENARIO 6: Test automatic restriction lifting (simulate deadline reached)
         logSection("=== SCENARIO 6: Test Automatic Restriction Lifting ===")
-        testAutomaticRestrictionLifting(genesis, genesisAddress, participantAddress)
+        testAutomaticRestrictionLifting(genesis, cluster, genesisAddress, participantAddress)
 
         logSection("=== TRANSFER RESTRICTIONS LIFECYCLE TEST COMPLETED ===")
         logHighlight("✅ All scenarios verified successfully:")
@@ -86,8 +86,8 @@ class RestrictionsTests : TestermintTest() {
     private fun testInitialRestrictionStatus(genesis: LocalInferencePair) {
         logHighlight("Querying initial transfer restriction status")
         
-        // Query restriction status
-        val status = genesis.api.getRestrictionsStatus()
+        // Query restriction status using CLI
+        val status = genesis.node.queryRestrictionsStatus()
         logHighlight("Initial restriction status:")
         logHighlight("  • Active: ${status.isActive}")
         logHighlight("  • End block: ${status.restrictionEndBlock}")
@@ -231,7 +231,7 @@ class RestrictionsTests : TestermintTest() {
         // Wait for proposal to pass
         genesis.node.waitForNextBlock(5)
 
-        val exemptions = genesis.api.getRestrictionsExemptions()
+        val exemptions = genesis.node.queryRestrictionsExemptions()
         assertThat(exemptions.getExemptionsSafe().any { it.exemptionId == exemptionId }).isTrue()
         
         // Step 3: Execute emergency transfer
@@ -244,15 +244,8 @@ class RestrictionsTests : TestermintTest() {
         logHighlight("  • From: $initialFromBalance nicoin")
         logHighlight("  • To: $initialToBalance nicoin")
         
-        val emergencyDto = EmergencyTransferDto(
-            exemptionId = exemptionId,
-            fromAddress = fromAddress,
-            toAddress = toAddress,
-            amount = "2000",
-            denom = "nicoin"
-        )
         val emergencyTx = runCatching {
-            genesis.api.executeEmergencyTransfer(emergencyDto)
+            genesis.node.executeEmergencyTransfer(exemptionId, fromAddress, toAddress, "2000", "nicoin")
         }
         assertThat(emergencyTx.isSuccess).isTrue()
         
@@ -262,7 +255,7 @@ class RestrictionsTests : TestermintTest() {
         assertThat(genesis.getBalance(fromAddress)).isEqualTo(initialFromBalance - 2000)
         assertThat(genesis.getBalance(toAddress)).isEqualTo(initialToBalance + 2000)
 
-        val usage = genesis.api.getRestrictionsExemptionUsage(exemptionId, fromAddress)
+        val usage = genesis.node.queryRestrictionsExemptionUsage(exemptionId, fromAddress)
         assertThat(usage.usageEntries.first().usageCount).isEqualTo(1)
         
         logHighlight("✅ Emergency exemption workflow tested (creation, querying, execution)")
@@ -274,7 +267,7 @@ class RestrictionsTests : TestermintTest() {
         // Query current parameters
         logHighlight("Querying current restriction parameters")
         val initialStatus = runCatching {
-            genesis.api.getRestrictionsStatus()
+            genesis.node.queryRestrictionsStatus()
         }
         
         if (initialStatus.isSuccess) {
@@ -301,7 +294,7 @@ class RestrictionsTests : TestermintTest() {
             // Wait for proposal to pass
             genesis.node.waitForNextBlock(5)
 
-            val updatedStatus = genesis.api.getRestrictionsStatus()
+            val updatedStatus = genesis.node.queryRestrictionsStatus()
             logHighlight("✅ Parameters updated via governance:")
             logHighlight("  • New end block: ${updatedStatus.restrictionEndBlock}")
             logHighlight("  • Remaining blocks: ${updatedStatus.remainingBlocks}")
@@ -312,12 +305,12 @@ class RestrictionsTests : TestermintTest() {
         logHighlight("✅ Parameter governance control interface verified")
     }
 
-    private fun testAutomaticRestrictionLifting(genesis: LocalInferencePair, fromAddress: String, toAddress: String) {
+    private fun testAutomaticRestrictionLifting(genesis: LocalInferencePair, cluster: LocalCluster, fromAddress: String, toAddress: String) {
         logHighlight("Testing automatic restriction lifting at deadline (block 100)")
         
         // Get current restriction status
         val currentStatus = runCatching {
-            genesis.api.getRestrictionsStatus()
+            genesis.node.queryRestrictionsStatus()
         }.getOrNull()
         
         if (currentStatus != null) {
@@ -339,15 +332,16 @@ class RestrictionsTests : TestermintTest() {
                 logHighlight("Restriction deadline too far (${currentStatus.restrictionEndBlock}), updating for testing")
                 val nearBlock = currentStatus.currentBlockHeight + 5
                 
-                val updateDto = UpdateRestrictionsParamsDto(
-                    restrictionEndBlock = nearBlock.toULong(),
+                // Update via governance proposal (this would normally go through governance voting)
+                val restrictionsParams = RestrictionsParams(
+                    restrictionEndBlock = nearBlock.toLong(),
                     emergencyTransferExemptions = emptyList(),
                     exemptionUsageTracking = emptyList()
                 )
-                val updateTx = runCatching {
-                    genesis.api.updateRestrictionsParams(updateDto)
-                }
-                assertThat(updateTx.isSuccess).isTrue()
+                val updateProposal = UpdateRestrictionsParams(params = restrictionsParams)
+                
+                logHighlight("Submitting governance proposal to update restriction deadline to block $nearBlock")
+                genesis.runProposal(cluster, updateProposal)
                 genesis.node.waitForNextBlock(1) // Pass proposal
                 logHighlight("✅ Restriction deadline reached at updated block: $nearBlock")
             }
@@ -358,7 +352,7 @@ class RestrictionsTests : TestermintTest() {
             // Test that restrictions are now inactive
             logHighlight("Verifying restrictions are now inactive")
             val finalStatus = runCatching {
-                genesis.api.getRestrictionsStatus()
+                genesis.node.queryRestrictionsStatus()
             }.getOrNull()
             
             if (finalStatus != null) {

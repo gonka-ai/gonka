@@ -126,6 +126,29 @@ The Cosmos SDK bank module provides a `SendRestriction` interface that allows cu
 - Transfers to/from WASM contracts are subject to the same restrictions as user-to-user transfers
 - No additional mitigation is required
 
+### 3.5. Authz Delegation Analysis
+
+**Potential Concern**: Users might attempt to bypass transfer restrictions by delegating bank send permissions to other accounts through the authz module.
+
+**Why This Isn't a Concern**:
+
+**1. Existing SendRestriction Applies to Authz Execution**:
+- When recipients execute authz delegations via `tx authz exec`, the underlying bank transfer still goes through SendRestriction
+- SendRestriction sees the original account (granter) as the sender and applies the same restrictions
+- User-to-user transfers remain blocked regardless of whether they're executed directly or via authz
+
+**2. Delegation Creation vs. Fund Movement**:
+- Creating authz delegations (`MsgGrant`) doesn't move any funds - it only creates permissions
+- Actual fund transfers happen during execution (`MsgExec`) and are subject to SendRestriction
+- The restriction applies at the point of actual fund movement, not permission creation
+
+**3. Revocable Nature of Delegations**:
+- All standard authz delegations are revocable by the granter at any time
+- This means delegations don't constitute permanent loss of control or genuine transfers
+- The bootstrap period restriction goal (preventing speculative transfers) isn't compromised by revocable permissions
+
+**Conclusion**: The existing SendRestriction mechanism already prevents authz-based bypass attempts because restrictions apply to the actual fund transfers during execution, not to the creation of revocable permissions. No additional restrictions on authz delegation are necessary.
+
 ## 4. Block Height-Based Activation
 
 ### 4.1. Restriction Timeline

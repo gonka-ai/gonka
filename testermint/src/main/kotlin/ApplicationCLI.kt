@@ -282,6 +282,33 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "streamvesting", "params"))
     }
 
+    // Restrictions CLI methods
+    fun queryRestrictionsStatus(): TransferRestrictionStatusDto = wrapLog("queryRestrictionsStatus", false) {
+        execAndParse(listOf("query", "restrictions", "status"))
+    }
+
+    fun queryRestrictionsExemptions(): TransferExemptionsDto = wrapLog("queryRestrictionsExemptions", false) {
+        execAndParse(listOf("query", "restrictions", "exemptions"))
+    }
+
+    fun queryRestrictionsExemptionUsage(exemptionId: String, accountAddress: String): ExemptionUsageDto = wrapLog("queryRestrictionsExemptionUsage", false) {
+        execAndParse(listOf("query", "restrictions", "exemption-usage", exemptionId, accountAddress))
+    }
+
+    fun executeEmergencyTransfer(exemptionId: String, fromAddress: String, toAddress: String, amount: String, denom: String): TxResponse = wrapLog("executeEmergencyTransfer", true) {
+        sendTransactionDirectly(
+            listOf(
+                "restrictions",
+                "execute-emergency-transfer",
+                exemptionId,
+                fromAddress,
+                toAddress,
+                amount,
+                denom
+            )
+        )
+    }
+
     fun getGovParams(): GovState = wrapLog("getGovParams", false) {
         execAndParse(listOf("query", "gov", "params"))
     }

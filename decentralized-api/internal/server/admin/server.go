@@ -61,9 +61,6 @@ func NewServer(
 
 	g.POST("bls/request", s.postRequestThresholdSignature)
 
-	// Restrictions admin API
-	g.POST("restrictions/params", s.postUpdateRestrictionsParams)
-
 	g.POST("debug/create-dummy-training-task", s.postDummyTrainingTask)
 
 	return s

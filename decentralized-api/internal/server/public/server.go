@@ -90,11 +90,10 @@ func NewServer(
 	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
 	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
 
-	// Restrictions public API
+	// Restrictions public API (query-only)
 	g.GET("restrictions/status", s.getRestrictionsStatus)
 	g.GET("restrictions/exemptions", s.getRestrictionsExemptions)
 	g.GET("restrictions/exemptions/:id/usage/:account", s.getRestrictionsExemptionUsage)
-	g.POST("restrictions/emergency-transfer", s.postEmergencyTransfer)
 
 	return s
 }
