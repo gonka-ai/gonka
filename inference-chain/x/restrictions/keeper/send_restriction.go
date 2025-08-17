@@ -90,6 +90,7 @@ func (k Keeper) IsModuleAccount(addr sdk.AccAddress) bool {
 		"not_bonded_tokens_pool",
 		"mint",
 		"bls",
+		"genesistransfer",
 	}
 
 	for _, moduleName := range knownModules {

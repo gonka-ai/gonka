@@ -1,0 +1,97 @@
+syntax = "proto3";
+package inference.genesistransfer;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "inference/genesistransfer/params.proto";
+import "inference/genesistransfer/genesis.proto";
+
+option go_package = "github.com/productscience/inference/x/genesistransfer/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/productscience/inference/genesistransfer/params";
+  }
+
+  // TransferStatus queries the completion status for a specific genesis account.
+  rpc TransferStatus(QueryTransferStatusRequest) returns (QueryTransferStatusResponse) {
+    option (google.api.http).get = "/productscience/inference/genesistransfer/transfer_status/{genesis_address}";
+  }
+
+  // TransferHistory retrieves historical transfer records with optional pagination.
+  rpc TransferHistory(QueryTransferHistoryRequest) returns (QueryTransferHistoryResponse) {
+    option (google.api.http).get = "/productscience/inference/genesistransfer/transfer_history";
+  }
+
+  // AllowedAccounts queries the whitelist of accounts eligible for transfer (if enabled).
+  rpc AllowedAccounts(QueryAllowedAccountsRequest) returns (QueryAllowedAccountsResponse) {
+    option (google.api.http).get = "/productscience/inference/genesistransfer/allowed_accounts";
+  }
+
+  // TransferEligibility validates whether a specific account can be transferred.
+  rpc TransferEligibility(QueryTransferEligibilityRequest) returns (QueryTransferEligibilityResponse) {
+    option (google.api.http).get = "/productscience/inference/genesistransfer/transfer_eligibility/{genesis_address}";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryTransferStatusRequest is request type for the Query/TransferStatus RPC method.
+message QueryTransferStatusRequest {
+  string genesis_address = 1; // Address of the genesis account to query
+}
+
+// QueryTransferStatusResponse is response type for the Query/TransferStatus RPC method.
+message QueryTransferStatusResponse {
+  bool is_transferred = 1;        // Whether the account has been transferred
+  TransferRecord transfer_record = 2; // Transfer record if it exists (optional)
+}
+
+// QueryTransferHistoryRequest is request type for the Query/TransferHistory RPC method.
+message QueryTransferHistoryRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1; // Optional pagination
+}
+
+// QueryTransferHistoryResponse is response type for the Query/TransferHistory RPC method.
+message QueryTransferHistoryResponse {
+  repeated TransferRecord transfer_records = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2; // Pagination information
+}
+
+// QueryAllowedAccountsRequest is request type for the Query/AllowedAccounts RPC method.
+message QueryAllowedAccountsRequest {}
+
+// QueryAllowedAccountsResponse is response type for the Query/AllowedAccounts RPC method.
+message QueryAllowedAccountsResponse {
+  repeated string allowed_accounts = 1; // List of allowed genesis account addresses
+  bool restrict_to_list = 2;            // Whether whitelist enforcement is enabled
+}
+
+// QueryTransferEligibilityRequest is request type for the Query/TransferEligibility RPC method.
+message QueryTransferEligibilityRequest {
+  string genesis_address = 1; // Address of the genesis account to check eligibility
+}
+
+// QueryTransferEligibilityResponse is response type for the Query/TransferEligibility RPC method.
+message QueryTransferEligibilityResponse {
+  bool is_eligible = 1;           // Whether the account is eligible for transfer
+  string reason = 2;              // Reason for ineligibility (if applicable)
+  bool already_transferred = 3;   // Whether the account has already been transferred
+}

@@ -282,6 +282,38 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "streamvesting", "params"))
     }
 
+    // Genesis Transfer CLI methods
+    fun queryGenesisTransferStatus(genesisAddress: String): GenesisTransferStatusResponse = wrapLog("queryGenesisTransferStatus", false) {
+        execAndParse(listOf("query", "genesistransfer", "transfer-status", genesisAddress))
+    }
+
+    fun queryGenesisTransferHistory(): GenesisTransferHistoryResponse = wrapLog("queryGenesisTransferHistory", false) {
+        execAndParse(listOf("query", "genesistransfer", "transfer-history"))
+    }
+
+    fun queryGenesisTransferEligibility(genesisAddress: String): GenesisTransferEligibilityResponse = wrapLog("queryGenesisTransferEligibility", false) {
+        execAndParse(listOf("query", "genesistransfer", "transfer-eligibility", genesisAddress))
+    }
+
+    fun queryGenesisTransferParams(): GenesisTransferParamsWrapper = wrapLog("queryGenesisTransferParams", false) {
+        execAndParse(listOf("query", "genesistransfer", "params"))
+    }
+
+    fun queryGenesisTransferAllowedAccounts(): GenesisTransferAllowedAccountsResponse = wrapLog("queryGenesisTransferAllowedAccounts", false) {
+        execAndParse(listOf("query", "genesistransfer", "allowed-accounts"))
+    }
+
+    fun submitGenesisTransferOwnership(genesisAddress: String, recipientAddress: String): TxResponse = wrapLog("submitGenesisTransferOwnership", true) {
+        sendTransactionDirectly(
+            listOf(
+                "genesistransfer",
+                "transfer-ownership",
+                genesisAddress,
+                recipientAddress
+            )
+        )
+    }
+
     // Restrictions CLI methods
     fun queryRestrictionsStatus(): TransferRestrictionStatusDto = wrapLog("queryRestrictionsStatus", false) {
         execAndParse(listOf("query", "restrictions", "status"))
