@@ -88,9 +88,10 @@ func (s *Server) resolveEpochFromContext(c echo.Context) (uint64, error) {
 
 func (s *Server) getParticipants(epoch uint64) (*contracts.ActiveParticipantWithProof, error) {
 	// FIXME: now we can set active participants even for epoch 0, fix InitGenesis for that
-	if epoch == 0 {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, "Epoch enumeration starts with 1")
-	}
+	/*	if epoch == 0 {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "Epoch enumeration starts with 1")
+		}
+	*/
 
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
 	types.RegisterInterfaces(interfaceRegistry)
@@ -134,21 +135,6 @@ func (s *Server) getParticipants(epoch uint64) (*contracts.ActiveParticipantWith
 
 	validatorsProof, _ := cl.GetValidatorsProofByHeight(ctx, &types.QueryGetValidatorsProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
 
-	/*
-	        heightP1 := activeParticipants.CreatedAtBlockHeight + 1
-	   	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
-	   	if err != nil || blockP1 == nil {
-	   		logging.Error("Failed to get block + 1", types.Participants, "error", err)
-	   	}*/
-
-	/*
-		    vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
-			if err != nil || vals == nil {
-				logging.Error("Failed to get validators", types.Participants, "error", err)
-				return nil, err
-			}
-	*/
-
 	// we need to verify proof from block N using hash from N+1,
 	// because hash of block N is made after Commit() and stored in
 	// header of block N+1. It works so to make each block 'link' to previous and have chain of blocks.
@@ -178,17 +164,21 @@ func (s *Server) getParticipants(epoch uint64) (*contracts.ActiveParticipantWith
 
 	for i, participant := range activeParticipants.Participants {
 		addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+		var seed *contracts.RandomSeed
+		if participant.Seed != nil {
+			seed = &contracts.RandomSeed{
+				Participant: participant.Seed.Participant,
+				BlockHeight: participant.Seed.BlockHeight,
+				Signature:   participant.Seed.Signature,
+			}
+		}
 		finalParticipants.Participants[i] = &contracts.ActiveParticipant{
 			Index:        participant.Index,
 			ValidatorKey: participant.ValidatorKey,
 			Weight:       participant.Weight,
 			InferenceUrl: participant.InferenceUrl,
 			Models:       participant.Models,
-			Seed: &contracts.RandomSeed{
-				Participant: participant.Seed.Participant,
-				BlockHeight: participant.Seed.BlockHeight,
-				Signature:   participant.Seed.Signature,
-			},
+			Seed:         seed,
 		}
 		if err != nil {
 			logging.Error("Failed to convert public key to address", types.Participants, "error", err)
@@ -327,18 +317,17 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 		"created_at_block_height", activeParticipants.CreatedAtBlockHeight,
 		"effective_block_height", activeParticipants.EffectiveBlockHeight)
 
-	// We disable the second query with proof for now, because:
-	// 1. Data migration happened, and we can't validate pre-migration records recursively;
-	//    they are now signed by the validators active during the epoch.
-	// 2. The implemented proof system has a bug anyway and needs to be revisited
-
 	blockHeight := activeParticipants.CreatedAtBlockHeight
-	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
+	queryWIthProof := true
+	if blockHeight <= 1 {
+		// cosmos can't build merkle proof for genesis because need previous state
+		queryWIthProof = false
+	}
+	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, queryWIthProof)
 	if err != nil {
 		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
 		return nil, err
 	}
-
 	return result, err
 }
 

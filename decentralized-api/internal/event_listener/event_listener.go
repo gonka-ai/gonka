@@ -350,6 +350,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 
 // TODO setup retry retrieving genesis block till success
 func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) error {
+	logging.Warn("collectMissingBlocksSignatures", types.EventProcessing, "currentHeight", currentHeight)
 	if !el.configManager.GetChainNodeConfig().IsGenesis {
 		return nil
 	}
@@ -360,7 +361,7 @@ func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) err
 		return err
 	}
 
-	for startBlockHeight := int64(1); startBlockHeight < currentHeight; startBlockHeight++ {
+	for startBlockHeight := int64(1); startBlockHeight <= currentHeight; startBlockHeight++ {
 		block, err := rpcClient.Block(context.Background(), &startBlockHeight)
 		if err != nil {
 			logging.Error("EventListener: Failed to get genesis block", types.System, "error", err)
@@ -370,15 +371,15 @@ func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) err
 			BlockHeight: block.Block.LastCommit.Height,
 			Round:       int64(block.Block.LastCommit.Round),
 			BlockId: &types.BlockID{
-				Hash:               block.BlockID.Hash.String(),
-				PartSetHeaderTotal: int64(block.BlockID.PartSetHeader.Total),
-				PartSetHeaderHash:  block.BlockID.PartSetHeader.Hash.String(),
+				Hash:               block.Block.LastCommit.BlockID.Hash.String(),
+				PartSetHeaderTotal: int64(block.Block.LastCommit.BlockID.PartSetHeader.Total),
+				PartSetHeaderHash:  block.Block.LastCommit.BlockID.PartSetHeader.Hash.String(),
 			},
 			Signatures: make([]*types.SignatureInfo, 0),
 		}
 
 		for _, sign := range block.Block.LastCommit.Signatures {
-			logging.Info("Preparing signature to send", types.System,
+			logging.Info("collectMissingBlocksSignatures: preparing signature to send", types.System,
 				"sign_ts", sign.Timestamp,
 				"signature", sign.Signature,
 				"height", block.Block.LastCommit.Height,
@@ -400,6 +401,7 @@ func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) err
 	return nil
 }
 
+// TODO пофиксить: установить pending proof и писать только для тех блоков, где создается participants set
 func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCResponse) {
 	block := chainevents.FinalizedBlock{}
 	d, err := json.Marshal(event.Result.Data.Value)
@@ -420,7 +422,7 @@ func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCRespon
 		logging.Error("Failed to parse block height to int", types.System, "height", block.Block.LastCommit.Height, "error", err)
 	}
 
-	if el.earliestCollectedBlockHeight < height {
+	if el.earliestCollectedBlockHeight == 0 {
 		el.earliestCollectedBlockHeight = height
 		go el.collectMissingBlocksSignatures(height)
 	}
