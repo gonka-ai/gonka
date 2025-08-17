@@ -1,7 +1,7 @@
 {
   "app_name": "inferenced",
-  "app_version": "67200275",
-  "genesis_time": "2025-08-15T07:56:30.618490168Z",
+  "app_version": "69243844",
+  "genesis_time": "2025-08-17T18:01:01.177319589Z",
   "chain_id": "gonka-testnet-7",
   "initial_height": 1,
   "app_hash": null,
@@ -19,23 +19,9 @@
       "accounts": [
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka13l6c0jghmz9qr4wyn237560e6cy70eljqe6q9y",
+          "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
           "pub_key": null,
           "account_number": "0",
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1z6l8marv76t69tcnjuchpr602kjtrtmp7k2uts",
-          "pub_key": null,
-          "account_number": "1",
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka17pwrcnldrtkulkt8p8a5ymwp5sz9eclgvlm38e",
-          "pub_key": null,
-          "account_number": "2",
           "sequence": "0"
         }
       ]
@@ -50,29 +36,11 @@
       },
       "balances": [
         {
-          "address": "gonka13l6c0jghmz9qr4wyn237560e6cy70eljqe6q9y",
+          "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
           "coins": [
             {
               "denom": "nicoin",
-              "amount": "1"
-            }
-          ]
-        },
-        {
-          "address": "gonka1z6l8marv76t69tcnjuchpr602kjtrtmp7k2uts",
-          "coins": [
-            {
-              "denom": "nicoin",
-              "amount": "1"
-            }
-          ]
-        },
-        {
-          "address": "gonka17pwrcnldrtkulkt8p8a5ymwp5sz9eclgvlm38e",
-          "coins": [
-            {
-              "denom": "nicoin",
-              "amount": "1"
+              "amount": "160000000000000000"
             }
           ]
         }
@@ -80,7 +48,7 @@
       "supply": [
         {
           "denom": "nicoin",
-          "amount": "3"
+          "amount": "160000000000000000"
         }
       ],
       "denom_metadata": [
@@ -215,14 +183,14 @@
           }
         ],
         "max_deposit_period": "172800s",
-        "voting_period": "0h3m0s",
-        "quorum": "0.01000000000000000",
+        "voting_period": "0h10m0s",
+        "quorum": "0.00100000000000000",
         "threshold": "0.500000000000000000",
         "veto_threshold": "0.334000000000000000",
         "min_initial_deposit_ratio": "0.000000000000000000",
         "proposal_cancel_ratio": "0.500000000000000000",
         "proposal_cancel_dest": "",
-        "expedited_voting_period": "0h2m0s",
+        "expedited_voting_period": "0h5m0s",
         "expedited_threshold": "0.667000000000000000",
         "expedited_min_deposit": [
           {
@@ -291,16 +259,16 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "115",
+          "epoch_length": "1800",
           "epoch_multiplier": "1",
-          "epoch_shift": "100",
+          "epoch_shift": "1700",
           "default_unit_of_compute_price": "100",
-          "poc_stage_duration": "30",
+          "poc_stage_duration": "60",
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
-          "poc_validation_duration": "10",
-          "set_new_validators_delay": "20",
-          "inference_validation_cutoff": "40",
+          "poc_validation_duration": "20",
+          "set_new_validators_delay": "80",
+          "inference_validation_cutoff": "50",
           "inference_pruning_epoch_threshold": "2"
         },
         "validation_params": {
