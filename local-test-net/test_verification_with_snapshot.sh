@@ -7,7 +7,7 @@ export KEY_NAME=join2
 export RPC_SERVER_URL_2="http://genesis-node:26657"
 export RPC_SERVER_URL_1="http://join1-node:26657"
 export SYNC_WITH_SNAPSHOTS="true"
-export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
 export ML_SERVER_PORT=9021
 export ADMIN_SERVER_PORT=9022
@@ -17,5 +17,6 @@ export RPC_PORT=8102
 export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:9020"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export GENESIS_APP_HASH="E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
+export GENESIS_APP_HASH="5A1C91002243225023D37ADFCBAB5B147750377B94311ACC813735996C29A557"
 ./launch_add_network_node.sh

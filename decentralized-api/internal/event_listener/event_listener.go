@@ -13,7 +13,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,19 +38,19 @@ const (
 
 // TODO: write tests properly
 type EventListener struct {
-	nodeBroker                   *broker.Broker
-	configManager                *apiconfig.ConfigManager
-	validator                    *validation.InferenceValidator
-	transactionRecorder          cosmosclient.InferenceCosmosClient
-	trainingExecutor             *training.Executor
-	blsManager                   *bls.BlsManager
-	nodeCaughtUp                 atomic.Bool
-	phaseTracker                 *chainphase.ChainPhaseTracker
-	dispatcher                   *OnNewBlockDispatcher
-	cancelFunc                   context.CancelFunc
-	eventHandlers                []EventHandler
-	earliestCollectedBlockHeight int64
-	ws                           *websocket.Conn
+	nodeBroker          *broker.Broker
+	configManager       *apiconfig.ConfigManager
+	validator           *validation.InferenceValidator
+	transactionRecorder cosmosclient.InferenceCosmosClient
+	trainingExecutor    *training.Executor
+	blsManager          *bls.BlsManager
+	nodeCaughtUp        atomic.Bool
+	phaseTracker        *chainphase.ChainPhaseTracker
+	dispatcher          *OnNewBlockDispatcher
+	cancelFunc          context.CancelFunc
+	eventHandlers       []EventHandler
+	// earliestCollectedBlockHeight int64
+	ws *websocket.Conn
 }
 
 func NewEventListener(
@@ -73,6 +72,7 @@ func NewEventListener(
 		&transactionRecorder,
 		phaseTracker,
 		DefaultReconciliationConfig,
+		transactionRecorder,
 	)
 
 	eventHandlers := []EventHandler{
@@ -283,7 +283,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		}
 
 		// Parse the event into NewBlockInfo
-		blockInfo, err := parseNewBlockInfo(event)
+		blockInfo, err := parseFinalizedBlock(event)
 		if err != nil {
 			logging.Error("Failed to parse new block info", types.EventProcessing, "error", err, "worker", workerName)
 			return
@@ -291,8 +291,6 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 		// Process using the new dispatcher
 		ctx := context.Background() // We could pass this from caller if needed
-		el.collectBlockSignatures(event)
-
 		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
 		if err != nil {
 			logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
@@ -349,7 +347,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 }
 
 // TODO setup retry retrieving genesis block till success
-func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) error {
+/*func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) error {
 	logging.Warn("collectMissingBlocksSignatures", types.EventProcessing, "currentHeight", currentHeight)
 	if !el.configManager.GetChainNodeConfig().IsGenesis {
 		return nil
@@ -399,10 +397,10 @@ func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) err
 	}
 
 	return nil
-}
+}*/
 
 // TODO пофиксить: установить pending proof и писать только для тех блоков, где создается participants set
-func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCResponse) {
+/*func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCResponse) {
 	block := chainevents.FinalizedBlock{}
 	d, err := json.Marshal(event.Result.Data.Value)
 	if err != nil {
@@ -456,7 +454,7 @@ func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCRespon
 		// TODO what to do if error is critical
 		logging.Error("Failed to set validators proof", types.System, "error", err)
 	}
-}
+}*/
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {

@@ -70,4 +70,4 @@ export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:9020"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
-#./launch_add_network_node.sh
+./launch_add_network_node.sh

@@ -35,10 +35,9 @@ func (s *Server) getBlock(c echo.Context) error {
 		return err
 	}
 
-	signatures, err := cl.GetValidatorsProofByHeight(context.Background(), &types.QueryGetValidatorsProofRequest{ProofHeight: blockHeight})
+	signaturesResp, err := cl.GetValidatorsProofByHeight(context.Background(), &types.QueryGetValidatorsProofRequest{ProofHeight: blockHeight})
 	if err != nil {
 		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
-		return err
 	}
 
 	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
@@ -49,13 +48,17 @@ func (s *Server) getBlock(c echo.Context) error {
 
 	block, err := rpcClient.Block(c.Request().Context(), &blockHeight)
 	if err != nil {
-		logging.Error("Failed to get validators", types.System, "error", err)
-		return err
+		logging.Error("Failed to get cosmos block", types.System, "error", err)
+	}
+
+	var signatures *types.ValidatorsProof
+	if signaturesResp != nil {
+		signatures = signaturesResp.Proof
 	}
 
 	resp := TemporaryResponse{
 		BlockProof:           blockProof.Proof,
-		ValidatorsSignatures: signatures.Proof,
+		ValidatorsSignatures: signatures,
 		CosmosBlock:          block,
 	}
 	return c.JSON(http.StatusOK, resp)

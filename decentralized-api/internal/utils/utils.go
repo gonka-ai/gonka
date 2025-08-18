@@ -1,17 +1,26 @@
 package utils
 
 import (
+	"context"
 	"decentralized-api/completionapi"
+	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/merkleproof"
 	"decentralized-api/utils"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"github.com/cometbft/cometbft/crypto/tmhash"
+	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/gonka-ai/gonka-utils/go/contracts"
+	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"github.com/productscience/inference/x/inference/types"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -52,8 +61,29 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 	return hash, &response, nil
 }
 
-/*func QueryActiveParticipants(rpcClient *rpcclient.HTTP, epochId uint64) externalutils.GetParticipantsFn {
-	return func(ctx context.Context, _ string) (*contracts.ActiveParticipantWithProof, error) {
+func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryClient) externalutils.GetParticipantsFn {
+	return func(ctx context.Context, epochParam string) (*contracts.ActiveParticipantWithProof, error) {
+		if epochParam == "" {
+			return nil, errors.New("invalid epoch id")
+		}
+
+		var epochId uint64
+		if epochParam == "current" {
+			currEpoch, err := queryClient.GetCurrentEpoch(ctx, &types.QueryGetCurrentEpochRequest{})
+			if err != nil {
+				logging.Error("Failed to get current epoch", types.Participants, "error", err)
+				return nil, err
+			}
+			logging.Info("Current epoch resolved.", types.Participants, "epoch", currEpoch.Epoch)
+			epochId = currEpoch.Epoch
+		} else {
+			epoch, err := strconv.ParseUint(epochParam, 10, 64)
+			if err != nil {
+				return nil, errors.New("invalid epoch id")
+			}
+			epochId = epoch
+		}
+
 		dataKey := types.ActiveParticipantsFullKey(epochId)
 		result, err := cosmos_client.QueryByKey(rpcClient, "inference", dataKey)
 		if err != nil {
@@ -67,7 +97,6 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 
 		interfaceRegistry := codectypes.NewInterfaceRegistry()
 		types.RegisterInterfaces(interfaceRegistry)
-
 		cdc := codec.NewProtoCodec(interfaceRegistry)
 
 		var activeParticipants types.ActiveParticipants
@@ -82,36 +111,42 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 			"effective_block_height", activeParticipants.EffectiveBlockHeight)
 
 		blockHeight := activeParticipants.CreatedAtBlockHeight
-		result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
+		queryWIthProof := true
+		if blockHeight <= 1 {
+			// cosmos can't build merkle proof for genesis because need previous state
+			queryWIthProof = false
+		}
+
+		result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, queryWIthProof)
 		if err != nil {
 			logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
 			return nil, err
 		}
 
-		block, err := rpcClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
-		if err != nil || block == nil {
-			logging.Error("Failed to get block", types.Participants, "error", err)
+		blockProof, err := queryClient.GetBlockProofByHeight(ctx, &types.QueryBlockProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
+		if err != nil {
+			logging.Error("Failed to get block proof by height", types.Participants, "error", err)
 			return nil, err
 		}
 
-		heightP1 := activeParticipants.CreatedAtBlockHeight + 1
-		blockP1, err := rpcClient.Block(context.Background(), &heightP1)
-		if err != nil || blockP1 == nil {
-			logging.Error("Failed to get block + 1", types.Participants, "error", err)
-		}
-
 		if result.Response.ProofOps != nil {
-			verifyProof(epochId, result, blockP1)
+			hash, _ := hex.DecodeString(blockProof.Proof.AppHashHex)
+			verifyProof(epochId, result, hash)
 		}
 
-		vals, err := QueryValidators(rpcClient)(context.Background(), activeParticipants.CreatedAtBlockHeight)
-		if err != nil || vals == nil {
-			logging.Error("Failed to get validators", types.Participants, "error", err)
+		validatorsProof, err := queryClient.GetValidatorsProofByHeight(ctx, &types.QueryGetValidatorsProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
+		if err != nil {
 			return nil, err
 		}
 
 		activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
 		addresses := make([]string, len(activeParticipants.Participants))
+		for i, participant := range activeParticipants.Participants {
+			addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+			if err != nil {
+				logging.Error("Failed to convert public key to address", types.Participants, "error", err)
+			}
+		}
 
 		finalParticipants := contracts.ActiveParticipants{
 			Participants:         make([]*contracts.ActiveParticipant, len(activeParticipants.Participants)),
@@ -124,26 +159,59 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 
 		for i, participant := range activeParticipants.Participants {
 			addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+			var seed *contracts.RandomSeed
+			if participant.Seed != nil {
+				seed = &contracts.RandomSeed{
+					Participant: participant.Seed.Participant,
+					BlockHeight: participant.Seed.BlockHeight,
+					Signature:   participant.Seed.Signature,
+				}
+			}
 			finalParticipants.Participants[i] = &contracts.ActiveParticipant{
 				Index:        participant.Index,
 				ValidatorKey: participant.ValidatorKey,
 				Weight:       participant.Weight,
 				InferenceUrl: participant.InferenceUrl,
 				Models:       participant.Models,
-				Seed: &contracts.RandomSeed{
-					Participant: participant.Seed.Participant,
-					BlockHeight: participant.Seed.BlockHeight,
-					Signature:   participant.Seed.Signature,
-				},
+				Seed:         seed,
 			}
 			if err != nil {
 				logging.Error("Failed to convert public key to address", types.Participants, "error", err)
 			}
 		}
 
-		var returnBlock *comettypes.Block
-		if blockP1 != nil {
-			returnBlock = blockP1.Block
+		block := &contracts.BlockProof{
+			CreatedAtBlockHeight: blockProof.Proof.CreatedAtBlockHeight,
+			AppHashHex:           blockProof.Proof.AppHashHex,
+			TotalVotingPower:     blockProof.Proof.TotalVotingPower,
+			Commits:              make([]*contracts.CommitInfo, 0),
+		}
+
+		for _, commit := range blockProof.Proof.Commits {
+			block.Commits = append(block.Commits, &contracts.CommitInfo{
+				ValidatorAddress: commit.ValidatorAddress,
+				ValidatorPubKey:  commit.ValidatorPubKey,
+				VotingPower:      commit.VotingPower,
+			})
+		}
+
+		validators := &contracts.ValidatorsProof{
+			BlockHeight: validatorsProof.Proof.BlockHeight,
+			Round:       validatorsProof.Proof.Round,
+			BlockId: &contracts.BlockID{
+				Hash:               validatorsProof.Proof.BlockId.Hash,
+				PartSetHeaderTotal: validatorsProof.Proof.BlockId.PartSetHeaderTotal,
+				PartSetHeaderHash:  validatorsProof.Proof.BlockId.PartSetHeaderHash,
+			},
+			Signatures: make([]*contracts.SignatureInfo, 0),
+		}
+
+		for _, sign := range validatorsProof.Proof.Signatures {
+			validators.Signatures = append(validators.Signatures, &contracts.SignatureInfo{
+				SignatureBase64:     sign.SignatureBase64,
+				ValidatorAddressHex: sign.ValidatorAddressHex,
+				Timestamp:           sign.Timestamp,
+			})
 		}
 
 		return &contracts.ActiveParticipantWithProof{
@@ -151,44 +219,12 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 			Addresses:               addresses,
 			ActiveParticipantsBytes: activeParticipantsBytes,
 			ProofOps:                result.Response.ProofOps,
-		}, err
-	}
-}*/
-
-/*func QueryValidators(rpcClient *rpcclient.HTTP) externalutils.GetValidatorsFn {
-	return func(ctx context.Context, height int64) (*contracts.BlockValidators, error) {
-		vals, err := rpcClient.Validators(context.Background(), &height, nil, nil)
-		if err != nil || vals == nil {
-			logging.Error("Failed to get validators", types.Participants, "error", err)
-			return nil, err
-		}
-
-		validators := make([]*contracts.Validator, len(vals.Validators))
-		for i, validator := range vals.Validators {
-			validators[i] = &contracts.Validator{
-				Address:          validator.PubKey.Address().String(),
-				PubKey:           base64.StdEncoding.EncodeToString(validator.PubKey.Bytes()),
-				VotingPower:      validator.VotingPower,
-				ProposerPriority: validator.ProposerPriority,
-			}
-		}
-
-		return &contracts.BlockValidators{
-			BlockHeight: vals.BlockHeight,
-			Validators:  validators,
-			Count:       vals.Count,
-			Total:       vals.Total,
+			BlockProof:              block,
+			ValidatorsProof:         validators,
 		}, nil
 	}
-}*/
+}
 
-/*
-	func QueryBlock(rpcClient *rpcclient.HTTP) externalutils.GetBlockFn {
-		return func(ctx context.Context, height int64) (*coretypes.ResultBlock, error) {
-			return rpcClient.Block(context.Background(), &height)
-		}
-	}
-*/
 func pubKeyToAddress3(pubKey string) (string, error) {
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
 	if err != nil {
@@ -200,19 +236,19 @@ func pubKeyToAddress3(pubKey string) (string, error) {
 	return valAddrHex, nil
 }
 
-func verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, block *coretypes.ResultBlock) {
+func verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, appHash []byte) {
 	dataKey := types.ActiveParticipantsFullKey(epoch)
 	// Build the key path used by proof verification. We percent-encode the raw
 	// binary key so the path is a valid UTF-8/URL string.
 	verKey := "/inference/" + url.PathEscape(string(dataKey))
 	// verKey2 := string(result.Response.Key)
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
-	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
+	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, appHash, verKey, result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
-	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
+	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, appHash, "inference", string(dataKey), result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
