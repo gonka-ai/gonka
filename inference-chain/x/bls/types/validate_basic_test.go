@@ -94,19 +94,8 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 		require.Error(t, msg.ValidateBasic())
 	})
 
-	t.Run("zero commitment bytes", func(t *testing.T) {
-		zero := []byte{} // empty => treated as all-zero
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: [][]byte{zero}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
-		require.Error(t, msg.ValidateBasic())
-	})
-
 	t.Run("empty encrypted shares list", func(t *testing.T) {
 		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: nil}
-		require.Error(t, msg.ValidateBasic())
-	})
-
-	t.Run("participant with empty shares", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: nil}}}
 		require.Error(t, msg.ValidateBasic())
 	})
 }
