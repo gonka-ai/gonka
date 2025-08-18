@@ -22,6 +22,7 @@ import (
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
 // HandlerOptions extend the SDK's AnteHandler options by requiring the IBC
@@ -55,13 +56,53 @@ type cw20SendEnvelope struct {
 
 // matchesAllowedSwap checks if a MsgExecuteContract is either a direct call to a pool
 // or a cw20 Send{contract:<pool>} to a pool.
-func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg sdk.Msg) bool {
+func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg sdk.Msg, poolAddress string, wrappedCodeID uint64) bool {
 	exec, ok := msg.(*wasmtypes.MsgExecuteContract)
 	if !ok {
 		return false
 	}
 
-	// Resolve dynamic chain state if available
+	// Helper to check if a contract address is a wrapped token instance by code id
+	isWrappedByCodeID := func(addr string) bool {
+		if d.WasmKeeper == nil {
+			return false
+		}
+		acc, err := sdk.AccAddressFromBech32(addr)
+		if err != nil {
+			return false
+		}
+		info := d.WasmKeeper.GetContractInfo(ctx, acc)
+		if info == nil {
+			return false
+		}
+		return info.CodeID == wrappedCodeID
+	}
+
+	// Path A: direct execute to pool
+	if exec.Contract == poolAddress {
+		return true
+	}
+
+	// Path B: cw20::Send to pool (exec is sent to cw20)
+	var env cw20SendEnvelope
+	if err := json.Unmarshal(exec.Msg, &env); err == nil {
+		if env.Send.Contract != "" && env.Send.Contract == poolAddress {
+			// Only allow if the caller contract is a wrapped token (by code id)
+			if isWrappedByCodeID(exec.Contract) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	msgs := tx.GetMsgs()
+	if len(msgs) == 0 {
+		return next(ctx, tx, simulate)
+	}
+
+	// Check if we have the required chain state for fee bypass
 	var (
 		poolAddress   string
 		wrappedCodeID uint64
@@ -79,43 +120,8 @@ func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg
 		}
 	}
 
-	// Helper to check if a contract address is a wrapped token instance by code id
-	isWrappedByCodeID := func(addr string) bool {
-		if !haveWrapped || d.WasmKeeper == nil {
-			return false
-		}
-		acc, err := sdk.AccAddressFromBech32(addr)
-		if err != nil {
-			return false
-		}
-		info := d.WasmKeeper.GetContractInfo(ctx, acc)
-		if info == nil {
-			return false
-		}
-		return info.CodeID == wrappedCodeID
-	}
-
-	// Path A: direct execute to pool
-	if havePool && exec.Contract == poolAddress {
-		return true
-	}
-
-	// Path B: cw20::Send to pool (exec is sent to cw20)
-	var env cw20SendEnvelope
-	if err := json.Unmarshal(exec.Msg, &env); err == nil {
-		if env.Send.Contract != "" && havePool && env.Send.Contract == poolAddress {
-			// Only allow if the caller contract is a wrapped token (by code id)
-			if isWrappedByCodeID(exec.Contract) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
-	msgs := tx.GetMsgs()
-	if len(msgs) == 0 {
+	// If no pool or wrapped token is registered yet, just pass through without fee bypass
+	if !havePool || !haveWrapped {
 		return next(ctx, tx, simulate)
 	}
 
@@ -126,15 +132,21 @@ func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, 
 		}
 	}
 
+	// Check if ALL messages in the transaction qualify for fee bypass
 	allAllowed := true
 	for _, m := range msgs {
-		if !d.matchesAllowedSwap(ctx, m) {
+		if !d.matchesAllowedSwap(ctx, m, poolAddress, wrappedCodeID) {
 			allAllowed = false
 			break
 		}
 	}
 
 	if allAllowed {
+		// Log successful fee bypass
+		if d.InferenceKeeper != nil {
+			d.InferenceKeeper.LogInfo("AnteHandle: LiquidityPoolFeeBypass - applying fee bypass",
+				inferencetypes.System, "poolAddress", poolAddress, "wrappedCodeID", wrappedCodeID)
+		}
 		// Waive min-gas-prices (fees) but keep metering; optionally raise priority.
 		ctx = ctx.WithMinGasPrices(sdk.DecCoins{})
 		if d.Priority != 0 {
