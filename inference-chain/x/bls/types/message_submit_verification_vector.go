@@ -18,8 +18,5 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if len(m.DealerValidity) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity must be non-empty")
 	}
-	if len(m.DealerValidity) > MaxParticipantCount {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity exceeds maximum allowed")
-	}
 	return nil
 }
