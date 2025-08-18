@@ -167,7 +167,6 @@ if $FIRST_RUN; then
 
     kv client chain-id "$CHAIN_ID"
     kv client keyring-backend "$KEYRING_BACKEND"
-    kv app minimum-gas-prices "0${COIN_DENOM}"
     kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
     sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' $STATE_DIR/config/config.toml
     configure_tmkms
@@ -215,6 +214,8 @@ fi
 # Configuration executed on every start
 ###############################################################################
 echo "Applying configuration at container start"
+
+kv app minimum-gas-prices "0${COIN_DENOM}"
 
 # Snapshot parameters ----------------------------------------------------------
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
