@@ -9,17 +9,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// GenesisEnhancementResult represents the result of genesis validator enhancement
-type GenesisEnhancementResult struct {
+// GenesisGuardianEnhancementResult represents the result of genesis guardian enhancement
+type GenesisGuardianEnhancementResult struct {
 	ComputeResults []stakingkeeper.ComputeResult // validator compute results with enhanced power
 	TotalPower     int64                         // total power after enhancement
 	WasEnhanced    bool                          // whether enhancement was applied
 }
 
-// ShouldApplyGenesisEnhancement checks if network maturity and validator identification conditions are met
-func ShouldApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, totalNetworkPower int64, computeResults []stakingkeeper.ComputeResult) bool {
+// ShouldApplyGenesisGuardianEnhancement checks if network maturity and guardian identification conditions are met
+func ShouldApplyGenesisGuardianEnhancement(ctx context.Context, k keeper.Keeper, totalNetworkPower int64, computeResults []stakingkeeper.ComputeResult) bool {
 	// Enhancement only applies if feature is enabled
-	if !k.GetGenesisVetoEnabled(ctx) {
+	if !k.GetGenesisGuardianEnabled(ctx) {
 		return false
 	}
 
@@ -33,15 +33,20 @@ func ShouldApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, totalNe
 		return false
 	}
 
-	// Enhancement only applies if first genesis validator is identified
-	firstGenesisValidatorAddress := k.GetFirstGenesisValidatorAddress(ctx)
-	if firstGenesisValidatorAddress == "" {
+	// Enhancement only applies if genesis guardians are identified
+	genesisGuardianAddresses := k.GetGenesisGuardianAddresses(ctx)
+	if len(genesisGuardianAddresses) == 0 {
 		return false
 	}
 
-	// Check if first genesis validator exists in compute results
+	// Check if at least one genesis guardian exists in compute results
+	guardianAddressMap := make(map[string]bool)
+	for _, address := range genesisGuardianAddresses {
+		guardianAddressMap[address] = true
+	}
+
 	for _, result := range computeResults {
-		if result.OperatorAddress == firstGenesisValidatorAddress {
+		if guardianAddressMap[result.OperatorAddress] {
 			return true
 		}
 	}
@@ -49,11 +54,11 @@ func ShouldApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, totalNe
 	return false
 }
 
-// ApplyGenesisEnhancement applies 0.52 multiplier to first genesis validator
+// ApplyGenesisGuardianEnhancement applies distributed enhancement to genesis guardians
 // This system only applies to staking powers when network is immature
-func ApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, computeResults []stakingkeeper.ComputeResult) *GenesisEnhancementResult {
+func ApplyGenesisGuardianEnhancement(ctx context.Context, k keeper.Keeper, computeResults []stakingkeeper.ComputeResult) *GenesisGuardianEnhancementResult {
 	if len(computeResults) == 0 {
-		return &GenesisEnhancementResult{
+		return &GenesisGuardianEnhancementResult{
 			ComputeResults: computeResults,
 			TotalPower:     0,
 			WasEnhanced:    false,
@@ -67,9 +72,9 @@ func ApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, computeResult
 	}
 
 	// Check if enhancement should be applied
-	if !ShouldApplyGenesisEnhancement(ctx, k, totalNetworkPower, computeResults) {
+	if !ShouldApplyGenesisGuardianEnhancement(ctx, k, totalNetworkPower, computeResults) {
 		// Return original results unchanged
-		return &GenesisEnhancementResult{
+		return &GenesisGuardianEnhancementResult{
 			ComputeResults: computeResults,
 			TotalPower:     totalNetworkPower,
 			WasEnhanced:    false,
@@ -79,26 +84,60 @@ func ApplyGenesisEnhancement(ctx context.Context, k keeper.Keeper, computeResult
 	// Apply enhancement
 	enhancedResults, enhancedTotalPower := calculateEnhancedPower(ctx, k, computeResults, totalNetworkPower)
 
-	return &GenesisEnhancementResult{
+	return &GenesisGuardianEnhancementResult{
 		ComputeResults: enhancedResults,
 		TotalPower:     enhancedTotalPower,
 		WasEnhanced:    true,
 	}
 }
 
-// calculateEnhancedPower computes enhanced power based on others' total using 0.52 multiplier
+// calculateEnhancedPower computes distributed enhanced power across multiple genesis guardians
 func calculateEnhancedPower(ctx context.Context, k keeper.Keeper, computeResults []stakingkeeper.ComputeResult, totalNetworkPower int64) ([]stakingkeeper.ComputeResult, int64) {
-	// Find first genesis validator
-	firstGenesisValidatorAddress := k.GetFirstGenesisValidatorAddress(ctx)
-	if firstGenesisValidatorAddress == "" {
+	// Get genesis guardian addresses
+	genesisGuardianAddresses := k.GetGenesisGuardianAddresses(ctx)
+	if len(genesisGuardianAddresses) == 0 {
 		return computeResults, totalNetworkPower
 	}
 
-	// Get genesis enhancement parameters
-	genesisVetoMultiplier := k.GetGenesisVetoMultiplier(ctx)
-	if genesisVetoMultiplier == nil {
+	// Get genesis guardian multiplier
+	genesisGuardianMultiplier := k.GetGenesisGuardianMultiplier(ctx)
+	if genesisGuardianMultiplier == nil {
 		return computeResults, totalNetworkPower
 	}
+
+	// Create guardian address map for quick lookup
+	guardianAddressMap := make(map[string]bool)
+	for _, address := range genesisGuardianAddresses {
+		guardianAddressMap[address] = true
+	}
+
+	// Calculate total guardian power and identify guardian indices
+	guardianIndices := []int{}
+	totalGuardianPower := int64(0)
+	for i, result := range computeResults {
+		if guardianAddressMap[result.OperatorAddress] {
+			guardianIndices = append(guardianIndices, i)
+			totalGuardianPower += result.Power
+		}
+	}
+
+	// If no guardians found in compute results, return unchanged
+	if len(guardianIndices) == 0 {
+		return computeResults, totalNetworkPower
+	}
+
+	// Calculate other participants' total power (excluding all guardians)
+	otherParticipantsTotal := totalNetworkPower - totalGuardianPower
+
+	// Calculate total enhancement amount: other_participants_total * genesis_guardian_multiplier
+	multiplierDecimal := genesisGuardianMultiplier.ToDecimal()
+	otherParticipantsTotalDecimal := decimal.NewFromInt(otherParticipantsTotal)
+	totalEnhancementDecimal := otherParticipantsTotalDecimal.Mul(multiplierDecimal)
+
+	// Calculate per-guardian enhancement: total_enhancement / number_of_guardians
+	guardianCount := len(guardianIndices)
+	perGuardianEnhancementDecimal := totalEnhancementDecimal.Div(decimal.NewFromInt(int64(guardianCount)))
+	perGuardianEnhancement := perGuardianEnhancementDecimal.IntPart()
 
 	// Create enhanced results
 	enhancedResults := make([]stakingkeeper.ComputeResult, len(computeResults))
@@ -106,19 +145,9 @@ func calculateEnhancedPower(ctx context.Context, k keeper.Keeper, computeResults
 
 	for i, result := range computeResults {
 		enhancedResults[i] = result
-		if result.OperatorAddress == firstGenesisValidatorAddress {
-			// Calculate other participants' total power
-			otherParticipantsTotal := totalNetworkPower - result.Power
-
-			// Calculate enhanced power for first genesis validator using decimal arithmetic
-			// enhanced_power = other_participants_total * 0.52
-			multiplierDecimal := genesisVetoMultiplier.ToDecimal()
-			otherParticipantsTotalDecimal := decimal.NewFromInt(otherParticipantsTotal)
-			enhancedGenesisPowerDecimal := otherParticipantsTotalDecimal.Mul(multiplierDecimal)
-			enhancedGenesisPower := enhancedGenesisPowerDecimal.IntPart()
-
-			// Apply enhancement to first genesis validator
-			enhancedResults[i].Power = enhancedGenesisPower
+		// Apply enhancement to genesis guardians
+		if guardianAddressMap[result.OperatorAddress] {
+			enhancedResults[i].Power = perGuardianEnhancement
 		}
 		enhancedTotalPower += enhancedResults[i].Power
 	}
@@ -126,8 +155,8 @@ func calculateEnhancedPower(ctx context.Context, k keeper.Keeper, computeResults
 	return enhancedResults, enhancedTotalPower
 }
 
-// validateEnhancementResults ensures enhancement was applied correctly
-func ValidateEnhancementResults(original []stakingkeeper.ComputeResult, enhanced []stakingkeeper.ComputeResult, enhancedTotalPower int64) error {
+// validateGuardianEnhancementResults ensures enhancement was applied correctly
+func ValidateGuardianEnhancementResults(original []stakingkeeper.ComputeResult, enhanced []stakingkeeper.ComputeResult, enhancedTotalPower int64) error {
 	// Check participant count consistency
 	if len(original) != len(enhanced) {
 		return fmt.Errorf("participant count mismatch: original=%d, enhanced=%d", len(original), len(enhanced))

@@ -28,24 +28,24 @@ func (k Keeper) GetGenesisOnlyParams(ctx context.Context) (val types.GenesisOnly
 	return val, true
 }
 
-// GetNetworkMaturityThreshold returns the network maturity threshold from GenesisOnlyParams
-func (k Keeper) GetNetworkMaturityThreshold(ctx context.Context) int64 {
+// GetGenesisGuardianNetworkMaturityThreshold returns the genesis guardian network maturity threshold from GenesisOnlyParams
+func (k Keeper) GetGenesisGuardianNetworkMaturityThreshold(ctx context.Context) int64 {
 	params, found := k.GetGenesisOnlyParams(ctx)
 	if !found {
 		// Return default value if not found
 		return 10_000_000
 	}
-	return params.NetworkMaturityThreshold
+	return params.GenesisGuardianNetworkMaturityThreshold
 }
 
-// GetGenesisVetoMultiplier returns the genesis veto multiplier from GenesisOnlyParams
-func (k Keeper) GetGenesisVetoMultiplier(ctx context.Context) *types.Decimal {
+// GetGenesisGuardianMultiplier returns the genesis guardian multiplier from GenesisOnlyParams
+func (k Keeper) GetGenesisGuardianMultiplier(ctx context.Context) *types.Decimal {
 	params, found := k.GetGenesisOnlyParams(ctx)
 	if !found {
 		// Return default value if not found
 		return types.DecimalFromFloat(0.52)
 	}
-	return params.GenesisVetoMultiplier
+	return params.GenesisGuardianMultiplier
 }
 
 // GetMaxIndividualPowerPercentage returns the max individual power percentage from GenesisOnlyParams
@@ -58,28 +58,28 @@ func (k Keeper) GetMaxIndividualPowerPercentage(ctx context.Context) *types.Deci
 	return params.MaxIndividualPowerPercentage
 }
 
-// IsNetworkMature checks if the total network power exceeds the maturity threshold
+// IsNetworkMature checks if the total network power exceeds the genesis guardian maturity threshold
 func (k Keeper) IsNetworkMature(ctx context.Context, totalNetworkPower int64) bool {
-	threshold := k.GetNetworkMaturityThreshold(ctx)
+	threshold := k.GetGenesisGuardianNetworkMaturityThreshold(ctx)
 	return totalNetworkPower >= threshold
 }
 
-// GetFirstGenesisValidatorAddress returns the first genesis validator address from GenesisOnlyParams
-func (k Keeper) GetFirstGenesisValidatorAddress(ctx context.Context) string {
+// GetGenesisGuardianAddresses returns the genesis guardian addresses from GenesisOnlyParams
+func (k Keeper) GetGenesisGuardianAddresses(ctx context.Context) []string {
 	params, found := k.GetGenesisOnlyParams(ctx)
 	if !found {
-		// Return empty string if not found (same as default)
-		return ""
+		// Return empty slice if not found (same as default)
+		return []string{}
 	}
-	return params.FirstGenesisValidatorAddress
+	return params.GenesisGuardianAddresses
 }
 
-// GetGenesisVetoEnabled returns whether genesis veto is enabled from GenesisOnlyParams
-func (k Keeper) GetGenesisVetoEnabled(ctx context.Context) bool {
+// GetGenesisGuardianEnabled returns whether genesis guardian system is enabled from GenesisOnlyParams
+func (k Keeper) GetGenesisGuardianEnabled(ctx context.Context) bool {
 	params, found := k.GetGenesisOnlyParams(ctx)
 	if !found {
 		// Return default value if not found (false)
 		return false
 	}
-	return params.GenesisVetoEnabled
+	return params.GenesisGuardianEnabled
 }

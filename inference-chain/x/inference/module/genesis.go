@@ -42,10 +42,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// Set genesis only params from configuration
 	genesisOnlyParams := genState.GenesisOnlyParams
-	if genesisOnlyParams.FirstGenesisValidatorAddress != "" {
-		k.LogInfo("Using configured first genesis validator address", types.System, "address", genesisOnlyParams.FirstGenesisValidatorAddress)
+	if len(genesisOnlyParams.GenesisGuardianAddresses) > 0 {
+		k.LogInfo("Using configured genesis guardian addresses", types.System, "addresses", genesisOnlyParams.GenesisGuardianAddresses, "count", len(genesisOnlyParams.GenesisGuardianAddresses))
 	} else {
-		k.LogInfo("No first genesis validator address configured - genesis enhancement will be disabled", types.System)
+		k.LogInfo("No genesis guardian addresses configured - genesis guardian enhancement will be disabled", types.System)
 	}
 
 	k.SetGenesisOnlyParams(ctx, &genesisOnlyParams)

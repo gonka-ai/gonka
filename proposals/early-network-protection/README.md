@@ -70,15 +70,19 @@ Applied to all epoch powers universally, regardless of network maturity:
 
 Applied only to staking powers during network immaturity (`total_network_power < network_maturity_threshold` AND `genesis_enhancement_enabled = true`):
 
-**Selective Power Enhancement**:
-- **Target**: First validator from genesis validator list (project developers)
-- **Enhancement**: Increase power to 52% of all other participants' combined power
-- **Veto Authority**: Provides ~34% of total network power for governance veto capability
+**Distributed Power Enhancement**:
+- **Targets**: Multiple genesis validators from configured list (project developers/trusted entities)
+- **Enhancement Strategy**: 
+  - **2 Validators**: Each receives 26% of all other participants' combined power
+  - **3 Validators**: Each receives 18% of all other participants' combined power  
+  - **1 Validator**: Receives 52% of all other participants' combined power (fallback)
+- **Collective Veto Authority**: Combined enhanced validators provide ~34% of total network power for governance veto capability
+- **Power Distribution**: Enhancement distributed among multiple validators to prevent single point of control
 - **Temporary**: Automatically deactivates when network reaches maturity threshold
 
 ### Developer Veto Power Rationale
 
-**Why Developers**: The first genesis validator represents the project developers, making them uniquely qualified to hold protective veto power:
+**Why Developers**: The genesis validators represent the project developers and trusted entities, making them uniquely qualified to hold protective veto power:
 
 - **Technical Expertise**: Developers have the deepest understanding of the protocol, potential attack vectors, and system vulnerabilities
 - **Long-term Commitment**: Project success directly impacts developers' professional reputation and economic interests
@@ -91,11 +95,12 @@ Applied only to staking powers during network immaturity (`total_network_power <
 - **No Governance Override Needed**: Transition to full decentralization occurs algorithmically
 - **Predictable Timeline**: Clear, transparent conditions for developer authority termination
 
-**Limited Scope**: Developer veto power is carefully constrained:
-- **Cannot Advance Proposals**: 34% insufficient for unilateral governance control (requires >50%)
-- **Cannot Control Consensus**: Insufficient power to dominate block production or transaction ordering
+**Limited Scope**: Developer veto power is carefully constrained and distributed:
+- **Cannot Advance Proposals**: Combined 34% insufficient for unilateral governance control (requires >50%)
+- **Cannot Control Consensus**: Distributed power prevents single validator from dominating block production
 - **Cannot Extract Value**: Economic incentives remain aligned with network success rather than extraction
-- **Subject to Same Limits**: Bound by concentration limits like all other participants
+- **Subject to Same Limits**: All enhanced validators bound by concentration limits like other participants
+- **Requires Coordination**: Multiple validators must coordinate for any significant action, preventing unilateral control
 
 ### Power Distribution Algorithms
 
@@ -126,10 +131,14 @@ Applied only to staking powers when network is immature:
 If total_network_power >= network_maturity_threshold:
     Skip enhancement (network is mature)
 Else:
-    1. Identify first genesis validator
-    2. Calculate other_participants_total = sum(all_powers) - first_genesis_power
-    3. Set first_genesis_power = other_participants_total * 0.52
-    4. Return enhanced distribution
+    1. Identify genesis validators from configured list
+    2. Calculate other_participants_total = sum(all_powers) - sum(genesis_validators_power)
+    3. Determine enhancement per validator:
+       - If 2 genesis validators: enhancement_per_validator = other_participants_total * 0.26
+       - If 3 genesis validators: enhancement_per_validator = other_participants_total * 0.18  
+       - If 1 genesis validator: enhancement_per_validator = other_participants_total * 0.52
+    4. Apply enhancement to each genesis validator
+    5. Return enhanced distribution
 ```
 
 #### Algorithm Integration
@@ -154,9 +163,11 @@ The two systems can be applied independently or in combination:
 - **Mathematical Edge Cases**: Fallback to simple percentage cap when complex formula fails
 
 **Genesis Enhancement Edge Cases**:
-- **No Genesis Validator**: Enhancement skipped if first genesis validator not identified
-- **Mature Network**: Enhancement automatically disabled when threshold reached
+- **No Genesis Validators**: Enhancement skipped if no genesis validators identified
+- **Mature Network**: Enhancement automatically disabled when threshold reached  
 - **Single Participant**: No enhancement applied (unnecessary)
+- **Partial Genesis Validators**: Enhancement applied only to identified genesis validators
+- **Validator Count Mismatch**: System adapts multiplier based on actual number of genesis validators found
 
 #### Numerical Examples
 
@@ -176,17 +187,34 @@ The two systems can be applied independently or in combination:
 
 **Result**: Largest participant reduced from 53.3% to 30% of total (7,500 total)
 
-##### Genesis Enhancement Example  
+##### Genesis Enhancement Examples
+
+**Example 1: Two Genesis Validators**
 
 **Initial Staking Powers**: 
-- Genesis Validator: 1,000
+- Genesis Validator A: 800
+- Genesis Validator B: 1,200  
 - Others: 2,000 + 1,500 + 500 = 4,000 total
 
 **Enhancement Applied** (network immature):
-- Enhanced genesis power: 4,000 × 0.52 = 2,080
-- Genesis percentage: 2,080 / (2,080 + 4,000) = 34.2%
+- Enhancement per validator: 4,000 × 0.26 = 1,040
+- Enhanced A power: 1,040, Enhanced B power: 1,040
+- Combined genesis percentage: (1,040 + 1,040) / (1,040 + 1,040 + 4,000) = 34.2%
 
-**Result**: Genesis validator achieves veto power while others retain original distribution
+**Result**: Two genesis validators achieve collective veto power with distributed control
+
+**Example 2: Three Genesis Validators**
+
+**Initial Staking Powers**: 
+- Genesis Validators A, B, C: 500, 700, 800
+- Others: 2,000 + 1,500 + 500 = 4,000 total
+
+**Enhancement Applied** (network immature):
+- Enhancement per validator: 4,000 × 0.18 = 720
+- Enhanced powers: A=720, B=720, C=720
+- Combined genesis percentage: (720 × 3) / (720 × 3 + 4,000) = 35.1%
+
+**Result**: Three genesis validators achieve collective veto power with maximum distribution
 
 ### Implementation Integration
 
@@ -211,8 +239,8 @@ The two systems can be applied independently or in combination:
 **New GenesisOnlyParams Fields**:
 - `max_individual_power_percentage`: Default 0.30 (30%) - Power capping threshold
 - `network_maturity_threshold`: Default 10,000,000 - Genesis enhancement deactivation threshold  
-- `genesis_veto_multiplier`: Default 0.52 - Enhancement multiplier for first genesis validator
-- `first_genesis_validator_address`: Auto-populated from genesis validators during InitGenesis
+- `genesis_veto_multiplier`: Default 0.52 - Enhancement multiplier (for single validator fallback)
+- `genesis_validator_addresses`: List of genesis validator addresses for distributed enhancement
 - `genesis_enhancement_enabled`: Default false - Enable/disable Genesis Validator Enhancement feature
 
 **Implementation Files**:
@@ -230,9 +258,10 @@ The two systems can be applied independently or in combination:
 
 **Genesis Enhancement Functions** (`module/genesis_enhancement.go`):
 - `ShouldApplyGenesisEnhancement` - Check network maturity and validator identification  
-- `ApplyGenesisEnhancement` - Apply 0.52 multiplier to first genesis validator
-- `identifyFirstGenesisValidator` - Find first validator from genesis configuration
-- `calculateEnhancedPower` - Compute enhanced power based on others' total
+- `ApplyGenesisEnhancement` - Apply distributed enhancement to genesis validators
+- `identifyGenesisValidators` - Find genesis validators from configuration list
+- `calculateDistributedEnhancement` - Compute distributed enhancement based on validator count
+- `determineEnhancementMultiplier` - Select appropriate multiplier (0.26, 0.18, or 0.52)
 
 **Integration Functions** (`module/early_protection.go`):
 - `orchestrateDualProtection` - Coordinate both systems appropriately
@@ -250,7 +279,8 @@ The two systems can be applied independently or in combination:
 
 **Staking Power Processing** (`module/module.go`):
 - Check network maturity in `onSetNewValidatorsStage`
-- Apply genesis enhancement if network immature and first validator identified
+- Apply distributed genesis enhancement if network immature and genesis validators identified
+- Enhancement distributed among 1-3 validators based on configuration
 - Optionally apply power capping after enhancement
 - Pass final distribution to `SetComputeValidators`
 

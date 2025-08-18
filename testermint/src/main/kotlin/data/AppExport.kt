@@ -49,10 +49,10 @@ data class GenesisOnlyParams(
     val topRewardPayoutsPerMiner: Long,
     val topRewardMaxDuration: Long,
     val maxIndividualPowerPercentage: Decimal?,
-    val genesisEnhancementEnabled: Boolean,
-    val networkMaturityThreshold: Long,
-    val genesisVetoMultiplier: Decimal?,
-    val firstGenesisValidatorAddress: String,
+    val genesisGuardianEnabled: Boolean,
+    val genesisGuardianNetworkMaturityThreshold: Long,
+    val genesisGuardianMultiplier: Decimal?,
+    val genesisGuardianAddresses: List<String>,
 )
 
 data class InferenceParamsWrapper(

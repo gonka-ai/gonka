@@ -627,11 +627,11 @@ func (am AppModule) applyEpochPowerCapping(ctx context.Context, activeParticipan
 	return result.CappedParticipants
 }
 
-// applyEarlyNetworkProtection applies genesis validator enhancement to compute results before validator set updates
+// applyEarlyNetworkProtection applies genesis guardian enhancement to compute results before validator set updates
 // This system only applies when network is immature (below maturity threshold)
 func (am AppModule) applyEarlyNetworkProtection(ctx context.Context, computeResults []stakingkeeper.ComputeResult) []stakingkeeper.ComputeResult {
-	// Apply genesis validator enhancement (only when network immature)
-	result := ApplyGenesisEnhancement(ctx, am.keeper, computeResults)
+	// Apply genesis guardian enhancement (only when network immature)
+	result := ApplyGenesisGuardianEnhancement(ctx, am.keeper, computeResults)
 
 	// Log enhancement application results
 	originalTotal := int64(0)
@@ -640,17 +640,37 @@ func (am AppModule) applyEarlyNetworkProtection(ctx context.Context, computeResu
 	}
 
 	if result.WasEnhanced {
-		firstGenesisValidatorKey := am.keeper.GetFirstGenesisValidatorAddress(ctx)
-		am.LogInfo("Genesis validator enhancement applied to staking powers", types.EpochGroup,
+		genesisGuardianAddresses := am.keeper.GetGenesisGuardianAddresses(ctx)
+
+		// Count enhanced guardians and calculate their individual powers
+		enhancedGuardians := []string{}
+		guardianPowers := []int64{}
+		guardianAddressMap := make(map[string]bool)
+		for _, address := range genesisGuardianAddresses {
+			guardianAddressMap[address] = true
+		}
+
+		for _, cr := range result.ComputeResults {
+			if guardianAddressMap[cr.OperatorAddress] {
+				enhancedGuardians = append(enhancedGuardians, cr.OperatorAddress)
+				guardianPowers = append(guardianPowers, cr.Power)
+			}
+		}
+
+		am.LogInfo("Genesis guardian enhancement applied to staking powers", types.EpochGroup,
 			"originalTotalPower", originalTotal,
 			"enhancedTotalPower", result.TotalPower,
 			"participantCount", len(computeResults),
-			"firstGenesisValidator", firstGenesisValidatorKey)
+			"guardianCount", len(enhancedGuardians),
+			"enhancedGuardians", enhancedGuardians,
+			"guardianPowers", guardianPowers)
 	} else {
-		am.LogInfo("Genesis validator enhancement evaluated but not applied to staking powers", types.EpochGroup,
+		genesisGuardianAddresses := am.keeper.GetGenesisGuardianAddresses(ctx)
+		am.LogInfo("Genesis guardian enhancement evaluated but not applied to staking powers", types.EpochGroup,
 			"totalPower", originalTotal,
 			"participantCount", len(computeResults),
-			"reason", "network mature, insufficient participants, or first genesis validator not found")
+			"configuredGuardianCount", len(genesisGuardianAddresses),
+			"reason", "network mature, insufficient participants, or no genesis guardians found")
 	}
 
 	return result.ComputeResults
