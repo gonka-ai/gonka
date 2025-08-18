@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func participantExists(recorder cosmosclient.CosmosMessageClient) (bool, error) 
 
 	// TODO: check participant state, compute diff and update?
 	// 	Or implement some ways to periodically (or by request) update the participant state
-	response, err := queryClient.Participant(*recorder.GetContext(), request)
+	response, err := queryClient.Participant(recorder.GetContext(), request)
 	if err != nil {
 		if strings.Contains(err.Error(), "code = NotFound") {
 			logging.Info("Participant does not exist", types.Participants, "Address", recorder.GetAccountAddress(), "err", err)
@@ -83,6 +84,13 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 }
 
 func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager) error {
+	isTest := os.Getenv("TESTS") == "true"
+	if !isTest {
+		return nil
+	}
+
+	logging.Info("[TEST ONLY] Registering participant", types.Participants, "isTest", isTest)
+
 	if config.GetChainNodeConfig().IsGenesis {
 		return registerGenesisParticipant(recorder, config)
 	} else {

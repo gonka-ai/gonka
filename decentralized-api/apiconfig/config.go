@@ -12,8 +12,15 @@ type Config struct {
 	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
 	MLNodeKeyConfig    MLNodeKeyConfig       `koanf:"ml_node_key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
+	Nats               NatsServerConfig      `koanf:"nats"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
 	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
+	BandwidthParams    BandwidthParamsCache  `koanf:"bandwidth_params"`
+}
+
+type NatsServerConfig struct {
+	Host string `koanf:"host"`
+	Port int    `koanf:"port"`
 }
 
 type NodeVersionStack struct {
@@ -141,4 +148,11 @@ type Hardware struct {
 type ValidationParamsCache struct {
 	TimestampExpiration int64 `koanf:"timestamp_expiration"`
 	TimestampAdvance    int64 `koanf:"timestamp_advance"`
+	ExpirationBlocks    int64 `koanf:"expiration_blocks"`
+}
+
+type BandwidthParamsCache struct {
+	EstimatedLimitsPerBlockKb uint64  `koanf:"estimated_limits_per_block_kb"`
+	KbPerInputToken           float64 `koanf:"kb_per_input_token"`
+	KbPerOutputToken          float64 `koanf:"kb_per_output_token"`
 }

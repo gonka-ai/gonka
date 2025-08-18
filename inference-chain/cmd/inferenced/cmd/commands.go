@@ -19,10 +19,13 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	"github.com/cosmos/cosmos-sdk/x/crisis"
+	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
+	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/productscience/inference/app"
 	inferencemodule "github.com/productscience/inference/x/inference/module"
 
@@ -68,9 +71,20 @@ func addModuleInitFlags(startCmd *cobra.Command) {
 	crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `inferenced genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
-	cmd := genutilcli.Commands(txConfig, basicManager, app.DefaultNodeHome)
+	gentxModule := basicManager[genutiltypes.ModuleName].(genutil.AppModuleBasic)
+
+	cmd := genutilcli.CommandsWithCustomMigrationMap(txConfig, basicManager, app.DefaultNodeHome, genutiltypes.MigrationMap{})
+
+	for _, subCmd := range cmd.Commands() {
+		if subCmd.Use == "gentx [key_name] [amount]" {
+			cmd.RemoveCommand(subCmd)
+			break
+		}
+	}
+
+	cmd.AddCommand(GenTxCmd(basicManager, txConfig, banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome, txConfig.SigningContext().ValidatorAddressCodec()))
+	cmd.AddCommand(PatchGenesisCmd(banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome, gentxModule.GenTxValidator, txConfig.SigningContext().ValidatorAddressCodec()))
 
 	for _, subCmd := range cmds {
 		cmd.AddCommand(subCmd)
@@ -204,3 +218,5 @@ func appExport(
 
 	return bApp.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs, modulesToExport)
 }
+
+// CustomGenTxCmd is now defined in custom_gentx.go

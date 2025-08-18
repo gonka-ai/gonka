@@ -6,7 +6,9 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/nats/server"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
@@ -60,6 +62,11 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
+	natssrv := server.NewServer(config.GetNatsConfig())
+	if err := natssrv.Start(); err != nil {
+		panic(err)
+	}
+
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
 		"gonka",
@@ -98,7 +105,7 @@ func main() {
 	}
 
 	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", recorder.ApiAccount.SignerAccount.Name,
+		types.PoC, "name", recorder.GetApiAccount().SignerAccount.Name,
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
@@ -123,7 +130,8 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
+	blsManager := bls.NewBlsManager(*recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsManager)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 
@@ -133,7 +141,7 @@ func main() {
 	// Bridge external block queue
 	blockQueue := pserver.NewBlockQueue(recorder)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue)
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

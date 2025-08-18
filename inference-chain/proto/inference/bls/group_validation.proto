@@ -1,0 +1,44 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/bls/params.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// GroupKeyValidationStatus defines the status of a group key validation process
+enum GroupKeyValidationStatus {
+  // COLLECTING_SIGNATURES indicates validation is in progress, collecting partial signatures
+  GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES = 0;
+  
+  // VALIDATED indicates validation completed successfully with sufficient signatures
+  GROUP_KEY_VALIDATION_STATUS_VALIDATED = 1;
+  
+  // VALIDATION_FAILED indicates validation failed due to insufficient participation or invalid signatures
+  GROUP_KEY_VALIDATION_STATUS_VALIDATION_FAILED = 2;
+}
+
+// GroupKeyValidationState contains the state of a group key validation process for a specific epoch
+message GroupKeyValidationState {
+  // new_epoch_id is the epoch ID of the new epoch whose group public key is being validated
+  uint64 new_epoch_id = 1;
+  
+  // previous_epoch_id is the epoch ID of the previous epoch whose validators are performing the validation
+  uint64 previous_epoch_id = 2;
+  
+  // status indicates the current status of the validation process
+  GroupKeyValidationStatus status = 3;
+  
+  // partial_signatures contains all partial signatures received from participants
+  repeated PartialSignature partial_signatures = 4 [(gogoproto.nullable) = false];
+  
+  // final_signature is the aggregated signature when validation completes successfully (G1 point, 48-byte compressed)
+  bytes final_signature = 5;
+  
+  // message_hash is the keccak256 hash of the encoded validation data that participants sign
+  bytes message_hash = 6;
+  
+  // slots_covered tracks the total number of slots covered by valid partial signatures received
+  uint32 slots_covered = 7;
+}

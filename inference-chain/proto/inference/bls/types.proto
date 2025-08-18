@@ -1,0 +1,130 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// DKGPhase defines the different phases of the Distributed Key Generation process
+enum DKGPhase {
+  // UNDEFINED represents an uninitialized or unknown phase
+  DKG_PHASE_UNDEFINED = 0;
+  
+  // DEALING represents the phase where participants submit their dealing parts
+  DKG_PHASE_DEALING = 1;
+  
+  // VERIFYING represents the phase where participants verify dealing parts
+  DKG_PHASE_VERIFYING = 2;
+  
+  // COMPLETED represents the phase where DKG has successfully completed
+  DKG_PHASE_COMPLETED = 3;
+  
+  // FAILED represents the phase where DKG has failed
+  DKG_PHASE_FAILED = 4;
+  
+  // SIGNED represents the phase where DKG has completed and been validated by previous epoch
+  DKG_PHASE_SIGNED = 5;
+}
+
+// BLSParticipantInfo contains information about a participant in the DKG process
+message BLSParticipantInfo {
+  // address is the participant's address
+  string address = 1;
+  
+  // percentage_weight is the participant's weight in the validation set (as string for sdk.Dec compatibility)
+  string percentage_weight = 2 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false
+  ];
+  
+  // secp256k1_public_key is the participant's secp256k1 public key for encryption
+  bytes secp256k1_public_key = 3;
+  
+  // slot_start_index is the first slot index assigned to this participant
+  uint32 slot_start_index = 4;
+  
+  // slot_end_index is the last slot index assigned to this participant (inclusive)
+  uint32 slot_end_index = 5;
+}
+
+// EncryptedSharesForParticipant contains encrypted shares for a specific participant
+message EncryptedSharesForParticipant {
+  // encrypted_shares contains shares for participant's slot range in order
+  // Index i = share for slot (participant.slot_start_index + i)
+  repeated bytes encrypted_shares = 1;
+}
+
+// DealerPartStorage contains the storage format for a dealer's contribution to DKG
+message DealerPartStorage {
+  // dealer_address is the address of the dealer who submitted this part
+  string dealer_address = 1;
+  
+  // commitments are the G2 points C_kj = g * a_kj representing polynomial commitments
+  repeated bytes commitments = 2;
+  
+  // participant_shares contains encrypted shares for all participants in order
+  // Index i = shares for EpochBLSData.participants[i]
+  repeated EncryptedSharesForParticipant participant_shares = 3;
+}
+
+// VerificationVectorSubmission contains verification results from a specific participant
+message VerificationVectorSubmission {
+  // dealer_validity bitmap indicating which dealers this participant verified as valid
+  // Index i corresponds to EpochBLSData.participants[i] as dealer
+  // true = dealer's shares verified correctly; false = failed verification or no submission
+  // Empty array indicates participant has not submitted verification yet
+  repeated bool dealer_validity = 1;
+}
+
+// EpochBLSData contains all information about a DKG round for a specific epoch
+message EpochBLSData {
+  // epoch_id uniquely identifies this DKG round
+  uint64 epoch_id = 1;
+  
+  // i_total_slots is the total number of slots in the DKG
+  uint32 i_total_slots = 2;
+  
+  // t_slots_degree is the polynomial degree t for the threshold scheme
+  uint32 t_slots_degree = 3;
+  
+  // participants contains information about all participants in this DKG round
+  repeated BLSParticipantInfo participants = 4 [(gogoproto.nullable) = false];
+  
+  // dkg_phase indicates the current phase of the DKG process
+  DKGPhase dkg_phase = 5;
+  
+  // dealing_phase_deadline_block is the block height deadline for the dealing phase
+  int64 dealing_phase_deadline_block = 6;
+  
+  // verifying_phase_deadline_block is the block height deadline for the verification phase
+  int64 verifying_phase_deadline_block = 7;
+  
+  // group_public_key is the final group public key (G2 point) when DKG completes
+  bytes group_public_key = 8;
+  
+  // dealer_parts contains dealer contributions in the same order as participants array
+  // dealer_parts[i] corresponds to participants[i]'s dealer contribution
+  // nil/empty entries indicate that participant has not submitted their dealer part yet
+  repeated DealerPartStorage dealer_parts = 9;
+  
+  // verification_submissions contains verification results from each participant
+  // Each entry tracks which dealers that participant verified as valid
+  repeated VerificationVectorSubmission verification_submissions = 10;
+  
+  // valid_dealers contains the validity of each dealer that was determined during DKG completion
+  // This is populated when the DKG transitions to COMPLETED phase
+  // Index i corresponds to whether dealer i (participants[i]) is valid
+  repeated bool valid_dealers = 11;
+  
+  // validation_signature is the final aggregated signature validating this epoch's group public key
+  // This signature is created by the previous epoch's validators using their BLS slot shares
+  // For Epoch 1 (genesis), this field remains empty (no previous epoch to validate)
+  // For Epoch N+1, stores the signature from Epoch N validators confirming the new group public key
+  // Format: 48-byte G1 compressed signature
+  bytes validation_signature = 12;
+}
+
+ 

@@ -1,0 +1,82 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/bls/params.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// ThresholdSigningStatus defines the different states of a threshold signing request
+enum ThresholdSigningStatus {
+  // UNDEFINED represents an uninitialized or unknown status
+  THRESHOLD_SIGNING_STATUS_UNDEFINED = 0;
+  
+  // PENDING_SIGNING represents the initial state when a signing request is created
+  THRESHOLD_SIGNING_STATUS_PENDING_SIGNING = 1;
+  
+  // COLLECTING_SIGNATURES represents the state when collecting partial signatures from participants
+  THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES = 2;
+  
+  // COMPLETED represents the state when the threshold signature has been successfully created
+  THRESHOLD_SIGNING_STATUS_COMPLETED = 3;
+  
+  // FAILED represents the state when the threshold signing process has failed
+  THRESHOLD_SIGNING_STATUS_FAILED = 4;
+  
+  // EXPIRED represents the state when the deadline has passed without sufficient signatures
+  THRESHOLD_SIGNING_STATUS_EXPIRED = 5;
+}
+
+// SigningData represents the data structure for requesting a threshold signature
+// Used as input to the RequestThresholdSignature keeper method
+message SigningData {
+  // current_epoch_id is the epoch to use for signing (must have completed DKG)
+  uint64 current_epoch_id = 1;
+  
+  // chain_id is the 32-byte chain identifier for cross-chain security
+  bytes chain_id = 2;
+  
+  // request_id is the unique 32-byte identifier provided by the calling module (e.g., tx_hash)
+  bytes request_id = 3;
+  
+  // data is the array of 32-byte data chunks to be signed (Ethereum-compatible format)
+  repeated bytes data = 4;
+}
+
+// ThresholdSigningRequest represents a complete threshold signing request stored on-chain
+message ThresholdSigningRequest {
+  // request_id is the unique 32-byte identifier for this signing request
+  bytes request_id = 1;
+  
+  // current_epoch_id is the epoch being used for signing
+  uint64 current_epoch_id = 2;
+  
+  // chain_id is the 32-byte chain identifier for cross-chain security
+  bytes chain_id = 3;
+  
+  // data is the original array of 32-byte data chunks to be signed
+  repeated bytes data = 4;
+  
+  // encoded_data is the Ethereum-compatible abi.encodePacked result
+  bytes encoded_data = 5;
+  
+  // message_hash is the keccak256 hash of the encoded_data (32 bytes)
+  bytes message_hash = 6;
+  
+  // status is the current state of the signing request
+  ThresholdSigningStatus status = 7;
+  
+  // partial_signatures contains all partial signatures submitted by participants
+  repeated PartialSignature partial_signatures = 8 [(gogoproto.nullable) = false];
+  
+  // final_signature is the aggregated BLS signature (G1 point, 48-byte compressed format)
+  // Only set when status is COMPLETED
+  bytes final_signature = 9;
+  
+  // created_block_height is the block height when this request was created
+  int64 created_block_height = 10;
+  
+  // deadline_block_height is the block height after which this request expires
+  int64 deadline_block_height = 11;
+}

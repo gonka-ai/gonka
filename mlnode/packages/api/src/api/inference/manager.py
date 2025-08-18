@@ -43,16 +43,18 @@ class InferenceManager(IManager):
     def _start(self):
         if self.vllm_runner is None:
             raise Exception("VLLMRunner not initialized")
-        
         if self.is_running():
-            raise Exception("VLLMRunner is running")
-
+            raise Exception("VLLMRunner is already running")
         self.vllm_runner.start()
         logger.info("VLLMRunner started")
 
     def _stop(self):
-        self.vllm_runner.stop()
-        logger.info("VLLMRunner stopped")
+        if self.vllm_runner:
+            self.vllm_runner.stop()
+            logger.info("VLLMRunner stopped")
+        
+        # Clear the runner reference
+        self.vllm_runner = None
 
     def is_running(self) -> bool:
         return self.vllm_runner is not None and self.vllm_runner.is_running()

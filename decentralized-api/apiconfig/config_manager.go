@@ -5,6 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"strings"
+	"sync"
+
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
@@ -12,11 +18,6 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"github.com/productscience/inference/x/inference/types"
-	"io"
-	"log"
-	"os"
-	"strings"
-	"sync"
 )
 
 type ConfigManager struct {
@@ -40,6 +41,12 @@ func LoadDefaultConfigManager() (*ConfigManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = manager.Write()
+	if err != nil {
+		log.Printf("Error writing config: %+v", err)
+		return nil, err
+	}
+	log.Printf("Saved loaded config: %+v", manager.currentConfig)
 	return &manager, nil
 }
 
@@ -68,6 +75,10 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	return cm.currentConfig.Api
+}
+
+func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
+	return cm.currentConfig.Nats
 }
 
 func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
@@ -115,6 +126,18 @@ func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error
 
 func (cm *ConfigManager) GetValidationParams() ValidationParamsCache {
 	return cm.currentConfig.ValidationParams
+}
+
+func (cm *ConfigManager) SetBandwidthParams(params BandwidthParamsCache) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.BandwidthParams = params
+	logging.Info("Setting bandwidth params", types.Config, "params", params)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+func (cm *ConfigManager) GetBandwidthParams() BandwidthParamsCache {
+	return cm.currentConfig.BandwidthParams
 }
 
 func (cm *ConfigManager) AddNodeVersion(height int64, version string) error {

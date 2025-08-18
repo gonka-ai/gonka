@@ -47,7 +47,7 @@ data class KubeExecutor(
      * @param args The command arguments to execute
      * @return The command output as a list of strings
      */
-    override fun exec(args: List<String>): List<String> {
+    override fun exec(args: List<String>, stdin:String?): List<String> {
         try {
             Logger.trace("Executing command in pod $podName: ${args.joinToString(" ")}")
 

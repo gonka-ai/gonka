@@ -12,7 +12,7 @@ import (
 
 func (s *Server) getPricing(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 	req := &types.QueryCurrentEpochGroupDataRequest{}
 	response, err := queryClient.CurrentEpochGroupData(context, req)
 	// FIXME: handle epoch 0, there's a default price specifically for that,
@@ -54,7 +54,7 @@ func (s *Server) getPricing(ctx echo.Context) error {
 
 func (s *Server) getGovernancePricing(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	// Get the unit of compute price from the latest epoch data, as this is always the most current price.
 	response, err := queryClient.CurrentEpochGroupData(context, &types.QueryCurrentEpochGroupDataRequest{})
@@ -187,7 +187,7 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 // getDynamicPricingData queries dynamic pricing information from the chain
 func (s *Server) getDynamicPricingData() (bool, map[string]uint64, error) {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	context := *s.recorder.GetContext()
+	context := s.recorder.GetContext()
 
 	// Get all model prices directly from the chain's KV storage
 	pricesResponse, err := queryClient.GetAllModelPerTokenPrices(context, &types.QueryGetAllModelPerTokenPricesRequest{})

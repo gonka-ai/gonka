@@ -6,6 +6,7 @@ import com.productscience.data.StakeValidatorStatus
 import com.productscience.data.spec
 import com.productscience.getNextStage
 import com.productscience.inferenceConfig
+import com.productscience.inferenceRequestObject
 import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.runParallelInferences
@@ -24,12 +25,12 @@ class ParticipantTests : TestermintTest() {
         // useful for testing gonka client
         val (cluster, genesis) = initCluster()
         val addresses = cluster.allPairs.map {
-            it.api.getPublicUrl() + ";" + it.node.getAddress()
+            it.api.getPublicUrl() + ";" + it.node.getColdAddress()
         }
         val clipboardContent = buildString {
             appendLine("GONKA_ENDPOINTS=" + addresses.joinToString(separator = ","))
-            appendLine("GONKA_ADDRESS=" + genesis.node.getAddress())
-            appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getPrivateKey())
+            appendLine("GONKA_ADDRESS=" + genesis.node.getColdAddress())
+            appendLine("GONKA_PRIVATE_KEY=" + genesis.node.getColdPrivateKey())
         }
 
         Logger.warn(clipboardContent)
@@ -93,7 +94,12 @@ class ParticipantTests : TestermintTest() {
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Running inferences")
-        runParallelInferences(genesis, 50, waitForBlocks = 3, maxConcurrentRequests = 50)
+        val inferenceRequest = inferenceRequestObject.copy(
+            maxTokens = 20 // To not trigger bandwidth limit
+        )
+        runParallelInferences(genesis, 50, waitForBlocks = 3, maxConcurrentRequests = 50,
+            inferenceRequest = inferenceRequest
+        )
         genesis.waitForBlock(2) {
             it.node.getMinimumValidationAverage().minimumValidationAverage < startMin.minimumValidationAverage
         }
