@@ -31,9 +31,13 @@ var (
 	// CollateralKey is the prefix to store collateral for participants
 	CollateralKey = collections.NewPrefix(2)
 
-	// UnbondingKey is the prefix for unbonding entries
+	// UnbondingKey is the legacy prefix for unbonding entries (raw store)
 	// Format: unbonding/{completionEpoch}/{participantAddress}
 	UnbondingKey = []byte("unbonding/")
+
+	// New collections prefixes for UnbondingCollateral IndexedMap and its secondary index
+	UnbondingCollPrefix               = collections.NewPrefix(3)
+	UnbondingByParticipantIndexPrefix = collections.NewPrefix(4)
 
 	// JailedKey is the prefix for jailed participant entries
 	JailedKey = []byte("jailed/")
