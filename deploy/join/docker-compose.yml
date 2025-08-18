@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.21
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.23
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.21
+    image: ghcr.io/product-science/inferenced:0.1.23
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -31,9 +31,9 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=false
-      - IS_GENESIS=false
-      - GENESIS_SEEDS=nodeId1@36.189.234.237:19255,nodeId2@36.189.234.237:19257,nodeId3@36.189.234.237:19237
+      - INIT_ONLY=true
+      - IS_GENESIS=true
+      - GENESIS_SEEDS=nodeId-1@36.189.234.237:19255,nodeId-2@36.189.234.237:19257,nodeId-3@36.189.234.237:19237
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
@@ -45,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.21
+    image: ghcr.io/product-science/api:0.1.23
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -73,7 +73,7 @@ services:
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.21
+    image: ghcr.io/product-science/proxy:0.1.23
     ports:
       - "${API_PORT:-8000}:80"
     environment:
