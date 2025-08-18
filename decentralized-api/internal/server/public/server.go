@@ -76,6 +76,7 @@ func NewServer(
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+	g.GET("debug/block/:height", s.getBlock)
 
 	g.GET("versions", s.getVersions)
 
@@ -89,10 +90,6 @@ func NewServer(
 	blsGroup := g.Group("bls/")
 	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
 	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
-
-
-	g.GET("validators/:height", s.getValidatorsByBlock)
-	g.GET("block/:height", s.getBlock)
 	return s
 }
 

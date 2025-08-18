@@ -63,28 +63,3 @@ func (s *Server) getBlock(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, resp)
 }
-
-func (s *Server) getValidatorsByBlock(c echo.Context) error {
-	blockHeightParam := c.Param("height")
-	if blockHeightParam == "" {
-		return ErrInvalidBlockHeight
-	}
-
-	blockHeight, err := strconv.ParseInt(blockHeightParam, 10, 64)
-	if err != nil {
-		return ErrInvalidBlockHeight
-	}
-
-	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
-	if err != nil {
-		logging.Error("Failed to create rpc client", types.System, "error", err)
-		return err
-	}
-	validators, err := rpcClient.Validators(c.Request().Context(), &blockHeight, nil, nil)
-	if err != nil {
-		logging.Error("Failed to get validators", types.System, "error", err)
-		return err
-	}
-
-	return c.JSON(http.StatusOK, validators)
-}
