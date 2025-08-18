@@ -2,14 +2,14 @@
   "app_state": {
     "gov": {
       "params": {
-        "voting_period": "0h3m0s",
+        "voting_period": "0h1m0s",
         "min_deposit": [
           {
             "denom": "nicoin",
             "amount": "25_000_000"
           }
         ],
-        "expedited_voting_period": "0h2m0s",
+        "expedited_voting_period": "0h0m30s",
         "expedited_min_deposit": [
           {
             "denom": "nicoin",
