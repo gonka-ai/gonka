@@ -2,6 +2,8 @@ package event_listener
 
 import (
 	"context"
+	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
@@ -305,6 +307,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		mockSeedManager,
 		finalReconciliationConfig,
 		mockConfigManager,
+		cosmos_client.InferenceCosmosClient{},
 	)
 
 	return &IntegrationTestSetup{
@@ -393,10 +396,9 @@ func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool
 func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 	// Now call to chain mock will return new blockHeight
 	setup.advanceBlockHeight(height)
-
-	blockInfo := chainphase.BlockInfo{
-		Height: height,
-		Hash:   fmt.Sprintf("hash-%d", height),
+	blockInfo := chainevents.FinalizedBlock{
+		Block:   chainevents.Block{Header: chainevents.Header{Height: fmt.Sprintf("%v", height)}},
+		BlockId: chainevents.BlockId{Hash: fmt.Sprintf("hash-%d", height)},
 	}
 	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
 }

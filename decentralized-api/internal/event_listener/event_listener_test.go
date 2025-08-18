@@ -3,9 +3,6 @@ package event_listener
 import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"encoding/json"
-	"fmt"
-	"github.com/gorilla/websocket"
-	"github.com/stretchr/testify/assert"
 	"log"
 	"testing"
 )
@@ -167,33 +164,4 @@ func Test(t *testing.T) {
 	if len(ids) == 0 {
 		t.Fatalf("no inference ids found")
 	}
-}
-
-func TestDecodeNewBlockEvent(t *testing.T) {
-	websocketUrl := getWebsocketUrl("http://localhost:26657")
-
-	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
-	if err != nil {
-		log.Fatal("dial:", err)
-	}
-
-	subscribeToEvents(ws, 2, "tm.event='NewBlock'")
-	_, _, err = ws.ReadMessage()
-	assert.NoError(t, err)
-
-	_, message, err := ws.ReadMessage()
-	assert.NoError(t, err)
-
-	var event chainevents.JSONRPCResponse
-	err = json.Unmarshal(message, &event)
-	assert.NoError(t, err)
-
-	block := chainevents.FinalizedBlock{}
-	d, err := json.Marshal(event.Result.Data.Value)
-	assert.NoError(t, err)
-
-	err = json.Unmarshal(d, &block)
-	assert.NoError(t, err)
-
-	fmt.Println(block.Block.LastCommit.Signatures)
 }

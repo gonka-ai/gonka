@@ -2,63 +2,69 @@ package chainevents
 
 import "time"
 
-type FinalizedBlock struct {
-	Block struct {
-		Data struct {
-			Txs []string `json:"txs"`
-		} `json:"data"`
-		Evidence struct {
-			Evidence []interface{} `json:"evidence"`
-		} `json:"evidence"`
-		Header struct {
-			AppHash       string `json:"app_hash"`
-			ChainId       string `json:"chain_id"`
-			ConsensusHash string `json:"consensus_hash"`
-			DataHash      string `json:"data_hash"`
-			EvidenceHash  string `json:"evidence_hash"`
-			Height        string `json:"height"`
-			LastBlockId   struct {
-				Hash  string `json:"hash"`
-				Parts struct {
-					Hash  string `json:"hash"`
-					Total int    `json:"total"`
-				} `json:"parts"`
-			} `json:"last_block_id"`
-			LastCommitHash     string    `json:"last_commit_hash"`
-			LastResultsHash    string    `json:"last_results_hash"`
-			NextValidatorsHash string    `json:"next_validators_hash"`
-			ProposerAddress    string    `json:"proposer_address"`
-			Time               time.Time `json:"time"`
-			ValidatorsHash     string    `json:"validators_hash"`
-			Version            struct {
-				Block string `json:"block"`
-			} `json:"version"`
-		} `json:"header"`
-		LastCommit struct {
-			BlockId struct {
-				Hash  string `json:"hash"`
-				Parts struct {
-					Hash  string `json:"hash"`
-					Total int    `json:"total"`
-				} `json:"parts"`
-			} `json:"block_id"`
-			Height     string `json:"height"`
-			Round      int    `json:"round"`
-			Signatures []struct {
-				BlockIdFlag      int       `json:"block_id_flag"`
-				Signature        string    `json:"signature"`
-				Timestamp        time.Time `json:"timestamp"`
-				ValidatorAddress string    `json:"validator_address"`
-			} `json:"signatures"`
-		} `json:"last_commit"`
-	} `json:"block"`
-	BlockId struct {
+type Header struct {
+	AppHash       string `json:"app_hash"`
+	ChainId       string `json:"chain_id"`
+	ConsensusHash string `json:"consensus_hash"`
+	DataHash      string `json:"data_hash"`
+	EvidenceHash  string `json:"evidence_hash"`
+	Height        string `json:"height"`
+	LastBlockId   struct {
 		Hash  string `json:"hash"`
 		Parts struct {
 			Hash  string `json:"hash"`
 			Total int    `json:"total"`
 		} `json:"parts"`
-	} `json:"block_id"`
+	} `json:"last_block_id"`
+	LastCommitHash     string    `json:"last_commit_hash"`
+	LastResultsHash    string    `json:"last_results_hash"`
+	NextValidatorsHash string    `json:"next_validators_hash"`
+	ProposerAddress    string    `json:"proposer_address"`
+	Time               time.Time `json:"time"`
+	ValidatorsHash     string    `json:"validators_hash"`
+	Version            struct {
+		Block string `json:"block"`
+	} `json:"version"`
+}
+
+type Block struct {
+	Data struct {
+		Txs []string `json:"txs"`
+	} `json:"data"`
+	Evidence struct {
+		Evidence []interface{} `json:"evidence"`
+	} `json:"evidence"`
+	Header     Header `json:"header"`
+	LastCommit struct {
+		BlockId struct {
+			Hash  string `json:"hash"`
+			Parts struct {
+				Hash  string `json:"hash"`
+				Total int    `json:"total"`
+			} `json:"parts"`
+		} `json:"block_id"`
+		Height     string `json:"height"`
+		Round      int    `json:"round"`
+		Signatures []struct {
+			BlockIdFlag      int       `json:"block_id_flag"`
+			Signature        string    `json:"signature"`
+			Timestamp        time.Time `json:"timestamp"`
+			ValidatorAddress string    `json:"validator_address"`
+		} `json:"signatures"`
+	} `json:"last_commit"`
+}
+
+type BlockId struct {
+	Hash  string `json:"hash"`
+	Parts struct {
+		Hash  string `json:"hash"`
+		Total int    `json:"total"`
+	} `json:"parts"`
+}
+
+type FinalizedBlock struct {
+	Block               Block   `json:"block"`
+	BlockId             BlockId `json:"block_id"`
 	ResultFinalizeBlock struct {
 		AppHash               string `json:"app_hash"`
 		ConsensusParamUpdates struct {

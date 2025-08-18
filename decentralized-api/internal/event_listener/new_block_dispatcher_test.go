@@ -120,9 +120,9 @@ func TestParseNewBlockInfo(t *testing.T) {
 		},
 	}
 
-	blockInfo, err := parseNewBlockInfo(mockEvent)
+	blockInfo, err := parseFinalizedBlock(mockEvent)
 
 	assert.NoError(t, err)
-	assert.Equal(t, int64(12345), blockInfo.Height)
-	assert.Equal(t, "ABCDEF123456", blockInfo.Hash)
+	assert.Equal(t, "12345", blockInfo.Block.Header.Height)
+	assert.Equal(t, "ABCDEF123456", blockInfo.BlockId.Hash)
 }
