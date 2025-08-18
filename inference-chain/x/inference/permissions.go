@@ -40,6 +40,7 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&blstypes.MsgSubmitVerificationVector{},
 	&blstypes.MsgRequestThresholdSignature{},
 	&blstypes.MsgSubmitPartialSignature{},
+	&blstypes.MsgSubmitGroupKeyValidationSignature{},
 }
 
 func GrantMLOperationalKeyPermissionsToAccount(

@@ -37,7 +37,7 @@ class TokenomicsTests : TestermintTest() {
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(genesis.node.getAddress())
+        assertThat(topMiner.address).isEqualTo(genesis.node.getColdAddress())
         val startTime = topMiner.firstQualifiedStarted
         assertThat(topMiner.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner.lastUpdatedTime).isEqualTo(startTime)
@@ -48,7 +48,7 @@ class TokenomicsTests : TestermintTest() {
         val topMiners2 = genesis.node.getTopMiners()
         assertThat(topMiners2.topMiner).hasSize(1)
         val topMiner2 = topMiners2.topMiner.first()
-        assertThat(topMiner2.address).isEqualTo(genesis.node.getAddress())
+        assertThat(topMiner2.address).isEqualTo(genesis.node.getColdAddress())
         assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
         val epochLength = genesis.getParams().epochParams.epochLength
@@ -92,7 +92,7 @@ class TokenomicsTests : TestermintTest() {
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(firstJoin.node.getAddress())
+        assertThat(topMiner.address).isEqualTo(firstJoin.node.getColdAddress())
         val standardizedExpectedReward = getTopMinerReward(localCluster)
         val currentBalance = firstJoin.node.getSelfBalance("nicoin")
         // greater, because it's done validation work at some point, no doubt.

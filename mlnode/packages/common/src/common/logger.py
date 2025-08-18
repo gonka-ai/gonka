@@ -1,4 +1,7 @@
 import logging
+import os
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 
 def create_logger(name):
@@ -8,7 +11,7 @@ def create_logger(name):
 
 def setup_logger(
     logger: logging.Logger,
-    log_level: int = logging.INFO
+    log_level: str = LOG_LEVEL
 ) -> logging.Logger:
     logger.setLevel(log_level)
     handler = logging.StreamHandler()  # Outputs to console

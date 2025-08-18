@@ -43,7 +43,7 @@ func (s *Server) postTrainingTask(ctx echo.Context) error {
 
 func (s *Server) getTrainingTasks(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	tasks, err := queryClient.TrainingTaskAll(*s.recorder.GetContext(), &types.QueryTrainingTaskAllRequest{})
+	tasks, err := queryClient.TrainingTaskAll(s.recorder.GetContext(), &types.QueryTrainingTaskAllRequest{})
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (s *Server) getTrainingTask(ctx echo.Context) error {
 	}
 
 	queryClient := s.recorder.NewInferenceQueryClient()
-	task, err := queryClient.TrainingTask(*s.recorder.GetContext(), &types.QueryTrainingTaskRequest{Id: uintId})
+	task, err := queryClient.TrainingTask(s.recorder.GetContext(), &types.QueryTrainingTaskRequest{Id: uintId})
 	if err != nil {
 		return err
 	}

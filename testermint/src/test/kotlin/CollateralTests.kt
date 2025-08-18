@@ -15,7 +15,7 @@ class CollateralTests : TestermintTest() {
     fun `a participant can deposit collateral and withdraw it`() {
         val (cluster, genesis) = initCluster(reboot = true)
         val participant = cluster.genesis
-        val participantAddress = participant.node.getAddress()
+        val participantAddress = participant.node.getColdAddress()
 
         logSection("Despositing collateral")
 
@@ -108,7 +108,7 @@ class CollateralTests : TestermintTest() {
         )
 
         val (cluster, genesis) = initCluster(config = fastExpirationConfig, reboot = true)
-        val genesisAddress = genesis.node.getAddress()
+        val genesisAddress = genesis.node.getColdAddress()
         val depositAmount = 1000L
 
         val timeoutsAtStart = genesis.node.getInferenceTimeouts()

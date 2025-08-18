@@ -1,4 +1,4 @@
-package cosmosclient
+package tx_manager
 
 import (
 	"fmt"

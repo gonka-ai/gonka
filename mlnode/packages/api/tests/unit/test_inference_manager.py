@@ -47,5 +47,5 @@ def test_inference_manager_start_already_running():
     )
     manager.init_vllm(request)
     manager.start()
-    with pytest.raises(Exception, match="is running"):
+    with pytest.raises(Exception, match="already running"):
         manager.start()

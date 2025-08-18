@@ -71,7 +71,7 @@ func (s *Server) resolveEpochFromContext(c echo.Context) (uint64, error) {
 
 	if epochParam == "current" {
 		queryClient := s.recorder.NewInferenceQueryClient()
-		currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
+		currEpoch, err := queryClient.GetCurrentEpoch(s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 		if err != nil {
 			logging.Error("Failed to get current epoch", types.Participants, "error", err)
 			return 0, err

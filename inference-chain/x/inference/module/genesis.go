@@ -50,6 +50,11 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	k.SetGenesisOnlyParams(ctx, &genesisOnlyParams)
 
+	// Import participants provided in genesis
+	for _, p := range genState.ParticipantList {
+		k.SetParticipant(ctx, p)
+	}
+
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -216,6 +221,9 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		genesis.CosmWasmParams = contractsParams
 	}
 	genesis.ModelList = getModels(&ctx, &k)
+	// Export participants
+	participants := k.GetAllParticipant(ctx)
+	genesis.ParticipantList = participants
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis
