@@ -133,6 +133,16 @@ func (k Keeper) transferVestingSchedule(ctx context.Context, genesisAccount sdk.
 	// Set the new vesting account for the recipient
 	k.accountKeeper.SetAccount(ctx, newVestingAccount)
 
+	// Convert the original genesis account to a regular BaseAccount (cleanup)
+	// This removes the vesting account structure since all assets have been transferred
+	baseAccount := authtypes.NewBaseAccount(
+		genesisAccount.GetAddress(),
+		genesisAccount.GetPubKey(),
+		genesisAccount.GetAccountNumber(),
+		genesisAccount.GetSequence(),
+	)
+	k.accountKeeper.SetAccount(ctx, baseAccount)
+
 	// Log successful vesting transfer
 	k.Logger().Info(
 		"vesting schedule transfer completed",
