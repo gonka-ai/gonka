@@ -187,19 +187,89 @@ func TestIsGasFeePayment(t *testing.T) {
 }
 
 func TestIsModuleAccount(t *testing.T) {
-	keeper, _ := keepertest.RestrictionsKeeper(t)
+	keeper, ctx := keepertest.RestrictionsKeeper(t)
 
 	// Known module accounts should be detected
 	feeCollector := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
-	require.True(t, keeper.IsModuleAccount(feeCollector))
+	require.True(t, keeper.IsModuleAccount(ctx, feeCollector))
 
 	inference := authtypes.NewModuleAddress("inference")
-	require.True(t, keeper.IsModuleAccount(inference))
+	require.True(t, keeper.IsModuleAccount(ctx, inference))
 
 	gov := authtypes.NewModuleAddress("gov")
-	require.True(t, keeper.IsModuleAccount(gov))
+	require.True(t, keeper.IsModuleAccount(ctx, gov))
+
+	// Test special sub-accounts (the main focus of this enhancement)
+	topReward := authtypes.NewModuleAddress("top_reward")
+	require.True(t, keeper.IsModuleAccount(ctx, topReward))
+
+	preProgrammedSale := authtypes.NewModuleAddress("pre_programmed_sale")
+	require.True(t, keeper.IsModuleAccount(ctx, preProgrammedSale))
+
+	// Test other important module accounts
+	distribution := authtypes.NewModuleAddress("distribution")
+	require.True(t, keeper.IsModuleAccount(ctx, distribution))
+
+	streamvesting := authtypes.NewModuleAddress("streamvesting")
+	require.True(t, keeper.IsModuleAccount(ctx, streamvesting))
+
+	collateral := authtypes.NewModuleAddress("collateral")
+	require.True(t, keeper.IsModuleAccount(ctx, collateral))
 
 	// Regular address should not be detected as module account
 	regular := sdk.AccAddress("regular_user_addr___")
-	require.False(t, keeper.IsModuleAccount(regular))
+	require.False(t, keeper.IsModuleAccount(ctx, regular))
+}
+
+func TestSpecialModuleAccountTransfers(t *testing.T) {
+	keeper, ctx := keepertest.RestrictionsKeeper(t)
+
+	// Set up restriction parameters (active restrictions)
+	params := types.DefaultParams()
+	params.RestrictionEndBlock = uint64(ctx.BlockHeight()) + 1000
+	keeper.SetParams(ctx, params)
+
+	// Test addresses
+	userAddr := sdk.AccAddress("user_address_test___")
+	anotherUser := sdk.AccAddress("another_user_test___")
+
+	// Special module-controlled accounts
+	topRewardAddr := authtypes.NewModuleAddress("top_reward")
+	preProgrammedSaleAddr := authtypes.NewModuleAddress("pre_programmed_sale")
+	inferenceAddr := authtypes.NewModuleAddress("inference")
+
+	testCoins := sdk.NewCoins(sdk.NewCoin("ugonka", math.NewInt(100)))
+
+	// Test 1: Transfers FROM special accounts should be allowed (module operations)
+	newTo, err := keeper.SendRestrictionFn(sdk.WrapSDKContext(ctx), topRewardAddr, userAddr, testCoins)
+	require.NoError(t, err)
+	require.Equal(t, userAddr, newTo)
+
+	newTo, err = keeper.SendRestrictionFn(sdk.WrapSDKContext(ctx), preProgrammedSaleAddr, userAddr, testCoins)
+	require.NoError(t, err)
+	require.Equal(t, userAddr, newTo)
+
+	// Test 2: Transfers TO special accounts should be allowed (user-to-module)
+	newTo, err = keeper.SendRestrictionFn(sdk.WrapSDKContext(ctx), userAddr, topRewardAddr, testCoins)
+	require.NoError(t, err)
+	require.Equal(t, topRewardAddr, newTo)
+
+	newTo, err = keeper.SendRestrictionFn(sdk.WrapSDKContext(ctx), userAddr, preProgrammedSaleAddr, testCoins)
+	require.NoError(t, err)
+	require.Equal(t, preProgrammedSaleAddr, newTo)
+
+	// Test 3: Module-to-module transfers should be allowed
+	newTo, err = keeper.SendRestrictionFn(sdk.WrapSDKContext(ctx), topRewardAddr, inferenceAddr, testCoins)
+	require.NoError(t, err)
+	require.Equal(t, inferenceAddr, newTo)
+
+	// Test 4: User-to-user transfers should still be restricted
+	_, err = keeper.SendRestrictionFn(sdk.WrapSDKContext(ctx), userAddr, anotherUser, testCoins)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "user-to-user transfers are restricted")
+
+	// Test 5: Verify special accounts are properly detected
+	require.True(t, keeper.IsModuleAccount(ctx, topRewardAddr))
+	require.True(t, keeper.IsModuleAccount(ctx, preProgrammedSaleAddr))
+	require.False(t, keeper.IsModuleAccount(ctx, userAddr))
 }

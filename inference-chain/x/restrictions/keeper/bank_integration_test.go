@@ -74,6 +74,43 @@ func (m *MockBankKeeper) SendCoins(ctx context.Context, fromAddr, toAddr sdk.Acc
 	return nil
 }
 
+// MockAccountKeeper implements a simple account keeper for integration testing
+type MockAccountKeeper struct {
+	accounts map[string]sdk.AccountI
+}
+
+func (m *MockAccountKeeper) GetAccount(ctx context.Context, addr sdk.AccAddress) sdk.AccountI {
+	addrStr := addr.String()
+	if account, exists := m.accounts[addrStr]; exists {
+		return account
+	}
+
+	// For testing purposes, check if this is a known module address
+	knownModules := []string{
+		"fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov",
+		"inference", "streamvesting", "collateral", "bookkeeper", "bls", "genesistransfer", "restrictions",
+		"top_reward", "pre_programmed_sale", // Special accounts
+	}
+
+	for _, moduleName := range knownModules {
+		moduleAddr := authtypes.NewModuleAddress(moduleName)
+		if addr.Equals(moduleAddr) {
+			// Create and cache a mock module account
+			moduleAccount := &authtypes.ModuleAccount{
+				BaseAccount: &authtypes.BaseAccount{Address: addrStr},
+				Name:        moduleName,
+			}
+			m.accounts[addrStr] = moduleAccount
+			return moduleAccount
+		}
+	}
+
+	// Create and cache a regular account for non-module addresses
+	baseAccount := &authtypes.BaseAccount{Address: addrStr}
+	m.accounts[addrStr] = baseAccount
+	return baseAccount
+}
+
 func (m *MockBankKeeper) SetBalance(addr sdk.AccAddress, coins sdk.Coins) {
 	m.balances[addr.String()] = coins
 }
@@ -103,12 +140,16 @@ func setupIntegrationKeepers(t testing.TB) (sdk.Context, restrictionskeeper.Keep
 	// --- Mock Bank Keeper ---
 	bankKeeper := NewMockBankKeeper()
 
+	// --- Mock Account Keeper ---
+	accountKeeper := &MockAccountKeeper{accounts: make(map[string]sdk.AccountI)}
+
 	// --- Real Restrictions Keeper ---
 	restrictionsKeeper := restrictionskeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(restrictionsStoreKey),
 		log.NewNopLogger(),
 		authority.String(),
+		accountKeeper,
 		bankKeeper,
 	)
 

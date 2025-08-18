@@ -22,6 +22,36 @@ import (
 	"github.com/productscience/inference/x/restrictions/types"
 )
 
+// SimpleAccountKeeper is a simple mock for testing
+type SimpleAccountKeeper struct{}
+
+func (m *SimpleAccountKeeper) GetAccount(ctx context.Context, addr sdk.AccAddress) sdk.AccountI {
+	// For testing purposes, simulate what the real AccountKeeper would return
+	// Module accounts are created by modules during genesis/runtime, so we simulate this
+	addrStr := addr.String()
+
+	// Check if this address matches any module account address
+	knownModules := []string{
+		"fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov",
+		"inference", "streamvesting", "collateral", "bookkeeper", "bls", "genesistransfer", "restrictions",
+		"top_reward", "pre_programmed_sale", // Special accounts
+	}
+
+	for _, moduleName := range knownModules {
+		moduleAddr := authtypes.NewModuleAddress(moduleName)
+		if addr.Equals(moduleAddr) {
+			// Return a mock module account (simulating what real modules would create)
+			return &authtypes.ModuleAccount{
+				BaseAccount: &authtypes.BaseAccount{Address: addrStr},
+				Name:        moduleName,
+			}
+		}
+	}
+
+	// Return a regular account for non-module addresses
+	return &authtypes.BaseAccount{Address: addrStr}
+}
+
 // SimpleBankKeeper is a simple mock for testing
 type SimpleBankKeeper struct{}
 
@@ -50,6 +80,7 @@ func RestrictionsKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 		runtime.NewKVStoreService(storeKey),
 		log.NewNopLogger(),
 		authority.String(),
+		&SimpleAccountKeeper{},
 		&SimpleBankKeeper{},
 	)
 

@@ -358,4 +358,22 @@ Each task includes:
 - **Dependencies**: All previous tasks
 - **Result**: ✅ **COMPLETED** - Full CLI-first architecture with comprehensive autocli.go configuration. All restrictions functionality available through standard Cosmos SDK CLI commands: `inferenced query restrictions [status|exemptions|exemption-usage|params]` and `inferenced tx restrictions execute-emergency-transfer`. Decentralized API provides read-only query access for monitoring. All builds pass, tests demonstrate complete CLI workflows. Architecture follows Cosmos SDK security best practices.
 
-**COMPLETE PROJECT SUMMARY**: This task plan successfully implements a complete transfer restrictions system as an independent x/restrictions module that can be reused by any Cosmos SDK chain. The system restricts user-to-user transfers during bootstrap periods while preserving essential operations (gas payments, protocol interactions). It includes governance-controlled emergency exemptions, automatic cleanup, comprehensive testing, **CLI-only transaction interface following Cosmos SDK best practices**, read-only API query access, and complete documentation to ensure security, reliability, and operational readiness. The final implementation prioritizes security by routing all state changes through standard CLI/gRPC interfaces rather than custom API endpoints.
+### Section 7: Special Module Account Support
+
+#### 7.1 Enhanced Module Account Detection
+- **Task**: [x] Implement universal module account detection for special accounts
+- **What**: Replace hardcoded module account detection with universal system that automatically handles all module-controlled accounts:
+  - Replace hardcoded list in `IsModuleAccount()` with dynamic detection using AccountKeeper
+  - Add support for special sub-accounts like `TopRewardPoolAccName` ("top_reward") and `PreProgrammedSaleAccName` ("pre_programmed_sale")
+  - Implement multi-method detection: AccountKeeper type check → Registry lookup → Address pattern analysis
+  - Build module account registry from app configuration at initialization
+  - Ensure all module-controlled accounts (standard modules + special sub-accounts) are automatically permitted
+- **Where**:
+  - `inference-chain/x/restrictions/keeper/send_restriction.go` (update `IsModuleAccount()` function)
+  - `inference-chain/x/restrictions/keeper/keeper.go` (add registry initialization and helper methods)
+  - `inference-chain/x/restrictions/keeper/send_restriction_test.go` (add tests for special accounts)
+- **Why**: Current hardcoded approach misses special module-controlled accounts like top_reward and pre_programmed_sale, which should be exempt from transfer restrictions. Universal detection ensures all module accounts are properly handled without manual maintenance.
+- **Dependencies**: All previous sections
+- **Result**: ✅ **COMPLETED** - Successfully implemented universal module account detection system. Enhanced `IsModuleAccount()` with three-tier detection: (1) AccountKeeper type checking for definitive module account identification, (2) Registry-based lookup for all known module accounts including special sub-accounts, (3) Address pattern analysis as fallback. Added `initializeModuleAccountRegistry()` that populates cache with standard SDK modules, chain-specific modules, and special accounts (top_reward, pre_programmed_sale). Updated all keeper constructors and test helpers to include AccountKeeper dependency. Added comprehensive test `TestSpecialModuleAccountTransfers()` covering all transfer scenarios with special accounts. All 42 tests pass, full build verification successful. Special module-controlled accounts now properly exempt from transfer restrictions while maintaining security for user-to-user transfers. 
+
+**COMPLETE PROJECT SUMMARY**: This task plan successfully implements a complete transfer restrictions system as an independent x/restrictions module that can be reused by any Cosmos SDK chain. The system restricts user-to-user transfers during bootstrap periods while preserving essential operations (gas payments, protocol interactions). It includes governance-controlled emergency exemptions, automatic cleanup, comprehensive testing, **CLI-only transaction interface following Cosmos SDK best practices**, read-only API query access, universal module account detection for special accounts, and complete documentation to ensure security, reliability, and operational readiness. The final implementation prioritizes security by routing all state changes through standard CLI/gRPC interfaces rather than custom API endpoints.

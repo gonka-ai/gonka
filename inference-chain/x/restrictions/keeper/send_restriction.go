@@ -29,13 +29,13 @@ func (k Keeper) SendRestrictionFn(ctx context.Context, from, to sdk.AccAddress, 
 
 	// 2. PERMITTED - User-to-Module Transfers
 	// Any transfer from user to module account is allowed (inference escrow, governance deposits, etc.)
-	if k.IsModuleAccount(to) {
+	if k.IsModuleAccount(sdkCtx, to) {
 		return to, nil
 	}
 
 	// 3. PERMITTED - Module Operations
 	// Any transfer from module account to any account is allowed (rewards, refunds, etc.)
-	if k.IsModuleAccount(from) {
+	if k.IsModuleAccount(sdkCtx, from) {
 		return to, nil
 	}
 
@@ -72,46 +72,19 @@ func (k Keeper) IsGasFeePayment(toAddr sdk.AccAddress) bool {
 }
 
 // IsModuleAccount checks if the given address is a module account
-func (k Keeper) IsModuleAccount(addr sdk.AccAddress) bool {
-	// Check if it's a known module account by trying to get the module name
-	// This is a simple check - in practice, you might want to maintain a registry
-	// or use the account keeper to check if it's a module account
-
-	// Common module accounts we know about
-	knownModules := []string{
-		authtypes.FeeCollectorName,
-		"inference",
-		"streamvesting",
-		"collateral",
-		"bookkeeper",
-		"gov",
-		"distribution",
-		"bonded_tokens_pool",
-		"not_bonded_tokens_pool",
-		"mint",
-		"bls",
-		"genesistransfer",
-	}
-
-	for _, moduleName := range knownModules {
-		moduleAddr := authtypes.NewModuleAddress(moduleName)
-		if addr.Equals(moduleAddr) {
+func (k Keeper) IsModuleAccount(ctx sdk.Context, addr sdk.AccAddress) bool {
+	// Check using AccountKeeper - this is the definitive method
+	// This works for all module accounts regardless of how they were created
+	account := k.accountKeeper.GetAccount(ctx, addr)
+	if account != nil {
+		// Check if it's a module account type
+		if _, isModuleAccount := account.(*authtypes.ModuleAccount); isModuleAccount {
 			return true
 		}
 	}
 
-	// Additional check: if the address has the module account prefix
-	// Module accounts typically have addresses that start with specific patterns
-	// This is a heuristic check
-	addrStr := addr.String()
-	if len(addrStr) >= 20 && (addrStr[:4] == "cosm" || addrStr[:7] == "cosmos1") {
-		// Check if it looks like a module account (typically longer and with specific patterns)
-		// This is not foolproof but helps catch most module accounts
-		if len(addrStr) > 50 {
-			return true
-		}
-	}
-
+	// If AccountKeeper doesn't have the account or it's not a ModuleAccount type,
+	// then it's not a module account
 	return false
 }
 
