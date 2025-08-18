@@ -154,20 +154,43 @@ The Cosmos SDK bank module provides a `SendRestriction` interface that allows cu
 ### 4.1. Restriction Timeline
 
 **Activation Block**: Genesis block (height 0)
-**End Block**: 1,555,000
+**End Block**: 1,555,000 (production - set via genesis configuration)
+**Default Parameter**: 0 (no restrictions - for testing/testnet environments)
 **Estimated Duration**: Approximately 90 days (assuming 5-second block times)
 
 **Block Height Calculation:**
 ```
 Restriction Duration: 1,555,000 blocks
-Block Time: ~6 seconds average
-Total Duration: 1,555,000 × 6 seconds = 9,330,000 seconds ≈ 180 days
+Block Time: ~5 seconds average
+Total Duration: 1,555,000 × 5 seconds = 7,775,000 seconds ≈ 90 days
 ```
 
-### 4.2. Automatic Restriction Lifting
+### 4.2. Parameter Configuration Strategy
+
+**Default Behavior**: The module defaults to `restriction_end_block: 0` to support different deployment scenarios:
+
+- **Testing/Development**: Default `0` allows unrestricted transfers for local development and testing
+- **Testnet Deployment**: Default `0` enables full functionality testing without restrictions  
+- **Production Networks**: Must explicitly set `1,555,000` (or desired block height) in genesis configuration
+
+**Genesis Configuration**: Production networks should include restriction parameters in genesis:
+```json
+{
+  "app_state": {
+    "restrictions": {
+      "params": {
+        "restriction_end_block": "1555000"
+      }
+    }
+  }
+}
+```
+
+### 4.3. Automatic Restriction Lifting
 
 **Implementation**: `IsRestrictionActive()` function in `inference-chain/x/restrictions/keeper/keeper.go`
-- Compares current block height against `RestrictionEndBlock` governance parameter (default: 1,555,000)
+- Compares current block height against `RestrictionEndBlock` governance parameter
+- Returns `false` when current height >= end block OR when end block is 0, effectively disabling all restrictions
 - Returns boolean indicating if restrictions should be enforced
 - **SendRestriction Auto-Unregistration**: When restrictions expire, the module automatically unregisters the SendRestriction function to eliminate unnecessary performance overhead
 

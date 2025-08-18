@@ -19,7 +19,9 @@ var (
 
 // Default parameter values
 const (
-	DefaultRestrictionEndBlock = uint64(1555000) // Default: 1,555,000 blocks (~180 days)
+	// Default: 0 (no restrictions) - for testing/testnet.
+	// Production should set 1,555,000 blocks (~90 days) in genesis
+	DefaultRestrictionEndBlock = uint64(0)
 )
 
 // ParamKeyTable the param key table for launch module

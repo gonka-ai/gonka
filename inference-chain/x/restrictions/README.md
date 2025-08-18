@@ -31,8 +31,9 @@ func (app *App) RegisterModules() {
 ### Restriction End Block
 - **Key**: `restriction_end_block`
 - **Type**: `uint64`
-- **Default**: `1,555,000` (approximately 180 days)
-- **Description**: Block height when transfer restrictions automatically end
+- **Default**: `0` (no restrictions - for testing/testnet)
+- **Production**: `1,555,000` (approximately 90 days) - set via genesis configuration
+- **Description**: Block height when transfer restrictions automatically end. Default 0 allows unrestricted transfers for testing environments.
 
 ### Emergency Transfer Exemptions
 - **Key**: `emergency_transfer_exemptions`

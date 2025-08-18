@@ -51,7 +51,6 @@ func (k msgServer) TransferOwnership(goCtx context.Context, msg *types.MsgTransf
 		"ownership transfer message processed successfully",
 		"genesis_address", msg.GenesisAddress,
 		"recipient_address", msg.RecipientAddress,
-		"authority", msg.Authority,
 	)
 
 	return &types.MsgTransferOwnershipResponse{}, nil

@@ -46,17 +46,14 @@ message MsgUpdateParamsResponse {}
 
 // MsgTransferOwnership is the Msg/TransferOwnership request type.
 message MsgTransferOwnership {
-  option (cosmos.msg.v1.signer) = "authority";
+  option (cosmos.msg.v1.signer) = "genesis_address";
   option (amino.name) = "inference/x/genesistransfer/MsgTransferOwnership";
 
-  // authority is the address that controls the genesis account being transferred
-  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-
-  // genesis_address is the source genesis account to transfer from
-  string genesis_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // genesis_address is the source genesis account to transfer from (must be the signer)
+  string genesis_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   
   // recipient_address is the destination account to transfer ownership to
-  string recipient_address = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string recipient_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 }
 
 // MsgTransferOwnershipResponse defines the response structure for executing a

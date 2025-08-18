@@ -7,6 +7,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/genesistransfer/keeper"
 	"github.com/productscience/inference/x/genesistransfer/types"
@@ -44,9 +45,11 @@ func (suite *MsgServerTestSuite) TestMsgServerSetup() {
 
 // Test TransferOwnership message with valid scenarios
 func (suite *MsgServerTestSuite) TestTransferOwnership_ValidScenarios() {
-	// Test addresses - using string-based addresses like other tests
-	genesisAddr := sdk.AccAddress("genesis_msg_test____")
-	recipientAddr := sdk.AccAddress("recipient_msg_test_")
+	// Test addresses - using real bech32 addresses from testutil
+	genesisAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	suite.Require().NoError(err)
+	recipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+	suite.Require().NoError(err)
 
 	suite.Run("successful_liquid_balance_transfer", func() {
 		// This test will be simplified since we can't easily mock the keepers
@@ -54,7 +57,6 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_ValidScenarios() {
 
 		// Create transfer message with valid addresses
 		msg := &types.MsgTransferOwnership{
-			Authority:        genesisAddr.String(),
 			GenesisAddress:   genesisAddr.String(),
 			RecipientAddress: recipientAddr.String(),
 		}
@@ -72,12 +74,13 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_ValidScenarios() {
 
 	suite.Run("successful_vesting_account_transfer", func() {
 		// Create new addresses for this test
-		vestingGenesisAddr := sdk.AccAddress("vesting_genesis_____")
-		vestingRecipientAddr := sdk.AccAddress("vesting_recipient__")
+		vestingGenesisAddr, err := sdk.AccAddressFromBech32(testutil.Executor)
+		suite.Require().NoError(err)
+		vestingRecipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+		suite.Require().NoError(err)
 
 		// Create transfer message
 		msg := &types.MsgTransferOwnership{
-			Authority:        vestingGenesisAddr.String(),
 			GenesisAddress:   vestingGenesisAddr.String(),
 			RecipientAddress: vestingRecipientAddr.String(),
 		}
@@ -92,25 +95,13 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_ValidScenarios() {
 
 // Test TransferOwnership message validation
 func (suite *MsgServerTestSuite) TestTransferOwnership_MessageValidation() {
-	validGenesisAddr := sdk.AccAddress("valid_genesis_______")
-	validRecipientAddr := sdk.AccAddress("valid_recipient____")
-
-	suite.Run("invalid_authority_address", func() {
-		msg := &types.MsgTransferOwnership{
-			Authority:        "invalid_address",
-			GenesisAddress:   validGenesisAddr.String(),
-			RecipientAddress: validRecipientAddr.String(),
-		}
-
-		resp, err := suite.msgServer.TransferOwnership(suite.ctx, msg)
-		suite.Require().Error(err)
-		suite.Require().Nil(resp)
-		suite.Require().Contains(err.Error(), "invalid message")
-	})
+	validGenesisAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	suite.Require().NoError(err)
+	validRecipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+	suite.Require().NoError(err)
 
 	suite.Run("invalid_genesis_address", func() {
 		msg := &types.MsgTransferOwnership{
-			Authority:        validGenesisAddr.String(),
 			GenesisAddress:   "invalid_address",
 			RecipientAddress: validRecipientAddr.String(),
 		}
@@ -123,7 +114,6 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_MessageValidation() {
 
 	suite.Run("invalid_recipient_address", func() {
 		msg := &types.MsgTransferOwnership{
-			Authority:        validGenesisAddr.String(),
 			GenesisAddress:   validGenesisAddr.String(),
 			RecipientAddress: "invalid_address",
 		}
@@ -134,23 +124,8 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_MessageValidation() {
 		suite.Require().Contains(err.Error(), "invalid recipient address")
 	})
 
-	suite.Run("authority_mismatch_genesis", func() {
-		differentAddr := sdk.AccAddress("different_addr_____")
-		msg := &types.MsgTransferOwnership{
-			Authority:        differentAddr.String(),
-			GenesisAddress:   validGenesisAddr.String(),
-			RecipientAddress: validRecipientAddr.String(),
-		}
-
-		resp, err := suite.msgServer.TransferOwnership(suite.ctx, msg)
-		suite.Require().Error(err)
-		suite.Require().Nil(resp)
-		suite.Require().Contains(err.Error(), "invalid message")
-	})
-
 	suite.Run("self_transfer", func() {
 		msg := &types.MsgTransferOwnership{
-			Authority:        validGenesisAddr.String(),
 			GenesisAddress:   validGenesisAddr.String(),
 			RecipientAddress: validGenesisAddr.String(),
 		}
@@ -164,13 +139,15 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_MessageValidation() {
 
 // Test one-time transfer enforcement
 func (suite *MsgServerTestSuite) TestTransferOwnership_OneTimeEnforcement() {
-	genesisAddr := sdk.AccAddress("one_time_genesis____")
-	recipientAddr1 := sdk.AccAddress("recipient1_________")
-	recipientAddr2 := sdk.AccAddress("recipient2_________")
+	genesisAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	suite.Require().NoError(err)
+	recipientAddr1, err := sdk.AccAddressFromBech32(testutil.Requester)
+	suite.Require().NoError(err)
+	recipientAddr2, err := sdk.AccAddressFromBech32(testutil.Executor)
+	suite.Require().NoError(err)
 
 	// Test first transfer attempt - will fail due to non-existent account
 	msg1 := &types.MsgTransferOwnership{
-		Authority:        genesisAddr.String(),
 		GenesisAddress:   genesisAddr.String(),
 		RecipientAddress: recipientAddr1.String(),
 	}
@@ -182,7 +159,6 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_OneTimeEnforcement() {
 
 	// Test second transfer attempt - should also fail for the same reason
 	msg2 := &types.MsgTransferOwnership{
-		Authority:        genesisAddr.String(),
 		GenesisAddress:   genesisAddr.String(),
 		RecipientAddress: recipientAddr2.String(),
 	}
@@ -195,11 +171,12 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_OneTimeEnforcement() {
 
 // Test transfer with non-existent genesis account
 func (suite *MsgServerTestSuite) TestTransferOwnership_NonExistentAccount() {
-	nonExistentAddr := sdk.AccAddress("non_existent_______")
-	recipientAddr := sdk.AccAddress("any_recipient______")
+	nonExistentAddr, err := sdk.AccAddressFromBech32(testutil.Executor)
+	suite.Require().NoError(err)
+	recipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+	suite.Require().NoError(err)
 
 	msg := &types.MsgTransferOwnership{
-		Authority:        nonExistentAddr.String(),
 		GenesisAddress:   nonExistentAddr.String(),
 		RecipientAddress: recipientAddr.String(),
 	}
@@ -212,13 +189,14 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_NonExistentAccount() {
 
 // Test parameter validation and whitelist enforcement
 func (suite *MsgServerTestSuite) TestTransferOwnership_WhitelistEnforcement() {
-	genesisAddr := sdk.AccAddress("whitelist_genesis___")
-	recipientAddr := sdk.AccAddress("whitelist_recipient")
+	genesisAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	suite.Require().NoError(err)
+	recipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+	suite.Require().NoError(err)
 
 	suite.Run("whitelist_disabled_should_pass", func() {
 		// Test with whitelist disabled (default state)
 		msg := &types.MsgTransferOwnership{
-			Authority:        genesisAddr.String(),
 			GenesisAddress:   genesisAddr.String(),
 			RecipientAddress: recipientAddr.String(),
 		}
@@ -232,12 +210,13 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_WhitelistEnforcement() {
 
 	suite.Run("whitelist_enabled_address_in_list", func() {
 		// Create new addresses for this test
-		whitelistGenesisAddr := sdk.AccAddress("whitelist_addr_____")
-		whitelistRecipientAddr := sdk.AccAddress("whitelist_recip____")
+		whitelistGenesisAddr, err := sdk.AccAddressFromBech32(testutil.Executor)
+		suite.Require().NoError(err)
+		whitelistRecipientAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+		suite.Require().NoError(err)
 
 		// Test message validation with whitelist enabled
 		msg := &types.MsgTransferOwnership{
-			Authority:        whitelistGenesisAddr.String(),
 			GenesisAddress:   whitelistGenesisAddr.String(),
 			RecipientAddress: whitelistRecipientAddr.String(),
 		}
@@ -250,13 +229,14 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_WhitelistEnforcement() {
 	})
 
 	suite.Run("whitelist_enabled_address_not_in_list", func() {
-		// Create new addresses for this test
-		notAllowedAddr := sdk.AccAddress("not_allowed_addr___")
-		someRecipientAddr := sdk.AccAddress("some_recipient____")
+		// Create new addresses for this test - using different addresses from the whitelist
+		notAllowedAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+		suite.Require().NoError(err)
+		someRecipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+		suite.Require().NoError(err)
 
 		// Test message validation
 		msg := &types.MsgTransferOwnership{
-			Authority:        notAllowedAddr.String(),
 			GenesisAddress:   notAllowedAddr.String(),
 			RecipientAddress: someRecipientAddr.String(),
 		}
@@ -271,13 +251,14 @@ func (suite *MsgServerTestSuite) TestTransferOwnership_WhitelistEnforcement() {
 
 // Test error handling scenarios
 func (suite *MsgServerTestSuite) TestTransferOwnership_ErrorHandling() {
-	genesisAddr := sdk.AccAddress("error_genesis_______")
-	recipientAddr := sdk.AccAddress("error_recipient____")
+	genesisAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	suite.Require().NoError(err)
+	recipientAddr, err := sdk.AccAddressFromBech32(testutil.Requester)
+	suite.Require().NoError(err)
 
 	suite.Run("account_with_zero_balance", func() {
 		// Test with account that would have zero balance
 		msg := &types.MsgTransferOwnership{
-			Authority:        genesisAddr.String(),
 			GenesisAddress:   genesisAddr.String(),
 			RecipientAddress: recipientAddr.String(),
 		}

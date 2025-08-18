@@ -367,7 +367,6 @@ func TestVestingIntegration_CompleteOwnershipTransferWithVesting(t *testing.T) {
 
 	// Execute complete ownership transfer
 	msg := &types.MsgTransferOwnership{
-		Authority:        genesisAddr.String(), // Authority must match genesis address
 		GenesisAddress:   genesisAddr.String(),
 		RecipientAddress: recipientAddr.String(),
 	}
@@ -520,7 +519,6 @@ func TestVestingIntegration_WhitelistEnforcementWithVesting(t *testing.T) {
 
 	// Execute ownership transfer (should succeed - genesis address is whitelisted)
 	msg := &types.MsgTransferOwnership{
-		Authority:        genesisAddr.String(), // Authority must match genesis address
 		GenesisAddress:   genesisAddr.String(),
 		RecipientAddress: recipientAddr.String(),
 	}
@@ -549,7 +547,6 @@ func TestVestingIntegration_WhitelistEnforcementWithVesting(t *testing.T) {
 
 	// Try to transfer non-whitelisted account (should fail)
 	msg2 := &types.MsgTransferOwnership{
-		Authority:        nonWhitelistedAddr.String(), // Authority must match genesis address
 		GenesisAddress:   nonWhitelistedAddr.String(),
 		RecipientAddress: recipientAddr.String(),
 	}

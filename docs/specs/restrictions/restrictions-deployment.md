@@ -8,17 +8,17 @@ This guide covers deploying and managing the Transfer Restrictions module (x/res
 
 ### Timeline Considerations
 
-**Recommended Bootstrap Period**: 180 days (1,555,000 blocks)
+**Recommended Bootstrap Period**: 90 days (1,555,000 blocks)
 - Allows sufficient time for ecosystem development
 - Provides window for exchange integrations and audits
 - Enables community growth and governance establishment
 
 **Key Milestones**:
-- **Days 1-30**: Initial network stability and core operations
-- **Days 31-90**: Exchange partnerships and integration testing
-- **Days 91-150**: Community governance activation and testing
-- **Days 151-180**: Pre-launch preparation and final audits
-- **Day 180+**: Full transfer functionality enabled
+- **Days 1-15**: Initial network stability and core operations
+- **Days 16-45**: Exchange partnerships and integration testing
+- **Days 46-75**: Community governance activation and testing
+- **Days 76-90**: Pre-launch preparation and final audits
+- **Day 90+**: Full transfer functionality enabled
 
 ### Stakeholder Communication
 
@@ -38,6 +38,8 @@ This guide covers deploying and managing the Transfer Restrictions module (x/res
 
 ### Basic Configuration
 
+**Important**: The module defaults to `restriction_end_block: 0` (no restrictions) for testing and testnet environments. For production deployment, you **must** configure the restriction end block in genesis.
+
 Add to `genesis.json`:
 
 ```json
@@ -53,6 +55,11 @@ Add to `genesis.json`:
   }
 }
 ```
+
+**Configuration Notes**:
+- **Testing/Testnet**: Default `0` allows unrestricted transfers for development
+- **Production**: Set `1555000` (90 days) or desired block height in genesis
+- **Block Height**: Must be set at genesis - cannot be 0 in production networks
 
 ### Production Parameters
 
@@ -92,9 +99,9 @@ Add to `genesis.json`:
 ### Parameter Tuning Guidelines
 
 **Restriction End Block**:
-- **Conservative**: 2,200,000 blocks (~250 days)
-- **Standard**: 1,555,000 blocks (~180 days) 
-- **Aggressive**: 1,100,000 blocks (~125 days)
+- **Conservative**: 2,200,000 blocks (~127 days)
+- **Standard**: 1,555,000 blocks (~90 days) 
+- **Aggressive**: 1,100,000 blocks (~64 days)
 
 **Emergency Exemptions**:
 - **Limit scope**: Use specific addresses when possible

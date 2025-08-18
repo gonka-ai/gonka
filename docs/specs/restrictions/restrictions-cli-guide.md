@@ -4,6 +4,8 @@
 
 This guide covers all CLI commands and queries available for the Transfer Restrictions module (x/restrictions). The module provides temporary restrictions on user-to-user transfers while preserving essential network operations.
 
+**Parameter Configuration**: The module defaults to `restriction_end_block: 0` (no restrictions) for testing environments. Production networks must set the restriction end block via genesis configuration.
+
 ## Query Commands
 
 ### Check Restriction Status

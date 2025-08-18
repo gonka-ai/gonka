@@ -207,9 +207,9 @@ inferenced query genesistransfer allowed-accounts
 ### Transaction Commands
 
 ```bash
-# Execute ownership transfer (requires governance authority)
+# Execute ownership transfer (requires genesis account owner signature)
 inferenced tx genesistransfer transfer-ownership gonka1genesis... gonka1recipient... \
-  --from governance \
+  --from genesis-account-key \
   --keyring-backend test \
   --gas 2000000 \
   --yes
@@ -238,7 +238,7 @@ inferenced tx genesistransfer transfer-ownership gonka1genesis... gonka1recipien
 ## Security Considerations
 
 ### Access Control
-- **Authority-Only Execution**: Transfers require governance authority signature
+- **Genesis Account Owner Execution**: Transfers require signature from the genesis account owner
 - **Account Ownership**: Only account owners control their accounts (via transaction signing)
 - **One-Time Enforcement**: Prevents accidental or malicious duplicate transfers
 

@@ -4,7 +4,7 @@ This directory contains the proposal for implementing native coin transfer restr
 
 ## Overview
 
-The proposal introduces controlled native coin transfer restrictions for the first 1,555,000 blocks (~180 days) while preserving essential network operations including gas payments and inference fees.
+The proposal introduces controlled native coin transfer restrictions for the first 1,555,000 blocks (~90 days) while preserving essential network operations including gas payments and inference fees.
 
 ## Documents
 
