@@ -201,7 +201,7 @@ The `1nicoin` value represents an artificial consensus weight for the genesis tr
     --pubkey <consensus-pubkey-from-step-1.3> \
     --ml-operational-address <ml-operational-key-address-from-step-1.4> \
     --url $PUBLIC_URL \
-    --chain-id gonka-testnet-7 \
+    --chain-id gonka-rehearsal \
     --node-id <node-id-from-step-1.2>
 ```
 
@@ -214,7 +214,7 @@ The `1nicoin` value represents an artificial consensus weight for the genesis tr
     --pubkey eNrjtkSXzfE18jq3lqvpu/i1iIog9SN+kqR2Wsa6fSM= \
     --ml-operational-address gonka13xplq68fws3uvs8m7ej2ed5ack9hzpc68fwvex \
     --url http://36.189.234.237:19238 \
-    --moniker "mynode-702121" --chain-id gonka-testnet-7 \
+    --moniker "mynode-702121" --chain-id gonka-rehearsal \
     --node-id 149d25924b9a6676448aea716864c31775645459
 Enter keyring passphrase (attempt 1/3):
 Classic genesis transaction written to "702121/config/gentx/gentx-149d25924b9a6676448aea716864c31775645459.json"
