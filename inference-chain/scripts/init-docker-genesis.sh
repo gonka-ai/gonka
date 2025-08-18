@@ -98,6 +98,12 @@ $APP_NAME keys \
     --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
     add "POOL_product_science_inc"
 
+# Create warm key for ML operations
+KEY_NAME_WARM="${KEY_NAME}_warm"
+$APP_NAME keys \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
+    add "$KEY_NAME_WARM"
+
 modify_genesis_file() {
   local json_file="$HOME/.inference/config/genesis.json"
   local override_file="$1"
@@ -125,15 +131,26 @@ echo "Adding the keys to the genesis account"
 $APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 
+# Get the warm key address for ML operations
+WARM_KEY_ADDRESS=$($APP_NAME keys show "$KEY_NAME_WARM" --address --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR")
+
+# Use PUBLIC_URL if set, otherwise provide a reasonable default
+URL_VALUE="${PUBLIC_URL:-http://localhost:9000}"
+
 $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" \
   --moniker "mynode" \
-  --url "tmp" \
-  --ml-operational-address "gonka17pwrcnldrtkulkt8p8a5ymwp5sz9eclgvlm38e" \
+  --url "$URL_VALUE" \
+  --ml-operational-address "$WARM_KEY_ADDRESS" \
   || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }
 output=$($APP_NAME genesis collect-gentxs 2>&1)
+echo "$output" | filter_cw20_code
+
+# Patch genesis with genparticipant transactions
+echo "Patching genesis with genparticipant transactions"
+output=$($APP_NAME genesis patch-genesis 2>&1)
 echo "$output" | filter_cw20_code
 
 # tgbot
