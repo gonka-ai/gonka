@@ -316,7 +316,11 @@ func TestMsgServer_MessageValidation(t *testing.T) {
 			name: "valid UpdateParams message",
 			msg: &types.MsgUpdateParams{
 				Authority: k.GetAuthority(),
-				Params:    types.DefaultParams(),
+				Params: types.Params{
+					RestrictionEndBlock:         1000000, // Set to valid non-zero value for testing
+					EmergencyTransferExemptions: []types.EmergencyTransferExemption{},
+					ExemptionUsageTracking:      []types.ExemptionUsage{},
+				},
 			},
 			expectErr: false,
 		},

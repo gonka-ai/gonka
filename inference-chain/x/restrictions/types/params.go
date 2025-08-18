@@ -68,16 +68,13 @@ func (p Params) Validate() error {
 
 // validateRestrictionEndBlock validates the restriction end block parameter
 func validateRestrictionEndBlock(i interface{}) error {
-	v, ok := i.(uint64)
+	_, ok := i.(uint64)
 	if !ok {
 		return fmt.Errorf("invalid parameter type: %T", i)
 	}
 
-	// Must be greater than 0 (genesis block)
-	if v == 0 {
-		return fmt.Errorf("restriction end block must be greater than 0: %d", v)
-	}
-
+	// 0 is valid (means no restrictions - for testing/testnet)
+	// Any positive value is valid (restriction end block height)
 	return nil
 }
 

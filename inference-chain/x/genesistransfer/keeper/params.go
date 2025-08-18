@@ -5,7 +5,6 @@ import (
 
 	errorsmod "cosmossdk.io/errors"
 	"github.com/cosmos/cosmos-sdk/runtime"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/productscience/inference/x/genesistransfer/types"
 )
@@ -60,60 +59,4 @@ func (k Keeper) GetAllowedAccounts(ctx context.Context) []string {
 func (k Keeper) GetRestrictToList(ctx context.Context) bool {
 	params := k.GetParams(ctx)
 	return params.RestrictToList
-}
-
-// AddAllowedAccount adds an account to the allowed accounts list
-func (k Keeper) AddAllowedAccount(ctx context.Context, address string) error {
-	// Validate the address
-	if _, err := sdk.AccAddressFromBech32(address); err != nil {
-		return errorsmod.Wrapf(err, "invalid address: %s", address)
-	}
-
-	params := k.GetParams(ctx)
-
-	// Check if already exists
-	for _, addr := range params.AllowedAccounts {
-		if addr == address {
-			return errorsmod.Wrapf(types.ErrInvalidTransfer, "address %s already in allowed list", address)
-		}
-	}
-
-	// Add the address
-	params.AllowedAccounts = append(params.AllowedAccounts, address)
-
-	return k.SetParams(ctx, params)
-}
-
-// RemoveAllowedAccount removes an account from the allowed accounts list
-func (k Keeper) RemoveAllowedAccount(ctx context.Context, address string) error {
-	params := k.GetParams(ctx)
-
-	// Find and remove the address
-	for i, addr := range params.AllowedAccounts {
-		if addr == address {
-			// Remove by creating new slice
-			params.AllowedAccounts = append(params.AllowedAccounts[:i], params.AllowedAccounts[i+1:]...)
-			return k.SetParams(ctx, params)
-		}
-	}
-
-	return errorsmod.Wrapf(types.ErrAccountNotFound, "address %s not found in allowed list", address)
-}
-
-// SetRestrictToList sets whether transfers should be restricted to the allowed accounts list
-func (k Keeper) SetRestrictToList(ctx context.Context, restrict bool) error {
-	params := k.GetParams(ctx)
-	params.RestrictToList = restrict
-	return k.SetParams(ctx, params)
-}
-
-// ValidateParams validates module parameters
-func (k Keeper) ValidateParams(ctx context.Context, params types.Params) error {
-	return params.Validate()
-}
-
-// ResetParams resets parameters to default values
-func (k Keeper) ResetParams(ctx context.Context) error {
-	defaultParams := types.DefaultParams()
-	return k.SetParams(ctx, defaultParams)
 }

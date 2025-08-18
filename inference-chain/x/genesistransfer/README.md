@@ -12,7 +12,7 @@ The Genesis Transfer module provides secure, atomic, and irreversible transfer o
 - **One-Time Enforcement**: Prevents duplicate transfers with transfer record tracking
 - **Vesting Integration**: Preserves vesting timelines during ownership transfer
 - **Transfer Restrictions Compliance**: Uses module account intermediary to bypass bootstrap restrictions
-- **Parameter System**: Governance-controlled whitelist and configuration management
+- **Parameter System**: Optional account whitelist via governance parameters
 - **Query Interface**: Comprehensive APIs for transfer status, history, and eligibility
 - **Audit Trail**: Complete transfer record management for compliance and monitoring
 
@@ -118,7 +118,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 #### `TransferOwnership`
 - **Purpose**: Execute complete ownership transfer
 - **Usage**: `inferenced tx genesistransfer transfer-ownership [genesis-address] [recipient-address]`
-- **Requirements**: Must be signed by module authority (typically governance)
+- **Requirements**: Must be signed by genesis account owner
 
 ## Integration Patterns for Genesis Account Management
 
@@ -154,11 +154,12 @@ records, pagination, err := keeper.GetAllTransferRecords(ctx, pageRequest)
 // Get current parameters
 params := keeper.GetParams(ctx)
 
-// Check whitelist status
-isWhitelisted := keeper.IsAccountWhitelisted(ctx, accountAddr)
+// Check if account is whitelisted (if whitelist enabled)
+isTransferable := keeper.IsTransferableAccount(ctx, accountAddr)
 
-// Add account to whitelist (governance only)
-err := keeper.AddAccountsToWhitelist(ctx, []string{accountAddr})
+// Check whitelist settings
+allowedAccounts := keeper.GetAllowedAccounts(ctx)
+whitelistEnabled := keeper.GetRestrictToList(ctx)
 ```
 
 ## Module Configuration
@@ -294,13 +295,12 @@ inferenced tx genesistransfer transfer-ownership gonka1genesis... gonka1recipien
 ## Governance Integration
 
 ### Parameter Updates
-- `AllowedAccounts`: Whitelist management via governance proposals
+- `AllowedAccounts`: Account whitelist configured via governance proposals
 - `RestrictToList`: Enable/disable whitelist enforcement
 
 ### Emergency Procedures
-- Whitelist modifications for urgent transfers
-- Parameter updates for operational requirements
-- Transfer record management (administrative functions)
+- Parameter updates for urgent whitelist changes
+- Transfer record queries for audit and compliance
 
 ## Version Compatibility
 

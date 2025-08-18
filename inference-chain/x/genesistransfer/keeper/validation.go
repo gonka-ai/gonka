@@ -180,12 +180,7 @@ func (k Keeper) IsTransferableAccount(ctx context.Context, address string) bool 
 		return false
 	}
 
-	// Check if address is too long (reasonable limit)
-	if len(address) > 100 {
-		return false
-	}
-
-	// Try to parse as bech32 address to validate format
+	// Validate address format
 	_, err := sdk.AccAddressFromBech32(address)
 	if err != nil {
 		return false
