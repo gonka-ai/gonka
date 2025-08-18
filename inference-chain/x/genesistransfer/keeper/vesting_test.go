@@ -37,15 +37,15 @@ func (suite *VestingTestSuite) TestTransferVestingScheduleValidation() {
 
 	// Test invalid addresses
 	suite.Run("invalid_addresses", func() {
-		err := suite.keeper.TransferVestingSchedule(suite.ctx, nil, recipientAddr)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nil, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "genesis address cannot be nil")
 
-		err = suite.keeper.TransferVestingSchedule(suite.ctx, genesisAddr, nil)
+		err = suite.keeper.ExecuteOwnershipTransfer(suite.ctx, genesisAddr, nil)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "recipient address cannot be nil")
 
-		err = suite.keeper.TransferVestingSchedule(suite.ctx, genesisAddr, genesisAddr)
+		err = suite.keeper.ExecuteOwnershipTransfer(suite.ctx, genesisAddr, genesisAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "cannot transfer to the same address")
 	})
@@ -53,7 +53,7 @@ func (suite *VestingTestSuite) TestTransferVestingScheduleValidation() {
 	// Test non-existent genesis account
 	suite.Run("non_existent_genesis_account", func() {
 		nonExistentAddr := sdk.AccAddress("non_existent_______")
-		err := suite.keeper.TransferVestingSchedule(suite.ctx, nonExistentAddr, recipientAddr)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nonExistentAddr, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "does not exist")
 	})
@@ -257,7 +257,7 @@ func BenchmarkTransferVestingSchedule(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// This will fail but we're testing the validation performance
-		_ = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+		_ = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	}
 }
 

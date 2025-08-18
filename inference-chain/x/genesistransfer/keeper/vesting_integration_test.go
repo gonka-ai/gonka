@@ -168,7 +168,7 @@ func setupVestingIntegrationKeepers(t testing.TB) (sdk.Context, keeper.Keeper, *
 		bookkeepingBankKeeper,
 	)
 
-	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
+	ctx := sdk.NewContext(stateStore, cmtproto.Header{Height: 1}, false, log.NewNopLogger())
 
 	// Initialize params
 	require.NoError(t, k.SetParams(ctx, types.DefaultParams()))
@@ -221,7 +221,7 @@ func TestVestingIntegration_PeriodicVestingAccountTransfer(t *testing.T) {
 	bankKeeper.SetBalance(genesisAddr, vestingCoins)
 
 	// Execute vesting schedule transfer
-	err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+	err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	require.NoError(t, err)
 
 	// Verify recipient account was created and has the correct vesting schedule
@@ -271,7 +271,7 @@ func TestVestingIntegration_ContinuousVestingAccountTransfer(t *testing.T) {
 	bankKeeper.SetBalance(genesisAddr, vestingCoins)
 
 	// Execute vesting schedule transfer
-	err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+	err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	require.NoError(t, err)
 
 	// Verify recipient account was created and has the correct vesting schedule
@@ -317,7 +317,7 @@ func TestVestingIntegration_DelayedVestingAccountTransfer(t *testing.T) {
 	bankKeeper.SetBalance(genesisAddr, vestingCoins)
 
 	// Execute vesting schedule transfer
-	err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+	err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	require.NoError(t, err)
 
 	// Verify recipient account was created and has the correct vesting schedule
@@ -423,7 +423,7 @@ func TestVestingIntegration_NonVestingAccountHandling(t *testing.T) {
 	bankKeeper.SetBalance(genesisAddr, liquidCoins)
 
 	// Execute vesting schedule transfer (should handle gracefully)
-	err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+	err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	require.NoError(t, err) // Should not error for non-vesting accounts
 
 	// Verify no vesting account was created for recipient (since source had no vesting)
@@ -470,7 +470,7 @@ func TestVestingIntegration_ExpiredVestingAccountHandling(t *testing.T) {
 	bankKeeper.SetBalance(genesisAddr, vestingCoins)
 
 	// Execute vesting schedule transfer (should handle expired vesting gracefully)
-	err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+	err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	require.NoError(t, err) // Should not error but should skip vesting transfer
 
 	// Verify no vesting account was created for recipient (since vesting expired)
@@ -590,7 +590,7 @@ func TestVestingIntegration_VestingTimelinePreservation(t *testing.T) {
 	bankKeeper.SetBalance(genesisAddr, originalVestingCoins)
 
 	// Execute vesting schedule transfer
-	err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+	err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 	require.NoError(t, err)
 
 	// Verify recipient account has correct vesting schedule
@@ -688,7 +688,7 @@ func TestVestingIntegration_MultipleVestingAccountTypes(t *testing.T) {
 			bankKeeper.SetBalance(genesisAddr, vestingCoins)
 
 			// Execute vesting transfer
-			err = k.TransferVestingSchedule(ctx, genesisAddr, recipientAddr)
+			err = k.ExecuteOwnershipTransfer(ctx, genesisAddr, recipientAddr)
 			require.NoError(t, err, "vesting transfer should succeed for %s", tc.name)
 
 			// Verify recipient account was created

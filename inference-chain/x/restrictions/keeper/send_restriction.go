@@ -179,8 +179,3 @@ func (k Keeper) MatchesEmergencyExemption(ctx sdk.Context, from, to sdk.AccAddre
 
 	return false
 }
-
-// GetTransferRestrictionFunction returns the transfer restriction function for bank module integration
-func (k Keeper) GetTransferRestrictionFunction() func(ctx context.Context, from, to sdk.AccAddress, amt sdk.Coins) (sdk.AccAddress, error) {
-	return k.SendRestrictionFn
-}

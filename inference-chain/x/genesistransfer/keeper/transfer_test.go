@@ -62,48 +62,48 @@ func (suite *TransferTestSuite) TestExecuteOwnershipTransfer() {
 	})
 }
 
-// Test TransferLiquidBalances function
+// Test ExecuteOwnershipTransfer validation (replacing TransferLiquidBalances test)
 func (suite *TransferTestSuite) TestTransferLiquidBalances() {
 	genesisAddr := sdk.AccAddress("genesis_addr_______")
 	recipientAddr := sdk.AccAddress("recipient_addr____")
 
 	suite.Run("invalid_addresses", func() {
-		err := suite.keeper.TransferLiquidBalances(suite.ctx, nil, recipientAddr)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nil, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "genesis address cannot be nil")
 
-		err = suite.keeper.TransferLiquidBalances(suite.ctx, genesisAddr, nil)
+		err = suite.keeper.ExecuteOwnershipTransfer(suite.ctx, genesisAddr, nil)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "recipient address cannot be nil")
 
-		err = suite.keeper.TransferLiquidBalances(suite.ctx, genesisAddr, genesisAddr)
+		err = suite.keeper.ExecuteOwnershipTransfer(suite.ctx, genesisAddr, genesisAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "cannot transfer to the same address")
 	})
 
 	suite.Run("non_existent_genesis_account", func() {
 		nonExistentAddr := sdk.AccAddress("non_existent_______")
-		err := suite.keeper.TransferLiquidBalances(suite.ctx, nonExistentAddr, recipientAddr)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nonExistentAddr, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "does not exist")
 	})
 }
 
-// Test ValidateBalanceTransfer function
+// Test ValidateTransfer function (replacing ValidateBalanceTransfer test)
 func (suite *TransferTestSuite) TestValidateBalanceTransfer() {
 	genesisAddr := sdk.AccAddress("genesis_addr_______")
 	recipientAddr := sdk.AccAddress("recipient_addr____")
 
 	suite.Run("invalid_addresses", func() {
-		err := suite.keeper.ValidateBalanceTransfer(suite.ctx, nil, recipientAddr)
+		err := suite.keeper.ValidateTransfer(suite.ctx, nil, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "genesis address cannot be nil")
 
-		err = suite.keeper.ValidateBalanceTransfer(suite.ctx, genesisAddr, nil)
+		err = suite.keeper.ValidateTransfer(suite.ctx, genesisAddr, nil)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "recipient address cannot be nil")
 
-		err = suite.keeper.ValidateBalanceTransfer(suite.ctx, genesisAddr, genesisAddr)
+		err = suite.keeper.ValidateTransfer(suite.ctx, genesisAddr, genesisAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "cannot transfer to the same address")
 	})
@@ -114,41 +114,42 @@ func (suite *TransferTestSuite) TestGetTransferableBalance() {
 
 	suite.Run("non_existent_account", func() {
 		testAddr := sdk.AccAddress("test_addr__________")
-		balance, err := suite.keeper.GetTransferableBalance(suite.ctx, testAddr)
-		suite.Require().NoError(err)
-		suite.Require().True(balance.IsZero())
+		// Test using ExecuteOwnershipTransfer instead (will fail due to non-existent account)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, testAddr, sdk.AccAddress("recipient"))
+		suite.Require().Error(err)
+		suite.Require().Contains(err.Error(), "does not exist")
 	})
 
 	suite.Run("nil_address", func() {
-		balance, err := suite.keeper.GetTransferableBalance(suite.ctx, nil)
+		// Test validation using ExecuteOwnershipTransfer instead
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nil, sdk.AccAddress("recipient"))
 		suite.Require().Error(err)
-		suite.Require().Contains(err.Error(), "address cannot be nil")
-		suite.Require().True(balance.IsZero())
+		suite.Require().Contains(err.Error(), "genesis address cannot be nil")
 	})
 }
 
-// Test TransferVestingSchedule with different vesting account types
+// Test vesting schedule transfer via ExecuteOwnershipTransfer (replacing TransferVestingSchedule test)
 func (suite *TransferTestSuite) TestTransferVestingSchedule() {
 	genesisAddr := sdk.AccAddress("genesis_addr_______")
 	recipientAddr := sdk.AccAddress("recipient_addr____")
 
 	suite.Run("invalid_addresses", func() {
-		err := suite.keeper.TransferVestingSchedule(suite.ctx, nil, recipientAddr)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nil, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "genesis address cannot be nil")
 
-		err = suite.keeper.TransferVestingSchedule(suite.ctx, genesisAddr, nil)
+		err = suite.keeper.ExecuteOwnershipTransfer(suite.ctx, genesisAddr, nil)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "recipient address cannot be nil")
 
-		err = suite.keeper.TransferVestingSchedule(suite.ctx, genesisAddr, genesisAddr)
+		err = suite.keeper.ExecuteOwnershipTransfer(suite.ctx, genesisAddr, genesisAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "cannot transfer to the same address")
 	})
 
 	suite.Run("non_existent_genesis_account", func() {
 		nonExistentAddr := sdk.AccAddress("non_existent_______")
-		err := suite.keeper.TransferVestingSchedule(suite.ctx, nonExistentAddr, recipientAddr)
+		err := suite.keeper.ExecuteOwnershipTransfer(suite.ctx, nonExistentAddr, recipientAddr)
 		suite.Require().Error(err)
 		suite.Require().Contains(err.Error(), "does not exist")
 	})
