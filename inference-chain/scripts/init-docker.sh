@@ -169,7 +169,7 @@ if $FIRST_RUN; then
   fi
   if [ "${INIT_ONLY:-false}" = "true" ]; then
     echo "Initialisation complete"
-    echo "nodeId: $(inferenced tendermint show-node-id)"
+    echo "nodeId: $($APP_NAME tendermint show-node-id)"
     exit 0
   fi
 
