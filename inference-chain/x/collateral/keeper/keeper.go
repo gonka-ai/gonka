@@ -34,6 +34,7 @@ type (
 		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
 		Schema                collections.Schema
 		CurrentEpoch          collections.Item[uint64]
+		Jailed                collections.KeySet[sdk.AccAddress]
 	}
 )
 
@@ -63,6 +64,7 @@ func NewKeeper(
 		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
+		Jailed:                collections.NewKeySet(sb, types.JailedKey, "jailed", sdk.AccAddressKey),
 	}
 	schema, err := sb.Build()
 	if err != nil {
@@ -329,9 +331,7 @@ func (k Keeper) GetAllUnbondings(ctx sdk.Context) []types.UnbondingCollateral {
 // SetJailed stores a participant's jailed status.
 // The presence of the key indicates the participant is jailed.
 func (k Keeper) SetJailed(ctx sdk.Context, participantAddress sdk.AccAddress) {
-	store := k.storeService.OpenKVStore(ctx)
-	// We store a simple value, like a single byte, as the presence of the key is what matters.
-	err := store.Set(types.GetJailedKey(participantAddress.String()), []byte{1})
+	err := k.Jailed.Set(ctx, participantAddress)
 	if err != nil {
 		panic(err)
 	}
@@ -339,8 +339,7 @@ func (k Keeper) SetJailed(ctx sdk.Context, participantAddress sdk.AccAddress) {
 
 // RemoveJailed removes a participant's jailed status.
 func (k Keeper) RemoveJailed(ctx sdk.Context, participantAddress sdk.AccAddress) {
-	store := k.storeService.OpenKVStore(ctx)
-	err := store.Delete(types.GetJailedKey(participantAddress.String()))
+	err := k.Jailed.Remove(ctx, participantAddress)
 	if err != nil {
 		panic(err)
 	}
@@ -348,30 +347,24 @@ func (k Keeper) RemoveJailed(ctx sdk.Context, participantAddress sdk.AccAddress)
 
 // IsJailed checks if a participant is currently marked as jailed.
 func (k Keeper) IsJailed(ctx sdk.Context, participantAddress sdk.AccAddress) bool {
-	store := k.storeService.OpenKVStore(ctx)
-	bz, err := store.Get(types.GetJailedKey(participantAddress.String()))
+	found, err := k.Jailed.Has(ctx, participantAddress)
 	if err != nil {
 		panic(err)
 	}
-	return bz != nil
+	return found
 }
 
 // GetAllJailed returns all jailed participant addresses.
-func (k Keeper) GetAllJailed(ctx sdk.Context) []string {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	jailedStore := prefix.NewStore(storeAdapter, types.JailedKey)
-	jailedList := []string{}
-
-	iterator := jailedStore.Iterator(nil, nil)
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		// The key itself contains the address after the prefix.
-		address := string(iterator.Key())
-		jailedList = append(jailedList, address)
+func (k Keeper) GetAllJailed(ctx sdk.Context) []sdk.AccAddress {
+	iter, err := k.Jailed.Iterate(ctx, nil)
+	if err != nil {
+		panic(err)
 	}
-
-	return jailedList
+	result, err := iter.Keys()
+	if err != nil {
+		panic(err)
+	}
+	return result
 }
 
 // Slash penalizes a participant by burning a fraction of their total collateral.

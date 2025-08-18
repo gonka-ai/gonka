@@ -66,7 +66,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	jailedParticipants := k.GetAllJailed(ctx)
 	genesis.JailedParticipantList = make([]*types.JailedParticipant, len(jailedParticipants))
 	for i, addr := range jailedParticipants {
-		genesis.JailedParticipantList[i] = &types.JailedParticipant{Address: addr}
+		genesis.JailedParticipantList[i] = &types.JailedParticipant{Address: addr.String()}
 	}
 
 	// this line is used by starport scaffolding # genesis/module/export
