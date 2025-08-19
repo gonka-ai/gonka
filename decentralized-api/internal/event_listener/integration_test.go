@@ -400,7 +400,7 @@ func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 		Block:   chainevents.Block{Header: chainevents.Header{Height: fmt.Sprintf("%v", height)}},
 		BlockId: chainevents.BlockId{Hash: fmt.Sprintf("hash-%d", height)},
 	}
-	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo, height-1)
 }
 
 func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnodeclient.MockClient {

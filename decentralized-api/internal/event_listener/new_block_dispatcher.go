@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"strconv"
 	"strings"
 	"time"
+
+	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -19,6 +20,7 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
+
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
@@ -159,7 +161,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 }
 
 // ProcessNewBlock is the main entry point for processing new block events
-func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainevents.FinalizedBlock) error {
+func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainevents.FinalizedBlock, knownHeight int64) error {
 	height, err := strconv.ParseInt(blockInfo.Block.Header.Height, 10, 64)
 	if err != nil {
 		logging.Error("failed to parse block height", types.Stages, "height", blockInfo.Block.Header.Height, "err", err)
@@ -181,6 +183,12 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		logging.Error("Failed to query network info, skipping block processing", types.Stages,
 			"error", err, "height", blockInfo.Block.Header.Height)
 		return err // Skip processing this block
+	}
+
+	// Update config manager height - unblock event processing
+	err = d.setHeightFunc(height)
+	if err != nil {
+		logging.Error("Failed to write config", types.Config, "error", err)
 	}
 
 	// Fetch validation parameters - skip in tests
@@ -226,7 +234,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		}
 	}
 
-	d.verifyParticipantsChain(ctx, networkInfo.BlockHeight)
+	d.verifyParticipantsChain(ctx, networkInfo.BlockHeight, knownHeight)
 
 	// Let's check in prod how often this happens
 	if networkInfo.BlockHeight != height {
@@ -271,19 +279,13 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		d.triggerReconciliation(*epochState)
 	}
 
-	// 5. Update config manager height
-	err = d.setHeightFunc(height)
-	if err != nil {
-		logging.Warn("Failed to write config", types.Config, "error", err)
-	}
-
 	return nil
 }
 
-func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curHeight int64) {
-	logging.Info("verify participants", types.System, "known_height", d.configManager.GetHeight(), "current_height", curHeight, "last_verified_app_hash", d.lastVerifiedAppHashHex)
+func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curHeight int64, knownHeight int64) {
+	logging.Info("verify participants", types.System, "known_height", knownHeight, "current_height", curHeight, "last_verified_app_hash", d.lastVerifiedAppHashHex)
 
-	if d.lastVerifiedAppHashHex != "" && d.configManager.GetHeight() != curHeight-1 {
+	if d.lastVerifiedAppHashHex != "" && knownHeight != curHeight-1 {
 		logging.Info("verify participants: start", types.System, "lastVerifiedAppHashHex", d.lastVerifiedAppHashHex)
 
 		rpcClient, err := cosmosclient.NewRpcClient(d.configManager.GetChainNodeConfig().Url)
