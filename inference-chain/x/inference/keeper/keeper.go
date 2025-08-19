@@ -30,12 +30,13 @@ type (
 		AuthzKeeper   types.AuthzKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
 
-		collateralKeeper    types.CollateralKeeper
-		streamvestingKeeper types.StreamVestingKeeper
-		Participants        collections.Map[sdk.AccAddress, types.Participant]
-		RandomSeeds         collections.Map[collections.Pair[int64, sdk.AccAddress], types.RandomSeed]
-		PoCBatches          collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
-		PoCValidations      collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
+		collateralKeeper      types.CollateralKeeper
+		streamvestingKeeper   types.StreamVestingKeeper
+		Participants          collections.Map[sdk.AccAddress, types.Participant]
+		RandomSeeds           collections.Map[collections.Pair[int64, sdk.AccAddress], types.RandomSeed]
+		PoCBatches            collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
+		PoCValidations        collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
+		ActiveParticipantsMap collections.Map[uint64, types.ActiveParticipants]
 	}
 )
 
@@ -106,6 +107,13 @@ func NewKeeper(
 			"poc_validation",
 			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidation](cdc),
+		),
+		ActiveParticipantsMap: collections.NewMap(
+			sb,
+			types.ActiveParticipantsPrefix,
+			"active_participants",
+			collections.Uint64Key,
+			codec.CollValue[types.ActiveParticipants](cdc),
 		),
 	}
 }
