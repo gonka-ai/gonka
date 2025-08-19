@@ -27,6 +27,7 @@ var (
 	DynamicPricingCurrentPrefix  = collections.NewPrefix(4)
 	DynamicPricingCapacityPrefix = collections.NewPrefix(5)
 	ModelsPrefix                 = collections.NewPrefix(6)
+	InferenceTimeoutPrefix       = collections.NewPrefix(7)
 	ParamsKey                    = []byte("p_inference")
 )
 

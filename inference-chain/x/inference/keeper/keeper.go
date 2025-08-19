@@ -40,7 +40,8 @@ type (
 		ModelCurrentPriceMap collections.Map[string, uint64]
 		ModelCapacityMap     collections.Map[string, uint64]
 		// Governance models
-		Models collections.Map[string, types.Model]
+		Models            collections.Map[string, types.Model]
+		InferenceTimeouts collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 	}
 )
 
@@ -134,6 +135,13 @@ func NewKeeper(
 			"models",
 			collections.StringKey,
 			codec.CollValue[types.Model](cdc),
+		),
+		InferenceTimeouts: collections.NewMap(
+			sb,
+			types.InferenceTimeoutPrefix,
+			"inference_timeout",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.InferenceTimeout](cdc),
 		),
 	}
 }
