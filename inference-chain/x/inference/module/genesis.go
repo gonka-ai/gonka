@@ -67,22 +67,24 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	// Set all bridge contract addresses from genesis
-	for _, elem := range genState.Bridge.ContractAddresses {
-		k.SetBridgeContractAddress(ctx, *elem)
-	}
+	if genState.Bridge != nil {
+		for _, elem := range genState.Bridge.ContractAddresses {
+			k.SetBridgeContractAddress(ctx, *elem)
+		}
 
-	// Set all bridge token metadata from genesis
-	for _, elem := range genState.Bridge.TokenMetadata {
-		k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
-			Name:     elem.Name,
-			Symbol:   elem.Symbol,
-			Decimals: uint8(elem.Decimals),
-		})
-	}
+		// Set all bridge token metadata from genesis
+		for _, elem := range genState.Bridge.TokenMetadata {
+			k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
+				Name:     elem.Name,
+				Symbol:   elem.Symbol,
+				Decimals: uint8(elem.Decimals),
+			})
+		}
 
-	// Set all bridge trade approved tokens from genesis
-	for _, elem := range genState.Bridge.TradeApprovedTokens {
-		k.SetBridgeTradeApprovedToken(ctx, *elem)
+		// Set all bridge trade approved tokens from genesis
+		for _, elem := range genState.Bridge.TradeApprovedTokens {
+			k.SetBridgeTradeApprovedToken(ctx, *elem)
+		}
 	}
 
 	// Observability: end of InitGenesis
