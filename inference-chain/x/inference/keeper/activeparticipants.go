@@ -18,13 +18,26 @@ func (k Keeper) SetActiveParticipantsV1(ctx context.Context, participants types.
 }
 
 func (k Keeper) GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool) {
-	v, err := k.ActiveParticipantsMap.Get(ctx, epochId)
-	if err != nil {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	key := types.ActiveParticipantsFullKey(epochId)
+
+	b := store.Get(key)
+	if b == nil {
 		return types.ActiveParticipants{}, false
 	}
-	return v, true
+
+	k.cdc.MustUnmarshal(b, &val)
+	return val, true
 }
 
 func (k Keeper) SetActiveParticipants(ctx context.Context, participants types.ActiveParticipants) {
-	_ = k.ActiveParticipantsMap.Set(ctx, participants.EpochId, participants)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	key := types.ActiveParticipantsFullKey(participants.EpochId)
+
+	b := k.cdc.MustMarshal(&participants)
+	store.Set(key, b)
 }
