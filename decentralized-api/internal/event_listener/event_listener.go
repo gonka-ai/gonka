@@ -291,7 +291,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 		// Process using the new dispatcher
 		ctx := context.Background() // We could pass this from caller if needed
-		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
+		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo, el.configManager.GetHeight())
 		if err != nil {
 			logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
 		}
