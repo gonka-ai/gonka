@@ -36,6 +36,9 @@ type (
 		RandomSeeds         collections.Map[collections.Pair[int64, sdk.AccAddress], types.RandomSeed]
 		PoCBatches          collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations      collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
+		// Dynamic pricing collections
+		ModelCurrentPriceMap collections.Map[string, uint64]
+		ModelCapacityMap     collections.Map[string, uint64]
 	}
 )
 
@@ -106,6 +109,21 @@ func NewKeeper(
 			"poc_validation",
 			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidation](cdc),
+		),
+		// dynamic pricing collections
+		ModelCurrentPriceMap: collections.NewMap(
+			sb,
+			types.DynamicPricingCurrentPrefix,
+			"model_current_price",
+			collections.StringKey,
+			collections.Uint64Value,
+		),
+		ModelCapacityMap: collections.NewMap(
+			sb,
+			types.DynamicPricingCapacityPrefix,
+			"model_capacity",
+			collections.StringKey,
+			collections.Uint64Value,
 		),
 	}
 }
