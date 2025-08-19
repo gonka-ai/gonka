@@ -1,9 +1,39 @@
 # Cosmos SDK Collections: Quickstart (Code-Heavy)
 
-Minimal, example-first guide to move from direct KVStore to Collections. Uses real snippets from x/collateral and x/inference.
+Minimal, example-first guide to move from direct KVStore to Collections. Uses real snippets from x/collateral and x/inference, but the patterns apply to any module.
+
+Why Collections (goals and reasoning):
+- Deterministic, safer state access: typed keys/values, ordered iteration (consensus-safe), easier correctness.
+- Built-in indexing: secondary indexes without manual key gymnastics.
+- Simpler iteration and pagination: first-class Walk/Iterate and query helpers.
+- Clear separation of concerns: prefixes live in types/keys.go; wiring in keeper; logic in keepers/handlers.
+
+Process at a glance:
+1) Define all prefixes in types/keys.go (never inline).
+2) Wire a SchemaBuilder in the keeper and create Items/Maps/KeySets/IndexedMaps.
+3) Use Set/Get/Has for single-key ops; prefer Iterate/Walk for deterministic ranges and GetAll.
+4) Expose queries with query.CollectionPaginate for consistent pagination.
 
 References:
 - Collections docs: https://docs.cosmos.network/main/build/packages/collections
+
+Quick pattern: GetAll with Iterate (recommended)
+To collect all values from a Map, prefer Iterate (or Walk) over manual key scans. Example from x/inference:
+
+```go
+// GetAllParticipant returns all participant
+func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant) {
+  iter, err := k.Participants.Iterate(ctx, nil)
+  if err != nil {
+    return nil
+  }
+  participants, err := iter.Values()
+  if err != nil {
+    return nil
+  }
+  return participants
+}
+```
 
 ---
 
@@ -43,7 +73,7 @@ if err != nil { panic(err) }
 k.Schema = schema
 ```
 
-Keys and prefixes:
+Keys and prefixes (define ALL prefixes in types/keys.go; never inline prefixes in keepers, handlers, or tests):
 ```go
 // x/collateral/types/keys.go
 var (
@@ -79,7 +109,7 @@ Value codecs:
 
 ---
 
-## 2) Map[K,V]: simple k→v (Collateral by address)
+## 2) Map[K,V]: simple k→v (example: account → collateral)
 
 ```go
 // set/get/remove collateral
@@ -110,7 +140,7 @@ Key codec examples:
 
 ---
 
-## 3) KeySet[K]: membership flags (Jailed)
+## 3) KeySet[K]: membership flags (e.g., jailed participants)
 
 ```go
 func (k Keeper) SetJailed(ctx sdk.Context, addr sdk.AccAddress) {
@@ -138,7 +168,7 @@ func (k Keeper) GetAllJailed(ctx sdk.Context) []sdk.AccAddress {
 
 ---
 
-## 4) IndexedMap with secondary index: (epoch, addr) → UnbondingCollateral; index by participant
+## 4) IndexedMap with secondary index (example: (epoch, addr) → UnbondingCollateral; index by participant)
 
 Proto value:
 ```proto
