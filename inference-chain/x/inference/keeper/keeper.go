@@ -33,6 +33,7 @@ type (
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
 		Participants        collections.Map[sdk.AccAddress, types.Participant]
+		RandomSeeds         collections.Map[collections.Pair[int64, sdk.AccAddress], types.RandomSeed]
 	}
 )
 
@@ -78,10 +79,17 @@ func NewKeeper(
 		// collection init
 		Participants: collections.NewMap(
 			sb,
-			collections.NewPrefix("participants"),
+			types.ParticipantsPrefix,
 			"participant",
 			sdk.AccAddressKey,
 			codec.CollValue[types.Participant](cdc),
+		),
+		RandomSeeds: collections.NewMap(
+			sb,
+			types.RandomSeedPrefix,
+			"random_seed",
+			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			codec.CollValue[types.RandomSeed](cdc),
 		),
 	}
 }

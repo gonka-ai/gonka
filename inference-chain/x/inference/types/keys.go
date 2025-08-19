@@ -1,5 +1,7 @@
 package types
 
+import "cosmossdk.io/collections"
+
 const (
 	// ModuleName defines the module name
 	ModuleName = "inference"
@@ -18,7 +20,9 @@ const (
 )
 
 var (
-	ParamsKey = []byte("p_inference")
+	ParticipantsPrefix = collections.NewPrefix(0)
+	RandomSeedPrefix   = collections.NewPrefix(1)
+	ParamsKey          = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

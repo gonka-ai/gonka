@@ -38,7 +38,22 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 ---
 
 ## 0) Wiring Keeper with Collections
+Create Keys and prefixes (define ALL prefixes in types/keys.go; never inline prefixes in keepers, handlers, or tests):
+DELETE the old keys for each collection converted.
 
+```go
+// x/collateral/types/keys.go
+var (
+  ParamsKey  = collections.NewPrefix(0)
+  CurrentEpochKey = collections.NewPrefix(1)
+  CollateralKey   = collections.NewPrefix(2)
+  UnbondingCollPrefix               = collections.NewPrefix(4)
+  UnbondingByParticipantIndexPrefix = collections.NewPrefix(5)
+  JailedKey = collections.NewPrefix(6)
+)
+```
+
+When selecting keys, all Participant/address keys should be `sdk.AccAddressKey`, not strings. Add conversion as needed.
 ```go
 // x/collateral/keeper/keeper.go
 sb := collections.NewSchemaBuilder(storeService)
@@ -71,19 +86,6 @@ k := Keeper{
 schema, err := sb.Build()
 if err != nil { panic(err) }
 k.Schema = schema
-```
-
-Keys and prefixes (define ALL prefixes in types/keys.go; never inline prefixes in keepers, handlers, or tests):
-```go
-// x/collateral/types/keys.go
-var (
-  ParamsKey  = collections.NewPrefix(0)
-  CurrentEpochKey = collections.NewPrefix(1)
-  CollateralKey   = collections.NewPrefix(2)
-  UnbondingCollPrefix               = collections.NewPrefix(4)
-  UnbondingByParticipantIndexPrefix = collections.NewPrefix(5)
-  JailedKey = collections.NewPrefix(6)
-)
 ```
 
 ---
