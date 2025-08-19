@@ -26,6 +26,7 @@ var (
 	PoCValidationPref            = collections.NewPrefix(3)
 	DynamicPricingCurrentPrefix  = collections.NewPrefix(4)
 	DynamicPricingCapacityPrefix = collections.NewPrefix(5)
+	ModelsPrefix                 = collections.NewPrefix(6)
 	ParamsKey                    = []byte("p_inference")
 )
 

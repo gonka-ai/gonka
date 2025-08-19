@@ -39,6 +39,8 @@ type (
 		// Dynamic pricing collections
 		ModelCurrentPriceMap collections.Map[string, uint64]
 		ModelCapacityMap     collections.Map[string, uint64]
+		// Governance models
+		Models collections.Map[string, types.Model]
 	}
 )
 
@@ -124,6 +126,14 @@ func NewKeeper(
 			"model_capacity",
 			collections.StringKey,
 			collections.Uint64Value,
+		),
+		// governance models map
+		Models: collections.NewMap(
+			sb,
+			types.ModelsPrefix,
+			"models",
+			collections.StringKey,
+			codec.CollValue[types.Model](cdc),
 		),
 	}
 }
