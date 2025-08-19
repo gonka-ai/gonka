@@ -406,7 +406,7 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: testutil.Validator,
 							Weight:        10,
 						},
 					},
@@ -428,7 +428,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up validations
 				validation := types.PoCValidation{
 					ParticipantAddress:          testutil.Executor2,
-					ValidatorParticipantAddress: "validator1",
+					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false,
 				}
@@ -462,11 +462,11 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: testutil.Validator,
 							Weight:        10,
 						},
 						{
-							MemberAddress: "validator2",
+							MemberAddress: testutil.Validator2,
 							Weight:        20,
 						},
 					},
@@ -488,7 +488,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up validations with only one validator (not enough weight)
 				validation := types.PoCValidation{
 					ParticipantAddress:          testutil.Executor2,
-					ValidatorParticipantAddress: "validator1",
+					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false,
 				}
@@ -522,12 +522,12 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: testutil.Validator,
 							Weight:        5,
 						},
 						{
 							// Intentionally using a different address to simulate low weight
-							MemberAddress: "validator2",
+							MemberAddress: testutil.Validator2,
 							Weight:        20,
 						},
 					},
@@ -549,7 +549,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up validations with enough total weight but not enough valid weight
 				validation1 := types.PoCValidation{
 					ParticipantAddress:          testutil.Executor2,
-					ValidatorParticipantAddress: "validator1",
+					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false, // Valid but low weight
 				}
@@ -557,7 +557,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				validation2 := types.PoCValidation{
 					ParticipantAddress:          testutil.Executor2,
-					ValidatorParticipantAddress: "validator2",
+					ValidatorParticipantAddress: testutil.Validator2,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               true, // Invalid with high weight
 				}

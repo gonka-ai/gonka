@@ -22,6 +22,8 @@ const (
 var (
 	ParticipantsPrefix = collections.NewPrefix(0)
 	RandomSeedPrefix   = collections.NewPrefix(1)
+	PoCBatchPrefix     = collections.NewPrefix(2)
+	PoCValidationPref  = collections.NewPrefix(3)
 	ParamsKey          = []byte("p_inference")
 )
 

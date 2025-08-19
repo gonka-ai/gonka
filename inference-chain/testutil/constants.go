@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	Creator   = "gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2"
-	Requester = "gonka1rdyphrqxe9l5hkp7uxcruch64sh337jasqsntr"
-	Executor  = "gonka1pda35dczayfhy2udffky7wzset9tpkpatzaksd"
-	Validator = "gonka13779rkgy6ke7cdj8f097pdvx34uvrlcqq8nq2w"
-	Executor2 = "gonka1xxczezuqw0pe67xag5s3zgyrzh4w3zyermjgs9"
+	Creator    = "gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2"
+	Requester  = "gonka1rdyphrqxe9l5hkp7uxcruch64sh337jasqsntr"
+	Executor   = "gonka1pda35dczayfhy2udffky7wzset9tpkpatzaksd"
+	Validator  = "gonka13779rkgy6ke7cdj8f097pdvx34uvrlcqq8nq2w"
+	Executor2  = "gonka1xxczezuqw0pe67xag5s3zgyrzh4w3zyermjgs9"
+	Validator2 = "gonka1l47s7lufh2v0s6t4r9kg3gz8whwg3w4hfvqm55"
 )
 
 // Bech32Addr returns a valid bech32-encoded account address with the given HRP.

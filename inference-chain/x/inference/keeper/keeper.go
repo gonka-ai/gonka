@@ -34,6 +34,8 @@ type (
 		streamvestingKeeper types.StreamVestingKeeper
 		Participants        collections.Map[sdk.AccAddress, types.Participant]
 		RandomSeeds         collections.Map[collections.Pair[int64, sdk.AccAddress], types.RandomSeed]
+		PoCBatches          collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
+		PoCValidations      collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 	}
 )
 
@@ -90,6 +92,20 @@ func NewKeeper(
 			"random_seed",
 			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
 			codec.CollValue[types.RandomSeed](cdc),
+		),
+		PoCBatches: collections.NewMap(
+			sb,
+			types.PoCBatchPrefix,
+			"poc_batch",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
+			codec.CollValue[types.PoCBatch](cdc),
+		),
+		PoCValidations: collections.NewMap(
+			sb,
+			types.PoCValidationPref,
+			"poc_validation",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
+			codec.CollValue[types.PoCValidation](cdc),
 		),
 	}
 }
