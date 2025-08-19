@@ -115,33 +115,43 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			"blockNumber", msg.BlockNumber,
 			"receiptIndex", msg.ReceiptIndex,
 			"validator", msg.Validator,
-			"currentValidations", existingTx.ValidationCount)
+			"currentValidations", existingTx.ValidationCount,
+			"status", existingTx.Status)
 
 		// Check if we have majority
-		requiredValidators := (len(activeParticipants.Participants) * 2) / 3
+		requiredValidators := (2*len(activeParticipants.Participants) + 2) / 3
 
 		if existingTx.ValidationCount >= uint32(requiredValidators) {
-			existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
+			// Only process completion once to avoid duplicate mints
+			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
+				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
+				k.SetBridgeTransaction(ctx, existingTx)
 
-			// Handle token minting for completed transaction
-			if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
-				k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
+				// Handle token minting for completed transaction
+				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
+					k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
+						types.Messages,
+						"error", err,
+						"originChain", msg.OriginChain,
+						"blockNumber", msg.BlockNumber,
+						"receiptIndex", msg.ReceiptIndex)
+					return nil, err
+				}
+
+				k.LogInfo("Bridge exchange: transaction reached majority validation",
 					types.Messages,
-					"error", err,
 					"originChain", msg.OriginChain,
 					"blockNumber", msg.BlockNumber,
-					"receiptIndex", msg.ReceiptIndex)
-				return nil, err
+					"receiptIndex", msg.ReceiptIndex,
+					"validationsRequired", requiredValidators,
+					"validationsReceived", existingTx.ValidationCount,
+					"totalValidators", len(activeParticipants.Participants))
+
+				return &types.MsgBridgeExchangeResponse{
+					Id: existingTx.Id,
+				}, nil
 			}
 
-			k.LogInfo("Bridge exchange: transaction reached majority validation",
-				types.Messages,
-				"originChain", msg.OriginChain,
-				"blockNumber", msg.BlockNumber,
-				"receiptIndex", msg.ReceiptIndex,
-				"validationsRequired", requiredValidators,
-				"validationsReceived", existingTx.ValidationCount,
-				"totalValidators", len(activeParticipants.Participants))
 		} else {
 			k.LogInfo("Bridge exchange: transaction pending majority validation",
 				types.Messages,

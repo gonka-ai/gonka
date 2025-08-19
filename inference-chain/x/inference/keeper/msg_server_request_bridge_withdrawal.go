@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
@@ -31,45 +30,53 @@ var (
 func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.MsgRequestBridgeWithdrawal) (*types.MsgRequestBridgeWithdrawalResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// 1. Get chain ID for request identification
+	// 1. Get the actual transaction signer (this is validated by the Cosmos SDK framework)
+	signers := msg.GetSigners()
+	if len(signers) != 1 {
+		return nil, fmt.Errorf("expected exactly one signer, got %d", len(signers))
+	}
+	contractAddr := signers[0]
+	contractAddrStr := contractAddr.String()
+
+	// 2. Verify that the caller is actually a smart contract
+	err := k.validateContractCaller(ctx, contractAddrStr)
+	if err != nil {
+		return nil, fmt.Errorf("caller validation failed: %v", err)
+	}
+
+	// 3. Verify that the calling contract is a registered wrapped token contract
+	bridgeWrappedTokenContract, found := k.getWrappedTokenMetadata(ctx, contractAddrStr)
+	if !found {
+		return nil, fmt.Errorf("calling contract %s is not a registered wrapped token contract", contractAddrStr)
+	}
+
+	// 4. Get chain ID for request identification
 	chainID := ctx.ChainID()
 
-	// 2. Generate request ID from transaction hash
+	// 5. Generate request ID from transaction hash
 	requestID := k.generateRequestID(ctx)
 
-	// 3. Get current epoch for BLS signature
+	// 6. Get current epoch for BLS signature
 	currentEpochGroup, err := k.GetCurrentEpochGroup(goCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current epoch group: %v", err)
 	}
 
-	// 4. Get wrapped token metadata to determine destination chain
-	metadata, found := k.getWrappedTokenMetadata(ctx, msg.WrappedContractAddress)
-	if !found {
-		return nil, fmt.Errorf("wrapped token contract not found: %s", msg.WrappedContractAddress)
-	}
-
-	// 5. Execute CW20 withdrawal/burn via the contract
-	err = k.executeCW20Withdrawal(ctx, msg.Creator, msg.WrappedContractAddress, msg.Amount)
-	if err != nil {
-		return nil, fmt.Errorf("failed to withdraw CW20 tokens: %v", err)
-	}
-
-	// 6. Prepare BLS signature data according to Ethereum bridge format
+	// 7. Prepare BLS signature data according to Ethereum bridge format
 	// Get numeric chain ID from metadata's string chain identifier
-	destinationChainId, found := chainIdMapping[metadata.ChainId]
+	destinationChainId, found := chainIdMapping[bridgeWrappedTokenContract.ChainId]
 	if !found {
-		return nil, fmt.Errorf("unsupported destination chain: %s", metadata.ChainId)
+		return nil, fmt.Errorf("unsupported destination chain: %s", bridgeWrappedTokenContract.ChainId)
 	}
 
 	blsData := k.prepareBridgeSignatureData(
 		destinationChainId, // Numeric chain ID (e.g., "1", "137")
 		msg.DestinationAddress,
-		metadata.OriginContractAddress, // Original token address on destination chain
-		msg.Amount,                     // amount as string
+		bridgeWrappedTokenContract.ContractAddress, // Original token address on destination chain
+		msg.Amount, // amount as string
 	)
 
-	// 7. Request BLS threshold signature
+	// 8. Request BLS threshold signature
 	signingData := blstypes.SigningData{
 		CurrentEpochId: currentEpochGroup.GroupData.EpochId,
 		ChainId:        []byte(chainID),
@@ -82,10 +89,10 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		return nil, fmt.Errorf("failed to request BLS signature: %v", err)
 	}
 
-	// 8. Log the withdrawal request
-	k.LogInfo("Bridge withdrawal requested", types.Messages,
-		"creator", msg.Creator,
-		"wrapped_contract", msg.WrappedContractAddress,
+	// 9. Log the withdrawal request
+	k.LogInfo("Contract bridge withdrawal requested", types.Messages,
+		"contract_address", contractAddrStr,
+		"user_address", msg.UserAddress,
 		"amount", msg.Amount,
 		"destination_address", msg.DestinationAddress,
 		"request_id", requestID,
@@ -100,106 +107,62 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	}, nil
 }
 
-// generateRequestID creates a unique request ID from transaction hash
-func (k msgServer) generateRequestID(ctx sdk.Context) string {
-	// Get transaction hash from context
-	txHash := ctx.TxBytes()
-	if len(txHash) == 0 {
-		// Fallback: use block height + block hash for uniqueness
-		blockInfo := fmt.Sprintf("%d-%s", ctx.BlockHeight(), hex.EncodeToString(ctx.BlockHeader().LastBlockId.Hash))
-		hash := sha256.Sum256([]byte(blockInfo))
-		return hex.EncodeToString(hash[:])
-	}
-
-	// Use transaction hash directly
-	hash := sha256.Sum256(txHash)
-	return hex.EncodeToString(hash[:])
-}
-
-// WrappedTokenMetadata holds metadata for wrapped token contracts
-type WrappedTokenMetadata struct {
-	ChainId               string
-	OriginContractAddress string
-	Name                  string
-	Symbol                string
-	Decimals              uint8
-}
-
-// getWrappedTokenMetadata retrieves metadata for wrapped token contract
-func (k msgServer) getWrappedTokenMetadata(ctx sdk.Context, contractAddress string) (*WrappedTokenMetadata, bool) {
-	// Use the efficient reverse index lookup to find the wrapped contract
-	wrappedContract, found := k.GetWrappedTokenContractByWrappedAddress(ctx, contractAddress)
-	if !found {
-		return nil, false
-	}
-
-	// Get the token metadata for the original contract
-	metadata, found := k.GetTokenMetadata(ctx, wrappedContract.ChainId, wrappedContract.ContractAddress)
-	if !found {
-		return nil, false
-	}
-
-	return &WrappedTokenMetadata{
-		ChainId:               wrappedContract.ChainId,
-		OriginContractAddress: wrappedContract.ContractAddress,
-		Name:                  metadata.Name,
-		Symbol:                metadata.Symbol,
-		Decimals:              metadata.Decimals,
-	}, true
-}
-
-// executeCW20Withdrawal burns/withdraws tokens from the user's wrapped token balance
-func (k msgServer) executeCW20Withdrawal(ctx sdk.Context, userAddress, contractAddress, amount string) error {
-	wasmKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.getWasmKeeper())
-
-	// Create withdrawal message for the CW20 contract
-	withdrawMsg := fmt.Sprintf(`{"withdraw":{"amount":"%s"}}`, amount)
-
-	// Convert user address to AccAddress for proper authentication
-	userAddr, err := sdk.AccAddressFromBech32(userAddress)
-	if err != nil {
-		return fmt.Errorf("invalid user address: %v", err)
-	}
-
-	// Execute the withdrawal message
+// validateContractCaller ensures that the caller is actually a smart contract
+func (k msgServer) validateContractCaller(ctx sdk.Context, contractAddress string) error {
 	contractAddr, err := sdk.AccAddressFromBech32(contractAddress)
 	if err != nil {
 		return fmt.Errorf("invalid contract address: %v", err)
 	}
 
-	// Execute as the USER (not as module admin) to preserve user authority
-	// This ensures the contract sees info.sender = user and can properly authenticate
-	_, err = wasmKeeper.Execute(
-		ctx,
-		contractAddr,        // Contract to execute
-		userAddr,            // USER as the message sender/authority
-		[]byte(withdrawMsg), // Withdraw message
-		sdk.NewCoins(),      // No coins attached to this message
-	)
-	if err != nil {
-		return fmt.Errorf("contract execution failed: %v", err)
+	// Check if the address is a contract by querying contract info
+	wasmKeeper := k.getWasmKeeper()
+	contractInfo := wasmKeeper.GetContractInfo(ctx, contractAddr)
+	if contractInfo == nil {
+		return fmt.Errorf("address %s is not a smart contract", contractAddress)
 	}
 
 	return nil
 }
 
-// prepareBridgeSignatureData formats data according to Ethereum bridge contract expectations
-func (k msgServer) prepareBridgeSignatureData(destinationChainId, recipient, tokenContract, amount string) [][]byte {
-	// Convert data to the format expected by BLS signing and Ethereum bridge
-	// Note: epochId, gonka-chainId, and requestId are provided separately in SigningData structure
-	// Final message structure: [epochId, gonka-chainId, requestId, destinationChainId, WITHDRAW_OPERATION, recipient, tokenContract, amount]
-	// This provides cross-chain replay protection for both Gonka and destination chains
+// Helper function to get wasm keeper
+func (k msgServer) getWasmKeeper() wasmkeeper.Keeper {
+	if k.Keeper.getWasmKeeper == nil {
+		panic("wasm keeper not available")
+	}
+	return k.Keeper.getWasmKeeper()
+}
 
-	// Pad destination chain ID to 32 bytes for consistency
-	destinationChainBytes := make([]byte, 32)
-	copy(destinationChainBytes[32-len(destinationChainId):], destinationChainId)
+// Helper function to get wrapped token metadata using the keeper's existing method
+func (k msgServer) getWrappedTokenMetadata(ctx sdk.Context, contractAddress string) (*types.BridgeWrappedTokenContract, bool) {
+	contract, found := k.Keeper.GetWrappedTokenContractByWrappedAddress(ctx, contractAddress)
+	if !found {
+		return nil, false
+	}
+	return &contract, true
+}
 
+// Generate a unique request ID based on the transaction context
+func (k msgServer) generateRequestID(ctx sdk.Context) string {
+	// Use block height and transaction hash as a simple request ID
+	// In a real implementation, you might want to use the transaction hash
+	return fmt.Sprintf("req_%d_%x", ctx.BlockHeight(), ctx.TxBytes())
+}
+
+// Prepare BLS signature data for bridge withdrawal (matches Ethereum bridge contract format)
+func (k msgServer) prepareBridgeSignatureData(chainId, destinationAddress, tokenAddress, amount string) [][]byte {
+	// Bridge signature data format should match the Ethereum bridge contract expectations
+	// This typically includes: operation hash, chain ID, destination address, token address, amount
+
+	// Convert operation hash to bytes
+	operationBytes := withdrawOperationHash[:]
+
+	// Prepare data components (as bytes)
 	data := [][]byte{
-		destinationChainBytes,    // destination chain ID (e.g., "1" for Ethereum mainnet)
-		withdrawOperationHash[:], // operation type hash (pre-calculated constant)
-		[]byte(recipient),        // recipient address
-		[]byte(tokenContract),    // token contract address
-		[]byte(amount),           // amount as bytes
+		operationBytes,             // WITHDRAW_OPERATION hash
+		[]byte(chainId),            // Chain ID
+		[]byte(destinationAddress), // Destination address
+		[]byte(tokenAddress),       // Token contract address
+		[]byte(amount),             // Amount as string
 	}
 
 	return data

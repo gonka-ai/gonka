@@ -2,45 +2,51 @@ package types
 
 import (
 	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 )
 
 var _ sdk.Msg = &MsgRequestBridgeWithdrawal{}
 
-func NewMsgRequestBridgeWithdrawal(creator, wrappedContractAddress, amount, destinationAddress string) *MsgRequestBridgeWithdrawal {
+func NewMsgRequestBridgeWithdrawal(creator, userAddress, amount, destinationAddress string) *MsgRequestBridgeWithdrawal {
 	return &MsgRequestBridgeWithdrawal{
-		Creator:                creator,
-		WrappedContractAddress: wrappedContractAddress,
-		Amount:                 amount,
-		DestinationAddress:     destinationAddress,
+		Creator:            creator,
+		UserAddress:        userAddress,
+		Amount:             amount,
+		DestinationAddress: destinationAddress,
 	}
 }
 
 func (msg *MsgRequestBridgeWithdrawal) ValidateBasic() error {
-	// Validate creator address
+	// Validate creator address (contract signer)
 	_, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
 
-	// Validate wrapped contract address
-	_, err = sdk.AccAddressFromBech32(msg.WrappedContractAddress)
+	// Validate user address
+	_, err = sdk.AccAddressFromBech32(msg.UserAddress)
 	if err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid wrapped contract address (%s)", err)
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid user address (%s)", err)
 	}
 
-	// Validate amount
-	amount, ok := math.NewIntFromString(msg.Amount)
-	if !ok || amount.LTE(math.ZeroInt()) {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "invalid amount (%s)", msg.Amount)
+	// Validate amount is not empty
+	if len(msg.Amount) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount cannot be empty")
 	}
 
-	// Validate destination address (basic Ethereum address format)
-	if len(msg.DestinationAddress) != 42 || msg.DestinationAddress[:2] != "0x" {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid Ethereum destination address (%s)", msg.DestinationAddress)
+	// Validate destination address is not empty (Ethereum address format not validated here)
+	if len(msg.DestinationAddress) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination address cannot be empty")
 	}
 
 	return nil
+}
+
+func (msg *MsgRequestBridgeWithdrawal) GetSigners() []sdk.AccAddress {
+	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		panic(err)
+	}
+	return []sdk.AccAddress{creatorAddr}
 }
