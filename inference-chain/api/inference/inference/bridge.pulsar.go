@@ -1704,67 +1704,66 @@ func (x *fastReflection_BridgeTokenReference) ProtoMethods() *protoiface.Methods
 	}
 }
 
-var _ protoreflect.List = (*_BridgeTransaction_9_list)(nil)
+var _ protoreflect.List = (*_BridgeTransaction_11_list)(nil)
 
-type _BridgeTransaction_9_list struct {
+type _BridgeTransaction_11_list struct {
 	list *[]string
 }
 
-func (x *_BridgeTransaction_9_list) Len() int {
+func (x *_BridgeTransaction_11_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_BridgeTransaction_9_list) Get(i int) protoreflect.Value {
+func (x *_BridgeTransaction_11_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfString((*x.list)[i])
 }
 
-func (x *_BridgeTransaction_9_list) Set(i int, value protoreflect.Value) {
+func (x *_BridgeTransaction_11_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.String()
 	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_BridgeTransaction_9_list) Append(value protoreflect.Value) {
+func (x *_BridgeTransaction_11_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.String()
 	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_BridgeTransaction_9_list) AppendMutable() protoreflect.Value {
+func (x *_BridgeTransaction_11_list) AppendMutable() protoreflect.Value {
 	panic(fmt.Errorf("AppendMutable can not be called on message BridgeTransaction at list field Validators as it is not of Message kind"))
 }
 
-func (x *_BridgeTransaction_9_list) Truncate(n int) {
+func (x *_BridgeTransaction_11_list) Truncate(n int) {
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_BridgeTransaction_9_list) NewElement() protoreflect.Value {
+func (x *_BridgeTransaction_11_list) NewElement() protoreflect.Value {
 	v := ""
 	return protoreflect.ValueOfString(v)
 }
 
-func (x *_BridgeTransaction_9_list) IsValid() bool {
+func (x *_BridgeTransaction_11_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_BridgeTransaction                 protoreflect.MessageDescriptor
-	fd_BridgeTransaction_id              protoreflect.FieldDescriptor
-	fd_BridgeTransaction_chainId         protoreflect.FieldDescriptor
-	fd_BridgeTransaction_contractAddress protoreflect.FieldDescriptor
-	fd_BridgeTransaction_ownerAddress    protoreflect.FieldDescriptor
-	fd_BridgeTransaction_amount          protoreflect.FieldDescriptor
-	fd_BridgeTransaction_blockHeight     protoreflect.FieldDescriptor
-	fd_BridgeTransaction_timestamp       protoreflect.FieldDescriptor
-	fd_BridgeTransaction_status          protoreflect.FieldDescriptor
-	fd_BridgeTransaction_validators      protoreflect.FieldDescriptor
-	fd_BridgeTransaction_validationCount protoreflect.FieldDescriptor
-	fd_BridgeTransaction_blockNumber     protoreflect.FieldDescriptor
-	fd_BridgeTransaction_receiptIndex    protoreflect.FieldDescriptor
-	fd_BridgeTransaction_receiptsRoot    protoreflect.FieldDescriptor
+	md_BridgeTransaction                      protoreflect.MessageDescriptor
+	fd_BridgeTransaction_id                   protoreflect.FieldDescriptor
+	fd_BridgeTransaction_chainId              protoreflect.FieldDescriptor
+	fd_BridgeTransaction_contractAddress      protoreflect.FieldDescriptor
+	fd_BridgeTransaction_ownerAddress         protoreflect.FieldDescriptor
+	fd_BridgeTransaction_amount               protoreflect.FieldDescriptor
+	fd_BridgeTransaction_status               protoreflect.FieldDescriptor
+	fd_BridgeTransaction_blockNumber          protoreflect.FieldDescriptor
+	fd_BridgeTransaction_receiptIndex         protoreflect.FieldDescriptor
+	fd_BridgeTransaction_receiptsRoot         protoreflect.FieldDescriptor
+	fd_BridgeTransaction_pocStartBlockHeight  protoreflect.FieldDescriptor
+	fd_BridgeTransaction_validators           protoreflect.FieldDescriptor
+	fd_BridgeTransaction_totalValidationPower protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1775,14 +1774,13 @@ func init() {
 	fd_BridgeTransaction_contractAddress = md_BridgeTransaction.Fields().ByName("contractAddress")
 	fd_BridgeTransaction_ownerAddress = md_BridgeTransaction.Fields().ByName("ownerAddress")
 	fd_BridgeTransaction_amount = md_BridgeTransaction.Fields().ByName("amount")
-	fd_BridgeTransaction_blockHeight = md_BridgeTransaction.Fields().ByName("blockHeight")
-	fd_BridgeTransaction_timestamp = md_BridgeTransaction.Fields().ByName("timestamp")
 	fd_BridgeTransaction_status = md_BridgeTransaction.Fields().ByName("status")
-	fd_BridgeTransaction_validators = md_BridgeTransaction.Fields().ByName("validators")
-	fd_BridgeTransaction_validationCount = md_BridgeTransaction.Fields().ByName("validationCount")
 	fd_BridgeTransaction_blockNumber = md_BridgeTransaction.Fields().ByName("blockNumber")
 	fd_BridgeTransaction_receiptIndex = md_BridgeTransaction.Fields().ByName("receiptIndex")
 	fd_BridgeTransaction_receiptsRoot = md_BridgeTransaction.Fields().ByName("receiptsRoot")
+	fd_BridgeTransaction_pocStartBlockHeight = md_BridgeTransaction.Fields().ByName("pocStartBlockHeight")
+	fd_BridgeTransaction_validators = md_BridgeTransaction.Fields().ByName("validators")
+	fd_BridgeTransaction_totalValidationPower = md_BridgeTransaction.Fields().ByName("totalValidationPower")
 }
 
 var _ protoreflect.Message = (*fastReflection_BridgeTransaction)(nil)
@@ -1880,33 +1878,9 @@ func (x *fastReflection_BridgeTransaction) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
-	if x.BlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.BlockHeight)
-		if !f(fd_BridgeTransaction_blockHeight, value) {
-			return
-		}
-	}
-	if x.Timestamp != int64(0) {
-		value := protoreflect.ValueOfInt64(x.Timestamp)
-		if !f(fd_BridgeTransaction_timestamp, value) {
-			return
-		}
-	}
 	if x.Status != 0 {
 		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.Status))
 		if !f(fd_BridgeTransaction_status, value) {
-			return
-		}
-	}
-	if len(x.Validators) != 0 {
-		value := protoreflect.ValueOfList(&_BridgeTransaction_9_list{list: &x.Validators})
-		if !f(fd_BridgeTransaction_validators, value) {
-			return
-		}
-	}
-	if x.ValidationCount != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.ValidationCount)
-		if !f(fd_BridgeTransaction_validationCount, value) {
 			return
 		}
 	}
@@ -1925,6 +1899,24 @@ func (x *fastReflection_BridgeTransaction) Range(f func(protoreflect.FieldDescri
 	if x.ReceiptsRoot != "" {
 		value := protoreflect.ValueOfString(x.ReceiptsRoot)
 		if !f(fd_BridgeTransaction_receiptsRoot, value) {
+			return
+		}
+	}
+	if x.PocStartBlockHeight != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.PocStartBlockHeight)
+		if !f(fd_BridgeTransaction_pocStartBlockHeight, value) {
+			return
+		}
+	}
+	if len(x.Validators) != 0 {
+		value := protoreflect.ValueOfList(&_BridgeTransaction_11_list{list: &x.Validators})
+		if !f(fd_BridgeTransaction_validators, value) {
+			return
+		}
+	}
+	if x.TotalValidationPower != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TotalValidationPower)
+		if !f(fd_BridgeTransaction_totalValidationPower, value) {
 			return
 		}
 	}
@@ -1953,22 +1945,20 @@ func (x *fastReflection_BridgeTransaction) Has(fd protoreflect.FieldDescriptor) 
 		return x.OwnerAddress != ""
 	case "inference.inference.BridgeTransaction.amount":
 		return x.Amount != ""
-	case "inference.inference.BridgeTransaction.blockHeight":
-		return x.BlockHeight != int64(0)
-	case "inference.inference.BridgeTransaction.timestamp":
-		return x.Timestamp != int64(0)
 	case "inference.inference.BridgeTransaction.status":
 		return x.Status != 0
-	case "inference.inference.BridgeTransaction.validators":
-		return len(x.Validators) != 0
-	case "inference.inference.BridgeTransaction.validationCount":
-		return x.ValidationCount != uint32(0)
 	case "inference.inference.BridgeTransaction.blockNumber":
 		return x.BlockNumber != ""
 	case "inference.inference.BridgeTransaction.receiptIndex":
 		return x.ReceiptIndex != ""
 	case "inference.inference.BridgeTransaction.receiptsRoot":
 		return x.ReceiptsRoot != ""
+	case "inference.inference.BridgeTransaction.pocStartBlockHeight":
+		return x.PocStartBlockHeight != uint64(0)
+	case "inference.inference.BridgeTransaction.validators":
+		return len(x.Validators) != 0
+	case "inference.inference.BridgeTransaction.totalValidationPower":
+		return x.TotalValidationPower != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgeTransaction"))
@@ -1995,22 +1985,20 @@ func (x *fastReflection_BridgeTransaction) Clear(fd protoreflect.FieldDescriptor
 		x.OwnerAddress = ""
 	case "inference.inference.BridgeTransaction.amount":
 		x.Amount = ""
-	case "inference.inference.BridgeTransaction.blockHeight":
-		x.BlockHeight = int64(0)
-	case "inference.inference.BridgeTransaction.timestamp":
-		x.Timestamp = int64(0)
 	case "inference.inference.BridgeTransaction.status":
 		x.Status = 0
-	case "inference.inference.BridgeTransaction.validators":
-		x.Validators = nil
-	case "inference.inference.BridgeTransaction.validationCount":
-		x.ValidationCount = uint32(0)
 	case "inference.inference.BridgeTransaction.blockNumber":
 		x.BlockNumber = ""
 	case "inference.inference.BridgeTransaction.receiptIndex":
 		x.ReceiptIndex = ""
 	case "inference.inference.BridgeTransaction.receiptsRoot":
 		x.ReceiptsRoot = ""
+	case "inference.inference.BridgeTransaction.pocStartBlockHeight":
+		x.PocStartBlockHeight = uint64(0)
+	case "inference.inference.BridgeTransaction.validators":
+		x.Validators = nil
+	case "inference.inference.BridgeTransaction.totalValidationPower":
+		x.TotalValidationPower = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgeTransaction"))
@@ -2042,24 +2030,9 @@ func (x *fastReflection_BridgeTransaction) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.BridgeTransaction.amount":
 		value := x.Amount
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.BridgeTransaction.blockHeight":
-		value := x.BlockHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.BridgeTransaction.timestamp":
-		value := x.Timestamp
-		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.BridgeTransaction.status":
 		value := x.Status
 		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
-	case "inference.inference.BridgeTransaction.validators":
-		if len(x.Validators) == 0 {
-			return protoreflect.ValueOfList(&_BridgeTransaction_9_list{})
-		}
-		listValue := &_BridgeTransaction_9_list{list: &x.Validators}
-		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.BridgeTransaction.validationCount":
-		value := x.ValidationCount
-		return protoreflect.ValueOfUint32(value)
 	case "inference.inference.BridgeTransaction.blockNumber":
 		value := x.BlockNumber
 		return protoreflect.ValueOfString(value)
@@ -2069,6 +2042,18 @@ func (x *fastReflection_BridgeTransaction) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.BridgeTransaction.receiptsRoot":
 		value := x.ReceiptsRoot
 		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgeTransaction.pocStartBlockHeight":
+		value := x.PocStartBlockHeight
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.BridgeTransaction.validators":
+		if len(x.Validators) == 0 {
+			return protoreflect.ValueOfList(&_BridgeTransaction_11_list{})
+		}
+		listValue := &_BridgeTransaction_11_list{list: &x.Validators}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.BridgeTransaction.totalValidationPower":
+		value := x.TotalValidationPower
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgeTransaction"))
@@ -2099,24 +2084,22 @@ func (x *fastReflection_BridgeTransaction) Set(fd protoreflect.FieldDescriptor, 
 		x.OwnerAddress = value.Interface().(string)
 	case "inference.inference.BridgeTransaction.amount":
 		x.Amount = value.Interface().(string)
-	case "inference.inference.BridgeTransaction.blockHeight":
-		x.BlockHeight = value.Int()
-	case "inference.inference.BridgeTransaction.timestamp":
-		x.Timestamp = value.Int()
 	case "inference.inference.BridgeTransaction.status":
 		x.Status = (BridgeTransactionStatus)(value.Enum())
-	case "inference.inference.BridgeTransaction.validators":
-		lv := value.List()
-		clv := lv.(*_BridgeTransaction_9_list)
-		x.Validators = *clv.list
-	case "inference.inference.BridgeTransaction.validationCount":
-		x.ValidationCount = uint32(value.Uint())
 	case "inference.inference.BridgeTransaction.blockNumber":
 		x.BlockNumber = value.Interface().(string)
 	case "inference.inference.BridgeTransaction.receiptIndex":
 		x.ReceiptIndex = value.Interface().(string)
 	case "inference.inference.BridgeTransaction.receiptsRoot":
 		x.ReceiptsRoot = value.Interface().(string)
+	case "inference.inference.BridgeTransaction.pocStartBlockHeight":
+		x.PocStartBlockHeight = value.Uint()
+	case "inference.inference.BridgeTransaction.validators":
+		lv := value.List()
+		clv := lv.(*_BridgeTransaction_11_list)
+		x.Validators = *clv.list
+	case "inference.inference.BridgeTransaction.totalValidationPower":
+		x.TotalValidationPower = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgeTransaction"))
@@ -2141,7 +2124,7 @@ func (x *fastReflection_BridgeTransaction) Mutable(fd protoreflect.FieldDescript
 		if x.Validators == nil {
 			x.Validators = []string{}
 		}
-		value := &_BridgeTransaction_9_list{list: &x.Validators}
+		value := &_BridgeTransaction_11_list{list: &x.Validators}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.BridgeTransaction.id":
 		panic(fmt.Errorf("field id of message inference.inference.BridgeTransaction is not mutable"))
@@ -2153,20 +2136,18 @@ func (x *fastReflection_BridgeTransaction) Mutable(fd protoreflect.FieldDescript
 		panic(fmt.Errorf("field ownerAddress of message inference.inference.BridgeTransaction is not mutable"))
 	case "inference.inference.BridgeTransaction.amount":
 		panic(fmt.Errorf("field amount of message inference.inference.BridgeTransaction is not mutable"))
-	case "inference.inference.BridgeTransaction.blockHeight":
-		panic(fmt.Errorf("field blockHeight of message inference.inference.BridgeTransaction is not mutable"))
-	case "inference.inference.BridgeTransaction.timestamp":
-		panic(fmt.Errorf("field timestamp of message inference.inference.BridgeTransaction is not mutable"))
 	case "inference.inference.BridgeTransaction.status":
 		panic(fmt.Errorf("field status of message inference.inference.BridgeTransaction is not mutable"))
-	case "inference.inference.BridgeTransaction.validationCount":
-		panic(fmt.Errorf("field validationCount of message inference.inference.BridgeTransaction is not mutable"))
 	case "inference.inference.BridgeTransaction.blockNumber":
 		panic(fmt.Errorf("field blockNumber of message inference.inference.BridgeTransaction is not mutable"))
 	case "inference.inference.BridgeTransaction.receiptIndex":
 		panic(fmt.Errorf("field receiptIndex of message inference.inference.BridgeTransaction is not mutable"))
 	case "inference.inference.BridgeTransaction.receiptsRoot":
 		panic(fmt.Errorf("field receiptsRoot of message inference.inference.BridgeTransaction is not mutable"))
+	case "inference.inference.BridgeTransaction.pocStartBlockHeight":
+		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.BridgeTransaction is not mutable"))
+	case "inference.inference.BridgeTransaction.totalValidationPower":
+		panic(fmt.Errorf("field totalValidationPower of message inference.inference.BridgeTransaction is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgeTransaction"))
@@ -2190,23 +2171,21 @@ func (x *fastReflection_BridgeTransaction) NewField(fd protoreflect.FieldDescrip
 		return protoreflect.ValueOfString("")
 	case "inference.inference.BridgeTransaction.amount":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.BridgeTransaction.blockHeight":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.BridgeTransaction.timestamp":
-		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.BridgeTransaction.status":
 		return protoreflect.ValueOfEnum(0)
-	case "inference.inference.BridgeTransaction.validators":
-		list := []string{}
-		return protoreflect.ValueOfList(&_BridgeTransaction_9_list{list: &list})
-	case "inference.inference.BridgeTransaction.validationCount":
-		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.BridgeTransaction.blockNumber":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.BridgeTransaction.receiptIndex":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.BridgeTransaction.receiptsRoot":
 		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgeTransaction.pocStartBlockHeight":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.BridgeTransaction.validators":
+		list := []string{}
+		return protoreflect.ValueOfList(&_BridgeTransaction_11_list{list: &list})
+	case "inference.inference.BridgeTransaction.totalValidationPower":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgeTransaction"))
@@ -2296,23 +2275,8 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.BlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.BlockHeight))
-		}
-		if x.Timestamp != 0 {
-			n += 1 + runtime.Sov(uint64(x.Timestamp))
-		}
 		if x.Status != 0 {
 			n += 1 + runtime.Sov(uint64(x.Status))
-		}
-		if len(x.Validators) > 0 {
-			for _, s := range x.Validators {
-				l = len(s)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if x.ValidationCount != 0 {
-			n += 1 + runtime.Sov(uint64(x.ValidationCount))
 		}
 		l = len(x.BlockNumber)
 		if l > 0 {
@@ -2325,6 +2289,18 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 		l = len(x.ReceiptsRoot)
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.PocStartBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocStartBlockHeight))
+		}
+		if len(x.Validators) > 0 {
+			for _, s := range x.Validators {
+				l = len(s)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if x.TotalValidationPower != 0 {
+			n += 1 + runtime.Sov(uint64(x.TotalValidationPower))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -2355,31 +2331,10 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.ReceiptsRoot) > 0 {
-			i -= len(x.ReceiptsRoot)
-			copy(dAtA[i:], x.ReceiptsRoot)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ReceiptsRoot)))
+		if x.TotalValidationPower != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TotalValidationPower))
 			i--
-			dAtA[i] = 0x6a
-		}
-		if len(x.ReceiptIndex) > 0 {
-			i -= len(x.ReceiptIndex)
-			copy(dAtA[i:], x.ReceiptIndex)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ReceiptIndex)))
-			i--
-			dAtA[i] = 0x62
-		}
-		if len(x.BlockNumber) > 0 {
-			i -= len(x.BlockNumber)
-			copy(dAtA[i:], x.BlockNumber)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.BlockNumber)))
-			i--
-			dAtA[i] = 0x5a
-		}
-		if x.ValidationCount != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidationCount))
-			i--
-			dAtA[i] = 0x50
+			dAtA[i] = 0x60
 		}
 		if len(x.Validators) > 0 {
 			for iNdEx := len(x.Validators) - 1; iNdEx >= 0; iNdEx-- {
@@ -2387,21 +2342,37 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], x.Validators[iNdEx])
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Validators[iNdEx])))
 				i--
-				dAtA[i] = 0x4a
+				dAtA[i] = 0x5a
 			}
+		}
+		if x.PocStartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStartBlockHeight))
+			i--
+			dAtA[i] = 0x50
+		}
+		if len(x.ReceiptsRoot) > 0 {
+			i -= len(x.ReceiptsRoot)
+			copy(dAtA[i:], x.ReceiptsRoot)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ReceiptsRoot)))
+			i--
+			dAtA[i] = 0x4a
+		}
+		if len(x.ReceiptIndex) > 0 {
+			i -= len(x.ReceiptIndex)
+			copy(dAtA[i:], x.ReceiptIndex)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ReceiptIndex)))
+			i--
+			dAtA[i] = 0x42
+		}
+		if len(x.BlockNumber) > 0 {
+			i -= len(x.BlockNumber)
+			copy(dAtA[i:], x.BlockNumber)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.BlockNumber)))
+			i--
+			dAtA[i] = 0x3a
 		}
 		if x.Status != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Status))
-			i--
-			dAtA[i] = 0x40
-		}
-		if x.Timestamp != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.Timestamp))
-			i--
-			dAtA[i] = 0x38
-		}
-		if x.BlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.BlockHeight))
 			i--
 			dAtA[i] = 0x30
 		}
@@ -2651,44 +2622,6 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 6:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlockHeight", wireType)
-				}
-				x.BlockHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.BlockHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 7:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Timestamp", wireType)
-				}
-				x.Timestamp = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.Timestamp |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 8:
-				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
 				}
 				x.Status = 0
@@ -2706,58 +2639,7 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 9:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Validators", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Validators = append(x.Validators, string(dAtA[iNdEx:postIndex]))
-				iNdEx = postIndex
-			case 10:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidationCount", wireType)
-				}
-				x.ValidationCount = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.ValidationCount |= uint32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 11:
+			case 7:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlockNumber", wireType)
 				}
@@ -2789,7 +2671,7 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 				}
 				x.BlockNumber = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 12:
+			case 8:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ReceiptIndex", wireType)
 				}
@@ -2821,7 +2703,7 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 				}
 				x.ReceiptIndex = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 13:
+			case 9:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ReceiptsRoot", wireType)
 				}
@@ -2853,6 +2735,76 @@ func (x *fastReflection_BridgeTransaction) ProtoMethods() *protoiface.Methods {
 				}
 				x.ReceiptsRoot = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStartBlockHeight", wireType)
+				}
+				x.PocStartBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocStartBlockHeight |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 11:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Validators", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Validators = append(x.Validators, string(dAtA[iNdEx:postIndex]))
+				iNdEx = postIndex
+			case 12:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TotalValidationPower", wireType)
+				}
+				x.TotalValidationPower = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TotalValidationPower |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -4434,19 +4386,18 @@ type BridgeTransaction struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Id              string                  `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ChainId         string                  `protobuf:"bytes,2,opt,name=chainId,proto3" json:"chainId,omitempty"`
-	ContractAddress string                  `protobuf:"bytes,3,opt,name=contractAddress,proto3" json:"contractAddress,omitempty"`
-	OwnerAddress    string                  `protobuf:"bytes,4,opt,name=ownerAddress,proto3" json:"ownerAddress,omitempty"`
-	Amount          string                  `protobuf:"bytes,5,opt,name=amount,proto3" json:"amount,omitempty"`
-	BlockHeight     int64                   `protobuf:"varint,6,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
-	Timestamp       int64                   `protobuf:"varint,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Status          BridgeTransactionStatus `protobuf:"varint,8,opt,name=status,proto3,enum=inference.inference.BridgeTransactionStatus" json:"status,omitempty"`
-	Validators      []string                `protobuf:"bytes,9,rep,name=validators,proto3" json:"validators,omitempty"`
-	ValidationCount uint32                  `protobuf:"varint,10,opt,name=validationCount,proto3" json:"validationCount,omitempty"`
-	BlockNumber     string                  `protobuf:"bytes,11,opt,name=blockNumber,proto3" json:"blockNumber,omitempty"`   // block number where the transaction occurred on the origin chain
-	ReceiptIndex    string                  `protobuf:"bytes,12,opt,name=receiptIndex,proto3" json:"receiptIndex,omitempty"` // index of the transaction receipt in the block
-	ReceiptsRoot    string                  `protobuf:"bytes,13,opt,name=receiptsRoot,proto3" json:"receiptsRoot,omitempty"` // merkle root of receipts trie for transaction verification
+	Id                   string                  `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ChainId              string                  `protobuf:"bytes,2,opt,name=chainId,proto3" json:"chainId,omitempty"`
+	ContractAddress      string                  `protobuf:"bytes,3,opt,name=contractAddress,proto3" json:"contractAddress,omitempty"`
+	OwnerAddress         string                  `protobuf:"bytes,4,opt,name=ownerAddress,proto3" json:"ownerAddress,omitempty"`
+	Amount               string                  `protobuf:"bytes,5,opt,name=amount,proto3" json:"amount,omitempty"`
+	Status               BridgeTransactionStatus `protobuf:"varint,6,opt,name=status,proto3,enum=inference.inference.BridgeTransactionStatus" json:"status,omitempty"`
+	BlockNumber          string                  `protobuf:"bytes,7,opt,name=blockNumber,proto3" json:"blockNumber,omitempty"`                     // block number where the transaction occurred on the origin chain
+	ReceiptIndex         string                  `protobuf:"bytes,8,opt,name=receiptIndex,proto3" json:"receiptIndex,omitempty"`                   // index of the transaction receipt in the block
+	ReceiptsRoot         string                  `protobuf:"bytes,9,opt,name=receiptsRoot,proto3" json:"receiptsRoot,omitempty"`                   // merkle root of receipts trie for transaction verification
+	PocStartBlockHeight  uint64                  `protobuf:"varint,10,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`   // PoC start block height of the epoch when transaction was created
+	Validators           []string                `protobuf:"bytes,11,rep,name=validators,proto3" json:"validators,omitempty"`                      // list of validator addresses that validated
+	TotalValidationPower int64                   `protobuf:"varint,12,opt,name=totalValidationPower,proto3" json:"totalValidationPower,omitempty"` // sum of all validator powers that validated
 }
 
 func (x *BridgeTransaction) Reset() {
@@ -4504,39 +4455,11 @@ func (x *BridgeTransaction) GetAmount() string {
 	return ""
 }
 
-func (x *BridgeTransaction) GetBlockHeight() int64 {
-	if x != nil {
-		return x.BlockHeight
-	}
-	return 0
-}
-
-func (x *BridgeTransaction) GetTimestamp() int64 {
-	if x != nil {
-		return x.Timestamp
-	}
-	return 0
-}
-
 func (x *BridgeTransaction) GetStatus() BridgeTransactionStatus {
 	if x != nil {
 		return x.Status
 	}
 	return BridgeTransactionStatus_BRIDGE_PENDING
-}
-
-func (x *BridgeTransaction) GetValidators() []string {
-	if x != nil {
-		return x.Validators
-	}
-	return nil
-}
-
-func (x *BridgeTransaction) GetValidationCount() uint32 {
-	if x != nil {
-		return x.ValidationCount
-	}
-	return 0
 }
 
 func (x *BridgeTransaction) GetBlockNumber() string {
@@ -4558,6 +4481,27 @@ func (x *BridgeTransaction) GetReceiptsRoot() string {
 		return x.ReceiptsRoot
 	}
 	return ""
+}
+
+func (x *BridgeTransaction) GetPocStartBlockHeight() uint64 {
+	if x != nil {
+		return x.PocStartBlockHeight
+	}
+	return 0
+}
+
+func (x *BridgeTransaction) GetValidators() []string {
+	if x != nil {
+		return x.Validators
+	}
+	return nil
+}
+
+func (x *BridgeTransaction) GetTotalValidationPower() int64 {
+	if x != nil {
+		return x.TotalValidationPower
+	}
+	return 0
 }
 
 // Stores mapping between external chain tokens and their CW20 counterparts
@@ -4692,7 +4636,7 @@ var file_inference_inference_bridge_proto_rawDesc = []byte{
 	0x09, 0x52, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x0f, 0x63, 0x6f,
 	0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
 	0x01, 0x28, 0x09, 0x52, 0x0f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x22, 0xdd, 0x03, 0x0a, 0x11, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54,
+	0x72, 0x65, 0x73, 0x73, 0x22, 0xd9, 0x03, 0x0a, 0x11, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54,
 	0x72, 0x61, 0x6e, 0x73, 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64,
 	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x68,
 	0x61, 0x69, 0x6e, 0x49, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x68, 0x61,
@@ -4702,70 +4646,70 @@ var file_inference_inference_bridge_proto_rawDesc = []byte{
 	0x0a, 0x0c, 0x6f, 0x77, 0x6e, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x04,
 	0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x6f, 0x77, 0x6e, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65,
 	0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x05, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c,
-	0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1c, 0x0a, 0x09,
-	0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x09, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x44, 0x0a, 0x06, 0x73, 0x74,
-	0x61, 0x74, 0x75, 0x73, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66,
+	0x28, 0x09, 0x52, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x44, 0x0a, 0x06, 0x73, 0x74,
+	0x61, 0x74, 0x75, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x72, 0x61, 0x6e, 0x73, 0x61, 0x63, 0x74, 0x69,
 	0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73,
-	0x12, 0x1e, 0x0a, 0x0a, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x18, 0x09,
-	0x20, 0x03, 0x28, 0x09, 0x52, 0x0a, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73,
-	0x12, 0x28, 0x0a, 0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x43, 0x6f,
-	0x75, 0x6e, 0x74, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c,
-	0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x12, 0x22, 0x0a, 0x0c,
-	0x72, 0x65, 0x63, 0x65, 0x69, 0x70, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x0c, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x70, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78,
-	0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x70, 0x74, 0x73, 0x52, 0x6f, 0x6f, 0x74,
-	0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x70, 0x74, 0x73,
-	0x52, 0x6f, 0x6f, 0x74, 0x22, 0x98, 0x01, 0x0a, 0x1a, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x57,
-	0x72, 0x61, 0x70, 0x70, 0x65, 0x64, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x6e, 0x74, 0x72,
-	0x61, 0x63, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x12, 0x28, 0x0a,
-	0x0f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
-	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74,
-	0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x36, 0x0a, 0x16, 0x77, 0x72, 0x61, 0x70, 0x70,
-	0x65, 0x64, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73,
-	0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x16, 0x77, 0x72, 0x61, 0x70, 0x70, 0x65, 0x64,
-	0x43, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22,
-	0x93, 0x02, 0x0a, 0x06, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x12, 0x59, 0x0a, 0x12, 0x63, 0x6f,
-	0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73,
-	0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69,
-	0x64, 0x67, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65,
-	0x73, 0x73, 0x52, 0x11, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72,
-	0x65, 0x73, 0x73, 0x65, 0x73, 0x12, 0x4f, 0x0a, 0x0e, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x6d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x28, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x4d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x52, 0x0d, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65,
-	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x12, 0x5d, 0x0a, 0x15, 0x74, 0x72, 0x61, 0x64, 0x65, 0x5f,
-	0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18,
-	0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64,
-	0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x52, 0x13, 0x74, 0x72, 0x61, 0x64, 0x65, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x54,
-	0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x2a, 0x43, 0x0a, 0x17, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54,
-	0x72, 0x61, 0x6e, 0x73, 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
-	0x12, 0x12, 0x0a, 0x0e, 0x42, 0x52, 0x49, 0x44, 0x47, 0x45, 0x5f, 0x50, 0x45, 0x4e, 0x44, 0x49,
-	0x4e, 0x47, 0x10, 0x00, 0x12, 0x14, 0x0a, 0x10, 0x42, 0x52, 0x49, 0x44, 0x47, 0x45, 0x5f, 0x43,
-	0x4f, 0x4d, 0x50, 0x4c, 0x45, 0x54, 0x45, 0x44, 0x10, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63,
-	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
-	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
-	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18,
+	0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62,
+	0x65, 0x72, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x70, 0x74, 0x49, 0x6e, 0x64,
+	0x65, 0x78, 0x18, 0x08, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x70,
+	0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x70,
+	0x74, 0x73, 0x52, 0x6f, 0x6f, 0x74, 0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65,
+	0x63, 0x65, 0x69, 0x70, 0x74, 0x73, 0x52, 0x6f, 0x6f, 0x74, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f,
+	0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72,
+	0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1e, 0x0a, 0x0a,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x18, 0x0b, 0x20, 0x03, 0x28, 0x09,
+	0x52, 0x0a, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x12, 0x32, 0x0a, 0x14,
+	0x74, 0x6f, 0x74, 0x61, 0x6c, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50,
+	0x6f, 0x77, 0x65, 0x72, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x74, 0x6f, 0x74, 0x61,
+	0x6c, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x6f, 0x77, 0x65, 0x72,
+	0x22, 0x98, 0x01, 0x0a, 0x1a, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x57, 0x72, 0x61, 0x70, 0x70,
+	0x65, 0x64, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x12,
+	0x18, 0x0a, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x0f, 0x63, 0x6f, 0x6e,
+	0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x0f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72,
+	0x65, 0x73, 0x73, 0x12, 0x36, 0x0a, 0x16, 0x77, 0x72, 0x61, 0x70, 0x70, 0x65, 0x64, 0x43, 0x6f,
+	0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x16, 0x77, 0x72, 0x61, 0x70, 0x70, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x74,
+	0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x93, 0x02, 0x0a, 0x06,
+	0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x12, 0x59, 0x0a, 0x12, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61,
+	0x63, 0x74, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x18, 0x01, 0x20, 0x03,
+	0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x43,
+	0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x11,
+	0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65,
+	0x73, 0x12, 0x4f, 0x0a, 0x0e, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x6d, 0x65, 0x74, 0x61, 0x64,
+	0x61, 0x74, 0x61, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x64,
+	0x61, 0x74, 0x61, 0x52, 0x0d, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61,
+	0x74, 0x61, 0x12, 0x5d, 0x0a, 0x15, 0x74, 0x72, 0x61, 0x64, 0x65, 0x5f, 0x61, 0x70, 0x70, 0x72,
+	0x6f, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x6f,
+	0x6b, 0x65, 0x6e, 0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x13, 0x74, 0x72,
+	0x61, 0x64, 0x65, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x54, 0x6f, 0x6b, 0x65, 0x6e,
+	0x73, 0x2a, 0x43, 0x0a, 0x17, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x72, 0x61, 0x6e, 0x73,
+	0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x12, 0x0a, 0x0e,
+	0x42, 0x52, 0x49, 0x44, 0x47, 0x45, 0x5f, 0x50, 0x45, 0x4e, 0x44, 0x49, 0x4e, 0x47, 0x10, 0x00,
+	0x12, 0x14, 0x0a, 0x10, 0x42, 0x52, 0x49, 0x44, 0x47, 0x45, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x4c,
+	0x45, 0x54, 0x45, 0x44, 0x10, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x42, 0x0b, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

@@ -36,14 +36,13 @@ message BridgeTransaction {
   string contractAddress = 3;        
   string ownerAddress = 4;           
   string amount = 5;                 
-  int64 blockHeight = 6;            
-  int64 timestamp = 7;              
-  BridgeTransactionStatus status = 8;
-  repeated string validators = 9;    
-  uint32 validationCount = 10;       
-  string blockNumber = 11;          // block number where the transaction occurred on the origin chain
-  string receiptIndex = 12;         // index of the transaction receipt in the block
-  string receiptsRoot = 13;         // merkle root of receipts trie for transaction verification
+  BridgeTransactionStatus status = 6;
+  string blockNumber = 7;           // block number where the transaction occurred on the origin chain
+  string receiptIndex = 8;          // index of the transaction receipt in the block
+  string receiptsRoot = 9;          // merkle root of receipts trie for transaction verification
+  uint64 pocStartBlockHeight = 10;  // PoC start block height of the epoch when transaction was created
+  repeated string validators = 11;   // list of validator addresses that validated
+  int64 totalValidationPower = 12;  // sum of all validator powers that validated
 }
 
 // Stores mapping between external chain tokens and their CW20 counterparts

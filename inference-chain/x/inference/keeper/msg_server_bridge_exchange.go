@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -40,23 +41,6 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("invalid amount: %s", msg.Amount)
 	}
 
-	// Get current epoch group and active participants
-	currentEpochGroup, error := k.GetCurrentEpochGroup(goCtx)
-	if error != nil {
-		k.LogError(
-			"Bridge exchange: unable to get current epoch group",
-			types.Messages,
-			"error", error)
-		return nil, fmt.Errorf("unable to get current epoch group: %v", error)
-	}
-
-	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochGroup.GroupData.EpochId)
-	if !found {
-		k.LogError("Bridge exchange: No active participants found for current epoch", types.Messages,
-			"epochGroupId", currentEpochGroup.GroupData.EpochGroupId)
-		return nil, fmt.Errorf("no active participants found for current epoch")
-	}
-
 	// Get the account address
 	addr, err := sdk.AccAddressFromBech32(msg.Validator)
 	if err != nil {
@@ -67,37 +51,61 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	// Check if the validator is in active participants by checking their account
+	// Check if the validator account exists
 	acc := k.AccountKeeper.GetAccount(ctx, addr)
 	if acc == nil {
 		k.LogError("Bridge exchange: Account not found for validator", types.Messages, "validator", msg.Validator)
 		return nil, fmt.Errorf("account not found for validator")
 	}
 
-	isActive := false
-	for _, participant := range activeParticipants.Participants {
-		// Get the account associated with this participant
-		participantAddr, err := sdk.AccAddressFromBech32(participant.Index)
-		if err != nil {
-			continue
-		}
-
-		if participantAddr.Equals(addr) {
-			isActive = true
-			break
-		}
-	}
-
-	if !isActive {
-		k.LogError("Bridge exchange: Validator not in active participants", types.Messages, "validator", msg.Validator)
-		return nil, fmt.Errorf("validator not in active participants")
-	}
-	k.LogInfo("Bridge exchange: Validator is active participant", types.Messages, "validator", msg.Validator)
-
 	// Check if this transaction has already been processed
 	existingTx, found := k.GetBridgeTransaction(ctx, msg.OriginChain, msg.BlockNumber, msg.ReceiptIndex)
 	if found {
-		// If exists, check if validator already validated
+		// Get the epoch group for the existing transaction using pocStartBlockHeight
+		epochGroup, err := k.GetEpochGroup(goCtx, existingTx.PocStartBlockHeight, "")
+		if err != nil {
+			k.LogError("Bridge exchange: unable to get epoch group for existing transaction", types.Messages,
+				"pocStartBlockHeight", existingTx.PocStartBlockHeight, "error", err)
+			return nil, fmt.Errorf("unable to get epoch group for existing transaction: %v", err)
+		}
+
+		// Get epoch group members directly
+		epochGroupMembers, err := epochGroup.GetGroupMembers(ctx)
+		if err != nil {
+			k.LogError("Bridge exchange: unable to get epoch group members", types.Messages,
+				"pocStartBlockHeight", existingTx.PocStartBlockHeight, "error", err)
+			return nil, fmt.Errorf("unable to get epoch group members: %v", err)
+		}
+
+		// Check if validator is in the epoch group
+		isInEpochGroup := false
+		var validatorPower int64
+		for _, member := range epochGroupMembers {
+			memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
+			if err != nil {
+				continue
+			}
+			if memberAddr.Equals(addr) {
+				isInEpochGroup = true
+				// Parse weight from string (group module stores weight as string)
+				weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+				if err != nil {
+					k.LogError("Bridge exchange: unable to parse member weight", types.Messages,
+						"member", member.Member.Address, "weight", member.Member.Weight, "error", err)
+					continue
+				}
+				validatorPower = weight
+				break
+			}
+		}
+
+		if !isInEpochGroup {
+			k.LogError("Bridge exchange: Validator not in transaction's epoch group", types.Messages,
+				"validator", msg.Validator, "pocStartBlockHeight", existingTx.PocStartBlockHeight)
+			return nil, fmt.Errorf("validator not in transaction's epoch group")
+		}
+
+		// Check if validator already validated
 		for _, validator := range existingTx.Validators {
 			if validator == msg.Validator {
 				k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
@@ -105,9 +113,12 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			}
 		}
 
-		// Add validator
+		// Add validator and their power to totals
 		existingTx.Validators = append(existingTx.Validators, msg.Validator)
-		existingTx.ValidationCount++
+		existingTx.TotalValidationPower += validatorPower
+
+		// Use total epoch power from epoch group data
+		totalEpochPower := epochGroup.GroupData.TotalWeight
 
 		k.LogInfo("Bridge exchange: Additional validator added",
 			types.Messages,
@@ -115,13 +126,15 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			"blockNumber", msg.BlockNumber,
 			"receiptIndex", msg.ReceiptIndex,
 			"validator", msg.Validator,
-			"currentValidations", existingTx.ValidationCount,
+			"validatorPower", validatorPower,
+			"totalValidationPower", existingTx.TotalValidationPower,
+			"totalEpochPower", totalEpochPower,
 			"status", existingTx.Status)
 
-		// Check if we have majority
-		requiredValidators := (2*len(activeParticipants.Participants) + 2) / 3
+		// Check if we have majority (50+% of total power)
+		requiredPower := (totalEpochPower / 2) + 1
 
-		if existingTx.ValidationCount >= uint32(requiredValidators) {
+		if existingTx.TotalValidationPower >= requiredPower {
 			// Only process completion once to avoid duplicate mints
 			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
 				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
@@ -143,24 +156,23 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 					"originChain", msg.OriginChain,
 					"blockNumber", msg.BlockNumber,
 					"receiptIndex", msg.ReceiptIndex,
-					"validationsRequired", requiredValidators,
-					"validationsReceived", existingTx.ValidationCount,
-					"totalValidators", len(activeParticipants.Participants))
+					"powerRequired", requiredPower,
+					"powerReceived", existingTx.TotalValidationPower,
+					"totalEpochPower", totalEpochPower)
 
 				return &types.MsgBridgeExchangeResponse{
 					Id: existingTx.Id,
 				}, nil
 			}
-
 		} else {
 			k.LogInfo("Bridge exchange: transaction pending majority validation",
 				types.Messages,
 				"originChain", msg.OriginChain,
 				"blockNumber", msg.BlockNumber,
 				"receiptIndex", msg.ReceiptIndex,
-				"validationsRequired", requiredValidators,
-				"validationsReceived", existingTx.ValidationCount,
-				"totalValidators", len(activeParticipants.Participants))
+				"powerRequired", requiredPower,
+				"powerReceived", existingTx.TotalValidationPower,
+				"totalEpochPower", totalEpochPower)
 		}
 
 		k.SetBridgeTransaction(ctx, existingTx)
@@ -169,21 +181,63 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		}, nil
 	}
 
+	// Transaction doesn't exist, create new one
+	// Get current epoch group
+	currentEpochGroup, err := k.GetCurrentEpochGroup(goCtx)
+	if err != nil {
+		k.LogError("Bridge exchange: unable to get current epoch group", types.Messages, "error", err)
+		return nil, fmt.Errorf("unable to get current epoch group: %v", err)
+	}
+
+	// Get current epoch group members directly
+	currentEpochMembers, err := currentEpochGroup.GetGroupMembers(ctx)
+	if err != nil {
+		k.LogError("Bridge exchange: unable to get current epoch group members", types.Messages,
+			"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight, "error", err)
+		return nil, fmt.Errorf("unable to get current epoch group members: %v", err)
+	}
+
+	// Check if validator is in current epoch group
+	isActive := false
+	var validatorPower int64
+	for _, member := range currentEpochMembers {
+		memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
+		if err != nil {
+			continue
+		}
+		if memberAddr.Equals(addr) {
+			isActive = true
+			// Parse weight from string (group module stores weight as string)
+			weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+			if err != nil {
+				k.LogError("Bridge exchange: unable to parse member weight", types.Messages,
+					"member", member.Member.Address, "weight", member.Member.Weight, "error", err)
+				continue
+			}
+			validatorPower = weight
+			break
+		}
+	}
+
+	if !isActive {
+		k.LogError("Bridge exchange: Validator not in active participants", types.Messages, "validator", msg.Validator)
+		return nil, fmt.Errorf("validator not in active participants")
+	}
+
 	// Create new bridge transaction
 	bridgeTx := &types.BridgeTransaction{
-		Id:              "", // Will be set by SetBridgeTransaction
-		ChainId:         msg.OriginChain,
-		ContractAddress: msg.ContractAddress,
-		OwnerAddress:    msg.OwnerAddress,
-		Amount:          msg.Amount,
-		BlockHeight:     ctx.BlockHeight(),
-		Timestamp:       ctx.BlockTime().Unix(),
-		Status:          types.BridgeTransactionStatus_BRIDGE_PENDING,
-		Validators:      []string{msg.Validator},
-		ValidationCount: 1,
-		BlockNumber:     msg.BlockNumber,
-		ReceiptIndex:    msg.ReceiptIndex,
-		ReceiptsRoot:    msg.ReceiptsRoot,
+		Id:                   "", // Will be set by SetBridgeTransaction
+		ChainId:              msg.OriginChain,
+		ContractAddress:      msg.ContractAddress,
+		OwnerAddress:         msg.OwnerAddress,
+		Amount:               msg.Amount,
+		Status:               types.BridgeTransactionStatus_BRIDGE_PENDING,
+		BlockNumber:          msg.BlockNumber,
+		ReceiptIndex:         msg.ReceiptIndex,
+		ReceiptsRoot:         msg.ReceiptsRoot,
+		PocStartBlockHeight:  currentEpochGroup.GroupData.PocStartBlockHeight,
+		Validators:           []string{msg.Validator},
+		TotalValidationPower: validatorPower,
 	}
 	k.SetBridgeTransaction(ctx, bridgeTx)
 
@@ -193,6 +247,8 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"blockNumber", msg.BlockNumber,
 		"receiptIndex", msg.ReceiptIndex,
 		"validator", msg.Validator,
+		"validatorPower", validatorPower,
+		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"amount", msg.Amount,
 		"uniqueId", bridgeTx.Id)
 
