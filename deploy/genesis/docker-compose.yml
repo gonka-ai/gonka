@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.22.gammabridge
+    image: ghcr.io/product-science/inferenced:0.1.22.zetabridge
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -24,7 +24,7 @@ services:
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.22.gammabridge
+    image: ghcr.io/product-science/api:0.1.22.zetabridge
     restart: always
     depends_on:
       - node
@@ -49,7 +49,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge-ethereum:0.1.22.gammabridge
+    image: ghcr.io/product-science/bridge-ethereum:0.1.22.zetabridge
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -78,7 +78,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.22.gammabridge
+    image: ghcr.io/product-science/proxy:0.1.22.zetabridge
     ports:
       - "${API_PORT:-8000}:80"
     environment:
