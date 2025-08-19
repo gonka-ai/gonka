@@ -20,53 +20,34 @@ func TestMsgSubmitNewUnfundedParticipant_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid creator address",
 			msg: MsgSubmitNewUnfundedParticipant{
-				Creator: "invalid_address",
-			},
-			err: sdkerrors.ErrInvalidAddress,
-		}, {
-			name: "valid creator address",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator: validCreator,
-			},
-		}, {
-			name: "invalid address field",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator: validCreator,
-				Address: "invalid_address",
-			},
-			err: sdkerrors.ErrInvalidAddress,
-		}, {
-			name: "valid address field",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator: validCreator,
-				Address: validAddress,
-			},
-		}, {
-			name: "valid pub key",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator: validCreator,
-				PubKey:  sample.ValidSECP256K1AccountKey(),
-			},
-		}, {
-			name: "valid validator key",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator:      validCreator,
-				ValidatorKey: sample.ValidED25519ValidatorKey(),
-			},
-		}, {
-			name: "valid worker key",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator:   validCreator,
-				WorkerKey: sample.ValidSECP256K1AccountKey(),
-			},
-		}, {
-			name: "valid all keys",
-			msg: MsgSubmitNewUnfundedParticipant{
-				Creator:      validCreator,
+				Creator:      "invalid_address",
 				Address:      validAddress,
+				Url:          "https://example.com",
 				PubKey:       sample.ValidSECP256K1AccountKey(),
 				ValidatorKey: sample.ValidED25519ValidatorKey(),
 				WorkerKey:    sample.ValidSECP256K1AccountKey(),
+			},
+			err: sdkerrors.ErrInvalidAddress,
+		}, {
+			name: "invalid address field",
+			msg: MsgSubmitNewUnfundedParticipant{
+				Creator:      validCreator,
+				Address:      "invalid_address",
+				Url:          "https://example.com",
+				PubKey:       sample.ValidSECP256K1AccountKey(),
+				ValidatorKey: sample.ValidED25519ValidatorKey(),
+				WorkerKey:    sample.ValidSECP256K1AccountKey(),
+			},
+			err: sdkerrors.ErrInvalidAddress,
+		}, {
+			name: "valid all required fields",
+			msg: MsgSubmitNewUnfundedParticipant{
+				Creator:      validCreator,
+				Address:      validAddress,
+				Url:          "https://example.com",
+				PubKey:       sample.ValidSECP256K1AccountKey(),
+				ValidatorKey: sample.ValidED25519ValidatorKey(),
+				WorkerKey:    sample.ValidED25519ValidatorKey(),
 			},
 		},
 	}
@@ -80,8 +61,12 @@ func TestMsgSubmitNewUnfundedParticipant_ValidateBasic(t *testing.T) {
 		}{
 			name: "invalid pub key: " + name,
 			msg: MsgSubmitNewUnfundedParticipant{
-				Creator: validCreator,
-				PubKey:  invalidKey,
+				Creator:      validCreator,
+				Address:      validAddress,
+				Url:          "https://example.com",
+				PubKey:       invalidKey,
+				ValidatorKey: sample.ValidED25519ValidatorKey(),
+				WorkerKey:    sample.ValidSECP256K1AccountKey(),
 			},
 			err: sdkerrors.ErrInvalidPubKey,
 		})
@@ -97,7 +82,11 @@ func TestMsgSubmitNewUnfundedParticipant_ValidateBasic(t *testing.T) {
 			name: "invalid validator key: " + name,
 			msg: MsgSubmitNewUnfundedParticipant{
 				Creator:      validCreator,
+				Address:      validAddress,
+				Url:          "https://example.com",
+				PubKey:       sample.ValidSECP256K1AccountKey(),
 				ValidatorKey: invalidKey,
+				WorkerKey:    sample.ValidSECP256K1AccountKey(),
 			},
 			err: sdkerrors.ErrInvalidPubKey,
 		})

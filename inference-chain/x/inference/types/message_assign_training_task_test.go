@@ -17,13 +17,17 @@ func TestMsgAssignTrainingTask_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgAssignTrainingTask{
-				Creator: "invalid_address",
+				Creator:   "invalid_address",
+				TaskId:    1,
+				Assignees: []*TrainingTaskAssignee{&TrainingTaskAssignee{Participant: sample.AccAddress(), NodeIds: []string{"n1"}}},
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address and fields",
 			msg: MsgAssignTrainingTask{
-				Creator: sample.AccAddress(),
+				Creator:   sample.AccAddress(),
+				TaskId:    1,
+				Assignees: []*TrainingTaskAssignee{&TrainingTaskAssignee{Participant: sample.AccAddress(), NodeIds: []string{"n1"}}},
 			},
 		},
 	}

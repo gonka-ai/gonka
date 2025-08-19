@@ -18,12 +18,14 @@ func TestMsgCreateDummyTrainingTask_ValidateBasic(t *testing.T) {
 			name: "invalid address",
 			msg: MsgCreateDummyTrainingTask{
 				Creator: "invalid_address",
+				Task:    &TrainingTask{HardwareResources: []*TrainingHardwareResources{{Type: "GPU", Count: 1}}},
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid minimal",
 			msg: MsgCreateDummyTrainingTask{
 				Creator: sample.AccAddress(),
+				Task:    &TrainingTask{HardwareResources: []*TrainingHardwareResources{{Type: "GPU", Count: 1}}, Assignees: []*TrainingTaskAssignee{{Participant: sample.AccAddress(), NodeIds: []string{"n1"}}}},
 			},
 		},
 	}

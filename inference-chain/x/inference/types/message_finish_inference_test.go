@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/base64"
 	"testing"
 
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -17,13 +18,39 @@ func TestMsgFinishInference_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgFinishInference{
-				Creator: "invalid_address",
+				Creator:              "invalid_address",
+				ExecutedBy:           sample.AccAddress(),
+				TransferredBy:        sample.AccAddress(),
+				RequestedBy:          sample.AccAddress(),
+				InferenceId:          base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				ResponseHash:         "rh",
+				ResponsePayload:      "rp",
+				OriginalPrompt:       "op",
+				Model:                "m",
+				RequestTimestamp:     1,
+				TransferSignature:    base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				ExecutorSignature:    base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				PromptTokenCount:     0,
+				CompletionTokenCount: 0,
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid address",
 			msg: MsgFinishInference{
-				Creator: sample.AccAddress(),
+				Creator:              sample.AccAddress(),
+				ExecutedBy:           sample.AccAddress(),
+				TransferredBy:        sample.AccAddress(),
+				RequestedBy:          sample.AccAddress(),
+				InferenceId:          base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				ResponseHash:         "rh",
+				ResponsePayload:      "rp",
+				OriginalPrompt:       "op",
+				Model:                "m",
+				RequestTimestamp:     1,
+				TransferSignature:    base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				ExecutorSignature:    base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				PromptTokenCount:     0,
+				CompletionTokenCount: 0,
 			},
 		},
 	}
