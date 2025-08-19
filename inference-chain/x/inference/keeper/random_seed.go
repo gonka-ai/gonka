@@ -17,10 +17,10 @@ func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) {
 	store.Set(key, b)
 }
 
-func (k Keeper) GetRandomSeed(ctx context.Context, blockHeight int64, participantAddress string) (types.RandomSeed, bool) {
+func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex int64, participantAddress string) (types.RandomSeed, bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.RandomSeedKeyPrefix))
-	key := types.RandomSeedKey(blockHeight, participantAddress)
+	key := types.RandomSeedKey(epochIndex, participantAddress)
 
 	bz := store.Get(key)
 	if bz == nil {

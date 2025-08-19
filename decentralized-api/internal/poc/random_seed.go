@@ -13,7 +13,7 @@ import (
 )
 
 type RandomSeedManager interface {
-	GenerateSeed(blockHeight uint64)
+	GenerateSeed(epochIndex uint64)
 	ChangeCurrentSeed()
 	RequestMoney()
 }
@@ -33,9 +33,9 @@ func NewRandomSeedManager(
 	}
 }
 
-func (rsm *RandomSeedManagerImpl) GenerateSeed(blockHeight uint64) {
+func (rsm *RandomSeedManagerImpl) GenerateSeed(epochIndex uint64) {
 	logging.Debug("Old Seed Signature", types.Claims, rsm.configManager.GetCurrentSeed())
-	newSeed, err := createNewSeed(blockHeight, rsm.transactionRecorder)
+	newSeed, err := createNewSeed(epochIndex, rsm.transactionRecorder)
 	if err != nil {
 		logging.Error("Failed to get next seed signature", types.Claims, "error", err)
 		return
@@ -48,7 +48,7 @@ func (rsm *RandomSeedManagerImpl) GenerateSeed(blockHeight uint64) {
 	logging.Debug("New Seed Signature", types.Claims, "seed", rsm.configManager.GetUpcomingSeed())
 
 	err = rsm.transactionRecorder.SubmitSeed(&inference.MsgSubmitSeed{
-		EpochIndex: rsm.configManager.GetUpcomingSeed().Epoch,
+		EpochIndex: rsm.configManager.GetUpcomingSeed().EpochIndex,
 		Signature:  rsm.configManager.GetUpcomingSeed().Signature,
 	})
 	if err != nil {
@@ -84,7 +84,7 @@ func (rsm *RandomSeedManagerImpl) RequestMoney() {
 	logging.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", types.Claims, "seed", seed)
 	err := rsm.transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
 		Seed:       seed.Seed,
-		EpochIndex: seed.Epoch,
+		EpochIndex: seed.EpochIndex,
 	})
 	if err != nil {
 		logging.Error("Failed to send ClaimRewards transaction", types.Claims, "error", err)
@@ -104,8 +104,8 @@ func createNewSeed(
 		return nil, err
 	}
 	return &apiconfig.SeedInfo{
-		Seed:      newSeed,
-		Epoch:     epoch,
-		Signature: hex.EncodeToString(signature),
+		Seed:       newSeed,
+		EpochIndex: epoch,
+		Signature:  hex.EncodeToString(signature),
 	}, nil
 }

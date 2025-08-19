@@ -301,7 +301,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	if epochContext.IsStartOfPocStage(blockHeight) {
 
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
-		d.randomSeedManager.GenerateSeed(epochContext.NextEpochContext().EpochIndex)
+		d.randomSeedManager.GenerateSeed(epochContext.EpochIndex)
 		return
 	}
 

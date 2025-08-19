@@ -924,7 +924,7 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 
 	if needsPocParams {
-		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(int64(epochState.LatestEpoch.PocStartBlockHeight))
+		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(epochState.LatestEpoch.PocStartBlockHeight)
 		if pocParamsErr != nil {
 			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
 		}
