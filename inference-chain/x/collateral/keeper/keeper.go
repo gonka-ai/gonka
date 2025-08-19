@@ -60,6 +60,14 @@ func NewKeeper(
 	}
 
 	sb := collections.NewSchemaBuilder(storeService)
+	unbondingIdx := UnbondingIndexes{
+		ByParticipant: indexes.NewReversePair[types.UnbondingCollateral](
+			sb,
+			types.UnbondingByParticipantIndexPrefix,
+			"unbonding_by_participant",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+		),
+	}
 
 	ak := Keeper{
 		cdc:          cdc,
@@ -73,25 +81,15 @@ func NewKeeper(
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
 		Jailed:                collections.NewKeySet(sb, types.JailedKey, "jailed", sdk.AccAddressKey),
-	}
-
-	// initialize unbonding indexed map and its indexes
-	unbondingIdx := UnbondingIndexes{
-		ByParticipant: indexes.NewReversePair[types.UnbondingCollateral](
+		UnbondingIM: *collections.NewIndexedMap(
 			sb,
-			types.UnbondingByParticipantIndexPrefix,
-			"unbonding_by_participant",
+			types.UnbondingCollPrefix,
+			"unbonding_collateral",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+			codec.CollValue[types.UnbondingCollateral](cdc),
+			unbondingIdx,
 		),
 	}
-	ak.UnbondingIM = *collections.NewIndexedMap(
-		sb,
-		types.UnbondingCollPrefix,
-		"unbonding_collateral",
-		collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
-		codec.CollValue[types.UnbondingCollateral](cdc),
-		unbondingIdx,
-	)
 	schema, err := sb.Build()
 	if err != nil {
 		panic(err)
@@ -115,7 +113,6 @@ func (k Keeper) Logger() log.Logger {
 func (k Keeper) SetCollateral(ctx context.Context, participantAddress sdk.AccAddress, amount sdk.Coin) {
 	err := k.CollateralMap.Set(ctx, participantAddress, amount)
 	if err != nil {
-		k.Logger().Error("failed to set collateral", "participant", participantAddress, "amount", amount)
 		panic(err)
 	}
 }

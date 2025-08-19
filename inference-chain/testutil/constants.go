@@ -5,4 +5,5 @@ const (
 	Requester = "cosmos1xyxs3skf3f4jfqeuv89yyaqvjc6lffavxqhc8g"
 	Executor  = "cosmos1e0w5t53nrq7p66fye6c8p0ynyhf6y24l4yuxd7"
 	Validator = "cosmos1e0w5t53nrq7782rfaec8p0ynyhf6y24l4yuxd7"
+	Executor2 = "gonka1xxczezuqw0pe67xag5s3zgyrzh4w3zyermjgs9"
 )
