@@ -108,7 +108,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	// Set up random seed
 	seed := types.RandomSeed{
 		Participant: "participant1",
-		BlockHeight: 100,
+		EpochIndex:  100,
 		Signature:   "signature1",
 	}
 	k.SetRandomSeed(ctx, seed)
@@ -388,7 +388,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up random seed
 				seed := types.RandomSeed{
 					Participant: "participant1",
-					BlockHeight: 100,
+					EpochIndex:  100,
 					Signature:   "signature1",
 				}
 				k.SetRandomSeed(ctx, seed)
@@ -444,7 +444,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up random seed
 				seed := types.RandomSeed{
 					Participant: "participant1",
-					BlockHeight: 100,
+					EpochIndex:  100,
 					Signature:   "signature1",
 				}
 				k.SetRandomSeed(ctx, seed)
@@ -504,7 +504,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up random seed
 				seed := types.RandomSeed{
 					Participant: "participant1",
-					BlockHeight: 100,
+					EpochIndex:  100,
 					Signature:   "signature1",
 				}
 				k.SetRandomSeed(ctx, seed)

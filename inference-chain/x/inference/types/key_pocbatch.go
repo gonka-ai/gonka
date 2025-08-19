@@ -1,10 +1,9 @@
 package types
 
 import (
-	"fmt"
-	"github.com/google/uuid"
 	"strconv"
-	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -31,20 +30,6 @@ func PoCBatchPrefixByStage(pocStageStartBlockHeight int64) []byte {
 
 func GenerateBatchID() string {
 	return uuid.New().String()
-}
-
-func parsePoCBatchKey(key []byte) (participantIndex string, batchId string, err error) {
-	keyStr := string(key)
-	segments := strings.Split(keyStr, "/")
-
-	if len(segments) != 2 {
-		return "", "", fmt.Errorf("invalid key format")
-	}
-
-	participantIndex = segments[0]
-	batchId = segments[1]
-
-	return participantIndex, batchId, nil
 }
 
 func PoCValidationKey(pocStageStartBlockHeight int64, participantIndex string, valParticipantIndex string) []byte {

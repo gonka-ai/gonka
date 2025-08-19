@@ -29,13 +29,13 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 	if !found {
 		return ctx, types.ErrEffectiveEpochNotFound
 	}
+	// The genesis groups have already been created
 	newEpoch := types.Epoch{Index: epochIndex + 1, PocStartBlockHeight: blockHeight}
 	k.SetEpoch(ctx, &newEpoch)
 	k.SetEffectiveEpochIndex(ctx, newEpoch.Index)
-
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochGroupId)
 
-	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight), epochIndex)
+	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight), epochIndex+1)
 	if err != nil {
 		return ctx, err
 	}
@@ -43,7 +43,6 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 	if err != nil {
 		return ctx, err
 	}
-
 	return ctx, nil
 }
 
@@ -65,6 +64,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	requestTimestamp := inferenceHelper.context.BlockTime().UnixNano()
 	initialBlockTime := ctx.BlockTime().UnixMilli()
 	initialBlockHeight := int64(10)
+	// This should advance us to epoch 1 (the first after genesis)
 	ctx, err := advanceEpoch(ctx, &k, inferenceHelper.Mocks, initialBlockHeight, epochId)
 	if err != nil {
 		t.Fatalf("Failed to advance epoch: %v", err)
@@ -93,7 +93,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	}, devStat)
 
 	newBlockHeight := initialBlockTime + 10
-	ctx, err = advanceEpoch(ctx, &k, inferenceHelper.Mocks, newBlockHeight, 2)
+	// This should advance us to epoch 2
+	ctx, err = advanceEpoch(ctx, &k, inferenceHelper.Mocks, newBlockHeight, epochId2)
 	if err != nil {
 		t.Fatalf("Failed to advance epoch: %v", err)
 	}

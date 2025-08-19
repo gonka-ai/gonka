@@ -23,8 +23,8 @@ func (s *Server) getModels(ctx echo.Context) error {
 	// Iterate over the subgroup models to get the snapshot for each one.
 	for _, modelId := range parentEpochData.SubGroupModels {
 		req := &types.QueryGetEpochGroupDataRequest{
-			PocStartBlockHeight: parentEpochData.PocStartBlockHeight,
-			ModelId:             modelId,
+			EpochIndex: parentEpochData.EpochIndex,
+			ModelId:    modelId,
 		}
 		modelEpochData, err := queryClient.EpochGroupData(context, req)
 		if err != nil {

@@ -21,36 +21,36 @@ service Msg {
 
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
-  rpc UpdateParams                     (MsgUpdateParams                    ) returns (MsgUpdateParamsResponse                    );
-  rpc StartInference                   (MsgStartInference                  ) returns (MsgStartInferenceResponse                  );
-  rpc FinishInference                  (MsgFinishInference                 ) returns (MsgFinishInferenceResponse                 );
-  rpc SubmitNewParticipant             (MsgSubmitNewParticipant            ) returns (MsgSubmitNewParticipantResponse            );
-  rpc Validation                       (MsgValidation                      ) returns (MsgValidationResponse                      );
-  rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant    ) returns (MsgSubmitNewUnfundedParticipantResponse    );
-  rpc InvalidateInference              (MsgInvalidateInference             ) returns (MsgInvalidateInferenceResponse             );
-  rpc RevalidateInference              (MsgRevalidateInference             ) returns (MsgRevalidateInferenceResponse             );
-  rpc ClaimRewards                     (MsgClaimRewards                    ) returns (MsgClaimRewardsResponse                    );
-  rpc SubmitPocBatch                   (MsgSubmitPocBatch                  ) returns (MsgSubmitPocBatchResponse                  );
-  rpc SubmitPocValidation              (MsgSubmitPocValidation             ) returns (MsgSubmitPocValidationResponse             );
-  rpc SubmitSeed                       (MsgSubmitSeed                      ) returns (MsgSubmitSeedResponse                      );
+  rpc UpdateParams                     (MsgUpdateParams) returns (MsgUpdateParamsResponse);
+  rpc StartInference                   (MsgStartInference) returns (MsgStartInferenceResponse);
+  rpc FinishInference                  (MsgFinishInference) returns (MsgFinishInferenceResponse);
+  rpc SubmitNewParticipant             (MsgSubmitNewParticipant) returns (MsgSubmitNewParticipantResponse);
+  rpc Validation                       (MsgValidation) returns (MsgValidationResponse);
+  rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
+  rpc InvalidateInference              (MsgInvalidateInference) returns (MsgInvalidateInferenceResponse);
+  rpc RevalidateInference              (MsgRevalidateInference) returns (MsgRevalidateInferenceResponse);
+  rpc ClaimRewards                     (MsgClaimRewards) returns (MsgClaimRewardsResponse);
+  rpc SubmitPocBatch                   (MsgSubmitPocBatch) returns (MsgSubmitPocBatchResponse);
+  rpc SubmitPocValidation              (MsgSubmitPocValidation) returns (MsgSubmitPocValidationResponse);
+  rpc SubmitSeed                       (MsgSubmitSeed) returns (MsgSubmitSeedResponse);
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
-  rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
-  rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
-  rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
-  rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade            ) returns (MsgCreatePartialUpgradeResponse            );
-  rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
-  rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
-  rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord          ) returns (MsgSubmitTrainingKvRecordResponse          );
-  rpc JoinTraining                     (MsgJoinTraining                    ) returns (MsgJoinTrainingResponse                    );
-  rpc TrainingHeartbeat                (MsgTrainingHeartbeat               ) returns (MsgTrainingHeartbeatResponse               );
-  rpc SetBarrier                       (MsgSetBarrier                      ) returns (MsgSetBarrierResponse                      );
-  rpc JoinTrainingStatus               (MsgJoinTrainingStatus              ) returns (MsgJoinTrainingStatusResponse              );
-  rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask         ) returns (MsgCreateDummyTrainingTaskResponse         );
-  rpc BridgeExchange                   (MsgBridgeExchange                  ) returns (MsgBridgeExchangeResponse                  );
+  rpc RegisterModel                    (MsgRegisterModel) returns (MsgRegisterModelResponse);
+  rpc CreateTrainingTask               (MsgCreateTrainingTask) returns (MsgCreateTrainingTaskResponse);
+  rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff) returns (MsgSubmitHardwareDiffResponse);
+  rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade) returns (MsgCreatePartialUpgradeResponse);
+  rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment) returns (MsgClaimTrainingTaskForAssignmentResponse);
+  rpc AssignTrainingTask               (MsgAssignTrainingTask) returns (MsgAssignTrainingTaskResponse);
+  rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord) returns (MsgSubmitTrainingKvRecordResponse);
+  rpc JoinTraining                     (MsgJoinTraining) returns (MsgJoinTrainingResponse);
+  rpc TrainingHeartbeat                (MsgTrainingHeartbeat) returns (MsgTrainingHeartbeatResponse);
+  rpc SetBarrier                       (MsgSetBarrier) returns (MsgSetBarrierResponse);
+  rpc JoinTrainingStatus               (MsgJoinTrainingStatus) returns (MsgJoinTrainingStatusResponse);
+  rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask) returns (MsgCreateDummyTrainingTaskResponse);
+  rpc BridgeExchange                   (MsgBridgeExchange) returns (MsgBridgeExchangeResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
-  option (cosmos.msg.v1.signer) =                             "authority";
+  option (cosmos.msg.v1.signer) = "authority";
   option           (amino.name) = "inference/x/inference/MsgUpdateParams";
 
   // authority is the address that controls the module (defaults to x/gov unless overwritten).
@@ -68,15 +68,15 @@ message MsgUpdateParamsResponse {}
 
 message MsgStartInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator        = 1;
-  string inference_id   = 2;
-  string prompt_hash    = 3;
+  string creator = 1;
+  string inference_id = 2;
+  string prompt_hash = 3;
   string prompt_payload = 4;
-  string model          = 6;
-  string requested_by   = 7;
-  string assigned_to    = 8;
-  string node_version   = 9;
-  uint64 max_tokens     = 10;
+  string model = 6;
+  string requested_by = 7;
+  string assigned_to = 8;
+  string node_version = 9;
+  uint64 max_tokens = 10;
   uint64 prompt_token_count = 11;
   int64  request_timestamp = 12;
   string transfer_signature = 14;
@@ -89,20 +89,20 @@ message MsgStartInferenceResponse {
 
 message MsgFinishInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator                = 1;
-  string inference_id           = 2;
-  string response_hash          = 3;
-  string response_payload       = 4;
-  uint64 prompt_token_count     = 5;
+  string creator = 1;
+  string inference_id = 2;
+  string response_hash = 3;
+  string response_payload = 4;
+  uint64 prompt_token_count = 5;
   uint64 completion_token_count = 6;
-  string executed_by            = 7;
-  string transferred_by         = 8;
-  int64  request_timestamp      = 9;
-  string transfer_signature     = 10;
-  string executor_signature     = 11;
-  string requested_by           = 12;
-  string original_prompt        = 13;
-  string model                  = 14;
+  string executed_by = 7;
+  string transferred_by = 8;
+  int64  request_timestamp = 9;
+  string transfer_signature = 10;
+  string executor_signature = 11;
+  string requested_by = 12;
+  string original_prompt = 13;
+  string model = 14;
 }
 
 message MsgFinishInferenceResponse {
@@ -111,45 +111,45 @@ message MsgFinishInferenceResponse {
 
 message MsgSubmitNewParticipant {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator       = 1;
-           string url           = 2;
-           string validator_key = 3;
-           string worker_key    = 4;
+  string creator = 1;
+  string url = 2;
+  string validator_key = 3;
+  string worker_key = 4;
 }
 
 message MsgSubmitNewParticipantResponse {
   string participant_index = 1;
-  string status            = 2;
+  string status = 2;
 }
 
 message MsgValidation {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator          = 1;
-  string id               = 2;
-  string inference_id     = 3;
+  string creator = 1;
+  string id = 2;
+  string inference_id = 3;
   string response_payload = 4;
-  string response_hash    = 5;
-  double value            = 6;
-  bool   revalidation     = 7;
+  string response_hash = 5;
+  double value = 6;
+  bool   revalidation = 7;
 }
 
 message MsgValidationResponse {}
 
 message MsgSubmitNewUnfundedParticipant {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator       = 1;
-           string address       = 2;
-           string url           = 3;
-           string pub_key       = 4;
-           string validator_key = 5;
-           string worker_key    = 6;
+  string creator = 1;
+  string address = 2;
+  string url = 3;
+  string pub_key = 4;
+  string validator_key = 5;
+  string worker_key = 6;
 }
 
 message MsgSubmitNewUnfundedParticipantResponse {}
 
 message MsgInvalidateInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator      = 1;
+  string creator = 1;
   string inference_id = 2;
 }
 
@@ -157,7 +157,7 @@ message MsgInvalidateInferenceResponse {}
 
 message MsgRevalidateInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator      = 1;
+  string creator = 1;
   string inference_id = 2;
 }
 
@@ -165,9 +165,9 @@ message MsgRevalidateInferenceResponse {}
 
 message MsgClaimRewards {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator          = 1;
-  int64  seed             = 2;
-  uint64 poc_start_height = 3;
+  string creator = 1;
+  int64  seed = 2;
+  uint64 epoch_index = 3;
 }
 
 message MsgClaimRewardsResponse {
@@ -177,38 +177,38 @@ message MsgClaimRewardsResponse {
 
 message MsgSubmitPocBatch {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator                      = 1;
-           int64  poc_stage_start_block_height = 2;
-           string batch_id                     = 3;
-  repeated int64  nonces                       = 4;
-  repeated double dist                         = 5;
-           string node_id                      = 6;
+  string creator = 1;
+  int64  poc_stage_start_block_height = 2;
+  string batch_id = 3;
+  repeated int64  nonces = 4;
+  repeated double dist = 5;
+  string node_id = 6;
 }
 
 message MsgSubmitPocBatchResponse {}
 
 message MsgSubmitPocValidation {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator                      =  1;
-           string participant_address          =  2;
-           int64  poc_stage_start_block_height =  3;
-  repeated int64  nonces                       =  4;
-  repeated double dist                         =  5;
-  repeated double received_dist                =  6;
-           double r_target                     =  7;
-           double fraud_threshold              =  8;
-           int64  n_invalid                    =  9;
-           double probability_honest           = 10;
-           bool   fraud_detected               = 11;
+  string creator = 1;
+  string participant_address = 2;
+  int64  poc_stage_start_block_height = 3;
+  repeated int64  nonces = 4;
+  repeated double dist = 5;
+  repeated double received_dist = 6;
+  double r_target = 7;
+  double fraud_threshold = 8;
+  int64  n_invalid = 9;
+  double probability_honest = 10;
+  bool   fraud_detected = 11;
 }
 
 message MsgSubmitPocValidationResponse {}
 
 message MsgSubmitSeed {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator      = 1;
-  int64  block_height = 2;
-  string signature    = 3;
+  string creator = 1;
+  uint64  epoch_index = 2;
+  string signature = 3;
 }
 
 message MsgSubmitSeedResponse {}
@@ -216,32 +216,32 @@ message MsgSubmitSeedResponse {}
 message MsgSubmitUnitOfComputePriceProposal {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
-  uint64 price   = 2;
+  uint64 price = 2;
 }
 
 message MsgSubmitUnitOfComputePriceProposalResponse {}
 
 message MsgRegisterModel {
-  option (cosmos.msg.v1.signer)      = "authority";
-  string authority                   = 1;
-  string proposed_by                 = 2;
-  string id                          = 3;
-  uint64 units_of_compute_per_token  = 4;
-  string hf_repo                     = 5;
-  string hf_commit                   = 6;
-  repeated string model_args         = 7;
-  uint64 v_ram                       = 8;
-  uint64 throughput_per_nonce        = 9;
-  Decimal validation_threshold       = 10;
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string proposed_by = 2;
+  string id = 3;
+  uint64 units_of_compute_per_token = 4;
+  string hf_repo = 5;
+  string hf_commit = 6;
+  repeated string model_args = 7;
+  uint64 v_ram = 8;
+  uint64 throughput_per_nonce = 9;
+  Decimal validation_threshold = 10;
 }
 
 message MsgRegisterModelResponse {}
 
 message MsgCreateTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
-           string                    creator            = 1;
+  string                    creator = 1;
   repeated TrainingHardwareResources hardware_resources = 2;
-           TrainingConfig            config             = 3;
+  TrainingConfig            config = 3;
 }
 
 message MsgCreateTrainingTaskResponse {
@@ -250,9 +250,9 @@ message MsgCreateTrainingTaskResponse {
 
 message MsgSubmitHardwareDiff {
   option (cosmos.msg.v1.signer) = "creator";
-           string       creator       = 1;
+  string       creator = 1;
   repeated HardwareNode newOrModified = 2;
-  repeated HardwareNode removed       = 3;
+  repeated HardwareNode removed = 3;
 }
 
 message MsgSubmitHardwareDiffResponse {}
@@ -267,8 +267,8 @@ message MsgClaimTrainingTaskForAssignmentResponse {}
 
 message MsgAssignTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
-           string               creator   = 1;
-           uint64               task_id   = 2;
+  string               creator = 1;
+  uint64               task_id = 2;
   repeated TrainingTaskAssignee assignees = 3;
 }
 
@@ -276,9 +276,9 @@ message MsgAssignTrainingTaskResponse {}
 
 message MsgCreatePartialUpgrade {
   option (cosmos.msg.v1.signer) = "authority";
-  string authority       = 1;
-  uint64 height          = 2;
-  string nodeVersion     = 3;
+  string authority = 1;
+  uint64 height = 2;
+  string nodeVersion = 3;
   string apiBinariesJson = 4;
 }
 
@@ -286,11 +286,11 @@ message MsgCreatePartialUpgradeResponse {}
 
 message MsgSubmitTrainingKvRecord {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator     = 1;
-  uint64 taskId      = 2;
+  string creator = 1;
+  uint64 taskId = 2;
   string participant = 3;
-  string key         = 4;
-  string value       = 5;
+  string key = 4;
+  string value = 5;
 }
 
 message MsgSubmitTrainingKvRecordResponse {}
@@ -298,7 +298,7 @@ message MsgSubmitTrainingKvRecordResponse {}
 message MsgJoinTraining {
   option (cosmos.msg.v1.signer) = "creator";
   string              creator = 1;
-  JoinTrainingRequest req     = 2;
+  JoinTrainingRequest req = 2;
 }
 
 message MsgJoinTrainingResponse {
@@ -308,7 +308,7 @@ message MsgJoinTrainingResponse {
 message MsgTrainingHeartbeat {
   option (cosmos.msg.v1.signer) = "creator";
   string           creator = 1;
-  HeartbeatRequest req     = 2;
+  HeartbeatRequest req = 2;
 }
 
 message MsgTrainingHeartbeatResponse {
@@ -318,7 +318,7 @@ message MsgTrainingHeartbeatResponse {
 message MsgSetBarrier {
   option (cosmos.msg.v1.signer) = "creator";
   string            creator = 1;
-  SetBarrierRequest req     = 2;
+  SetBarrierRequest req = 2;
 }
 
 message MsgSetBarrierResponse {
@@ -328,7 +328,7 @@ message MsgSetBarrierResponse {
 message MsgJoinTrainingStatus {
   option (cosmos.msg.v1.signer) = "creator";
   string              creator = 1;
-  JoinTrainingRequest req     = 2;
+  JoinTrainingRequest req = 2;
 }
 
 message MsgJoinTrainingStatusResponse {
@@ -346,15 +346,15 @@ message MsgCreateDummyTrainingTaskResponse {
 }
 message MsgBridgeExchange {
   option (cosmos.msg.v1.signer) = "validator";
-  string validator              = 1;
-  string originChain            = 2;  // e.g., "ethereum"
-  string contractAddress        = 3;  // original chain smart contract address
-  string ownerAddress           = 4;  // token owner's address on the origin chain
-  string ownerPubKey            = 5;  // public key of the token owner
-  string amount                 = 6;  // amount of tokens being bridged
-  string blockNumber            = 7;  // block number where the transaction occurred
-  string receiptIndex           = 8;  // index of the transaction receipt in the block
-  string receiptsRoot           = 9;  // merkle root of receipts trie for transaction verification
+  string validator = 1;
+  string originChain = 2;  // e.g., "ethereum"
+  string contractAddress = 3;  // original chain smart contract address
+  string ownerAddress = 4;  // token owner's address on the origin chain
+  string ownerPubKey = 5;  // public key of the token owner
+  string amount = 6;  // amount of tokens being bridged
+  string blockNumber = 7;  // block number where the transaction occurred
+  string receiptIndex = 8;  // index of the transaction receipt in the block
+  string receiptsRoot = 9;  // merkle root of receipts trie for transaction verification
 
 }
 

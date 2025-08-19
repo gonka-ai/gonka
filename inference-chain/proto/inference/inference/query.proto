@@ -75,7 +75,7 @@ service Query {
   
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{epoch_index}";
   
   }
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
@@ -427,7 +427,7 @@ message QueryGetRandomExecutorResponse {
 }
 
 message QueryGetEpochGroupDataRequest {
-  uint64 poc_start_block_height = 1;
+  uint64 epoch_index = 1;
   string model_id               = 2;
 }
 

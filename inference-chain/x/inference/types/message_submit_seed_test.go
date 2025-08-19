@@ -18,17 +18,17 @@ func TestMsgSubmitSeed_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgSubmitSeed{
-				Creator:     "invalid_address",
-				BlockHeight: 1,
-				Signature:   base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				Creator:    "invalid_address",
+				EpochIndex: 1,
+				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid minimal",
 			msg: MsgSubmitSeed{
-				Creator:     sample.AccAddress(),
-				BlockHeight: 1,
-				Signature:   base64.StdEncoding.EncodeToString(make([]byte, 64)),
+				Creator:    sample.AccAddress(),
+				EpochIndex: 1,
+				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 		},
 	}

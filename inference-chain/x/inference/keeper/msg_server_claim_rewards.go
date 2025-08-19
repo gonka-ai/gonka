@@ -104,7 +104,7 @@ func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required 
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
 	ms.RemoveSettleAmount(ctx, settleAmount.Participant)
-	perfSummary, found := ms.GetEpochPerformanceSummary(ctx, settleAmount.PocStartHeight, settleAmount.Participant)
+	perfSummary, found := ms.GetEpochPerformanceSummary(ctx, settleAmount.EpochIndex, settleAmount.Participant)
 	if found {
 		perfSummary.Claimed = true
 		ms.SetEpochPerformanceSummary(ctx, perfSummary)
@@ -120,8 +120,8 @@ func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) 
 			Result: "No rewards for this address",
 		}
 	}
-	if settleAmount.PocStartHeight != msg.PocStartHeight {
-		k.LogDebug("SettleAmount does not match height", types.Claims, "height", msg.PocStartHeight, "settleHeight", settleAmount.PocStartHeight)
+	if settleAmount.EpochIndex != msg.EpochIndex {
+		k.LogDebug("SettleAmount does not match epoch index", types.Claims, "epoch", msg.EpochIndex, "settleEpoch", settleAmount.EpochIndex)
 		return nil, &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "No rewards for this block height",
@@ -139,7 +139,7 @@ func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) 
 }
 
 func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
-	k.LogInfo("Validating claim", types.Claims, "account", msg.Creator, "seed", msg.Seed, "height", msg.PocStartHeight)
+	k.LogInfo("Validating claim", types.Claims, "account", msg.Creator, "seed", msg.Seed, "epoch", msg.EpochIndex)
 
 	// Validate the seed signature
 	if err := k.validateSeedSignature(ctx, msg, settleAmount); err != nil {
@@ -201,7 +201,7 @@ func (ms msgServer) validateSeedSignatureForPubkey(msg *types.MsgClaimRewards, s
 }
 
 func (ms msgServer) validateSeedSignature(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {
-	ms.LogDebug("Validating seed signature", types.Claims, "account", msg.Creator, "seed", msg.Seed, "height", msg.PocStartHeight)
+	ms.LogDebug("Validating seed signature", types.Claims, "account", msg.Creator, "seed", msg.Seed, "epoch", msg.EpochIndex)
 	addr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
 		return types.ErrPocAddressInvalid
@@ -235,9 +235,9 @@ func (ms msgServer) validateSeedSignature(ctx sdk.Context, msg *types.MsgClaimRe
 }
 
 func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) map[string]bool {
-	wasValidatedRaw, found := k.GetEpochGroupValidations(ctx, msg.Creator, msg.PocStartHeight)
+	wasValidatedRaw, found := k.GetEpochGroupValidations(ctx, msg.Creator, msg.EpochIndex)
 	if !found {
-		k.LogInfo("Validations not found", types.Claims, "height", msg.PocStartHeight, "account", msg.Creator)
+		k.LogInfo("Validations not found", types.Claims, "epoch", msg.EpochIndex, "account", msg.Creator)
 		wasValidatedRaw = types.EpochGroupValidations{
 			ValidatedInferences: make([]string, 0),
 		}
@@ -281,22 +281,22 @@ func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint6
 
 func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) ([]string, error) {
 	// Get the main epoch data
-	mainEpochData, mainWeightMap, mainTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.PocStartHeight, "")
+	mainEpochData, mainWeightMap, mainTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.EpochIndex, "")
 	if !found {
 		return nil, types.ErrCurrentEpochGroupNotFound
 	}
 
-	epoch, found := k.GetEpoch(ctx, mainEpochData.EpochId)
+	epoch, found := k.GetEpoch(ctx, mainEpochData.EpochIndex)
 	if !found || epoch == nil {
 		k.LogError("MsgClaimReward. getMustBeValidatedInferences. Epoch not found", types.Claims,
-			"epochId", mainEpochData.EpochId, "found", found, "epoch", epoch)
-		return nil, types.ErrEpochNotFound.Wrapf("epochId = %d. found = %v. epoch = %v", mainEpochData.EpochId, found, epoch)
+			"epochId", mainEpochData.EpochIndex, "found", found, "epoch", epoch)
+		return nil, types.ErrEpochNotFound.Wrapf("epochId = %d. found = %v. epoch = %v", mainEpochData.EpochIndex, found, epoch)
 	}
 
-	if uint64(epoch.PocStartBlockHeight) != msg.PocStartHeight || uint64(epoch.PocStartBlockHeight) != mainEpochData.PocStartBlockHeight {
+	if epoch.Index != msg.EpochIndex || epoch.Index != mainEpochData.EpochIndex {
 		k.LogError("MsgClaimReward. getMustBeValidatedInferences. ILLEGAL STATE. Epoch start block height does not match", types.Claims,
-			"epoch.PocStartHeight", epoch.PocStartBlockHeight, "msg.PocStartHeight", msg.PocStartHeight, "mainEpochData.PocStartBlockHeight", mainEpochData.PocStartBlockHeight)
-		return nil, types.ErrIllegalState.Wrapf("epoch.PocStartHeight = %d, msg.PocStartHeight = %d, mainEpochData.PocStartBlockHeight = %d", epoch.PocStartBlockHeight, msg.PocStartHeight, mainEpochData.PocStartBlockHeight)
+			"epoch.Index", epoch.Index, "msg.EpochIndex", msg.EpochIndex, "mainEpochData.Index", mainEpochData.EpochIndex)
+		return nil, types.ErrIllegalState.Wrapf("epoch.PocStartHeight = %d, msg.EpochIndex = %d, mainEpochData.EpochIndex = %d", epoch.Index, msg.EpochIndex, mainEpochData.EpochIndex)
 	}
 
 	params := k.Keeper.GetParams(ctx).EpochParams
@@ -319,9 +319,9 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	// Get sub models from the main epoch data
 	for _, subModelId := range mainEpochData.SubGroupModels {
-		_, subWeightMap, subTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.PocStartHeight, subModelId)
+		_, subWeightMap, subTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.EpochIndex, subModelId)
 		if !found {
-			k.LogWarn("Sub epoch data not found", types.Claims, "height", msg.PocStartHeight, "modelId", subModelId)
+			k.LogWarn("Sub epoch data not found", types.Claims, "epoch", msg.EpochIndex, "modelId", subModelId)
 			continue
 		}
 
@@ -331,7 +331,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	skipped := 0
 	mustBeValidated := make([]string, 0)
-	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochId)
+	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochIndex)
 	for _, inference := range finishedInferences {
 		if inference.ExecutorId == msg.Creator {
 			continue

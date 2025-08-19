@@ -87,19 +87,19 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get current epoch group", types.PoC, "error", err.Error())
 		return nil
 	}
-	if currentEpochGroup.GroupData.EpochId != upcomingEpoch.Index-1 {
+	if currentEpochGroup.GroupData.EpochIndex != upcomingEpoch.Index-1 {
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Current epoch group does not match upcoming epoch", types.PoC,
-			"currentEpochGroup.EpochId", currentEpochGroup.GroupData.EpochId,
+			"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 			"upcomingEpoch.Index", upcomingEpoch.Index)
 	}
 
 	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
-		"currentEpochGroup.EpochId", currentEpochGroup.GroupData.EpochId,
+		"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochId)
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex)
 
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {

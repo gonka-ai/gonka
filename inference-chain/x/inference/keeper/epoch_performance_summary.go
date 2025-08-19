@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -22,7 +23,7 @@ func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformance
 // GetEpochPerformanceSummary returns a epochPerformanceSummary from its index
 func (k Keeper) GetEpochPerformanceSummary(
 	ctx context.Context,
-	epochStartHeight uint64,
+	epochIndex uint64,
 	participantId string,
 
 ) (val types.EpochPerformanceSummary, found bool) {
@@ -31,7 +32,7 @@ func (k Keeper) GetEpochPerformanceSummary(
 
 	b := store.Get(types.EpochPerformanceSummaryKey(
 		participantId,
-		epochStartHeight,
+		epochIndex,
 	))
 	if b == nil {
 		return val, false
@@ -44,7 +45,7 @@ func (k Keeper) GetEpochPerformanceSummary(
 // RemoveEpochPerformanceSummary removes a epochPerformanceSummary from the store
 func (k Keeper) RemoveEpochPerformanceSummary(
 	ctx context.Context,
-	epochStartHeight uint64,
+	epochIndex uint64,
 	participantId string,
 
 ) {
@@ -52,7 +53,7 @@ func (k Keeper) RemoveEpochPerformanceSummary(
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 	store.Delete(types.EpochPerformanceSummaryKey(
 		participantId,
-		epochStartHeight,
+		epochIndex,
 	))
 }
 
@@ -93,14 +94,14 @@ func (k Keeper) GetEpochPerformanceSummariesByParticipant(ctx context.Context, p
 func (k Keeper) GetParticipantsEpochSummaries(
 	ctx context.Context,
 	participantIds []string,
-	epochStartHeight uint64,
+	epochIndex uint64,
 ) []types.EpochPerformanceSummary {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 
 	var summaries []types.EpochPerformanceSummary
 	for _, participantId := range participantIds {
-		key := types.EpochPerformanceSummaryKey(participantId, epochStartHeight)
+		key := types.EpochPerformanceSummaryKey(participantId, epochIndex)
 		bz := store.Get(key)
 		if bz == nil {
 			continue

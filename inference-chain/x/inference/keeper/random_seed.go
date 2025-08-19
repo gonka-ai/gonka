@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
@@ -10,7 +11,7 @@ import (
 func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.RandomSeedKeyPrefix))
-	key := types.RandomSeedKey(seed.BlockHeight, seed.Participant)
+	key := types.RandomSeedKey(int64(seed.EpochIndex), seed.Participant)
 
 	b := k.cdc.MustMarshal(&seed)
 	store.Set(key, b)

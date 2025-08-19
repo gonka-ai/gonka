@@ -62,7 +62,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "EpochGroupData",
 					Use:            "show-epoch-group-data [id]",
 					Short:          "Shows a epochGroupData",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "poc_start_block_height"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}},
 				},
 				{
 					RpcMethod: "SettleAmountAll",
@@ -359,7 +359,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "ClaimRewards",
 					Use:            "claim-rewards [seed] [poc-start-height]",
 					Short:          "Send a claimRewards tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "poc_start_height"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "epoch_index"}},
 				},
 				{
 					RpcMethod:      "SubmitPocBatch",
@@ -377,7 +377,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "SubmitSeed",
 					Use:            "submit-seed [block-height] [signature]",
 					Short:          "Send a submit-seed tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}, {ProtoField: "signature"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}, {ProtoField: "signature"}},
 				},
 				{
 					RpcMethod:      "SubmitUnitOfComputePriceProposal",

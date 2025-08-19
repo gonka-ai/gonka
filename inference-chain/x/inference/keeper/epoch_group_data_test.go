@@ -2,10 +2,11 @@ package keeper_test
 
 import (
 	"context"
-	"github.com/cosmos/cosmos-sdk/codec"
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"strconv"
 	"testing"
+
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
@@ -20,7 +21,7 @@ var _ = strconv.IntSize
 func createNEpochGroupData(keeper keeper.Keeper, ctx context.Context, n int) []types.EpochGroupData {
 	items := make([]types.EpochGroupData, n)
 	for i := range items {
-		items[i].PocStartBlockHeight = uint64(i)
+		items[i].EpochIndex = uint64(i)
 		items[i].MemberSeedSignatures = []*types.SeedSignature{}
 		items[i].ModelId = ""
 		keeper.SetEpochGroupData(ctx, items[i])
@@ -32,7 +33,8 @@ func TestRawRoundTrip(t *testing.T) {
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	epochGroupData := types.EpochGroupData{
-		PocStartBlockHeight: 1,
+		PocStartBlockHeight: 50,
+		EpochIndex:          1,
 		ModelId:             "",
 	}
 	bytes := cdc.MustMarshal(&epochGroupData)
@@ -45,16 +47,16 @@ func TestEpochGroupDataGet(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNEpochGroupData(keeper, ctx, 10)
 	for _, item := range items {
-		rst, found := keeper.GetEpochGroupData(ctx,
-			item.PocStartBlockHeight,
+		result, found := keeper.GetEpochGroupData(ctx,
+			item.EpochIndex,
 			"",
 		)
 		require.True(t, found)
 		// This will be nil if MemberSeedSignature is empty!!
-		require.Nil(t, rst.MemberSeedSignatures)
+		require.Nil(t, result.MemberSeedSignatures)
 		require.Equal(t,
 			nullify.Fill(&item),
-			nullify.Fill(&rst),
+			nullify.Fill(&result),
 		)
 	}
 }
@@ -63,11 +65,11 @@ func TestEpochGroupDataRemove(t *testing.T) {
 	items := createNEpochGroupData(keeper, ctx, 10)
 	for _, item := range items {
 		keeper.RemoveEpochGroupData(ctx,
-			item.PocStartBlockHeight,
+			item.EpochIndex,
 			"",
 		)
 		_, found := keeper.GetEpochGroupData(ctx,
-			item.PocStartBlockHeight,
+			item.EpochIndex,
 			"",
 		)
 		require.False(t, found)

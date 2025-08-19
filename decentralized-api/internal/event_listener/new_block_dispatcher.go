@@ -299,8 +299,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {
+
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
-		d.randomSeedManager.GenerateSeed(blockHeight)
+		d.randomSeedManager.GenerateSeed(epochContext.NextEpochContext().EpochIndex)
 		return
 	}
 

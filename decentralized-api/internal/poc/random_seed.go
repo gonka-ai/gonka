@@ -6,13 +6,14 @@ import (
 	"decentralized-api/logging"
 	"encoding/binary"
 	"encoding/hex"
+	"math/rand"
+
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"math/rand"
 )
 
 type RandomSeedManager interface {
-	GenerateSeed(blockHeight int64)
+	GenerateSeed(blockHeight uint64)
 	ChangeCurrentSeed()
 	RequestMoney()
 }
@@ -32,7 +33,7 @@ func NewRandomSeedManager(
 	}
 }
 
-func (rsm *RandomSeedManagerImpl) GenerateSeed(blockHeight int64) {
+func (rsm *RandomSeedManagerImpl) GenerateSeed(blockHeight uint64) {
 	logging.Debug("Old Seed Signature", types.Claims, rsm.configManager.GetCurrentSeed())
 	newSeed, err := createNewSeed(blockHeight, rsm.transactionRecorder)
 	if err != nil {
@@ -47,8 +48,8 @@ func (rsm *RandomSeedManagerImpl) GenerateSeed(blockHeight int64) {
 	logging.Debug("New Seed Signature", types.Claims, "seed", rsm.configManager.GetUpcomingSeed())
 
 	err = rsm.transactionRecorder.SubmitSeed(&inference.MsgSubmitSeed{
-		BlockHeight: rsm.configManager.GetUpcomingSeed().Height,
-		Signature:   rsm.configManager.GetUpcomingSeed().Signature,
+		EpochIndex: rsm.configManager.GetUpcomingSeed().Epoch,
+		Signature:  rsm.configManager.GetUpcomingSeed().Signature,
 	})
 	if err != nil {
 		logging.Error("Failed to send SubmitSeed transaction", types.Claims, "error", err)
@@ -82,8 +83,8 @@ func (rsm *RandomSeedManagerImpl) RequestMoney() {
 
 	logging.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", types.Claims, "seed", seed)
 	err := rsm.transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
-		Seed:           seed.Seed,
-		PocStartHeight: uint64(seed.Height),
+		Seed:       seed.Seed,
+		EpochIndex: seed.Epoch,
 	})
 	if err != nil {
 		logging.Error("Failed to send ClaimRewards transaction", types.Claims, "error", err)
@@ -91,11 +92,10 @@ func (rsm *RandomSeedManagerImpl) RequestMoney() {
 }
 
 func createNewSeed(
-	blockHeight int64,
+	epoch uint64,
 	transactionRecorder cosmosclient.CosmosMessageClient,
 ) (*apiconfig.SeedInfo, error) {
 	newSeed := rand.Int63()
-	newHeight := blockHeight
 	seedBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(seedBytes, uint64(newSeed))
 	signature, err := transactionRecorder.SignBytes(seedBytes)
@@ -105,7 +105,7 @@ func createNewSeed(
 	}
 	return &apiconfig.SeedInfo{
 		Seed:      newSeed,
-		Height:    newHeight,
+		Epoch:     epoch,
 		Signature: hex.EncodeToString(signature),
 	}, nil
 }
