@@ -54,6 +54,16 @@ type cw20SendEnvelope struct {
 	} `json:"send"`
 }
 
+func isAllWasmExec(tx sdk.Tx) bool {
+	for _, m := range tx.GetMsgs() {
+		// type assertion is fastest & version-safe
+		if _, ok := m.(*wasmtypes.MsgExecuteContract); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // matchesAllowedSwap checks if a MsgExecuteContract is either a direct call to a pool
 // or a cw20 Send{contract:<pool>} to a pool.
 func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg sdk.Msg, poolAddress string, wrappedCodeID uint64) bool {
@@ -98,7 +108,9 @@ func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg
 
 func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
 	msgs := tx.GetMsgs()
-	if len(msgs) == 0 {
+
+	// Fast path: only consider txs that are *entirely* wasm MsgExecuteContract.
+	if !isAllWasmExec(tx) {
 		return next(ctx, tx, simulate)
 	}
 
@@ -125,14 +137,8 @@ func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, 
 		return next(ctx, tx, simulate)
 	}
 
-	// Ensure gas cap is respected
-	if feeTx, ok := tx.(sdk.FeeTx); ok {
-		if d.GasCap > 0 && feeTx.GetGas() > d.GasCap {
-			return ctx, fmt.Errorf("fee-bypass: gas %d exceeds cap %d", feeTx.GetGas(), d.GasCap)
-		}
-	}
-
 	// Check if ALL messages in the transaction qualify for fee bypass
+	// We only care about MsgExecuteContract messages - ignore all other message types
 	allAllowed := true
 	for _, m := range msgs {
 		if !d.matchesAllowedSwap(ctx, m, poolAddress, wrappedCodeID) {
@@ -142,6 +148,12 @@ func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, 
 	}
 
 	if allAllowed {
+		// Enforce gas cap only for bypassed wasm txs
+		if feeTx, ok := tx.(sdk.FeeTx); ok {
+			if d.GasCap > 0 && feeTx.GetGas() > d.GasCap {
+				return ctx, fmt.Errorf("fee-bypass: gas %d exceeds cap %d", feeTx.GetGas(), d.GasCap)
+			}
+		}
 		// Log successful fee bypass
 		if d.InferenceKeeper != nil {
 			d.InferenceKeeper.LogInfo("AnteHandle: LiquidityPoolFeeBypass - applying fee bypass",
@@ -152,6 +164,7 @@ func (d LiquidityPoolFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, 
 		if d.Priority != 0 {
 			ctx = ctx.WithPriority(d.Priority)
 		}
+		return next(ctx, tx, simulate)
 	}
 	return next(ctx, tx, simulate)
 }
