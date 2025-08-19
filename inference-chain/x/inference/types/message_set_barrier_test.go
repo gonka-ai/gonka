@@ -18,12 +18,14 @@ func TestMsgSetBarrier_ValidateBasic(t *testing.T) {
 			name: "invalid address",
 			msg: MsgSetBarrier{
 				Creator: "invalid_address",
+				Req:     &SetBarrierRequest{BarrierId: "b1", NodeId: "n1", RunId: 1, OuterStep: 0},
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid",
 			msg: MsgSetBarrier{
 				Creator: sample.AccAddress(),
+				Req:     &SetBarrierRequest{BarrierId: "b1", NodeId: "n1", RunId: 1, OuterStep: 0},
 			},
 		},
 	}

@@ -17,13 +17,23 @@ func TestMsgValidation_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgValidation{
-				Creator: "invalid_address",
+				Creator:         "invalid_address",
+				Id:              "id",
+				InferenceId:     "iid",
+				ResponsePayload: "payload",
+				ResponseHash:    "hash",
+				Value:           0.5,
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address & all required fields",
 			msg: MsgValidation{
-				Creator: sample.AccAddress(),
+				Creator:         sample.AccAddress(),
+				Id:              "id",
+				InferenceId:     "iid",
+				ResponsePayload: "payload",
+				ResponseHash:    "hash",
+				Value:           0.5,
 			},
 		},
 	}
