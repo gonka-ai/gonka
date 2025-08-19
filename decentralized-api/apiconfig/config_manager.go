@@ -41,6 +41,12 @@ func LoadDefaultConfigManager() (*ConfigManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = manager.Write()
+	if err != nil {
+		log.Printf("Error writing config: %+v", err)
+		return nil, err
+	}
+	log.Printf("Saved loaded config: %+v", manager.currentConfig)
 	return &manager, nil
 }
 
@@ -69,6 +75,10 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	return cm.currentConfig.Api
+}
+
+func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
+	return cm.currentConfig.Nats
 }
 
 func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {

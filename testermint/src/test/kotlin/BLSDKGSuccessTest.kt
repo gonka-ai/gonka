@@ -3,6 +3,7 @@ import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.data.RequestThresholdSignatureDto
 import com.productscience.data.toHexString
+import com.productscience.logHighlight
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -89,12 +90,15 @@ class BLSDKGSuccessTest : TestermintTest() {
         val allPairs = listOf(genesis) + cluster.joinPairs
         
         // Trigger complete DKG flow
+        logSection("Triggering DKG Init")
         triggerDKGInitiation(genesis)
         
         // Capture epoch ID once to avoid race conditions
+        logSection("Waiting for DKG Phase")
         val epochId = getCurrentEpochId(genesis)
         waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
-        
+
+        logSection("Verifying BLS State from all nodes")
         // Query BLS state from all nodes
         val blsDataFromNodes = allPairs.map { pair ->
             pair.name to queryEpochBLSData(pair, epochId)
@@ -112,8 +116,6 @@ class BLSDKGSuccessTest : TestermintTest() {
             assertThat(blsData?.tSlotsDegree).isEqualTo(referenceData?.tSlotsDegree)
             Logger.info("Node $nodeName has consistent BLS state")
         }
-        
-        logSection("BLS state consistency validated across all nodes")
     }
     
     @Test
@@ -382,32 +384,32 @@ class BLSDKGSuccessTest : TestermintTest() {
     // ========================================
     
     private fun validateDealerCommitments(blsData: EpochBLSData) {
-        Logger.info("Validating dealer commitments for epoch ${blsData.epochId}")
+        logHighlight("Validating dealer commitments for epoch ${blsData.epochId}")
         
         // Validate that we have dealer parts
         assertThat(blsData.dealerParts).isNotEmpty()
-        Logger.info("Found ${blsData.dealerParts.size} dealer parts")
+        logHighlight("Found ${blsData.dealerParts.size} dealer parts")
         
         // Log detailed information about each dealer part
         blsData.dealerParts.forEachIndexed { index, dealerPart ->
-            Logger.info("Dealer part $index: address='${dealerPart.dealerAddress}', commitments=${dealerPart.commitments.size}, participantShares=${dealerPart.participantShares.size}")
+            logHighlight("Dealer part $index: address='${dealerPart.dealerAddress}', commitments=${dealerPart.commitments.size}, participantShares=${dealerPart.participantShares.size}")
         }
         
         // Filter only non-empty dealer parts for validation
         val activeDealerParts = blsData.dealerParts.filter { it.dealerAddress.isNotEmpty() }
-        Logger.info("Active dealer parts (non-empty): ${activeDealerParts.size}")
+        logHighlight("Active dealer parts (non-empty): ${activeDealerParts.size}")
         
         activeDealerParts.forEachIndexed { index, dealerPart ->
-            Logger.info("Validating active dealer part $index: ${dealerPart.dealerAddress}")
+            logHighlight("Validating active dealer part $index: ${dealerPart.dealerAddress}")
             
             // Validate commitments exist
             assertThat(dealerPart.commitments).isNotEmpty()
-            Logger.info("Dealer ${dealerPart.dealerAddress} has ${dealerPart.commitments.size} commitments")
+            logHighlight("Dealer ${dealerPart.dealerAddress} has ${dealerPart.commitments.size} commitments")
             
             // Validate commitment format (should be G2 points)
             dealerPart.commitments.forEachIndexed { commitmentIndex, commitment ->
                 if (commitmentIndex < 3) { // Only log first few commitments to avoid spam
-                    Logger.info("Commitment $commitmentIndex size: ${commitment.size} bytes")
+                    logHighlight("Commitment $commitmentIndex size: ${commitment.size} bytes")
                 }
                 // G2 points can be:
                 // - Compressed: 96 bytes
@@ -419,21 +421,23 @@ class BLSDKGSuccessTest : TestermintTest() {
                 // Log first few bytes to understand the format
                 if (commitmentIndex == 0) {
                     val firstBytes = commitment.take(10).joinToString(", ")
-                    Logger.info("First commitment starts with: [$firstBytes...]")
+                    logHighlight("First commitment starts with: [$firstBytes...]")
                 }
             }
             
             // Validate participant shares structure
             assertThat(dealerPart.participantShares).hasSize(blsData.participants.size)
-            Logger.info("Dealer ${dealerPart.dealerAddress} has shares for ${dealerPart.participantShares.size} participants")
+            logHighlight("Dealer ${dealerPart.dealerAddress} has shares for ${dealerPart.participantShares.size} participants")
             
             // Validate each participant's encrypted shares
             dealerPart.participantShares.forEachIndexed { participantIndex, shares ->
                 val participant = blsData.participants[participantIndex]
-                val expectedSlotCount = participant.slotEndIndex - participant.slotStartIndex + 1
-                Logger.info("Participant $participantIndex (${participant.address}): expected slots=$expectedSlotCount, actual shares=${shares.encryptedShares.size}")
-                
-                assertThat(shares.encryptedShares).hasSize(expectedSlotCount)
+                val expectedSlotCount = (participant.slotEndIndex - participant.slotStartIndex + 1)
+                logHighlight("Participant $participantIndex (${participant.address}): expected slots=$expectedSlotCount, actual shares=${shares.encryptedShares.size}")
+
+                // For now, we are going to check for EITHER expectedSlotCount OR expectedSlotCount*2, because we
+                // are producing encryptedShares for both warm and hot key
+                assertThat(shares.encryptedShares.size).isIn(expectedSlotCount, expectedSlotCount * 2)
                 
                 // Validate encrypted share format (should be non-empty)
                 shares.encryptedShares.forEachIndexed { shareIndex, encryptedShare ->
@@ -444,10 +448,10 @@ class BLSDKGSuccessTest : TestermintTest() {
                 }
             }
             
-            Logger.info("✅ Dealer ${dealerPart.dealerAddress} validation passed")
+            logHighlight("✅ Dealer ${dealerPart.dealerAddress} validation passed")
         }
         
-        Logger.info("✅ Dealer commitments validation passed")
+        logHighlight("✅ Dealer commitments validation passed")
     }
     
     private fun validateParticipantSlotAssignments(blsData: EpochBLSData) {

@@ -62,6 +62,7 @@ export P2P_PORT=8201
 export PROXY_PORT=81
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
 export PROXY_ACTIVE=true
 export BRIDGE_ACTIVE=true
 # Unique internal bridge ports for join1
@@ -88,6 +89,7 @@ export P2P_PORT=8202
 export PROXY_PORT=82
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
 export PROXY_ACTIVE=true
 export BRIDGE_ACTIVE=true
 # Unique internal bridge ports for join2

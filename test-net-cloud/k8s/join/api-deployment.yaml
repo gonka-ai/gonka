@@ -58,6 +58,8 @@ spec:
           value: "test"
         - name: KEYRING_PASSWORD
           value: "default"
+        - name: TESTS
+          value: "true"
         volumeMounts:
         - name: inference-data
           mountPath: /root/.inference

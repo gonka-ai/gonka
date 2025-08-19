@@ -58,7 +58,7 @@ class StreamVestingTests : TestermintTest() {
 
     private fun testLegacyRewardSystemVesting(cluster: LocalCluster, genesis: LocalInferencePair) {
         val participant = genesis
-        val participantAddress = participant.node.getAddress()
+        val participantAddress = participant.node.getColdAddress()
 
         logSection("=== LEGACY REWARD SYSTEM VESTING TEST ===")
         logHighlight("Testing comprehensive vesting with legacy variable reward system")
@@ -232,7 +232,7 @@ class StreamVestingTests : TestermintTest() {
 
     private fun testBitcoinRewardSystemVesting(cluster: LocalCluster, genesis: LocalInferencePair) {
         val participant = genesis
-        val participantAddress = participant.node.getAddress()
+        val participantAddress = participant.node.getColdAddress()
 
         logSection("=== BITCOIN REWARD SYSTEM VESTING TEST ===")
         logSection("Testing vesting aggregation with Bitcoin-style fixed reward system")

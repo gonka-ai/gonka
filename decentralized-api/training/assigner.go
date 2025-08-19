@@ -81,7 +81,7 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 	queryClient := a.cosmosClient.NewInferenceQueryClient()
 
 	req := &types.QueryQueuedTrainingTasksRequest{}
-	resp, err := queryClient.QueuedTrainingTasks(*a.cosmosClient.GetContext(), req)
+	resp, err := queryClient.QueuedTrainingTasks(a.cosmosClient.GetContext(), req)
 	if err != nil {
 		slog.Error(logTag+"Error querying for training tasks", "err", err)
 		return
@@ -214,7 +214,7 @@ func (a *Assigner) checkTaskIsStillClaimed() {
 	req := &types.QueryTrainingTaskRequest{
 		Id: a.task.task.Id,
 	}
-	resp, err := queryClient.TrainingTask(*a.cosmosClient.GetContext(), req)
+	resp, err := queryClient.TrainingTask(a.cosmosClient.GetContext(), req)
 	if err != nil {
 		slog.Error(logTag+"Error querying for task", "taskId", a.task.task.Id, "err", err)
 		return

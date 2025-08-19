@@ -3,7 +3,7 @@
 ################################################################################
 # Build stage
 ################################################################################
-FROM golang:alpine AS builder
+FROM golang:1.23.2-alpine3.20 AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64

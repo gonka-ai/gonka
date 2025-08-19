@@ -12,7 +12,7 @@ import (
 
 func (s *Server) getVersions(ctx echo.Context) error {
 	cometClient := s.recorder.NewCometQueryClient()
-	resp, err := cometClient.GetNodeInfo(*s.recorder.GetContext(), &cmtservice.GetNodeInfoRequest{})
+	resp, err := cometClient.GetNodeInfo(s.recorder.GetContext(), &cmtservice.GetNodeInfoRequest{})
 	if err != nil {
 		logging.Error("Failed to get node info from cosmos node", types.Server, "error", err)
 		return ctx.JSON(http.StatusInternalServerError, map[string]string{
