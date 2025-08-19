@@ -84,7 +84,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "EpochGroupValidations",
 					Use:            "show-epoch-group-validations [id]",
 					Short:          "Shows a epochGroupValidations",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "poc_start_block_height"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "epoch_index"}},
 				},
 				{
 					RpcMethod:      "PocBatchesForStage",

@@ -115,7 +115,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 
 	// Create EpochGroupData with epochIndex <= 1
 	upcomingEpoch := types.Epoch{
-		Index:               1,
+		Index:               2,
 		PocStartBlockHeight: 100,
 	}
 

@@ -263,21 +263,21 @@ type NetworkInfo struct {
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
-func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkInfo, error) {
+func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (NetworkInfo, error) {
 	// Query sync status
 	status, err := d.getStatusFunc()
 	if err != nil {
-		return nil, err
+		return NetworkInfo{}, err
 	}
 	isSynced := !status.SyncInfo.CatchingUp
 
 	epochInfo, err := d.queryClient.EpochInfo(ctx, &types.QueryEpochInfoRequest{})
 	if err != nil || epochInfo == nil {
 		logging.Error("Failed to query epoch info", types.Stages, "error", err)
-		return nil, err
+		return NetworkInfo{}, err
 	}
 
-	return &NetworkInfo{
+	return NetworkInfo{
 		EpochParams: *epochInfo.Params.EpochParams,
 		IsSynced:    isSynced,
 		LatestEpoch: epochInfo.LatestEpoch,

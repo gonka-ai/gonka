@@ -16,7 +16,7 @@ func (k Keeper) SetEpochGroupValidations(ctx context.Context, epochGroupValidati
 	b := k.cdc.MustMarshal(&epochGroupValidations)
 	store.Set(types.EpochGroupValidationsKey(
 		epochGroupValidations.Participant,
-		epochGroupValidations.PocStartBlockHeight,
+		epochGroupValidations.EpochIndex,
 	), b)
 }
 
@@ -24,7 +24,7 @@ func (k Keeper) SetEpochGroupValidations(ctx context.Context, epochGroupValidati
 func (k Keeper) GetEpochGroupValidations(
 	ctx context.Context,
 	participant string,
-	pocStartBlockHeight uint64,
+	epochIndex uint64,
 
 ) (val types.EpochGroupValidations, found bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
@@ -32,7 +32,7 @@ func (k Keeper) GetEpochGroupValidations(
 
 	b := store.Get(types.EpochGroupValidationsKey(
 		participant,
-		pocStartBlockHeight,
+		epochIndex,
 	))
 	if b == nil {
 		return val, false

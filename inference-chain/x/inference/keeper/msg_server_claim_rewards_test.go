@@ -70,7 +70,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Setup validations
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: epochIndex,
+		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1"},
 	}
 	k.SetEpochGroupValidations(sdk.UnwrapSDKContext(ctx), validations)
@@ -366,7 +366,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Now let's validate all inferences and try again
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: epochIndex,
+		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)
@@ -580,7 +580,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// This should still fail because we need to validate all required inferences
 	validations := types.EpochGroupValidations{
 		Participant:         testutil.Creator,
-		PocStartBlockHeight: epochIndex,
+		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference2"},
 	}
 	k.SetEpochGroupValidations(sdkCtx, validations)

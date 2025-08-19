@@ -541,15 +541,15 @@ func request_Query_EpochGroupValidations_0(ctx context.Context, marshaler runtim
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
-	val, ok = pathParams["poc_start_block_height"]
+	val, ok = pathParams["epoch_index"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_start_block_height")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
 	}
 
-	protoReq.PocStartBlockHeight, err = runtime.Uint64(val)
+	protoReq.EpochIndex, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_start_block_height", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
 	}
 
 	msg, err := client.EpochGroupValidations(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
@@ -579,15 +579,15 @@ func local_request_Query_EpochGroupValidations_0(ctx context.Context, marshaler 
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
-	val, ok = pathParams["poc_start_block_height"]
+	val, ok = pathParams["epoch_index"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_start_block_height")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
 	}
 
-	protoReq.PocStartBlockHeight, err = runtime.Uint64(val)
+	protoReq.EpochIndex, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_start_block_height", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
 	}
 
 	msg, err := server.EpochGroupValidations(ctx, &protoReq)
@@ -5321,7 +5321,7 @@ var (
 
 	pattern_Query_SettleAmountAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "settle_amount"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "poc_start_block_height"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "epoch_index"}, "", runtime.AssumeColonVerbOpt(false)))
 
 	pattern_Query_EpochGroupValidationsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_validations"}, "", runtime.AssumeColonVerbOpt(false)))
 

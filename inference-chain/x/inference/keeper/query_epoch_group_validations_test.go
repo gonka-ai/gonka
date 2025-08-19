@@ -29,24 +29,24 @@ func TestEpochGroupValidationsQuerySingle(t *testing.T) {
 		{
 			desc: "First",
 			request: &types.QueryGetEpochGroupValidationsRequest{
-				Participant:         msgs[0].Participant,
-				PocStartBlockHeight: msgs[0].PocStartBlockHeight,
+				Participant: msgs[0].Participant,
+				EpochIndex:  msgs[0].EpochIndex,
 			},
 			response: &types.QueryGetEpochGroupValidationsResponse{EpochGroupValidations: msgs[0]},
 		},
 		{
 			desc: "Second",
 			request: &types.QueryGetEpochGroupValidationsRequest{
-				Participant:         msgs[1].Participant,
-				PocStartBlockHeight: msgs[1].PocStartBlockHeight,
+				Participant: msgs[1].Participant,
+				EpochIndex:  msgs[1].EpochIndex,
 			},
 			response: &types.QueryGetEpochGroupValidationsResponse{EpochGroupValidations: msgs[1]},
 		},
 		{
 			desc: "KeyNotFound",
 			request: &types.QueryGetEpochGroupValidationsRequest{
-				Participant:         strconv.Itoa(100000),
-				PocStartBlockHeight: 100000,
+				Participant: strconv.Itoa(100000),
+				EpochIndex:  100000,
 			},
 			err: status.Error(codes.NotFound, "not found"),
 		},
