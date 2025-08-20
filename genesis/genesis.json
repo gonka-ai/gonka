@@ -149,6 +149,17 @@
           "address": "gonka14zwvawtj4wqvnv6zj222qsz2m0f5xjly3jza7t",
           "pub_key": null,
           "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.ModuleAccount",
+          "name": "distribution",
+          "base_account": {
+            "address": "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa",
+            "pub_key": null,
+            "account_number": "19",
+            "sequence": "0"
+          },
+          "permissions": []
         }
       ]
     },
@@ -2276,12 +2287,21 @@
               "amount": "1"
             }
           ]
+        },
+        {
+          "address": "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "120000000000000000"
+            }
+          ]
         }
       ],
       "supply": [
         {
           "denom": "nicoin",
-          "amount": "160000000000000009"
+          "amount": "280000000000000009"
         }
       ],
       "denom_metadata": [
@@ -2373,7 +2393,9 @@
         "withdraw_addr_enabled": true
       },
       "fee_pool": {
-        "community_pool": []
+        "community_pool": [
+          { "denom": "nicoin", "amount": "120000000000000000.000000000000000000" }
+        ]
       },
       "delegator_withdraw_infos": [],
       "previous_proposer": "",
