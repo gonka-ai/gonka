@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/base64"
 	"testing"
 
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -17,13 +18,17 @@ func TestMsgSubmitSeed_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgSubmitSeed{
-				Creator: "invalid_address",
+				Creator:     "invalid_address",
+				BlockHeight: 1,
+				Signature:   base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid minimal",
 			msg: MsgSubmitSeed{
-				Creator: sample.AccAddress(),
+				Creator:     sample.AccAddress(),
+				BlockHeight: 1,
+				Signature:   base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 		},
 	}

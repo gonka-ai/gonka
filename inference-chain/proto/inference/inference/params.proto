@@ -33,6 +33,11 @@ message GenesisOnlyParams {
   int64 top_reward_payouts = 9;
   int64 top_reward_payouts_per_miner = 10;
   int64 top_reward_max_duration = 11;
+  Decimal max_individual_power_percentage = 12;
+  bool genesis_guardian_enabled = 13;
+  int64 genesis_guardian_network_maturity_threshold = 14;
+  Decimal genesis_guardian_multiplier = 15;
+  repeated string genesis_guardian_addresses = 16;
 }
 
 message TokenomicsParams {

@@ -16,6 +16,7 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgSubmitDealerPart{},
 		&MsgSubmitVerificationVector{},
 		&MsgUpdateParams{},
+		&MsgSubmitGroupKeyValidationSignature{},
 	)
 	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
 }
