@@ -41,6 +41,7 @@ type (
 		ModelCapacityMap     collections.Map[string, uint64]
 		// Governance models
 		Models                        collections.Map[string, types.Model]
+		Inferences                    collections.Map[string, types.Inference]
 		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
@@ -142,6 +143,14 @@ func NewKeeper(
 			"models",
 			collections.StringKey,
 			codec.CollValue[types.Model](cdc),
+		),
+		// inferences map
+		Inferences: collections.NewMap(
+			sb,
+			types.InferencesPrefix,
+			"inferences",
+			collections.StringKey,
+			codec.CollValue[types.Inference](cdc),
 		),
 		// unit of compute price proposals map
 		UnitOfComputePriceProposals: collections.NewMap(
