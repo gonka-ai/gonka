@@ -22,7 +22,7 @@ def estimate_batch_size(gpu_group: GpuGroup, params: Params, target_memory_usage
     # --- 1. Define Constants and Assumptions ---
     BYTES_PER_ELEMENT = 2  # float16
     ACTIVATION_OVERHEAD_FACTOR = 8.0
-    SAFETY_MARGIN = 0.95
+    SAFETY_MARGIN = 0.90
     num_gpus = gpu_group.group_size
 
     if num_gpus == 0:

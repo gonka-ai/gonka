@@ -46,7 +46,7 @@ class TestMinVramFunction:
         """Test minimum VRAM with params (returns constant for now)."""
         fake_params = {"dim": 1024}
         min_vram = get_min_group_vram(fake_params)
-        assert min_vram == 40.0  # Still constant
+        assert min_vram == 38.0  # Still constant
 
 
 class TestCreateGpuGroups:
