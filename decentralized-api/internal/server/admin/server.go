@@ -7,6 +7,7 @@ import (
 	"decentralized-api/internal/server/middleware"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	blstypes "github.com/productscience/inference/x/bls/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -75,6 +76,7 @@ func getCodec() *codec.ProtoCodec {
 	upgradetypes.RegisterInterfaces(interfaceRegistry)
 	collateraltypes.RegisterInterfaces(interfaceRegistry)
 	restrictionstypes.RegisterInterfaces(interfaceRegistry)
+	blstypes.RegisterInterfaces(interfaceRegistry)
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 	return cdc
 }
