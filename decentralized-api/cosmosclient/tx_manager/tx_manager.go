@@ -26,7 +26,15 @@ import (
 	"strings"
 
 	"github.com/nats-io/nats.go"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	"github.com/productscience/inference/app"
+	blstypes "github.com/productscience/inference/x/bls/types"
+	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
+	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
 const (
@@ -72,7 +80,15 @@ func StartTxManager(
 		return nil, err
 	}
 
+	// Register all module interfaces to match admin server codec
+	app.RegisterLegacyModules(client.Context().InterfaceRegistry)
 	types.RegisterInterfaces(client.Context().InterfaceRegistry)
+	banktypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	v1.RegisterInterfaces(client.Context().InterfaceRegistry)
+	upgradetypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	collateraltypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 
 	m := &manager{
 		ctx:              ctx,

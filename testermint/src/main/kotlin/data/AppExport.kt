@@ -20,6 +20,7 @@ data class AppState(
     val bank: BankState,
     val gov: GovState,
     val inference: InferenceState,
+    val restrictions: RestrictionsState,
 )
 
 data class InferenceState(
@@ -274,4 +275,47 @@ data class ModelListItem(
     val vRam: String,
     val throughputPerNonce: String,
     val validationThreshold: Decimal,
+)
+
+// -----------------------
+// Restrictions Module (AppState wiring for E2E DSL)
+// -----------------------
+
+data class RestrictionsState(
+    val params: RestrictionsParams,
+)
+
+data class RestrictionsParams(
+    @SerializedName("restriction_end_block")
+    val restrictionEndBlock: Long,
+    @SerializedName("emergency_transfer_exemptions")
+    val emergencyTransferExemptions: List<EmergencyTransferExemption> = emptyList(),
+    @SerializedName("exemption_usage_tracking")
+    val exemptionUsageTracking: List<ExemptionUsageEntry> = emptyList(),
+)
+
+data class EmergencyTransferExemption(
+    @SerializedName("exemption_id")
+    val exemptionId: String,
+    @SerializedName("from_address")
+    val fromAddress: String,
+    @SerializedName("to_address")
+    val toAddress: String,
+    // String amount for consistency with on-chain proto/json (e.g., "1000")
+    @SerializedName("max_amount")
+    val maxAmount: String,
+    @SerializedName("usage_limit")
+    val usageLimit: Long,
+    @SerializedName("expiry_block")
+    val expiryBlock: Long,
+    val justification: String,
+)
+
+data class ExemptionUsageEntry(
+    @SerializedName("exemption_id")
+    val exemptionId: String,
+    @SerializedName("account_address")
+    val accountAddress: String,
+    @SerializedName("usage_count")
+    val usageCount: Long,
 )

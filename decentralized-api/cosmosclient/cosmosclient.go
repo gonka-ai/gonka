@@ -32,6 +32,7 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
+	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
 type InferenceCosmosClient struct {
@@ -196,6 +197,7 @@ type CosmosMessageClient interface {
 	SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error
 	SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error
 	NewBLSQueryClient() blstypes.QueryClient
+	NewRestrictionsQueryClient() restrictionstypes.QueryClient
 	GetAddress() string
 	GetApiAccount() apiconfig.ApiAccount
 }
@@ -478,4 +480,8 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
 	return blstypes.NewQueryClient(icc.manager.GetClientContext())
+}
+
+func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
+	return restrictionstypes.NewQueryClient(icc.manager.GetClientContext())
 }
