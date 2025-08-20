@@ -38,6 +38,7 @@ var (
 	SettleAmountPrefix               = collections.NewPrefix(15)
 	TopMinerPrefix                   = collections.NewPrefix(16)
 	PartialUpgradePrefix             = collections.NewPrefix(17)
+	EpochPerformanceSummaryPrefix    = collections.NewPrefix(18)
 	ParamsKey                        = []byte("p_inference")
 )
 

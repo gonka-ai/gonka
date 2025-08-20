@@ -47,12 +47,13 @@ type (
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 		// Epoch collections
-		Epochs                   collections.Map[uint64, types.Epoch]
-		EffectiveEpochIndex      collections.Item[uint64]
-		EpochGroupValidationsMap collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
-		SettleAmounts            collections.Map[sdk.AccAddress, types.SettleAmount]
-		TopMiners                collections.Map[sdk.AccAddress, types.TopMiner]
-		PartialUpgrades          collections.Map[uint64, types.PartialUpgrade]
+		Epochs                    collections.Map[uint64, types.Epoch]
+		EffectiveEpochIndex       collections.Item[uint64]
+		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
+		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
+		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
+		EpochPerformanceSummaries collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
 	}
 )
 
@@ -225,6 +226,13 @@ func NewKeeper(
 			"partial_upgrade",
 			collections.Uint64Key,
 			codec.CollValue[types.PartialUpgrade](cdc),
+		),
+		EpochPerformanceSummaries: collections.NewMap(
+			sb,
+			types.EpochPerformanceSummaryPrefix,
+			"epoch_performance_summary",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
+			codec.CollValue[types.EpochPerformanceSummary](cdc),
 		),
 	}
 }
