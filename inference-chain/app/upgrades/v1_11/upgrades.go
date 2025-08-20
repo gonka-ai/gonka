@@ -184,7 +184,7 @@ func createEpochs(ctx context.Context, k keeper.Keeper) map[uint64]uint64 {
 
 		startBlockHeightToEpochId[epochGroup.PocStartBlockHeight] = epochId
 
-		epochGroup.EpochId = epochId
+		epochGroup.EpochIndex = epochId
 		k.SetEpochGroupData(ctx, *epochGroup)
 	}
 
@@ -221,10 +221,10 @@ func propagateEpochIdToSubGroups(ctx context.Context, k keeper.Keeper, pocStartB
 			skipped++
 			continue
 		}
-		if eg.EpochId == epochId {
+		if eg.EpochIndex == epochId {
 			continue // already correct
 		}
-		eg.EpochId = epochId
+		eg.EpochIndex = epochId
 		k.SetEpochGroupData(ctx, eg)
 		updated++
 	}

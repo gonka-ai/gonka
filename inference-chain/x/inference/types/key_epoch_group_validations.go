@@ -12,7 +12,7 @@ const (
 // EpochGroupValidationsKey returns the store key to retrieve a EpochGroupValidations from the index fields
 func EpochGroupValidationsKey(
 	participant string,
-	pocStartBlockHeight uint64,
+	epochIndex uint64,
 ) []byte {
 	var key []byte
 
@@ -20,9 +20,9 @@ func EpochGroupValidationsKey(
 	key = append(key, participantBytes...)
 	key = append(key, []byte("/")...)
 
-	pocStartBlockHeightBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(pocStartBlockHeightBytes, pocStartBlockHeight)
-	key = append(key, pocStartBlockHeightBytes...)
+	epochIndexBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(epochIndexBytes, epochIndex)
+	key = append(key, epochIndexBytes...)
 	key = append(key, []byte("/")...)
 
 	return key

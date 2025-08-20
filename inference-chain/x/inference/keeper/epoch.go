@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -82,6 +83,14 @@ func (k Keeper) GetEffectiveEpochPocStartHeight(ctx context.Context) (uint64, bo
 	return uint64(epoch.PocStartBlockHeight), true
 }
 
+func (k Keeper) GetUpcomingEpochIndex(ctx context.Context) (uint64, bool) {
+	epoch, found := k.GetUpcomingEpoch(ctx)
+	if !found {
+		return 0, false
+	}
+	return epoch.Index, true
+}
+
 func (k Keeper) GetUpcomingEpochPocStartHeight(ctx context.Context) (uint64, bool) {
 	epoch, found := k.GetUpcomingEpoch(ctx)
 	if !found {
@@ -89,6 +98,14 @@ func (k Keeper) GetUpcomingEpochPocStartHeight(ctx context.Context) (uint64, boo
 	}
 
 	return uint64(epoch.PocStartBlockHeight), true
+}
+
+func (k Keeper) GetPreviousEpochIndex(ctx context.Context) (uint64, bool) {
+	epoch, found := k.GetPreviousEpoch(ctx)
+	if !found {
+		return 0, false
+	}
+	return epoch.Index, true
 }
 
 func (k Keeper) GetPreviousEpochPocStartHeight(ctx context.Context) (uint64, bool) {

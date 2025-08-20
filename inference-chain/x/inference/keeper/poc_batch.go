@@ -2,12 +2,13 @@ package keeper
 
 import (
 	"context"
-	"cosmossdk.io/store/prefix"
 	"fmt"
-	"github.com/cosmos/cosmos-sdk/runtime"
-	"github.com/productscience/inference/x/inference/types"
 	"strconv"
 	"strings"
+
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
@@ -75,25 +76,6 @@ func (k Keeper) GetPoCBatchesCountByStage(ctx context.Context, pocStageStartBloc
 	}
 
 	return count, nil
-}
-
-func JoinPocBatches(batches map[string][]types.PoCBatch) map[string]types.PoCBatch {
-	result := make(map[string]types.PoCBatch)
-	for _, batchSlice := range batches {
-		joinedBatch := types.PoCBatch{
-			ParticipantAddress:       batchSlice[0].ParticipantAddress,
-			PocStageStartBlockHeight: batchSlice[0].PocStageStartBlockHeight,
-			ReceivedAtBlockHeight:    batchSlice[0].ReceivedAtBlockHeight,
-			Nonces:                   nil,
-			Dist:                     nil,
-		}
-
-		for _, b := range batchSlice {
-			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
-			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
-		}
-	}
-	return result
 }
 
 func (k Keeper) SetPoCValidation(ctx context.Context, validation types.PoCValidation) {

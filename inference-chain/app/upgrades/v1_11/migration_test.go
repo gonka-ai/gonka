@@ -100,7 +100,7 @@ func TestEpochMigration(t *testing.T) {
 
 		eg, ok := k.GetEpochGroupData(sdkCtx, height, "")
 		require.True(t, ok)
-		require.Equal(t, epochId, eg.EpochId)
+		require.Equal(t, epochId, eg.EpochIndex)
 
 		ap, ok := k.GetActiveParticipants(sdkCtx, epochId)
 		require.True(t, ok)
@@ -129,7 +129,7 @@ func TestEpochMigration(t *testing.T) {
 		}
 		expectedId, ok := mapping[egd.PocStartBlockHeight]
 		require.True(t, ok)
-		require.Equal(t, expectedId, egd.EpochId, "Sub-group at height %d, model %s has incorrect EpochId", egd.PocStartBlockHeight, egd.ModelId)
+		require.Equal(t, expectedId, egd.EpochIndex, "Sub-group at height %d, model %s has incorrect EpochId", egd.PocStartBlockHeight, egd.ModelId)
 	}
 }
 

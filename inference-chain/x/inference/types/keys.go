@@ -1,5 +1,7 @@
 package types
 
+import "cosmossdk.io/collections"
+
 const (
 	// ModuleName defines the module name
 	ModuleName = "inference"
@@ -18,7 +20,9 @@ const (
 )
 
 var (
-	ParamsKey = []byte("p_inference")
+	// prefixes
+	EpochGroupDataPrefix = collections.NewPrefix(0)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

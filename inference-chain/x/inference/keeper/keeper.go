@@ -3,6 +3,7 @@ package keeper
 import (
 	"fmt"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
@@ -31,6 +32,7 @@ type (
 
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
+		EpochGroupDataMap   collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 	}
 )
 
@@ -55,6 +57,8 @@ func NewKeeper(
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
+	sb := collections.NewSchemaBuilder(storeService)
+
 	return Keeper{
 		cdc:                 cdc,
 		storeService:        storeService,
@@ -71,6 +75,15 @@ func NewKeeper(
 		collateralKeeper:    collateralKeeper,
 		streamvestingKeeper: streamvestingKeeper,
 		getWasmKeeper:       getWasmKeeper,
+		// collections initialization
+
+		EpochGroupDataMap: collections.NewMap(
+			sb,
+			types.EpochGroupDataPrefix,
+			"epoch_group_data",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.EpochGroupData](cdc),
+		),
 	}
 }
 

@@ -103,7 +103,7 @@ func TestBitcoinRewardIntegration_RewardCalculationFunctions(t *testing.T) {
 	t.Run("Test PoC weight retrieval", func(t *testing.T) {
 		// Create test epoch group data
 		epochGroupData := &types.EpochGroupData{
-			EpochId: 10,
+			EpochIndex: 10,
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -137,7 +137,7 @@ func TestBitcoinRewardIntegration_DistributionLogic(t *testing.T) {
 
 	// Setup test data
 	epochGroupData := &types.EpochGroupData{
-		EpochId: 25,
+		EpochIndex: 25,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: "participant1",
@@ -256,7 +256,7 @@ func TestBitcoinRewardIntegration_DefaultParameters(t *testing.T) {
 func TestBitcoinRewardIntegration_Phase2Stubs(t *testing.T) {
 	// Setup test data
 	epochGroupData := &types.EpochGroupData{
-		EpochId: 15,
+		EpochIndex: 15,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: "participant1",

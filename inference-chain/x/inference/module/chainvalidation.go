@@ -87,19 +87,19 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get current epoch group", types.PoC, "error", err.Error())
 		return nil
 	}
-	if currentEpochGroup.GroupData.EpochId != upcomingEpoch.Index-1 {
+	if currentEpochGroup.GroupData.EpochIndex != upcomingEpoch.Index-1 {
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Current epoch group does not match upcoming epoch", types.PoC,
-			"currentEpochGroup.EpochId", currentEpochGroup.GroupData.EpochId,
+			"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 			"upcomingEpoch.Index", upcomingEpoch.Index)
 	}
 
 	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
-		"currentEpochGroup.EpochId", currentEpochGroup.GroupData.EpochId,
+		"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochId)
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex)
 
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
@@ -307,7 +307,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		}
 		participants[participantAddress] = participant
 
-		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
+		seed, found := am.keeper.GetRandomSeed(ctx, int64(upcomingEpoch.Index), participantAddress)
 		if !found {
 			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -321,7 +321,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	// STEP 3: Add seeds for preserved participants if they have submitted seeds
 	for _, preservedParticipant := range preservedParticipants {
 		participantAddress := preservedParticipant.Index
-		if seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress); found {
+		if seed, found := am.keeper.GetRandomSeed(ctx, int64(upcomingEpoch.Index), participantAddress); found {
 			preservedParticipant.Seed = &seed
 			seeds[participantAddress] = seed
 			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,

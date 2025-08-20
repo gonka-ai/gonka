@@ -18,7 +18,7 @@ var _ = strconv.IntSize
 func createNEpochPerformanceSummary(keeper keeper.Keeper, ctx context.Context, n int) []types.EpochPerformanceSummary {
 	items := make([]types.EpochPerformanceSummary, n)
 	for i := range items {
-		items[i].EpochStartHeight = uint64(i)
+		items[i].EpochIndex = uint64(i)
 		items[i].ParticipantId = strconv.Itoa(i)
 
 		keeper.SetEpochPerformanceSummary(ctx, items[i])
@@ -31,7 +31,7 @@ func TestEpochPerformanceSummaryGet(t *testing.T) {
 	items := createNEpochPerformanceSummary(keeper, ctx, 10)
 	for _, item := range items {
 		rst, found := keeper.GetEpochPerformanceSummary(ctx,
-			item.EpochStartHeight,
+			item.EpochIndex,
 			item.ParticipantId,
 		)
 		require.True(t, found)
@@ -46,11 +46,11 @@ func TestEpochPerformanceSummaryRemove(t *testing.T) {
 	items := createNEpochPerformanceSummary(keeper, ctx, 10)
 	for _, item := range items {
 		keeper.RemoveEpochPerformanceSummary(ctx,
-			item.EpochStartHeight,
+			item.EpochIndex,
 			item.ParticipantId,
 		)
 		_, found := keeper.GetEpochPerformanceSummary(ctx,
-			item.EpochStartHeight,
+			item.EpochIndex,
 			item.ParticipantId,
 		)
 		require.False(t, found)
@@ -77,7 +77,7 @@ func TestEpochPerformanceSummaryGetByParticipants(t *testing.T) {
 	)
 
 	extraItem := types.EpochPerformanceSummary{}
-	extraItem.EpochStartHeight = uint64(1)
+	extraItem.EpochIndex = uint64(1)
 	extraItem.ParticipantId = "2"
 
 	keeper.SetEpochPerformanceSummary(ctx, extraItem)
