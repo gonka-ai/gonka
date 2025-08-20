@@ -37,6 +37,7 @@ var (
 	InferencesPrefix                 = collections.NewPrefix(14)
 	SettleAmountPrefix               = collections.NewPrefix(15)
 	TopMinerPrefix                   = collections.NewPrefix(16)
+	PartialUpgradePrefix             = collections.NewPrefix(17)
 	ParamsKey                        = []byte("p_inference")
 )
 

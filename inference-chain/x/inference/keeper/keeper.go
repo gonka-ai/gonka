@@ -52,6 +52,7 @@ type (
 		EpochGroupValidationsMap collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
 		SettleAmounts            collections.Map[sdk.AccAddress, types.SettleAmount]
 		TopMiners                collections.Map[sdk.AccAddress, types.TopMiner]
+		PartialUpgrades          collections.Map[uint64, types.PartialUpgrade]
 	}
 )
 
@@ -217,6 +218,13 @@ func NewKeeper(
 			"top_miner",
 			sdk.AccAddressKey,
 			codec.CollValue[types.TopMiner](cdc),
+		),
+		PartialUpgrades: collections.NewMap(
+			sb,
+			types.PartialUpgradePrefix,
+			"partial_upgrade",
+			collections.Uint64Key,
+			codec.CollValue[types.PartialUpgrade](cdc),
 		),
 	}
 }
