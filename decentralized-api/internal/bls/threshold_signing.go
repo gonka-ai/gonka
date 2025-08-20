@@ -27,9 +27,9 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 		return fmt.Errorf("failed to extract request_id: %w", err)
 	}
 
-	epochIdStr, err := bm.extractEventString(event, "inference.bls.EventThresholdSigningRequested.current_epoch_id")
+	epochIndexStr, err := bm.extractEventString(event, "inference.bls.EventThresholdSigningRequested.current_epoch_index")
 	if err != nil {
-		return fmt.Errorf("failed to extract current_epoch_id: %w", err)
+		return fmt.Errorf("failed to extract current_epoch_index: %w", err)
 	}
 
 	messageHashBytes, err := bm.extractEventData(event, "inference.bls.EventThresholdSigningRequested.message_hash")
@@ -43,7 +43,7 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 	}
 
 	// Parse epoch ID
-	epochId, err := strconv.ParseUint(epochIdStr, 10, 64)
+	epochIndex, err := strconv.ParseUint(epochIndexStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse epoch_id: %w", err)
 	}
@@ -56,19 +56,19 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 
 	logging.Info(thresholdSigningLogTag+"Received threshold signing request", inferenceTypes.BLS,
 		"request_id", fmt.Sprintf("%x", requestIdBytes),
-		"epoch_id", epochId,
+		"epoch_index", epochIndex,
 		"deadline", deadline)
 
 	// Get verification result for this epoch from cache
-	result := bm.cache.Get(epochId)
+	result := bm.cache.Get(epochIndex)
 	if result == nil {
-		logging.Warn(thresholdSigningLogTag+"No verification result found for epoch", inferenceTypes.BLS, "epoch_id", epochId)
-		return fmt.Errorf("no verification result found for epoch %d", epochId)
+		logging.Warn(thresholdSigningLogTag+"No verification result found for epoch", inferenceTypes.BLS, "epoch_index", epochIndex)
+		return fmt.Errorf("no verification result found for epoch %d", epochIndex)
 	}
 
 	// Check if we are a participant in this epoch
 	if !result.IsParticipant {
-		logging.Debug(thresholdSigningLogTag+"Not a participant in this epoch, skipping", inferenceTypes.BLS, "epoch_id", epochId)
+		logging.Debug(thresholdSigningLogTag+"Not a participant in this epoch, skipping", inferenceTypes.BLS, "epoch_index", epochIndex)
 		return nil
 	}
 
@@ -78,14 +78,14 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 	}
 
 	// Compute partial signatures for our slot range
-	err = bm.submitPartialSignatures(epochId, requestIdBytes, messageHashBytes, result)
+	err = bm.submitPartialSignatures(epochIndex, requestIdBytes, messageHashBytes, result)
 	if err != nil {
 		return fmt.Errorf("failed to submit partial signatures: %w", err)
 	}
 
 	logging.Info(thresholdSigningLogTag+"Successfully submitted partial signatures", inferenceTypes.BLS,
 		"request_id", fmt.Sprintf("%x", requestIdBytes),
-		"epoch_id", epochId,
+		"epoch_index", epochIndex,
 		"slot_range", result.SlotRange)
 
 	return nil
