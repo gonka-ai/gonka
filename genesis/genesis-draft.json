@@ -327,14 +327,14 @@
           }
         ],
         "max_deposit_period": "172800s",
-        "voting_period": "0h10m0s",
-        "quorum": "0.00100000000000000",
+        "voting_period": "48h0m0s",
+        "quorum": "0.334000000000000000", // => won't work without us
         "threshold": "0.500000000000000000",
         "veto_threshold": "0.334000000000000000",
         "min_initial_deposit_ratio": "0.000000000000000000",
         "proposal_cancel_ratio": "0.500000000000000000",
         "proposal_cancel_dest": "",
-        "expedited_voting_period": "0h5m0s",
+        "expedited_voting_period": "12h0m0s",
         "expedited_threshold": "0.667000000000000000",
         "expedited_min_deposit": [
           {
@@ -403,9 +403,9 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "1800",
+          "epoch_length": "17280",
           "epoch_multiplier": "1",
-          "epoch_shift": "1700",
+          "epoch_shift": "16280",
           "default_unit_of_compute_price": "100",
           "poc_stage_duration": "60",
           "poc_exchange_duration": "5",
@@ -587,7 +587,7 @@
           "hf_repo": "Qwen/QwQ-32B",
           "hf_commit": "976055f8c83f394f35dbd3ab09a285a984907bd0",
           "model_args": [
-            "--quantization",
+            "--quantization", // Should be enforced soon to w8a16
             "fp8",
             "--kv-cache-dtype",
             "fp8"
@@ -595,7 +595,7 @@
           "v_ram": "80",
           "throughput_per_nonce": "1000",
           "validation_threshold": {
-            "value": "85",
+            "value": "98",
             "exponent": -2
           }
         },
@@ -606,13 +606,13 @@
           "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
           "hf_commit": "a09a35458c702b33eeacc393d103063234e8bc28",
           "model_args": [
-            "--quantization",
+            "--quantization", // Should be enforced soon to w8a16
             "fp8"
           ],
           "v_ram": "24",
           "throughput_per_nonce": "10000",
           "validation_threshold": {
-            "value": "85",
+            "value": "98",
             "exponent": -2
           }
         }
