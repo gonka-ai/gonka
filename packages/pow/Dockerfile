@@ -1,5 +1,5 @@
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS builder
+FROM ghcr.io/gonka-ai/vllm:v0.9.1 AS builder
 
 ENV POETRY_VERSION=2.0.1 \
     PYTHONUNBUFFERED=1 \
@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 ################################################################################
 
 ARG USERNAME=pow
-FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS app
+FROM ghcr.io/gonka-ai/vllm:v0.9.1 AS app
 
 ARG USERNAME
 ENV PYTHONUNBUFFERED=1 \
