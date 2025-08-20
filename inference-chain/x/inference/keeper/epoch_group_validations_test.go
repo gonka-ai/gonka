@@ -19,7 +19,7 @@ func createNEpochGroupValidations(keeper keeper.Keeper, ctx context.Context, n i
 	items := make([]types.EpochGroupValidations, n)
 	for i := range items {
 		items[i].Participant = strconv.Itoa(i)
-		items[i].PocStartBlockHeight = uint64(i)
+		items[i].EpochIndex = uint64(i)
 
 		keeper.SetEpochGroupValidations(ctx, items[i])
 	}
@@ -32,7 +32,7 @@ func TestEpochGroupValidationsGet(t *testing.T) {
 	for _, item := range items {
 		rst, found := keeper.GetEpochGroupValidations(ctx,
 			item.Participant,
-			item.PocStartBlockHeight,
+			item.EpochIndex,
 		)
 		require.True(t, found)
 		require.Equal(t,
@@ -47,11 +47,11 @@ func TestEpochGroupValidationsRemove(t *testing.T) {
 	for _, item := range items {
 		keeper.RemoveEpochGroupValidations(ctx,
 			item.Participant,
-			item.PocStartBlockHeight,
+			item.EpochIndex,
 		)
 		_, found := keeper.GetEpochGroupValidations(ctx,
 			item.Participant,
-			item.PocStartBlockHeight,
+			item.EpochIndex,
 		)
 		require.False(t, found)
 	}

@@ -50,6 +50,8 @@ func createEpochGroupObject(t testing.TB, epochGroupData *types.EpochGroupData) 
 func TestCreateEpochGroup(t *testing.T) {
 	epochGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: 10,
+		EpochIndex:          1,
+		ModelId:             "modelId",
 	}
 	epochGroup := createEpochGroupObject(t, epochGroupData)
 	response := &group.MsgCreateGroupWithPolicyResponse{
@@ -60,7 +62,7 @@ func TestCreateEpochGroup(t *testing.T) {
 	epochGroup.GroupMock.EXPECT().CreateGroupWithPolicy(gomock.Any(), gomock.Any()).Return(response, nil)
 	err := epochGroup.EpochGroup.CreateGroup(context.Background())
 	require.NoError(t, err)
-	data, found := epochGroup.EpochGroup.GroupDataKeeper.GetEpochGroupData(context.Background(), epochGroupData.PocStartBlockHeight,
+	data, found := epochGroup.EpochGroup.GroupDataKeeper.GetEpochGroupData(context.Background(), epochGroupData.EpochIndex,
 		epochGroupData.ModelId)
 	require.True(t, found)
 	require.Equal(t, uint64(8), data.EpochGroupId)
@@ -108,6 +110,7 @@ func createTestModels() []types.Model {
 func createTestEpochGroupWithModels(t *testing.T) *EpochGroupMock {
 	epochGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: 10,
+		EpochIndex:          10,
 		EpochGroupId:        8,
 		EpochPolicy:         "epochPolicy",
 	}

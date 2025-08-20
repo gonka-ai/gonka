@@ -2,13 +2,14 @@ package keeper
 
 import (
 	"context"
+	"fmt"
+	"strings"
+
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
-	"fmt"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/bookkeeper/types"
-	"strings"
 )
 
 type (
@@ -64,6 +65,17 @@ func (k Keeper) GetAuthority() string {
 // Logger returns a module-specific logger.
 func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
+}
+
+func (k Keeper) SendCoins(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins, memo string) error {
+	err := k.bankKeeper.SendCoins(ctx, fromAddr, toAddr, amt)
+	if err != nil {
+		return err
+	}
+	for _, coin := range amt {
+		k.logTransaction(ctx, toAddr.String(), fromAddr.String(), coin, memo, "")
+	}
+	return nil
 }
 
 func (k Keeper) SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins, memo string) error {

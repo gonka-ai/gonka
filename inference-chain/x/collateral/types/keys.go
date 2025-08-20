@@ -1,8 +1,7 @@
 package types
 
 import (
-	"encoding/binary"
-	"fmt"
+	"cosmossdk.io/collections"
 )
 
 const (
@@ -21,60 +20,22 @@ const (
 )
 
 var (
-	ParamsKey = []byte("p_collateral")
+	ParamsKey = collections.NewPrefix(0)
 
 	// CurrentEpochKey is the key to store the current epoch index for the collateral module
-	CurrentEpochKey = []byte("CurrentEpoch")
+	CurrentEpochKey = collections.NewPrefix(1)
 
 	// CollateralKey is the prefix to store collateral for participants
-	CollateralKey = []byte("collateral/")
+	CollateralKey = collections.NewPrefix(2)
 
-	// UnbondingKey is the prefix for unbonding entries
+	// UnbondingKey is the legacy prefix for unbonding entries (raw store)
 	// Format: unbonding/{completionEpoch}/{participantAddress}
-	UnbondingKey = []byte("unbonding/")
+	UnbondingKey = collections.NewPrefix(3)
+
+	// New collections prefixes for UnbondingCollateral IndexedMap and its secondary index
+	UnbondingCollPrefix               = collections.NewPrefix(4)
+	UnbondingByParticipantIndexPrefix = collections.NewPrefix(5)
 
 	// JailedKey is the prefix for jailed participant entries
-	JailedKey = []byte("jailed/")
+	JailedKey = collections.NewPrefix(6)
 )
-
-func KeyPrefix(p string) []byte {
-	return []byte(p)
-}
-
-// GetCollateralKey returns the store key for a participant's collateral
-func GetCollateralKey(participantAddress string) []byte {
-	return append(CollateralKey, []byte(participantAddress)...)
-}
-
-// GetUnbondingKey returns the store key for an unbonding entry
-// Format: unbonding/{completionEpoch}/{participantAddress}
-func GetUnbondingKey(completionEpoch uint64, participantAddress string) []byte {
-	epochBz := make([]byte, 8)
-	binary.BigEndian.PutUint64(epochBz, completionEpoch)
-	return append(append(UnbondingKey, epochBz...), []byte(participantAddress)...)
-}
-
-// GetUnbondingEpochPrefix returns the prefix for all unbonding entries for a specific epoch
-func GetUnbondingEpochPrefix(completionEpoch uint64) []byte {
-	epochBz := make([]byte, 8)
-	binary.BigEndian.PutUint64(epochBz, completionEpoch)
-	return append(UnbondingKey, epochBz...)
-}
-
-// GetJailedKey creates a key for a specific participant's jailed status
-func GetJailedKey(participantAddress string) []byte {
-	return append(JailedKey, []byte(participantAddress)...)
-}
-
-// ParseUnbondingKey parses the completion epoch and participant address from an unbonding key
-func ParseUnbondingKey(key []byte) (completionEpoch uint64, participantAddress string, err error) {
-	if len(key) < len(UnbondingKey)+8 {
-		return 0, "", fmt.Errorf("invalid unbonding key length")
-	}
-
-	epochBz := key[len(UnbondingKey) : len(UnbondingKey)+8]
-	completionEpoch = binary.BigEndian.Uint64(epochBz)
-	participantAddress = string(key[len(UnbondingKey)+8:])
-
-	return completionEpoch, participantAddress, nil
-}

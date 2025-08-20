@@ -35,7 +35,7 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 	}
 
 	k.Logger().Info("GetRandomExecutor: Retrieved epoch group",
-		"model_id", req.Model, "epoch_id", epochGroup.GroupData.EpochId)
+		"model_id", req.Model, "epoch_id", epochGroup.GroupData.EpochIndex)
 
 	participant, err := epochGroup.GetRandomMemberForModel(goCtx, req.Model, filterFn)
 	if err != nil {

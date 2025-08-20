@@ -1,5 +1,7 @@
 package types
 
+import "cosmossdk.io/collections"
+
 const (
 	// ModuleName defines the module name
 	ModuleName = "streamvesting"
@@ -12,17 +14,9 @@ const (
 )
 
 var (
-	ParamsKey = []byte("p_streamvesting")
+	// ParamsKey is the collections prefix for module params (Item)
+	ParamsKey = collections.NewPrefix(0)
 
-	// VestingScheduleKeyPrefix is the prefix for storing vesting schedules
-	VestingScheduleKeyPrefix = []byte("vesting_schedule")
+	// VestingScheduleKey is the collections prefix for storing vesting schedules (Map)
+	VestingScheduleKey = collections.NewPrefix(1)
 )
-
-func KeyPrefix(p string) []byte {
-	return []byte(p)
-}
-
-// VestingScheduleKey returns the store key for a participant's vesting schedule
-func VestingScheduleKey(participantAddress string) []byte {
-	return append(VestingScheduleKeyPrefix, []byte(participantAddress)...)
-}

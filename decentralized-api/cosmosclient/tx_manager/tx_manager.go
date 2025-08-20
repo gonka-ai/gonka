@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
+
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -20,11 +22,19 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
-	"time"
+
+	"strings"
 
 	"github.com/nats-io/nats.go"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	"github.com/productscience/inference/app"
+	blstypes "github.com/productscience/inference/x/bls/types"
+	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
-	"strings"
+	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
 const (
@@ -70,7 +80,15 @@ func StartTxManager(
 		return nil, err
 	}
 
+	// Register all module interfaces to match admin server codec
+	app.RegisterLegacyModules(client.Context().InterfaceRegistry)
 	types.RegisterInterfaces(client.Context().InterfaceRegistry)
+	banktypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	v1.RegisterInterfaces(client.Context().InterfaceRegistry)
+	upgradetypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	collateraltypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 
 	m := &manager{
 		ctx:              ctx,
@@ -147,7 +165,7 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse,
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
-	logging.Debug("SendTransactionAsyncNoRetry: sending tx", types.Messages, "tx_id", id)
+	logging.Debug("SendTransactionAsyncNoRetry: sending tx", types.Messages, "tx_id", id, "originalMsgType", sdk.MsgTypeURL(rawTx))
 	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
 	return resp, broadcastErr
 }
@@ -360,6 +378,9 @@ func (m *manager) checkTxStatus(hash string) (bool, error) {
 		return false, err
 	}
 
+	if resp.TxResult.Code != 0 {
+		logging.Error("checkTxStatus: tx failed on-chain", types.Messages, "txHash", hash, "code", resp.TxResult.Code, "codespace", resp.TxResult.Codespace, "rawLog", resp.TxResult.Log)
+	}
 	logging.Debug("checkTxStatus: found tx result", types.Messages, "txHash", hash, "resp", resp)
 	return true, nil
 }
@@ -393,6 +414,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 	}
 
 	var finalMsg sdk.Msg = rawTx
+	originalMsgType := sdk.MsgTypeURL(rawTx)
 	if !m.apiAccount.IsSignerTheMainAccount() {
 		granteeAddress, err := m.apiAccount.SignerAddress()
 		if err != nil {
@@ -401,7 +423,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 
 		execMsg := authztypes.NewMsgExec(granteeAddress, []sdk.Msg{rawTx})
 		finalMsg = &execMsg
-		logging.Info("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", sdk.MsgTypeURL(rawTx))
+		logging.Info("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", originalMsgType)
 	}
 
 	unsignedTx, err := factory.BuildUnsignedTx(finalMsg)
@@ -416,6 +438,9 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 	resp, err := m.client.Context().BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, time.Time{}, err
+	}
+	if resp.Code != 0 {
+		logging.Error("Broadcast failed immediately", types.Messages, "code", resp.Code, "rawLog", resp.RawLog, "tx_id", id, "originalMsgType", originalMsgType)
 	}
 	return resp, timestamp, nil
 }

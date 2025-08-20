@@ -1,7 +1,6 @@
 package keeper_test
 
 import (
-	"strconv"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -11,11 +10,9 @@ import (
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
+	"github.com/productscience/inference/testutil/sample"
 	"github.com/productscience/inference/x/inference/types"
 )
-
-// Prevent strconv unused error
-var _ = strconv.IntSize
 
 func TestSettleAmountQuerySingle(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
@@ -43,7 +40,7 @@ func TestSettleAmountQuerySingle(t *testing.T) {
 		{
 			desc: "KeyNotFound",
 			request: &types.QueryGetSettleAmountRequest{
-				Participant: strconv.Itoa(100000),
+				Participant: sample.AccAddress(),
 			},
 			err: status.Error(codes.NotFound, "not found"),
 		},

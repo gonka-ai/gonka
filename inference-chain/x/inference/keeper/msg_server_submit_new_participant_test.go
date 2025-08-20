@@ -7,6 +7,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/stretchr/testify/require"
@@ -25,19 +26,19 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 	workerKeyString := base64.StdEncoding.EncodeToString(workerPubKey.Bytes())
 
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator:      "creator",
+		Creator:      testutil.Executor,
 		Url:          "url",
 		ValidatorKey: validatorKeyString,
 		WorkerKey:    workerKeyString,
 	})
 	require.NoError(t, err)
 
-	savedParticipant, found := k.GetParticipant(ctx, "creator")
+	savedParticipant, found := k.GetParticipant(ctx, testutil.Executor)
 	require.True(t, found)
 	ctx2 := sdk.UnwrapSDKContext(ctx)
 	require.Equal(t, types.Participant{
-		Index:             "creator",
-		Address:           "creator",
+		Index:             testutil.Executor,
+		Address:           testutil.Executor,
 		Weight:            -1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
 		JoinHeight:        ctx2.BlockHeight(),
@@ -54,14 +55,14 @@ func TestMsgServer_SubmitNewParticipant_WithEmptyKeys(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator:      "creator",
+		Creator:      testutil.Executor,
 		Url:          "url",
 		ValidatorKey: "", // Test with empty validator key
 		WorkerKey:    "", // Test with empty worker key
 	})
 	require.NoError(t, err)
 
-	savedParticipant, found := k.GetParticipant(ctx, "creator")
+	savedParticipant, found := k.GetParticipant(ctx, testutil.Executor)
 	require.True(t, found)
 	require.Equal(t, "", savedParticipant.ValidatorKey) // Should handle empty key gracefully
 	require.Equal(t, "", savedParticipant.WorkerPublicKey)
@@ -76,14 +77,14 @@ func TestMsgServer_SubmitNewParticipant_ValidateSecp256k1Key(t *testing.T) {
 	validatorKeyString := base64.StdEncoding.EncodeToString(pubKey.Bytes())
 
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator:      "creator",
+		Creator:      testutil.Executor,
 		Url:          "url",
 		ValidatorKey: validatorKeyString,
 		WorkerKey:    "worker-key",
 	})
 	require.NoError(t, err)
 
-	savedParticipant, found := k.GetParticipant(ctx, "creator")
+	savedParticipant, found := k.GetParticipant(ctx, testutil.Executor)
 	require.True(t, found)
 
 	// Verify the key was stored correctly
@@ -174,7 +175,7 @@ func TestMsgServer_SubmitNewParticipant_InvalidED25519Keys(t *testing.T) {
 
 			// Test submitting participant with this key
 			_, submitErr := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-				Creator:      "test_creator_" + tc.name,
+				Creator:      testutil.Executor,
 				Url:          "http://test.url",
 				ValidatorKey: tc.validatorKey,
 				WorkerKey:    validKeyBase64, // Use valid worker key
@@ -185,7 +186,7 @@ func TestMsgServer_SubmitNewParticipant_InvalidED25519Keys(t *testing.T) {
 			require.NoError(t, submitErr, "Submission currently succeeds without validation")
 
 			// Check that participant was stored
-			savedParticipant, found := k.GetParticipant(ctx, "test_creator_"+tc.name)
+			savedParticipant, found := k.GetParticipant(ctx, testutil.Executor)
 			require.True(t, found, "Participant should be stored")
 			require.Equal(t, tc.validatorKey, savedParticipant.ValidatorKey, "Validator key should be stored as-is")
 		})

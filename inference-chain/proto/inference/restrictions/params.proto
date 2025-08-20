@@ -1,0 +1,44 @@
+syntax = "proto3";
+package inference.restrictions;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/restrictions/types";
+
+// EmergencyTransferExemption defines an exemption template for emergency transfers
+message EmergencyTransferExemption {
+  option (gogoproto.equal) = true;
+  
+  string exemption_id = 1;
+  string from_address = 2; // specific address or "*" for wildcard
+  string to_address = 3; // specific address or "*" for wildcard
+  string max_amount = 4; // maximum amount per transfer (as string to avoid precision loss)
+  uint64 usage_limit = 5; // maximum number of uses per account
+  uint64 expiry_block = 6; // block height when exemption expires
+  string justification = 7; // description of emergency use case
+}
+
+// ExemptionUsage tracks usage of exemptions per account
+message ExemptionUsage {
+  option (gogoproto.equal) = true;
+  
+  string exemption_id = 1;
+  string account_address = 2;
+  uint64 usage_count = 3;
+}
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/restrictions/Params";
+  option (gogoproto.equal) = true;
+
+  // Block height when transfer restrictions end (default: 1,555,000)
+  uint64 restriction_end_block = 1;
+  
+  // Array of governance-approved emergency transfer exemption templates
+  repeated EmergencyTransferExemption emergency_transfer_exemptions = 2 [(gogoproto.nullable) = false];
+  
+  // Usage tracking for emergency exemptions per account
+  repeated ExemptionUsage exemption_usage_tracking = 3 [(gogoproto.nullable) = false];
+}
