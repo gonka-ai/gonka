@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	testutil "github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	"github.com/productscience/inference/x/inference/types"
@@ -46,7 +47,7 @@ func TestEpochPerformanceSummaryQuerySingle(t *testing.T) {
 			desc: "KeyNotFound",
 			request: &types.QueryGetEpochPerformanceSummaryRequest{
 				EpochIndex:    100000,
-				ParticipantId: strconv.Itoa(100000),
+				ParticipantId: testutil.Bech32Addr(100000),
 			},
 			err: status.Error(codes.NotFound, "not found"),
 		},

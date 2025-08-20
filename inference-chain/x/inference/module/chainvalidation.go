@@ -307,7 +307,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		}
 		participants[participantAddress] = participant
 
-		seed, found := am.keeper.GetRandomSeed(ctx, int64(upcomingEpoch.Index), participantAddress)
+		seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
 		if !found {
 			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -321,7 +321,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	// STEP 3: Add seeds for preserved participants if they have submitted seeds
 	for _, preservedParticipant := range preservedParticipants {
 		participantAddress := preservedParticipant.Index
-		if seed, found := am.keeper.GetRandomSeed(ctx, int64(upcomingEpoch.Index), participantAddress); found {
+		if seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress); found {
 			preservedParticipant.Seed = &seed
 			seeds[participantAddress] = seed
 			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,

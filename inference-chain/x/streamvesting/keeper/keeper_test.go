@@ -1,8 +1,9 @@
 package keeper_test
 
 import (
-	"go.uber.org/mock/gomock"
 	"testing"
+
+	"go.uber.org/mock/gomock"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -21,6 +22,7 @@ type KeeperTestSuite struct {
 }
 
 func (suite *KeeperTestSuite) SetupTest() {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	k, ctx, mocks := keepertest.StreamVestingKeeperWithMocks(suite.T())
 	suite.ctx = ctx
 	suite.keeper = k

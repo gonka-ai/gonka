@@ -3,8 +3,6 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -16,20 +14,12 @@ func (k Keeper) PartialUpgradeAll(ctx context.Context, req *types.QueryAllPartia
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	var partialUpgrades []types.PartialUpgrade
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	partialUpgradeStore := prefix.NewStore(store, types.KeyPrefix(types.PartialUpgradeKeyPrefix))
-
-	pageRes, err := query.Paginate(partialUpgradeStore, req.Pagination, func(key []byte, value []byte) error {
-		var partialUpgrade types.PartialUpgrade
-		if err := k.cdc.Unmarshal(value, &partialUpgrade); err != nil {
-			return err
-		}
-
-		partialUpgrades = append(partialUpgrades, partialUpgrade)
-		return nil
-	})
+	partialUpgrades, pageRes, err := query.CollectionPaginate(
+		ctx,
+		k.PartialUpgrades,
+		req.Pagination,
+		func(_ uint64, v types.PartialUpgrade) (types.PartialUpgrade, error) { return v, nil },
+	)
 
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

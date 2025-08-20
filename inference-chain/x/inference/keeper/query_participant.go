@@ -2,10 +2,9 @@ package keeper
 
 import (
 	"context"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -17,27 +16,16 @@ func (k Keeper) ParticipantAll(ctx context.Context, req *types.QueryAllParticipa
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	participants, pageRes, err := query.CollectionPaginate(
+		ctx,
+		k.Participants,
+		req.Pagination,
+		func(_ sdk.AccAddress, value types.Participant) (types.Participant, error) {
+			return value, nil
+		},
+	)
 
-	var participants []types.Participant
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	participantStore := prefix.NewStore(store, types.KeyPrefix(types.ParticipantKeyPrefix))
-
-	pageRes, err := query.Paginate(participantStore, req.Pagination, func(key []byte, value []byte) error {
-		var participant types.Participant
-		if err := k.cdc.Unmarshal(value, &participant); err != nil {
-			return err
-		}
-
-		participants = append(participants, participant)
-		return nil
-	})
-
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	return &types.QueryAllParticipantResponse{Participant: participants, Pagination: pageRes, BlockHeight: sdkCtx.BlockHeight()}, nil
+	return &types.QueryAllParticipantResponse{Participant: participants, Pagination: pageRes, BlockHeight: sdkCtx.BlockHeight()}, err
 }
 
 func (k Keeper) Participant(ctx context.Context, req *types.QueryGetParticipantRequest) (*types.QueryGetParticipantResponse, error) {

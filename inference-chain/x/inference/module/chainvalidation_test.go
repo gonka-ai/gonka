@@ -83,7 +83,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 
 	// Set up batches
 	batch := types.PoCBatch{
-		ParticipantAddress:       testutil.Executor,
+		ParticipantAddress:       testutil.Executor2,
 		PocStageStartBlockHeight: 100,
 		Nonces:                   []int64{1, 2, 3},
 	}
@@ -91,7 +91,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 
 	// Set up validations
 	validation := types.PoCValidation{
-		ParticipantAddress:          testutil.Executor,
+		ParticipantAddress:          testutil.Executor2,
 		ValidatorParticipantAddress: validatorAccAddress2, // Set validation only for participant with large weight
 		PocStageStartBlockHeight:    100,
 		FraudDetected:               false,
@@ -100,15 +100,15 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 
 	// Set up participant
 	participant := types.Participant{
-		Index:        testutil.Executor,
+		Index:        testutil.Executor2,
 		ValidatorKey: "validatorKey1",
-		InferenceUrl: "inferenceUrl1",
+		InferenceUrl: "http://www.yahoo.com/",
 	}
 	k.SetParticipant(ctx, participant)
 
 	// Set up random seed
 	seed := types.RandomSeed{
-		Participant: testutil.Executor,
+		Participant: testutil.Executor2,
 		EpochIndex:  1,
 		Signature:   "signature1",
 	}
@@ -147,7 +147,7 @@ func TestCollateralGracePeriod(t *testing.T) {
 	// The "Weight" field here represents the "PotentialWeight" before adjustment.
 	participants := []*types.ActiveParticipant{
 		{
-			Index:  testutil.Executor,
+			Index:  testutil.Executor2,
 			Weight: 1000,
 		},
 	}
@@ -363,7 +363,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up batches
 				batch := types.PoCBatch{
-					ParticipantAddress:       testutil.Executor,
+					ParticipantAddress:       testutil.Executor2,
 					PocStageStartBlockHeight: 100,
 					Nonces:                   []int64{1, 2, 3},
 				}
@@ -371,7 +371,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up validations
 				validation := types.PoCValidation{
-					ParticipantAddress:          testutil.Executor,
+					ParticipantAddress:          testutil.Executor2,
 					ValidatorParticipantAddress: validatorAccAddress,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false,
@@ -380,7 +380,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up participant
 				participant := types.Participant{
-					Index:        testutil.Executor,
+					Index:        testutil.Executor2,
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
 				}
@@ -388,7 +388,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up random seed
 				seed := types.RandomSeed{
-					Participant: testutil.Executor,
+					Participant: testutil.Executor2,
 					EpochIndex:  1,
 					Signature:   "signature1",
 				}
@@ -464,11 +464,11 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: testutil.Validator,
 							Weight:        10,
 						},
 						{
-							MemberAddress: "validator2",
+							MemberAddress: testutil.Validator2,
 							Weight:        20,
 						},
 					},
@@ -481,7 +481,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up batches
 				batch := types.PoCBatch{
-					ParticipantAddress:       testutil.Executor,
+					ParticipantAddress:       testutil.Executor2,
 					PocStageStartBlockHeight: 100,
 					Nonces:                   []int64{1, 2, 3},
 				}
@@ -489,8 +489,8 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up validations with only one validator (not enough weight)
 				validation := types.PoCValidation{
-					ParticipantAddress:          testutil.Executor,
-					ValidatorParticipantAddress: "validator1",
+					ParticipantAddress:          testutil.Executor2,
+					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false,
 				}
@@ -498,7 +498,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up participant
 				participant := types.Participant{
-					Index:        testutil.Executor,
+					Index:        testutil.Executor2,
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
 				}
@@ -506,7 +506,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up random seed
 				seed := types.RandomSeed{
-					Participant: testutil.Executor,
+					Participant: testutil.Executor2,
 					EpochIndex:  1,
 					Signature:   "signature1",
 				}
@@ -525,12 +525,12 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: testutil.Validator,
 							Weight:        5,
 						},
 						{
 							// Intentionally using a different address to simulate low weight
-							MemberAddress: "validator2",
+							MemberAddress: testutil.Validator2,
 							Weight:        20,
 						},
 					},
@@ -543,7 +543,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up batches
 				batch := types.PoCBatch{
-					ParticipantAddress:       testutil.Executor,
+					ParticipantAddress:       testutil.Executor2,
 					PocStageStartBlockHeight: 100,
 					Nonces:                   []int64{1, 2, 3},
 				}
@@ -551,16 +551,16 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up validations with enough total weight but not enough valid weight
 				validation1 := types.PoCValidation{
-					ParticipantAddress:          testutil.Executor,
-					ValidatorParticipantAddress: "validator1",
+					ParticipantAddress:          testutil.Executor2,
+					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false, // Valid but low weight
 				}
 				k.SetPoCValidation(ctx, validation1)
 
 				validation2 := types.PoCValidation{
-					ParticipantAddress:          testutil.Executor,
-					ValidatorParticipantAddress: "validator2",
+					ParticipantAddress:          testutil.Executor2,
+					ValidatorParticipantAddress: testutil.Validator2,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               true, // Invalid with high weight
 				}
@@ -568,7 +568,7 @@ func TestComputeNewWeights(t *testing.T) {
 
 				// Set up participant
 				participant := types.Participant{
-					Index:        testutil.Executor,
+					Index:        testutil.Executor2,
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
 				}
