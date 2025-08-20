@@ -18,8 +18,5 @@ func (m *MsgSubmitGroupKeyValidationSignature) ValidateBasic() error {
 	if len(m.SlotIndices) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "slot_indices must be non-empty")
 	}
-	if len(m.SlotIndices) > MaxSlotIndices {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "slot_indices exceed maximum allowed")
-	}
 	return nil
 }

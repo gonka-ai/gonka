@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -83,6 +84,13 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 }
 
 func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager) error {
+	isTest := os.Getenv("TESTS") == "true"
+	if !isTest {
+		return nil
+	}
+
+	logging.Info("[TEST ONLY] Registering participant", types.Participants, "isTest", isTest)
+
 	if config.GetChainNodeConfig().IsGenesis {
 		return registerGenesisParticipant(recorder, config)
 	} else {

@@ -57,6 +57,8 @@ spec:
           value: "true"
         - name: DAPI_CHAIN_NODE__URL
           value: "http://node:26657"
+        - name: TESTS
+          value: "true"
         volumeMounts:
         - name: data
           mountPath: /root/.inference

@@ -35,6 +35,11 @@ if [ -z "$WIREMOCK_PORT" ]; then
   echo "WIREMOCK_PORT is not set, using $WIREMOCK_PORT"
 fi
 
+if [ -z "$P2P_EXTERNAL_ADDRESS" ]; then
+  echo "P2P_EXTERNAL_ADDRESS is not set"
+  exit 1
+fi
+
 project_name="$KEY_NAME"
 
 docker compose -p "$project_name" down -v

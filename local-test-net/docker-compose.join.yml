@@ -11,6 +11,7 @@ services:
     environment:
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
       - CREATE_KEY=${CREATE_KEY:-true}
+      - TESTS=true
       - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
       - KEYRING_BACKEND=${KEYRING_BACKEND:-test}
       - KEYRING_PASSWORD=${KEYRING_PASSWORD}

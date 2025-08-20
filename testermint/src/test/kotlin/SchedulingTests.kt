@@ -24,7 +24,10 @@ class SchedulingTests : TestermintTest() {
         val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodes = false)
         val genesisParticipantKey = genesis.node.getValidatorInfo()
 
-        checkParticipantWeights(genesis.node, genesisParticipantKey)
+        // Wait for all participants to join and validators to be applied
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        
+        checkParticipantWeights(genesis.node, genesisParticipantKey) // Should have all participants by now
 
         val allocatedNode = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
@@ -99,10 +102,21 @@ class SchedulingTests : TestermintTest() {
 fun checkParticipantWeights(
     appCli: ApplicationCLI,
     genesisParticipantKey: Pubkey2,
+    expectedGenesisTokens: Long? = null
 ) {
-    appCli.getValidators().validators.forEach { v ->
+    val validators = appCli.getValidators().validators
+    val participantCount = validators.size
+    
+    // Determine expected genesis tokens based on participant count if not specified
+    val expectedTokens = expectedGenesisTokens ?: when (participantCount) {
+        2 -> 10L // 2 participants: 50% cap results in 10 tokens
+        3 -> 13L // 3 participants: 40% cap results in 13 tokens  
+        else -> throw AssertionError("Unexpected participant count: $participantCount")
+    }
+    
+    validators.forEach { v ->
         when (v.consensusPubkey.value) {
-            genesisParticipantKey.key -> assertThat(v.tokens).isEqualTo(20)
+            genesisParticipantKey.key -> assertThat(v.tokens).isEqualTo(expectedTokens)
             else -> assertThat(v.tokens).isEqualTo(10)
         }
     }

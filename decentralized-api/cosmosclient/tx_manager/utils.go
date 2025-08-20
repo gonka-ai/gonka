@@ -3,10 +3,12 @@ package tx_manager
 import (
 	"decentralized-api/logging"
 	"fmt"
+	"sync/atomic"
+	"time"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/golang/protobuf/proto"
 	"github.com/productscience/inference/x/inference/types"
-	"time"
 )
 
 func ParseMsgResponse(data []byte, msgIndex int, dstMsg proto.Message) error {
@@ -33,8 +35,23 @@ func ParseMsgResponse(data []byte, msgIndex int, dstMsg proto.Message) error {
 	return nil
 }
 
-// TODO: This is likely not as guaranteed to be unique as we want. Will fix
+var lastNanos atomic.Int64
+
+func nowNanoUnique() int64 {
+	for {
+		now := time.Now().UnixNano()
+		prev := lastNanos.Load()
+		next := now
+		if next <= prev {
+			next = prev + 1
+		}
+		if lastNanos.CompareAndSwap(prev, next) {
+			return next
+		}
+	}
+}
+
 func getTimestamp(duration time.Duration) time.Time {
-	// Use the current time in seconds since epoch
-	return time.Now().Add(duration) // Adding 60 seconds to ensure the transaction is valid for a while
+	nanos := nowNanoUnique()
+	return time.Unix(0, nanos).Add(duration)
 }

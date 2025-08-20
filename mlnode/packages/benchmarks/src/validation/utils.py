@@ -1,10 +1,18 @@
 import requests
+import math
 from typing import (
     Dict,
     Any,
     List,
-    Callable
+    Callable,
+    Optional
 )
+
+from pydantic import BaseModel
+
+
+from typing import Any, Dict, List
+from pydantic import BaseModel, Field
 
 from validation.data import (
     ModelInfo,
@@ -21,11 +29,32 @@ from common.logger import create_logger
 logger = create_logger(__name__)
 
 
+class EnforcedToken(BaseModel):
+    token: str
+    top_tokens: List[str] = Field(default_factory=list)
+
+class EnforcedTokens(BaseModel):
+    tokens: List[EnforcedToken]
+
+    @classmethod
+    def from_content(cls, content: List[Dict[str, Any]]) -> "EnforcedTokens":
+        tokens = []
+        for position in content:
+            token = position["token"]
+            top_tokens = [x["token"] for x in position["top_logprobs"]]
+            tokens.append(EnforcedToken(token=token, top_tokens=top_tokens))
+        return cls(tokens=tokens)
+    
+    @classmethod
+    def from_result(cls, result: Result) -> "EnforcedTokens":
+        return cls(tokens=[EnforcedToken(token=r.token, top_tokens=list(r.logprobs.keys())) for r in result.results])
+
+    
 def _prepare_messages(
     prompt: str,
 ) -> List[Dict[str, Any]]:
     return [
-        {"role": "system", "content": "You are a helpful assistant. Response should be really long and detailed."},
+        {"role": "system", "content": "You are a helpful assistant. Response clear, correct and complete."},
         {"role": "user", "content": prompt}
     ]
 
@@ -46,6 +75,8 @@ def inference(
         "logprobs": True,
         "n": 1,
         "top_logprobs": request_params.top_logprobs,
+        "skip_special_tokens": False,
+        "repetition_penalty": 1.2,
     }
     
     response = requests.post(url, json=payload)
@@ -58,7 +89,8 @@ def validation(
     model_info: ModelInfo,
     request_params: RequestParams,
     prompt: str,
-    enforced_str: str
+    enforced_str: Optional[str] = None,
+    enforced_tokens: Optional[EnforcedTokens] = None,
 ) -> Dict[str, Any]:
     url = f"{model_info.url}/v1/chat/completions"
     payload = {
@@ -71,33 +103,38 @@ def validation(
         "logprobs": True,
         "top_logprobs": request_params.top_logprobs,
         "n": 1,
-        "enforced_str": enforced_str,
+        "skip_special_tokens": False,
+        "repetition_penalty": 1.2,
     }
     
+    if enforced_str:
+        payload["enforced_str"] = enforced_str
+    if enforced_tokens:
+        payload["enforced_tokens"] = enforced_tokens.dict()
+
     response = requests.post(url, json=payload)
     if response.status_code != 200:
-        raise RuntimeError(f"Validation API request failed with status {response.status_code} {response.text}")
+        raise RuntimeError(f"Validation API request failed with status {response.status_code} {response.text}\n(enforced_tokens: {enforced_tokens})\n(payload: {payload})")
     
     return response.json()
 
 
 def _extract_logprobs(resp) -> Result:
     logprobs = resp["choices"][0]["logprobs"]["content"]
-    results = []
-    current_text = ""
     text = resp["choices"][0]["message"]["content"]
+    results = []
     for position in logprobs:
         res = PositionResult(
             token=position["token"],
             logprobs={logprob["token"]: logprob["logprob"] for logprob in position["top_logprobs"]}
         )
         results.append(res)
-        current_text += position["token"]
-        #TODO: fix on vLLM side (sometimes generation logprobs has <|eot_id|> token at the end but validation logprobs doesn't)
-        if current_text == text:
-            break
 
-    return Result(results=results)
+    return Result(text=text, results=results)
+
+
+def _extract_enforced_tokens(resp) -> EnforcedTokens:
+    return EnforcedTokens.from_content(resp["choices"][0]["logprobs"]["content"])
 
 
 def generate_and_validate(
@@ -109,13 +146,24 @@ def generate_and_validate(
         experiment_request.prompt,
     )
     inference_result = _extract_logprobs(inference_resp)
+    enforced_tokens = _extract_enforced_tokens(inference_resp)
     validation_resp = validation(
         experiment_request.validation_model,
         experiment_request.request_params,
         experiment_request.prompt,
-        enforced_str=inference_result.text
+        # enforced_str=inference_result.text,
+        enforced_tokens=enforced_tokens
     )
     validation_result = _extract_logprobs(validation_resp)
+    if validation_result.text != inference_result.text:
+        print(
+            f"text sequences don't match\n" +
+            f"inference:\n {inference_result.text}\n" +
+            f"{'-'*10}\n" +
+            f"validation:\n {validation_result.text}\n" +
+            f"{'-'*100}"
+        )
+        exit(-1)
 
     return experiment_request.to_result(
         inference_result,
@@ -215,10 +263,7 @@ def similarity2(
     return 1 - dist, matches_ratio
 
 
-def distance2(
-    inf_result: Result,
-    val_result: Result,
-):
+def distance2(inf_result: Result, val_result: Result):
     if not _check_match(inf_result, val_result):
         return -1, -1
 
@@ -234,34 +279,28 @@ def distance2(
     return total_dist, matches_ratio
 
 
-import math
 
-def js_divergence(probA: Dict[str, float], probB: Dict[str, float]) -> float:
-    tokens = sorted(set(probA.keys()) | set(probB.keys()))
-    pA = [probA.get(t, 0.0) for t in tokens]
-    pB = [probB.get(t, 0.0) for t in tokens]
-    m = [(a + b)/2 for (a, b) in zip(pA, pB)]
-    return 0.5 * kl_divergence(pA, m) + 0.5 * kl_divergence(pB, m)
+import numpy as np
+from typing import List, Dict
+from validation.data import Result
 
-def kl_divergence(p, q):
-    s = 0.0
-    for pi, qi in zip(p, q):
-        if pi > 0.0 and qi > 0.0:
-            s += pi * math.log(pi / qi)
-    return s
+BAD_LOGP = -10.0
 
-def token_distance_js(
-    inf_position_logprobs: PositionResult,
-    val_position_logprobs: PositionResult
-):
-    inf_probs = {t: math.exp(lp) for t, lp in inf_position_logprobs.logprobs.items()}
-    val_probs = {t: math.exp(lp) for t, lp in val_position_logprobs.logprobs.items()}
-    z_inf = sum(inf_probs.values()) or 1e-10
-    z_val = sum(val_probs.values()) or 1e-10
-    inf_probs = {t: p/z_inf for t,p in inf_probs.items()}
-    val_probs = {t: p/z_val for t,p in val_probs.items()}
-    jsd = js_divergence(inf_probs, val_probs)
-    dist = math.sqrt(jsd)
-    n_matches = len(set(inf_position_logprobs.logprobs.keys())
-                    & set(val_position_logprobs.logprobs.keys()))
-    return dist, n_matches
+def _clean_logprob(lp: float, floor: float = BAD_LOGP) -> float:
+    return lp if lp is not None and lp > floor else floor
+
+
+def get_metric(logprobs: List[float]) -> float:
+    if not logprobs:
+        return 0.0
+    return float(np.exp(np.mean(logprobs)))
+
+
+def get_metric_from_result(inf_result: Result) -> float:
+    per_token_lp: List[float] = []
+
+    for r in inf_result.results:
+        lp = r.logprobs.get(r.token, BAD_LOGP)
+        per_token_lp.append(_clean_logprob(lp))
+
+    return get_metric(per_token_lp)
