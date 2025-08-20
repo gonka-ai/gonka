@@ -7,9 +7,9 @@ def get_min_group_vram(params: Params) -> float:
     if params == PARAMS_V1:
         return 10.0
     elif params == PARAMS_V2:
-        return 40.0
+        return 38.0
     else:
-        return 40.0
+        return 38.0
 
 class GpuGroup:
     def __init__(self, devices: List[int]):
