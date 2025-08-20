@@ -588,7 +588,7 @@ data class ApplicationCLI(
         return exec(finalArgs).joinToString("")
     }
 
-    fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {
+    fun waitForTxProcessed(txHash: String, maxWait: Int = 20): TxResponse {
         var currentWait = 0
         while (currentWait < maxWait) {
             try {
