@@ -68,7 +68,7 @@ func (x *_EventKeyGenerationInitiated_4_list) IsValid() bool {
 
 var (
 	md_EventKeyGenerationInitiated                protoreflect.MessageDescriptor
-	fd_EventKeyGenerationInitiated_epoch_id       protoreflect.FieldDescriptor
+	fd_EventKeyGenerationInitiated_epoch_index    protoreflect.FieldDescriptor
 	fd_EventKeyGenerationInitiated_i_total_slots  protoreflect.FieldDescriptor
 	fd_EventKeyGenerationInitiated_t_slots_degree protoreflect.FieldDescriptor
 	fd_EventKeyGenerationInitiated_participants   protoreflect.FieldDescriptor
@@ -77,7 +77,7 @@ var (
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventKeyGenerationInitiated = File_inference_bls_events_proto.Messages().ByName("EventKeyGenerationInitiated")
-	fd_EventKeyGenerationInitiated_epoch_id = md_EventKeyGenerationInitiated.Fields().ByName("epoch_id")
+	fd_EventKeyGenerationInitiated_epoch_index = md_EventKeyGenerationInitiated.Fields().ByName("epoch_index")
 	fd_EventKeyGenerationInitiated_i_total_slots = md_EventKeyGenerationInitiated.Fields().ByName("i_total_slots")
 	fd_EventKeyGenerationInitiated_t_slots_degree = md_EventKeyGenerationInitiated.Fields().ByName("t_slots_degree")
 	fd_EventKeyGenerationInitiated_participants = md_EventKeyGenerationInitiated.Fields().ByName("participants")
@@ -148,9 +148,9 @@ func (x *fastReflection_EventKeyGenerationInitiated) Interface() protoreflect.Pr
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventKeyGenerationInitiated) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.EpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochId)
-		if !f(fd_EventKeyGenerationInitiated_epoch_id, value) {
+	if x.EpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochIndex)
+		if !f(fd_EventKeyGenerationInitiated_epoch_index, value) {
 			return
 		}
 	}
@@ -187,8 +187,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) Range(f func(protoreflect.F
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventKeyGenerationInitiated) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventKeyGenerationInitiated.epoch_id":
-		return x.EpochId != uint64(0)
+	case "inference.bls.EventKeyGenerationInitiated.epoch_index":
+		return x.EpochIndex != uint64(0)
 	case "inference.bls.EventKeyGenerationInitiated.i_total_slots":
 		return x.ITotalSlots != uint32(0)
 	case "inference.bls.EventKeyGenerationInitiated.t_slots_degree":
@@ -211,8 +211,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) Has(fd protoreflect.FieldDe
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventKeyGenerationInitiated) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventKeyGenerationInitiated.epoch_id":
-		x.EpochId = uint64(0)
+	case "inference.bls.EventKeyGenerationInitiated.epoch_index":
+		x.EpochIndex = uint64(0)
 	case "inference.bls.EventKeyGenerationInitiated.i_total_slots":
 		x.ITotalSlots = uint32(0)
 	case "inference.bls.EventKeyGenerationInitiated.t_slots_degree":
@@ -235,8 +235,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) Clear(fd protoreflect.Field
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventKeyGenerationInitiated) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventKeyGenerationInitiated.epoch_id":
-		value := x.EpochId
+	case "inference.bls.EventKeyGenerationInitiated.epoch_index":
+		value := x.EpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventKeyGenerationInitiated.i_total_slots":
 		value := x.ITotalSlots
@@ -270,8 +270,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) Get(descriptor protoreflect
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventKeyGenerationInitiated) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventKeyGenerationInitiated.epoch_id":
-		x.EpochId = value.Uint()
+	case "inference.bls.EventKeyGenerationInitiated.epoch_index":
+		x.EpochIndex = value.Uint()
 	case "inference.bls.EventKeyGenerationInitiated.i_total_slots":
 		x.ITotalSlots = uint32(value.Uint())
 	case "inference.bls.EventKeyGenerationInitiated.t_slots_degree":
@@ -306,8 +306,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) Mutable(fd protoreflect.Fie
 		}
 		value := &_EventKeyGenerationInitiated_4_list{list: &x.Participants}
 		return protoreflect.ValueOfList(value)
-	case "inference.bls.EventKeyGenerationInitiated.epoch_id":
-		panic(fmt.Errorf("field epoch_id of message inference.bls.EventKeyGenerationInitiated is not mutable"))
+	case "inference.bls.EventKeyGenerationInitiated.epoch_index":
+		panic(fmt.Errorf("field epoch_index of message inference.bls.EventKeyGenerationInitiated is not mutable"))
 	case "inference.bls.EventKeyGenerationInitiated.i_total_slots":
 		panic(fmt.Errorf("field i_total_slots of message inference.bls.EventKeyGenerationInitiated is not mutable"))
 	case "inference.bls.EventKeyGenerationInitiated.t_slots_degree":
@@ -325,7 +325,7 @@ func (x *fastReflection_EventKeyGenerationInitiated) Mutable(fd protoreflect.Fie
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventKeyGenerationInitiated) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventKeyGenerationInitiated.epoch_id":
+	case "inference.bls.EventKeyGenerationInitiated.epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventKeyGenerationInitiated.i_total_slots":
 		return protoreflect.ValueOfUint32(uint32(0))
@@ -403,8 +403,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) ProtoMethods() *protoiface.
 		var n int
 		var l int
 		_ = l
-		if x.EpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochIndex))
 		}
 		if x.ITotalSlots != 0 {
 			n += 1 + runtime.Sov(uint64(x.ITotalSlots))
@@ -473,8 +473,8 @@ func (x *fastReflection_EventKeyGenerationInitiated) ProtoMethods() *protoiface.
 			i--
 			dAtA[i] = 0x10
 		}
-		if x.EpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -529,9 +529,9 @@ func (x *fastReflection_EventKeyGenerationInitiated) ProtoMethods() *protoiface.
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 				}
-				x.EpochId = 0
+				x.EpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -541,7 +541,7 @@ func (x *fastReflection_EventKeyGenerationInitiated) ProtoMethods() *protoiface.
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochId |= uint64(b&0x7F) << shift
+					x.EpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -655,14 +655,14 @@ func (x *fastReflection_EventKeyGenerationInitiated) ProtoMethods() *protoiface.
 
 var (
 	md_EventDealerPartSubmitted                protoreflect.MessageDescriptor
-	fd_EventDealerPartSubmitted_epoch_id       protoreflect.FieldDescriptor
+	fd_EventDealerPartSubmitted_epoch_index    protoreflect.FieldDescriptor
 	fd_EventDealerPartSubmitted_dealer_address protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventDealerPartSubmitted = File_inference_bls_events_proto.Messages().ByName("EventDealerPartSubmitted")
-	fd_EventDealerPartSubmitted_epoch_id = md_EventDealerPartSubmitted.Fields().ByName("epoch_id")
+	fd_EventDealerPartSubmitted_epoch_index = md_EventDealerPartSubmitted.Fields().ByName("epoch_index")
 	fd_EventDealerPartSubmitted_dealer_address = md_EventDealerPartSubmitted.Fields().ByName("dealer_address")
 }
 
@@ -731,9 +731,9 @@ func (x *fastReflection_EventDealerPartSubmitted) Interface() protoreflect.Proto
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventDealerPartSubmitted) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.EpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochId)
-		if !f(fd_EventDealerPartSubmitted_epoch_id, value) {
+	if x.EpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochIndex)
+		if !f(fd_EventDealerPartSubmitted_epoch_index, value) {
 			return
 		}
 	}
@@ -758,8 +758,8 @@ func (x *fastReflection_EventDealerPartSubmitted) Range(f func(protoreflect.Fiel
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventDealerPartSubmitted) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventDealerPartSubmitted.epoch_id":
-		return x.EpochId != uint64(0)
+	case "inference.bls.EventDealerPartSubmitted.epoch_index":
+		return x.EpochIndex != uint64(0)
 	case "inference.bls.EventDealerPartSubmitted.dealer_address":
 		return x.DealerAddress != ""
 	default:
@@ -778,8 +778,8 @@ func (x *fastReflection_EventDealerPartSubmitted) Has(fd protoreflect.FieldDescr
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventDealerPartSubmitted) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventDealerPartSubmitted.epoch_id":
-		x.EpochId = uint64(0)
+	case "inference.bls.EventDealerPartSubmitted.epoch_index":
+		x.EpochIndex = uint64(0)
 	case "inference.bls.EventDealerPartSubmitted.dealer_address":
 		x.DealerAddress = ""
 	default:
@@ -798,8 +798,8 @@ func (x *fastReflection_EventDealerPartSubmitted) Clear(fd protoreflect.FieldDes
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventDealerPartSubmitted) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventDealerPartSubmitted.epoch_id":
-		value := x.EpochId
+	case "inference.bls.EventDealerPartSubmitted.epoch_index":
+		value := x.EpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventDealerPartSubmitted.dealer_address":
 		value := x.DealerAddress
@@ -824,8 +824,8 @@ func (x *fastReflection_EventDealerPartSubmitted) Get(descriptor protoreflect.Fi
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventDealerPartSubmitted) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventDealerPartSubmitted.epoch_id":
-		x.EpochId = value.Uint()
+	case "inference.bls.EventDealerPartSubmitted.epoch_index":
+		x.EpochIndex = value.Uint()
 	case "inference.bls.EventDealerPartSubmitted.dealer_address":
 		x.DealerAddress = value.Interface().(string)
 	default:
@@ -848,8 +848,8 @@ func (x *fastReflection_EventDealerPartSubmitted) Set(fd protoreflect.FieldDescr
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventDealerPartSubmitted) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventDealerPartSubmitted.epoch_id":
-		panic(fmt.Errorf("field epoch_id of message inference.bls.EventDealerPartSubmitted is not mutable"))
+	case "inference.bls.EventDealerPartSubmitted.epoch_index":
+		panic(fmt.Errorf("field epoch_index of message inference.bls.EventDealerPartSubmitted is not mutable"))
 	case "inference.bls.EventDealerPartSubmitted.dealer_address":
 		panic(fmt.Errorf("field dealer_address of message inference.bls.EventDealerPartSubmitted is not mutable"))
 	default:
@@ -865,7 +865,7 @@ func (x *fastReflection_EventDealerPartSubmitted) Mutable(fd protoreflect.FieldD
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventDealerPartSubmitted) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventDealerPartSubmitted.epoch_id":
+	case "inference.bls.EventDealerPartSubmitted.epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventDealerPartSubmitted.dealer_address":
 		return protoreflect.ValueOfString("")
@@ -938,8 +938,8 @@ func (x *fastReflection_EventDealerPartSubmitted) ProtoMethods() *protoiface.Met
 		var n int
 		var l int
 		_ = l
-		if x.EpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochIndex))
 		}
 		l = len(x.DealerAddress)
 		if l > 0 {
@@ -981,8 +981,8 @@ func (x *fastReflection_EventDealerPartSubmitted) ProtoMethods() *protoiface.Met
 			i--
 			dAtA[i] = 0x12
 		}
-		if x.EpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -1037,9 +1037,9 @@ func (x *fastReflection_EventDealerPartSubmitted) ProtoMethods() *protoiface.Met
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 				}
-				x.EpochId = 0
+				x.EpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1049,7 +1049,7 @@ func (x *fastReflection_EventDealerPartSubmitted) ProtoMethods() *protoiface.Met
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochId |= uint64(b&0x7F) << shift
+					x.EpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1123,7 +1123,7 @@ func (x *fastReflection_EventDealerPartSubmitted) ProtoMethods() *protoiface.Met
 
 var (
 	md_EventVerifyingPhaseStarted                                protoreflect.MessageDescriptor
-	fd_EventVerifyingPhaseStarted_epoch_id                       protoreflect.FieldDescriptor
+	fd_EventVerifyingPhaseStarted_epoch_index                    protoreflect.FieldDescriptor
 	fd_EventVerifyingPhaseStarted_verifying_phase_deadline_block protoreflect.FieldDescriptor
 	fd_EventVerifyingPhaseStarted_epoch_data                     protoreflect.FieldDescriptor
 )
@@ -1131,7 +1131,7 @@ var (
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventVerifyingPhaseStarted = File_inference_bls_events_proto.Messages().ByName("EventVerifyingPhaseStarted")
-	fd_EventVerifyingPhaseStarted_epoch_id = md_EventVerifyingPhaseStarted.Fields().ByName("epoch_id")
+	fd_EventVerifyingPhaseStarted_epoch_index = md_EventVerifyingPhaseStarted.Fields().ByName("epoch_index")
 	fd_EventVerifyingPhaseStarted_verifying_phase_deadline_block = md_EventVerifyingPhaseStarted.Fields().ByName("verifying_phase_deadline_block")
 	fd_EventVerifyingPhaseStarted_epoch_data = md_EventVerifyingPhaseStarted.Fields().ByName("epoch_data")
 }
@@ -1201,9 +1201,9 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Interface() protoreflect.Pro
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventVerifyingPhaseStarted) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.EpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochId)
-		if !f(fd_EventVerifyingPhaseStarted_epoch_id, value) {
+	if x.EpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochIndex)
+		if !f(fd_EventVerifyingPhaseStarted_epoch_index, value) {
 			return
 		}
 	}
@@ -1234,8 +1234,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Range(f func(protoreflect.Fi
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventVerifyingPhaseStarted) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventVerifyingPhaseStarted.epoch_id":
-		return x.EpochId != uint64(0)
+	case "inference.bls.EventVerifyingPhaseStarted.epoch_index":
+		return x.EpochIndex != uint64(0)
 	case "inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":
 		return x.VerifyingPhaseDeadlineBlock != uint64(0)
 	case "inference.bls.EventVerifyingPhaseStarted.epoch_data":
@@ -1256,8 +1256,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Has(fd protoreflect.FieldDes
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventVerifyingPhaseStarted) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventVerifyingPhaseStarted.epoch_id":
-		x.EpochId = uint64(0)
+	case "inference.bls.EventVerifyingPhaseStarted.epoch_index":
+		x.EpochIndex = uint64(0)
 	case "inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":
 		x.VerifyingPhaseDeadlineBlock = uint64(0)
 	case "inference.bls.EventVerifyingPhaseStarted.epoch_data":
@@ -1278,8 +1278,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Clear(fd protoreflect.FieldD
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventVerifyingPhaseStarted) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventVerifyingPhaseStarted.epoch_id":
-		value := x.EpochId
+	case "inference.bls.EventVerifyingPhaseStarted.epoch_index":
+		value := x.EpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":
 		value := x.VerifyingPhaseDeadlineBlock
@@ -1307,8 +1307,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Get(descriptor protoreflect.
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventVerifyingPhaseStarted) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventVerifyingPhaseStarted.epoch_id":
-		x.EpochId = value.Uint()
+	case "inference.bls.EventVerifyingPhaseStarted.epoch_index":
+		x.EpochIndex = value.Uint()
 	case "inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":
 		x.VerifyingPhaseDeadlineBlock = value.Uint()
 	case "inference.bls.EventVerifyingPhaseStarted.epoch_data":
@@ -1338,8 +1338,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Mutable(fd protoreflect.Fiel
 			x.EpochData = new(EpochBLSData)
 		}
 		return protoreflect.ValueOfMessage(x.EpochData.ProtoReflect())
-	case "inference.bls.EventVerifyingPhaseStarted.epoch_id":
-		panic(fmt.Errorf("field epoch_id of message inference.bls.EventVerifyingPhaseStarted is not mutable"))
+	case "inference.bls.EventVerifyingPhaseStarted.epoch_index":
+		panic(fmt.Errorf("field epoch_index of message inference.bls.EventVerifyingPhaseStarted is not mutable"))
 	case "inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":
 		panic(fmt.Errorf("field verifying_phase_deadline_block of message inference.bls.EventVerifyingPhaseStarted is not mutable"))
 	default:
@@ -1355,7 +1355,7 @@ func (x *fastReflection_EventVerifyingPhaseStarted) Mutable(fd protoreflect.Fiel
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventVerifyingPhaseStarted) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventVerifyingPhaseStarted.epoch_id":
+	case "inference.bls.EventVerifyingPhaseStarted.epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block":
 		return protoreflect.ValueOfUint64(uint64(0))
@@ -1431,8 +1431,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) ProtoMethods() *protoiface.M
 		var n int
 		var l int
 		_ = l
-		if x.EpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochIndex))
 		}
 		if x.VerifyingPhaseDeadlineBlock != 0 {
 			n += 1 + runtime.Sov(uint64(x.VerifyingPhaseDeadlineBlock))
@@ -1489,8 +1489,8 @@ func (x *fastReflection_EventVerifyingPhaseStarted) ProtoMethods() *protoiface.M
 			i--
 			dAtA[i] = 0x10
 		}
-		if x.EpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -1545,9 +1545,9 @@ func (x *fastReflection_EventVerifyingPhaseStarted) ProtoMethods() *protoiface.M
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 				}
-				x.EpochId = 0
+				x.EpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1557,7 +1557,7 @@ func (x *fastReflection_EventVerifyingPhaseStarted) ProtoMethods() *protoiface.M
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochId |= uint64(b&0x7F) << shift
+					x.EpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1653,16 +1653,16 @@ func (x *fastReflection_EventVerifyingPhaseStarted) ProtoMethods() *protoiface.M
 }
 
 var (
-	md_EventDKGFailed            protoreflect.MessageDescriptor
-	fd_EventDKGFailed_epoch_id   protoreflect.FieldDescriptor
-	fd_EventDKGFailed_reason     protoreflect.FieldDescriptor
-	fd_EventDKGFailed_epoch_data protoreflect.FieldDescriptor
+	md_EventDKGFailed             protoreflect.MessageDescriptor
+	fd_EventDKGFailed_epoch_index protoreflect.FieldDescriptor
+	fd_EventDKGFailed_reason      protoreflect.FieldDescriptor
+	fd_EventDKGFailed_epoch_data  protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventDKGFailed = File_inference_bls_events_proto.Messages().ByName("EventDKGFailed")
-	fd_EventDKGFailed_epoch_id = md_EventDKGFailed.Fields().ByName("epoch_id")
+	fd_EventDKGFailed_epoch_index = md_EventDKGFailed.Fields().ByName("epoch_index")
 	fd_EventDKGFailed_reason = md_EventDKGFailed.Fields().ByName("reason")
 	fd_EventDKGFailed_epoch_data = md_EventDKGFailed.Fields().ByName("epoch_data")
 }
@@ -1732,9 +1732,9 @@ func (x *fastReflection_EventDKGFailed) Interface() protoreflect.ProtoMessage {
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventDKGFailed) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.EpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochId)
-		if !f(fd_EventDKGFailed_epoch_id, value) {
+	if x.EpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochIndex)
+		if !f(fd_EventDKGFailed_epoch_index, value) {
 			return
 		}
 	}
@@ -1765,8 +1765,8 @@ func (x *fastReflection_EventDKGFailed) Range(f func(protoreflect.FieldDescripto
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventDKGFailed) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventDKGFailed.epoch_id":
-		return x.EpochId != uint64(0)
+	case "inference.bls.EventDKGFailed.epoch_index":
+		return x.EpochIndex != uint64(0)
 	case "inference.bls.EventDKGFailed.reason":
 		return x.Reason != ""
 	case "inference.bls.EventDKGFailed.epoch_data":
@@ -1787,8 +1787,8 @@ func (x *fastReflection_EventDKGFailed) Has(fd protoreflect.FieldDescriptor) boo
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventDKGFailed) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventDKGFailed.epoch_id":
-		x.EpochId = uint64(0)
+	case "inference.bls.EventDKGFailed.epoch_index":
+		x.EpochIndex = uint64(0)
 	case "inference.bls.EventDKGFailed.reason":
 		x.Reason = ""
 	case "inference.bls.EventDKGFailed.epoch_data":
@@ -1809,8 +1809,8 @@ func (x *fastReflection_EventDKGFailed) Clear(fd protoreflect.FieldDescriptor) {
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventDKGFailed) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventDKGFailed.epoch_id":
-		value := x.EpochId
+	case "inference.bls.EventDKGFailed.epoch_index":
+		value := x.EpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventDKGFailed.reason":
 		value := x.Reason
@@ -1838,8 +1838,8 @@ func (x *fastReflection_EventDKGFailed) Get(descriptor protoreflect.FieldDescrip
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventDKGFailed) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventDKGFailed.epoch_id":
-		x.EpochId = value.Uint()
+	case "inference.bls.EventDKGFailed.epoch_index":
+		x.EpochIndex = value.Uint()
 	case "inference.bls.EventDKGFailed.reason":
 		x.Reason = value.Interface().(string)
 	case "inference.bls.EventDKGFailed.epoch_data":
@@ -1869,8 +1869,8 @@ func (x *fastReflection_EventDKGFailed) Mutable(fd protoreflect.FieldDescriptor)
 			x.EpochData = new(EpochBLSData)
 		}
 		return protoreflect.ValueOfMessage(x.EpochData.ProtoReflect())
-	case "inference.bls.EventDKGFailed.epoch_id":
-		panic(fmt.Errorf("field epoch_id of message inference.bls.EventDKGFailed is not mutable"))
+	case "inference.bls.EventDKGFailed.epoch_index":
+		panic(fmt.Errorf("field epoch_index of message inference.bls.EventDKGFailed is not mutable"))
 	case "inference.bls.EventDKGFailed.reason":
 		panic(fmt.Errorf("field reason of message inference.bls.EventDKGFailed is not mutable"))
 	default:
@@ -1886,7 +1886,7 @@ func (x *fastReflection_EventDKGFailed) Mutable(fd protoreflect.FieldDescriptor)
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventDKGFailed) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventDKGFailed.epoch_id":
+	case "inference.bls.EventDKGFailed.epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventDKGFailed.reason":
 		return protoreflect.ValueOfString("")
@@ -1962,8 +1962,8 @@ func (x *fastReflection_EventDKGFailed) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		if x.EpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochIndex))
 		}
 		l = len(x.Reason)
 		if l > 0 {
@@ -2023,8 +2023,8 @@ func (x *fastReflection_EventDKGFailed) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x12
 		}
-		if x.EpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -2079,9 +2079,9 @@ func (x *fastReflection_EventDKGFailed) ProtoMethods() *protoiface.Methods {
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 				}
-				x.EpochId = 0
+				x.EpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -2091,7 +2091,7 @@ func (x *fastReflection_EventDKGFailed) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochId |= uint64(b&0x7F) << shift
+					x.EpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -2201,14 +2201,14 @@ func (x *fastReflection_EventDKGFailed) ProtoMethods() *protoiface.Methods {
 
 var (
 	md_EventVerificationVectorSubmitted                     protoreflect.MessageDescriptor
-	fd_EventVerificationVectorSubmitted_epoch_id            protoreflect.FieldDescriptor
+	fd_EventVerificationVectorSubmitted_epoch_index         protoreflect.FieldDescriptor
 	fd_EventVerificationVectorSubmitted_participant_address protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventVerificationVectorSubmitted = File_inference_bls_events_proto.Messages().ByName("EventVerificationVectorSubmitted")
-	fd_EventVerificationVectorSubmitted_epoch_id = md_EventVerificationVectorSubmitted.Fields().ByName("epoch_id")
+	fd_EventVerificationVectorSubmitted_epoch_index = md_EventVerificationVectorSubmitted.Fields().ByName("epoch_index")
 	fd_EventVerificationVectorSubmitted_participant_address = md_EventVerificationVectorSubmitted.Fields().ByName("participant_address")
 }
 
@@ -2277,9 +2277,9 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Interface() protorefle
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventVerificationVectorSubmitted) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.EpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochId)
-		if !f(fd_EventVerificationVectorSubmitted_epoch_id, value) {
+	if x.EpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochIndex)
+		if !f(fd_EventVerificationVectorSubmitted_epoch_index, value) {
 			return
 		}
 	}
@@ -2304,8 +2304,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Range(f func(protorefl
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventVerificationVectorSubmitted) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventVerificationVectorSubmitted.epoch_id":
-		return x.EpochId != uint64(0)
+	case "inference.bls.EventVerificationVectorSubmitted.epoch_index":
+		return x.EpochIndex != uint64(0)
 	case "inference.bls.EventVerificationVectorSubmitted.participant_address":
 		return x.ParticipantAddress != ""
 	default:
@@ -2324,8 +2324,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Has(fd protoreflect.Fi
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventVerificationVectorSubmitted) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventVerificationVectorSubmitted.epoch_id":
-		x.EpochId = uint64(0)
+	case "inference.bls.EventVerificationVectorSubmitted.epoch_index":
+		x.EpochIndex = uint64(0)
 	case "inference.bls.EventVerificationVectorSubmitted.participant_address":
 		x.ParticipantAddress = ""
 	default:
@@ -2344,8 +2344,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Clear(fd protoreflect.
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventVerificationVectorSubmitted) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventVerificationVectorSubmitted.epoch_id":
-		value := x.EpochId
+	case "inference.bls.EventVerificationVectorSubmitted.epoch_index":
+		value := x.EpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventVerificationVectorSubmitted.participant_address":
 		value := x.ParticipantAddress
@@ -2370,8 +2370,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Get(descriptor protore
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventVerificationVectorSubmitted) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventVerificationVectorSubmitted.epoch_id":
-		x.EpochId = value.Uint()
+	case "inference.bls.EventVerificationVectorSubmitted.epoch_index":
+		x.EpochIndex = value.Uint()
 	case "inference.bls.EventVerificationVectorSubmitted.participant_address":
 		x.ParticipantAddress = value.Interface().(string)
 	default:
@@ -2394,8 +2394,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Set(fd protoreflect.Fi
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventVerificationVectorSubmitted) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventVerificationVectorSubmitted.epoch_id":
-		panic(fmt.Errorf("field epoch_id of message inference.bls.EventVerificationVectorSubmitted is not mutable"))
+	case "inference.bls.EventVerificationVectorSubmitted.epoch_index":
+		panic(fmt.Errorf("field epoch_index of message inference.bls.EventVerificationVectorSubmitted is not mutable"))
 	case "inference.bls.EventVerificationVectorSubmitted.participant_address":
 		panic(fmt.Errorf("field participant_address of message inference.bls.EventVerificationVectorSubmitted is not mutable"))
 	default:
@@ -2411,7 +2411,7 @@ func (x *fastReflection_EventVerificationVectorSubmitted) Mutable(fd protoreflec
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventVerificationVectorSubmitted) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventVerificationVectorSubmitted.epoch_id":
+	case "inference.bls.EventVerificationVectorSubmitted.epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventVerificationVectorSubmitted.participant_address":
 		return protoreflect.ValueOfString("")
@@ -2484,8 +2484,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) ProtoMethods() *protoi
 		var n int
 		var l int
 		_ = l
-		if x.EpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochIndex))
 		}
 		l = len(x.ParticipantAddress)
 		if l > 0 {
@@ -2527,8 +2527,8 @@ func (x *fastReflection_EventVerificationVectorSubmitted) ProtoMethods() *protoi
 			i--
 			dAtA[i] = 0x12
 		}
-		if x.EpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -2583,9 +2583,9 @@ func (x *fastReflection_EventVerificationVectorSubmitted) ProtoMethods() *protoi
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 				}
-				x.EpochId = 0
+				x.EpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -2595,7 +2595,7 @@ func (x *fastReflection_EventVerificationVectorSubmitted) ProtoMethods() *protoi
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochId |= uint64(b&0x7F) << shift
+					x.EpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -2669,7 +2669,7 @@ func (x *fastReflection_EventVerificationVectorSubmitted) ProtoMethods() *protoi
 
 var (
 	md_EventGroupPublicKeyGenerated                  protoreflect.MessageDescriptor
-	fd_EventGroupPublicKeyGenerated_epoch_id         protoreflect.FieldDescriptor
+	fd_EventGroupPublicKeyGenerated_epoch_index      protoreflect.FieldDescriptor
 	fd_EventGroupPublicKeyGenerated_group_public_key protoreflect.FieldDescriptor
 	fd_EventGroupPublicKeyGenerated_i_total_slots    protoreflect.FieldDescriptor
 	fd_EventGroupPublicKeyGenerated_t_slots_degree   protoreflect.FieldDescriptor
@@ -2680,7 +2680,7 @@ var (
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventGroupPublicKeyGenerated = File_inference_bls_events_proto.Messages().ByName("EventGroupPublicKeyGenerated")
-	fd_EventGroupPublicKeyGenerated_epoch_id = md_EventGroupPublicKeyGenerated.Fields().ByName("epoch_id")
+	fd_EventGroupPublicKeyGenerated_epoch_index = md_EventGroupPublicKeyGenerated.Fields().ByName("epoch_index")
 	fd_EventGroupPublicKeyGenerated_group_public_key = md_EventGroupPublicKeyGenerated.Fields().ByName("group_public_key")
 	fd_EventGroupPublicKeyGenerated_i_total_slots = md_EventGroupPublicKeyGenerated.Fields().ByName("i_total_slots")
 	fd_EventGroupPublicKeyGenerated_t_slots_degree = md_EventGroupPublicKeyGenerated.Fields().ByName("t_slots_degree")
@@ -2753,9 +2753,9 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Interface() protoreflect.P
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventGroupPublicKeyGenerated) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.EpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochId)
-		if !f(fd_EventGroupPublicKeyGenerated_epoch_id, value) {
+	if x.EpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochIndex)
+		if !f(fd_EventGroupPublicKeyGenerated_epoch_index, value) {
 			return
 		}
 	}
@@ -2804,8 +2804,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Range(f func(protoreflect.
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventGroupPublicKeyGenerated) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupPublicKeyGenerated.epoch_id":
-		return x.EpochId != uint64(0)
+	case "inference.bls.EventGroupPublicKeyGenerated.epoch_index":
+		return x.EpochIndex != uint64(0)
 	case "inference.bls.EventGroupPublicKeyGenerated.group_public_key":
 		return len(x.GroupPublicKey) != 0
 	case "inference.bls.EventGroupPublicKeyGenerated.i_total_slots":
@@ -2832,8 +2832,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Has(fd protoreflect.FieldD
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupPublicKeyGenerated) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupPublicKeyGenerated.epoch_id":
-		x.EpochId = uint64(0)
+	case "inference.bls.EventGroupPublicKeyGenerated.epoch_index":
+		x.EpochIndex = uint64(0)
 	case "inference.bls.EventGroupPublicKeyGenerated.group_public_key":
 		x.GroupPublicKey = nil
 	case "inference.bls.EventGroupPublicKeyGenerated.i_total_slots":
@@ -2860,8 +2860,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Clear(fd protoreflect.Fiel
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventGroupPublicKeyGenerated) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventGroupPublicKeyGenerated.epoch_id":
-		value := x.EpochId
+	case "inference.bls.EventGroupPublicKeyGenerated.epoch_index":
+		value := x.EpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventGroupPublicKeyGenerated.group_public_key":
 		value := x.GroupPublicKey
@@ -2898,8 +2898,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Get(descriptor protoreflec
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupPublicKeyGenerated) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupPublicKeyGenerated.epoch_id":
-		x.EpochId = value.Uint()
+	case "inference.bls.EventGroupPublicKeyGenerated.epoch_index":
+		x.EpochIndex = value.Uint()
 	case "inference.bls.EventGroupPublicKeyGenerated.group_public_key":
 		x.GroupPublicKey = value.Bytes()
 	case "inference.bls.EventGroupPublicKeyGenerated.i_total_slots":
@@ -2935,8 +2935,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Mutable(fd protoreflect.Fi
 			x.EpochData = new(EpochBLSData)
 		}
 		return protoreflect.ValueOfMessage(x.EpochData.ProtoReflect())
-	case "inference.bls.EventGroupPublicKeyGenerated.epoch_id":
-		panic(fmt.Errorf("field epoch_id of message inference.bls.EventGroupPublicKeyGenerated is not mutable"))
+	case "inference.bls.EventGroupPublicKeyGenerated.epoch_index":
+		panic(fmt.Errorf("field epoch_index of message inference.bls.EventGroupPublicKeyGenerated is not mutable"))
 	case "inference.bls.EventGroupPublicKeyGenerated.group_public_key":
 		panic(fmt.Errorf("field group_public_key of message inference.bls.EventGroupPublicKeyGenerated is not mutable"))
 	case "inference.bls.EventGroupPublicKeyGenerated.i_total_slots":
@@ -2958,7 +2958,7 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) Mutable(fd protoreflect.Fi
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventGroupPublicKeyGenerated) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupPublicKeyGenerated.epoch_id":
+	case "inference.bls.EventGroupPublicKeyGenerated.epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventGroupPublicKeyGenerated.group_public_key":
 		return protoreflect.ValueOfBytes(nil)
@@ -3040,8 +3040,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 		var n int
 		var l int
 		_ = l
-		if x.EpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochIndex))
 		}
 		l = len(x.GroupPublicKey)
 		if l > 0 {
@@ -3128,8 +3128,8 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 			i--
 			dAtA[i] = 0x12
 		}
-		if x.EpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
+		if x.EpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -3184,9 +3184,9 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 				}
-				x.EpochId = 0
+				x.EpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -3196,7 +3196,7 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochId |= uint64(b&0x7F) << shift
+					x.EpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -3378,14 +3378,14 @@ func (x *fastReflection_EventGroupPublicKeyGenerated) ProtoMethods() *protoiface
 
 var (
 	md_EventGroupKeyValidated                 protoreflect.MessageDescriptor
-	fd_EventGroupKeyValidated_new_epoch_id    protoreflect.FieldDescriptor
+	fd_EventGroupKeyValidated_new_epoch_index protoreflect.FieldDescriptor
 	fd_EventGroupKeyValidated_final_signature protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventGroupKeyValidated = File_inference_bls_events_proto.Messages().ByName("EventGroupKeyValidated")
-	fd_EventGroupKeyValidated_new_epoch_id = md_EventGroupKeyValidated.Fields().ByName("new_epoch_id")
+	fd_EventGroupKeyValidated_new_epoch_index = md_EventGroupKeyValidated.Fields().ByName("new_epoch_index")
 	fd_EventGroupKeyValidated_final_signature = md_EventGroupKeyValidated.Fields().ByName("final_signature")
 }
 
@@ -3454,9 +3454,9 @@ func (x *fastReflection_EventGroupKeyValidated) Interface() protoreflect.ProtoMe
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventGroupKeyValidated) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.NewEpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.NewEpochId)
-		if !f(fd_EventGroupKeyValidated_new_epoch_id, value) {
+	if x.NewEpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.NewEpochIndex)
+		if !f(fd_EventGroupKeyValidated_new_epoch_index, value) {
 			return
 		}
 	}
@@ -3481,8 +3481,8 @@ func (x *fastReflection_EventGroupKeyValidated) Range(f func(protoreflect.FieldD
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventGroupKeyValidated) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
-		return x.NewEpochId != uint64(0)
+	case "inference.bls.EventGroupKeyValidated.new_epoch_index":
+		return x.NewEpochIndex != uint64(0)
 	case "inference.bls.EventGroupKeyValidated.final_signature":
 		return len(x.FinalSignature) != 0
 	default:
@@ -3501,8 +3501,8 @@ func (x *fastReflection_EventGroupKeyValidated) Has(fd protoreflect.FieldDescrip
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupKeyValidated) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
-		x.NewEpochId = uint64(0)
+	case "inference.bls.EventGroupKeyValidated.new_epoch_index":
+		x.NewEpochIndex = uint64(0)
 	case "inference.bls.EventGroupKeyValidated.final_signature":
 		x.FinalSignature = nil
 	default:
@@ -3521,8 +3521,8 @@ func (x *fastReflection_EventGroupKeyValidated) Clear(fd protoreflect.FieldDescr
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventGroupKeyValidated) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
-		value := x.NewEpochId
+	case "inference.bls.EventGroupKeyValidated.new_epoch_index":
+		value := x.NewEpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventGroupKeyValidated.final_signature":
 		value := x.FinalSignature
@@ -3547,8 +3547,8 @@ func (x *fastReflection_EventGroupKeyValidated) Get(descriptor protoreflect.Fiel
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupKeyValidated) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
-		x.NewEpochId = value.Uint()
+	case "inference.bls.EventGroupKeyValidated.new_epoch_index":
+		x.NewEpochIndex = value.Uint()
 	case "inference.bls.EventGroupKeyValidated.final_signature":
 		x.FinalSignature = value.Bytes()
 	default:
@@ -3571,8 +3571,8 @@ func (x *fastReflection_EventGroupKeyValidated) Set(fd protoreflect.FieldDescrip
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupKeyValidated) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
-		panic(fmt.Errorf("field new_epoch_id of message inference.bls.EventGroupKeyValidated is not mutable"))
+	case "inference.bls.EventGroupKeyValidated.new_epoch_index":
+		panic(fmt.Errorf("field new_epoch_index of message inference.bls.EventGroupKeyValidated is not mutable"))
 	case "inference.bls.EventGroupKeyValidated.final_signature":
 		panic(fmt.Errorf("field final_signature of message inference.bls.EventGroupKeyValidated is not mutable"))
 	default:
@@ -3588,7 +3588,7 @@ func (x *fastReflection_EventGroupKeyValidated) Mutable(fd protoreflect.FieldDes
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventGroupKeyValidated) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidated.new_epoch_id":
+	case "inference.bls.EventGroupKeyValidated.new_epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventGroupKeyValidated.final_signature":
 		return protoreflect.ValueOfBytes(nil)
@@ -3661,8 +3661,8 @@ func (x *fastReflection_EventGroupKeyValidated) ProtoMethods() *protoiface.Metho
 		var n int
 		var l int
 		_ = l
-		if x.NewEpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.NewEpochId))
+		if x.NewEpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.NewEpochIndex))
 		}
 		l = len(x.FinalSignature)
 		if l > 0 {
@@ -3704,8 +3704,8 @@ func (x *fastReflection_EventGroupKeyValidated) ProtoMethods() *protoiface.Metho
 			i--
 			dAtA[i] = 0x12
 		}
-		if x.NewEpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.NewEpochId))
+		if x.NewEpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.NewEpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -3760,9 +3760,9 @@ func (x *fastReflection_EventGroupKeyValidated) ProtoMethods() *protoiface.Metho
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NewEpochIndex", wireType)
 				}
-				x.NewEpochId = 0
+				x.NewEpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -3772,7 +3772,7 @@ func (x *fastReflection_EventGroupKeyValidated) ProtoMethods() *protoiface.Metho
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.NewEpochId |= uint64(b&0x7F) << shift
+					x.NewEpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -3847,15 +3847,15 @@ func (x *fastReflection_EventGroupKeyValidated) ProtoMethods() *protoiface.Metho
 }
 
 var (
-	md_EventGroupKeyValidationFailed              protoreflect.MessageDescriptor
-	fd_EventGroupKeyValidationFailed_new_epoch_id protoreflect.FieldDescriptor
-	fd_EventGroupKeyValidationFailed_reason       protoreflect.FieldDescriptor
+	md_EventGroupKeyValidationFailed                 protoreflect.MessageDescriptor
+	fd_EventGroupKeyValidationFailed_new_epoch_index protoreflect.FieldDescriptor
+	fd_EventGroupKeyValidationFailed_reason          protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventGroupKeyValidationFailed = File_inference_bls_events_proto.Messages().ByName("EventGroupKeyValidationFailed")
-	fd_EventGroupKeyValidationFailed_new_epoch_id = md_EventGroupKeyValidationFailed.Fields().ByName("new_epoch_id")
+	fd_EventGroupKeyValidationFailed_new_epoch_index = md_EventGroupKeyValidationFailed.Fields().ByName("new_epoch_index")
 	fd_EventGroupKeyValidationFailed_reason = md_EventGroupKeyValidationFailed.Fields().ByName("reason")
 }
 
@@ -3924,9 +3924,9 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Interface() protoreflect.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_EventGroupKeyValidationFailed) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.NewEpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.NewEpochId)
-		if !f(fd_EventGroupKeyValidationFailed_new_epoch_id, value) {
+	if x.NewEpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.NewEpochIndex)
+		if !f(fd_EventGroupKeyValidationFailed_new_epoch_index, value) {
 			return
 		}
 	}
@@ -3951,8 +3951,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Range(f func(protoreflect
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EventGroupKeyValidationFailed) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
-		return x.NewEpochId != uint64(0)
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_index":
+		return x.NewEpochIndex != uint64(0)
 	case "inference.bls.EventGroupKeyValidationFailed.reason":
 		return x.Reason != ""
 	default:
@@ -3971,8 +3971,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Has(fd protoreflect.Field
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupKeyValidationFailed) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
-		x.NewEpochId = uint64(0)
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_index":
+		x.NewEpochIndex = uint64(0)
 	case "inference.bls.EventGroupKeyValidationFailed.reason":
 		x.Reason = ""
 	default:
@@ -3991,8 +3991,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Clear(fd protoreflect.Fie
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EventGroupKeyValidationFailed) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
-		value := x.NewEpochId
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_index":
+		value := x.NewEpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventGroupKeyValidationFailed.reason":
 		value := x.Reason
@@ -4017,8 +4017,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Get(descriptor protorefle
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupKeyValidationFailed) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
-		x.NewEpochId = value.Uint()
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_index":
+		x.NewEpochIndex = value.Uint()
 	case "inference.bls.EventGroupKeyValidationFailed.reason":
 		x.Reason = value.Interface().(string)
 	default:
@@ -4041,8 +4041,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Set(fd protoreflect.Field
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EventGroupKeyValidationFailed) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
-		panic(fmt.Errorf("field new_epoch_id of message inference.bls.EventGroupKeyValidationFailed is not mutable"))
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_index":
+		panic(fmt.Errorf("field new_epoch_index of message inference.bls.EventGroupKeyValidationFailed is not mutable"))
 	case "inference.bls.EventGroupKeyValidationFailed.reason":
 		panic(fmt.Errorf("field reason of message inference.bls.EventGroupKeyValidationFailed is not mutable"))
 	default:
@@ -4058,7 +4058,7 @@ func (x *fastReflection_EventGroupKeyValidationFailed) Mutable(fd protoreflect.F
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EventGroupKeyValidationFailed) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_id":
+	case "inference.bls.EventGroupKeyValidationFailed.new_epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventGroupKeyValidationFailed.reason":
 		return protoreflect.ValueOfString("")
@@ -4131,8 +4131,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) ProtoMethods() *protoifac
 		var n int
 		var l int
 		_ = l
-		if x.NewEpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.NewEpochId))
+		if x.NewEpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.NewEpochIndex))
 		}
 		l = len(x.Reason)
 		if l > 0 {
@@ -4174,8 +4174,8 @@ func (x *fastReflection_EventGroupKeyValidationFailed) ProtoMethods() *protoifac
 			i--
 			dAtA[i] = 0x12
 		}
-		if x.NewEpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.NewEpochId))
+		if x.NewEpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.NewEpochIndex))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -4230,9 +4230,9 @@ func (x *fastReflection_EventGroupKeyValidationFailed) ProtoMethods() *protoifac
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NewEpochIndex", wireType)
 				}
-				x.NewEpochId = 0
+				x.NewEpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -4242,7 +4242,7 @@ func (x *fastReflection_EventGroupKeyValidationFailed) ProtoMethods() *protoifac
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.NewEpochId |= uint64(b&0x7F) << shift
+					x.NewEpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -4317,7 +4317,7 @@ func (x *fastReflection_EventGroupKeyValidationFailed) ProtoMethods() *protoifac
 var (
 	md_EventThresholdSigningRequested                       protoreflect.MessageDescriptor
 	fd_EventThresholdSigningRequested_request_id            protoreflect.FieldDescriptor
-	fd_EventThresholdSigningRequested_current_epoch_id      protoreflect.FieldDescriptor
+	fd_EventThresholdSigningRequested_current_epoch_index   protoreflect.FieldDescriptor
 	fd_EventThresholdSigningRequested_encoded_data          protoreflect.FieldDescriptor
 	fd_EventThresholdSigningRequested_message_hash          protoreflect.FieldDescriptor
 	fd_EventThresholdSigningRequested_deadline_block_height protoreflect.FieldDescriptor
@@ -4327,7 +4327,7 @@ func init() {
 	file_inference_bls_events_proto_init()
 	md_EventThresholdSigningRequested = File_inference_bls_events_proto.Messages().ByName("EventThresholdSigningRequested")
 	fd_EventThresholdSigningRequested_request_id = md_EventThresholdSigningRequested.Fields().ByName("request_id")
-	fd_EventThresholdSigningRequested_current_epoch_id = md_EventThresholdSigningRequested.Fields().ByName("current_epoch_id")
+	fd_EventThresholdSigningRequested_current_epoch_index = md_EventThresholdSigningRequested.Fields().ByName("current_epoch_index")
 	fd_EventThresholdSigningRequested_encoded_data = md_EventThresholdSigningRequested.Fields().ByName("encoded_data")
 	fd_EventThresholdSigningRequested_message_hash = md_EventThresholdSigningRequested.Fields().ByName("message_hash")
 	fd_EventThresholdSigningRequested_deadline_block_height = md_EventThresholdSigningRequested.Fields().ByName("deadline_block_height")
@@ -4404,9 +4404,9 @@ func (x *fastReflection_EventThresholdSigningRequested) Range(f func(protoreflec
 			return
 		}
 	}
-	if x.CurrentEpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.CurrentEpochId)
-		if !f(fd_EventThresholdSigningRequested_current_epoch_id, value) {
+	if x.CurrentEpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentEpochIndex)
+		if !f(fd_EventThresholdSigningRequested_current_epoch_index, value) {
 			return
 		}
 	}
@@ -4445,8 +4445,8 @@ func (x *fastReflection_EventThresholdSigningRequested) Has(fd protoreflect.Fiel
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningRequested.request_id":
 		return len(x.RequestId) != 0
-	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
-		return x.CurrentEpochId != uint64(0)
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_index":
+		return x.CurrentEpochIndex != uint64(0)
 	case "inference.bls.EventThresholdSigningRequested.encoded_data":
 		return len(x.EncodedData) != 0
 	case "inference.bls.EventThresholdSigningRequested.message_hash":
@@ -4471,8 +4471,8 @@ func (x *fastReflection_EventThresholdSigningRequested) Clear(fd protoreflect.Fi
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningRequested.request_id":
 		x.RequestId = nil
-	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
-		x.CurrentEpochId = uint64(0)
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_index":
+		x.CurrentEpochIndex = uint64(0)
 	case "inference.bls.EventThresholdSigningRequested.encoded_data":
 		x.EncodedData = nil
 	case "inference.bls.EventThresholdSigningRequested.message_hash":
@@ -4498,8 +4498,8 @@ func (x *fastReflection_EventThresholdSigningRequested) Get(descriptor protorefl
 	case "inference.bls.EventThresholdSigningRequested.request_id":
 		value := x.RequestId
 		return protoreflect.ValueOfBytes(value)
-	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
-		value := x.CurrentEpochId
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_index":
+		value := x.CurrentEpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventThresholdSigningRequested.encoded_data":
 		value := x.EncodedData
@@ -4532,8 +4532,8 @@ func (x *fastReflection_EventThresholdSigningRequested) Set(fd protoreflect.Fiel
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningRequested.request_id":
 		x.RequestId = value.Bytes()
-	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
-		x.CurrentEpochId = value.Uint()
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_index":
+		x.CurrentEpochIndex = value.Uint()
 	case "inference.bls.EventThresholdSigningRequested.encoded_data":
 		x.EncodedData = value.Bytes()
 	case "inference.bls.EventThresholdSigningRequested.message_hash":
@@ -4562,8 +4562,8 @@ func (x *fastReflection_EventThresholdSigningRequested) Mutable(fd protoreflect.
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningRequested.request_id":
 		panic(fmt.Errorf("field request_id of message inference.bls.EventThresholdSigningRequested is not mutable"))
-	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
-		panic(fmt.Errorf("field current_epoch_id of message inference.bls.EventThresholdSigningRequested is not mutable"))
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_index":
+		panic(fmt.Errorf("field current_epoch_index of message inference.bls.EventThresholdSigningRequested is not mutable"))
 	case "inference.bls.EventThresholdSigningRequested.encoded_data":
 		panic(fmt.Errorf("field encoded_data of message inference.bls.EventThresholdSigningRequested is not mutable"))
 	case "inference.bls.EventThresholdSigningRequested.message_hash":
@@ -4585,7 +4585,7 @@ func (x *fastReflection_EventThresholdSigningRequested) NewField(fd protoreflect
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningRequested.request_id":
 		return protoreflect.ValueOfBytes(nil)
-	case "inference.bls.EventThresholdSigningRequested.current_epoch_id":
+	case "inference.bls.EventThresholdSigningRequested.current_epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventThresholdSigningRequested.encoded_data":
 		return protoreflect.ValueOfBytes(nil)
@@ -4666,8 +4666,8 @@ func (x *fastReflection_EventThresholdSigningRequested) ProtoMethods() *protoifa
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.CurrentEpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.CurrentEpochId))
+		if x.CurrentEpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentEpochIndex))
 		}
 		l = len(x.EncodedData)
 		if l > 0 {
@@ -4728,8 +4728,8 @@ func (x *fastReflection_EventThresholdSigningRequested) ProtoMethods() *protoifa
 			i--
 			dAtA[i] = 0x1a
 		}
-		if x.CurrentEpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochId))
+		if x.CurrentEpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochIndex))
 			i--
 			dAtA[i] = 0x10
 		}
@@ -4825,9 +4825,9 @@ func (x *fastReflection_EventThresholdSigningRequested) ProtoMethods() *protoifa
 				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochIndex", wireType)
 				}
-				x.CurrentEpochId = 0
+				x.CurrentEpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -4837,7 +4837,7 @@ func (x *fastReflection_EventThresholdSigningRequested) ProtoMethods() *protoifa
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.CurrentEpochId |= uint64(b&0x7F) << shift
+					x.CurrentEpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -4967,7 +4967,7 @@ func (x *fastReflection_EventThresholdSigningRequested) ProtoMethods() *protoifa
 var (
 	md_EventThresholdSigningCompleted                     protoreflect.MessageDescriptor
 	fd_EventThresholdSigningCompleted_request_id          protoreflect.FieldDescriptor
-	fd_EventThresholdSigningCompleted_current_epoch_id    protoreflect.FieldDescriptor
+	fd_EventThresholdSigningCompleted_current_epoch_index protoreflect.FieldDescriptor
 	fd_EventThresholdSigningCompleted_final_signature     protoreflect.FieldDescriptor
 	fd_EventThresholdSigningCompleted_participating_slots protoreflect.FieldDescriptor
 )
@@ -4976,7 +4976,7 @@ func init() {
 	file_inference_bls_events_proto_init()
 	md_EventThresholdSigningCompleted = File_inference_bls_events_proto.Messages().ByName("EventThresholdSigningCompleted")
 	fd_EventThresholdSigningCompleted_request_id = md_EventThresholdSigningCompleted.Fields().ByName("request_id")
-	fd_EventThresholdSigningCompleted_current_epoch_id = md_EventThresholdSigningCompleted.Fields().ByName("current_epoch_id")
+	fd_EventThresholdSigningCompleted_current_epoch_index = md_EventThresholdSigningCompleted.Fields().ByName("current_epoch_index")
 	fd_EventThresholdSigningCompleted_final_signature = md_EventThresholdSigningCompleted.Fields().ByName("final_signature")
 	fd_EventThresholdSigningCompleted_participating_slots = md_EventThresholdSigningCompleted.Fields().ByName("participating_slots")
 }
@@ -5052,9 +5052,9 @@ func (x *fastReflection_EventThresholdSigningCompleted) Range(f func(protoreflec
 			return
 		}
 	}
-	if x.CurrentEpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.CurrentEpochId)
-		if !f(fd_EventThresholdSigningCompleted_current_epoch_id, value) {
+	if x.CurrentEpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentEpochIndex)
+		if !f(fd_EventThresholdSigningCompleted_current_epoch_index, value) {
 			return
 		}
 	}
@@ -5087,8 +5087,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) Has(fd protoreflect.Fiel
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningCompleted.request_id":
 		return len(x.RequestId) != 0
-	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
-		return x.CurrentEpochId != uint64(0)
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_index":
+		return x.CurrentEpochIndex != uint64(0)
 	case "inference.bls.EventThresholdSigningCompleted.final_signature":
 		return len(x.FinalSignature) != 0
 	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
@@ -5111,8 +5111,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) Clear(fd protoreflect.Fi
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningCompleted.request_id":
 		x.RequestId = nil
-	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
-		x.CurrentEpochId = uint64(0)
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_index":
+		x.CurrentEpochIndex = uint64(0)
 	case "inference.bls.EventThresholdSigningCompleted.final_signature":
 		x.FinalSignature = nil
 	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
@@ -5136,8 +5136,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) Get(descriptor protorefl
 	case "inference.bls.EventThresholdSigningCompleted.request_id":
 		value := x.RequestId
 		return protoreflect.ValueOfBytes(value)
-	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
-		value := x.CurrentEpochId
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_index":
+		value := x.CurrentEpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventThresholdSigningCompleted.final_signature":
 		value := x.FinalSignature
@@ -5167,8 +5167,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) Set(fd protoreflect.Fiel
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningCompleted.request_id":
 		x.RequestId = value.Bytes()
-	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
-		x.CurrentEpochId = value.Uint()
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_index":
+		x.CurrentEpochIndex = value.Uint()
 	case "inference.bls.EventThresholdSigningCompleted.final_signature":
 		x.FinalSignature = value.Bytes()
 	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
@@ -5195,8 +5195,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) Mutable(fd protoreflect.
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningCompleted.request_id":
 		panic(fmt.Errorf("field request_id of message inference.bls.EventThresholdSigningCompleted is not mutable"))
-	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
-		panic(fmt.Errorf("field current_epoch_id of message inference.bls.EventThresholdSigningCompleted is not mutable"))
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_index":
+		panic(fmt.Errorf("field current_epoch_index of message inference.bls.EventThresholdSigningCompleted is not mutable"))
 	case "inference.bls.EventThresholdSigningCompleted.final_signature":
 		panic(fmt.Errorf("field final_signature of message inference.bls.EventThresholdSigningCompleted is not mutable"))
 	case "inference.bls.EventThresholdSigningCompleted.participating_slots":
@@ -5216,7 +5216,7 @@ func (x *fastReflection_EventThresholdSigningCompleted) NewField(fd protoreflect
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningCompleted.request_id":
 		return protoreflect.ValueOfBytes(nil)
-	case "inference.bls.EventThresholdSigningCompleted.current_epoch_id":
+	case "inference.bls.EventThresholdSigningCompleted.current_epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventThresholdSigningCompleted.final_signature":
 		return protoreflect.ValueOfBytes(nil)
@@ -5295,8 +5295,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) ProtoMethods() *protoifa
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.CurrentEpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.CurrentEpochId))
+		if x.CurrentEpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentEpochIndex))
 		}
 		l = len(x.FinalSignature)
 		if l > 0 {
@@ -5346,8 +5346,8 @@ func (x *fastReflection_EventThresholdSigningCompleted) ProtoMethods() *protoifa
 			i--
 			dAtA[i] = 0x1a
 		}
-		if x.CurrentEpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochId))
+		if x.CurrentEpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochIndex))
 			i--
 			dAtA[i] = 0x10
 		}
@@ -5443,9 +5443,9 @@ func (x *fastReflection_EventThresholdSigningCompleted) ProtoMethods() *protoifa
 				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochIndex", wireType)
 				}
-				x.CurrentEpochId = 0
+				x.CurrentEpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5455,7 +5455,7 @@ func (x *fastReflection_EventThresholdSigningCompleted) ProtoMethods() *protoifa
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.CurrentEpochId |= uint64(b&0x7F) << shift
+					x.CurrentEpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -5549,17 +5549,17 @@ func (x *fastReflection_EventThresholdSigningCompleted) ProtoMethods() *protoifa
 }
 
 var (
-	md_EventThresholdSigningFailed                  protoreflect.MessageDescriptor
-	fd_EventThresholdSigningFailed_request_id       protoreflect.FieldDescriptor
-	fd_EventThresholdSigningFailed_current_epoch_id protoreflect.FieldDescriptor
-	fd_EventThresholdSigningFailed_reason           protoreflect.FieldDescriptor
+	md_EventThresholdSigningFailed                     protoreflect.MessageDescriptor
+	fd_EventThresholdSigningFailed_request_id          protoreflect.FieldDescriptor
+	fd_EventThresholdSigningFailed_current_epoch_index protoreflect.FieldDescriptor
+	fd_EventThresholdSigningFailed_reason              protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_bls_events_proto_init()
 	md_EventThresholdSigningFailed = File_inference_bls_events_proto.Messages().ByName("EventThresholdSigningFailed")
 	fd_EventThresholdSigningFailed_request_id = md_EventThresholdSigningFailed.Fields().ByName("request_id")
-	fd_EventThresholdSigningFailed_current_epoch_id = md_EventThresholdSigningFailed.Fields().ByName("current_epoch_id")
+	fd_EventThresholdSigningFailed_current_epoch_index = md_EventThresholdSigningFailed.Fields().ByName("current_epoch_index")
 	fd_EventThresholdSigningFailed_reason = md_EventThresholdSigningFailed.Fields().ByName("reason")
 }
 
@@ -5634,9 +5634,9 @@ func (x *fastReflection_EventThresholdSigningFailed) Range(f func(protoreflect.F
 			return
 		}
 	}
-	if x.CurrentEpochId != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.CurrentEpochId)
-		if !f(fd_EventThresholdSigningFailed_current_epoch_id, value) {
+	if x.CurrentEpochIndex != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentEpochIndex)
+		if !f(fd_EventThresholdSigningFailed_current_epoch_index, value) {
 			return
 		}
 	}
@@ -5663,8 +5663,8 @@ func (x *fastReflection_EventThresholdSigningFailed) Has(fd protoreflect.FieldDe
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningFailed.request_id":
 		return len(x.RequestId) != 0
-	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
-		return x.CurrentEpochId != uint64(0)
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_index":
+		return x.CurrentEpochIndex != uint64(0)
 	case "inference.bls.EventThresholdSigningFailed.reason":
 		return x.Reason != ""
 	default:
@@ -5685,8 +5685,8 @@ func (x *fastReflection_EventThresholdSigningFailed) Clear(fd protoreflect.Field
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningFailed.request_id":
 		x.RequestId = nil
-	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
-		x.CurrentEpochId = uint64(0)
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_index":
+		x.CurrentEpochIndex = uint64(0)
 	case "inference.bls.EventThresholdSigningFailed.reason":
 		x.Reason = ""
 	default:
@@ -5708,8 +5708,8 @@ func (x *fastReflection_EventThresholdSigningFailed) Get(descriptor protoreflect
 	case "inference.bls.EventThresholdSigningFailed.request_id":
 		value := x.RequestId
 		return protoreflect.ValueOfBytes(value)
-	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
-		value := x.CurrentEpochId
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_index":
+		value := x.CurrentEpochIndex
 		return protoreflect.ValueOfUint64(value)
 	case "inference.bls.EventThresholdSigningFailed.reason":
 		value := x.Reason
@@ -5736,8 +5736,8 @@ func (x *fastReflection_EventThresholdSigningFailed) Set(fd protoreflect.FieldDe
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningFailed.request_id":
 		x.RequestId = value.Bytes()
-	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
-		x.CurrentEpochId = value.Uint()
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_index":
+		x.CurrentEpochIndex = value.Uint()
 	case "inference.bls.EventThresholdSigningFailed.reason":
 		x.Reason = value.Interface().(string)
 	default:
@@ -5762,8 +5762,8 @@ func (x *fastReflection_EventThresholdSigningFailed) Mutable(fd protoreflect.Fie
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningFailed.request_id":
 		panic(fmt.Errorf("field request_id of message inference.bls.EventThresholdSigningFailed is not mutable"))
-	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
-		panic(fmt.Errorf("field current_epoch_id of message inference.bls.EventThresholdSigningFailed is not mutable"))
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_index":
+		panic(fmt.Errorf("field current_epoch_index of message inference.bls.EventThresholdSigningFailed is not mutable"))
 	case "inference.bls.EventThresholdSigningFailed.reason":
 		panic(fmt.Errorf("field reason of message inference.bls.EventThresholdSigningFailed is not mutable"))
 	default:
@@ -5781,7 +5781,7 @@ func (x *fastReflection_EventThresholdSigningFailed) NewField(fd protoreflect.Fi
 	switch fd.FullName() {
 	case "inference.bls.EventThresholdSigningFailed.request_id":
 		return protoreflect.ValueOfBytes(nil)
-	case "inference.bls.EventThresholdSigningFailed.current_epoch_id":
+	case "inference.bls.EventThresholdSigningFailed.current_epoch_index":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.bls.EventThresholdSigningFailed.reason":
 		return protoreflect.ValueOfString("")
@@ -5858,8 +5858,8 @@ func (x *fastReflection_EventThresholdSigningFailed) ProtoMethods() *protoiface.
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.CurrentEpochId != 0 {
-			n += 1 + runtime.Sov(uint64(x.CurrentEpochId))
+		if x.CurrentEpochIndex != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentEpochIndex))
 		}
 		l = len(x.Reason)
 		if l > 0 {
@@ -5901,8 +5901,8 @@ func (x *fastReflection_EventThresholdSigningFailed) ProtoMethods() *protoiface.
 			i--
 			dAtA[i] = 0x1a
 		}
-		if x.CurrentEpochId != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochId))
+		if x.CurrentEpochIndex != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentEpochIndex))
 			i--
 			dAtA[i] = 0x10
 		}
@@ -5998,9 +5998,9 @@ func (x *fastReflection_EventThresholdSigningFailed) ProtoMethods() *protoiface.
 				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochIndex", wireType)
 				}
-				x.CurrentEpochId = 0
+				x.CurrentEpochIndex = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -6010,7 +6010,7 @@ func (x *fastReflection_EventThresholdSigningFailed) ProtoMethods() *protoiface.
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.CurrentEpochId |= uint64(b&0x7F) << shift
+					x.CurrentEpochIndex |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -6101,8 +6101,8 @@ type EventKeyGenerationInitiated struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// epoch_id uniquely identifies this DKG round
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index uniquely identifies this DKG round
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// i_total_slots is the total number of slots in the DKG
 	ITotalSlots uint32 `protobuf:"varint,2,opt,name=i_total_slots,json=iTotalSlots,proto3" json:"i_total_slots,omitempty"`
 	// t_slots_degree is the polynomial degree t for the threshold scheme
@@ -6131,9 +6131,9 @@ func (*EventKeyGenerationInitiated) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *EventKeyGenerationInitiated) GetEpochId() uint64 {
+func (x *EventKeyGenerationInitiated) GetEpochIndex() uint64 {
 	if x != nil {
-		return x.EpochId
+		return x.EpochIndex
 	}
 	return 0
 }
@@ -6165,8 +6165,8 @@ type EventDealerPartSubmitted struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// epoch_id identifies the DKG round this dealer part belongs to
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round this dealer part belongs to
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// dealer_address is the address of the dealer who submitted their part
 	DealerAddress string `protobuf:"bytes,2,opt,name=dealer_address,json=dealerAddress,proto3" json:"dealer_address,omitempty"`
 }
@@ -6191,9 +6191,9 @@ func (*EventDealerPartSubmitted) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *EventDealerPartSubmitted) GetEpochId() uint64 {
+func (x *EventDealerPartSubmitted) GetEpochIndex() uint64 {
 	if x != nil {
-		return x.EpochId
+		return x.EpochIndex
 	}
 	return 0
 }
@@ -6211,8 +6211,8 @@ type EventVerifyingPhaseStarted struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// epoch_id identifies the DKG round entering verification phase
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round entering verification phase
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// verifying_phase_deadline_block is the block height deadline for the verification phase
 	VerifyingPhaseDeadlineBlock uint64 `protobuf:"varint,2,opt,name=verifying_phase_deadline_block,json=verifyingPhaseDeadlineBlock,proto3" json:"verifying_phase_deadline_block,omitempty"`
 	// epoch_data contains the complete epoch BLS data at the time of transition
@@ -6239,9 +6239,9 @@ func (*EventVerifyingPhaseStarted) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *EventVerifyingPhaseStarted) GetEpochId() uint64 {
+func (x *EventVerifyingPhaseStarted) GetEpochIndex() uint64 {
 	if x != nil {
-		return x.EpochId
+		return x.EpochIndex
 	}
 	return 0
 }
@@ -6266,8 +6266,8 @@ type EventDKGFailed struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// epoch_id identifies the DKG round that failed
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round that failed
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// reason describes why the DKG failed
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// epoch_data contains the complete epoch BLS data at the time of failure
@@ -6294,9 +6294,9 @@ func (*EventDKGFailed) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *EventDKGFailed) GetEpochId() uint64 {
+func (x *EventDKGFailed) GetEpochIndex() uint64 {
 	if x != nil {
-		return x.EpochId
+		return x.EpochIndex
 	}
 	return 0
 }
@@ -6321,8 +6321,8 @@ type EventVerificationVectorSubmitted struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// epoch_id identifies the DKG round this verification submission belongs to
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round this verification submission belongs to
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// participant_address is the address of the participant who submitted verification
 	ParticipantAddress string `protobuf:"bytes,2,opt,name=participant_address,json=participantAddress,proto3" json:"participant_address,omitempty"`
 }
@@ -6347,9 +6347,9 @@ func (*EventVerificationVectorSubmitted) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *EventVerificationVectorSubmitted) GetEpochId() uint64 {
+func (x *EventVerificationVectorSubmitted) GetEpochIndex() uint64 {
 	if x != nil {
-		return x.EpochId
+		return x.EpochIndex
 	}
 	return 0
 }
@@ -6367,8 +6367,8 @@ type EventGroupPublicKeyGenerated struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// epoch_id uniquely identifies this DKG round
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index uniquely identifies this DKG round
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// group_public_key is the final aggregated group public key (compressed G2 format, 96 bytes)
 	GroupPublicKey []byte `protobuf:"bytes,2,opt,name=group_public_key,json=groupPublicKey,proto3" json:"group_public_key,omitempty"`
 	// i_total_slots is the total number of slots in the DKG
@@ -6401,9 +6401,9 @@ func (*EventGroupPublicKeyGenerated) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *EventGroupPublicKeyGenerated) GetEpochId() uint64 {
+func (x *EventGroupPublicKeyGenerated) GetEpochIndex() uint64 {
 	if x != nil {
-		return x.EpochId
+		return x.EpochIndex
 	}
 	return 0
 }
@@ -6449,8 +6449,8 @@ type EventGroupKeyValidated struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// new_epoch_id identifies the epoch whose group public key was successfully validated
-	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// new_epoch_index identifies the epoch whose group public key was successfully validated
+	NewEpochIndex uint64 `protobuf:"varint,1,opt,name=new_epoch_index,json=newEpochIndex,proto3" json:"new_epoch_index,omitempty"`
 	// final_signature is the aggregated signature validating the new group public key (G1 point, 48-byte compressed)
 	FinalSignature []byte `protobuf:"bytes,2,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
 }
@@ -6475,9 +6475,9 @@ func (*EventGroupKeyValidated) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *EventGroupKeyValidated) GetNewEpochId() uint64 {
+func (x *EventGroupKeyValidated) GetNewEpochIndex() uint64 {
 	if x != nil {
-		return x.NewEpochId
+		return x.NewEpochIndex
 	}
 	return 0
 }
@@ -6495,8 +6495,8 @@ type EventGroupKeyValidationFailed struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// new_epoch_id identifies the epoch whose group public key validation failed
-	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// new_epoch_index identifies the epoch whose group public key validation failed
+	NewEpochIndex uint64 `protobuf:"varint,1,opt,name=new_epoch_index,json=newEpochIndex,proto3" json:"new_epoch_index,omitempty"`
 	// reason describes why the validation failed
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 }
@@ -6521,9 +6521,9 @@ func (*EventGroupKeyValidationFailed) Descriptor() ([]byte, []int) {
 	return file_inference_bls_events_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *EventGroupKeyValidationFailed) GetNewEpochId() uint64 {
+func (x *EventGroupKeyValidationFailed) GetNewEpochIndex() uint64 {
 	if x != nil {
-		return x.NewEpochId
+		return x.NewEpochIndex
 	}
 	return 0
 }
@@ -6543,8 +6543,8 @@ type EventThresholdSigningRequested struct {
 
 	// request_id uniquely identifies this threshold signing request
 	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// current_epoch_id identifies the epoch being used for signing
-	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// current_epoch_index identifies the epoch being used for signing
+	CurrentEpochIndex uint64 `protobuf:"varint,2,opt,name=current_epoch_index,json=currentEpochIndex,proto3" json:"current_epoch_index,omitempty"`
 	// encoded_data is the Ethereum-compatible abi.encodePacked result that participants will sign
 	EncodedData []byte `protobuf:"bytes,3,opt,name=encoded_data,json=encodedData,proto3" json:"encoded_data,omitempty"`
 	// message_hash is the keccak256 hash of the encoded_data (pre-computed for participants)
@@ -6580,9 +6580,9 @@ func (x *EventThresholdSigningRequested) GetRequestId() []byte {
 	return nil
 }
 
-func (x *EventThresholdSigningRequested) GetCurrentEpochId() uint64 {
+func (x *EventThresholdSigningRequested) GetCurrentEpochIndex() uint64 {
 	if x != nil {
-		return x.CurrentEpochId
+		return x.CurrentEpochIndex
 	}
 	return 0
 }
@@ -6616,8 +6616,8 @@ type EventThresholdSigningCompleted struct {
 
 	// request_id identifies the threshold signing request that completed
 	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// current_epoch_id identifies the epoch used for signing
-	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// current_epoch_index identifies the epoch used for signing
+	CurrentEpochIndex uint64 `protobuf:"varint,2,opt,name=current_epoch_index,json=currentEpochIndex,proto3" json:"current_epoch_index,omitempty"`
 	// final_signature is the aggregated BLS threshold signature (G1 point, 48-byte compressed)
 	FinalSignature []byte `protobuf:"bytes,3,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
 	// participating_slots is the total number of slots that participated in the signing
@@ -6651,9 +6651,9 @@ func (x *EventThresholdSigningCompleted) GetRequestId() []byte {
 	return nil
 }
 
-func (x *EventThresholdSigningCompleted) GetCurrentEpochId() uint64 {
+func (x *EventThresholdSigningCompleted) GetCurrentEpochIndex() uint64 {
 	if x != nil {
-		return x.CurrentEpochId
+		return x.CurrentEpochIndex
 	}
 	return 0
 }
@@ -6680,8 +6680,8 @@ type EventThresholdSigningFailed struct {
 
 	// request_id identifies the threshold signing request that failed
 	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// current_epoch_id identifies the epoch used for signing
-	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// current_epoch_index identifies the epoch used for signing
+	CurrentEpochIndex uint64 `protobuf:"varint,2,opt,name=current_epoch_index,json=currentEpochIndex,proto3" json:"current_epoch_index,omitempty"`
 	// reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
 	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 }
@@ -6713,9 +6713,9 @@ func (x *EventThresholdSigningFailed) GetRequestId() []byte {
 	return nil
 }
 
-func (x *EventThresholdSigningFailed) GetCurrentEpochId() uint64 {
+func (x *EventThresholdSigningFailed) GetCurrentEpochIndex() uint64 {
 	if x != nil {
-		return x.CurrentEpochId
+		return x.CurrentEpochIndex
 	}
 	return 0
 }
@@ -6738,131 +6738,135 @@ var file_inference_bls_events_proto_rawDesc = []byte{
 	0x6d, 0x6f, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x14, 0x67, 0x6f, 0x67, 0x6f, 0x70,
 	0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a,
 	0x19, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0x2f, 0x74,
-	0x79, 0x70, 0x65, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xcf, 0x01, 0x0a, 0x1b, 0x45,
+	0x79, 0x70, 0x65, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xd5, 0x01, 0x0a, 0x1b, 0x45,
 	0x76, 0x65, 0x6e, 0x74, 0x4b, 0x65, 0x79, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x49, 0x6e, 0x69, 0x74, 0x69, 0x61, 0x74, 0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70,
-	0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70,
-	0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x22, 0x0a, 0x0d, 0x69, 0x5f, 0x74, 0x6f, 0x74, 0x61, 0x6c,
-	0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0b, 0x69, 0x54,
-	0x6f, 0x74, 0x61, 0x6c, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x12, 0x24, 0x0a, 0x0e, 0x74, 0x5f, 0x73,
-	0x6c, 0x6f, 0x74, 0x73, 0x5f, 0x64, 0x65, 0x67, 0x72, 0x65, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28,
-	0x0d, 0x52, 0x0c, 0x74, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x44, 0x65, 0x67, 0x72, 0x65, 0x65, 0x12,
-	0x4b, 0x0a, 0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x18,
-	0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x42, 0x4c, 0x53, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x49, 0x6e, 0x66, 0x6f, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0c,
-	0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x22, 0x76, 0x0a, 0x18,
-	0x45, 0x76, 0x65, 0x6e, 0x74, 0x44, 0x65, 0x61, 0x6c, 0x65, 0x72, 0x50, 0x61, 0x72, 0x74, 0x53,
-	0x75, 0x62, 0x6d, 0x69, 0x74, 0x74, 0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x49, 0x64, 0x12, 0x3f, 0x0a, 0x0e, 0x64, 0x65, 0x61, 0x6c, 0x65, 0x72, 0x5f, 0x61, 0x64,
-	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x42, 0x18, 0xd2, 0xb4, 0x2d,
-	0x14, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x53,
-	0x74, 0x72, 0x69, 0x6e, 0x67, 0x52, 0x0d, 0x64, 0x65, 0x61, 0x6c, 0x65, 0x72, 0x41, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x22, 0xbe, 0x01, 0x0a, 0x1a, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x56, 0x65,
-	0x72, 0x69, 0x66, 0x79, 0x69, 0x6e, 0x67, 0x50, 0x68, 0x61, 0x73, 0x65, 0x53, 0x74, 0x61, 0x72,
-	0x74, 0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x43,
-	0x0a, 0x1e, 0x76, 0x65, 0x72, 0x69, 0x66, 0x79, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x68, 0x61, 0x73,
-	0x65, 0x5f, 0x64, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b,
-	0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x1b, 0x76, 0x65, 0x72, 0x69, 0x66, 0x79, 0x69, 0x6e,
-	0x67, 0x50, 0x68, 0x61, 0x73, 0x65, 0x44, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65, 0x42, 0x6c,
-	0x6f, 0x63, 0x6b, 0x12, 0x40, 0x0a, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x64, 0x61, 0x74,
+	0x6e, 0x49, 0x6e, 0x69, 0x74, 0x69, 0x61, 0x74, 0x65, 0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x22, 0x0a, 0x0d, 0x69,
+	0x5f, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x0b, 0x69, 0x54, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x12,
+	0x24, 0x0a, 0x0e, 0x74, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x5f, 0x64, 0x65, 0x67, 0x72, 0x65,
+	0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0c, 0x74, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x44,
+	0x65, 0x67, 0x72, 0x65, 0x65, 0x12, 0x4b, 0x0a, 0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
+	0x70, 0x61, 0x6e, 0x74, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x42, 0x4c, 0x53, 0x50,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x49, 0x6e, 0x66, 0x6f, 0x42, 0x04,
+	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
+	0x74, 0x73, 0x22, 0x7c, 0x0a, 0x18, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x44, 0x65, 0x61, 0x6c, 0x65,
+	0x72, 0x50, 0x61, 0x72, 0x74, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x74, 0x65, 0x64, 0x12, 0x1f,
+	0x0a, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12,
+	0x3f, 0x0a, 0x0e, 0x64, 0x65, 0x61, 0x6c, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73,
+	0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x42, 0x18, 0xd2, 0xb4, 0x2d, 0x14, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x2e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x53, 0x74, 0x72, 0x69, 0x6e,
+	0x67, 0x52, 0x0d, 0x64, 0x65, 0x61, 0x6c, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
+	0x22, 0xc4, 0x01, 0x0a, 0x1a, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x56, 0x65, 0x72, 0x69, 0x66, 0x79,
+	0x69, 0x6e, 0x67, 0x50, 0x68, 0x61, 0x73, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x65, 0x64, 0x12,
+	0x1f, 0x0a, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78,
+	0x12, 0x43, 0x0a, 0x1e, 0x76, 0x65, 0x72, 0x69, 0x66, 0x79, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x68,
+	0x61, 0x73, 0x65, 0x5f, 0x64, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65, 0x5f, 0x62, 0x6c, 0x6f,
+	0x63, 0x6b, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x1b, 0x76, 0x65, 0x72, 0x69, 0x66, 0x79,
+	0x69, 0x6e, 0x67, 0x50, 0x68, 0x61, 0x73, 0x65, 0x44, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65,
+	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x12, 0x40, 0x0a, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x64,
+	0x61, 0x74, 0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x42,
+	0x4c, 0x53, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x44, 0x61, 0x74, 0x61, 0x22, 0x8b, 0x01, 0x0a, 0x0e, 0x45, 0x76, 0x65, 0x6e,
+	0x74, 0x44, 0x4b, 0x47, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06, 0x72,
+	0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x61,
+	0x73, 0x6f, 0x6e, 0x12, 0x40, 0x0a, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x64, 0x61, 0x74,
 	0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x42, 0x4c, 0x53,
 	0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x44, 0x61, 0x74, 0x61, 0x22, 0x85, 0x01, 0x0a, 0x0e, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x44,
-	0x4b, 0x47, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x12, 0x40, 0x0a, 0x0a, 0x65,
-	0x70, 0x6f, 0x63, 0x68, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32,
-	0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e,
-	0x45, 0x70, 0x6f, 0x63, 0x68, 0x42, 0x4c, 0x53, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde,
-	0x1f, 0x00, 0x52, 0x09, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x44, 0x61, 0x74, 0x61, 0x22, 0x88, 0x01,
-	0x0a, 0x20, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x56, 0x65, 0x72, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x56, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x74,
-	0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x49, 0x0a,
-	0x13, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x61, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x42, 0x18, 0xd2, 0xb4, 0x2d, 0x14,
-	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x53, 0x74,
-	0x72, 0x69, 0x6e, 0x67, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x8a, 0x02, 0x0a, 0x1c, 0x45, 0x76, 0x65,
-	0x6e, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b, 0x65, 0x79,
-	0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f,
-	0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f,
-	0x63, 0x68, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x10, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x70, 0x75,
-	0x62, 0x6c, 0x69, 0x63, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0e,
-	0x67, 0x72, 0x6f, 0x75, 0x70, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b, 0x65, 0x79, 0x12, 0x22,
-	0x0a, 0x0d, 0x69, 0x5f, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0b, 0x69, 0x54, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x6c, 0x6f,
-	0x74, 0x73, 0x12, 0x24, 0x0a, 0x0e, 0x74, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x5f, 0x64, 0x65,
-	0x67, 0x72, 0x65, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0c, 0x74, 0x53, 0x6c, 0x6f,
-	0x74, 0x73, 0x44, 0x65, 0x67, 0x72, 0x65, 0x65, 0x12, 0x40, 0x0a, 0x0a, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x45, 0x70, 0x6f,
-	0x63, 0x68, 0x42, 0x4c, 0x53, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52,
-	0x09, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x44, 0x61, 0x74, 0x61, 0x12, 0x19, 0x0a, 0x08, 0x63, 0x68,
-	0x61, 0x69, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x68,
-	0x61, 0x69, 0x6e, 0x49, 0x64, 0x22, 0x63, 0x0a, 0x16, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x47, 0x72,
-	0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x12,
-	0x20, 0x0a, 0x0c, 0x6e, 0x65, 0x77, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x6e, 0x65, 0x77, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49,
-	0x64, 0x12, 0x27, 0x0a, 0x0f, 0x66, 0x69, 0x6e, 0x61, 0x6c, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61,
-	0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0e, 0x66, 0x69, 0x6e, 0x61,
-	0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x59, 0x0a, 0x1d, 0x45, 0x76,
-	0x65, 0x6e, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x56, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x12, 0x20, 0x0a, 0x0c, 0x6e,
-	0x65, 0x77, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0a, 0x6e, 0x65, 0x77, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a,
+	0x68, 0x44, 0x61, 0x74, 0x61, 0x22, 0x8e, 0x01, 0x0a, 0x20, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x56,
+	0x65, 0x72, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x56, 0x65, 0x63, 0x74, 0x6f,
+	0x72, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x74, 0x65, 0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x49, 0x0a, 0x13, 0x70,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65,
+	0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x42, 0x18, 0xd2, 0xb4, 0x2d, 0x14, 0x63, 0x6f,
+	0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x53, 0x74, 0x72, 0x69,
+	0x6e, 0x67, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41,
+	0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x90, 0x02, 0x0a, 0x1c, 0x45, 0x76, 0x65, 0x6e, 0x74,
+	0x47, 0x72, 0x6f, 0x75, 0x70, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b, 0x65, 0x79, 0x47, 0x65,
+	0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68,
+	0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x28, 0x0a, 0x10, 0x67, 0x72, 0x6f, 0x75,
+	0x70, 0x5f, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x0c, 0x52, 0x0e, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b,
+	0x65, 0x79, 0x12, 0x22, 0x0a, 0x0d, 0x69, 0x5f, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x6c,
+	0x6f, 0x74, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0b, 0x69, 0x54, 0x6f, 0x74, 0x61,
+	0x6c, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x12, 0x24, 0x0a, 0x0e, 0x74, 0x5f, 0x73, 0x6c, 0x6f, 0x74,
+	0x73, 0x5f, 0x64, 0x65, 0x67, 0x72, 0x65, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0c,
+	0x74, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x44, 0x65, 0x67, 0x72, 0x65, 0x65, 0x12, 0x40, 0x0a, 0x0a,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73,
+	0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x42, 0x4c, 0x53, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8,
+	0xde, 0x1f, 0x00, 0x52, 0x09, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x44, 0x61, 0x74, 0x61, 0x12, 0x19,
+	0x0a, 0x08, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x22, 0x69, 0x0a, 0x16, 0x45, 0x76, 0x65,
+	0x6e, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x65, 0x64, 0x12, 0x26, 0x0a, 0x0f, 0x6e, 0x65, 0x77, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68,
+	0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x6e, 0x65,
+	0x77, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x27, 0x0a, 0x0f, 0x66,
+	0x69, 0x6e, 0x61, 0x6c, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x0c, 0x52, 0x0e, 0x66, 0x69, 0x6e, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61,
+	0x74, 0x75, 0x72, 0x65, 0x22, 0x5f, 0x0a, 0x1d, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x47, 0x72, 0x6f,
+	0x75, 0x70, 0x4b, 0x65, 0x79, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x46,
+	0x61, 0x69, 0x6c, 0x65, 0x64, 0x12, 0x26, 0x0a, 0x0f, 0x6e, 0x65, 0x77, 0x5f, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d,
+	0x6e, 0x65, 0x77, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a,
 	0x06, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72,
-	0x65, 0x61, 0x73, 0x6f, 0x6e, 0x22, 0xe3, 0x01, 0x0a, 0x1e, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54,
+	0x65, 0x61, 0x73, 0x6f, 0x6e, 0x22, 0xe9, 0x01, 0x0a, 0x1e, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54,
 	0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x52,
 	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75,
 	0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x10, 0x63, 0x75, 0x72, 0x72, 0x65,
-	0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49,
-	0x64, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x6e, 0x63, 0x6f, 0x64, 0x65, 0x64, 0x5f, 0x64, 0x61, 0x74,
-	0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0b, 0x65, 0x6e, 0x63, 0x6f, 0x64, 0x65, 0x64,
-	0x44, 0x61, 0x74, 0x61, 0x12, 0x21, 0x0a, 0x0c, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x5f,
-	0x68, 0x61, 0x73, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0b, 0x6d, 0x65, 0x73, 0x73,
-	0x61, 0x67, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x32, 0x0a, 0x15, 0x64, 0x65, 0x61, 0x64, 0x6c,
-	0x69, 0x6e, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74,
-	0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x64, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65,
-	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xc3, 0x01, 0x0a, 0x1e,
-	0x45, 0x76, 0x65, 0x6e, 0x74, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69,
-	0x67, 0x6e, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x12, 0x1d,
-	0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a,
-	0x10, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69,
-	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74,
-	0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x27, 0x0a, 0x0f, 0x66, 0x69, 0x6e, 0x61, 0x6c,
-	0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c,
-	0x52, 0x0e, 0x66, 0x69, 0x6e, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65,
-	0x12, 0x2f, 0x0a, 0x13, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x74, 0x69, 0x6e,
-	0x67, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x12, 0x70,
-	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x53, 0x6c, 0x6f, 0x74,
-	0x73, 0x22, 0x7e, 0x0a, 0x1b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68,
-	0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64,
-	0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12,
-	0x28, 0x0a, 0x10, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72, 0x65,
-	0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65, 0x61,
-	0x73, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x61, 0x73, 0x6f,
-	0x6e, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x42, 0x0b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x50,
-	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
-	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa, 0x02, 0x0d, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca, 0x02, 0x0d, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2, 0x02, 0x19, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c, 0x47, 0x50, 0x42,
-	0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42, 0x6c, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x75, 0x72, 0x72, 0x65,
+	0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f,
+	0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x6e, 0x63, 0x6f, 0x64,
+	0x65, 0x64, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0b, 0x65,
+	0x6e, 0x63, 0x6f, 0x64, 0x65, 0x64, 0x44, 0x61, 0x74, 0x61, 0x12, 0x21, 0x0a, 0x0c, 0x6d, 0x65,
+	0x73, 0x73, 0x61, 0x67, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0c,
+	0x52, 0x0b, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x32, 0x0a,
+	0x15, 0x64, 0x65, 0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f,
+	0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x64, 0x65,
+	0x61, 0x64, 0x6c, 0x69, 0x6e, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x22, 0xc9, 0x01, 0x0a, 0x1e, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54, 0x68, 0x72, 0x65, 0x73,
+	0x68, 0x6f, 0x6c, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x43, 0x6f, 0x6d, 0x70, 0x6c,
+	0x65, 0x74, 0x65, 0x64, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f,
+	0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x49, 0x64, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x65,
+	0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x11, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e,
+	0x64, 0x65, 0x78, 0x12, 0x27, 0x0a, 0x0f, 0x66, 0x69, 0x6e, 0x61, 0x6c, 0x5f, 0x73, 0x69, 0x67,
+	0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0e, 0x66, 0x69,
+	0x6e, 0x61, 0x6c, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12, 0x2f, 0x0a, 0x13,
+	0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x6c,
+	0x6f, 0x74, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69,
+	0x63, 0x69, 0x70, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x22, 0x84, 0x01,
+	0x0a, 0x1b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64,
+	0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x46, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x12, 0x1d, 0x0a,
+	0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x2e, 0x0a, 0x13,
+	0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e,
+	0x64, 0x65, 0x78, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x63, 0x75, 0x72, 0x72, 0x65,
+	0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06,
+	0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65,
+	0x61, 0x73, 0x6f, 0x6e, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x42, 0x0b, 0x45, 0x76, 0x65, 0x6e,
+	0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
+	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa,
+	0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca,
+	0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2,
+	0x02, 0x19, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42, 0x6c, 0x73, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

@@ -81,8 +81,8 @@ message VerificationVectorSubmission {
 
 // EpochBLSData contains all information about a DKG round for a specific epoch
 message EpochBLSData {
-  // epoch_id uniquely identifies this DKG round
-  uint64 epoch_id = 1;
+  // epoch_index uniquely identifies this DKG round
+  uint64 epoch_index = 1;
   
   // i_total_slots is the total number of slots in the DKG
   uint32 i_total_slots = 2;

@@ -104,10 +104,10 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	requestIdHash := sha256.Sum256([]byte(requestID))
 
 	signingData := blstypes.SigningData{
-		CurrentEpochId: currentEpochGroup.GroupData.EpochId,
-		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
-		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
-		Data:           blsData,             // The remaining data fields
+		CurrentEpochIndex: currentEpochGroup.GroupData.EpochIndex,
+		ChainId:           gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
+		RequestId:         requestIdHash[:],    // Request ID as bytes32 (32 bytes)
+		Data:              blsData,             // The remaining data fields
 	}
 
 	err = k.BlsKeeper.RequestThresholdSignature(ctx, signingData)
@@ -131,7 +131,7 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		"destinationAddress", msg.DestinationAddress,
 		"chainId", msg.ChainId,
 		"requestId", requestID,
-		"epochId", currentEpochGroup.GroupData.EpochId,
+		"epochId", currentEpochGroup.GroupData.EpochIndex,
 		"blsRequestId", blsRequestId)
 
 	// 9. Emit bridge mint event for off-chain monitoring
@@ -143,14 +143,14 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 			sdk.NewAttribute("destination_address", msg.DestinationAddress),
 			sdk.NewAttribute("chain_id", msg.ChainId),
 			sdk.NewAttribute("request_id", requestID),
-			sdk.NewAttribute("epoch_id", fmt.Sprintf("%d", currentEpochGroup.GroupData.EpochId)),
+			sdk.NewAttribute("epoch_id", fmt.Sprintf("%d", currentEpochGroup.GroupData.EpochIndex)),
 			sdk.NewAttribute("bls_request_id", blsRequestId),
 		),
 	)
 
 	return &types.MsgRequestBridgeMintResponse{
 		RequestId:    requestID,
-		EpochId:      currentEpochGroup.GroupData.EpochId,
+		EpochId:      currentEpochGroup.GroupData.EpochIndex,
 		BlsRequestId: blsRequestId,
 	}, nil
 }

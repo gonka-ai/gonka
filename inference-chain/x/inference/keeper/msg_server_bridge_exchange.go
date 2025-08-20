@@ -86,11 +86,11 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 				"proposedAmount", proposedTx.Amount)
 			return nil, fmt.Errorf("transaction content mismatch - potential attack detected")
 		}
-		// Get the epoch group for the existing transaction using pocStartBlockHeight
-		epochGroup, err := k.GetEpochGroup(goCtx, existingTx.PocStartBlockHeight, "")
+		// Get the epoch group for the existing transaction using epochIndex
+		epochGroup, err := k.GetEpochGroup(goCtx, existingTx.EpochIndex, "")
 		if err != nil {
 			k.LogError("Bridge exchange: unable to get epoch group for existing transaction", types.Messages,
-				"pocStartBlockHeight", existingTx.PocStartBlockHeight, "error", err)
+				"epochIndex", existingTx.EpochIndex, "error", err)
 			return nil, fmt.Errorf("unable to get epoch group for existing transaction: %v", err)
 		}
 
@@ -98,7 +98,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		epochGroupMembers, err := epochGroup.GetGroupMembers(ctx)
 		if err != nil {
 			k.LogError("Bridge exchange: unable to get epoch group members", types.Messages,
-				"pocStartBlockHeight", existingTx.PocStartBlockHeight, "error", err)
+				"epochIndex", existingTx.EpochIndex, "error", err)
 			return nil, fmt.Errorf("unable to get epoch group members: %v", err)
 		}
 
@@ -126,7 +126,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 
 		if !isInEpochGroup {
 			k.LogError("Bridge exchange: Validator not in transaction's epoch group", types.Messages,
-				"validator", msg.Validator, "pocStartBlockHeight", existingTx.PocStartBlockHeight)
+				"validator", msg.Validator, "epochIndex", existingTx.EpochIndex)
 			return nil, fmt.Errorf("validator not in transaction's epoch group")
 		}
 
@@ -218,7 +218,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	currentEpochMembers, err := currentEpochGroup.GetGroupMembers(ctx)
 	if err != nil {
 		k.LogError("Bridge exchange: unable to get current epoch group members", types.Messages,
-			"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight, "error", err)
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex, "error", err)
 		return nil, fmt.Errorf("unable to get current epoch group members: %v", err)
 	}
 
@@ -252,7 +252,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	// Complete the proposed transaction with epoch and validation data
 	proposedTx.Id = "" // Will be set by SetBridgeTransaction
 	proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
-	proposedTx.PocStartBlockHeight = currentEpochGroup.GroupData.PocStartBlockHeight
+	proposedTx.EpochIndex = currentEpochGroup.GroupData.EpochIndex
 	proposedTx.Validators = []string{msg.Validator}
 	proposedTx.TotalValidationPower = validatorPower
 
@@ -265,7 +265,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"receiptIndex", msg.ReceiptIndex,
 		"validator", msg.Validator,
 		"validatorPower", validatorPower,
-		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
+		"epochIndex", currentEpochGroup.GroupData.EpochIndex,
 		"amount", msg.Amount,
 		"uniqueId", proposedTx.Id)
 

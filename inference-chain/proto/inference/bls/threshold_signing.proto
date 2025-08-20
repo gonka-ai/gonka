@@ -31,8 +31,8 @@ enum ThresholdSigningStatus {
 // SigningData represents the data structure for requesting a threshold signature
 // Used as input to the RequestThresholdSignature keeper method
 message SigningData {
-  // current_epoch_id is the epoch to use for signing (must have completed DKG)
-  uint64 current_epoch_id = 1;
+  // current_epoch_index is the epoch to use for signing (must have completed DKG)
+  uint64 current_epoch_index = 1;
   
   // chain_id is the 32-byte chain identifier for cross-chain security
   bytes chain_id = 2;
@@ -49,8 +49,8 @@ message ThresholdSigningRequest {
   // request_id is the unique 32-byte identifier for this signing request
   bytes request_id = 1;
   
-  // current_epoch_id is the epoch being used for signing
-  uint64 current_epoch_id = 2;
+  // current_epoch_index is the epoch being used for signing
+  uint64 current_epoch_index = 2;
   
   // chain_id is the 32-byte chain identifier for cross-chain security
   bytes chain_id = 3;

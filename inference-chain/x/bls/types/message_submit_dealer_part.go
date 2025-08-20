@@ -13,9 +13,9 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(m.Creator); err != nil {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidAddress, "invalid creator address")
 	}
-	// epoch id
-	if m.EpochId == 0 {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "epoch_id must be > 0")
+	// epoch index
+	if m.EpochIndex == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "epoch_index must be > 0")
 	}
 	// commitments: non-empty, each G2 size and non-zero bytes
 	if len(m.Commitments) == 0 {

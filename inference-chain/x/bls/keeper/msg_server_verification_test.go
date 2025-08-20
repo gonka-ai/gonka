@@ -24,8 +24,8 @@ func TestSubmitVerificationVector_Success(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase
-	epochID := uint64(100)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(100)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Create verification message from first participant
@@ -34,7 +34,7 @@ func TestSubmitVerificationVector_Success(t *testing.T) {
 
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: dealerValidity,
 	}
 
@@ -44,7 +44,7 @@ func TestSubmitVerificationVector_Success(t *testing.T) {
 	require.NotNil(t, resp)
 
 	// Verify epoch data was updated
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 
 	// Verify successful submission
@@ -64,7 +64,7 @@ func TestSubmitVerificationVector_EpochNotFound(t *testing.T) {
 	// Try to submit for non-existent epoch
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        "participant1",
-		EpochId:        999,
+		EpochIndex:     999,
 		DealerValidity: []bool{true, false},
 	}
 
@@ -84,15 +84,15 @@ func TestSubmitVerificationVector_WrongPhase(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in DEALING phase
-	epochID := uint64(101)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(101)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	// Keep in DEALING phase
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	participant := epochBLSData.Participants[0]
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: []bool{true, false, true},
 	}
 
@@ -112,8 +112,8 @@ func TestSubmitVerificationVector_DeadlinePassed(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase with deadline already passed
-	epochID := uint64(102)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(102)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Set current block height past the verification deadline
@@ -123,7 +123,7 @@ func TestSubmitVerificationVector_DeadlinePassed(t *testing.T) {
 	participant := epochBLSData.Participants[0]
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: []bool{true, false, true},
 	}
 
@@ -143,14 +143,14 @@ func TestSubmitVerificationVector_NotParticipant(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase
-	epochID := uint64(103)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(103)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Try to submit from non-participant address
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        "not_a_participant",
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: []bool{true, false, true},
 	}
 
@@ -170,8 +170,8 @@ func TestSubmitVerificationVector_AlreadySubmitted(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase
-	epochID := uint64(104)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(104)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 
 	// Mark first participant as having already submitted (index-based)
 	participant := epochBLSData.Participants[0]
@@ -183,7 +183,7 @@ func TestSubmitVerificationVector_AlreadySubmitted(t *testing.T) {
 	// Try to submit again from same participant
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: []bool{false, true, true},
 	}
 
@@ -203,15 +203,15 @@ func TestSubmitVerificationVector_WrongDealerValidityLength(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase with 3 participants
-	epochID := uint64(105)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(105)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	participant := epochBLSData.Participants[0]
 	// Provide wrong length dealer validity array (2 instead of 3)
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: []bool{true, false}, // Wrong length
 	}
 
@@ -231,14 +231,14 @@ func TestSubmitVerificationVector_EventEmission(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase
-	epochID := uint64(106)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(106)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	participant := epochBLSData.Participants[0]
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: []bool{true, false, true},
 	}
 
@@ -267,8 +267,8 @@ func TestSubmitVerificationVector_MultipleParticipants(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data in VERIFYING phase with 3 participants
-	epochID := uint64(107)
-	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochIndex := uint64(107)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Submit verification vectors from all participants
@@ -280,7 +280,7 @@ func TestSubmitVerificationVector_MultipleParticipants(t *testing.T) {
 
 		msg := &types.MsgSubmitVerificationVector{
 			Creator:        participant.Address,
-			EpochId:        epochID,
+			EpochIndex:     epochIndex,
 			DealerValidity: dealerValidity,
 		}
 
@@ -290,7 +290,7 @@ func TestSubmitVerificationVector_MultipleParticipants(t *testing.T) {
 	}
 
 	// Verify all submissions were stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Len(t, storedData.VerificationSubmissions, 3)
 

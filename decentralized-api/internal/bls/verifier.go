@@ -20,29 +20,29 @@ const verifierLogTag = "[bls-verifier] "
 // ProcessVerifyingPhaseStarted handles the EventVerifyingPhaseStarted event
 func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCResponse) error {
 	// Extract event data from chain event (typed event from EmitTypedEvent)
-	epochIDs, ok := event.Result.Events["inference.bls.EventVerifyingPhaseStarted.epoch_id"]
-	if !ok || len(epochIDs) == 0 {
+	epochIndexes, ok := event.Result.Events["inference.bls.EventVerifyingPhaseStarted.epoch_id"]
+	if !ok || len(epochIndexes) == 0 {
 		return fmt.Errorf("epoch_id not found in verifying phase started event")
 	}
 
 	// Unquote the epoch_id value (handles JSON-encoded strings like "\"1\"")
-	unquotedEpochID, err := utils.UnquoteEventValue(epochIDs[0])
+	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
 		return fmt.Errorf("failed to unquote epoch_id: %w", err)
 	}
 
-	epochID, err := strconv.ParseUint(unquotedEpochID, 10, 64)
+	epochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse epoch_id: %w", err)
 	}
 
-	existingResult := bm.GetVerificationResult(epochID)
+	existingResult := bm.GetVerificationResult(epochIndex)
 	if existingResult != nil &&
 		(existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_VERIFYING ||
 			existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED ||
 			existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED) {
 		logging.Info(verifierLogTag+"Verification already completed for this epoch", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"existingPhase", existingResult.DkgPhase,
 			"isParticipant", existingResult.IsParticipant)
 		return nil
@@ -66,7 +66,7 @@ func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRes
 	}
 
 	logging.Info(verifierLogTag+"Processing DKG verifying phase started", inferenceTypes.BLS,
-		"epochID", epochID, "deadlineBlock", deadlineBlock, "verifier", bm.cosmosClient.GetAccountAddress())
+		"epochIndex", epochIndex, "deadlineBlock", deadlineBlock, "verifier", bm.cosmosClient.GetAccountAddress())
 
 	// Extract epoch data from event instead of querying chain
 	epochData, err := bm.extractEpochDataFromVerifyingEvent(event)
@@ -75,9 +75,9 @@ func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRes
 	}
 
 	// Setup, perform verification, and store result for this epoch using event data
-	completed, err := bm.setupAndPerformVerification(epochID, epochData)
+	completed, err := bm.setupAndPerformVerification(epochIndex, epochData)
 	if err != nil {
-		return fmt.Errorf("failed to setup and perform verification for epoch %d: %w", epochID, err)
+		return fmt.Errorf("failed to setup and perform verification for epoch %d: %w", epochIndex, err)
 	}
 
 	// If we're not a participant, return early
@@ -86,7 +86,7 @@ func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRes
 	}
 
 	// Submit verification vector
-	err = bm.submitVerificationVectorSimplified(epochID)
+	err = bm.submitVerificationVectorSimplified(epochIndex)
 	if err != nil {
 		return fmt.Errorf("failed to submit verification vector: %w", err)
 	}
@@ -96,10 +96,10 @@ func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRes
 
 // setupAndPerformVerification handles epoch data validation, participant setup, verification, and storage
 // Returns true if verification was completed and stored, false if we're not a participant or not in correct phase
-func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *types.EpochBLSData) (bool, error) {
+func (bm *BlsManager) setupAndPerformVerification(epochIndex uint64, epochData *types.EpochBLSData) (bool, error) {
 	// Create new verification result for this epoch
 	verificationResult := &VerificationResult{
-		EpochID: epochID,
+		EpochIndex: epochIndex,
 	}
 
 	// Set the DKG phase from epoch data
@@ -108,7 +108,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 	// Validate we're in the correct phase
 	if epochData.DkgPhase != types.DKGPhase_DKG_PHASE_VERIFYING {
 		logging.Debug(verifierLogTag+"DKG not in verifying phase", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"currentPhase", epochData.DkgPhase)
 		return false, nil // Return false to indicate we should skip verification
 	}
@@ -128,7 +128,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 
 	if myParticipantIndex == -1 {
 		logging.Debug(verifierLogTag+"Not a participant in this DKG round", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"myAddress", myAddress,
 			"participantCount", len(epochData.Participants))
 		return false, nil // Return false to indicate we should skip verification
@@ -139,7 +139,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 	verificationResult.SlotRange = [2]uint32{myParticipant.SlotStartIndex, myParticipant.SlotEndIndex}
 
 	logging.Debug(verifierLogTag+"Found participant info from epoch data", inferenceTypes.BLS,
-		"epochID", epochID,
+		"epochIndex", epochIndex,
 		"participantIndex", myParticipantIndex,
 		"slotRange", verificationResult.SlotRange,
 		"dealerPartsCount", len(epochData.DealerParts),
@@ -161,7 +161,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 // performVerificationAndReconstruction performs the core verification and share reconstruction logic
 func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipantIndex int) error {
 	logging.Debug(verifierLogTag+"Starting share verification and reconstruction", inferenceTypes.BLS,
-		"epochID", verificationResult.EpochID,
+		"epochIndex", verificationResult.EpochIndex,
 		"slotRange", verificationResult.SlotRange,
 		"dealerPartsCount", len(dealerParts),
 		"myParticipantIndex", myParticipantIndex)
@@ -291,7 +291,7 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 	}
 
 	logging.Info(verifierLogTag+"Completed verification and reconstruction", inferenceTypes.BLS,
-		"epochID", verificationResult.EpochID,
+		"epochIndex", verificationResult.EpochIndex,
 		"validDealers", countTrueValues(verificationResult.DealerValidity),
 		"totalDealers", len(dealerParts),
 		"processedSlots", len(verificationResult.AggregatedShares))
@@ -439,19 +439,19 @@ func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex
 }
 
 // submitVerificationVectorSimplified constructs and submits the verification vector to the chain
-func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
+func (bm *BlsManager) submitVerificationVectorSimplified(epochIndex uint64) error {
 	// Get verification result from cache
-	verificationResult := bm.cache.Get(epochID)
+	verificationResult := bm.cache.Get(epochIndex)
 	if verificationResult == nil {
-		return fmt.Errorf("verification result not found in cache for epoch %d", epochID)
+		return fmt.Errorf("verification result not found in cache for epoch %d", epochIndex)
 	}
 
-	logging.Debug(verifierLogTag+"Submitting verification vector", inferenceTypes.BLS, "epochID", epochID)
+	logging.Debug(verifierLogTag+"Submitting verification vector", inferenceTypes.BLS, "epochIndex", epochIndex)
 
 	// Submit the verification vector using the dealer validity we already determined
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        bm.cosmosClient.GetAccountAddress(),
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DealerValidity: verificationResult.DealerValidity,
 	}
 
@@ -461,7 +461,7 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 	}
 
 	logging.Debug(verifierLogTag+"Successfully submitted verification vector", inferenceTypes.BLS,
-		"epochID", epochID,
+		"epochIndex", epochIndex,
 		"validDealers", countTrueValues(verificationResult.DealerValidity),
 		"totalDealers", len(verificationResult.DealerValidity))
 
@@ -481,30 +481,30 @@ func countTrueValues(values []bool) int {
 
 // ProcessGroupPublicKeyGenerated handles the DKG completion event
 func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.JSONRPCResponse) error {
-	// Extract epochID from event
-	epochIDs, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_id"]
-	if !ok || len(epochIDs) == 0 {
+	// Extract EpochIndex from event
+	epochIndexes, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_id"]
+	if !ok || len(epochIndexes) == 0 {
 		return fmt.Errorf("epoch_id not found in group public key generated event")
 	}
 
 	// Unquote the epoch_id value (handles JSON-encoded strings like "\"1\"")
-	unquotedEpochID, err := utils.UnquoteEventValue(epochIDs[0])
+	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
 		return fmt.Errorf("failed to unquote epoch_id: %w", err)
 	}
 
-	epochID, err := strconv.ParseUint(unquotedEpochID, 10, 64)
+	epochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse epoch_id: %w", err)
 	}
 
-	logging.Debug(verifierLogTag+"Processing group public key generated", inferenceTypes.BLS, "epochID", epochID)
+	logging.Debug(verifierLogTag+"Processing group public key generated", inferenceTypes.BLS, "epochIndex", epochIndex)
 
 	// Check if we already have a COMPLETED or SIGNED result for this epoch
-	existingResult := bm.GetVerificationResult(epochID)
+	existingResult := bm.GetVerificationResult(epochIndex)
 	if existingResult != nil && (existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED || existingResult.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED) {
 		logging.Warn(verifierLogTag+"DKG already completed for this epoch", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"isParticipant", existingResult.IsParticipant)
 		return nil
 	}
@@ -518,15 +518,15 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 	// Validate we're in the correct phase
 	if epochData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED && epochData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
 		logging.Warn(verifierLogTag+"DKG not in completed phase", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"currentPhase", epochData.DkgPhase)
-		return fmt.Errorf("epoch %d is not in COMPLETED or SIGNED phase, current phase: %s", epochID, epochData.DkgPhase)
+		return fmt.Errorf("epoch %d is not in COMPLETED or SIGNED phase, current phase: %s", epochIndex, epochData.DkgPhase)
 	}
 
 	// If we don't have a VERIFYING result, we need to perform verification first
 	if existingResult == nil || existingResult.DkgPhase != types.DKGPhase_DKG_PHASE_VERIFYING {
 		logging.Debug(verifierLogTag+"No verification result found, performing verification", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"existingPhase", func() string {
 				if existingResult != nil {
 					return existingResult.DkgPhase.String()
@@ -535,20 +535,20 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 			}())
 
 		// Setup and perform verification to get our slot shares using event data
-		completed, err := bm.setupAndPerformVerification(epochID, epochData)
+		completed, err := bm.setupAndPerformVerification(epochIndex, epochData)
 		if err != nil {
-			return fmt.Errorf("failed to setup and perform verification for epoch %d: %w", epochID, err)
+			return fmt.Errorf("failed to setup and perform verification for epoch %d: %w", epochIndex, err)
 		}
 
 		if !completed {
-			logging.Warn(verifierLogTag+"Not a participant in this DKG round", inferenceTypes.BLS, "epochID", epochID)
+			logging.Warn(verifierLogTag+"Not a participant in this DKG round", inferenceTypes.BLS, "epochIndex", epochIndex)
 			return nil
 		}
 
 		// Get the updated verification result
-		existingResult = bm.GetVerificationResult(epochID)
+		existingResult = bm.GetVerificationResult(epochIndex)
 		if existingResult == nil {
-			return fmt.Errorf("verification result not found after performing verification for epoch %d", epochID)
+			return fmt.Errorf("verification result not found after performing verification for epoch %d", epochIndex)
 		}
 	}
 
@@ -556,18 +556,18 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 	// Validate group public key format before storing (should be 96 bytes for compressed G2)
 	if len(epochData.GroupPublicKey) != 96 {
 		logging.Warn(verifierLogTag+"Invalid group public key length from epoch data", inferenceTypes.BLS,
-			"epochID", epochID,
+			"epochIndex", epochIndex,
 			"expectedBytes", 96,
 			"actualBytes", len(epochData.GroupPublicKey))
 		return fmt.Errorf("invalid group public key length: expected 96 bytes, got %d", len(epochData.GroupPublicKey))
 	}
 
 	logging.Debug(verifierLogTag+"Group public key validated from epoch data", inferenceTypes.BLS,
-		"epochID", epochID,
+		"epochIndex", epochIndex,
 		"groupPubKeyBytes", len(epochData.GroupPublicKey))
 
 	completedResult := &VerificationResult{
-		EpochID:          epochID,
+		EpochIndex:       epochIndex,
 		DkgPhase:         types.DKGPhase_DKG_PHASE_COMPLETED,
 		IsParticipant:    existingResult.IsParticipant,
 		SlotRange:        existingResult.SlotRange,
@@ -582,7 +582,7 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 	bm.storeVerificationResult(completedResult)
 
 	logging.Info(verifierLogTag+"Successfully processed DKG completion", inferenceTypes.BLS,
-		"epochID", epochID,
+		"epochIndex", epochIndex,
 		"isParticipant", completedResult.IsParticipant,
 		"slotRange", completedResult.SlotRange,
 		"aggregatedSharesCount", len(completedResult.AggregatedShares),
@@ -625,9 +625,9 @@ func (bm *BlsManager) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSDat
 	}
 
 	// Manually convert string numbers to proper types for protobuf fields
-	if epochIDStr, ok := epochDataMap["epoch_id"].(string); ok {
-		if epochID, err := strconv.ParseUint(epochIDStr, 10, 64); err == nil {
-			epochDataMap["epoch_id"] = epochID
+	if epochIndexStr, ok := epochDataMap["epoch_id"].(string); ok {
+		if epochIndex, err := strconv.ParseUint(epochIndexStr, 10, 64); err == nil {
+			epochDataMap["epoch_id"] = epochIndex
 		}
 	}
 

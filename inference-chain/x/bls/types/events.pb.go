@@ -27,8 +27,8 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 // EventKeyGenerationInitiated is emitted when DKG is initiated for an epoch
 type EventKeyGenerationInitiated struct {
-	// epoch_id uniquely identifies this DKG round
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index uniquely identifies this DKG round
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// i_total_slots is the total number of slots in the DKG
 	ITotalSlots uint32 `protobuf:"varint,2,opt,name=i_total_slots,json=iTotalSlots,proto3" json:"i_total_slots,omitempty"`
 	// t_slots_degree is the polynomial degree t for the threshold scheme
@@ -70,9 +70,9 @@ func (m *EventKeyGenerationInitiated) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventKeyGenerationInitiated proto.InternalMessageInfo
 
-func (m *EventKeyGenerationInitiated) GetEpochId() uint64 {
+func (m *EventKeyGenerationInitiated) GetEpochIndex() uint64 {
 	if m != nil {
-		return m.EpochId
+		return m.EpochIndex
 	}
 	return 0
 }
@@ -100,8 +100,8 @@ func (m *EventKeyGenerationInitiated) GetParticipants() []BLSParticipantInfo {
 
 // EventDealerPartSubmitted is emitted when a participant submits their dealer part
 type EventDealerPartSubmitted struct {
-	// epoch_id identifies the DKG round this dealer part belongs to
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round this dealer part belongs to
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// dealer_address is the address of the dealer who submitted their part
 	DealerAddress string `protobuf:"bytes,2,opt,name=dealer_address,json=dealerAddress,proto3" json:"dealer_address,omitempty"`
 }
@@ -139,9 +139,9 @@ func (m *EventDealerPartSubmitted) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventDealerPartSubmitted proto.InternalMessageInfo
 
-func (m *EventDealerPartSubmitted) GetEpochId() uint64 {
+func (m *EventDealerPartSubmitted) GetEpochIndex() uint64 {
 	if m != nil {
-		return m.EpochId
+		return m.EpochIndex
 	}
 	return 0
 }
@@ -155,8 +155,8 @@ func (m *EventDealerPartSubmitted) GetDealerAddress() string {
 
 // EventVerifyingPhaseStarted is emitted when the DKG transitions to the verification phase
 type EventVerifyingPhaseStarted struct {
-	// epoch_id identifies the DKG round entering verification phase
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round entering verification phase
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// verifying_phase_deadline_block is the block height deadline for the verification phase
 	VerifyingPhaseDeadlineBlock uint64 `protobuf:"varint,2,opt,name=verifying_phase_deadline_block,json=verifyingPhaseDeadlineBlock,proto3" json:"verifying_phase_deadline_block,omitempty"`
 	// epoch_data contains the complete epoch BLS data at the time of transition
@@ -196,9 +196,9 @@ func (m *EventVerifyingPhaseStarted) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventVerifyingPhaseStarted proto.InternalMessageInfo
 
-func (m *EventVerifyingPhaseStarted) GetEpochId() uint64 {
+func (m *EventVerifyingPhaseStarted) GetEpochIndex() uint64 {
 	if m != nil {
-		return m.EpochId
+		return m.EpochIndex
 	}
 	return 0
 }
@@ -219,8 +219,8 @@ func (m *EventVerifyingPhaseStarted) GetEpochData() EpochBLSData {
 
 // EventDKGFailed is emitted when a DKG round fails
 type EventDKGFailed struct {
-	// epoch_id identifies the DKG round that failed
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round that failed
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// reason describes why the DKG failed
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// epoch_data contains the complete epoch BLS data at the time of failure
@@ -260,9 +260,9 @@ func (m *EventDKGFailed) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventDKGFailed proto.InternalMessageInfo
 
-func (m *EventDKGFailed) GetEpochId() uint64 {
+func (m *EventDKGFailed) GetEpochIndex() uint64 {
 	if m != nil {
-		return m.EpochId
+		return m.EpochIndex
 	}
 	return 0
 }
@@ -283,8 +283,8 @@ func (m *EventDKGFailed) GetEpochData() EpochBLSData {
 
 // EventVerificationVectorSubmitted is emitted when a participant submits their verification vector
 type EventVerificationVectorSubmitted struct {
-	// epoch_id identifies the DKG round this verification submission belongs to
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index identifies the DKG round this verification submission belongs to
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// participant_address is the address of the participant who submitted verification
 	ParticipantAddress string `protobuf:"bytes,2,opt,name=participant_address,json=participantAddress,proto3" json:"participant_address,omitempty"`
 }
@@ -322,9 +322,9 @@ func (m *EventVerificationVectorSubmitted) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventVerificationVectorSubmitted proto.InternalMessageInfo
 
-func (m *EventVerificationVectorSubmitted) GetEpochId() uint64 {
+func (m *EventVerificationVectorSubmitted) GetEpochIndex() uint64 {
 	if m != nil {
-		return m.EpochId
+		return m.EpochIndex
 	}
 	return 0
 }
@@ -338,8 +338,8 @@ func (m *EventVerificationVectorSubmitted) GetParticipantAddress() string {
 
 // EventGroupPublicKeyGenerated is emitted when the DKG completes successfully and group public key is computed
 type EventGroupPublicKeyGenerated struct {
-	// epoch_id uniquely identifies this DKG round
-	EpochId uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// epoch_index uniquely identifies this DKG round
+	EpochIndex uint64 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	// group_public_key is the final aggregated group public key (compressed G2 format, 96 bytes)
 	GroupPublicKey []byte `protobuf:"bytes,2,opt,name=group_public_key,json=groupPublicKey,proto3" json:"group_public_key,omitempty"`
 	// i_total_slots is the total number of slots in the DKG
@@ -385,9 +385,9 @@ func (m *EventGroupPublicKeyGenerated) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventGroupPublicKeyGenerated proto.InternalMessageInfo
 
-func (m *EventGroupPublicKeyGenerated) GetEpochId() uint64 {
+func (m *EventGroupPublicKeyGenerated) GetEpochIndex() uint64 {
 	if m != nil {
-		return m.EpochId
+		return m.EpochIndex
 	}
 	return 0
 }
@@ -429,8 +429,8 @@ func (m *EventGroupPublicKeyGenerated) GetChainId() string {
 
 // EventGroupKeyValidated is emitted when group key validation completes successfully
 type EventGroupKeyValidated struct {
-	// new_epoch_id identifies the epoch whose group public key was successfully validated
-	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// new_epoch_index identifies the epoch whose group public key was successfully validated
+	NewEpochIndex uint64 `protobuf:"varint,1,opt,name=new_epoch_index,json=newEpochIndex,proto3" json:"new_epoch_index,omitempty"`
 	// final_signature is the aggregated signature validating the new group public key (G1 point, 48-byte compressed)
 	FinalSignature []byte `protobuf:"bytes,2,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
 }
@@ -468,9 +468,9 @@ func (m *EventGroupKeyValidated) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventGroupKeyValidated proto.InternalMessageInfo
 
-func (m *EventGroupKeyValidated) GetNewEpochId() uint64 {
+func (m *EventGroupKeyValidated) GetNewEpochIndex() uint64 {
 	if m != nil {
-		return m.NewEpochId
+		return m.NewEpochIndex
 	}
 	return 0
 }
@@ -484,8 +484,8 @@ func (m *EventGroupKeyValidated) GetFinalSignature() []byte {
 
 // EventGroupKeyValidationFailed is emitted when group key validation fails
 type EventGroupKeyValidationFailed struct {
-	// new_epoch_id identifies the epoch whose group public key validation failed
-	NewEpochId uint64 `protobuf:"varint,1,opt,name=new_epoch_id,json=newEpochId,proto3" json:"new_epoch_id,omitempty"`
+	// new_epoch_index identifies the epoch whose group public key validation failed
+	NewEpochIndex uint64 `protobuf:"varint,1,opt,name=new_epoch_index,json=newEpochIndex,proto3" json:"new_epoch_index,omitempty"`
 	// reason describes why the validation failed
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 }
@@ -523,9 +523,9 @@ func (m *EventGroupKeyValidationFailed) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventGroupKeyValidationFailed proto.InternalMessageInfo
 
-func (m *EventGroupKeyValidationFailed) GetNewEpochId() uint64 {
+func (m *EventGroupKeyValidationFailed) GetNewEpochIndex() uint64 {
 	if m != nil {
-		return m.NewEpochId
+		return m.NewEpochIndex
 	}
 	return 0
 }
@@ -541,8 +541,8 @@ func (m *EventGroupKeyValidationFailed) GetReason() string {
 type EventThresholdSigningRequested struct {
 	// request_id uniquely identifies this threshold signing request
 	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// current_epoch_id identifies the epoch being used for signing
-	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// current_epoch_index identifies the epoch being used for signing
+	CurrentEpochIndex uint64 `protobuf:"varint,2,opt,name=current_epoch_index,json=currentEpochIndex,proto3" json:"current_epoch_index,omitempty"`
 	// encoded_data is the Ethereum-compatible abi.encodePacked result that participants will sign
 	EncodedData []byte `protobuf:"bytes,3,opt,name=encoded_data,json=encodedData,proto3" json:"encoded_data,omitempty"`
 	// message_hash is the keccak256 hash of the encoded_data (pre-computed for participants)
@@ -591,9 +591,9 @@ func (m *EventThresholdSigningRequested) GetRequestId() []byte {
 	return nil
 }
 
-func (m *EventThresholdSigningRequested) GetCurrentEpochId() uint64 {
+func (m *EventThresholdSigningRequested) GetCurrentEpochIndex() uint64 {
 	if m != nil {
-		return m.CurrentEpochId
+		return m.CurrentEpochIndex
 	}
 	return 0
 }
@@ -623,8 +623,8 @@ func (m *EventThresholdSigningRequested) GetDeadlineBlockHeight() int64 {
 type EventThresholdSigningCompleted struct {
 	// request_id identifies the threshold signing request that completed
 	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// current_epoch_id identifies the epoch used for signing
-	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// current_epoch_index identifies the epoch used for signing
+	CurrentEpochIndex uint64 `protobuf:"varint,2,opt,name=current_epoch_index,json=currentEpochIndex,proto3" json:"current_epoch_index,omitempty"`
 	// final_signature is the aggregated BLS threshold signature (G1 point, 48-byte compressed)
 	FinalSignature []byte `protobuf:"bytes,3,opt,name=final_signature,json=finalSignature,proto3" json:"final_signature,omitempty"`
 	// participating_slots is the total number of slots that participated in the signing
@@ -671,9 +671,9 @@ func (m *EventThresholdSigningCompleted) GetRequestId() []byte {
 	return nil
 }
 
-func (m *EventThresholdSigningCompleted) GetCurrentEpochId() uint64 {
+func (m *EventThresholdSigningCompleted) GetCurrentEpochIndex() uint64 {
 	if m != nil {
-		return m.CurrentEpochId
+		return m.CurrentEpochIndex
 	}
 	return 0
 }
@@ -696,8 +696,8 @@ func (m *EventThresholdSigningCompleted) GetParticipatingSlots() uint32 {
 type EventThresholdSigningFailed struct {
 	// request_id identifies the threshold signing request that failed
 	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// current_epoch_id identifies the epoch used for signing
-	CurrentEpochId uint64 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	// current_epoch_index identifies the epoch used for signing
+	CurrentEpochIndex uint64 `protobuf:"varint,2,opt,name=current_epoch_index,json=currentEpochIndex,proto3" json:"current_epoch_index,omitempty"`
 	// reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
 	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 }
@@ -742,9 +742,9 @@ func (m *EventThresholdSigningFailed) GetRequestId() []byte {
 	return nil
 }
 
-func (m *EventThresholdSigningFailed) GetCurrentEpochId() uint64 {
+func (m *EventThresholdSigningFailed) GetCurrentEpochIndex() uint64 {
 	if m != nil {
-		return m.CurrentEpochId
+		return m.CurrentEpochIndex
 	}
 	return 0
 }
@@ -773,59 +773,60 @@ func init() {
 func init() { proto.RegisterFile("inference/bls/events.proto", fileDescriptor_96b42c6054f2dc42) }
 
 var fileDescriptor_96b42c6054f2dc42 = []byte{
-	// 823 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x55, 0x41, 0x8f, 0xdb, 0x44,
-	0x14, 0x8e, 0x9b, 0xb0, 0x65, 0x27, 0x4e, 0x00, 0xb7, 0x54, 0x69, 0x96, 0x9a, 0xac, 0x85, 0x44,
-	0x2e, 0x24, 0xd2, 0xf2, 0x03, 0x80, 0x34, 0xcb, 0x36, 0x4a, 0x0f, 0x2b, 0xa7, 0x5a, 0x09, 0x2e,
-	0xd6, 0xc4, 0xf3, 0x62, 0x8f, 0xea, 0xcc, 0x98, 0x99, 0x71, 0x4a, 0x2e, 0xdc, 0x90, 0x10, 0x27,
-	0x7e, 0x0c, 0x67, 0x2e, 0x5c, 0x7a, 0xa3, 0xe2, 0xc4, 0x09, 0xa1, 0xcd, 0x1f, 0x41, 0x33, 0x76,
-	0x70, 0xbc, 0xa4, 0xdd, 0xad, 0xb4, 0x97, 0x28, 0xf3, 0xbd, 0xf7, 0xe6, 0xbd, 0xef, 0x7b, 0xef,
-	0x79, 0x50, 0x97, 0xb2, 0x05, 0x08, 0x60, 0x21, 0x0c, 0xe7, 0x89, 0x1c, 0xc2, 0x0a, 0x98, 0x92,
-	0x83, 0x54, 0x70, 0xc5, 0x9d, 0xd6, 0x7f, 0xb6, 0xc1, 0x3c, 0x91, 0xdd, 0x0f, 0xf0, 0x92, 0x32,
-	0x3e, 0x34, 0xbf, 0xb9, 0x47, 0xf7, 0x61, 0xc8, 0xe5, 0x92, 0xcb, 0xc0, 0x9c, 0x86, 0xf9, 0xa1,
-	0x30, 0xdd, 0x8f, 0x78, 0xc4, 0x73, 0x5c, 0xff, 0xdb, 0x06, 0x54, 0xd3, 0xa9, 0x75, 0x0a, 0x45,
-	0x80, 0xf7, 0x87, 0x85, 0x8e, 0x4e, 0x75, 0xfa, 0x29, 0xac, 0xcf, 0x80, 0x81, 0xc0, 0x8a, 0x72,
-	0x36, 0x61, 0x54, 0x51, 0xac, 0x80, 0x38, 0x0f, 0xd1, 0xbb, 0x90, 0xf2, 0x30, 0x0e, 0x28, 0xe9,
-	0x58, 0x3d, 0xab, 0xdf, 0xf0, 0xef, 0x9a, 0xf3, 0x84, 0x38, 0x1e, 0x6a, 0xd1, 0x40, 0x71, 0x85,
-	0x93, 0x40, 0x26, 0x5c, 0xc9, 0xce, 0x9d, 0x9e, 0xd5, 0x6f, 0xf9, 0x4d, 0xfa, 0x4c, 0x63, 0x33,
-	0x0d, 0x39, 0x9f, 0xa0, 0xb6, 0xca, 0xad, 0x01, 0x81, 0x48, 0x00, 0x74, 0xea, 0xc6, 0xc9, 0x56,
-	0xc6, 0x3e, 0x36, 0x98, 0x33, 0x45, 0x76, 0x8a, 0x85, 0xa2, 0x21, 0x4d, 0x31, 0x53, 0xb2, 0xd3,
-	0xe8, 0xd5, 0xfb, 0xcd, 0x93, 0xe3, 0x41, 0x45, 0x89, 0xc1, 0xe8, 0xe9, 0xec, 0xbc, 0xf4, 0x9a,
-	0xb0, 0x05, 0x1f, 0x35, 0x5e, 0xfe, 0xfd, 0x71, 0xcd, 0xaf, 0x04, 0x7b, 0x2b, 0xd4, 0x31, 0x84,
-	0xc6, 0x80, 0x13, 0x10, 0x3a, 0x62, 0x96, 0xcd, 0x97, 0x54, 0x5d, 0xc3, 0xe6, 0x0b, 0xd4, 0x26,
-	0x26, 0x22, 0xc0, 0x84, 0x08, 0x90, 0x39, 0x9d, 0xc3, 0x51, 0xe7, 0xcf, 0x5f, 0x3f, 0xbb, 0x5f,
-	0x68, 0xfc, 0x55, 0x6e, 0x99, 0x29, 0x41, 0x59, 0xe4, 0xb7, 0x72, 0xff, 0x02, 0xf4, 0x7e, 0xb3,
-	0x50, 0xd7, 0x24, 0xbe, 0x00, 0x41, 0x17, 0x6b, 0xca, 0xa2, 0xf3, 0x18, 0x4b, 0x98, 0x29, 0x2c,
-	0xae, 0x49, 0xfd, 0x18, 0xb9, 0xab, 0x6d, 0x4c, 0x90, 0xea, 0xa0, 0x80, 0x00, 0x26, 0x09, 0x65,
-	0x10, 0xcc, 0x13, 0x1e, 0x3e, 0x37, 0xa5, 0x34, 0xfc, 0xa3, 0x55, 0xe5, 0xe6, 0x71, 0xe1, 0x33,
-	0xd2, 0x2e, 0xce, 0x97, 0x08, 0xe5, 0xf7, 0x13, 0xac, 0xb0, 0x51, 0xb9, 0x79, 0x72, 0x74, 0x45,
-	0xc1, 0x53, 0xed, 0x30, 0x7a, 0x3a, 0x1b, 0x63, 0x85, 0x0b, 0xed, 0x0e, 0x4d, 0x90, 0x06, 0xbc,
-	0x1f, 0x2d, 0xd4, 0xce, 0x95, 0x9b, 0x9e, 0x7d, 0x8d, 0x69, 0xf2, 0xe6, 0xa2, 0x1f, 0xa0, 0x03,
-	0x01, 0x58, 0x72, 0x96, 0xeb, 0xe4, 0x17, 0xa7, 0x5b, 0xa8, 0xe3, 0x27, 0x0b, 0xf5, 0x4a, 0x21,
-	0x69, 0x68, 0x26, 0xf2, 0x02, 0x42, 0xc5, 0xc5, 0x8d, 0x3a, 0x39, 0x41, 0xf7, 0x76, 0x06, 0xe2,
-	0xc6, 0xed, 0x74, 0x76, 0x82, 0xb6, 0x3d, 0xfd, 0xf9, 0x0e, 0xfa, 0xc8, 0x94, 0x72, 0x26, 0x78,
-	0x96, 0x9e, 0x67, 0xf3, 0x84, 0x86, 0xe5, 0xa2, 0xbc, 0xb9, 0x8c, 0x3e, 0x7a, 0x3f, 0xd2, 0x51,
-	0x41, 0x6a, 0xc2, 0x82, 0xe7, 0xb0, 0x36, 0x35, 0xd8, 0x7e, 0x3b, 0xaa, 0xdc, 0xf6, 0xff, 0x45,
-	0xaa, 0xdf, 0x64, 0x91, 0x1a, 0x7b, 0x16, 0xa9, 0x2a, 0xfe, 0x3b, 0x6f, 0x2f, 0xbe, 0x26, 0x14,
-	0xc6, 0x98, 0x32, 0x4d, 0xe8, 0xc0, 0x34, 0xf6, 0xae, 0x39, 0x4f, 0x88, 0x17, 0xa2, 0x07, 0xa5,
-	0x16, 0x53, 0x58, 0x5f, 0xe0, 0x84, 0x12, 0xa3, 0x42, 0x0f, 0xd9, 0x0c, 0x5e, 0x04, 0x57, 0x94,
-	0x40, 0x0c, 0x5e, 0x9c, 0x16, 0x62, 0x7c, 0x8a, 0xde, 0x5b, 0x50, 0xa6, 0x09, 0xd2, 0x88, 0x61,
-	0x95, 0x09, 0xd8, 0x6a, 0x61, 0xe0, 0xd9, 0x16, 0xf5, 0xbe, 0x41, 0x8f, 0xf6, 0x25, 0xa1, 0x9c,
-	0x15, 0x23, 0x79, 0x7d, 0xae, 0xd7, 0x4c, 0xa6, 0xb7, 0xb1, 0x90, 0x6b, 0xee, 0x7e, 0x16, 0x0b,
-	0x90, 0x31, 0x4f, 0x88, 0x4e, 0xab, 0x5b, 0x0f, 0xdf, 0x65, 0x20, 0x35, 0x91, 0x47, 0x08, 0x89,
-	0xfc, 0xb0, 0xbd, 0xda, 0xf6, 0x0f, 0x0b, 0x24, 0x6f, 0x69, 0x98, 0x09, 0x01, 0x4c, 0x95, 0xf9,
-	0xf3, 0xd5, 0x6c, 0x17, 0xf8, 0xb6, 0x86, 0x63, 0x64, 0x03, 0x0b, 0x39, 0x01, 0x52, 0xee, 0x81,
-	0xed, 0x37, 0x0b, 0xcc, 0x28, 0x7d, 0x8c, 0xec, 0x25, 0x48, 0x89, 0x23, 0x08, 0x62, 0x2c, 0x63,
-	0xd3, 0x4f, 0xdb, 0x6f, 0x16, 0xd8, 0x13, 0x2c, 0x63, 0xe7, 0x04, 0x7d, 0x58, 0xfd, 0x10, 0x04,
-	0x31, 0xd0, 0x28, 0x56, 0xa6, 0xb3, 0x75, 0xff, 0x1e, 0xd9, 0xfd, 0x02, 0x3c, 0x31, 0x26, 0xef,
-	0xf7, 0xd7, 0xb1, 0x7c, 0xcc, 0x97, 0x69, 0x02, 0xb7, 0xca, 0x72, 0x4f, 0x57, 0xeb, 0xfb, 0xba,
-	0xea, 0x0c, 0x77, 0x56, 0x52, 0xe9, 0xaf, 0x5c, 0x3e, 0xe7, 0xf9, 0x08, 0x3b, 0x15, 0x93, 0x19,
-	0x67, 0xef, 0x87, 0xe2, 0x55, 0xba, 0x4a, 0xa2, 0x18, 0x82, 0x5b, 0x63, 0x50, 0xce, 0x4a, 0x7d,
-	0x77, 0x56, 0x46, 0x93, 0x97, 0x97, 0xae, 0xf5, 0xea, 0xd2, 0xb5, 0xfe, 0xb9, 0x74, 0xad, 0x5f,
-	0x36, 0x6e, 0xed, 0xd5, 0xc6, 0xad, 0xfd, 0xb5, 0x71, 0x6b, 0xdf, 0x0e, 0x23, 0xaa, 0xe2, 0x6c,
-	0x3e, 0x08, 0xf9, 0x72, 0x98, 0x0a, 0x4e, 0xb2, 0x50, 0xc9, 0x90, 0x9a, 0xb7, 0xb5, 0x7c, 0x65,
-	0xbf, 0x2f, 0xdf, 0xd9, 0xf9, 0x81, 0x79, 0x68, 0x3f, 0xff, 0x37, 0x00, 0x00, 0xff, 0xff, 0xc8,
-	0x35, 0xe0, 0x41, 0xf4, 0x07, 0x00, 0x00,
+	// 836 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x55, 0xcd, 0x8e, 0x1b, 0x45,
+	0x10, 0xde, 0x89, 0xcd, 0xc2, 0xb6, 0x7f, 0x42, 0x66, 0x43, 0xe4, 0x78, 0xc9, 0xc4, 0x3b, 0x42,
+	0xe0, 0x0b, 0xb6, 0xb4, 0x3c, 0x00, 0xe0, 0x78, 0xd9, 0x58, 0xce, 0x61, 0x35, 0x8e, 0xf6, 0xc0,
+	0xa5, 0xd5, 0x9e, 0x2e, 0xcf, 0xb4, 0x32, 0xee, 0x1e, 0xba, 0x7b, 0x36, 0xb1, 0xc4, 0x91, 0x1b,
+	0x12, 0xca, 0xc3, 0xf0, 0x08, 0x1c, 0xc2, 0x2d, 0x42, 0x42, 0xe2, 0x84, 0xd0, 0xee, 0x89, 0xb7,
+	0x40, 0xdd, 0x33, 0x66, 0x3c, 0x89, 0x23, 0x39, 0x52, 0x72, 0xb1, 0xdc, 0x5f, 0x55, 0x4d, 0x55,
+	0x7d, 0xf5, 0x55, 0x37, 0xea, 0x32, 0xbe, 0x00, 0x09, 0x3c, 0x84, 0xe1, 0x3c, 0x51, 0x43, 0xb8,
+	0x04, 0xae, 0xd5, 0x20, 0x95, 0x42, 0x0b, 0xb7, 0xf5, 0xbf, 0x6d, 0x30, 0x4f, 0x54, 0xf7, 0x16,
+	0x59, 0x32, 0x2e, 0x86, 0xf6, 0x37, 0xf7, 0xe8, 0xde, 0x0d, 0x85, 0x5a, 0x0a, 0x85, 0xed, 0x69,
+	0x98, 0x1f, 0x0a, 0xd3, 0xed, 0x48, 0x44, 0x22, 0xc7, 0xcd, 0xbf, 0x75, 0x40, 0x35, 0x9d, 0x5e,
+	0xa5, 0x50, 0x04, 0xf8, 0x7f, 0x3a, 0xe8, 0xe8, 0xd4, 0xa4, 0x9f, 0xc2, 0xea, 0x0c, 0x38, 0x48,
+	0xa2, 0x99, 0xe0, 0x13, 0xce, 0x34, 0x23, 0x1a, 0xa8, 0x7b, 0x1f, 0x35, 0x20, 0x15, 0x61, 0x8c,
+	0x19, 0xa7, 0xf0, 0xac, 0xe3, 0xf4, 0x9c, 0x7e, 0x3d, 0x40, 0x16, 0x9a, 0x18, 0xc4, 0xf5, 0x51,
+	0x8b, 0x61, 0x2d, 0x34, 0x49, 0xb0, 0x4a, 0x84, 0x56, 0x9d, 0x1b, 0x3d, 0xa7, 0xdf, 0x0a, 0x1a,
+	0xec, 0xb1, 0xc1, 0x66, 0x06, 0x72, 0x3f, 0x43, 0x6d, 0x9d, 0x5b, 0x31, 0x85, 0x48, 0x02, 0x74,
+	0x6a, 0xd6, 0xa9, 0xa9, 0xad, 0x7d, 0x6c, 0x31, 0x77, 0x8a, 0x9a, 0x29, 0x91, 0x9a, 0x85, 0x2c,
+	0x25, 0x5c, 0xab, 0x4e, 0xbd, 0x57, 0xeb, 0x37, 0x4e, 0x8e, 0x07, 0x15, 0x3e, 0x06, 0xa3, 0x47,
+	0xb3, 0xf3, 0xd2, 0x6b, 0xc2, 0x17, 0x62, 0x54, 0x7f, 0xf1, 0xf7, 0xfd, 0xbd, 0xa0, 0x12, 0xec,
+	0xff, 0x88, 0x3a, 0xb6, 0xad, 0x31, 0x90, 0x04, 0xa4, 0x89, 0x98, 0x65, 0xf3, 0x25, 0xd3, 0x3b,
+	0xf5, 0xf4, 0x35, 0x6a, 0x53, 0x1b, 0x87, 0x09, 0xa5, 0x12, 0x54, 0xde, 0xd4, 0xc1, 0xa8, 0xf3,
+	0xc7, 0xaf, 0x5f, 0xde, 0x2e, 0xf8, 0xfe, 0x36, 0xb7, 0xcc, 0xb4, 0x64, 0x3c, 0x0a, 0x5a, 0xb9,
+	0x7f, 0x01, 0xfa, 0xbf, 0x39, 0xa8, 0x6b, 0xd3, 0x5f, 0x80, 0x64, 0x8b, 0x15, 0xe3, 0xd1, 0x79,
+	0x4c, 0x14, 0xcc, 0x34, 0x91, 0x3b, 0x15, 0xf0, 0x00, 0x79, 0x97, 0xeb, 0x48, 0x9c, 0x9a, 0x50,
+	0x4c, 0x81, 0xd0, 0x84, 0x71, 0xc0, 0xf3, 0x44, 0x84, 0x4f, 0x6c, 0x41, 0xf5, 0xe0, 0xe8, 0xb2,
+	0xf2, 0xfd, 0x71, 0xe1, 0x33, 0x32, 0x2e, 0xee, 0x37, 0x28, 0xff, 0x24, 0xa6, 0x44, 0x13, 0xcb,
+	0x78, 0xe3, 0xe4, 0xe8, 0x15, 0x36, 0x4f, 0x8d, 0xc3, 0xe8, 0xd1, 0x6c, 0x4c, 0x34, 0x29, 0x78,
+	0x3c, 0xb0, 0x41, 0x06, 0xf0, 0x7f, 0x76, 0x50, 0x3b, 0x67, 0x71, 0x7a, 0xf6, 0x1d, 0x61, 0xc9,
+	0x2e, 0xa5, 0xdf, 0x41, 0xfb, 0x12, 0x88, 0x12, 0x3c, 0xe7, 0x2c, 0x28, 0x4e, 0xef, 0xa0, 0x9a,
+	0x5f, 0x1c, 0xd4, 0x2b, 0x49, 0x65, 0xa1, 0x55, 0xea, 0x05, 0x84, 0x5a, 0xc8, 0xb7, 0x98, 0xed,
+	0x04, 0x1d, 0x6e, 0x08, 0x65, 0xe7, 0x01, 0xbb, 0x1b, 0x41, 0xeb, 0x29, 0x3f, 0xbf, 0x81, 0x3e,
+	0xb5, 0x05, 0x9d, 0x49, 0x91, 0xa5, 0xe7, 0xd9, 0x3c, 0x61, 0x61, 0xb9, 0x46, 0xbb, 0x14, 0xd3,
+	0x47, 0x1f, 0x47, 0x26, 0x16, 0xa7, 0x36, 0x18, 0x3f, 0x81, 0x95, 0xad, 0xa4, 0x19, 0xb4, 0xa3,
+	0xca, 0x37, 0x5f, 0x5f, 0xb3, 0xda, 0x2e, 0x6b, 0x56, 0xdf, 0xb2, 0x66, 0xd5, 0x41, 0x7c, 0xf0,
+	0xf6, 0x83, 0x70, 0xef, 0xa2, 0x8f, 0xc2, 0x98, 0x30, 0x8e, 0x19, 0xed, 0xec, 0xdb, 0x21, 0x7f,
+	0x68, 0xcf, 0x13, 0xea, 0x33, 0x74, 0xa7, 0x64, 0x64, 0x0a, 0xab, 0x0b, 0x92, 0x30, 0x6a, 0xb9,
+	0xf8, 0x1c, 0xdd, 0xe4, 0xf0, 0x14, 0xbf, 0xce, 0x47, 0x8b, 0xc3, 0xd3, 0xd3, 0x92, 0x92, 0x2f,
+	0xd0, 0xcd, 0x05, 0xe3, 0xa6, 0x4d, 0x16, 0x71, 0xa2, 0x33, 0x09, 0x6b, 0x46, 0x2c, 0x3c, 0x5b,
+	0xa3, 0x3e, 0x46, 0xf7, 0xb6, 0xa5, 0x62, 0x82, 0x17, 0x52, 0xdd, 0x35, 0xe3, 0x1b, 0x14, 0xeb,
+	0xff, 0xeb, 0x20, 0xcf, 0x66, 0x78, 0x1c, 0x4b, 0x50, 0xb1, 0x48, 0xa8, 0x49, 0x6e, 0xc4, 0x00,
+	0x3f, 0x64, 0xa0, 0x4c, 0x53, 0xf7, 0x10, 0x92, 0xf9, 0xc1, 0x70, 0xe1, 0xd8, 0x3a, 0x0f, 0x0a,
+	0x64, 0x42, 0xdd, 0x01, 0x3a, 0x0c, 0x33, 0x29, 0x81, 0xeb, 0x4a, 0x15, 0xf9, 0xee, 0xde, 0x2a,
+	0x4c, 0x1b, 0x95, 0x1c, 0xa3, 0x26, 0xf0, 0x50, 0x50, 0xa0, 0xe5, 0x96, 0x34, 0x83, 0x46, 0x81,
+	0x59, 0xee, 0x8f, 0x51, 0x73, 0x09, 0x4a, 0x91, 0x08, 0x70, 0x4c, 0x54, 0x6c, 0x27, 0xdc, 0x0c,
+	0x1a, 0x05, 0xf6, 0x90, 0xa8, 0xd8, 0x3d, 0x41, 0x9f, 0x54, 0x2f, 0x0b, 0x1c, 0x03, 0x8b, 0x62,
+	0x6d, 0x67, 0x5d, 0x0b, 0x0e, 0xe9, 0xe6, 0x2d, 0xf1, 0xd0, 0x9a, 0xfc, 0xdf, 0xdf, 0xd4, 0xeb,
+	0x03, 0xb1, 0x4c, 0x13, 0x78, 0x0f, 0xbd, 0x6e, 0x99, 0x73, 0x6d, 0xdb, 0x9c, 0xdd, 0xe1, 0xc6,
+	0xc2, 0x6a, 0x73, 0x1f, 0xe6, 0xfa, 0xcf, 0xa5, 0xed, 0x56, 0x4c, 0x56, 0xe6, 0xfe, 0x4f, 0xeb,
+	0x27, 0xed, 0xd5, 0x5e, 0x0a, 0x5d, 0xbc, 0xe3, 0x46, 0x4a, 0xf9, 0xd4, 0x36, 0xe5, 0x33, 0x9a,
+	0xbc, 0xb8, 0xf2, 0x9c, 0x97, 0x57, 0x9e, 0xf3, 0xcf, 0x95, 0xe7, 0x3c, 0xbf, 0xf6, 0xf6, 0x5e,
+	0x5e, 0x7b, 0x7b, 0x7f, 0x5d, 0x7b, 0x7b, 0xdf, 0x0f, 0x23, 0xa6, 0xe3, 0x6c, 0x3e, 0x08, 0xc5,
+	0x72, 0x98, 0x4a, 0x41, 0xb3, 0x50, 0xab, 0x90, 0xd9, 0xe7, 0xb9, 0x7c, 0xa8, 0x9f, 0x95, 0x4f,
+	0xf5, 0x7c, 0xdf, 0xbe, 0xd5, 0x5f, 0xfd, 0x17, 0x00, 0x00, 0xff, 0xff, 0xfa, 0xd3, 0xd4, 0x42,
+	0x37, 0x08, 0x00, 0x00,
 }
 
 func (m *EventKeyGenerationInitiated) Marshal() (dAtA []byte, err error) {
@@ -872,8 +873,8 @@ func (m *EventKeyGenerationInitiated) MarshalToSizedBuffer(dAtA []byte) (int, er
 		i--
 		dAtA[i] = 0x10
 	}
-	if m.EpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -907,8 +908,8 @@ func (m *EventDealerPartSubmitted) MarshalToSizedBuffer(dAtA []byte) (int, error
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.EpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -950,8 +951,8 @@ func (m *EventVerifyingPhaseStarted) MarshalToSizedBuffer(dAtA []byte) (int, err
 		i--
 		dAtA[i] = 0x10
 	}
-	if m.EpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -995,8 +996,8 @@ func (m *EventDKGFailed) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.EpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1030,8 +1031,8 @@ func (m *EventVerificationVectorSubmitted) MarshalToSizedBuffer(dAtA []byte) (in
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.EpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1092,8 +1093,8 @@ func (m *EventGroupPublicKeyGenerated) MarshalToSizedBuffer(dAtA []byte) (int, e
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.EpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1127,8 +1128,8 @@ func (m *EventGroupKeyValidated) MarshalToSizedBuffer(dAtA []byte) (int, error) 
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.NewEpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.NewEpochId))
+	if m.NewEpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.NewEpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1162,8 +1163,8 @@ func (m *EventGroupKeyValidationFailed) MarshalToSizedBuffer(dAtA []byte) (int, 
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.NewEpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.NewEpochId))
+	if m.NewEpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.NewEpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1209,8 +1210,8 @@ func (m *EventThresholdSigningRequested) MarshalToSizedBuffer(dAtA []byte) (int,
 		i--
 		dAtA[i] = 0x1a
 	}
-	if m.CurrentEpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochId))
+	if m.CurrentEpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochIndex))
 		i--
 		dAtA[i] = 0x10
 	}
@@ -1256,8 +1257,8 @@ func (m *EventThresholdSigningCompleted) MarshalToSizedBuffer(dAtA []byte) (int,
 		i--
 		dAtA[i] = 0x1a
 	}
-	if m.CurrentEpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochId))
+	if m.CurrentEpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochIndex))
 		i--
 		dAtA[i] = 0x10
 	}
@@ -1298,8 +1299,8 @@ func (m *EventThresholdSigningFailed) MarshalToSizedBuffer(dAtA []byte) (int, er
 		i--
 		dAtA[i] = 0x1a
 	}
-	if m.CurrentEpochId != 0 {
-		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochId))
+	if m.CurrentEpochIndex != 0 {
+		i = encodeVarintEvents(dAtA, i, uint64(m.CurrentEpochIndex))
 		i--
 		dAtA[i] = 0x10
 	}
@@ -1330,8 +1331,8 @@ func (m *EventKeyGenerationInitiated) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.EpochId != 0 {
-		n += 1 + sovEvents(uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.EpochIndex))
 	}
 	if m.ITotalSlots != 0 {
 		n += 1 + sovEvents(uint64(m.ITotalSlots))
@@ -1354,8 +1355,8 @@ func (m *EventDealerPartSubmitted) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.EpochId != 0 {
-		n += 1 + sovEvents(uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.EpochIndex))
 	}
 	l = len(m.DealerAddress)
 	if l > 0 {
@@ -1370,8 +1371,8 @@ func (m *EventVerifyingPhaseStarted) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.EpochId != 0 {
-		n += 1 + sovEvents(uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.EpochIndex))
 	}
 	if m.VerifyingPhaseDeadlineBlock != 0 {
 		n += 1 + sovEvents(uint64(m.VerifyingPhaseDeadlineBlock))
@@ -1387,8 +1388,8 @@ func (m *EventDKGFailed) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.EpochId != 0 {
-		n += 1 + sovEvents(uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.EpochIndex))
 	}
 	l = len(m.Reason)
 	if l > 0 {
@@ -1405,8 +1406,8 @@ func (m *EventVerificationVectorSubmitted) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.EpochId != 0 {
-		n += 1 + sovEvents(uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.EpochIndex))
 	}
 	l = len(m.ParticipantAddress)
 	if l > 0 {
@@ -1421,8 +1422,8 @@ func (m *EventGroupPublicKeyGenerated) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.EpochId != 0 {
-		n += 1 + sovEvents(uint64(m.EpochId))
+	if m.EpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.EpochIndex))
 	}
 	l = len(m.GroupPublicKey)
 	if l > 0 {
@@ -1449,8 +1450,8 @@ func (m *EventGroupKeyValidated) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.NewEpochId != 0 {
-		n += 1 + sovEvents(uint64(m.NewEpochId))
+	if m.NewEpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.NewEpochIndex))
 	}
 	l = len(m.FinalSignature)
 	if l > 0 {
@@ -1465,8 +1466,8 @@ func (m *EventGroupKeyValidationFailed) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.NewEpochId != 0 {
-		n += 1 + sovEvents(uint64(m.NewEpochId))
+	if m.NewEpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.NewEpochIndex))
 	}
 	l = len(m.Reason)
 	if l > 0 {
@@ -1485,8 +1486,8 @@ func (m *EventThresholdSigningRequested) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovEvents(uint64(l))
 	}
-	if m.CurrentEpochId != 0 {
-		n += 1 + sovEvents(uint64(m.CurrentEpochId))
+	if m.CurrentEpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.CurrentEpochIndex))
 	}
 	l = len(m.EncodedData)
 	if l > 0 {
@@ -1512,8 +1513,8 @@ func (m *EventThresholdSigningCompleted) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovEvents(uint64(l))
 	}
-	if m.CurrentEpochId != 0 {
-		n += 1 + sovEvents(uint64(m.CurrentEpochId))
+	if m.CurrentEpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.CurrentEpochIndex))
 	}
 	l = len(m.FinalSignature)
 	if l > 0 {
@@ -1535,8 +1536,8 @@ func (m *EventThresholdSigningFailed) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovEvents(uint64(l))
 	}
-	if m.CurrentEpochId != 0 {
-		n += 1 + sovEvents(uint64(m.CurrentEpochId))
+	if m.CurrentEpochIndex != 0 {
+		n += 1 + sovEvents(uint64(m.CurrentEpochIndex))
 	}
 	l = len(m.Reason)
 	if l > 0 {
@@ -1582,9 +1583,9 @@ func (m *EventKeyGenerationInitiated) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 			}
-			m.EpochId = 0
+			m.EpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -1594,7 +1595,7 @@ func (m *EventKeyGenerationInitiated) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
+				m.EpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1723,9 +1724,9 @@ func (m *EventDealerPartSubmitted) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 			}
-			m.EpochId = 0
+			m.EpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -1735,7 +1736,7 @@ func (m *EventDealerPartSubmitted) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
+				m.EpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1824,9 +1825,9 @@ func (m *EventVerifyingPhaseStarted) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 			}
-			m.EpochId = 0
+			m.EpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -1836,7 +1837,7 @@ func (m *EventVerifyingPhaseStarted) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
+				m.EpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1945,9 +1946,9 @@ func (m *EventDKGFailed) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 			}
-			m.EpochId = 0
+			m.EpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -1957,7 +1958,7 @@ func (m *EventDKGFailed) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
+				m.EpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2079,9 +2080,9 @@ func (m *EventVerificationVectorSubmitted) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 			}
-			m.EpochId = 0
+			m.EpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2091,7 +2092,7 @@ func (m *EventVerificationVectorSubmitted) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
+				m.EpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2180,9 +2181,9 @@ func (m *EventGroupPublicKeyGenerated) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
 			}
-			m.EpochId = 0
+			m.EpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2192,7 +2193,7 @@ func (m *EventGroupPublicKeyGenerated) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
+				m.EpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2386,9 +2387,9 @@ func (m *EventGroupKeyValidated) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field NewEpochIndex", wireType)
 			}
-			m.NewEpochId = 0
+			m.NewEpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2398,7 +2399,7 @@ func (m *EventGroupKeyValidated) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.NewEpochId |= uint64(b&0x7F) << shift
+				m.NewEpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2489,9 +2490,9 @@ func (m *EventGroupKeyValidationFailed) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field NewEpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field NewEpochIndex", wireType)
 			}
-			m.NewEpochId = 0
+			m.NewEpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2501,7 +2502,7 @@ func (m *EventGroupKeyValidationFailed) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.NewEpochId |= uint64(b&0x7F) << shift
+				m.NewEpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2624,9 +2625,9 @@ func (m *EventThresholdSigningRequested) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochIndex", wireType)
 			}
-			m.CurrentEpochId = 0
+			m.CurrentEpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2636,7 +2637,7 @@ func (m *EventThresholdSigningRequested) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.CurrentEpochId |= uint64(b&0x7F) << shift
+				m.CurrentEpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2814,9 +2815,9 @@ func (m *EventThresholdSigningCompleted) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochIndex", wireType)
 			}
-			m.CurrentEpochId = 0
+			m.CurrentEpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2826,7 +2827,7 @@ func (m *EventThresholdSigningCompleted) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.CurrentEpochId |= uint64(b&0x7F) << shift
+				m.CurrentEpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2970,9 +2971,9 @@ func (m *EventThresholdSigningFailed) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochIndex", wireType)
 			}
-			m.CurrentEpochId = 0
+			m.CurrentEpochIndex = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEvents
@@ -2982,7 +2983,7 @@ func (m *EventThresholdSigningFailed) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.CurrentEpochId |= uint64(b&0x7F) << shift
+				m.CurrentEpochIndex |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

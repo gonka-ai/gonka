@@ -72,8 +72,8 @@ message QuerySigningStatusResponse {
 
 // QuerySigningHistoryRequest is request type for the Query/SigningHistory RPC method.
 message QuerySigningHistoryRequest {
-  // current_epoch_id filters requests by epoch (optional, 0 means all epochs)
-  uint64 current_epoch_id = 1;
+  // current_epoch_index filters requests by epoch (optional, 0 means all epochs)
+  uint64 current_epoch_index = 1;
   
   // status_filter filters requests by status (optional, UNDEFINED means all statuses)
   ThresholdSigningStatus status_filter = 2;

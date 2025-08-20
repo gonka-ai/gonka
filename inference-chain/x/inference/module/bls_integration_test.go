@@ -141,10 +141,10 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
-	epochID := uint64(1)
-	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	epochIndex := uint64(1)
+	appModule.InitiateBLSKeyGeneration(ctx, epochIndex, activeParticipants)
 
-	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Len(t, epochBLSData.Participants, 3)
 	for _, p := range epochBLSData.Participants {
@@ -391,41 +391,41 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
 	// Initiate DKG for epoch 1 - should succeed
-	epochID1 := uint64(1)
-	appModule.InitiateBLSKeyGeneration(ctx, epochID1, epoch1Participants)
+	epochIndex1 := uint64(1)
+	appModule.InitiateBLSKeyGeneration(ctx, epochIndex1, epoch1Participants)
 
 	// Verify epoch 1 DKG was initiated
-	epochBLSData1, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID1)
+	epochBLSData1, found := k.BlsKeeper.GetEpochBLSData(ctx, epochIndex1)
 	require.True(t, found, "Epoch 1 DKG should be initiated")
-	require.Equal(t, epochID1, epochBLSData1.EpochId)
+	require.Equal(t, epochIndex1, epochBLSData1.EpochIndex)
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
 
 	// Verify epoch 1 is set as active
-	activeEpochID, found := k.BlsKeeper.GetActiveEpochID(ctx)
+	activeEpochIndex, found := k.BlsKeeper.GetActiveEpochIndex(ctx)
 	require.True(t, found, "Active epoch should be found")
-	require.Equal(t, epochID1, activeEpochID, "Epoch 1 should be active")
+	require.Equal(t, epochIndex1, activeEpochIndex, "Epoch 1 should be active")
 
 	// Initiate DKG for epoch 2 while epoch 1 is still running - should succeed (concurrent DKG allowed)
-	epochID2 := uint64(2)
-	appModule.InitiateBLSKeyGeneration(ctx, epochID2, epoch2Participants)
+	epochIndex2 := uint64(2)
+	appModule.InitiateBLSKeyGeneration(ctx, epochIndex2, epoch2Participants)
 
 	// Verify epoch 2 DKG was also initiated (concurrent DKG rounds are allowed)
-	epochBLSData2, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID2)
+	epochBLSData2, found := k.BlsKeeper.GetEpochBLSData(ctx, epochIndex2)
 	require.True(t, found, "Epoch 2 DKG should be initiated even when epoch 1 is still running")
-	require.Equal(t, epochID2, epochBLSData2.EpochId)
+	require.Equal(t, epochIndex2, epochBLSData2.EpochIndex)
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
 
 	// Verify both epochs have their own independent DKG data
-	require.NotEqual(t, epochBLSData1.EpochId, epochBLSData2.EpochId, "Epochs should have different IDs")
+	require.NotEqual(t, epochBLSData1.EpochIndex, epochBLSData2.EpochIndex, "Epochs should have different IDs")
 
 	// Both should be in DEALING phase
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
 
 	// Active epoch tracking should reflect the most recent one (epoch 2)
-	activeEpochID, found = k.BlsKeeper.GetActiveEpochID(ctx)
+	activeEpochIndex, found = k.BlsKeeper.GetActiveEpochIndex(ctx)
 	require.True(t, found, "Active epoch should be found after second initiation")
-	require.Equal(t, epochID2, activeEpochID, "Active epoch should be updated to the most recent one")
+	require.Equal(t, epochIndex2, activeEpochIndex, "Active epoch should be updated to the most recent one")
 
 	// Both epochs should have valid participant data
 	require.Len(t, epochBLSData1.Participants, 2, "Epoch 1 should have 2 participants")

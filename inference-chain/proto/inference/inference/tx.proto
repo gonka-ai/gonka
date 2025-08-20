@@ -421,8 +421,8 @@ message MsgRequestBridgeWithdrawal {
 }
 
 message MsgRequestBridgeWithdrawalResponse {
-  string request_id    = 1; // Generated request ID (transaction hash)
-  uint64 epoch_id      = 2; // Current epoch ID used for signature
+  string request_id     = 1; // Generated request ID (transaction hash)
+  uint64 epoch_index    = 2; // Current epoch ID used for signature
   string bls_request_id = 3; // BLS signing request ID
 }
 

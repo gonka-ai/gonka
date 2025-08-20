@@ -63,8 +63,8 @@ message MsgSubmitDealerPart {
   // creator is the address of the dealer submitting their part
   string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   
-  // epoch_id identifies the DKG round this dealer part belongs to
-  uint64 epoch_id = 2;
+  // epoch_index identifies the DKG round this dealer part belongs to
+  uint64 epoch_index = 2;
   
   // commitments are the G2 points C_kj = g * a_kj representing polynomial commitments
   repeated bytes commitments = 3;
@@ -86,8 +86,8 @@ message MsgSubmitVerificationVector {
   // creator is the address of the participant confirming verification completion
   string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   
-  // epoch_id identifies the DKG round this verification confirmation belongs to
-  uint64 epoch_id = 2;
+  // epoch_index identifies the DKG round this verification confirmation belongs to
+  uint64 epoch_index = 2;
   
   // dealer_validity is a bitmap indicating which dealers provided valid shares
   // Index i corresponds to EpochBLSData.participants[i] as dealer
@@ -108,8 +108,8 @@ message MsgSubmitGroupKeyValidationSignature {
   // creator is the address of the participant submitting their partial signature
   string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   
-  // new_epoch_id identifies the epoch whose group public key is being validated
-  uint64 new_epoch_id = 2;
+  // new_epoch_index identifies the epoch whose group public key is being validated
+  uint64 new_epoch_index = 2;
   
   // slot_indices are the slot indices this participant is signing for (from their previous epoch assignment)
   repeated uint32 slot_indices = 3;
@@ -152,8 +152,8 @@ message MsgRequestThresholdSignature {
   // creator is the address of the user requesting the threshold signature
   string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 
-  // current_epoch_id identifies the epoch to use for signing
-  uint64 current_epoch_id = 2;
+  // current_epoch_index identifies the epoch to use for signing
+  uint64 current_epoch_index = 2;
 
   // chain_id is the chain ID for EIP-155 compatibility (32 bytes)
   bytes chain_id = 3;

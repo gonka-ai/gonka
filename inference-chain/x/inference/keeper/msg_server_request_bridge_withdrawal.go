@@ -86,10 +86,10 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	gonkaChainIdHash := sha256.Sum256([]byte(gonkaChainID)) // Convert to bytes32
 
 	signingData := blstypes.SigningData{
-		CurrentEpochId: currentEpochGroup.GroupData.EpochId,
-		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
-		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
-		Data:           blsData,             // The remaining data fields
+		CurrentEpochIndex: currentEpochGroup.GroupData.EpochIndex,
+		ChainId:           gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
+		RequestId:         requestIdHash[:],    // Request ID as bytes32 (32 bytes)
+		Data:              blsData,             // The remaining data fields
 	}
 
 	err = k.BlsKeeper.RequestThresholdSignature(ctx, signingData)
@@ -104,13 +104,13 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		"amount", msg.Amount,
 		"destination_address", msg.DestinationAddress,
 		"request_id", requestID,
-		"epoch_id", currentEpochGroup.GroupData.EpochId,
+		"epoch_index", currentEpochGroup.GroupData.EpochIndex,
 		"chain_id", chainID,
 	)
 
 	return &types.MsgRequestBridgeWithdrawalResponse{
 		RequestId:    requestID,
-		EpochId:      currentEpochGroup.GroupData.EpochId,
+		EpochIndex:   currentEpochGroup.GroupData.EpochIndex,
 		BlsRequestId: requestID, // Use same ID for simplicity
 	}, nil
 }

@@ -28,40 +28,40 @@ func (k Keeper) LogDebug(msg string, keyVals ...interface{}) {
 
 // SubmitGroupKeyValidationSignature handles the submission of partial signatures for group key validation
 func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg *types.MsgSubmitGroupKeyValidationSignature) (*types.MsgSubmitGroupKeyValidationSignatureResponse, error) {
-	ms.Keeper.LogInfo("Processing group key validation signature", "new_epoch_id", msg.NewEpochId, "creator", msg.Creator)
+	ms.Keeper.LogInfo("Processing group key validation signature", "new_epoch_index", msg.NewEpochIndex, "creator", msg.Creator)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Genesis case: Epoch 1 doesn't need validation (no previous epoch)
-	if msg.NewEpochId == 1 {
-		ms.Keeper.LogInfo("Rejecting group key validation for genesis epoch", "new_epoch_id", msg.NewEpochId)
+	if msg.NewEpochIndex == 1 {
+		ms.Keeper.LogInfo("Rejecting group key validation for genesis epoch", "new_epoch_index", msg.NewEpochIndex)
 		return nil, fmt.Errorf("epoch 1 does not require group key validation (genesis case)")
 	}
 
-	previousEpochId := msg.NewEpochId - 1
+	previousEpochId := msg.NewEpochIndex - 1
 
 	// Get the new epoch's BLS data to get the group public key being validated
-	newEpochBLSData, found := ms.GetEpochBLSData(ctx, msg.NewEpochId)
+	newEpochBLSData, found := ms.GetEpochBLSData(ctx, msg.NewEpochIndex)
 	if !found {
-		ms.Keeper.LogError("New epoch not found", "new_epoch_id", msg.NewEpochId)
-		return nil, fmt.Errorf("new epoch %d not found", msg.NewEpochId)
+		ms.Keeper.LogError("New epoch not found", "new_epoch_index", msg.NewEpochIndex)
+		return nil, fmt.Errorf("new epoch %d not found", msg.NewEpochIndex)
 	}
 
 	// Ensure the new epoch has completed DKG
 	if newEpochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED && newEpochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
-		ms.Keeper.LogError("Invalid DKG phase for group key validation", "new_epoch_id", msg.NewEpochId, "current_phase", newEpochBLSData.DkgPhase.String())
-		return nil, fmt.Errorf("new epoch %d DKG is not completed (current phase: %s)", msg.NewEpochId, newEpochBLSData.DkgPhase.String())
+		ms.Keeper.LogError("Invalid DKG phase for group key validation", "new_epoch_index", msg.NewEpochIndex, "current_phase", newEpochBLSData.DkgPhase.String())
+		return nil, fmt.Errorf("new epoch %d DKG is not completed (current phase: %s)", msg.NewEpochIndex, newEpochBLSData.DkgPhase.String())
 	}
 
 	// If already signed, silently ignore the submission
 	if newEpochBLSData.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED {
-		ms.Keeper.LogInfo("Group key validation already completed", "new_epoch_id", msg.NewEpochId)
+		ms.Keeper.LogInfo("Group key validation already completed", "new_epoch_index", msg.NewEpochIndex)
 		return &types.MsgSubmitGroupKeyValidationSignatureResponse{}, nil
 	}
 
 	// Get the previous epoch's BLS data for slot validation and signature verification
 	previousEpochBLSData, found := ms.GetEpochBLSData(ctx, previousEpochId)
 	if !found {
-		ms.Keeper.LogError("Previous epoch not found", "previous_epoch_id", previousEpochId)
+		ms.Keeper.LogError("Previous epoch not found", "previous_epoch_index", previousEpochId)
 		return nil, fmt.Errorf("previous epoch %d not found", previousEpochId)
 	}
 
@@ -77,7 +77,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	if participantIndex == -1 {
-		ms.Keeper.LogError("Participant not found in previous epoch", "creator", msg.Creator, "previous_epoch_id", previousEpochId)
+		ms.Keeper.LogError("Participant not found in previous epoch", "creator", msg.Creator, "previous_epoch_index", previousEpochId)
 		return nil, fmt.Errorf("participant %s not found in previous epoch %d", msg.Creator, previousEpochId)
 	}
 
@@ -102,28 +102,28 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 
 	// Check or create GroupKeyValidationState
 	var validationState *types.GroupKeyValidationState
-	validationStateKey := fmt.Sprintf("group_validation_%d", msg.NewEpochId)
+	validationStateKey := fmt.Sprintf("group_validation_%d", msg.NewEpochIndex)
 
 	// Try to get existing validation state
 	store := ms.storeService.OpenKVStore(ctx)
 	bz, err := store.Get([]byte(validationStateKey))
 	if err != nil {
-		ms.Keeper.LogError("Failed to get validation state", "new_epoch_id", msg.NewEpochId, "error", err.Error())
+		ms.Keeper.LogError("Failed to get validation state", "new_epoch_index", msg.NewEpochIndex, "error", err.Error())
 		return nil, fmt.Errorf("failed to get validation state: %w", err)
 	}
 
 	if bz == nil {
 		// First signature for this epoch - create validation state
 		validationState = &types.GroupKeyValidationState{
-			NewEpochId:      msg.NewEpochId,
-			PreviousEpochId: previousEpochId,
-			Status:          types.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES,
-			SlotsCovered:    0,
+			NewEpochIndex:      msg.NewEpochIndex,
+			PreviousEpochIndex: previousEpochId,
+			Status:             types.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES,
+			SlotsCovered:       0,
 		}
-		ms.Keeper.LogInfo("Created new validation state", "new_epoch_id", msg.NewEpochId, "previous_epoch_id", previousEpochId)
+		ms.Keeper.LogInfo("Created new validation state", "new_epoch_index", msg.NewEpochIndex, "previous_epoch_index", previousEpochId)
 
 		// Prepare validation data for message hash
-		messageHash, err := ms.computeValidationMessageHash(ctx, newEpochBLSData.GroupPublicKey, previousEpochId, msg.NewEpochId)
+		messageHash, err := ms.computeValidationMessageHash(ctx, newEpochBLSData.GroupPublicKey, previousEpochId, msg.NewEpochIndex)
 		if err != nil {
 			ms.Keeper.LogError("Failed to compute message hash", "error", err.Error())
 			return nil, fmt.Errorf("failed to compute message hash: %w", err)
@@ -179,11 +179,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		newEpochBLSData.ValidationSignature = validationState.FinalSignature
 		newEpochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_SIGNED
 		ms.SetEpochBLSData(ctx, newEpochBLSData)
-		ms.Keeper.LogInfo("Group key validation completed", "new_epoch_id", msg.NewEpochId, "slots_covered", validationState.SlotsCovered)
+		ms.Keeper.LogInfo("Group key validation completed", "new_epoch_index", msg.NewEpochIndex, "slots_covered", validationState.SlotsCovered)
 
 		// Emit success event
 		err := ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidated{
-			NewEpochId:     msg.NewEpochId,
+			NewEpochIndex:  msg.NewEpochIndex,
 			FinalSignature: validationState.FinalSignature,
 		})
 		if err != nil {

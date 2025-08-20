@@ -38,18 +38,18 @@ import (
 // ProcessKeyGenerationInitiated handles the EventKeyGenerationInitiated event
 func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCResponse) error {
 	// Extract event data from chain event (typed event from EmitTypedEvent)
-	epochIDs, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.epoch_id"]
-	if !ok || len(epochIDs) == 0 {
-		return fmt.Errorf("epoch_id not found in key generation initiated event")
+	epochIndexes, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.epoch_index"]
+	if !ok || len(epochIndexes) == 0 {
+		return fmt.Errorf("epoch_index not found in key generation initiated event")
 	}
 
 	// Unquote the epoch_id value (handles JSON-encoded strings like "\"1\"")
-	unquotedEpochID, err := utils.UnquoteEventValue(epochIDs[0])
+	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
 		return fmt.Errorf("failed to unquote epoch_id: %w", err)
 	}
 
-	epochID, err := strconv.ParseUint(unquotedEpochID, 10, 64)
+	epochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse epoch_id: %w", err)
 	}
@@ -87,7 +87,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 	}
 
 	logging.Debug("Processing DKG key generation initiated", inferenceTypes.BLS,
-		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", bm.cosmosClient.GetAddress())
+		"epochIndex", epochIndex, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", bm.cosmosClient.GetAddress())
 
 	// Parse participants from event
 	participants, err := bm.parseParticipantsFromEvent(event)
@@ -106,15 +106,15 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 
 	if !isParticipant {
 		logging.Debug("Not a participant in this DKG round", inferenceTypes.BLS,
-			"epochID", epochID, "address", bm.cosmosClient.GetAddress())
+			"epochIndex", epochIndex, "address", bm.cosmosClient.GetAddress())
 		return nil
 	}
 
 	logging.Debug("This node is a participant in DKG", inferenceTypes.BLS,
-		"epochID", epochID, "participantCount", len(participants))
+		"epochIndex", epochIndex, "participantCount", len(participants))
 
 	// Generate dealer part
-	dealerPart, err := bm.generateDealerPart(epochID, uint32(totalSlots), uint32(tDegree), participants)
+	dealerPart, err := bm.generateDealerPart(epochIndex, uint32(totalSlots), uint32(tDegree), participants)
 	if err != nil {
 		return fmt.Errorf("failed to generate dealer part: %w", err)
 	}
@@ -126,7 +126,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 	}
 
 	logging.Info("Successfully submitted dealer part", inferenceTypes.BLS,
-		"epochID", epochID, "dealer", bm.cosmosClient.GetAddress())
+		"epochIndex", epochIndex, "dealer", bm.cosmosClient.GetAddress())
 
 	return nil
 }
@@ -180,9 +180,9 @@ func (bm *BlsManager) parseParticipantsFromEvent(event *chainevents.JSONRPCRespo
 }
 
 // generateDealerPart generates the dealer's contribution to the DKG
-func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uint32, participants []ParticipantInfo) (*types.MsgSubmitDealerPart, error) {
+func (bm *BlsManager) generateDealerPart(epochIndex uint64, totalSlots, tDegree uint32, participants []ParticipantInfo) (*types.MsgSubmitDealerPart, error) {
 	logging.Debug("Generating dealer part", inferenceTypes.BLS,
-		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "participantCount", len(participants))
+		"epochIndex", epochIndex, "totalSlots", totalSlots, "tDegree", tDegree, "participantCount", len(participants))
 
 	// Generate secret BLS polynomial Poly_k(x) of degree tDegree
 	polynomial, err := generateRandomPolynomial(tDegree)
@@ -260,13 +260,13 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 
 	dealerPart := &types.MsgSubmitDealerPart{
 		Creator:                        bm.cosmosClient.GetAddress(),
-		EpochId:                        epochID,
+		EpochIndex:                     epochIndex,
 		Commitments:                    commitments,
 		EncryptedSharesForParticipants: encryptedSharesForParticipants,
 	}
 
 	logging.Info("Generated dealer part with actual cryptography", inferenceTypes.BLS,
-		"epochID", epochID, "commitmentsCount", len(commitments),
+		"epochIndex", epochIndex, "commitmentsCount", len(commitments),
 		"participantsCount", len(encryptedSharesForParticipants),
 		"note", "Using gnark-crypto for BLS12-381 cryptography")
 

@@ -25,7 +25,7 @@ type (
 )
 
 const (
-	ActiveEpochIDKey = "active_epoch_id"
+	ActiveEpochIndexKey = "active_epoch_index"
 )
 
 func NewKeeper(
@@ -57,20 +57,20 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
-// SetActiveEpochID sets the current active epoch undergoing DKG
-func (k Keeper) SetActiveEpochID(ctx sdk.Context, epochID uint64) {
+// SetActiveEpochIndex sets the current active epoch undergoing DKG
+func (k Keeper) SetActiveEpochIndex(ctx sdk.Context, epochIndex uint64) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := []byte(ActiveEpochIDKey)
+	key := []byte(ActiveEpochIndexKey)
 	value := make([]byte, 8)
-	binary.BigEndian.PutUint64(value, epochID)
+	binary.BigEndian.PutUint64(value, epochIndex)
 	store.Set(key, value)
 }
 
-// GetActiveEpochID returns the current active epoch undergoing DKG
+// GetActiveEpochIndex returns the current active epoch undergoing DKG
 // Returns 0 if no epoch is currently active
-func (k Keeper) GetActiveEpochID(ctx sdk.Context) (uint64, bool) {
+func (k Keeper) GetActiveEpochIndex(ctx sdk.Context) (uint64, bool) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := []byte(ActiveEpochIDKey)
+	key := []byte(ActiveEpochIndexKey)
 
 	value, err := store.Get(key)
 	if err != nil || value == nil {
@@ -80,10 +80,10 @@ func (k Keeper) GetActiveEpochID(ctx sdk.Context) (uint64, bool) {
 	return binary.BigEndian.Uint64(value), true
 }
 
-// ClearActiveEpochID removes the active epoch ID (no epoch is active)
-func (k Keeper) ClearActiveEpochID(ctx sdk.Context) {
+// ClearActiveEpochIndex removes the active epoch index (no epoch is active)
+func (k Keeper) ClearActiveEpochIndex(ctx sdk.Context) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := []byte(ActiveEpochIDKey)
+	key := []byte(ActiveEpochIndexKey)
 
 	err := store.Delete(key)
 	if err != nil {

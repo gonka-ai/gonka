@@ -24,14 +24,14 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Setup test data
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	dealerAddr := "dealer1"
 	participant1Addr := "participant1"
 	participant2Addr := "participant2"
 
 	// Create epoch BLS data with participants
 	epochBLSData := types.EpochBLSData{
-		EpochId:                   epochID,
+		EpochIndex:                epochIndex,
 		ITotalSlots:               100,
 		TSlotsDegree:              33,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
@@ -67,8 +67,8 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 
 	// Create test message
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
+		Creator:    dealerAddr,
+		EpochIndex: epochIndex,
 		Commitments: [][]byte{
 			[]byte("commitment1"),
 			[]byte("commitment2"),
@@ -88,7 +88,7 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	require.NotNil(t, resp)
 
 	// Check that dealer part was stored
-	updatedEpochBLSData, found := k.GetEpochBLSData(ctx, epochID)
+	updatedEpochBLSData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 
 	// Dealer should be at index 0
@@ -108,8 +108,8 @@ func TestSubmitDealerPart_EpochNotFound(t *testing.T) {
 	_, ms, goCtx := setupMsgServerDealer(t)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: "dealer1",
-		EpochId: 999, // Non-existent epoch
+		Creator:    "dealer1",
+		EpochIndex: 999, // Non-existent epoch
 	}
 
 	_, err := ms.SubmitDealerPart(goCtx, msg)
@@ -121,16 +121,16 @@ func TestSubmitDealerPart_WrongPhase(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	epochBLSData := types.EpochBLSData{
-		EpochId:  epochID,
-		DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING, // Wrong phase
+		EpochIndex: epochIndex,
+		DkgPhase:   types.DKGPhase_DKG_PHASE_VERIFYING, // Wrong phase
 	}
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: "dealer1",
-		EpochId: epochID,
+		Creator:    "dealer1",
+		EpochIndex: epochIndex,
 	}
 
 	_, err := ms.SubmitDealerPart(goCtx, msg)
@@ -142,17 +142,17 @@ func TestSubmitDealerPart_DeadlinePassed(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	epochBLSData := types.EpochBLSData{
-		EpochId:                   epochID,
+		EpochIndex:                epochIndex,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
 		DealingPhaseDeadlineBlock: ctx.BlockHeight() - 1, // Past deadline
 	}
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: "dealer1",
-		EpochId: epochID,
+		Creator:    "dealer1",
+		EpochIndex: epochIndex,
 	}
 
 	_, err := ms.SubmitDealerPart(goCtx, msg)
@@ -164,9 +164,9 @@ func TestSubmitDealerPart_NotParticipant(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	epochBLSData := types.EpochBLSData{
-		EpochId:                   epochID,
+		EpochIndex:                epochIndex,
 		ITotalSlots:               100,
 		TSlotsDegree:              33,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
@@ -187,8 +187,8 @@ func TestSubmitDealerPart_NotParticipant(t *testing.T) {
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: "not_a_participant",
-		EpochId: epochID,
+		Creator:    "not_a_participant",
+		EpochIndex: epochIndex,
 	}
 
 	_, err := ms.SubmitDealerPart(goCtx, msg)
@@ -200,11 +200,11 @@ func TestSubmitDealerPart_AlreadySubmitted(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	dealerAddr := "dealer1"
 
 	epochBLSData := types.EpochBLSData{
-		EpochId:                   epochID,
+		EpochIndex:                epochIndex,
 		ITotalSlots:               100,
 		TSlotsDegree:              33,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
@@ -225,8 +225,8 @@ func TestSubmitDealerPart_AlreadySubmitted(t *testing.T) {
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
+		Creator:    dealerAddr,
+		EpochIndex: epochIndex,
 	}
 
 	_, err := ms.SubmitDealerPart(goCtx, msg)
@@ -238,11 +238,11 @@ func TestSubmitDealerPart_WrongSharesLength(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	dealerAddr := "dealer1"
 
 	epochBLSData := types.EpochBLSData{
-		EpochId:                   epochID,
+		EpochIndex:                epochIndex,
 		ITotalSlots:               100,
 		TSlotsDegree:              33,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
@@ -271,8 +271,8 @@ func TestSubmitDealerPart_WrongSharesLength(t *testing.T) {
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
+		Creator:    dealerAddr,
+		EpochIndex: epochIndex,
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			// Only one share, but there are 2 participants
 			{EncryptedShares: [][]byte{[]byte("share1")}},
@@ -288,11 +288,11 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(1)
+	epochIndex := uint64(1)
 	dealerAddr := "dealer1"
 
 	epochBLSData := types.EpochBLSData{
-		EpochId:                   epochID,
+		EpochIndex:                epochIndex,
 		ITotalSlots:               100,
 		TSlotsDegree:              33,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
@@ -313,8 +313,8 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
+		Creator:    dealerAddr,
+		EpochIndex: epochIndex,
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{[]byte("share1")}},
 		},

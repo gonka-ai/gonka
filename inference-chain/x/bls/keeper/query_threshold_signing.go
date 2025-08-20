@@ -78,7 +78,7 @@ func (k Keeper) SigningHistory(ctx context.Context, req *types.QuerySigningHisto
 // matchesFilters checks if a signing request matches the query filters
 func (k Keeper) matchesFilters(request *types.ThresholdSigningRequest, req *types.QuerySigningHistoryRequest) bool {
 	// Filter by epoch if specified (0 means all epochs)
-	if req.CurrentEpochId != 0 && request.CurrentEpochId != req.CurrentEpochId {
+	if req.CurrentEpochIndex != 0 && request.CurrentEpochIndex != req.CurrentEpochIndex {
 		return false
 	}
 
