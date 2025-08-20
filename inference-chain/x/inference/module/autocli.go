@@ -433,6 +433,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a set-barrier tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
+				{
+					RpcMethod:      "RequestBridgeMint",
+					Use:            "request-bridge-mint [amount] [destination-address] [target-chain-id]",
+					Short:          "Request minting of WGNK tokens on Ethereum by bridging native Gonka",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}, {ProtoField: "destination_address"}, {ProtoField: "chain_id"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},
