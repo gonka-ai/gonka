@@ -31,9 +31,9 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=true
+      - INIT_ONLY=false
       - IS_GENESIS=true
-      - GENESIS_SEEDS=TODO
+      - GENESIS_SEEDS=d629bbfc7233fa2a5917a9bd88371d948ec15d26@36.189.234.237:19255,196bb39d7faebe241c2bf300bf53e2ef57a1b45b@36.189.234.237:19257,8b75c4dc48d60e0e9240609e14cbf536489fa3e2@36.189.234.237:19235
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
