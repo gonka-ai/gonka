@@ -1,11 +1,14 @@
+from sympy import mobius
 import torch
 from pow.models.llama31 import Transformer, ModelArgs
 from contextlib import contextmanager
-from typing import Tuple
+from typing import Tuple, Optional
 import subprocess
 import threading
 import time
 import numpy as np
+from pow.models.utils import Params, PARAMS_V1, PARAMS_V2
+from pow.compute.gpu_group import GpuGroup
 
 BIAS = 6500
 COEFF = 30.5
@@ -90,13 +93,14 @@ def get_batch_size_from_memory(target_memory_usage, device_id):
     return int(target_batch_size)
 
 
-def compute_memory_profile(compute_instance, batch_size: int, public_key: str = "test_key"):
-    device = compute_instance.device
+def compute_memory_profile_per_device(compute_instance, batch_size: int, public_key: str = "test_key"):
+    devices = compute_instance.devices
     
     nonces = list(range(batch_size))
     target = compute_instance.target
     
-    torch.cuda.reset_peak_memory_stats(device)
+    for device in devices:
+        torch.cuda.reset_peak_memory_stats(device)
     torch.cuda.synchronize()
     
     with torch.no_grad():
@@ -111,15 +115,38 @@ def compute_memory_profile(compute_instance, batch_size: int, public_key: str = 
         proof_batch = future_result.result()
         torch.cuda.synchronize()
     
-    peak_memory_bytes = torch.cuda.max_memory_reserved(device)
-    peak_memory_mb = peak_memory_bytes / (1024 * 1024)
+
+    peak_memory_bytes = {device: torch.cuda.max_memory_reserved(device) for device in devices}
+    peak_memory_mb = {device: peak_memory_bytes[device] / (1024 * 1024) for device in devices}
+
+    model_weight_by_device = {device: 0 for device in devices}
+    for param in compute_instance.model.module.parameters():
+        weight = param.numel() * param.element_size()
+        device = str(param.device)
+        model_weight_by_device[device] += weight
     
-    weights_memory_bytes = sum(p.numel() * p.element_size() for p in compute_instance.model.module.parameters())
-    weights_memory_mb = weights_memory_bytes / (1024 * 1024)
-    
-    activations_memory_mb = peak_memory_mb - weights_memory_mb
+    weights_memory_mb = {device: model_weight_by_device[device] / (1024 * 1024) for device in devices}
+    activations_memory_mb = {device: peak_memory_mb[device] - weights_memory_mb[device] for device in devices}
     
     return weights_memory_mb, activations_memory_mb
+
+def get_model_weights_memory_mb_per_device(compute_instance):
+    devices = compute_instance.devices
+    print(f"Devices: {devices}")
+    model_weight_by_device = {device: 0 for device in devices}
+    for param in compute_instance.model.module.parameters():
+        weight = param.numel() * param.element_size()
+        device = str(param.device)
+        model_weight_by_device[device] += weight
+    return {device: model_weight_by_device[device] / (1024 * 1024) for device in devices}
+
+def get_model_weights_memory_mb(compute_instance):
+    return sum(get_model_weights_memory_mb_per_device(compute_instance).values())
+
+def compute_memory_profile(compute_instance, batch_size: int, public_key: str = "test_key"):
+    devices = compute_instance.devices
+    weights_memory_mb, activations_memory_mb = compute_memory_profile_per_device(compute_instance, batch_size, public_key)
+    return max(weights_memory_mb.values()), max(activations_memory_mb.values())
 
 def _tensor_bytes(t: torch.Tensor) -> int:
     return t.numel() * t.element_size()

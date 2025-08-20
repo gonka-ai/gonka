@@ -14,6 +14,21 @@ class ProofBatch:
     block_height: int
     nonces: List[int]
     dist: List[float]
+    node_id: int
+
+    def __post_init__(self):
+        """Initialize keys or perform custom initialization"""
+        # Add your key initialization logic here
+        # Example:
+        # if not hasattr(self, '_initialized'):
+        #     self._initialize_keys()
+        #     self._initialized = True
+        pass
+
+    def _initialize_keys(self):
+        """Custom key initialization method"""
+        # Add your key initialization logic here
+        pass
 
     def sub_batch(
         self,
@@ -35,6 +50,7 @@ class ProofBatch:
             block_height=self.block_height,
             nonces=sub_nonces,
             dist=sub_dist,
+            node_id=self.node_id,
         )
 
     def __len__(
@@ -56,7 +72,8 @@ class ProofBatch:
                 block_hash=self.block_hash,
                 block_height=self.block_height,
                 nonces=self.nonces[i:i+batch_size],
-                dist=self.dist[i:i+batch_size]
+                dist=self.dist[i:i+batch_size],
+                node_id=self.node_id,
             )
             sub_batches.append(sub_batch)
 
@@ -75,7 +92,8 @@ class ProofBatch:
             block_hash=self.block_hash,
             block_height=self.block_height,
             nonces=np.array(self.nonces)[idxs].tolist(),
-            dist=np.array(self.dist)[idxs].tolist()
+            dist=np.array(self.dist)[idxs].tolist(),
+            node_id=self.node_id,
         )
 
     @staticmethod
@@ -106,6 +124,7 @@ class ProofBatch:
             block_height=proof_batches[0].block_height,
             nonces=all_nonces,
             dist=all_dist,
+            node_id=proof_batches[0].node_id,
         )
 
     @staticmethod
@@ -115,7 +134,8 @@ class ProofBatch:
             block_hash="",
             block_height=-1,
             nonces=[],
-            dist=[]
+            dist=[],
+            node_id=-1,
         )
 
     def __str__(
@@ -128,7 +148,8 @@ class ProofBatch:
             block_height={self.block_height},
             nonces={self.nonces[:5]}, 
             dist={self.dist[:5]}, 
-            length={len(self.nonces)}
+            length={len(self.nonces)},
+            node_id={self.node_id}
         )""")
 
 
@@ -152,7 +173,7 @@ class InValidation:
     def is_ready(
         self
     ) -> bool:
-        return len(set(self.nonce2valid_dist.keys())) == len(set(self.batch.nonces))
+        return all(n in self.nonce2valid_dist for n in self.batch.nonces)
 
     def validated(
         self,
@@ -167,7 +188,8 @@ class InValidation:
             received_dist=self.batch.dist,
             dist=[self.nonce2valid_dist[n] for n in self.batch.nonces],
             r_target=r_target,
-            fraud_threshold=fraud_threshold
+            fraud_threshold=fraud_threshold,
+            node_id=self.batch.node_id,
         )
 
 
@@ -215,7 +237,8 @@ class ValidatedBatch(ProofBatch):
             received_dist=[],
             r_target=0.0,
             fraud_threshold=0.0,
-            fraud_detected=False
+            fraud_detected=False,
+            node_id=-1,
         )
 
     def __str__(self) -> str:
@@ -230,5 +253,6 @@ class ValidatedBatch(ProofBatch):
             r_target={self.r_target},
             fraud_threshold={self.fraud_threshold},
             length={len(self.nonces)},
-            fraud_detected={self.fraud_detected}
+            fraud_detected={self.fraud_detected},
+            node_id={self.node_id}
         )""")

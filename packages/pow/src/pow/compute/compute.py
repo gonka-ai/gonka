@@ -6,6 +6,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
     List,
     Tuple,
+    Optional,
 )
 
 import numpy as np
@@ -59,6 +60,7 @@ class Compute(BaseCompute):
         public_key: str,
         r_target: float,
         devices: List[str],
+        node_id: int,
     ):
         self.public_key = public_key
         self.block_hash = block_hash
@@ -67,23 +69,30 @@ class Compute(BaseCompute):
         self.params = params
         self.stats = Stats()
         self.devices = devices
+        
         self.model = ModelWrapper.build(
             hash_=self.block_hash,
             params=params,
             stats=self.stats.time_stats,
             devices=self.devices,
+            max_seq_len=self.params.seq_len,
         )
         self.target = get_target(
             self.block_hash,
             self.params.vocab_size
         )
+        self.node_id = node_id
         
         self.executor = ThreadPoolExecutor(max_workers=24)
-        self.next_batch_future: Future = None
-        self.next_public_key: str = None
-        #does it need to be a list?
-        self.device = torch.device(self.devices[0])
+        self.next_batch_future: Optional[Future] = None
+        self.next_public_key: Optional[str] = None
 
+        # if devices and "cuda" in devices[0]:
+        #     available_devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
+        #     self.devices = [torch.device(d) for d in available_devices]
+        # else:
+        #     self.devices = [torch.device(d) for d in self.devices]
+        
     def _prepare_batch(
         self,
         nonces: List[int],
@@ -148,9 +157,9 @@ class Compute(BaseCompute):
         self.stats.time_stats.next_iter()
         outputs = self.model(inputs, start_pos=0)
         with self.stats.time_stats.time_infer():
-            if self.device.type == "cuda":
-                with self.stats.time_stats.time_sync():
-                    torch.cuda.synchronize(device=self.device)
+            with self.stats.time_stats.time_sync():
+                for device in self.devices:
+                    torch.cuda.synchronize(device=device)
             with self.stats.time_stats.time_numpy():
                 outputs = outputs[:, -1, :].cpu().numpy()
         del inputs
@@ -172,6 +181,7 @@ class Compute(BaseCompute):
                     block_height=self.block_height,
                     nonces=nonces,
                     dist=distances,
+                    node_id=self.node_id,
                 )
 
             return batch

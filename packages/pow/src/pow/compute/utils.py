@@ -148,6 +148,11 @@ class Stats:
         self.total_checked_nonces = 0
         self.total_valid_nonces = 0
         self.start_time = time.time()
+        self.total_time = 0
+
+    def update_time(self):
+        if hasattr(self, 'start_time'):
+            self.total_time = time.time() - self.start_time
 
     def count_batch(
         self,
@@ -156,41 +161,46 @@ class Stats:
     ):
         self.total_checked_nonces += len(batch.nonces)
         self.total_valid_nonces += len(valid.nonces)
-        self.total_time = time.time() - self.start_time
+        self.update_time()
 
     def report(
         self,
-        detailed: bool = False
+        detailed: bool = False,
+        worker_id: int = None
     ) -> str:
-        time_rate = self.total_valid_nonces / self.total_time
+        time_rate = 0
+        if self.total_time > 0:
+            time_rate = self.total_valid_nonces / self.total_time
         success_rate = 0
         if self.total_valid_nonces > 0:
             success_rate = self.total_checked_nonces / self.total_valid_nonces
-        report = dedent(
-            f"""
-            Generated: {self.total_valid_nonces} / {self.total_checked_nonces} (1 in {success_rate:.0f})
-            Time: {self.total_time/ 60:.2f}min ({time_rate * 60:.2f} nonces/min)
-        """
-        )
+        
+        raw_rate = 0
+        if self.total_time > 0:
+            raw_rate = self.total_checked_nonces / self.total_time * 60
+        
+        worker_prefix = f"[{worker_id}] " if worker_id is not None else ""
+        report = f"{worker_prefix}Generated: {self.total_valid_nonces} / {self.total_checked_nonces} (1 in {success_rate:.0f}) Time: {self.total_time/ 60:.2f}min ({time_rate * 60:.2f} valid/min, {raw_rate:.2f} raw/min)"
+        
         if detailed:
             report += "\n" + str(self.time_stats)
-        return dedent(report)
+        return report
 
 
 @dataclass
 class NonceIterator:
     node_id: int
     n_nodes: int
-    device_id: int
-    n_devices: int
+    group_id: int
+    n_groups: int
     _current_x: int = 0
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        offset = self.node_id + self.device_id * self.n_nodes
-        step = self.n_devices * self.n_nodes
+        offset = self.node_id + self.group_id * self.n_nodes
+        step = self.n_groups * self.n_nodes
         value = offset + self._current_x * step
         self._current_x += 1
         return value

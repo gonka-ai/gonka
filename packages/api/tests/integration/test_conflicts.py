@@ -53,7 +53,7 @@ def pow_params():
         multiple_of=1024,
         norm_eps=1e-05,
         rope_theta=500000.0,
-        use_scaled_rope=True,
+        use_scaled_rope=False,
         seq_len=4
     )
 

@@ -12,8 +12,9 @@ from pow.compute.utils import (
     NonceIterator,
 )
 from pow.compute.worker import Worker
+from pow.compute.gpu_group import GpuGroup, create_gpu_groups
 from pow.models.utils import Params
-from pow.compute.autobs import get_batch_size_from_memory
+from pow.compute.autobs_v2 import get_batch_size_for_gpu_group
 from common.logger import create_logger
 from common.trackable_task import ITrackableTask
 
@@ -30,12 +31,13 @@ class Controller:
         public_key: str,
         batch_size: int,
         r_target: float,
-        devices: List[str],
+        gpu_group: GpuGroup,
         iterator: Iterator[int],
         phase: Value,
         generated_batch_queue: Queue,
         validated_batch_queue: Queue,
         to_validate_batch_queue: Queue,
+        node_id: int,
     ):
         ctx = mp.get_context("spawn")
 
@@ -45,12 +47,15 @@ class Controller:
         self.validated_batch_queue = validated_batch_queue
         self.phase = phase
         self.model_init_event = ctx.Event()
-        self.devices = devices
+        self.gpu_group = gpu_group
+        self.devices = gpu_group.get_device_strings()  # For backward compatibility
+        self.node_id = node_id
+        self.params = params
         
-        target_memory_usage = 0.9
-        batch_size = get_batch_size_from_memory(target_memory_usage=target_memory_usage,
-                                                     device_id=idx)
-        logger.info(f"Batch size: {batch_size}, target memory usage: {target_memory_usage*100}%")
+        # Use simplified GPU group batch size calculation
+        batch_size = get_batch_size_for_gpu_group(gpu_group, params)
+        logger.info(f"Using batch size: {batch_size} for GPU group {gpu_group.devices}")
+
         self.process = ctx.Process(
             target=self._worker_process,
             args=(
@@ -66,8 +71,9 @@ class Controller:
                 public_key,
                 batch_size,
                 r_target,
-                devices,
+                self.devices,
                 iterator,
+                self.node_id,
             ),
             daemon=False,
         )
@@ -88,6 +94,7 @@ class Controller:
         r_target: float,
         devices: List[str],
         iterator: Iterator[int],
+        node_id: int,
     ):
         worker = Worker(
             idx,
@@ -104,6 +111,7 @@ class Controller:
             r_target,
             devices,
             iterator,
+            node_id,
         )
         worker.run()
 
@@ -157,12 +165,9 @@ class ParallelController(ITrackableTask):
         node_count: int,
         batch_size: int,
         r_target: float,
-        devices: List[str] = None,
+        devices: Optional[List[str]] = None,
     ):
         ctx = mp.get_context("spawn")
-
-        if devices is None:
-            devices = self._get_all_torch_devices()
 
         self.phase = ctx.Value('i', Phase.IDLE)
         
@@ -179,6 +184,18 @@ class ParallelController(ITrackableTask):
         self.node_count = node_count
         self.batch_size = batch_size
 
+        # Create GPU groups for controllers
+        if devices is None:
+            gpu_groups = create_gpu_groups(params=params)
+            logger.info(f"Created {len(gpu_groups)} GPU groups:")
+            for i, group in enumerate(gpu_groups):
+                logger.info(f"  Group {i}: {group} (VRAM: {group.get_total_vram_gb():.1f}GB)")
+        else:
+            # Convert device strings back to groups for backward compatibility
+            gpu_groups = [GpuGroup([int(device.split(':')[1]) if ':' in device else 0]) 
+                         for device in devices]
+            logger.info(f"Using provided devices as single-GPU groups: {len(gpu_groups)} groups")
+
         self.controllers = [
             Controller(
                 idx=idx,
@@ -188,19 +205,20 @@ class ParallelController(ITrackableTask):
                 public_key=public_key,
                 batch_size=batch_size,
                 r_target=r_target,
-                devices=device,
+                gpu_group=gpu_group,
                 iterator=NonceIterator(
                     node_id=self.node_id,
                     n_nodes=self.node_count,
-                    device_id=idx,
-                    n_devices=len(devices),
+                    group_id=idx,
+                    n_groups=len(gpu_groups),
                 ),
                 phase=self.phase,
                 generated_batch_queue=self.generated_batch_queue,
                 validated_batch_queue=self.validated_batch_queue,
                 to_validate_batch_queue=self.to_validate_batch_queue,
+                node_id=self.node_id,
             )
-            for idx, device in enumerate(devices)
+            for idx, gpu_group in enumerate(gpu_groups)
         ]
 
     def set_phase(self, new_phase: int):
@@ -255,16 +273,6 @@ class ParallelController(ITrackableTask):
     def terminate(self):
         for controller in self.controllers:
             controller.process.terminate()
-
-    @staticmethod
-    def _get_all_torch_devices():
-        if not torch.cuda.is_available():
-            return [["cpu"]]
-
-        all_devices = []
-        for device_id in range(torch.cuda.device_count()):
-            all_devices.append([f"cuda:{device_id}"])
-        return all_devices
 
     def is_alive(self) -> bool:
         return self.is_running()

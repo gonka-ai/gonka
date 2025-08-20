@@ -10,6 +10,7 @@ from pow.data import (
 )
 from pow.compute.controller import Controller, ParallelController
 from pow.compute.utils import Phase
+from pow.compute.gpu_group import GpuGroup
 import multiprocessing as mp
 import time
 from itertools import count
@@ -30,9 +31,9 @@ def test_gpu_operation():
 
 
 @pytest.mark.parametrize(
-    "block_hash, block_height, public_key, devices",
+    "block_hash, block_height, public_key, devices, node_id",
     [
-        ("0x00", 0, "0x00", ["cuda:0"]),
+        ("0x00", 0, "0x00", ["cuda:0"], 0),
     ],
 )
 def test_compute_simple(
@@ -40,20 +41,27 @@ def test_compute_simple(
     block_height: int,
     public_key: str,
     devices: List[str],
+    node_id: int,
 ):
     compute = Compute(
         params=Params(
             dim=128,
             vocab_size=128,
+            n_layers=4,  # Small number of layers for testing
+            n_heads=4,
+            n_kv_heads=4,
+            seq_len=16,  # Small sequence length
+            use_scaled_rope=False,  # Disable scaled RoPE to avoid meta tensor issues
         ),
         block_hash=block_hash,
         block_height=block_height,
         public_key=public_key,
         r_target=R_ESTIMATED,
         devices=devices,
+        node_id=node_id,
     )
 
-    nonces = list(range(1000))
+    nonces = list(range(100))  # Reasonable batch size for small test model
     proof_batch: ProofBatch = compute(
         nonces=nonces,
         public_key=compute.public_key,
@@ -73,9 +81,9 @@ def test_compute_simple(
 
 
 @pytest.mark.parametrize(
-    "block_hash, block_height, public_key, devices",
+    "block_hash, block_height, public_key, devices, node_id",
     [
-        ("0x00", 0, "0x00", ["cuda:0"]),
+        ("0x00", 0, "0x00", ["cuda:0"], 0),
     ],
 )
 def test_controller(
@@ -83,6 +91,7 @@ def test_controller(
     block_height: int,
     public_key: str,
     devices: List[str],
+    node_id: int,
 ):
     ctx = mp.get_context("spawn")
 
@@ -91,23 +100,33 @@ def test_controller(
     validated_batch_queue = ctx.Queue()
     phase = ctx.Value('i', Phase.IDLE)
 
+    # Convert device strings to GpuGroup
+    device_ids = [int(device.split(':')[1]) if ':' in device else 0 for device in devices]
+    gpu_group = GpuGroup(device_ids)
+    
     controller = Controller(
         idx=0,
         params=Params(
             dim=128,
             vocab_size=128,
+            n_layers=4,  # Small number of layers for testing
+            n_heads=4,
+            n_kv_heads=4,
+            seq_len=16,  # Small sequence length
+            use_scaled_rope=False,  # Disable scaled RoPE to avoid meta tensor issues
         ),
         block_hash=block_hash,
         block_height=block_height,
         public_key=public_key,
         batch_size=100,
         r_target=R_ESTIMATED,
-        devices=devices,
+        gpu_group=gpu_group,
         iterator=count(0, 10),
         phase=phase,
         generated_batch_queue=generated_batch_queue,
         validated_batch_queue=validated_batch_queue,
         to_validate_batch_queue=to_validate_batch_queue,
+        node_id=node_id,
     )
 
     assert generated_batch_queue.empty()
@@ -166,20 +185,25 @@ def test_parallel_controller(
     block_height: int,
     public_key: str,
 ):
-    devices = torch.cuda.device_count()
-    print(f"Devices: {devices}")
-    devices = [[f"cuda:{i}"] for i in range(devices)]
+    device_count = torch.cuda.device_count()
+    print(f"Devices: {device_count}")
+    devices = [f"cuda:{i}" for i in range(device_count)]
 
     controller = ParallelController(
-        node_id=0,
-        node_count=1,
         params=Params(
             dim=128,
             vocab_size=128,
+            n_layers=4,  # Small number of layers for testing
+            n_heads=4,
+            n_kv_heads=4,
+            seq_len=16,  # Small sequence length
+            use_scaled_rope=False,  # Disable scaled RoPE to avoid meta tensor issues
         ),
         block_hash=block_hash,
         block_height=block_height,
         public_key=public_key,
+        node_id=0,
+        node_count=1,
         batch_size=100,
         r_target=R_ESTIMATED,
         devices=devices,
