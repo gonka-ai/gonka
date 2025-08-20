@@ -11,7 +11,7 @@ import (
 
 // Key prefixes for bridge storage
 const (
-	BridgeAddressKeyPrefix = "bridge_address:"
+	BridgeAddressKeyPrefix = "BridgeAddress/"
 )
 
 // Bridge address management functions

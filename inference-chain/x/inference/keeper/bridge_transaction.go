@@ -11,7 +11,7 @@ import (
 
 // Key prefix for bridge transactions
 const (
-	BridgeTransactionKeyPrefix = "bridge_tx:"
+	BridgeTransactionKeyPrefix = "BridgeTx/"
 )
 
 // generateBridgeTransactionKey creates a unique key for bridge transactions
