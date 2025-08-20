@@ -31,6 +31,8 @@ var (
 	InferenceValidationDetailsPrefix = collections.NewPrefix(8)
 	UnitOfComputePriceProposalPrefix = collections.NewPrefix(9)
 	EpochGroupDataPrefix             = collections.NewPrefix(10)
+	EpochsPrefix                     = collections.NewPrefix(11)
+	EffectiveEpochIndexPrefix        = collections.NewPrefix(12)
 	ParamsKey                        = []byte("p_inference")
 )
 

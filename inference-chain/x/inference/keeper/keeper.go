@@ -45,6 +45,9 @@ type (
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		// Epoch collections
+		Epochs              collections.Map[uint64, types.Epoch]
+		EffectiveEpochIndex collections.Item[uint64]
 	}
 )
 
@@ -167,6 +170,20 @@ func NewKeeper(
 			"epoch_group_data",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupData](cdc),
+		),
+		// Epoch collections wiring
+		Epochs: collections.NewMap(
+			sb,
+			types.EpochsPrefix,
+			"epochs",
+			collections.Uint64Key,
+			codec.CollValue[types.Epoch](cdc),
+		),
+		EffectiveEpochIndex: collections.NewItem(
+			sb,
+			types.EffectiveEpochIndexPrefix,
+			"effective_epoch_index",
+			collections.Uint64Value,
 		),
 	}
 }
