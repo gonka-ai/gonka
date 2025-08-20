@@ -29,24 +29,24 @@ func TestEpochGroupDataQuerySingle(t *testing.T) {
 		{
 			desc: "First",
 			request: &types.QueryGetEpochGroupDataRequest{
-				PocStartBlockHeight: msgs[0].PocStartBlockHeight,
-				ModelId:             msgs[0].ModelId,
+				EpochIndex: msgs[0].EpochIndex,
+				ModelId:    msgs[0].ModelId,
 			},
 			response: &types.QueryGetEpochGroupDataResponse{EpochGroupData: msgs[0]},
 		},
 		{
 			desc: "Second",
 			request: &types.QueryGetEpochGroupDataRequest{
-				PocStartBlockHeight: msgs[1].PocStartBlockHeight,
-				ModelId:             msgs[1].ModelId,
+				EpochIndex: msgs[1].EpochIndex,
+				ModelId:    msgs[1].ModelId,
 			},
 			response: &types.QueryGetEpochGroupDataResponse{EpochGroupData: msgs[1]},
 		},
 		{
 			desc: "KeyNotFound",
 			request: &types.QueryGetEpochGroupDataRequest{
-				PocStartBlockHeight: 100000,
-				ModelId:             "",
+				EpochIndex: 100000,
+				ModelId:    "",
 			},
 			err: status.Error(codes.NotFound, "not found"),
 		},

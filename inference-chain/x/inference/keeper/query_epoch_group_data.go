@@ -3,8 +3,7 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -16,20 +15,14 @@ func (k Keeper) EpochGroupDataAll(ctx context.Context, req *types.QueryAllEpochG
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	var epochGroupDatas []types.EpochGroupData
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochGroupDataStore := prefix.NewStore(store, types.KeyPrefix(types.EpochGroupDataKeyPrefix))
-
-	pageRes, err := query.Paginate(epochGroupDataStore, req.Pagination, func(key []byte, value []byte) error {
-		var epochGroupData types.EpochGroupData
-		if err := k.cdc.Unmarshal(value, &epochGroupData); err != nil {
-			return err
-		}
-
-		epochGroupDatas = append(epochGroupDatas, epochGroupData)
-		return nil
-	})
+	epochGroupDatas, pageRes, err := query.CollectionPaginate(
+		ctx,
+		k.EpochGroupDataMap,
+		req.Pagination,
+		func(_ collections.Pair[uint64, string], value types.EpochGroupData) (types.EpochGroupData, error) {
+			return value, nil
+		},
+	)
 
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -45,7 +38,7 @@ func (k Keeper) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGrou
 
 	val, found := k.GetEpochGroupData(
 		ctx,
-		req.PocStartBlockHeight,
+		req.EpochIndex,
 		req.ModelId,
 	)
 	if !found {

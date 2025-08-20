@@ -12,7 +12,7 @@ const (
 // EpochPerformanceSummaryKey returns the store key to retrieve a EpochPerformanceSummary from the index fields
 func EpochPerformanceSummaryKey(
 	participantId string,
-	epochStartHeight uint64,
+	epochIndex uint64,
 ) []byte {
 	var key []byte
 
@@ -20,9 +20,9 @@ func EpochPerformanceSummaryKey(
 	key = append(key, participantIdBytes...)
 	key = append(key, []byte("/")...)
 
-	epochStartHeightBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(epochStartHeightBytes, epochStartHeight)
-	key = append(key, epochStartHeightBytes...)
+	epochIndexBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(epochIndexBytes, epochIndex)
+	key = append(key, epochIndexBytes...)
 	key = append(key, []byte("/")...)
 
 	return key

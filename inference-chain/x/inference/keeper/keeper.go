@@ -44,6 +44,7 @@ type (
 		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
+		EpochGroupDataMap   collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 	}
 )
 
@@ -159,6 +160,13 @@ func NewKeeper(
 			"inference_timeout",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.InferenceTimeout](cdc),
+		),
+		EpochGroupDataMap: collections.NewMap(
+			sb,
+			types.EpochGroupDataPrefix,
+			"epoch_group_data",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.EpochGroupData](cdc),
 		),
 	}
 }

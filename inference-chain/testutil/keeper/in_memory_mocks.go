@@ -16,8 +16,8 @@ type InMemoryEpochGroupDataKeeper struct {
 }
 
 // generateKey creates a unique key from pocStartBlockHeight and modelId.
-func (keeper *InMemoryEpochGroupDataKeeper) generateKey(pocStartBlockHeight uint64, modelId string) string {
-	return fmt.Sprintf("%d/%s", pocStartBlockHeight, modelId)
+func (keeper *InMemoryEpochGroupDataKeeper) generateKey(epochIndex uint64, modelId string) string {
+	return fmt.Sprintf("%d/%s", epochIndex, modelId)
 }
 
 // NewInMemoryEpochGroupDataKeeper creates a new instance of InMemoryEpochGroupDataKeeper.
@@ -31,24 +31,24 @@ func NewInMemoryEpochGroupDataKeeper() *InMemoryEpochGroupDataKeeper {
 func (keeper *InMemoryEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
-	key := keeper.generateKey(epochGroupData.PocStartBlockHeight, epochGroupData.ModelId)
+	key := keeper.generateKey(epochGroupData.EpochIndex, epochGroupData.ModelId)
 	keeper.data[key] = epochGroupData
 }
 
 // GetEpochGroupData retrieves the EpochGroupData by PocStartBlockHeight and modelId.
-func (keeper *InMemoryEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val types.EpochGroupData, found bool) {
+func (keeper *InMemoryEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val types.EpochGroupData, found bool) {
 	keeper.mu.RLock()
 	defer keeper.mu.RUnlock()
-	key := keeper.generateKey(pocStartBlockHeight, modelId)
+	key := keeper.generateKey(epochIndex, modelId)
 	val, found = keeper.data[key]
 	return
 }
 
 // RemoveEpochGroupData removes the EpochGroupData by PocStartBlockHeight and modelId.
-func (keeper *InMemoryEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) {
+func (keeper *InMemoryEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
-	key := keeper.generateKey(pocStartBlockHeight, modelId)
+	key := keeper.generateKey(epochIndex, modelId)
 	delete(keeper.data, key)
 }
 

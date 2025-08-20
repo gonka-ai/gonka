@@ -46,7 +46,7 @@ func (k Keeper) EpochGroupValidations(ctx context.Context, req *types.QueryGetEp
 	val, found := k.GetEpochGroupValidations(
 		ctx,
 		req.Participant,
-		req.PocStartBlockHeight,
+		req.EpochIndex,
 	)
 	if !found {
 		return nil, status.Error(codes.NotFound, "not found")

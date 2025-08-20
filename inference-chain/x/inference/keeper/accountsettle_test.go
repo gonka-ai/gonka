@@ -273,7 +273,7 @@ func TestActualSettle(t *testing.T) {
 	keeper.SetParticipant(ctx, participant1)
 	keeper.SetParticipant(ctx, participant2)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
-		PocStartBlockHeight: 10,
+		EpochIndex: 10,
 	})
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
 
@@ -293,7 +293,7 @@ func TestActualSettle(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, uint64(1000), settleAmount1.WorkCoins)
 	require.Equal(t, uint64(expectedRewardCoin/2), settleAmount1.RewardCoins)
-	require.Equal(t, uint64(10), settleAmount1.PocStartHeight)
+	require.Equal(t, uint64(10), settleAmount1.EpochIndex)
 	settleAmount2, found := keeper.GetSettleAmount(ctx, participant2.Address)
 	require.True(t, found)
 	require.Equal(t, uint64(1000), settleAmount2.WorkCoins)

@@ -13,18 +13,18 @@ func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) {
 	if err != nil {
 		panic(err)
 	}
-	pk := collections.Join(seed.BlockHeight, addr)
+	pk := collections.Join(seed.EpochIndex, addr)
 	if err := k.RandomSeeds.Set(ctx, pk, seed); err != nil {
 		panic(err)
 	}
 }
 
-func (k Keeper) GetRandomSeed(ctx context.Context, blockHeight int64, participantAddress string) (types.RandomSeed, bool) {
+func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex int64, participantAddress string) (types.RandomSeed, bool) {
 	addr, err := sdk.AccAddressFromBech32(participantAddress)
 	if err != nil {
 		return types.RandomSeed{}, false
 	}
-	pk := collections.Join(blockHeight, addr)
+	pk := collections.Join(epochIndex, addr)
 	v, err := k.RandomSeeds.Get(ctx, pk)
 	if err != nil {
 		return types.RandomSeed{}, false
