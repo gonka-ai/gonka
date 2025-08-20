@@ -11,6 +11,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
+	"strconv"
+	"strings"
+
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
@@ -19,9 +23,6 @@ import (
 	"github.com/gonka-ai/gonka-utils/go/contracts"
 	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"github.com/productscience/inference/x/inference/types"
-	"net/url"
-	"strconv"
-	"strings"
 )
 
 // UnquoteEventValue removes JSON quotes from event values
@@ -163,7 +164,7 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryC
 			if participant.Seed != nil {
 				seed = &contracts.RandomSeed{
 					Participant: participant.Seed.Participant,
-					BlockHeight: participant.Seed.BlockHeight,
+					EpochIndex:  participant.Seed.EpochIndex,
 					Signature:   participant.Seed.Signature,
 				}
 			}
