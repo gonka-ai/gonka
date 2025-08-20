@@ -30,7 +30,7 @@ var (
 	InferenceTimeoutPrefix           = collections.NewPrefix(7)
 	InferenceValidationDetailsPrefix = collections.NewPrefix(8)
 	UnitOfComputePriceProposalPrefix = collections.NewPrefix(9)
-	EpochGroupDataPrefix             = collections.NewPrefix(0)
+	EpochGroupDataPrefix             = collections.NewPrefix(10)
 	ParamsKey                        = []byte("p_inference")
 )
 
