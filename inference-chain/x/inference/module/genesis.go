@@ -64,7 +64,7 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	k.SetActiveParticipants(ctx, activeParticiapntGenesisEpoch)
-	k.SetPendingProof(ctx, 1)
+	k.SetPendingProof(ctx, 1, 0)
 
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {

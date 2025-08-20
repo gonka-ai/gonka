@@ -45,7 +45,7 @@ const (
 	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
 	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
 	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
-	Msg_SubmitValidatorsProof_FullMethodName            = "/inference.inference.Msg/SubmitValidatorsProof"
+	Msg_SubmitParticipantsProof_FullMethodName          = "/inference.inference.Msg/SubmitParticipantsProof"
 )
 
 // MsgClient is the client API for Msg service.
@@ -80,7 +80,7 @@ type MsgClient interface {
 	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error)
-	SubmitValidatorsProof(ctx context.Context, in *MsgSubmitValidatorsProof, opts ...grpc.CallOption) (*MsgSubmitValidatorsProofResponse, error)
+	SubmitParticipantsProof(ctx context.Context, in *MsgSubmitParticipantsProof, opts ...grpc.CallOption) (*MsgSubmitParticipantsProofResponse, error)
 }
 
 type msgClient struct {
@@ -325,9 +325,9 @@ func (c *msgClient) BridgeExchange(ctx context.Context, in *MsgBridgeExchange, o
 	return out, nil
 }
 
-func (c *msgClient) SubmitValidatorsProof(ctx context.Context, in *MsgSubmitValidatorsProof, opts ...grpc.CallOption) (*MsgSubmitValidatorsProofResponse, error) {
-	out := new(MsgSubmitValidatorsProofResponse)
-	err := c.cc.Invoke(ctx, Msg_SubmitValidatorsProof_FullMethodName, in, out, opts...)
+func (c *msgClient) SubmitParticipantsProof(ctx context.Context, in *MsgSubmitParticipantsProof, opts ...grpc.CallOption) (*MsgSubmitParticipantsProofResponse, error) {
+	out := new(MsgSubmitParticipantsProofResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitParticipantsProof_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +366,7 @@ type MsgServer interface {
 	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error)
-	SubmitValidatorsProof(context.Context, *MsgSubmitValidatorsProof) (*MsgSubmitValidatorsProofResponse, error)
+	SubmitParticipantsProof(context.Context, *MsgSubmitParticipantsProof) (*MsgSubmitParticipantsProofResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -452,8 +452,8 @@ func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreat
 func (UnimplementedMsgServer) BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BridgeExchange not implemented")
 }
-func (UnimplementedMsgServer) SubmitValidatorsProof(context.Context, *MsgSubmitValidatorsProof) (*MsgSubmitValidatorsProofResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitValidatorsProof not implemented")
+func (UnimplementedMsgServer) SubmitParticipantsProof(context.Context, *MsgSubmitParticipantsProof) (*MsgSubmitParticipantsProofResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitParticipantsProof not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -936,20 +936,20 @@ func _Msg_BridgeExchange_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_SubmitValidatorsProof_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSubmitValidatorsProof)
+func _Msg_SubmitParticipantsProof_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitParticipantsProof)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MsgServer).SubmitValidatorsProof(ctx, in)
+		return srv.(MsgServer).SubmitParticipantsProof(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Msg_SubmitValidatorsProof_FullMethodName,
+		FullMethod: Msg_SubmitParticipantsProof_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SubmitValidatorsProof(ctx, req.(*MsgSubmitValidatorsProof))
+		return srv.(MsgServer).SubmitParticipantsProof(ctx, req.(*MsgSubmitParticipantsProof))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1066,8 +1066,8 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_BridgeExchange_Handler,
 		},
 		{
-			MethodName: "SubmitValidatorsProof",
-			Handler:    _Msg_SubmitValidatorsProof_Handler,
+			MethodName: "SubmitParticipantsProof",
+			Handler:    _Msg_SubmitParticipantsProof_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

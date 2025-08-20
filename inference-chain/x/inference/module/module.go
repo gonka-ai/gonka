@@ -188,7 +188,7 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 
 	target := currentHeight - 1
 
-	if !am.keeper.HasPendingProof(ctx, target) {
+	if _, found := am.keeper.GetPendingProof(ctx, target); !found {
 		return nil
 	}
 
@@ -292,7 +292,6 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		return nil
 	}
 
-	am.keeper.ClearPendingProof(sdkCtx, target)
 	am.LogInfo("BlockProof stored", types.Participants,
 		"created_at_block_height", target,
 		"total_power", totalPower,
@@ -541,7 +540,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		CreatedAtBlockHeight: blockHeight,
 	})
 
-	am.keeper.SetPendingProof(ctx, blockHeight)
+	am.keeper.SetPendingProof(ctx, blockHeight, upcomingEpoch.Index)
 	am.LogInfo("set pending proof on height", types.EpochGroup, "blockHeight", blockHeight)
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)

@@ -369,9 +369,14 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/block_proof/{proof_height}";
   }
   
-  rpc GetValidatorsProofByHeight (QueryGetValidatorsProofRequest) returns (QueryGetValidatorsProofResponse) {
+  rpc GetParticipantsProofByHeight (QueryGetParticipantsProofRequest) returns (QueryGetParticipantsProofResponse) {
     option (google.api.http).get = "/productscience/inference/inference/validators_proof/{proof_height}";
   }
+
+  rpc IfProofPending(QueryIsProofPendingRequest) returns (QueryIsProofPendingResponse){
+    option (google.api.http).get = "/productscience/inference/inference/participants_proof/{proof_height}";
+  }
+
 }
 
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -938,10 +943,20 @@ message QueryBlockProofResponse{
   BlockProof proof = 1;
 }
 
-message QueryGetValidatorsProofRequest {
+message QueryGetParticipantsProofRequest {
   int64 proof_height = 1;
 }
 
-message QueryGetValidatorsProofResponse{
-  ValidatorsProof proof = 1;
+message QueryGetParticipantsProofResponse{
+  ValidatorsProof validators_proof = 1;
+  ProofOps merkle_proof = 2;
+}
+
+message QueryIsProofPendingRequest {
+  int64 proof_height = 1;
+}
+
+message QueryIsProofPendingResponse {
+  bool pending = 1;
+  uint64 upcoming_epoch_id = 2;
 }

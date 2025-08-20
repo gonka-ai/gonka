@@ -48,3 +48,14 @@ message ValidatorsProof {
   BlockID block_id = 3;
   repeated SignatureInfo signatures = 4;
 }
+
+message ProofOp {
+  string type = 1;
+  bytes  key  = 2;
+  bytes  data = 3;
+}
+
+message ProofOps {
+  int64 block_height             = 1;
+  repeated ProofOp ops = 2 [(gogoproto.nullable) = false];
+}

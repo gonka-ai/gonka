@@ -5,8 +5,8 @@ import (
 	"decentralized-api/internal/utils"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
+	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	externalutils "github.com/gonka-ai/gonka-utils/go/utils"
 	"strconv"
 	"strings"
@@ -57,18 +57,18 @@ type MlNodeReconciliationConfig struct {
 
 // OnNewBlockDispatcher orchestrates processing of new block events
 type OnNewBlockDispatcher struct {
-	nodeBroker                   *broker.Broker
-	lastVerifiedAppHashHex       string
-	nodePocOrchestrator          poc.NodePoCOrchestrator
-	queryClient                  ChainStateClient
-	phaseTracker                 *chainphase.ChainPhaseTracker
-	reconciliationConfig         MlNodeReconciliationConfig
-	getStatusFunc                StatusFunc
-	setHeightFunc                SetHeightFunc
-	randomSeedManager            poc.RandomSeedManager
-	transactionRecorder          cosmosclient.InferenceCosmosClient
-	configManager                *apiconfig.ConfigManager
-	earliestCollectedBlockHeight int64
+	nodeBroker              *broker.Broker
+	lastVerifiedAppHashHex  string
+	nodePocOrchestrator     poc.NodePoCOrchestrator
+	queryClient             ChainStateClient
+	phaseTracker            *chainphase.ChainPhaseTracker
+	reconciliationConfig    MlNodeReconciliationConfig
+	getStatusFunc           StatusFunc
+	setHeightFunc           SetHeightFunc
+	randomSeedManager       poc.RandomSeedManager
+	transactionRecorder     cosmosclient.InferenceCosmosClient
+	configManager           *apiconfig.ConfigManager
+	isGenesisBlockProcessed bool
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -160,6 +160,8 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 
 // ProcessNewBlock is the main entry point for processing new block events
 func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainevents.FinalizedBlock) error {
+	d.collectGenesisBlockProof()
+
 	height, err := strconv.ParseInt(blockInfo.Block.Header.Height, 10, 64)
 	if err != nil {
 		logging.Error("failed to parse block height", types.Stages, "height", blockInfo.Block.Header.Height, "err", err)
@@ -169,11 +171,6 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	logging.Debug("Processing new block", types.Stages,
 		"height", blockInfo.Block.Header.Height,
 		"hash", blockInfo.BlockId.Hash)
-
-	if d.earliestCollectedBlockHeight == 0 {
-		d.earliestCollectedBlockHeight = height
-		go d.collectMissingBlocksSignatures(height)
-	}
 
 	// 1. Query network for current state (sync status, epoch params)
 	networkInfo, err := d.queryNetworkInfo(ctx)
@@ -228,6 +225,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 	d.verifyParticipantsChain(ctx, networkInfo.BlockHeight)
 
+	d.collectBlockProofs(blockInfo)
 	// Let's check in prod how often this happens
 	if networkInfo.BlockHeight != height {
 		logging.Warn("Block height mismatch between event and network query", types.Stages,
@@ -316,11 +314,12 @@ func (d *OnNewBlockDispatcher) verifyParticipantsChain(ctx context.Context, curH
 	}
 }
 
-func (el *OnNewBlockDispatcher) collectMissingBlocksSignatures(currentHeight int64) error {
-	logging.Warn("collectMissingBlocksSignatures", types.EventProcessing, "currentHeight", currentHeight)
-	if !el.configManager.GetChainNodeConfig().IsGenesis {
+func (el *OnNewBlockDispatcher) collectGenesisBlockProof() error {
+	if !el.configManager.GetChainNodeConfig().IsGenesis || el.isGenesisBlockProcessed {
 		return nil
 	}
+
+	logging.Info("collectGenesisBlockProof", types.EventProcessing)
 
 	rpcClient, err := cosmosclient.NewRpcClient(el.configManager.GetChainNodeConfig().Url)
 	if err != nil {
@@ -328,43 +327,45 @@ func (el *OnNewBlockDispatcher) collectMissingBlocksSignatures(currentHeight int
 		return err
 	}
 
-	for startBlockHeight := int64(1); startBlockHeight <= currentHeight; startBlockHeight++ {
-		block, err := rpcClient.Block(context.Background(), &startBlockHeight)
-		if err != nil {
-			logging.Error("EventListener: Failed to get genesis block", types.System, "error", err)
-		}
-
-		proof := types.ValidatorsProof{
-			BlockHeight: block.Block.LastCommit.Height,
-			Round:       int64(block.Block.LastCommit.Round),
-			BlockId: &types.BlockID{
-				Hash:               block.Block.LastCommit.BlockID.Hash.String(),
-				PartSetHeaderTotal: int64(block.Block.LastCommit.BlockID.PartSetHeader.Total),
-				PartSetHeaderHash:  block.Block.LastCommit.BlockID.PartSetHeader.Hash.String(),
-			},
-			Signatures: make([]*types.SignatureInfo, 0),
-		}
-
-		for _, sign := range block.Block.LastCommit.Signatures {
-			logging.Info("collectMissingBlocksSignatures: preparing signature to send", types.System,
-				"sign_ts", sign.Timestamp,
-				"signature", sign.Signature,
-				"height", block.Block.LastCommit.Height,
-				"validator_address", sign.ValidatorAddress)
-
-			proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
-				SignatureBase64:     base64.StdEncoding.EncodeToString(sign.Signature),
-				ValidatorAddressHex: sign.ValidatorAddress.String(),
-				Timestamp:           sign.Timestamp,
-			})
-		}
-
-		if err := el.transactionRecorder.SubmitValidatorsProof(&types.MsgSubmitValidatorsProof{Proof: &proof}); err != nil {
-			// TODO think later what to do if error is critical
-			logging.Error("Failed to set validators proof", types.System, "error", err)
-		}
+	// genesis block data is in block with height=2
+	genesisBlockResultsHeight := int64(2)
+	block, err := rpcClient.Block(context.Background(), &genesisBlockResultsHeight)
+	if err != nil {
+		logging.Error("EventListener: Failed to get genesis block", types.System, "error", err)
 	}
 
+	proof := types.ValidatorsProof{
+		BlockHeight: block.Block.LastCommit.Height,
+		Round:       int64(block.Block.LastCommit.Round),
+		BlockId: &types.BlockID{
+			Hash:               block.Block.LastCommit.BlockID.Hash.String(),
+			PartSetHeaderTotal: int64(block.Block.LastCommit.BlockID.PartSetHeader.Total),
+			PartSetHeaderHash:  block.Block.LastCommit.BlockID.PartSetHeader.Hash.String(),
+		},
+		Signatures: make([]*types.SignatureInfo, 0),
+	}
+
+	for _, sign := range block.Block.LastCommit.Signatures {
+		logging.Info("collectMissingBlocksSignatures: preparing signature to send", types.System,
+			"sign_ts", sign.Timestamp,
+			"signature", sign.Signature,
+			"height", block.Block.LastCommit.Height,
+			"validator_address", sign.ValidatorAddress)
+
+		proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
+			SignatureBase64:     base64.StdEncoding.EncodeToString(sign.Signature),
+			ValidatorAddressHex: sign.ValidatorAddress.String(),
+			Timestamp:           sign.Timestamp,
+		})
+	}
+
+	// we do not collect proof here, because cosmos can't get merkle proof for block_height <= 1
+	if err := el.transactionRecorder.SubmitActiveParticipantsPendingProof(
+		&types.MsgSubmitParticipantsProof{BlockHeight: uint64(1), ValidatorsProof: &proof}); err != nil {
+		// TODO think later what to do if error is critical
+		logging.Error("Failed to set validators proof", types.System, "error", err)
+	}
+	el.isGenesisBlockProcessed = true
 	return nil
 }
 
@@ -453,7 +454,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		go func() {
 			d.randomSeedManager.ChangeCurrentSeed()
 		}()
-		d.collectBlockSignatures(finalizedBlock)
+		d.collectBlockProofs(finalizedBlock)
 	}
 
 	if epochContext.IsClaimMoneyStage(blockHeight) {
@@ -464,12 +465,35 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	}
 }
 
-func (el *OnNewBlockDispatcher) collectBlockSignatures(block chainevents.FinalizedBlock) {
-	logging.Info("collectBlockSignatures: start preparing signatures", types.System, "height", block.Block.LastCommit.Height)
-
+func (el *OnNewBlockDispatcher) collectBlockProofs(block chainevents.FinalizedBlock) {
 	height, err := strconv.ParseInt(block.Block.LastCommit.Height, 10, 64)
 	if err != nil {
 		logging.Error("Failed to parse block height to int", types.System, "height", block.Block.LastCommit.Height, "error", err)
+		return
+	}
+
+	logging.Info("collectBlockProofs: check if proof pending", types.System, "height", block.Block.LastCommit.Height)
+	pendingProofResp, err := el.transactionRecorder.NewInferenceQueryClient().IfProofPending(context.Background(), &types.QueryIsProofPendingRequest{ProofHeight: height})
+	if err != nil {
+		logging.Error("Failed to check if proof is pending", types.System, "height", block.Block.LastCommit.Height, "error", err)
+		return
+	}
+
+	if !pendingProofResp.Pending {
+		return
+	}
+
+	logging.Info("collecting pending proof", types.System, "height", height)
+
+	rpcClient, err := cosmosclient.NewRpcClient(el.configManager.GetChainNodeConfig().Url)
+	if err != nil {
+		logging.Error("Failed to create rpc client", types.System, "error", err)
+		return
+	}
+
+	proofOps, err := getParticipantsProof(rpcClient, pendingProofResp.UpcomingEpochId, height)
+	if err != nil {
+		logging.Error("EventListener: Failed to get participants proof", types.System, "error", err)
 	}
 
 	proof := types.ValidatorsProof{
@@ -497,7 +521,12 @@ func (el *OnNewBlockDispatcher) collectBlockSignatures(block chainevents.Finaliz
 		})
 	}
 
-	if err := el.transactionRecorder.SubmitValidatorsProof(&types.MsgSubmitValidatorsProof{Proof: &proof}); err != nil {
+	if err := el.transactionRecorder.SubmitActiveParticipantsPendingProof(
+		&types.MsgSubmitParticipantsProof{
+			BlockHeight:     uint64(height),
+			ValidatorsProof: &proof,
+			ProofOpts:       proofOps,
+		}); err != nil {
 		// TODO: think later what to do if error is critical
 		logging.Error("Failed to set validators proof", types.System, "error", err)
 	}
@@ -575,24 +604,6 @@ func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan 
 	return nil, nil
 }
 
-// parseNewBlockInfo extracts NewBlockInfo from a JSONRPCResponse event
-/*func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*chainphase.BlockInfo, error) {
-	blockHeight, err := getBlockHeight(event.Result.Data.Value)
-	if err != nil {
-		return nil, err
-	}
-
-	blockHash, err := getBlockHash(event.Result.Data.Value)
-	if err != nil {
-		return nil, err
-	}
-
-	return &chainphase.BlockInfo{
-		Height: blockHeight,
-		Hash:   blockHash,
-	}, nil
-}*/
-
 func parseFinalizedBlock(event *chainevents.JSONRPCResponse) (*chainevents.FinalizedBlock, error) {
 	block := chainevents.FinalizedBlock{}
 	d, err := json.Marshal(event.Result.Data.Value)
@@ -608,41 +619,23 @@ func parseFinalizedBlock(event *chainevents.JSONRPCResponse) (*chainevents.Final
 	return &block, nil
 }
 
-// Helper functions moved from event_listener.go for parsing block data
-/*func getBlockHeight(data map[string]interface{}) (int64, error) {
-	block, ok := data["block"].(map[string]interface{})
-	if !ok {
-		return 0, errors.New("failed to access 'block' key")
-	}
+func getParticipantsProof(rpcClient *rpcclient.HTTP, epochId uint64, height int64) (*types.ProofOps, error) {
+	dataKey := types.ActiveParticipantsFullKey(epochId)
 
-	header, ok := block["header"].(map[string]interface{})
-	if !ok {
-		return 0, errors.New("failed to access 'header' key")
-	}
-
-	heightString, ok := header["height"].(string)
-	if !ok {
-		return 0, errors.New("failed to access 'height' key or it's not a string")
-	}
-
-	height, err := strconv.ParseInt(heightString, 10, 64)
+	result, err := cosmosclient.QueryByKeyWithOptions(rpcClient, "inference", dataKey, height, true)
 	if err != nil {
-		return 0, errors.New("Failed to convert retrieved height value to int64")
+		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
+		return nil, err
 	}
 
-	return height, nil
-}*/
-
-func getBlockHash(data map[string]interface{}) (string, error) {
-	blockID, ok := data["block_id"].(map[string]interface{})
-	if !ok {
-		return "", errors.New("failed to access 'block_id' key")
+	var proofOps *types.ProofOps
+	if result.Response.ProofOps != nil {
+		proofOps = &types.ProofOps{
+			Ops: make([]types.ProofOp, 0),
+		}
+		for _, op := range result.Response.ProofOps.Ops {
+			proofOps.Ops = append(proofOps.Ops, types.ProofOp(op))
+		}
 	}
-
-	hash, ok := blockID["hash"].(string)
-	if !ok {
-		return "", errors.New("failed to access 'hash' key or it's not a string")
-	}
-
-	return hash, nil
+	return proofOps, nil
 }

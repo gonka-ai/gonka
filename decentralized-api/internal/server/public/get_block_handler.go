@@ -14,6 +14,7 @@ import (
 type TemporaryResponse struct {
 	BlockProof           *types.BlockProof
 	ValidatorsSignatures *types.ValidatorsProof
+	MerkleProof          *types.ProofOps
 	CosmosBlock          *coretypes.ResultBlock
 }
 
@@ -35,7 +36,7 @@ func (s *Server) getBlock(c echo.Context) error {
 		return err
 	}
 
-	signaturesResp, err := cl.GetValidatorsProofByHeight(context.Background(), &types.QueryGetValidatorsProofRequest{ProofHeight: blockHeight})
+	proofResp, err := cl.GetParticipantsProofByHeight(context.Background(), &types.QueryGetParticipantsProofRequest{ProofHeight: blockHeight})
 	if err != nil {
 		logging.Error("Failed to get block proof by height", types.Participants, "error", err)
 	}
@@ -51,14 +52,18 @@ func (s *Server) getBlock(c echo.Context) error {
 		logging.Error("Failed to get cosmos block", types.System, "error", err)
 	}
 
-	var signatures *types.ValidatorsProof
-	if signaturesResp != nil {
-		signatures = signaturesResp.Proof
+	var (
+		signatures  *types.ValidatorsProof
+		merkleProof *types.ProofOps
+	)
+	if proofResp != nil {
+		signatures = proofResp.ValidatorsProof
+		merkleProof = proofResp.MerkleProof
 	}
-
 	resp := TemporaryResponse{
 		BlockProof:           blockProof.Proof,
 		ValidatorsSignatures: signatures,
+		MerkleProof:          merkleProof,
 		CosmosBlock:          block,
 	}
 	return c.JSON(http.StatusOK, resp)

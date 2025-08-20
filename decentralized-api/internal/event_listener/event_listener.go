@@ -49,8 +49,7 @@ type EventListener struct {
 	dispatcher          *OnNewBlockDispatcher
 	cancelFunc          context.CancelFunc
 	eventHandlers       []EventHandler
-	// earliestCollectedBlockHeight int64
-	ws *websocket.Conn
+	ws                  *websocket.Conn
 }
 
 func NewEventListener(
@@ -345,116 +344,6 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		}
 	}
 }
-
-// TODO setup retry retrieving genesis block till success
-/*func (el *EventListener) collectMissingBlocksSignatures(currentHeight int64) error {
-	logging.Warn("collectMissingBlocksSignatures", types.EventProcessing, "currentHeight", currentHeight)
-	if !el.configManager.GetChainNodeConfig().IsGenesis {
-		return nil
-	}
-
-	rpcClient, err := cosmosclient.NewRpcClient(el.configManager.GetChainNodeConfig().Url)
-	if err != nil {
-		logging.Error("EventListener: Failed to create rpc client", types.System, "error", err)
-		return err
-	}
-
-	for startBlockHeight := int64(1); startBlockHeight <= currentHeight; startBlockHeight++ {
-		block, err := rpcClient.Block(context.Background(), &startBlockHeight)
-		if err != nil {
-			logging.Error("EventListener: Failed to get genesis block", types.System, "error", err)
-		}
-
-		proof := types.ValidatorsProof{
-			BlockHeight: block.Block.LastCommit.Height,
-			Round:       int64(block.Block.LastCommit.Round),
-			BlockId: &types.BlockID{
-				Hash:               block.Block.LastCommit.BlockID.Hash.String(),
-				PartSetHeaderTotal: int64(block.Block.LastCommit.BlockID.PartSetHeader.Total),
-				PartSetHeaderHash:  block.Block.LastCommit.BlockID.PartSetHeader.Hash.String(),
-			},
-			Signatures: make([]*types.SignatureInfo, 0),
-		}
-
-		for _, sign := range block.Block.LastCommit.Signatures {
-			logging.Info("collectMissingBlocksSignatures: preparing signature to send", types.System,
-				"sign_ts", sign.Timestamp,
-				"signature", sign.Signature,
-				"height", block.Block.LastCommit.Height,
-				"validator_address", sign.ValidatorAddress)
-
-			proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
-				SignatureBase64:     base64.StdEncoding.EncodeToString(sign.Signature),
-				ValidatorAddressHex: sign.ValidatorAddress.String(),
-				Timestamp:           sign.Timestamp,
-			})
-		}
-
-		if err := el.transactionRecorder.SubmitValidatorsProof(&types.MsgSubmitValidatorsProof{Proof: &proof}); err != nil {
-			// TODO what to do if error is critical
-			logging.Error("Failed to set validators proof", types.System, "error", err)
-		}
-	}
-
-	return nil
-}*/
-
-// TODO пофиксить: установить pending proof и писать только для тех блоков, где создается participants set
-/*func (el *EventListener) collectBlockSignatures(event *chainevents.JSONRPCResponse) {
-	block := chainevents.FinalizedBlock{}
-	d, err := json.Marshal(event.Result.Data.Value)
-	if err != nil {
-		logging.Error("Failed to marshal event.Result.Data.Value", types.System, "error", err)
-		return
-	}
-	err = json.Unmarshal(d, &block)
-	if err != nil {
-		logging.Error("Failed to unmarshal event.Result.Data.Value to block", types.System, "error", err)
-		return
-	}
-
-	logging.Info("collectBlockSignatures: start preparing signatures", types.System, "height", block.Block.LastCommit.Height)
-
-	height, err := strconv.ParseInt(block.Block.LastCommit.Height, 10, 64)
-	if err != nil {
-		logging.Error("Failed to parse block height to int", types.System, "height", block.Block.LastCommit.Height, "error", err)
-	}
-
-	if el.earliestCollectedBlockHeight == 0 {
-		el.earliestCollectedBlockHeight = height
-		go el.collectMissingBlocksSignatures(height)
-	}
-
-	proof := types.ValidatorsProof{
-		BlockHeight: height,
-		Round:       int64(block.Block.LastCommit.Round),
-		BlockId: &types.BlockID{
-			Hash:               block.Block.LastCommit.BlockId.Hash,
-			PartSetHeaderTotal: int64(block.Block.LastCommit.BlockId.Parts.Total),
-			PartSetHeaderHash:  block.Block.LastCommit.BlockId.Parts.Hash,
-		},
-		Signatures: make([]*types.SignatureInfo, 0),
-	}
-
-	for _, sign := range block.Block.LastCommit.Signatures {
-		logging.Info("Preparing signature to send", types.System,
-			"sign_ts", sign.Timestamp,
-			"signature", sign.Signature,
-			"height", height,
-			"validator_address", sign.ValidatorAddress)
-
-		proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
-			SignatureBase64:     sign.Signature,
-			ValidatorAddressHex: sign.ValidatorAddress,
-			Timestamp:           sign.Timestamp,
-		})
-	}
-
-	if err := el.transactionRecorder.SubmitValidatorsProof(&types.MsgSubmitValidatorsProof{Proof: &proof}); err != nil {
-		// TODO what to do if error is critical
-		logging.Error("Failed to set validators proof", types.System, "error", err)
-	}
-}*/
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {

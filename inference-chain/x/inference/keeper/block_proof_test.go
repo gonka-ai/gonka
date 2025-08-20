@@ -17,7 +17,7 @@ func TestBlockProof(t *testing.T) {
 		_, found := k.GetBlockProof(ctx, height)
 		assert.False(t, found)
 
-		found = k.HasPendingProof(ctx, height)
+		found = k.GetPendingProof(ctx, height)
 		assert.False(t, found)
 	})
 
@@ -49,13 +49,13 @@ func TestBlockProof(t *testing.T) {
 
 	t.Run("get block proof", func(t *testing.T) {
 		h := int64(20)
-		assert.False(t, k.HasPendingProof(ctx, h))
+		assert.False(t, k.GetPendingProof(ctx, h))
 
 		k.SetPendingProof(ctx, h)
-		assert.True(t, k.HasPendingProof(ctx, h))
+		assert.True(t, k.GetPendingProof(ctx, h))
 
 		k.ClearPendingProof(ctx, h)
-		assert.False(t, k.HasPendingProof(ctx, h))
+		assert.False(t, k.GetPendingProof(ctx, h))
 	})
 }
 

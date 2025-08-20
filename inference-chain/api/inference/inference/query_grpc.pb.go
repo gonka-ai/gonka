@@ -81,7 +81,8 @@ const (
 	Query_GetAllModelCapacities_FullMethodName                     = "/inference.inference.Query/GetAllModelCapacities"
 	Query_GranteesByMessageType_FullMethodName                     = "/inference.inference.Query/GranteesByMessageType"
 	Query_GetBlockProofByHeight_FullMethodName                     = "/inference.inference.Query/GetBlockProofByHeight"
-	Query_GetValidatorsProofByHeight_FullMethodName                = "/inference.inference.Query/GetValidatorsProofByHeight"
+	Query_GetParticipantsProofByHeight_FullMethodName              = "/inference.inference.Query/GetParticipantsProofByHeight"
+	Query_IfProofPending_FullMethodName                            = "/inference.inference.Query/IfProofPending"
 )
 
 // QueryClient is the client API for Query service.
@@ -191,7 +192,8 @@ type QueryClient interface {
 	// Queries all authz grantees with specific message type for an account
 	GranteesByMessageType(ctx context.Context, in *QueryGranteesByMessageTypeRequest, opts ...grpc.CallOption) (*QueryGranteesByMessageTypeResponse, error)
 	GetBlockProofByHeight(ctx context.Context, in *QueryBlockProofRequest, opts ...grpc.CallOption) (*QueryBlockProofResponse, error)
-	GetValidatorsProofByHeight(ctx context.Context, in *QueryGetValidatorsProofRequest, opts ...grpc.CallOption) (*QueryGetValidatorsProofResponse, error)
+	GetParticipantsProofByHeight(ctx context.Context, in *QueryGetParticipantsProofRequest, opts ...grpc.CallOption) (*QueryGetParticipantsProofResponse, error)
+	IfProofPending(ctx context.Context, in *QueryIsProofPendingRequest, opts ...grpc.CallOption) (*QueryIsProofPendingResponse, error)
 }
 
 type queryClient struct {
@@ -760,9 +762,18 @@ func (c *queryClient) GetBlockProofByHeight(ctx context.Context, in *QueryBlockP
 	return out, nil
 }
 
-func (c *queryClient) GetValidatorsProofByHeight(ctx context.Context, in *QueryGetValidatorsProofRequest, opts ...grpc.CallOption) (*QueryGetValidatorsProofResponse, error) {
-	out := new(QueryGetValidatorsProofResponse)
-	err := c.cc.Invoke(ctx, Query_GetValidatorsProofByHeight_FullMethodName, in, out, opts...)
+func (c *queryClient) GetParticipantsProofByHeight(ctx context.Context, in *QueryGetParticipantsProofRequest, opts ...grpc.CallOption) (*QueryGetParticipantsProofResponse, error) {
+	out := new(QueryGetParticipantsProofResponse)
+	err := c.cc.Invoke(ctx, Query_GetParticipantsProofByHeight_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) IfProofPending(ctx context.Context, in *QueryIsProofPendingRequest, opts ...grpc.CallOption) (*QueryIsProofPendingResponse, error) {
+	out := new(QueryIsProofPendingResponse)
+	err := c.cc.Invoke(ctx, Query_IfProofPending_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -876,7 +887,8 @@ type QueryServer interface {
 	// Queries all authz grantees with specific message type for an account
 	GranteesByMessageType(context.Context, *QueryGranteesByMessageTypeRequest) (*QueryGranteesByMessageTypeResponse, error)
 	GetBlockProofByHeight(context.Context, *QueryBlockProofRequest) (*QueryBlockProofResponse, error)
-	GetValidatorsProofByHeight(context.Context, *QueryGetValidatorsProofRequest) (*QueryGetValidatorsProofResponse, error)
+	GetParticipantsProofByHeight(context.Context, *QueryGetParticipantsProofRequest) (*QueryGetParticipantsProofResponse, error)
+	IfProofPending(context.Context, *QueryIsProofPendingRequest) (*QueryIsProofPendingResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1070,8 +1082,11 @@ func (UnimplementedQueryServer) GranteesByMessageType(context.Context, *QueryGra
 func (UnimplementedQueryServer) GetBlockProofByHeight(context.Context, *QueryBlockProofRequest) (*QueryBlockProofResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBlockProofByHeight not implemented")
 }
-func (UnimplementedQueryServer) GetValidatorsProofByHeight(context.Context, *QueryGetValidatorsProofRequest) (*QueryGetValidatorsProofResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetValidatorsProofByHeight not implemented")
+func (UnimplementedQueryServer) GetParticipantsProofByHeight(context.Context, *QueryGetParticipantsProofRequest) (*QueryGetParticipantsProofResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetParticipantsProofByHeight not implemented")
+}
+func (UnimplementedQueryServer) IfProofPending(context.Context, *QueryIsProofPendingRequest) (*QueryIsProofPendingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method IfProofPending not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2202,20 +2217,38 @@ func _Query_GetBlockProofByHeight_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_GetValidatorsProofByHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetValidatorsProofRequest)
+func _Query_GetParticipantsProofByHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetParticipantsProofRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).GetValidatorsProofByHeight(ctx, in)
+		return srv.(QueryServer).GetParticipantsProofByHeight(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Query_GetValidatorsProofByHeight_FullMethodName,
+		FullMethod: Query_GetParticipantsProofByHeight_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).GetValidatorsProofByHeight(ctx, req.(*QueryGetValidatorsProofRequest))
+		return srv.(QueryServer).GetParticipantsProofByHeight(ctx, req.(*QueryGetParticipantsProofRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_IfProofPending_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryIsProofPendingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).IfProofPending(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_IfProofPending_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).IfProofPending(ctx, req.(*QueryIsProofPendingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2476,8 +2509,12 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_GetBlockProofByHeight_Handler,
 		},
 		{
-			MethodName: "GetValidatorsProofByHeight",
-			Handler:    _Query_GetValidatorsProofByHeight_Handler,
+			MethodName: "GetParticipantsProofByHeight",
+			Handler:    _Query_GetParticipantsProofByHeight_Handler,
+		},
+		{
+			MethodName: "IfProofPending",
+			Handler:    _Query_IfProofPending_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

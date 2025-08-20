@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/cometbft/cometbft/crypto/tmhash"
+	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -110,19 +111,6 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryC
 			"created_at_block_height", activeParticipants.CreatedAtBlockHeight,
 			"effective_block_height", activeParticipants.EffectiveBlockHeight)
 
-		blockHeight := activeParticipants.CreatedAtBlockHeight
-		queryWIthProof := true
-		if blockHeight <= 1 {
-			// cosmos can't build merkle proof for genesis because need previous state
-			queryWIthProof = false
-		}
-
-		result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, queryWIthProof)
-		if err != nil {
-			logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
-			return nil, err
-		}
-
 		blockProof, err := queryClient.GetBlockProofByHeight(ctx, &types.QueryBlockProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
 		if err != nil {
 			logging.Error("Failed to get block proof by height", types.Participants, "error", err)
@@ -134,7 +122,7 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryC
 			verifyProof(epochId, result, hash)
 		}
 
-		validatorsProof, err := queryClient.GetValidatorsProofByHeight(ctx, &types.QueryGetValidatorsProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
+		proofResp, err := queryClient.GetParticipantsProofByHeight(ctx, &types.QueryGetParticipantsProofRequest{ProofHeight: activeParticipants.CreatedAtBlockHeight})
 		if err != nil {
 			return nil, err
 		}
@@ -195,18 +183,19 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryC
 			})
 		}
 
+		validatorsProof := proofResp.ValidatorsProof
 		validators := &contracts.ValidatorsProof{
-			BlockHeight: validatorsProof.Proof.BlockHeight,
-			Round:       validatorsProof.Proof.Round,
+			BlockHeight: validatorsProof.BlockHeight,
+			Round:       validatorsProof.Round,
 			BlockId: &contracts.BlockID{
-				Hash:               validatorsProof.Proof.BlockId.Hash,
-				PartSetHeaderTotal: validatorsProof.Proof.BlockId.PartSetHeaderTotal,
-				PartSetHeaderHash:  validatorsProof.Proof.BlockId.PartSetHeaderHash,
+				Hash:               validatorsProof.BlockId.Hash,
+				PartSetHeaderTotal: validatorsProof.BlockId.PartSetHeaderTotal,
+				PartSetHeaderHash:  validatorsProof.BlockId.PartSetHeaderHash,
 			},
 			Signatures: make([]*contracts.SignatureInfo, 0),
 		}
 
-		for _, sign := range validatorsProof.Proof.Signatures {
+		for _, sign := range validatorsProof.Signatures {
 			validators.Signatures = append(validators.Signatures, &contracts.SignatureInfo{
 				SignatureBase64:     sign.SignatureBase64,
 				ValidatorAddressHex: sign.ValidatorAddressHex,
@@ -214,11 +203,21 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryC
 			})
 		}
 
+		var proofOps *cryptotypes.ProofOps
+		if proofResp.MerkleProof != nil {
+			proofOps = &cryptotypes.ProofOps{
+				Ops: make([]cryptotypes.ProofOp, 0),
+			}
+			for _, op := range proofResp.MerkleProof.Ops {
+				proofOps.Ops = append(proofOps.Ops, cryptotypes.ProofOp(op))
+
+			}
+		}
 		return &contracts.ActiveParticipantWithProof{
 			ActiveParticipants:      finalParticipants,
 			Addresses:               addresses,
 			ActiveParticipantsBytes: activeParticipantsBytes,
-			ProofOps:                result.Response.ProofOps,
+			ProofOps:                proofOps,
 			BlockProof:              block,
 			ValidatorsProof:         validators,
 		}, nil

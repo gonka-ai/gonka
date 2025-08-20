@@ -48,7 +48,7 @@ service Msg {
   rpc JoinTrainingStatus               (MsgJoinTrainingStatus              ) returns (MsgJoinTrainingStatusResponse              );
   rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask         ) returns (MsgCreateDummyTrainingTaskResponse         );
   rpc BridgeExchange                   (MsgBridgeExchange                  ) returns (MsgBridgeExchangeResponse                  );
-  rpc SubmitValidatorsProof            (MsgSubmitValidatorsProof           ) returns (MsgSubmitValidatorsProofResponse           );
+  rpc SubmitParticipantsProof           (MsgSubmitParticipantsProof           ) returns (MsgSubmitParticipantsProofResponse           );
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -365,10 +365,12 @@ message MsgBridgeExchangeResponse {
   string id = 1;  // Unique bridge transaction ID (originChain_blockNumber_receiptIndex)
 }
 
-message MsgSubmitValidatorsProof {
+message MsgSubmitParticipantsProof {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
-  ValidatorsProof proof = 2;
+  uint64 block_height = 2;
+  ValidatorsProof validators_proof = 3;
+  ProofOps  proof_opts = 4;
 }
 
-message MsgSubmitValidatorsProofResponse {}
+message MsgSubmitParticipantsProofResponse {}
