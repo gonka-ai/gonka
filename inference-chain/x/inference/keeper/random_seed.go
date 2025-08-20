@@ -19,7 +19,7 @@ func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) {
 	}
 }
 
-func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex int64, participantAddress string) (types.RandomSeed, bool) {
+func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex uint64, participantAddress string) (types.RandomSeed, bool) {
 	addr, err := sdk.AccAddressFromBech32(participantAddress)
 	if err != nil {
 		return types.RandomSeed{}, false

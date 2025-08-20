@@ -33,7 +33,7 @@ type (
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
 		Participants        collections.Map[sdk.AccAddress, types.Participant]
-		RandomSeeds         collections.Map[collections.Pair[int64, sdk.AccAddress], types.RandomSeed]
+		RandomSeeds         collections.Map[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]
 		PoCBatches          collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations      collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// Dynamic pricing collections
@@ -44,7 +44,7 @@ type (
 		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
-		EpochGroupDataMap   collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 	}
 )
 
@@ -99,7 +99,7 @@ func NewKeeper(
 			sb,
 			types.RandomSeedPrefix,
 			"random_seed",
-			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 			codec.CollValue[types.RandomSeed](cdc),
 		),
 		PoCBatches: collections.NewMap(
