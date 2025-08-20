@@ -53,7 +53,7 @@ var (
 )
 ```
 
-When selecting keys, all Participant/address keys should be `sdk.AccAddressKey`, not strings. Add conversion as needed.
+When selecting keys, all Participant/address keys should be `sdk.AccAddressKey`, not strings. Add conversion as needed. Prefer using MustAccAddressFromBech32 rather than separate if (err) panic(err)
 ```go
 // x/collateral/keeper/keeper.go
 sb := collections.NewSchemaBuilder(storeService)

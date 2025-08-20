@@ -35,6 +35,7 @@ var (
 	EffectiveEpochIndexPrefix        = collections.NewPrefix(12)
 	EpochGroupValidationsPrefix      = collections.NewPrefix(13)
 	InferencesPrefix                 = collections.NewPrefix(14)
+	SettleAmountPrefix               = collections.NewPrefix(15)
 	ParamsKey                        = []byte("p_inference")
 )
 

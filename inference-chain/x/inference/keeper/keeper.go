@@ -50,6 +50,7 @@ type (
 		Epochs                   collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex      collections.Item[uint64]
 		EpochGroupValidationsMap collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		SettleAmounts            collections.Map[sdk.AccAddress, types.SettleAmount]
 	}
 )
 
@@ -201,6 +202,13 @@ func NewKeeper(
 			"epoch_group_validations",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupValidations](cdc),
+		),
+		SettleAmounts: collections.NewMap(
+			sb,
+			types.SettleAmountPrefix,
+			"settle_amount",
+			sdk.AccAddressKey,
+			codec.CollValue[types.SettleAmount](cdc),
 		),
 	}
 }
