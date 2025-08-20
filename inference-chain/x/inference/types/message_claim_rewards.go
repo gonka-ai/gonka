@@ -19,7 +19,7 @@ func (msg *MsgClaimRewards) ValidateBasic() error {
 	}
 	// poc_start_height must be > 0
 	if msg.EpochIndex == 0 {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "poc_start_height must be > 0")
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "epoch_index must be > 0")
 	}
 	// seed is allowed to be any int64; no additional stateless checks
 	return nil

@@ -19,6 +19,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -312,7 +313,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
 
-		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
+		// Apply early network protection if conditions are met
+		finalComputeResult := am.applyEarlyNetworkProtection(ctx, computeResult)
+
+		_, err = am.keeper.Staking.SetComputeValidators(ctx, finalComputeResult)
 		if err != nil {
 			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())
 		}
@@ -394,6 +398,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
 		// which means participants will proceed with their unadjusted PotentialWeight.
 	}
+
+	// Apply universal power capping to epoch powers
+	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
 
 	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
@@ -591,6 +598,82 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
+}
+
+// applyEpochPowerCapping applies universal power capping to activeParticipants after ComputeNewWeights
+// This system is applied universally regardless of network maturity
+func (am AppModule) applyEpochPowerCapping(ctx context.Context, activeParticipants []*types.ActiveParticipant) []*types.ActiveParticipant {
+	// Apply universal power capping
+	result := ApplyPowerCapping(ctx, am.keeper, activeParticipants)
+
+	// Log capping application results
+	originalTotal := int64(0)
+	for _, participant := range activeParticipants {
+		originalTotal += participant.Weight
+	}
+
+	if result.WasCapped {
+		am.LogInfo("Universal power capping applied to epoch powers", types.PoC,
+			"originalTotalPower", originalTotal,
+			"cappedTotalPower", result.TotalPower,
+			"participantCount", len(activeParticipants))
+	} else {
+		am.LogInfo("Universal power capping evaluated but not applied to epoch powers", types.PoC,
+			"totalPower", originalTotal,
+			"participantCount", len(activeParticipants),
+			"reason", "no participant exceeded 30% limit")
+	}
+
+	return result.CappedParticipants
+}
+
+// applyEarlyNetworkProtection applies genesis guardian enhancement to compute results before validator set updates
+// This system only applies when network is immature (below maturity threshold)
+func (am AppModule) applyEarlyNetworkProtection(ctx context.Context, computeResults []stakingkeeper.ComputeResult) []stakingkeeper.ComputeResult {
+	// Apply genesis guardian enhancement (only when network immature)
+	result := ApplyGenesisGuardianEnhancement(ctx, am.keeper, computeResults)
+
+	// Log enhancement application results
+	originalTotal := int64(0)
+	for _, cr := range computeResults {
+		originalTotal += cr.Power
+	}
+
+	if result.WasEnhanced {
+		genesisGuardianAddresses := am.keeper.GetGenesisGuardianAddresses(ctx)
+
+		// Count enhanced guardians and calculate their individual powers
+		enhancedGuardians := []string{}
+		guardianPowers := []int64{}
+		guardianAddressMap := make(map[string]bool)
+		for _, address := range genesisGuardianAddresses {
+			guardianAddressMap[address] = true
+		}
+
+		for _, cr := range result.ComputeResults {
+			if guardianAddressMap[cr.OperatorAddress] {
+				enhancedGuardians = append(enhancedGuardians, cr.OperatorAddress)
+				guardianPowers = append(guardianPowers, cr.Power)
+			}
+		}
+
+		am.LogInfo("Genesis guardian enhancement applied to staking powers", types.EpochGroup,
+			"originalTotalPower", originalTotal,
+			"enhancedTotalPower", result.TotalPower,
+			"participantCount", len(computeResults),
+			"guardianCount", len(enhancedGuardians),
+			"enhancedGuardians", enhancedGuardians,
+			"guardianPowers", guardianPowers)
+	} else {
+		genesisGuardianAddresses := am.keeper.GetGenesisGuardianAddresses(ctx)
+		am.LogInfo("Genesis guardian enhancement evaluated but not applied to staking powers", types.EpochGroup,
+			"totalPower", originalTotal,
+			"participantCount", len(computeResults),
+			"configuredGuardianCount", len(genesisGuardianAddresses),
+			"reason", "network mature, insufficient participants, or no genesis guardians found")
+	}
+
+	return result.ComputeResults
 }
 
 // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
