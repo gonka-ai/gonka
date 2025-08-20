@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -19,7 +18,7 @@ var _ = strconv.IntSize
 func createNTopMiner(keeper keeper.Keeper, ctx context.Context, n int) []types.TopMiner {
 	items := make([]types.TopMiner, n)
 	for i := range items {
-		items[i].Address = testutil.Bech32Addr(i)
+		items[i].Address = strconv.Itoa(i)
 
 		keeper.SetTopMiner(ctx, items[i])
 	}

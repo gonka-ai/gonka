@@ -3,17 +3,21 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
+	"cosmossdk.io/store/prefix"
+	storetypes "cosmossdk.io/store/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // SetEpochGroupValidations set a specific epochGroupValidations in the store from its index
 func (k Keeper) SetEpochGroupValidations(ctx context.Context, epochGroupValidations types.EpochGroupValidations) {
-	// use (epochIndex, participant) as composite key for deterministic ordering
-	pk := collections.Join(epochGroupValidations.EpochIndex, epochGroupValidations.Participant)
-	if err := k.EpochGroupValidationsMap.Set(ctx, pk, epochGroupValidations); err != nil {
-		panic(err)
-	}
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupValidationsKeyPrefix))
+	b := k.cdc.MustMarshal(&epochGroupValidations)
+	store.Set(types.EpochGroupValidationsKey(
+		epochGroupValidations.Participant,
+		epochGroupValidations.EpochIndex,
+	), b)
 }
 
 // GetEpochGroupValidations returns a epochGroupValidations from its index
@@ -23,12 +27,19 @@ func (k Keeper) GetEpochGroupValidations(
 	epochIndex uint64,
 
 ) (val types.EpochGroupValidations, found bool) {
-	pk := collections.Join(epochIndex, participant)
-	v, err := k.EpochGroupValidationsMap.Get(ctx, pk)
-	if err != nil {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupValidationsKeyPrefix))
+
+	b := store.Get(types.EpochGroupValidationsKey(
+		participant,
+		epochIndex,
+	))
+	if b == nil {
 		return val, false
 	}
-	return v, true
+
+	k.cdc.MustUnmarshal(b, &val)
+	return val, true
 }
 
 // RemoveEpochGroupValidations removes a epochGroupValidations from the store
@@ -38,19 +49,27 @@ func (k Keeper) RemoveEpochGroupValidations(
 	pocStartBlockHeight uint64,
 
 ) {
-	pk := collections.Join(pocStartBlockHeight, participant)
-	_ = k.EpochGroupValidationsMap.Remove(ctx, pk)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupValidationsKeyPrefix))
+	store.Delete(types.EpochGroupValidationsKey(
+		participant,
+		pocStartBlockHeight,
+	))
 }
 
 // GetAllEpochGroupValidations returns all epochGroupValidations
 func (k Keeper) GetAllEpochGroupValidations(ctx context.Context) (list []types.EpochGroupValidations) {
-	iter, err := k.EpochGroupValidationsMap.Iterate(ctx, nil)
-	if err != nil {
-		return nil
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupValidationsKeyPrefix))
+	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
+
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var val types.EpochGroupValidations
+		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		list = append(list, val)
 	}
-	vals, err := iter.Values()
-	if err != nil {
-		return nil
-	}
-	return vals
+
+	return
 }

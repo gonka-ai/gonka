@@ -2,9 +2,8 @@ package keeper_test
 
 import (
 	"context"
-	"testing"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"testing"
 
 	"github.com/stretchr/testify/require"
 
@@ -24,7 +23,6 @@ func setupMsgServerWithKeeper(k keeper.Keeper) types.MsgServer {
 
 func setupKeeperWithMocks(t testing.TB) (keeper.Keeper, types.MsgServer, sdk.Context, *keepertest.InferenceMocks) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	return k, keeper.NewMsgServerImpl(k), ctx, &mock
 }
 

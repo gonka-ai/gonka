@@ -3,62 +3,68 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"cosmossdk.io/store/prefix"
+	storetypes "cosmossdk.io/store/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetTopMiner sets a specific TopMiner in the store, indexed by sdk.AccAddress
+// SetTopMiner set a specific topMiner in the store from its index
 func (k Keeper) SetTopMiner(ctx context.Context, topMiner types.TopMiner) {
-	addr, err := sdk.AccAddressFromBech32(topMiner.Address)
-	if err != nil {
-		panic(err)
-	}
-	if err := k.TopMiners.Set(ctx, addr, topMiner); err != nil {
-		panic(err)
-	}
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.TopMinerKeyPrefix))
+	b := k.cdc.MustMarshal(&topMiner)
+	store.Set(types.TopMinerKey(
+		topMiner.Address,
+	), b)
 }
 
-// GetTopMiner returns a TopMiner by address (bech32)
+// GetTopMiner returns a topMiner from its index
 func (k Keeper) GetTopMiner(
 	ctx context.Context,
 	address string,
+
 ) (val types.TopMiner, found bool) {
-	addr, err := sdk.AccAddressFromBech32(address)
-	if err != nil {
-		return types.TopMiner{}, false
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.TopMinerKeyPrefix))
+
+	b := store.Get(types.TopMinerKey(
+		address,
+	))
+	if b == nil {
+		return val, false
 	}
-	v, err := k.TopMiners.Get(ctx, addr)
-	if err != nil {
-		return types.TopMiner{}, false
-	}
-	return v, true
+
+	k.cdc.MustUnmarshal(b, &val)
+	return val, true
 }
 
-// RemoveTopMiner removes a TopMiner from the store by address
+// RemoveTopMiner removes a topMiner from the store
 func (k Keeper) RemoveTopMiner(
 	ctx context.Context,
 	address string,
+
 ) {
-	addr, err := sdk.AccAddressFromBech32(address)
-	if err != nil {
-		return
-	}
-	_ = k.TopMiners.Remove(ctx, addr)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.TopMinerKeyPrefix))
+	store.Delete(types.TopMinerKey(
+		address,
+	))
 }
 
-// GetAllTopMiner returns all TopMiners deterministically
+// GetAllTopMiner returns all topMiner
 func (k Keeper) GetAllTopMiner(ctx context.Context) (list []types.TopMiner) {
-	it, err := k.TopMiners.Iterate(ctx, nil)
-	if err != nil {
-		return nil
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.TopMinerKeyPrefix))
+	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
+
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var val types.TopMiner
+		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		list = append(list, val)
 	}
-	defer it.Close()
-	for ; it.Valid(); it.Next() {
-		v, err := it.Value()
-		if err != nil {
-			panic(err)
-		}
-		list = append(list, v)
-	}
-	return list
+
+	return
 }

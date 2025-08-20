@@ -3,67 +3,87 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
+	"cosmossdk.io/store/prefix"
+	storetypes "cosmossdk.io/store/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetInferenceValidationDetails sets a specific InferenceValidationDetails value keyed by (epochId, inferenceId)
+// SetInferenceValidationDetails set a specific inferenceValidationDetails in the store from its index
 func (k Keeper) SetInferenceValidationDetails(ctx context.Context, inferenceValidationDetails types.InferenceValidationDetails) {
-	_ = k.InferenceValidationDetailsMap.Set(ctx,
-		collections.Join(inferenceValidationDetails.EpochId, inferenceValidationDetails.InferenceId),
-		inferenceValidationDetails,
-	)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
+	b := k.cdc.MustMarshal(&inferenceValidationDetails)
+	store.Set(types.InferenceValidationDetailsKey(
+		inferenceValidationDetails.EpochId,
+		inferenceValidationDetails.InferenceId,
+	), b)
 }
 
-// GetInferenceValidationDetails returns an InferenceValidationDetails by (epochId, inferenceId)
+// GetInferenceValidationDetails returns a inferenceValidationDetails from its index
 func (k Keeper) GetInferenceValidationDetails(
 	ctx context.Context,
 	epochId uint64,
 	inferenceId string,
 ) (val types.InferenceValidationDetails, found bool) {
-	v, err := k.InferenceValidationDetailsMap.Get(ctx, collections.Join(epochId, inferenceId))
-	if err != nil {
-		return types.InferenceValidationDetails{}, false
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
+
+	b := store.Get(types.InferenceValidationDetailsKey(
+		epochId,
+		inferenceId,
+	))
+	if b == nil {
+		return val, false
 	}
-	return v, true
+
+	k.cdc.MustUnmarshal(b, &val)
+	return val, true
 }
 
-// RemoveInferenceValidationDetails removes an InferenceValidationDetails by (epochId, inferenceId)
+// RemoveInferenceValidationDetails removes a inferenceValidationDetails from the store
 func (k Keeper) RemoveInferenceValidationDetails(
 	ctx context.Context,
 	epochId uint64,
 	inferenceId string,
 ) {
-	_ = k.InferenceValidationDetailsMap.Remove(ctx, collections.Join(epochId, inferenceId))
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
+	store.Delete(types.InferenceValidationDetailsKey(
+		epochId,
+		inferenceId,
+	))
 }
 
-// GetInferenceValidationDetailsForEpoch returns all InferenceValidationDetails for a given epochId
 func (k Keeper) GetInferenceValidationDetailsForEpoch(ctx context.Context, epochId uint64) (list []types.InferenceValidationDetails) {
-	it, err := k.InferenceValidationDetailsMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](epochId))
-	if err != nil {
-		return nil
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
+	iterator := storetypes.KVStorePrefixIterator(store, types.InferenceValidationDetailsEpochKey(epochId))
+
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var val types.InferenceValidationDetails
+		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		list = append(list, val)
 	}
-	defer it.Close()
-	for ; it.Valid(); it.Next() {
-		v, err := it.Value()
-		if err != nil {
-			return nil
-		}
-		list = append(list, v)
-	}
-	return list
+
+	return
 }
 
-// GetAllInferenceValidationDetails returns all InferenceValidationDetails
+// GetAllInferenceValidationDetails returns all inferenceValidationDetails
 func (k Keeper) GetAllInferenceValidationDetails(ctx context.Context) (list []types.InferenceValidationDetails) {
-	it, err := k.InferenceValidationDetailsMap.Iterate(ctx, nil)
-	if err != nil {
-		return nil
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
+	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
+
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var val types.InferenceValidationDetails
+		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		list = append(list, val)
 	}
-	defer it.Close()
-	vals, err := it.Values()
-	if err != nil {
-		return nil
-	}
-	return vals
+
+	return
 }

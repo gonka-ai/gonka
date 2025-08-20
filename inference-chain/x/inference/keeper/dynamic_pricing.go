@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -305,16 +307,25 @@ func (k *Keeper) CacheModelCapacity(ctx context.Context, modelId string, capacit
 	if capacity < 0 {
 		return fmt.Errorf("capacity cannot be negative: %d", capacity)
 	}
-	// Convert int64 to uint64 for storage with Collections
-	return k.ModelCapacityMap.Set(ctx, modelId, uint64(capacity))
+
+	keyPrefix := []byte(types.DynamicPricingCapacityKeyPrefix)
+	key := types.DynamicPricingCapacityKey(modelId)
+
+	// Convert int64 to uint64 for storage
+	SetUint64Value(k, ctx, keyPrefix, key, uint64(capacity))
+	return nil
 }
 
 // GetCachedModelCapacity retrieves a model's cached capacity from KV storage
 func (k *Keeper) GetCachedModelCapacity(ctx context.Context, modelId string) (int64, error) {
-	value, err := k.ModelCapacityMap.Get(ctx, modelId)
-	if err != nil {
+	keyPrefix := []byte(types.DynamicPricingCapacityKeyPrefix)
+	key := types.DynamicPricingCapacityKey(modelId)
+
+	value, found := GetUint64Value(k, ctx, keyPrefix, key)
+	if !found {
 		return 0, fmt.Errorf("capacity not found for model: %s", modelId)
 	}
+
 	// Convert uint64 back to int64
 	return int64(value), nil
 }
@@ -380,26 +391,58 @@ func (k *Keeper) CacheAllModelCapacities(ctx context.Context) error {
 
 // SetModelCurrentPrice stores the current per-token price for a model
 func (k *Keeper) SetModelCurrentPrice(ctx context.Context, modelId string, price uint64) error {
-	return k.ModelCurrentPriceMap.Set(ctx, modelId, price)
+	keyPrefix := []byte(types.DynamicPricingCurrentKeyPrefix)
+	key := types.DynamicPricingCurrentKey(modelId)
+
+	SetUint64Value(k, ctx, keyPrefix, key, price)
+	return nil
 }
 
 // GetModelCurrentPrice retrieves the current per-token price for a model
 func (k *Keeper) GetModelCurrentPrice(ctx context.Context, modelId string) (uint64, error) {
-	price, err := k.ModelCurrentPriceMap.Get(ctx, modelId)
-	if err != nil {
+	keyPrefix := []byte(types.DynamicPricingCurrentKeyPrefix)
+	key := types.DynamicPricingCurrentKey(modelId)
+
+	price, found := GetUint64Value(k, ctx, keyPrefix, key)
+	if !found {
 		return 0, fmt.Errorf("current price not found for model: %s", modelId)
 	}
+
 	return price, nil
 }
 
-// GetAllModelCurrentPrices retrieves current prices for all models using Collections
+// GetAllModelCurrentPrices retrieves current prices for all models
 func (k *Keeper) GetAllModelCurrentPrices(ctx context.Context) (map[string]uint64, error) {
 	result := make(map[string]uint64)
-	if err := k.ModelCurrentPriceMap.Walk(ctx, nil, func(modelId string, price uint64) (bool, error) {
+
+	// Import needed packages
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte(types.DynamicPricingCurrentKeyPrefix))
+
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		// Extract model ID from key (StringKey adds trailing "/", so remove it)
+		keyBytes := iterator.Key()
+		if len(keyBytes) == 0 {
+			continue
+		}
+
+		modelId := string(keyBytes)
+		if len(modelId) > 0 && modelId[len(modelId)-1] == '/' {
+			modelId = modelId[:len(modelId)-1] // Remove trailing "/"
+		}
+
+		// Extract price from value (stored as uint64 in big endian)
+		priceBytes := iterator.Value()
+		if len(priceBytes) == 0 {
+			continue
+		}
+
+		price := sdk.BigEndianToUint64(priceBytes)
 		result[modelId] = price
-		return false, nil
-	}); err != nil {
-		return nil, err
 	}
+
 	return result, nil
 }

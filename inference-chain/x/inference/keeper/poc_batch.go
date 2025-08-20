@@ -2,91 +2,140 @@ package keeper
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 
-	"cosmossdk.io/collections"
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetPocBatch stores a PoCBatch under triple key (epoch, participant addr, batch_id)
 func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
-	addr := sdk.MustAccAddressFromBech32(batch.ParticipantAddress)
-	pk := collections.Join3(batch.PocStageStartBlockHeight, addr, batch.BatchId)
-	k.LogInfo("PoC: Storing batch", types.PoC, "epoch", batch.PocStageStartBlockHeight, "participant", batch.ParticipantAddress, "batch_id", batch.BatchId)
-	if err := k.PoCBatches.Set(ctx, pk, batch); err != nil {
-		panic(err)
-	}
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocBatchKeyPrefix))
+	key := types.PoCBatchKey(batch.PocStageStartBlockHeight, batch.ParticipantAddress, batch.BatchId)
+
+	k.LogInfo("PoC: Storing batch", types.PoC, "key", key, "batch", batch)
+
+	b := k.cdc.MustMarshal(&batch)
+	store.Set(key, b)
 }
 
-// GetPoCBatchesByStage collects all PoCBatch grouped by participant for a specific epoch
+// TODO: RENAME GetPoCBatchesByStage > ByEpoch
 func (k Keeper) GetPoCBatchesByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCBatch, error) {
-	it, err := k.PoCBatches.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](pocStageStartBlockHeight))
-	if err != nil {
-		return nil, err
-	}
-	defer it.Close()
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocBatchKeyPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
 
 	batches := make(map[string][]types.PoCBatch)
-	for ; it.Valid(); it.Next() {
-		v, err := it.Value()
-		if err != nil {
-			return nil, err
+
+	for ; iterator.Valid(); iterator.Next() {
+		key := string(iterator.Key())
+		value := iterator.Value()
+
+		// Trim the trailing "/" and split the key to extract participantIndex and batchId
+		trimmedKey := strings.TrimSuffix(key, "/")
+		segments := strings.Split(trimmedKey, "/")
+
+		// Validate the key format
+		if len(segments) != 2 {
+			return nil, fmt.Errorf("invalid key format: %s", key)
 		}
-		batches[v.ParticipantAddress] = append(batches[v.ParticipantAddress], v)
+
+		participantIndex := segments[0]
+		// batchId := segments[1] // Uncomment if you need to use batchId
+
+		// Unmarshal the value into a PoCBatch struct
+		var batch types.PoCBatch
+		if err := k.cdc.Unmarshal(value, &batch); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal PoCBatch: %w", err)
+		}
+
+		// Append the batch to the corresponding participant's slice
+		batches[participantIndex] = append(batches[participantIndex], batch)
 	}
+
 	return batches, nil
 }
 
 func (k Keeper) GetPoCBatchesCountByStage(ctx context.Context, pocStageStartBlockHeight int64) (uint64, error) {
-	it, err := k.PoCBatches.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](pocStageStartBlockHeight))
-	if err != nil {
-		return 0, err
-	}
-	defer it.Close()
-	var count uint64
-	for ; it.Valid(); it.Next() {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocBatchKeyPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+	count := uint64(0)
+	for ; iterator.Valid(); iterator.Next() {
 		count++
 	}
+
 	return count, nil
 }
 
 func (k Keeper) SetPoCValidation(ctx context.Context, validation types.PoCValidation) {
-	pAddr := sdk.MustAccAddressFromBech32(validation.ParticipantAddress)
-	vAddr := sdk.MustAccAddressFromBech32(validation.ValidatorParticipantAddress)
-	pk := collections.Join3(validation.PocStageStartBlockHeight, pAddr, vAddr)
-	k.LogInfo("PoC: Storing validation", types.PoC, "epoch", validation.PocStageStartBlockHeight, "participant", validation.ParticipantAddress, "validator", validation.ValidatorParticipantAddress)
-	if err := k.PoCValidations.Set(ctx, pk, validation); err != nil {
-		panic(err)
-	}
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocValidationPrefix))
+	key := types.PoCValidationKey(validation.PocStageStartBlockHeight, validation.ParticipantAddress, validation.ValidatorParticipantAddress)
+
+	k.LogInfo("PoC: Storing validation", types.PoC, "key", key, "validation", validation)
+
+	b := k.cdc.MustMarshal(&validation)
+	store.Set(key, b)
 }
 
 func (k Keeper) GetPoCValidationByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCValidation, error) {
-	it, err := k.PoCValidations.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, sdk.AccAddress](pocStageStartBlockHeight))
-	if err != nil {
-		return nil, err
-	}
-	defer it.Close()
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocValidationPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
 	validations := make(map[string][]types.PoCValidation)
-	for ; it.Valid(); it.Next() {
-		v, err := it.Value()
-		if err != nil {
-			return nil, err
+
+	for ; iterator.Valid(); iterator.Next() {
+		key := string(iterator.Key())
+		value := iterator.Value()
+
+		trimmedKey := strings.TrimSuffix(key, "/")
+		segments := strings.Split(trimmedKey, "/")
+
+		// Validate the key format
+		if len(segments) != 2 {
+			return nil, fmt.Errorf("invalid key format: %s", key)
 		}
-		validations[v.ParticipantAddress] = append(validations[v.ParticipantAddress], v)
+
+		participantIndex := segments[0]
+		// valParticipantIndex := segments[1]
+
+		var validation types.PoCValidation
+		if err := k.cdc.Unmarshal(value, &validation); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal PoCBatch: %w", err)
+		}
+
+		validations[participantIndex] = append(validations[participantIndex], validation)
 	}
+
 	return validations, nil
 }
 
 func (k Keeper) GetPocValidationCountByStage(ctx context.Context, pocStageStartBlockHeight int64) (uint64, error) {
-	it, err := k.PoCValidations.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, sdk.AccAddress](pocStageStartBlockHeight))
-	if err != nil {
-		return 0, err
-	}
-	defer it.Close()
-	var count uint64
-	for ; it.Valid(); it.Next() {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocValidationPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+	count := uint64(0)
+	for ; iterator.Valid(); iterator.Next() {
 		count++
 	}
-	return count, nil
 
+	return count, nil
 }

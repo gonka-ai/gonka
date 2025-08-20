@@ -3,31 +3,32 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) {
-	addr, err := sdk.AccAddressFromBech32(seed.Participant)
-	if err != nil {
-		panic(err)
-	}
-	pk := collections.Join(seed.EpochIndex, addr)
-	if err := k.RandomSeeds.Set(ctx, pk, seed); err != nil {
-		panic(err)
-	}
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.RandomSeedKeyPrefix))
+	key := types.RandomSeedKey(int64(seed.EpochIndex), seed.Participant)
+
+	b := k.cdc.MustMarshal(&seed)
+	store.Set(key, b)
 }
 
-func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex uint64, participantAddress string) (types.RandomSeed, bool) {
-	addr, err := sdk.AccAddressFromBech32(participantAddress)
-	if err != nil {
+func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex int64, participantAddress string) (types.RandomSeed, bool) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.RandomSeedKeyPrefix))
+	key := types.RandomSeedKey(epochIndex, participantAddress)
+
+	bz := store.Get(key)
+	if bz == nil {
 		return types.RandomSeed{}, false
 	}
-	pk := collections.Join(epochIndex, addr)
-	v, err := k.RandomSeeds.Get(ctx, pk)
-	if err != nil {
-		return types.RandomSeed{}, false
-	}
-	return v, true
+
+	var seed types.RandomSeed
+	k.cdc.MustUnmarshal(bz, &seed)
+
+	return seed, true
 }

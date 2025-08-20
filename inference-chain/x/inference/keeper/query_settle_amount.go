@@ -3,7 +3,8 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -15,12 +16,21 @@ func (k Keeper) SettleAmountAll(ctx context.Context, req *types.QueryAllSettleAm
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	settleAmounts, pageRes, err := query.CollectionPaginate(
-		ctx,
-		k.SettleAmounts,
-		req.Pagination,
-		func(_ sdk.AccAddress, v types.SettleAmount) (types.SettleAmount, error) { return v, nil },
-	)
+	var settleAmounts []types.SettleAmount
+
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	settleAmountStore := prefix.NewStore(store, types.KeyPrefix(types.SettleAmountKeyPrefix))
+
+	pageRes, err := query.Paginate(settleAmountStore, req.Pagination, func(key []byte, value []byte) error {
+		var settleAmount types.SettleAmount
+		if err := k.cdc.Unmarshal(value, &settleAmount); err != nil {
+			return err
+		}
+
+		settleAmounts = append(settleAmounts, settleAmount)
+		return nil
+	})
+
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

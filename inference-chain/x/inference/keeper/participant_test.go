@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -19,7 +18,7 @@ var _ = strconv.IntSize
 func createNParticipant(keeper keeper.Keeper, ctx context.Context, n int) []types.Participant {
 	items := make([]types.Participant, n)
 	for i := range items {
-		items[i].Index = testutil.Bech32Addr(i)
+		items[i].Index = strconv.Itoa(i)
 		// To test counter
 		items[i].Status = types.ParticipantStatus_ACTIVE
 
