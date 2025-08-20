@@ -51,6 +51,7 @@ type (
 		EffectiveEpochIndex      collections.Item[uint64]
 		EpochGroupValidationsMap collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
 		SettleAmounts            collections.Map[sdk.AccAddress, types.SettleAmount]
+		TopMiners                collections.Map[sdk.AccAddress, types.TopMiner]
 	}
 )
 
@@ -209,6 +210,13 @@ func NewKeeper(
 			"settle_amount",
 			sdk.AccAddressKey,
 			codec.CollValue[types.SettleAmount](cdc),
+		),
+		TopMiners: collections.NewMap(
+			sb,
+			types.TopMinerPrefix,
+			"top_miner",
+			sdk.AccAddressKey,
+			codec.CollValue[types.TopMiner](cdc),
 		),
 	}
 }
