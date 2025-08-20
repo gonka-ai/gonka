@@ -61,9 +61,9 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: epochIndex,
-		ParticipantId:    testutil.Creator,
-		Claimed:          false,
+		EpochIndex:    epochIndex,
+		ParticipantId: testutil.Creator,
+		Claimed:       false,
 	}
 	k.SetEpochPerformanceSummary(sdk.UnwrapSDKContext(ctx), perfSummary)
 
@@ -294,9 +294,9 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: epochIndex,
-		ParticipantId:    testutil.Creator,
-		Claimed:          false,
+		EpochIndex:    epochIndex,
+		ParticipantId: testutil.Creator,
+		Claimed:       false,
 	}
 	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
 
@@ -509,9 +509,9 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Setup performance summary
 	perfSummary := types.EpochPerformanceSummary{
-		EpochStartHeight: epochIndex,
-		ParticipantId:    testutil.Creator,
-		Claimed:          false,
+		EpochIndex:    epochIndex,
+		ParticipantId: testutil.Creator,
+		Claimed:       false,
 	}
 	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
 
@@ -803,7 +803,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	k.SetEpochGroupData(sdkCtx, modelSubGroup)
 
 	// Performance Summary
-	perfSummary := types.EpochPerformanceSummary{EpochStartHeight: epochIndex, ParticipantId: testutil.Creator, Claimed: false}
+	perfSummary := types.EpochPerformanceSummary{EpochIndex: epochIndex, ParticipantId: testutil.Creator, Claimed: false}
 	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
 
 	// Inference occurring during PoC cutoff

@@ -45,7 +45,7 @@ func (k Keeper) EpochPerformanceSummary(ctx context.Context, req *types.QueryGet
 
 	val, found := k.GetEpochPerformanceSummary(
 		ctx,
-		req.EpochStartHeight,
+		req.EpochIndex,
 		req.ParticipantId,
 	)
 	if !found {

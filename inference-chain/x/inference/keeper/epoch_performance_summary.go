@@ -16,7 +16,7 @@ func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformance
 	b := k.cdc.MustMarshal(&epochPerformanceSummary)
 	store.Set(types.EpochPerformanceSummaryKey(
 		epochPerformanceSummary.ParticipantId,
-		epochPerformanceSummary.EpochStartHeight,
+		epochPerformanceSummary.EpochIndex,
 	), b)
 }
 

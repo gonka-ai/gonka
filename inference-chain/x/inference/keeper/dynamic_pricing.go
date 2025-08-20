@@ -347,10 +347,10 @@ func (k *Keeper) CacheAllModelCapacities(ctx context.Context) error {
 	// Cache capacity for each sub-model
 	for _, modelId := range mainEpochData.SubGroupModels {
 		// Get the epoch group data for this specific model
-		modelEpochData, found := k.GetEpochGroupData(ctx, mainEpochData.PocStartBlockHeight, modelId)
+		modelEpochData, found := k.GetEpochGroupData(ctx, mainEpochData.EpochIndex, modelId)
 		if !found {
 			k.LogWarn("Sub epoch data not found during capacity caching", types.Pricing,
-				"modelId", modelId, "pocStartHeight", mainEpochData.PocStartBlockHeight)
+				"modelId", modelId, "epoch_index", mainEpochData.EpochIndex)
 			continue
 		}
 

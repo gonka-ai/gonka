@@ -193,7 +193,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "EpochPerformanceSummary",
 					Use:            "show-epoch-performance-summary [id]",
 					Short:          "Shows a epoch_performance_summary",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochStartHeight"}, {ProtoField: "participantId"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}, {ProtoField: "participantId"}},
 				},
 				{
 					RpcMethod:      "GetParticipantCurrentStats",

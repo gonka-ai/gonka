@@ -1194,15 +1194,15 @@ func request_Query_EpochPerformanceSummary_0(ctx context.Context, marshaler runt
 		_   = err
 	)
 
-	val, ok = pathParams["epochStartHeight"]
+	val, ok = pathParams["epoch_index"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epochStartHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
 	}
 
-	protoReq.EpochStartHeight, err = runtime.Uint64(val)
+	protoReq.EpochIndex, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epochStartHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
 	}
 
 	val, ok = pathParams["participantId"]
@@ -1232,15 +1232,15 @@ func local_request_Query_EpochPerformanceSummary_0(ctx context.Context, marshale
 		_   = err
 	)
 
-	val, ok = pathParams["epochStartHeight"]
+	val, ok = pathParams["epoch_index"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epochStartHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
 	}
 
-	protoReq.EpochStartHeight, err = runtime.Uint64(val)
+	protoReq.EpochIndex, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epochStartHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
 	}
 
 	val, ok = pathParams["participantId"]
@@ -5351,7 +5351,7 @@ var (
 
 	pattern_Query_GetInferenceValidationParameters_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "get_inference_validation_parameters", "ids", "requester"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_EpochPerformanceSummary_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_performance_summary", "epochStartHeight", "participantId"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochPerformanceSummary_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_performance_summary", "epoch_index", "participantId"}, "", runtime.AssumeColonVerbOpt(false)))
 
 	pattern_Query_EpochPerformanceSummaryAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_performance_summary"}, "", runtime.AssumeColonVerbOpt(false)))
 

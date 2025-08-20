@@ -176,7 +176,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		participant.CurrentEpochStats.EarnedCoins = 0
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
 		epochPerformance := types.EpochPerformanceSummary{
-			EpochStartHeight:      currentEpochIndex,
+			EpochIndex:            currentEpochIndex,
 			ParticipantId:         participant.Address,
 			InferenceCount:        participant.CurrentEpochStats.InferenceCount,
 			MissedRequests:        participant.CurrentEpochStats.MissedRequests,

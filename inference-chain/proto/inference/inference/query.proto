@@ -179,7 +179,7 @@ service Query {
 
   // Queries a list of EpochPerformanceSummary items.
   rpc EpochPerformanceSummary    (QueryGetEpochPerformanceSummaryRequest) returns (QueryGetEpochPerformanceSummaryResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
+    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epoch_index}/{participantId}";
 
   }
   rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
@@ -600,7 +600,7 @@ message QueryGetInferenceValidationParametersResponse {
 }
 
 message QueryGetEpochPerformanceSummaryRequest {
-  uint64 epochStartHeight = 1;
+  uint64 epoch_index = 1;
   string participantId    = 2;
 }
 
