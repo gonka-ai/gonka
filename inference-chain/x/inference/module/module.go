@@ -357,7 +357,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// Signal to the collateral module that the epoch has advanced.
 	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
+		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
 		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+	} else {
+		am.LogError("collateral keeper is null", types.Tokenomics)
 	}
 
 	// Signal to the streamvesting module that the epoch has advanced.
@@ -370,12 +373,12 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
-	previousEpochPocStartHeight := uint64(0)
+	previousEpochIndex := uint64(0)
 	if found {
-		previousEpochPocStartHeight = uint64(previousEpoch.PocStartBlockHeight)
+		previousEpochIndex = previousEpoch.Index
 	}
 
-	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight), previousEpochPocStartHeight)
+	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
@@ -565,27 +568,27 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 }
 
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {
-	newEpochPocStartHeight, found := am.keeper.GetUpcomingEpochPocStartHeight(ctx)
+	newEpochIndex, found := am.keeper.GetUpcomingEpochIndex(ctx)
 	if !found {
 		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get upcoming epoch group id", types.EpochGroup, "blockHeight", blockHeight)
 		return
 	}
 
-	previousEpochPocStartHeight, found := am.keeper.GetEffectiveEpochPocStartHeight(ctx)
+	previousEpochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
 	if !found {
 		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get upcoming epoch group id", types.EpochGroup, "blockHeight", blockHeight)
 		return
 	}
 
-	am.LogInfo("NewEpochGroup", types.EpochGroup, "blockHeight", blockHeight, "newEpochPocStartHeight", newEpochPocStartHeight)
-	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newEpochPocStartHeight, "")
+	am.LogInfo("NewEpochGroup", types.EpochGroup, "blockHeight", blockHeight, "newEpochIndex", newEpochIndex)
+	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newEpochIndex, "")
 	if !found {
-		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newEpochPocStartHeight", newEpochPocStartHeight)
+		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newEpochIndex", newEpochIndex)
 		return
 	}
-	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousEpochPocStartHeight, "")
+	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousEpochIndex, "")
 	if !found {
-		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousEpochPocStartHeight", previousEpochPocStartHeight)
+		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousEpochIndex", previousEpochIndex)
 		return
 	}
 	params := am.keeper.GetParams(ctx)

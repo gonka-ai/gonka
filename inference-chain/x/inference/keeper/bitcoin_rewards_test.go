@@ -145,7 +145,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 
 	// Create epoch group data with validation weights
 	epochGroupData := &types.EpochGroupData{
-		EpochId: 100, // 99 epochs since genesis (epochsSinceGenesis = 100 - 1)
+		EpochIndex: 100, // 99 epochs since genesis (epochsSinceGenesis = 100 - 1)
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: "participant1",
@@ -293,7 +293,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 	t.Run("Zero PoC weight participants get no rewards", func(t *testing.T) {
 		// Epoch group with zero weight participant
 		zeroWeightEpochData := &types.EpochGroupData{
-			EpochId: 50,
+			EpochIndex: 50,
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -358,7 +358,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 	t.Run("Genesis epoch reward distribution", func(t *testing.T) {
 		// Test at first reward epoch (no decay since epochsSinceGenesis = 1 - 1 = 0)
 		genesisEpochData := &types.EpochGroupData{
-			EpochId: 1, // First reward epoch (epoch 0 is skipped)
+			EpochIndex: 1, // First reward epoch (epoch 0 is skipped)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -403,7 +403,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 
 		// 3 participants with equal weight - 100 doesn't divide evenly by 3
 		remainderEpochData := &types.EpochGroupData{
-			EpochId: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
+			EpochIndex: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -486,7 +486,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 	}
 
 	epochGroupData := &types.EpochGroupData{
-		EpochId: 100,
+		EpochIndex: 100,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: "participant1",
@@ -626,7 +626,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 func TestPhase2BonusFunctions(t *testing.T) {
 	// Setup test data
 	epochGroupData := &types.EpochGroupData{
-		EpochId: 100,
+		EpochIndex: 100,
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: "participant1",
@@ -827,7 +827,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		}
 
 		largeEpochData := &types.EpochGroupData{
-			EpochId:           50,
+			EpochIndex:        50,
 			ValidationWeights: largeValidationWeights,
 		}
 
@@ -897,7 +897,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 			GenesisEpoch:       1,
 		}
 
-		largeWeightData.EpochId = 1 // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
+		largeWeightData.EpochIndex = 1 // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 
 		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeWeightData, bitcoinParams)
 		require.NoError(t, err)
@@ -965,7 +965,7 @@ func TestMathematicalPrecision(t *testing.T) {
 
 		// Three participants with prime weights
 		primeEpochData := &types.EpochGroupData{
-			EpochId: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
+			EpochIndex: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",
@@ -1027,7 +1027,7 @@ func TestMathematicalPrecision(t *testing.T) {
 		}
 
 		evenEpochData := &types.EpochGroupData{
-			EpochId: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
+			EpochIndex: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "participant1",

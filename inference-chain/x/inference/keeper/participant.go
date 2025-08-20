@@ -2,24 +2,25 @@ package keeper
 
 import (
 	"context"
-	"log"
 
-	"cosmossdk.io/store/prefix"
-	storetypes "cosmossdk.io/store/types"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // SetParticipant set a specific participant in the store from its index
 func (k Keeper) SetParticipant(ctx context.Context, participant types.Participant) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-	key := types.ParticipantKey(participant.Index)
-
-	oldParticipant := k.retrieveParticipant(&store, key)
-
-	b := k.cdc.MustMarshal(&participant)
-	store.Set(key, b)
+	participantAddress := sdk.MustAccAddressFromBech32(participant.Index)
+	var oldParticipant *types.Participant
+	p, err := k.Participants.Get(ctx, participantAddress)
+	if err != nil {
+		oldParticipant = nil
+	} else {
+		oldParticipant = &p
+	}
+	err = k.Participants.Set(ctx, participantAddress, participant)
+	if err != nil {
+		panic(err)
+	}
 	k.LogDebug("Saved Participant", types.Participants, "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)
 	group, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
@@ -32,76 +33,31 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 	}
 }
 
-func (k Keeper) retrieveParticipant(store *prefix.Store, key []byte) *types.Participant {
-	b := store.Get(key)
-	if b == nil {
-		return nil
-	}
-
-	var participant types.Participant
-	k.cdc.MustUnmarshal(b, &participant)
-	return &participant
-}
-
-func isActiveValidator(participant *types.Participant) bool {
-	if participant == nil {
-		return false
-	}
-
-	switch participant.Status {
-	case types.ParticipantStatus_UNSPECIFIED:
-		return false
-	case types.ParticipantStatus_ACTIVE:
-		return true
-	case types.ParticipantStatus_INACTIVE:
-		return false
-	case types.ParticipantStatus_INVALID:
-		return true
-	case types.ParticipantStatus_RAMPING:
-		return true
-	default:
-		log.Fatalf("unknown participant status: %v", participant.Status)
-	}
-
-	// Effectively unreachable because of the default case
-	return false
-}
-
 // GetParticipant returns a participant from its index
 func (k Keeper) GetParticipant(
 	ctx context.Context,
 	index string,
-
 ) (val types.Participant, found bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-
-	b := store.Get(types.ParticipantKey(
-		index,
-	))
-	if b == nil {
+	address, err := sdk.AccAddressFromBech32(index)
+	if err != nil {
+		k.LogError("Could not parse participant address", types.Participants, "address", index, "error", err)
 		return val, false
 	}
-
-	k.cdc.MustUnmarshal(b, &val)
+	val, err = k.Participants.Get(ctx, address)
+	if err != nil {
+		return val, false
+	}
 	return val, true
 }
 
 func (k Keeper) GetParticipants(ctx context.Context, ids []string) ([]types.Participant, bool) {
 	var participants = make([]types.Participant, len(ids))
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-
 	for i, id := range ids {
-		var p types.Participant
-		b := store.Get(types.ParticipantKey(id))
-
-		if b == nil {
+		b, err := k.Participants.Get(ctx, sdk.MustAccAddressFromBech32(id))
+		if err != nil {
 			return nil, false
 		}
-
-		k.cdc.MustUnmarshal(b, &p)
-		participants[i] = p
+		participants[i] = b
 	}
 
 	return participants, true
@@ -113,43 +69,33 @@ func (k Keeper) RemoveParticipant(
 	index string,
 
 ) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-	key := types.ParticipantKey(index)
-
-	store.Delete(key)
+	err := k.Participants.Remove(ctx, sdk.MustAccAddressFromBech32(index))
+	if err != nil {
+		k.LogError("Could not remove participant", types.Participants, "error", err, "index", index, "address", sdk.MustAccAddressFromBech32(index).String(), "")
+	}
 }
 
 // GetAllParticipant returns all participant
 func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.Participant
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+	iter, err := k.Participants.Iterate(ctx, nil)
+	if err != nil {
+		return nil
 	}
-
-	return
+	participants, err := iter.Values()
+	if err != nil {
+		return nil
+	}
+	return participants
 }
 
 func (k Keeper) CountAllParticipantsWithNotZeroBalance(ctx context.Context) int64 {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-
-	iterator := store.Iterator(nil, nil)
-	defer iterator.Close()
-
-	var count int64
-	var participant types.Participant
-	for ; iterator.Valid(); iterator.Next() {
-		k.cdc.MustUnmarshal(iterator.Value(), &participant)
-		// TODO check balance!
-		count++
+	iter, err := k.Participants.Iterate(ctx, nil)
+	if err != nil {
+		return 0
 	}
-	return count
+	participants, err := iter.Values()
+	if err != nil {
+		return 0
+	}
+	return int64(len(participants))
 }
