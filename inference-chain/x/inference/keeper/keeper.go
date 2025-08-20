@@ -43,6 +43,7 @@ type (
 		Models                        collections.Map[string, types.Model]
 		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
+		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 	}
 )
 
@@ -136,6 +137,14 @@ func NewKeeper(
 			"models",
 			collections.StringKey,
 			codec.CollValue[types.Model](cdc),
+		),
+		// unit of compute price proposals map
+		UnitOfComputePriceProposals: collections.NewMap(
+			sb,
+			types.UnitOfComputePriceProposalPrefix,
+			"unit_of_compute_price_proposals",
+			collections.StringKey,
+			codec.CollValue[types.UnitOfComputePriceProposal](cdc),
 		),
 		InferenceValidationDetailsMap: collections.NewMap(
 			sb,
