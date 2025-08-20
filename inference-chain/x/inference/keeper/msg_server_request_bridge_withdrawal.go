@@ -55,6 +55,7 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 
 	// 5. Generate request ID from transaction hash
 	requestID := k.generateRequestID(ctx)
+	requestIdHash := sha256.Sum256([]byte(requestID))
 
 	// 6. Get current epoch for BLS signature
 	currentEpochGroup, err := k.GetCurrentEpochGroup(goCtx)
@@ -69,19 +70,26 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		return nil, fmt.Errorf("unsupported destination chain: %s", bridgeWrappedTokenContract.ChainId)
 	}
 
-	blsData := k.prepareBridgeSignatureData(
-		destinationChainId, // Numeric chain ID (e.g., "1", "137")
-		msg.DestinationAddress,
+	// Prepare data for BLS signing - only the parts after epochId/chainId/requestId
+	// The BLS system will prepend: epochId (8 bytes) + gonkaChainId (32 bytes) + requestId (32 bytes)
+	// We need to provide: ethereumChainId + WITHDRAW_OPERATION + recipient + tokenContract + amount
+	blsData := k.prepareBridgeWithdrawalSignatureData(
+		destinationChainId,                         // Numeric chain ID (e.g., "1", "137")
+		msg.DestinationAddress,                     // Ethereum address to receive tokens
 		bridgeWrappedTokenContract.ContractAddress, // Original token address on destination chain
-		msg.Amount, // amount as string
+		msg.Amount, // Amount as string
 	)
 
 	// 8. Request BLS threshold signature
+	// Use the actual Gonka chain ID from context (source chain)
+	gonkaChainID := ctx.ChainID()
+	gonkaChainIdHash := sha256.Sum256([]byte(gonkaChainID)) // Convert to bytes32
+
 	signingData := blstypes.SigningData{
 		CurrentEpochId: currentEpochGroup.GroupData.EpochId,
-		ChainId:        []byte(chainID),
-		RequestId:      []byte(requestID),
-		Data:           blsData,
+		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
+		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
+		Data:           blsData,             // The remaining data fields
 	}
 
 	err = k.BlsKeeper.RequestThresholdSignature(ctx, signingData)
@@ -148,21 +156,24 @@ func (k msgServer) generateRequestID(ctx sdk.Context) string {
 	return fmt.Sprintf("req_%d_%x", ctx.BlockHeight(), ctx.TxBytes())
 }
 
-// Prepare BLS signature data for bridge withdrawal (matches Ethereum bridge contract format)
-func (k msgServer) prepareBridgeSignatureData(chainId, destinationAddress, tokenAddress, amount string) [][]byte {
-	// Bridge signature data format should match the Ethereum bridge contract expectations
-	// This typically includes: operation hash, chain ID, destination address, token address, amount
+// prepareBridgeWithdrawalSignatureData prepares the data portion for BLS signature according to Ethereum bridge format
+// This function only prepares the data that comes AFTER epochId, gonkaChainId, and requestId
+// Final message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, tokenContract, amount]
+func (k msgServer) prepareBridgeWithdrawalSignatureData(chainId, recipient, tokenContract, amount string) [][]byte {
+	// Use helper functions for consistent encoding
+	ethereumChainIdBytes := chainIdToBytes32(chainId)
+	recipientBytes := ethereumAddressToBytes(recipient)
+	tokenBytes := ethereumAddressToBytes(tokenContract)
+	amountBytes := amountToBytes32(amount)
 
-	// Convert operation hash to bytes
-	operationBytes := withdrawOperationHash[:]
-
-	// Prepare data components (as bytes)
+	// Return the data fields that come after epochId, gonkaChainId, requestId
+	// Order: ethereumChainId (32 bytes) + WITHDRAW_OPERATION (32 bytes) + recipient (20 bytes) + tokenContract (20 bytes) + amount (32 bytes)
 	data := [][]byte{
-		operationBytes,             // WITHDRAW_OPERATION hash
-		[]byte(chainId),            // Chain ID
-		[]byte(destinationAddress), // Destination address
-		[]byte(tokenAddress),       // Token contract address
-		[]byte(amount),             // Amount as string
+		ethereumChainIdBytes,     // ETHEREUM_CHAIN_ID (32 bytes)
+		withdrawOperationHash[:], // WITHDRAW_OPERATION hash (32 bytes)
+		recipientBytes,           // Recipient address (20 bytes)
+		tokenBytes,               // Token contract address (20 bytes)
+		amountBytes,              // Amount as uint256 (32 bytes)
 	}
 
 	return data

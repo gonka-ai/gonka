@@ -52,6 +52,7 @@ service Msg {
   rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata           ) returns (MsgRegisterTokenMetadataResponse           );
   rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading    ) returns (MsgApproveBridgeTokenForTradingResponse    );
   rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal         ) returns (MsgRequestBridgeWithdrawalResponse         );
+  rpc RequestBridgeMint                (MsgRequestBridgeMint               ) returns (MsgRequestBridgeMintResponse               );
   rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract    ) returns (MsgRegisterWrappedTokenContractResponse    );
   rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens         ) returns (MsgMigrateAllWrappedTokensResponse         );
 }
@@ -422,6 +423,21 @@ message MsgRequestBridgeWithdrawal {
 message MsgRequestBridgeWithdrawalResponse {
   string request_id    = 1; // Generated request ID (transaction hash)
   uint64 epoch_id      = 2; // Current epoch ID used for signature
+  string bls_request_id = 3; // BLS signing request ID
+}
+
+// Native Gonka bridge mint request - bridges native tokens to WGNK
+message MsgRequestBridgeMint {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator              = 1; // User address sending native tokens
+  string amount               = 2; // Amount of native Gonka to bridge (as string to handle large numbers)
+  string destination_address  = 3; // Ethereum address to receive WGNK tokens
+  string chain_id             = 4; // Target chain identifier (e.g., "ethereum", "sepolia")
+}
+
+message MsgRequestBridgeMintResponse {
+  string request_id     = 1; // Generated request ID for tracking
+  uint64 epoch_id       = 2; // Current epoch ID used for signature
   string bls_request_id = 3; // BLS signing request ID
 }
 

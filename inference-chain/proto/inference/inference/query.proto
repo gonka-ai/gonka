@@ -853,7 +853,7 @@ message QueryGetBridgeTransactionRequest {
 }
 
 message QueryGetBridgeTransactionResponse {
-  BridgeTransaction bridgeTransaction = 1 [(gogoproto.nullable) = false];
+  repeated BridgeTransaction bridgeTransactions = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryAllBridgeTransactionsRequest {

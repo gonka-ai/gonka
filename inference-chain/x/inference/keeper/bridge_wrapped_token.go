@@ -703,6 +703,27 @@ func (k Keeper) MintTokens(ctx sdk.Context, contractAddr string, recipient strin
 
 // handleCompletedBridgeTransaction handles minting tokens when a bridge transaction is completed
 func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *types.BridgeTransaction) error {
+	// Check if this is a native token release (WGNK burn on Ethereum)
+	isBridgeContract, chainId := k.IsBridgeContractAddress(ctx, bridgeTx.ContractAddress)
+	if isBridgeContract {
+		// Handle native token release from escrow
+		err := k.HandleNativeTokenRelease(ctx, bridgeTx)
+		if err != nil {
+			k.LogError("Bridge exchange: Failed to release native tokens", types.Messages, "error", err)
+			return fmt.Errorf("failed to release native tokens: %v", err)
+		}
+
+		k.LogInfo("Bridge exchange: Successfully released native tokens from escrow",
+			types.Messages,
+			"contractAddress", bridgeTx.ContractAddress,
+			"recipient", bridgeTx.OwnerAddress,
+			"amount", bridgeTx.Amount,
+			"chainId", chainId)
+
+		return nil
+	}
+
+	// Handle wrapped token minting (existing logic)
 	// Get or create CW20 contract for the bridged token (automatically handles metadata)
 	contractAddr, err := k.GetOrCreateWrappedTokenContract(ctx, bridgeTx.ChainId, bridgeTx.ContractAddress)
 	if err != nil {

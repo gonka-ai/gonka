@@ -58,9 +58,34 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("account not found for validator")
 	}
 
-	// Check if this transaction has already been processed
-	existingTx, found := k.GetBridgeTransaction(ctx, msg.OriginChain, msg.BlockNumber, msg.ReceiptIndex)
+	// Create transaction object with all the content for secure validation
+	proposedTx := &types.BridgeTransaction{
+		ChainId:         msg.OriginChain,
+		ContractAddress: msg.ContractAddress,
+		OwnerAddress:    msg.OwnerAddress,
+		Amount:          msg.Amount,
+		BlockNumber:     msg.BlockNumber,
+		ReceiptIndex:    msg.ReceiptIndex,
+		ReceiptsRoot:    msg.ReceiptsRoot,
+		// Status and other fields will be set later
+	}
+
+	// Check if this exact transaction content has already been processed
+	existingTx, found := k.GetBridgeTransactionByContent(ctx, proposedTx)
 	if found {
+		// Validate that the existing transaction has identical content (double-check security)
+		if !bridgeTransactionsEqual(existingTx, proposedTx) {
+			k.LogError("Bridge exchange: Content mismatch for existing transaction", types.Messages,
+				"existingChainId", existingTx.ChainId,
+				"proposedChainId", proposedTx.ChainId,
+				"existingContract", existingTx.ContractAddress,
+				"proposedContract", proposedTx.ContractAddress,
+				"existingOwner", existingTx.OwnerAddress,
+				"proposedOwner", proposedTx.OwnerAddress,
+				"existingAmount", existingTx.Amount,
+				"proposedAmount", proposedTx.Amount)
+			return nil, fmt.Errorf("transaction content mismatch - potential attack detected")
+		}
 		// Get the epoch group for the existing transaction using pocStartBlockHeight
 		epochGroup, err := k.GetEpochGroup(goCtx, existingTx.PocStartBlockHeight, "")
 		if err != nil {
@@ -224,22 +249,14 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("validator not in active participants")
 	}
 
-	// Create new bridge transaction
-	bridgeTx := &types.BridgeTransaction{
-		Id:                   "", // Will be set by SetBridgeTransaction
-		ChainId:              msg.OriginChain,
-		ContractAddress:      msg.ContractAddress,
-		OwnerAddress:         msg.OwnerAddress,
-		Amount:               msg.Amount,
-		Status:               types.BridgeTransactionStatus_BRIDGE_PENDING,
-		BlockNumber:          msg.BlockNumber,
-		ReceiptIndex:         msg.ReceiptIndex,
-		ReceiptsRoot:         msg.ReceiptsRoot,
-		PocStartBlockHeight:  currentEpochGroup.GroupData.PocStartBlockHeight,
-		Validators:           []string{msg.Validator},
-		TotalValidationPower: validatorPower,
-	}
-	k.SetBridgeTransaction(ctx, bridgeTx)
+	// Complete the proposed transaction with epoch and validation data
+	proposedTx.Id = "" // Will be set by SetBridgeTransaction
+	proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
+	proposedTx.PocStartBlockHeight = currentEpochGroup.GroupData.PocStartBlockHeight
+	proposedTx.Validators = []string{msg.Validator}
+	proposedTx.TotalValidationPower = validatorPower
+
+	k.SetBridgeTransaction(ctx, proposedTx)
 
 	k.LogInfo("Bridge exchange: New transaction created",
 		types.Messages,
@@ -250,9 +267,9 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"validatorPower", validatorPower,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"amount", msg.Amount,
-		"uniqueId", bridgeTx.Id)
+		"uniqueId", proposedTx.Id)
 
 	return &types.MsgBridgeExchangeResponse{
-		Id: bridgeTx.Id,
+		Id: proposedTx.Id,
 	}, nil
 }

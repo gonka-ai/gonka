@@ -182,6 +182,7 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	// Ensures creation if not already existing
 	k.AccountKeeper.GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
+	k.AccountKeeper.GetModuleAccount(ctx, types.BridgeEscrowAccName)
 
 	topRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
 	preProgrammedCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
