@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     entry_point, to_json_binary, to_json_vec, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response,
-    StdResult, QueryRequest, GrpcQuery, StdError, ContractResult, SystemResult, Uint128, CosmosMsg, WasmMsg,
+    StdResult, QueryRequest, GrpcQuery, StdError, ContractResult, SystemResult, Uint128, CosmosMsg,
 };
 use cw20_base::contract as cw20_base_contract;
 use cw20_base::msg as cw20_base_msg;
@@ -210,10 +210,10 @@ fn create_bridge_withdrawal_msg(
         creator, user_address, amount, destination_address
     );
 
-    let stargate_msg = CosmosMsg::Stargate {
+    let stargate_msg = CosmosMsg::Any(cosmwasm_std::AnyMsg {
         type_url: "/inference.inference.MsgRequestBridgeWithdrawal".to_string(),
         value: Binary::from(msg_data.as_bytes()),
-    };
+    });
 
     Ok(stargate_msg)
 }
