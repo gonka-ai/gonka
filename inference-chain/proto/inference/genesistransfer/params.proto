@@ -1,0 +1,22 @@
+syntax = "proto3";
+package inference.genesistransfer;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/genesistransfer/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/genesistransfer/Params";
+  option (gogoproto.equal) = true;
+
+  // allowed_accounts is a whitelist of genesis account addresses that can be transferred
+  repeated string allowed_accounts = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  
+  // restrict_to_list enables whitelist enforcement - if false, any account can be transferred
+  bool restrict_to_list = 2;
+}

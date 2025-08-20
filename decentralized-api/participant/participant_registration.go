@@ -92,7 +92,10 @@ func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, conf
 	logging.Info("[TEST ONLY] Registering participant", types.Participants, "isTest", isTest)
 
 	if config.GetChainNodeConfig().IsGenesis {
-		return registerGenesisParticipant(recorder, config)
+		// Genesis participants are pre-registered through the genesis ceremony process
+		// No need to register them again at runtime
+		logging.Info("Genesis participant registration disabled - participants are pre-registered in genesis", types.Participants)
+		return nil
 	} else {
 		return registerJoiningParticipant(recorder, config)
 	}

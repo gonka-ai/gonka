@@ -17,6 +17,7 @@ import (
 	"github.com/productscience/inference/app"
 	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
+	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
 type Server struct {
@@ -74,6 +75,7 @@ func getCodec() *codec.ProtoCodec {
 	v1.RegisterInterfaces(interfaceRegistry)
 	upgradetypes.RegisterInterfaces(interfaceRegistry)
 	collateraltypes.RegisterInterfaces(interfaceRegistry)
+	restrictionstypes.RegisterInterfaces(interfaceRegistry)
 	blstypes.RegisterInterfaces(interfaceRegistry)
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 	return cdc

@@ -279,6 +279,40 @@ data class ApplicationAPI(
         return get(url, "v1/epochs/latest")
     }
 
+    // -----------------------
+    // Restrictions via Decentralized API
+    // -----------------------
+
+    fun getRestrictionsStatus(): TransferRestrictionStatusDto {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        return get(url, "v1/restrictions/status")
+    }
+
+    fun getRestrictionsExemptions(): TransferExemptionsDto {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        return get(url, "v1/restrictions/exemptions")
+    }
+
+    fun getRestrictionsExemptionUsage(exemptionId: String, account: String): ExemptionUsageDto {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        val path = "v1/restrictions/exemptions/$exemptionId/usage/$account"
+        return get(url, path)
+    }
+
+    fun updateRestrictionsParams(body: UpdateRestrictionsParamsDto): String {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        return postWithStringResponse(url, "admin/v1/restrictions/params", body)
+    }
+
+    fun executeEmergencyTransfer(body: EmergencyTransferDto): String {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        return postWithStringResponse(url, "v1/restrictions/emergency-transfer", body)
+    }
+
+    // -----------------------
+    // BLS via Decentralized API
+    // -----------------------
+
     fun requestThresholdSignature(request: RequestThresholdSignatureDto): String = wrapLog("RequestThresholdSignature", true) {
         val url = urlFor(SERVER_TYPE_ADMIN)
         postWithStringResponse(url, "admin/v1/bls/request", request)

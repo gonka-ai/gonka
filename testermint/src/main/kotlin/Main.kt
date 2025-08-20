@@ -524,6 +524,16 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
             )
         )
     }
+
+    // Default restrictions module params (tests can override via spec in test files)
+    this[AppState::restrictions] = spec<RestrictionsState> {
+        this[RestrictionsState::params] = spec<RestrictionsParams> {
+            // Set a sane default far in the future so tests relying on default behavior keep working
+            this[RestrictionsParams::restrictionEndBlock] = 1_555_000L
+            this[RestrictionsParams::emergencyTransferExemptions] = emptyList<EmergencyTransferExemption>()
+            this[RestrictionsParams::exemptionUsageTracking] = emptyList<ExemptionUsageEntry>()
+        }
+    }
 }
 
 

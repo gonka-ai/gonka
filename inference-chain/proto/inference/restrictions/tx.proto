@@ -1,0 +1,70 @@
+syntax = "proto3";
+package inference.restrictions;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "inference/restrictions/params.proto";
+
+option go_package = "github.com/productscience/inference/x/restrictions/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams defines a (governance) operation for updating the module
+  // parameters. The authority defaults to the x/gov module account.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+  
+  // ExecuteEmergencyTransfer allows users to execute governance-approved emergency transfers
+  rpc ExecuteEmergencyTransfer(MsgExecuteEmergencyTransfer) returns (MsgExecuteEmergencyTransferResponse);
+}
+
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "inference/x/restrictions/MsgUpdateParams";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params defines the module parameters to update.
+  //
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse defines the response structure for executing a
+// MsgUpdateParams message.
+message MsgUpdateParamsResponse {}
+
+// MsgExecuteEmergencyTransfer executes a governance-approved emergency transfer
+message MsgExecuteEmergencyTransfer {
+  option (cosmos.msg.v1.signer) = "from_address";
+  option (amino.name) = "inference/x/restrictions/MsgExecuteEmergencyTransfer";
+
+  // exemption_id is the ID of the governance-approved exemption template
+  string exemption_id = 1;
+  
+  // from_address is the sender of the transfer (must match exemption or be wildcard)
+  string from_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // to_address is the recipient of the transfer (must match exemption or be wildcard)
+  string to_address = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // amount is the amount to transfer (must be within exemption limits)
+  string amount = 4;
+  
+  // denom is the coin denomination to transfer
+  string denom = 5;
+}
+
+// MsgExecuteEmergencyTransferResponse is the response for emergency transfer execution
+message MsgExecuteEmergencyTransferResponse {
+  // remaining_uses is the number of uses left for this account with this exemption
+  uint64 remaining_uses = 1;
+}
