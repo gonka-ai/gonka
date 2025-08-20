@@ -20,15 +20,16 @@ const (
 )
 
 var (
-	ParticipantsPrefix           = collections.NewPrefix(0)
-	RandomSeedPrefix             = collections.NewPrefix(1)
-	PoCBatchPrefix               = collections.NewPrefix(2)
-	PoCValidationPref            = collections.NewPrefix(3)
-	DynamicPricingCurrentPrefix  = collections.NewPrefix(4)
-	DynamicPricingCapacityPrefix = collections.NewPrefix(5)
-	ModelsPrefix                 = collections.NewPrefix(6)
-	InferenceTimeoutPrefix       = collections.NewPrefix(7)
-	ParamsKey                    = []byte("p_inference")
+	ParticipantsPrefix               = collections.NewPrefix(0)
+	RandomSeedPrefix                 = collections.NewPrefix(1)
+	PoCBatchPrefix                   = collections.NewPrefix(2)
+	PoCValidationPref                = collections.NewPrefix(3)
+	DynamicPricingCurrentPrefix      = collections.NewPrefix(4)
+	DynamicPricingCapacityPrefix     = collections.NewPrefix(5)
+	ModelsPrefix                     = collections.NewPrefix(6)
+	InferenceTimeoutPrefix           = collections.NewPrefix(7)
+	InferenceValidationDetailsPrefix = collections.NewPrefix(8)
+	ParamsKey                        = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {
