@@ -87,13 +87,13 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 	}
 }
 
-func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, previousEpochPocStartHeight uint64) error {
-	if pocBlockHeight == 0 {
-		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "pocBlockHeight", pocBlockHeight, "skipping")
+func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, previousEpochIndex uint64) error {
+	if currentEpochIndex == 0 {
+		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "currentEpochIndex", currentEpochIndex, "skipping")
 		return nil
 	}
 
-	k.LogInfo("SettleAccounts", types.Settle, "pocBlockHeight", pocBlockHeight)
+	k.LogInfo("SettleAccounts", types.Settle, "currentEpochIndex", currentEpochIndex)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	participants, err := k.ParticipantAll(ctx, &types.QueryAllParticipantRequest{})
@@ -105,10 +105,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
 	k.LogInfo("Got participants", types.Settle, "participants", len(participants.Participant))
 
-	data, found := k.GetEpochGroupData(ctx, pocBlockHeight, "")
-	k.LogInfo("Settling for block", types.Settle, "height", pocBlockHeight)
+	data, found := k.GetEpochGroupData(ctx, currentEpochIndex, "")
+	k.LogInfo("Settling for block", types.Settle, "height", currentEpochIndex)
 	if !found {
-		k.LogError("Epoch group data not found", types.Settle, "height", pocBlockHeight)
+		k.LogError("Epoch group data not found", types.Settle, "height", currentEpochIndex)
 		return types.ErrCurrentEpochGroupNotFound
 	}
 	seedSigMap := make(map[string]string)
@@ -176,7 +176,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 		participant.CurrentEpochStats.EarnedCoins = 0
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
 		epochPerformance := types.EpochPerformanceSummary{
-			EpochStartHeight:      pocBlockHeight,
+			EpochIndex:            currentEpochIndex,
 			ParticipantId:         participant.Address,
 			InferenceCount:        participant.CurrentEpochStats.InferenceCount,
 			MissedRequests:        participant.CurrentEpochStats.MissedRequests,
@@ -208,17 +208,17 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64, prev
 			amount.Settle.SeedSignature = seedSignature
 		}
 
-		amount.Settle.PocStartHeight = pocBlockHeight
+		amount.Settle.EpochIndex = currentEpochIndex
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
 		k.SetSettleAmountWithBurn(ctx, *amount.Settle)
 	}
 
-	if previousEpochPocStartHeight == 0 {
+	if previousEpochIndex == 0 {
 		return nil
 	}
 
-	k.LogInfo("Burning old settle amounts", types.Settle, "previousEpochPocStartHeight", previousEpochPocStartHeight)
-	err = k.BurnOldSettleAmounts(ctx, previousEpochPocStartHeight)
+	k.LogInfo("Burning old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
+	err = k.BurnOldSettleAmounts(ctx, previousEpochIndex)
 	if err != nil {
 		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
 	}

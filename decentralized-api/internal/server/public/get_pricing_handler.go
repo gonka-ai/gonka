@@ -27,8 +27,8 @@ func (s *Server) getPricing(ctx echo.Context) error {
 
 	for _, modelId := range parentEpochData.SubGroupModels {
 		req := &types.QueryGetEpochGroupDataRequest{
-			PocStartBlockHeight: parentEpochData.PocStartBlockHeight,
-			ModelId:             modelId,
+			EpochIndex: parentEpochData.EpochIndex,
+			ModelId:    modelId,
 		}
 		modelEpochData, err := queryClient.EpochGroupData(context, req)
 		if err != nil {

@@ -1,8 +1,8 @@
 {
   "app_name": "inferenced",
-  "app_version": "67200275",
-  "genesis_time": "2025-08-15T07:56:30.618490168Z",
-  "chain_id": "gonka-testnet-7",
+  "app_version": "69243844",
+  "genesis_time": "2025-08-20T17:00:00.000000000Z",
+  "chain_id": "gonka-rehearsal",
   "initial_height": 1,
   "app_hash": null,
   "app_state": {
@@ -19,23 +19,72 @@
       "accounts": [
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka13l6c0jghmz9qr4wyn237560e6cy70eljqe6q9y",
+          "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
           "pub_key": null,
           "account_number": "0",
           "sequence": "0"
         },
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1z6l8marv76t69tcnjuchpr602kjtrtmp7k2uts",
+          "address": "gonka1dltwc37njhkapzklt9frfhvlk3lpcfz69faly9",
           "pub_key": null,
           "account_number": "1",
           "sequence": "0"
         },
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka17pwrcnldrtkulkt8p8a5ymwp5sz9eclgvlm38e",
+          "address": "gonka1szdfz8vlsajzyejc6d5220j5v5jrn6zcslqaxh",
           "pub_key": null,
           "account_number": "2",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
+          "pub_key": null,
+          "account_number": "3",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
+          "pub_key": null,
+          "account_number": "4",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "pub_key": null,
+          "account_number": "5",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+          "pub_key": null,
+          "account_number": "6",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
+          "pub_key": null,
+          "account_number": "7",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
+          "pub_key": null,
+          "account_number": "8",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
+          "pub_key": null,
+          "account_number": "9",
           "sequence": "0"
         }
       ]
@@ -50,7 +99,7 @@
       },
       "balances": [
         {
-          "address": "gonka13l6c0jghmz9qr4wyn237560e6cy70eljqe6q9y",
+          "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
           "coins": [
             {
               "denom": "nicoin",
@@ -59,7 +108,7 @@
           ]
         },
         {
-          "address": "gonka1z6l8marv76t69tcnjuchpr602kjtrtmp7k2uts",
+          "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
           "coins": [
             {
               "denom": "nicoin",
@@ -68,7 +117,70 @@
           ]
         },
         {
-          "address": "gonka17pwrcnldrtkulkt8p8a5ymwp5sz9eclgvlm38e",
+          "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1dltwc37njhkapzklt9frfhvlk3lpcfz69faly9",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1szdfz8vlsajzyejc6d5220j5v5jrn6zcslqaxh",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "160000000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
           "coins": [
             {
               "denom": "nicoin",
@@ -80,7 +192,7 @@
       "supply": [
         {
           "denom": "nicoin",
-          "amount": "3"
+          "amount": "160000000000000009"
         }
       ],
       "denom_metadata": [
@@ -215,14 +327,14 @@
           }
         ],
         "max_deposit_period": "172800s",
-        "voting_period": "0h3m0s",
-        "quorum": "0.01000000000000000",
+        "voting_period": "0h10m0s",
+        "quorum": "0.00100000000000000",
         "threshold": "0.500000000000000000",
         "veto_threshold": "0.334000000000000000",
         "min_initial_deposit_ratio": "0.000000000000000000",
         "proposal_cancel_ratio": "0.500000000000000000",
         "proposal_cancel_dest": "",
-        "expedited_voting_period": "0h2m0s",
+        "expedited_voting_period": "0h5m0s",
         "expedited_threshold": "0.667000000000000000",
         "expedited_min_deposit": [
           {
@@ -291,16 +403,16 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "115",
+          "epoch_length": "1800",
           "epoch_multiplier": "1",
-          "epoch_shift": "100",
+          "epoch_shift": "1700",
           "default_unit_of_compute_price": "100",
-          "poc_stage_duration": "30",
+          "poc_stage_duration": "60",
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
-          "poc_validation_duration": "10",
-          "set_new_validators_delay": "20",
-          "inference_validation_cutoff": "40",
+          "poc_validation_duration": "20",
+          "set_new_validators_delay": "80",
+          "inference_validation_cutoff": "50",
           "inference_pruning_epoch_threshold": "2"
         },
         "validation_params": {

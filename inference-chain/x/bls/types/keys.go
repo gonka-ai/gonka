@@ -35,6 +35,7 @@ func EpochBLSDataKey(epochID uint64) []byte {
 }
 
 // ThresholdSigningRequestKey generates a key for storing ThresholdSigningRequest by request ID
+// This results in a variable length key, as we put no constraints on the request_id
 func ThresholdSigningRequestKey(requestID []byte) []byte {
 	key := make([]byte, len(ThresholdSigningRequestPrefix)+len(requestID))
 	copy(key, ThresholdSigningRequestPrefix)

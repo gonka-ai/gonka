@@ -139,7 +139,7 @@ type MockRandomSeedManager struct {
 	mock.Mock
 }
 
-func (m *MockRandomSeedManager) GenerateSeed(blockHeight int64) {
+func (m *MockRandomSeedManager) GenerateSeed(blockHeight uint64) {
 	m.Called(blockHeight)
 }
 
@@ -285,7 +285,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	}, nil)
 
 	// Setup mock expectations for RandomSeedManager
-	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("int64")).Return()
+	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("uint64")).Return()
 	mockSeedManager.On("ChangeCurrentSeed").Return()
 	mockSeedManager.On("RequestMoney").Return()
 
@@ -400,7 +400,7 @@ func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 		Block:   chainevents.Block{Header: chainevents.Header{Height: fmt.Sprintf("%v", height)}},
 		BlockId: chainevents.BlockId{Hash: fmt.Sprintf("hash-%d", height)},
 	}
-	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo, height-1)
 }
 
 func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnodeclient.MockClient {

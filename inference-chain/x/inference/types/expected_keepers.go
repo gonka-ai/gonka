@@ -102,8 +102,8 @@ type HardwareNodeKeeper interface {
 
 type EpochGroupDataKeeper interface {
 	SetEpochGroupData(ctx context.Context, epochGroupData EpochGroupData)
-	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val EpochGroupData, found bool)
-	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string)
+	GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val EpochGroupData, found bool)
+	RemoveEpochGroupData(ctx context.Context, epochIndex uint64, modelId string)
 	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
 }
 

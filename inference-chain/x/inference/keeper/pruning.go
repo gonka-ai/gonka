@@ -2,8 +2,8 @@ package keeper
 
 import (
 	"context"
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -150,10 +150,12 @@ func (k Keeper) prunePoCBatchesForEpoch(ctx context.Context, pocStageStartBlockH
 
 	for participantAddr, batchSlice := range batches {
 		for _, batch := range batchSlice {
-			storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-			store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocBatchKeyPrefix))
-			key := types.PoCBatchKey(batch.PocStageStartBlockHeight, batch.ParticipantAddress, batch.BatchId)
-			store.Delete(key)
+			pAddr, err := sdk.AccAddressFromBech32(batch.ParticipantAddress)
+			if err != nil {
+				continue
+			}
+			pk := collections.Join3(batch.PocStageStartBlockHeight, pAddr, batch.BatchId)
+			_ = k.PoCBatches.Remove(ctx, pk)
 			prunedCount++
 		}
 
@@ -179,10 +181,16 @@ func (k Keeper) prunePoCValidationsForEpoch(ctx context.Context, pocStageStartBl
 
 	for participantAddr, validationSlice := range validations {
 		for _, validation := range validationSlice {
-			storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-			store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocValidationPrefix))
-			key := types.PoCValidationKey(validation.PocStageStartBlockHeight, validation.ParticipantAddress, validation.ValidatorParticipantAddress)
-			store.Delete(key)
+			pAddr, err := sdk.AccAddressFromBech32(validation.ParticipantAddress)
+			if err != nil {
+				continue
+			}
+			vAddr, err := sdk.AccAddressFromBech32(validation.ValidatorParticipantAddress)
+			if err != nil {
+				continue
+			}
+			pk := collections.Join3(validation.PocStageStartBlockHeight, pAddr, vAddr)
+			_ = k.PoCValidations.Remove(ctx, pk)
 			prunedCount++
 		}
 

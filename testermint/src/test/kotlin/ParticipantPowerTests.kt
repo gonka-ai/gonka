@@ -61,7 +61,7 @@ class ParticipantPowerTests : TestermintTest() {
         assertThat(cometValidators.validators).hasSize(2)
 
         logSection("Setting ${zeroParticipant.name} back to 15 power")
-        zeroParticipant.changePoc(15, setNewValidatorsOffset = 3)
+        zeroParticipant.changePoc(10, setNewValidatorsOffset = 3)
 
         logSection("Confirming ${zeroParticipant.name} is back in validators")
         val validatorsAfterRejoin = genesis.node.getValidators()
@@ -69,7 +69,7 @@ class ParticipantPowerTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
 
-        assertThat(rejoinedValidator.tokens).isEqualTo(15)
+        assertThat(rejoinedValidator.tokens).isEqualTo(10)
         assertThat(rejoinedValidator.status).isEqualTo(StakeValidatorStatus.BONDED.value)
         val cometValidatorsAfterRejoin = genesis.node.getCometValidators()
         assertThat(cometValidatorsAfterRejoin.validators).anyMatch {
