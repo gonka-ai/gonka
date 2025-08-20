@@ -1,0 +1,102 @@
+syntax = "proto3";
+package inference.restrictions;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "inference/restrictions/params.proto";
+
+option go_package = "github.com/productscience/inference/x/restrictions/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/productscience/inference/restrictions/params";
+  }
+  
+  // TransferRestrictionStatus queries the current transfer restriction status
+  rpc TransferRestrictionStatus(QueryTransferRestrictionStatusRequest) returns (QueryTransferRestrictionStatusResponse) {
+    option (google.api.http).get = "/productscience/inference/restrictions/status";
+  }
+  
+  // TransferExemptions queries all active emergency transfer exemptions
+  rpc TransferExemptions(QueryTransferExemptionsRequest) returns (QueryTransferExemptionsResponse) {
+    option (google.api.http).get = "/productscience/inference/restrictions/exemptions";
+  }
+  
+  // ExemptionUsage queries usage statistics for emergency exemptions
+  rpc ExemptionUsage(QueryExemptionUsageRequest) returns (QueryExemptionUsageResponse) {
+    option (google.api.http).get = "/productscience/inference/restrictions/exemption_usage";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryTransferRestrictionStatusRequest is request type for the Query/TransferRestrictionStatus RPC method.
+message QueryTransferRestrictionStatusRequest {}
+
+// QueryTransferRestrictionStatusResponse is response type for the Query/TransferRestrictionStatus RPC method.
+message QueryTransferRestrictionStatusResponse {
+  // is_active indicates if transfer restrictions are currently active
+  bool is_active = 1;
+  
+  // restriction_end_block is the block height when restrictions end
+  uint64 restriction_end_block = 2;
+  
+  // current_block_height is the current blockchain height
+  uint64 current_block_height = 3;
+  
+  // remaining_blocks is the number of blocks until restrictions end (0 if inactive)
+  uint64 remaining_blocks = 4;
+}
+
+// QueryTransferExemptionsRequest is request type for the Query/TransferExemptions RPC method.
+message QueryTransferExemptionsRequest {
+  // include_expired indicates whether to include expired exemptions in the response
+  bool include_expired = 1;
+  
+  // pagination defines an optional pagination for the request.
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+// QueryTransferExemptionsResponse is response type for the Query/TransferExemptions RPC method.
+message QueryTransferExemptionsResponse {
+  // exemptions is the list of emergency transfer exemptions
+  repeated EmergencyTransferExemption exemptions = 1 [(gogoproto.nullable) = false];
+  
+  // pagination defines the pagination in the response.
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// QueryExemptionUsageRequest is request type for the Query/ExemptionUsage RPC method.
+message QueryExemptionUsageRequest {
+  // exemption_id filters usage by specific exemption ID (optional)
+  string exemption_id = 1;
+  
+  // account_address filters usage by specific account address (optional)
+  string account_address = 2;
+  
+  // pagination defines an optional pagination for the request.
+  cosmos.base.query.v1beta1.PageRequest pagination = 3;
+}
+
+// QueryExemptionUsageResponse is response type for the Query/ExemptionUsage RPC method.
+message QueryExemptionUsageResponse {
+  // usage_entries is the list of exemption usage entries
+  repeated ExemptionUsage usage_entries = 1 [(gogoproto.nullable) = false];
+  
+  // pagination defines the pagination in the response.
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
