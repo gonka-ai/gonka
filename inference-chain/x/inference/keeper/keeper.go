@@ -32,7 +32,30 @@ type (
 
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
-		EpochGroupDataMap   collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		// Collections schema and stores
+		Schema         collections.Schema
+		Participants   collections.Map[sdk.AccAddress, types.Participant]
+		RandomSeeds    collections.Map[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]
+		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
+		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
+		// Dynamic pricing collections
+		ModelCurrentPriceMap collections.Map[string, uint64]
+		ModelCapacityMap     collections.Map[string, uint64]
+		// Governance models
+		Models                        collections.Map[string, types.Model]
+		Inferences                    collections.Map[string, types.Inference]
+		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
+		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
+		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
+		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		// Epoch collections
+		Epochs                    collections.Map[uint64, types.Epoch]
+		EffectiveEpochIndex       collections.Item[uint64]
+		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
+		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
+		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
+		EpochPerformanceSummaries collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
 	}
 )
 
@@ -59,7 +82,7 @@ func NewKeeper(
 
 	sb := collections.NewSchemaBuilder(storeService)
 
-	return Keeper{
+	k := Keeper{
 		cdc:                 cdc,
 		storeService:        storeService,
 		authority:           authority,
@@ -75,8 +98,88 @@ func NewKeeper(
 		collateralKeeper:    collateralKeeper,
 		streamvestingKeeper: streamvestingKeeper,
 		getWasmKeeper:       getWasmKeeper,
-		// collections initialization
-
+		// collection init
+		Participants: collections.NewMap(
+			sb,
+			types.ParticipantsPrefix,
+			"participant",
+			sdk.AccAddressKey,
+			codec.CollValue[types.Participant](cdc),
+		),
+		RandomSeeds: collections.NewMap(
+			sb,
+			types.RandomSeedPrefix,
+			"random_seed",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+			codec.CollValue[types.RandomSeed](cdc),
+		),
+		PoCBatches: collections.NewMap(
+			sb,
+			types.PoCBatchPrefix,
+			"poc_batch",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
+			codec.CollValue[types.PoCBatch](cdc),
+		),
+		PoCValidations: collections.NewMap(
+			sb,
+			types.PoCValidationPref,
+			"poc_validation",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
+			codec.CollValue[types.PoCValidation](cdc),
+		),
+		// dynamic pricing collections
+		ModelCurrentPriceMap: collections.NewMap(
+			sb,
+			types.DynamicPricingCurrentPrefix,
+			"model_current_price",
+			collections.StringKey,
+			collections.Uint64Value,
+		),
+		ModelCapacityMap: collections.NewMap(
+			sb,
+			types.DynamicPricingCapacityPrefix,
+			"model_capacity",
+			collections.StringKey,
+			collections.Uint64Value,
+		),
+		// governance models map
+		Models: collections.NewMap(
+			sb,
+			types.ModelsPrefix,
+			"models",
+			collections.StringKey,
+			codec.CollValue[types.Model](cdc),
+		),
+		// inferences map
+		Inferences: collections.NewMap(
+			sb,
+			types.InferencesPrefix,
+			"inferences",
+			collections.StringKey,
+			codec.CollValue[types.Inference](cdc),
+		),
+		// unit of compute price proposals map
+		UnitOfComputePriceProposals: collections.NewMap(
+			sb,
+			types.UnitOfComputePriceProposalPrefix,
+			"unit_of_compute_price_proposals",
+			collections.StringKey,
+			codec.CollValue[types.UnitOfComputePriceProposal](cdc),
+		),
+		InferenceValidationDetailsMap: collections.NewMap(
+			sb,
+			types.InferenceValidationDetailsPrefix,
+			"inference_validation_details",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.InferenceValidationDetails](cdc),
+		),
+		InferenceTimeouts: collections.NewMap(
+			sb,
+			types.InferenceTimeoutPrefix,
+			"inference_timeout",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.InferenceTimeout](cdc),
+		),
 		EpochGroupDataMap: collections.NewMap(
 			sb,
 			types.EpochGroupDataPrefix,
@@ -84,7 +187,63 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupData](cdc),
 		),
+		// Epoch collections wiring
+		Epochs: collections.NewMap(
+			sb,
+			types.EpochsPrefix,
+			"epochs",
+			collections.Uint64Key,
+			codec.CollValue[types.Epoch](cdc),
+		),
+		EffectiveEpochIndex: collections.NewItem(
+			sb,
+			types.EffectiveEpochIndexPrefix,
+			"effective_epoch_index",
+			collections.Uint64Value,
+		),
+		EpochGroupValidationsMap: collections.NewMap(
+			sb,
+			types.EpochGroupValidationsPrefix,
+			"epoch_group_validations",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.EpochGroupValidations](cdc),
+		),
+		SettleAmounts: collections.NewMap(
+			sb,
+			types.SettleAmountPrefix,
+			"settle_amount",
+			sdk.AccAddressKey,
+			codec.CollValue[types.SettleAmount](cdc),
+		),
+		TopMiners: collections.NewMap(
+			sb,
+			types.TopMinerPrefix,
+			"top_miner",
+			sdk.AccAddressKey,
+			codec.CollValue[types.TopMiner](cdc),
+		),
+		PartialUpgrades: collections.NewMap(
+			sb,
+			types.PartialUpgradePrefix,
+			"partial_upgrade",
+			collections.Uint64Key,
+			codec.CollValue[types.PartialUpgrade](cdc),
+		),
+		EpochPerformanceSummaries: collections.NewMap(
+			sb,
+			types.EpochPerformanceSummaryPrefix,
+			"epoch_performance_summary",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
+			codec.CollValue[types.EpochPerformanceSummary](cdc),
+		),
 	}
+	// Build the collections schema
+	schema, err := sb.Build()
+	if err != nil {
+		panic(err)
+	}
+	k.Schema = schema
+	return k
 }
 
 // GetAuthority returns the module's authority.

@@ -3,92 +3,65 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	storetypes "cosmossdk.io/store/types"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetInferenceTimeout set a specific inferenceTimeout in the store from its index
+// SetInferenceTimeout sets a specific inferenceTimeout into the collections map
 func (k Keeper) SetInferenceTimeout(ctx context.Context, inferenceTimeout types.InferenceTimeout) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceTimeoutKeyPrefix))
-	b := k.cdc.MustMarshal(&inferenceTimeout)
-	store.Set(types.InferenceTimeoutKey(
-		inferenceTimeout.ExpirationHeight,
-		inferenceTimeout.InferenceId,
-	), b)
+	_ = k.InferenceTimeouts.Set(ctx, collections.Join(inferenceTimeout.ExpirationHeight, inferenceTimeout.InferenceId), inferenceTimeout)
 }
 
-// GetInferenceTimeout returns a inferenceTimeout from its index
+// GetInferenceTimeout returns an inferenceTimeout from its composite key (expirationHeight, inferenceId)
 func (k Keeper) GetInferenceTimeout(
 	ctx context.Context,
 	expirationHeight uint64,
 	inferenceId string,
-
 ) (val types.InferenceTimeout, found bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceTimeoutKeyPrefix))
-
-	b := store.Get(types.InferenceTimeoutKey(
-		expirationHeight,
-		inferenceId,
-	))
-	if b == nil {
+	v, err := k.InferenceTimeouts.Get(ctx, collections.Join(expirationHeight, inferenceId))
+	if err != nil {
 		return val, false
 	}
-
-	k.cdc.MustUnmarshal(b, &val)
-	return val, true
+	return v, true
 }
 
-// RemoveInferenceTimeout removes a inferenceTimeout from the store
+// RemoveInferenceTimeout removes an inferenceTimeout from collections
 func (k Keeper) RemoveInferenceTimeout(
 	ctx context.Context,
 	expirationHeight uint64,
 	inferenceId string,
-
 ) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceTimeoutKeyPrefix))
-	store.Delete(types.InferenceTimeoutKey(
-		expirationHeight,
-		inferenceId,
-	))
+	_ = k.InferenceTimeouts.Remove(ctx, collections.Join(expirationHeight, inferenceId))
 }
 
-// GetAllInferenceTimeout returns all inferenceTimeout
+// GetAllInferenceTimeout returns all inferenceTimeout entries deterministically
 func (k Keeper) GetAllInferenceTimeout(ctx context.Context) (list []types.InferenceTimeout) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceTimeoutKeyPrefix))
-	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.InferenceTimeout
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+	iter, err := k.InferenceTimeouts.Iterate(ctx, nil)
+	if err != nil {
+		return nil
 	}
-
-	return
+	defer iter.Close()
+	vals, err := iter.Values()
+	if err != nil {
+		return nil
+	}
+	return vals
 }
 
 // GetAllInferenceTimeoutForHeight returns all inferenceTimeouts for a given expirationHeight
 func (k Keeper) GetAllInferenceTimeoutForHeight(ctx context.Context, expirationHeight uint64) (list []types.InferenceTimeout) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceTimeoutKeyPrefix))
-
-	// Use the expirationHeight as the prefix for the iterator
-	iterator := storetypes.KVStorePrefixIterator(store, types.InferenceTimeoutHeightKey(expirationHeight))
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.InferenceTimeout
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+	it, err := k.InferenceTimeouts.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](expirationHeight))
+	if err != nil {
+		return nil
 	}
-
-	return
+	defer it.Close()
+	var out []types.InferenceTimeout
+	for ; it.Valid(); it.Next() {
+		v, err := it.Value()
+		if err != nil {
+			return nil
+		}
+		out = append(out, v)
+	}
+	return out
 }

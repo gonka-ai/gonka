@@ -17,7 +17,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	// Create a test address and public key
-	testAddress := "cosmos1jmjfq0tplp9tmx4v9uemw72y4d2wa5nr3xn9d3"
+	testAddress := testutil.Requester
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
 	pubKeyBytes := pubKey.Bytes()
@@ -66,7 +66,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant_AccountAlreadyExists(t *testing.
 	_, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	// Create a test address and public key
-	testAddress := "cosmos1jmjfq0tplp9tmx4v9uemw72y4d2wa5nr3xn9d3"
+	testAddress := testutil.Requester
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
 	pubKeyBytes := pubKey.Bytes()
@@ -97,7 +97,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
 	// Create a test address and public key
-	testAddress := "cosmos1jmjfq0tplp9tmx4v9uemw72y4d2wa5nr3xn9d3"
+	testAddress := testutil.Requester
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
 	pubKeyBytes := pubKey.Bytes()

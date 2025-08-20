@@ -3,21 +3,17 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	storetypes "cosmossdk.io/store/types"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // SetEpochPerformanceSummary set a specific epochPerformanceSummary in the store from its index
 func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformanceSummary types.EpochPerformanceSummary) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-	b := k.cdc.MustMarshal(&epochPerformanceSummary)
-	store.Set(types.EpochPerformanceSummaryKey(
-		epochPerformanceSummary.ParticipantId,
-		epochPerformanceSummary.EpochIndex,
-	), b)
+	addr := sdk.MustAccAddressFromBech32(epochPerformanceSummary.ParticipantId)
+	if err := k.EpochPerformanceSummaries.Set(ctx, collections.Join(addr, epochPerformanceSummary.EpochIndex), epochPerformanceSummary); err != nil {
+		panic(err)
+	}
 }
 
 // GetEpochPerformanceSummary returns a epochPerformanceSummary from its index
@@ -25,21 +21,16 @@ func (k Keeper) GetEpochPerformanceSummary(
 	ctx context.Context,
 	epochIndex uint64,
 	participantId string,
-
 ) (val types.EpochPerformanceSummary, found bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-
-	b := store.Get(types.EpochPerformanceSummaryKey(
-		participantId,
-		epochIndex,
-	))
-	if b == nil {
+	addr, err := sdk.AccAddressFromBech32(participantId)
+	if err != nil {
 		return val, false
 	}
-
-	k.cdc.MustUnmarshal(b, &val)
-	return val, true
+	v, err := k.EpochPerformanceSummaries.Get(ctx, collections.Join(addr, epochIndex))
+	if err != nil {
+		return val, false
+	}
+	return v, true
 }
 
 // RemoveEpochPerformanceSummary removes a epochPerformanceSummary from the store
@@ -47,48 +38,48 @@ func (k Keeper) RemoveEpochPerformanceSummary(
 	ctx context.Context,
 	epochIndex uint64,
 	participantId string,
-
 ) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-	store.Delete(types.EpochPerformanceSummaryKey(
-		participantId,
-		epochIndex,
-	))
+	addr, err := sdk.AccAddressFromBech32(participantId)
+	if err != nil {
+		return
+	}
+	_ = k.EpochPerformanceSummaries.Remove(ctx, collections.Join(addr, epochIndex))
 }
 
 // GetAllEpochPerformanceSummary returns all epochPerformanceSummary
 func (k Keeper) GetAllEpochPerformanceSummary(ctx context.Context) (list []types.EpochPerformanceSummary) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.EpochPerformanceSummary
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+	it, err := k.EpochPerformanceSummaries.Iterate(ctx, nil)
+	if err != nil {
+		return nil
 	}
-
-	return
+	defer it.Close()
+	values, err := it.Values()
+	if err != nil {
+		return nil
+	}
+	return values
 }
 
 // GetEpochPerformanceSummariesByParticipant returns all epochPerformanceSummary for a specific participant
 func (k Keeper) GetEpochPerformanceSummariesByParticipant(ctx context.Context, participantId string) (list []types.EpochPerformanceSummary) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-	iterator := storetypes.KVStorePrefixIterator(store, types.EpochPerformanceSummaryKeyParticipantPrefix(participantId))
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.EpochPerformanceSummary
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+	addr, err := sdk.AccAddressFromBech32(participantId)
+	if err != nil {
+		return nil
 	}
-
-	return
+	it, err := k.EpochPerformanceSummaries.Iterate(ctx, collections.NewPrefixedPairRange[sdk.AccAddress, uint64](addr))
+	if err != nil {
+		return nil
+	}
+	defer it.Close()
+	var out []types.EpochPerformanceSummary
+	for ; it.Valid(); it.Next() {
+		v, err := it.Value()
+		if err != nil {
+			return nil
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (k Keeper) GetParticipantsEpochSummaries(
@@ -96,20 +87,17 @@ func (k Keeper) GetParticipantsEpochSummaries(
 	participantIds []string,
 	epochIndex uint64,
 ) []types.EpochPerformanceSummary {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-
 	var summaries []types.EpochPerformanceSummary
 	for _, participantId := range participantIds {
-		key := types.EpochPerformanceSummaryKey(participantId, epochIndex)
-		bz := store.Get(key)
-		if bz == nil {
+		addr, err := sdk.AccAddressFromBech32(participantId)
+		if err != nil {
 			continue
 		}
-
-		var summary types.EpochPerformanceSummary
-		k.cdc.MustUnmarshal(bz, &summary)
-		summaries = append(summaries, summary)
+		v, err := k.EpochPerformanceSummaries.Get(ctx, collections.Join(addr, epochIndex))
+		if err != nil {
+			continue
+		}
+		summaries = append(summaries, v)
 	}
 	return summaries
 }

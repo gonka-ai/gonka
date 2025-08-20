@@ -3,20 +3,15 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	storetypes "cosmossdk.io/store/types"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // SetInference set a specific inference in the store from its index
 func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
-	b := k.cdc.MustMarshal(&inference)
-	store.Set(types.InferenceKey(
-		inference.Index,
-	), b)
+	// store via collections
+	if err := k.Inferences.Set(ctx, inference.Index, inference); err != nil {
+		panic(err)
+	}
 
 	err := k.SetDeveloperStats(ctx, inference)
 	if err != nil {
@@ -27,12 +22,9 @@ func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
 }
 
 func (k Keeper) SetInferenceWithoutDevStatComputation(ctx context.Context, inference types.Inference) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
-	b := k.cdc.MustMarshal(&inference)
-	store.Set(types.InferenceKey(
-		inference.Index,
-	), b)
+	if err := k.Inferences.Set(ctx, inference.Index, inference); err != nil {
+		panic(err)
+	}
 }
 
 // GetInference returns a inference from its index
@@ -41,18 +33,11 @@ func (k Keeper) GetInference(
 	index string,
 
 ) (val types.Inference, found bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
-
-	b := store.Get(types.InferenceKey(
-		index,
-	))
-	if b == nil {
+	v, err := k.Inferences.Get(ctx, index)
+	if err != nil {
 		return val, false
 	}
-
-	k.cdc.MustUnmarshal(b, &val)
-	return val, true
+	return v, true
 }
 
 // RemoveInference removes a inference from the store
@@ -61,45 +46,31 @@ func (k Keeper) RemoveInference(
 	index string,
 
 ) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
-	store.Delete(types.InferenceKey(
-		index,
-	))
+	_ = k.Inferences.Remove(ctx, index)
 }
 
 // GetAllInference returns all inference
 func (k Keeper) GetAllInference(ctx context.Context) (list []types.Inference) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
-	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.Inference
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+	iter, err := k.Inferences.Iterate(ctx, nil)
+	if err != nil {
+		return nil
 	}
-
-	return
+	defer iter.Close()
+	vals, err := iter.Values()
+	if err != nil {
+		return nil
+	}
+	return vals
 }
 
 func (k Keeper) GetInferences(ctx context.Context, ids []string) ([]types.Inference, bool) {
-	var result = make([]types.Inference, len(ids))
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
+	result := make([]types.Inference, len(ids))
 	for i, id := range ids {
-		var val types.Inference
-		b := store.Get(types.InferenceKey(id))
-
-		if b == nil {
+		v, err := k.Inferences.Get(ctx, id)
+		if err != nil {
 			return nil, false
 		}
-
-		k.cdc.MustUnmarshal(b, &val)
-		result[i] = val
+		result[i] = v
 	}
-
 	return result, true
 }
