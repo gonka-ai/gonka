@@ -3,8 +3,8 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -16,21 +16,14 @@ func (k Keeper) EpochPerformanceSummaryAll(ctx context.Context, req *types.Query
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	var epochPerformanceSummarys []types.EpochPerformanceSummary
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochPerformanceSummaryStore := prefix.NewStore(store, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-
-	pageRes, err := query.Paginate(epochPerformanceSummaryStore, req.Pagination, func(key []byte, value []byte) error {
-		var epochPerformanceSummary types.EpochPerformanceSummary
-		if err := k.cdc.Unmarshal(value, &epochPerformanceSummary); err != nil {
-			return err
-		}
-
-		epochPerformanceSummarys = append(epochPerformanceSummarys, epochPerformanceSummary)
-		return nil
-	})
-
+	epochPerformanceSummarys, pageRes, err := query.CollectionPaginate[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary](
+		ctx,
+		k.EpochPerformanceSummaries,
+		req.Pagination,
+		func(_ collections.Pair[sdk.AccAddress, uint64], v types.EpochPerformanceSummary) (types.EpochPerformanceSummary, error) {
+			return v, nil
+		},
+	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

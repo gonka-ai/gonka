@@ -47,16 +47,15 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := types.DefaultGenesis()
 	genesis.Params = k.GetParams(ctx)
 
+	collateralBalances := make([]types.CollateralBalance, 0)
 	// Export all collateral balances
-	collateralMap := k.GetAllCollaterals(ctx)
-	collateralBalances := make([]types.CollateralBalance, 0, len(collateralMap))
-
-	for participant, amount := range collateralMap {
+	k.IterateCollaterals(ctx, func(participant sdk.AccAddress, amount sdk.Coin) (stop bool) {
 		collateralBalances = append(collateralBalances, types.CollateralBalance{
-			Participant: participant,
+			Participant: participant.String(),
 			Amount:      amount,
 		})
-	}
+		return false
+	})
 
 	genesis.CollateralBalanceList = collateralBalances
 
@@ -67,7 +66,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	jailedParticipants := k.GetAllJailed(ctx)
 	genesis.JailedParticipantList = make([]*types.JailedParticipant, len(jailedParticipants))
 	for i, addr := range jailedParticipants {
-		genesis.JailedParticipantList[i] = &types.JailedParticipant{Address: addr}
+		genesis.JailedParticipantList[i] = &types.JailedParticipant{Address: addr.String()}
 	}
 
 	// this line is used by starport scaffolding # genesis/module/export

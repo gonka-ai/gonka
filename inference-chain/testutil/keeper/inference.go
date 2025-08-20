@@ -159,6 +159,7 @@ func InferenceKeeperWithMock(
 	bankViewMock *MockBankKeeper,
 	authzKeeper types.AuthzKeeper,
 ) (keeper.Keeper, sdk.Context) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 

@@ -281,11 +281,11 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 				Weight:        50, // Validator has 50 power
 			},
 			{
-				MemberAddress: "executor1",
+				MemberAddress: testutil.Executor,
 				Weight:        30, // Executor1 has 30 power
 			},
 			{
-				MemberAddress: "executor2",
+				MemberAddress: testutil.Executor2,
 				Weight:        20, // Executor2 has 20 power
 			},
 		},
@@ -305,21 +305,21 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	inference1 := types.InferenceValidationDetails{
 		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
-		ExecutorId:         "executor1",
+		ExecutorId:         testutil.Executor,
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
 		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
-		ExecutorId:         "executor2",
+		ExecutorId:         testutil.Executor2,
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
 		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
-		ExecutorId:         "executor1",
+		ExecutorId:         testutil.Executor,
 		ExecutorReputation: 100, // High reputation
 		TrafficBasis:       1000,
 	}
@@ -496,11 +496,11 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 				Weight:        50, // Validator has 50 power
 			},
 			{
-				MemberAddress: "executor1",
+				MemberAddress: testutil.Executor,
 				Weight:        30, // Executor1 has 30 power
 			},
 			{
-				MemberAddress: "executor2",
+				MemberAddress: testutil.Executor2,
 				Weight:        20, // Executor2 has 20 power
 			},
 		},
@@ -520,21 +520,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	inference1 := types.InferenceValidationDetails{
 		EpochId:            epoch.Index,
 		InferenceId:        "inference1",
-		ExecutorId:         "executor1",
+		ExecutorId:         testutil.Executor,
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
 		EpochId:            epoch.Index,
 		InferenceId:        "inference2",
-		ExecutorId:         "executor2",
+		ExecutorId:         testutil.Executor2,
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
 		EpochId:            epoch.Index,
 		InferenceId:        "inference3",
-		ExecutorId:         "executor1",
+		ExecutorId:         testutil.Executor,
 		ExecutorReputation: 100, // High reputation
 		TrafficBasis:       1000,
 	}
@@ -717,7 +717,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 
 	// Participants & Keys
 	mockCreator := NewMockAccount(testutil.Creator)
-	mockExecutor := NewMockAccount("executor1")
+	mockExecutor := NewMockAccount(testutil.Executor)
 	MustAddParticipant(t, ms, ctx, *mockCreator)
 	MustAddParticipant(t, ms, ctx, *mockExecutor)
 	privKey := secp256k1.GenPrivKey()
@@ -761,7 +761,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 		EpochIndex:          epoch.Index,
 		EpochGroupId:        9000, // can be whatever now, because InferenceValDetails are indexed by EpochId
 		PocStartBlockHeight: epochIndex,
-		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: "executor1", Weight: 50}},
+		ValidationWeights:   []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 50}, {MemberAddress: testutil.Executor, Weight: 50}},
 		SubGroupModels:      []string{MODEL_ID},
 	}
 	k.SetEpochGroupData(sdkCtx, mainEpochData)
@@ -794,7 +794,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 		ValidationWeights: []*types.ValidationWeight{
 			validatorWeight,
 			{
-				MemberAddress: "executor1",
+				MemberAddress: testutil.Executor,
 				Weight:        50,
 				MlNodes:       []*types.MLNodeInfo{{NodeId: "node1", PocWeight: 50, TimeslotAllocation: []bool{true, false}}},
 			},
@@ -811,7 +811,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	inference := types.InferenceValidationDetails{
 		EpochId:              epoch.Index,
 		InferenceId:          "inference-during-poc",
-		ExecutorId:           "executor1",
+		ExecutorId:           testutil.Executor,
 		ExecutorReputation:   0,
 		TrafficBasis:         1000,
 		CreatedAtBlockHeight: epochContext.InferenceValidationCutoff(),

@@ -5,13 +5,11 @@ import (
 
 	"context"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
-	"cosmossdk.io/store/prefix"
-	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/productscience/inference/x/streamvesting/types"
@@ -29,6 +27,11 @@ type (
 
 		bankKeeper            types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
+
+		// Collections schema and stores
+		Schema           collections.Schema
+		params           collections.Item[types.Params]
+		VestingSchedules collections.Map[sdk.AccAddress, types.VestingSchedule]
 	}
 )
 
@@ -45,7 +48,9 @@ func NewKeeper(
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
-	return Keeper{
+	sb := collections.NewSchemaBuilder(storeService)
+
+	k := Keeper{
 		cdc:          cdc,
 		storeService: storeService,
 		authority:    authority,
@@ -54,6 +59,18 @@ func NewKeeper(
 		bankKeeper:            bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
 	}
+
+	// Wire collections stores
+	k.params = collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc))
+	k.VestingSchedules = collections.NewMap(sb, types.VestingScheduleKey, "vesting_schedules", sdk.AccAddressKey, codec.CollValue[types.VestingSchedule](cdc))
+
+	schema, err := sb.Build()
+	if err != nil {
+		panic(err)
+	}
+	k.Schema = schema
+
+	return k
 }
 
 // GetAuthority returns the module's authority.
@@ -268,49 +285,46 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 
 // SetVestingSchedule stores a vesting schedule for a participant
 func (k Keeper) SetVestingSchedule(ctx sdk.Context, schedule types.VestingSchedule) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.VestingScheduleKeyPrefix)
-	key := []byte(schedule.ParticipantAddress)
-	value := k.cdc.MustMarshal(&schedule)
-	store.Set(key, value)
+	addr, err := sdk.AccAddressFromBech32(schedule.ParticipantAddress)
+	if err != nil {
+		panic(err)
+	}
+	if err := k.VestingSchedules.Set(ctx, addr, schedule); err != nil {
+		panic(err)
+	}
 }
 
 // GetVestingSchedule retrieves a vesting schedule for a participant
 func (k Keeper) GetVestingSchedule(ctx sdk.Context, participantAddress string) (schedule types.VestingSchedule, found bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.VestingScheduleKeyPrefix)
-	key := []byte(participantAddress)
-	value := store.Get(key)
-
-	if value == nil {
+	addr, err := sdk.AccAddressFromBech32(participantAddress)
+	if err != nil {
 		return schedule, false
 	}
-
-	k.cdc.MustUnmarshal(value, &schedule)
-	return schedule, true
+	v, err := k.VestingSchedules.Get(ctx, addr)
+	if err != nil {
+		return schedule, false
+	}
+	return v, true
 }
 
 // RemoveVestingSchedule removes a vesting schedule for a participant
 func (k Keeper) RemoveVestingSchedule(ctx sdk.Context, participantAddress string) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.VestingScheduleKeyPrefix)
-	key := []byte(participantAddress)
-	store.Delete(key)
+	addr, err := sdk.AccAddressFromBech32(participantAddress)
+	if err != nil {
+		return
+	}
+	_ = k.VestingSchedules.Remove(ctx, addr)
 }
 
 // GetAllVestingSchedules retrieves all vesting schedules
 func (k Keeper) GetAllVestingSchedules(ctx sdk.Context) []types.VestingSchedule {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.VestingScheduleKeyPrefix)
-	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
-	defer iterator.Close()
-
-	var schedules []types.VestingSchedule
-	for ; iterator.Valid(); iterator.Next() {
-		var schedule types.VestingSchedule
-		k.cdc.MustUnmarshal(iterator.Value(), &schedule)
-		schedules = append(schedules, schedule)
+	iter, err := k.VestingSchedules.Iterate(ctx, nil)
+	if err != nil {
+		panic(err)
 	}
-
-	return schedules
+	values, err := iter.Values()
+	if err != nil {
+		panic(err)
+	}
+	return values
 }
