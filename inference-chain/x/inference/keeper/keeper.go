@@ -32,10 +32,12 @@ type (
 
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
-		Participants        collections.Map[sdk.AccAddress, types.Participant]
-		RandomSeeds         collections.Map[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]
-		PoCBatches          collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
-		PoCValidations      collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
+		// Collections schema and stores
+		Schema         collections.Schema
+		Participants   collections.Map[sdk.AccAddress, types.Participant]
+		RandomSeeds    collections.Map[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]
+		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
+		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// Dynamic pricing collections
 		ModelCurrentPriceMap collections.Map[string, uint64]
 		ModelCapacityMap     collections.Map[string, uint64]
@@ -80,7 +82,7 @@ func NewKeeper(
 
 	sb := collections.NewSchemaBuilder(storeService)
 
-	return Keeper{
+	k := Keeper{
 		cdc:                 cdc,
 		storeService:        storeService,
 		authority:           authority,
@@ -235,6 +237,13 @@ func NewKeeper(
 			codec.CollValue[types.EpochPerformanceSummary](cdc),
 		),
 	}
+	// Build the collections schema
+	schema, err := sb.Build()
+	if err != nil {
+		panic(err)
+	}
+	k.Schema = schema
+	return k
 }
 
 // GetAuthority returns the module's authority.
