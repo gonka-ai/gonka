@@ -31,7 +31,7 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=true
+      - INIT_ONLY=false
       - IS_GENESIS=true
       - GENESIS_SEEDS=TMP
     ports:
