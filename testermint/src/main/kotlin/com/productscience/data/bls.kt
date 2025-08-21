@@ -73,8 +73,8 @@ data class VerificationVectorSubmission(
 data class ThresholdSigningRequest(
     @SerializedName("request_id")
     val requestId: String,
-    @SerializedName("current_epoch_id")
-    val currentEpochId: Long,
+    @SerializedName("current_epoch_index")
+    val currentEpochIndex: Long,
     @SerializedName("chain_id")
     val chainId: String,
     val data: List<String>?,
@@ -102,8 +102,8 @@ data class PartialSignature(
 )
 
 data class RequestThresholdSignatureDto(
-    @SerializedName("current_epoch_id")
-    val currentEpochId: ULong,
+    @SerializedName("current_epoch_index")
+    val currentEpochIndex: ULong,
     @SerializedName("chain_id")
     val chainId: ByteArray,
     @SerializedName("request_id")
