@@ -67,7 +67,13 @@ if [ -z "$DAPI_API__PUBLIC_URL" ]; then
   exit 1
 fi
 
+initial_config_file="/root/api-config.yaml"
 yaml_file="/root/.dapi/api-config.yaml"
+if [ -f "$initial_config_file" ]; then
+  echo "Copying initial config file to $yaml_file"
+  cp "$initial_config_file" "$yaml_file"
+fi
+
 
 if [ -n "$NODE_HOST" ]; then
   echo "Setting node address to http://$NODE_HOST:26657 in $yaml_file"
