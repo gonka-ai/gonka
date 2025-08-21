@@ -7,32 +7,14 @@ data class EpochResponse(
     val blockHeight: Long,
     @SerializedName("latest_epoch")
     val latestEpoch: LatestEpochDto,
-    val phase: Any,  // Changed from EpochPhase to Any to handle both String and enum
+    val phase: EpochPhase,
     @SerializedName("epoch_stages")
     val epochStages: EpochStages,
     @SerializedName("next_epoch_stages")
     val nextEpochStages: EpochStages,
     @SerializedName("epoch_params")
     val epochParams: EpochParams
-) {
-    // Helper function to get phase as enum, handling both String and enum values
-    fun getPhaseAsEnum(): EpochPhase {
-        return when (phase) {
-            is EpochPhase -> phase
-            is String -> {
-                when (phase) {
-                    "POC_GENERATE" -> EpochPhase.PoCGenerate
-                    "POC_GENERATE_WIND_DOWN" -> EpochPhase.PoCGenerateWindDown
-                    "POC_VALIDATE" -> EpochPhase.PoCValidate
-                    "POC_VALIDATE_WIND_DOWN" -> EpochPhase.PoCValidateWindDown
-                    "INFERENCE" -> EpochPhase.Inference
-                    else -> EpochPhase.Inference // Default fallback
-                }
-            }
-            else -> EpochPhase.Inference
-        }
-    }
-}
+)
 
 data class LatestEpochDto(
     val index: Long,
