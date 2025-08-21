@@ -9,6 +9,16 @@ set -e  # Exit on any error
 FOUNDERS_LEDGER="genesis/founders_ledger.json"
 INFERENCED_PATH="./inference-chain/build/inferenced"
 GENESIS_HOME="./genesis/"
+GENESIS_DRAFT_PATH="./genesis/genesis-draft.json"
+
+# Check if draft exists
+if [ ! -f "$GENESIS_DRAFT_PATH" ]; then
+    echo "Error: genesis-draft.json not found at $GENESIS_DRAFT_PATH"
+    exit 1
+fi
+
+echo $"Copy draft to genesis"
+cp $GENESIS_DRAFT_PATH $GENESIS_HOME/config/genesis.json
 
 # Check if inferenced binary exists
 if [ ! -f "$INFERENCED_PATH" ]; then
@@ -24,8 +34,8 @@ if [ ! -f "$FOUNDERS_LEDGER" ]; then
 fi
 
 # Check if genesis config exists
-if [ ! -f "$GENESIS_HOME/genesis-draft.json" ]; then
-    echo "Error: genesis.json not found at $GENESIS_HOME/genesis-draft.json"
+if [ ! -f "$GENESIS_HOME/config/genesis.json" ]; then
+    echo "Error: genesis.json not found at $GENESIS_HOME/config/genesis.json"
     echo "Please make sure you've copied genesis-draft.json to genesis/genesis-draft.json"
     exit 1
 fi
@@ -74,7 +84,7 @@ while IFS=$'\t' read -r address amount_str || [ -n "$address" ]; do
         --vesting-amount "${amount}ngonka" \
         --vesting-start-time "$START_TIME" \
         --vesting-end-time "$END_TIME" \
-        --home "$GENESIS_HOME" 2>/dev/null; then
+        --home "$GENESIS_HOME"; then
         
         account_count=$((account_count + 1))
         total_amount=$((total_amount + amount))
@@ -89,7 +99,7 @@ echo ""
 echo "=== SUMMARY ==="
 echo "Successfully added: $account_count accounts"
 echo "Total vesting amount: $(printf "%'d" $total_amount) ngonka"
-echo "Genesis file updated at: $GENESIS_HOME/genesis-draft.json"
+echo "Genesis file updated at: $GENESIS_HOME/config/genesis.json"
 echo ""
 echo "Vesting schedule:"
 echo "  Start: $(date -u -r $START_TIME '+%Y-%m-%d %H:%M:%S UTC') (20:20 PST 08/20/2025)"

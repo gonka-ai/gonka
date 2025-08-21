@@ -1,7 +1,7 @@
 {
   "app_name": "inferenced",
   "app_version": "50e0a6c3",
-  "genesis_time": "2025-08-21T20:35:33.621296595Z",
+  "genesis_time": "2025-08-21T20:48:23.205041299Z",
   "chain_id": "gonka-rehearsal",
   "initial_height": 1,
   "app_hash": null,
@@ -16,15 +16,7 @@
         "sig_verify_cost_ed25519": "590",
         "sig_verify_cost_secp256k1": "1000"
       },
-      "accounts": [
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1pd5h9dky8nm3gayzutap23ce65llxtmx96nrmz",
-          "pub_key": null,
-          "account_number": "0",
-          "sequence": "0"
-        }
-      ]
+      "accounts": []
     },
     "authz": {
       "authorization": []
@@ -34,26 +26,15 @@
         "send_enabled": [],
         "default_send_enabled": true
       },
-      "balances": [
-        {
-          "address": "gonka1pd5h9dky8nm3gayzutap23ce65llxtmx96nrmz",
-          "coins": [
-            {
-              "denom": "ngonka",
-              "amount": "160000000000000000"
-            }
-          ]
-        }
-      ],
-      "supply": [
-        {
-          "denom": "ngonka",
-          "amount": "160000000000000000"
-        }
-      ],
+      "balances": [],
+      "supply": [],
       "denom_metadata": [
         {
           "description": "The native staking and governance token for the Gonka network.",
+          "base": "ngonka",
+          "display": "ngonka",
+          "name": "Gonka",
+          "symbol": "GNK",
           "denom_units": [
             {
               "denom": "ngonka",
@@ -81,13 +62,7 @@
               "exponent": 9,
               "aliases": []
             }
-          ],
-          "base": "ngonka",
-          "display": "ngonka",
-          "name": "Gonka",
-          "symbol": "GNK",
-          "uri": "",
-          "uri_hash": ""
+          ]
         }
       ],
       "send_enabled": []
