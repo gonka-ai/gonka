@@ -2673,7 +2673,10 @@
           "value": "52",
           "exponent": -2
         },
-        "genesis_guardian_addresses": []
+        "genesis_guardian_addresses": [
+          "gonka1n94rkgdj9jlflr774gwuwpg0sg95ke540vq394",
+          "gonka1ysra9l4870lna84cv5djpv9aex7cy4crvxafxl"
+        ]
       },
       "model_list": [
         {
