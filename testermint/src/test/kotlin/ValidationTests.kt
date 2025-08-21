@@ -116,7 +116,7 @@ class ValidationTests : TestermintTest() {
 }
 
 val InferencePayload.statusEnum: InferenceStatus
-    get() = InferenceStatus.entries.first { it.value == getStatusAsInt() }
+    get() = InferenceStatus.entries.first { it.value == status }
 
 fun getInferenceValidationState(
     highestFunded: LocalInferencePair,
