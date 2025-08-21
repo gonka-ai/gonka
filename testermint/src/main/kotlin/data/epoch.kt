@@ -19,10 +19,10 @@ data class EpochResponse(
     fun getPhaseAsEnum(): EpochPhase {
         return when (phase) {
             is EpochPhase -> phase
-            is Int -> EpochPhase.values().find { it.ordinal == phase } ?: EpochPhase.Inference
-            is Double -> EpochPhase.values().find { it.ordinal == phase.toInt() } ?: EpochPhase.Inference
-            is Float -> EpochPhase.values().find { it.ordinal == phase.toInt() } ?: EpochPhase.Inference
-            is Number -> EpochPhase.values().find { it.ordinal == phase.toInt() } ?: EpochPhase.Inference
+            is Int -> EpochPhase.values().find { it.value == phase } ?: EpochPhase.Inference
+            is Double -> EpochPhase.values().find { it.value == phase.toInt() } ?: EpochPhase.Inference
+            is Float -> EpochPhase.values().find { it.value == phase.toInt() } ?: EpochPhase.Inference
+            is Number -> EpochPhase.values().find { it.value == phase.toInt() } ?: EpochPhase.Inference
             is String -> {
                 when (phase) {
                     "POC_GENERATE" -> EpochPhase.PoCGenerate
@@ -44,12 +44,12 @@ data class LatestEpochDto(
     val pocStartBlockHeight: Long
 )
 
-enum class EpochPhase {
-    PoCGenerate,
-    PoCGenerateWindDown,
-    PoCValidate,
-    PoCValidateWindDown,
-    Inference
+enum class EpochPhase(val value: Int) {
+    PoCGenerate(0),
+    PoCGenerateWindDown(1),
+    PoCValidate(2),
+    PoCValidateWindDown(3),
+    Inference(4)
 }
 
 data class EpochStages(
