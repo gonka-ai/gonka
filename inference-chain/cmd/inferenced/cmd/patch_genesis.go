@@ -221,7 +221,7 @@ func addParticipantToGenesis(cdc codec.Codec, genesisState map[string]json.RawMe
 		Params            json.RawMessage              `json:"params"`
 		GenesisOnlyParams json.RawMessage              `json:"genesis_only_params"`
 		ModelList         json.RawMessage              `json:"model_list"`
-		CosmWasmParams    json.RawMessage              `json:"cosm_wasm_params"`
+		Bridge            json.RawMessage              `json:"bridge"`
 		ParticipantList   []inferencetypes.Participant `json:"participant_list"`
 	}
 
