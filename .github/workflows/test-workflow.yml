@@ -88,10 +88,16 @@ jobs:
         with:
           ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
 
-      - name: Set up Docker (Latest Version)
-        uses: docker/setup-docker-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
         with:
-          version: 'latest'
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
 
       - name: Verify Docker Installation
         run: |
@@ -112,10 +118,17 @@ jobs:
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
+          DOCKER_BUILDKIT: "1"
+          BUILDX_CACHE_FROM: "type=local,src=/tmp/.buildx-cache"
+          BUILDX_CACHE_TO: "type=local,dest=/tmp/.buildx-cache-new,mode=max"
         run: |
-          sudo make build-docker
+          sudo -E make build-docker
           echo "=== Images immediately after build ==="
           sudo docker images | head -20
+          
+          # Move cache to preserve it for next run
+          sudo rm -rf /tmp/.buildx-cache
+          sudo mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
 
       - name: Save Docker Images
         run: |

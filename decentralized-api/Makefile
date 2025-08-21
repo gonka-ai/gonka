@@ -27,6 +27,8 @@ define DOCKER_BUILD
 		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
+		$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
 		-f $(DOCKER_FILE) \
 		.. \
 		-t $(DOCKER_TAG)
