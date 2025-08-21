@@ -27,13 +27,10 @@ data class Participant(
     val reputation: Double,
     val status: Any? = null  // Added missing status field to handle both String and Int
 ) {
-    // Helper function to get status as integer, handling Int, Double, and String values
+    // Helper function to get status as integer, handling both Int and String values
     fun getStatusAsInt(): Int {
         return when (status) {
             is Int -> status
-            is Double -> status.toInt()
-            is Float -> status.toInt()
-            is Number -> status.toInt()
             is String -> {
                 when (status) {
                     "PARTICIPANT_STATUS_UNSPECIFIED" -> 0

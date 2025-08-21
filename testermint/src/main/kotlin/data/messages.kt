@@ -80,13 +80,10 @@ data class GovernanceProposalResponse(
     val proposer: String,
     val failedReason: String
 ) {
-    // Helper function to get status as integer, handling Int, Double, and String values
+    // Helper function to get status as integer, handling both Int and String values
     fun getStatusAsInt(): Int {
         return when (status) {
             is Int -> status
-            is Double -> status.toInt()
-            is Float -> status.toInt()
-            is Number -> status.toInt()
             is String -> {
                 when (status) {
                     "PROPOSAL_STATUS_UNSPECIFIED" -> 0
@@ -114,13 +111,10 @@ data class ProposalVoteOption(
     val option: Any,  // Changed from Int to Any to handle both Int and String
     val weight: String
 ) {
-    // Helper function to get option as integer, handling Int, Double, and String values
+    // Helper function to get option as integer, handling both Int and String values
     fun getOptionAsInt(): Int {
         return when (option) {
             is Int -> option
-            is Double -> option.toInt()
-            is Float -> option.toInt()
-            is Number -> option.toInt()
             is String -> {
                 when (option) {
                     "VOTE_OPTION_UNSPECIFIED" -> 0

@@ -56,13 +56,10 @@ data class InferencePayload(
 
     }
 
-    // Helper function to get status as integer, handling both Int, Double, and String values
+    // Helper function to get status as integer, handling both Int and String values
     fun getStatusAsInt(): Int {
         return when (status) {
             is Int -> status
-            is Double -> status.toInt()
-            is Float -> status.toInt()
-            is Number -> status.toInt()
             is String -> {
                 when (status) {
                     "STARTED" -> InferenceStatus.STARTED.value
