@@ -24,9 +24,9 @@ if [ ! -f "$FOUNDERS_LEDGER" ]; then
 fi
 
 # Check if genesis config exists
-if [ ! -f "$GENESIS_HOME/config/genesis.json" ]; then
-    echo "Error: genesis.json not found at $GENESIS_HOME/config/genesis.json"
-    echo "Please make sure you've copied genesis-draft.json to genesis/config/genesis.json"
+if [ ! -f "$GENESIS_HOME/genesis-draft.json" ]; then
+    echo "Error: genesis.json not found at $GENESIS_HOME/genesis-draft.json"
+    echo "Please make sure you've copied genesis-draft.json to genesis/genesis-draft.json"
     exit 1
 fi
 
@@ -89,7 +89,7 @@ echo ""
 echo "=== SUMMARY ==="
 echo "Successfully added: $account_count accounts"
 echo "Total vesting amount: $(printf "%'d" $total_amount) nicoin"
-echo "Genesis file updated at: $GENESIS_HOME/config/genesis.json"
+echo "Genesis file updated at: $GENESIS_HOME/genesis-draft.json"
 echo ""
 echo "Vesting schedule:"
 echo "  Start: $(date -u -r $START_TIME '+%Y-%m-%d %H:%M:%S UTC') (20:20 PST 08/20/2025)"
