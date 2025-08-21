@@ -52,8 +52,8 @@ func (msg *MsgSubmitPocBatch) ValidateBasic() error {
 		if math.IsNaN(d) || math.IsInf(d, 0) {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dist[%d] must be finite", i)
 		}
-		if d < 0 || d > 1 {
-			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dist[%d] must be in [0,1]", i)
+		if d < 0 {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dist[%d] must be >= 0", i)
 		}
 	}
 	// shape relation
