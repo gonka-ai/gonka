@@ -642,31 +642,14 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? 
             else -> 0L
         }
         
-        // Parse DKG phase (server can return numeric values like "dkg_phase": 1 or string values like "DKG_PHASE_COMPLETED")
-        val dkgPhase = when (val phase = epochData["dkg_phase"]) {
-            is Number -> DKGPhase.values().find { it.value == phase.toInt() } ?: DKGPhase.UNDEFINED
-            is String -> {
-                // First try to parse as string enum name
-                when (phase) {
-                    "DKG_PHASE_UNDEFINED" -> DKGPhase.UNDEFINED
-                    "DKG_PHASE_DEALING" -> DKGPhase.DEALING
-                    "DKG_PHASE_VERIFYING" -> DKGPhase.VERIFYING
-                    "DKG_PHASE_COMPLETED" -> DKGPhase.COMPLETED
-                    "DKG_PHASE_FAILED" -> DKGPhase.FAILED
-                    "DKG_PHASE_SIGNED" -> DKGPhase.SIGNED
-                    else -> {
-                        // Try to parse as numeric string
-                        val phaseNum = phase.toIntOrNull()
-                        if (phaseNum != null) {
-                            DKGPhase.values().find { it.value == phaseNum } ?: DKGPhase.UNDEFINED
-                        } else {
-                            DKGPhase.UNDEFINED
-                        }
-                    }
-                }
-            }
-            else -> DKGPhase.UNDEFINED
+        // Parse DKG phase (server returns numeric values like "dkg_phase": 1)
+        val dkgPhaseNum = when (val phase = epochData["dkg_phase"]) {
+            is Number -> phase.toInt()
+            is String -> phase.toIntOrNull() ?: 0
+            else -> 0
         }
+        val dkgPhase = DKGPhase.values().find { it.value == dkgPhaseNum } 
+            ?: DKGPhase.UNDEFINED
         
         // Parse participants
         @Suppress("UNCHECKED_CAST")

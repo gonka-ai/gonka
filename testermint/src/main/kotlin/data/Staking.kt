@@ -12,34 +12,14 @@ data class ValidatorsResponse(
 data class StakeValidator(
     val operatorAddress: String,
     val consensusPubkey: ConsensusPubkey,
-    val status: Any,  // Changed from Int to Any to handle both Int and String
+    val status: Int,
     val tokens: Long,
     val delegatorShares: Double,
     val description: ValidatorDescription,
     val unbondingTime: Instant,
     val commission: Commission,
     val minSelfDelegation: String
-) {
-    // Helper function to get status as integer, handling both Int and String values
-    fun getStatusAsInt(): Int {
-        return when (status) {
-            is Int -> status
-            is String -> {
-                when (status) {
-                    "BOND_STATUS_UNSPECIFIED" -> 0
-                    "BOND_STATUS_UNBONDED" -> 1
-                    "BOND_STATUS_UNBONDING" -> 2
-                    "BOND_STATUS_BONDED" -> 3
-                    else -> {
-                        // Try to parse as number if it's a numeric string
-                        status.toIntOrNull() ?: 0
-                    }
-                }
-            }
-            else -> 0
-        }
-    }
-}
+)
 
 enum class StakeValidatorStatus(val value: Int) {
     UNBONDING(2),
