@@ -330,7 +330,7 @@ data class LocalInferencePair(
     fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5): WaitForStageResult? {
         val epochData = getEpochData()
         val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
-        val currentPhase = epochData.phase
+        val currentPhase = epochData.getPhaseAsEnum()
         val currentBlockHeight = epochData.blockHeight
         Logger.info {
             "Checking if should wait for next SET_NEW_VALIDATORS to run inference. " +
@@ -339,13 +339,13 @@ data class LocalInferencePair(
                     "currentPhase=$currentPhase"
         }
 
-        if (epochData.phase != EpochPhase.Inference ||
+        if (epochData.getPhaseAsEnum() != EpochPhase.Inference ||
             startOfNextPoc - currentBlockHeight < windowSizeInBlocks
         ) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
             return waitForStage(EpochStage.SET_NEW_VALIDATORS)
         } else {
-            Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
+            Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.getPhaseAsEnum()}")
             return null
         }
     }
