@@ -23,7 +23,7 @@ class ParticipantPowerTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
         assertThat(zeroValidator.tokens).isZero
-        assertThat(zeroValidator.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
+        assertThat(zeroValidator.getStatusAsInt()).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
             it.pubKey.key == zeroParticipantKey.key
@@ -52,7 +52,7 @@ class ParticipantPowerTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
         assertThat(zeroValidator.tokens).isZero
-        assertThat(zeroValidator.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
+        assertThat(zeroValidator.getStatusAsInt()).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         // Ideally just add here smth like "wait for 1 block?"
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
@@ -70,7 +70,7 @@ class ParticipantPowerTests : TestermintTest() {
         }
 
         assertThat(rejoinedValidator.tokens).isEqualTo(10)
-        assertThat(rejoinedValidator.status).isEqualTo(StakeValidatorStatus.BONDED.value)
+        assertThat(rejoinedValidator.getStatusAsInt()).isEqualTo(StakeValidatorStatus.BONDED.value)
         val cometValidatorsAfterRejoin = genesis.node.getCometValidators()
         assertThat(cometValidatorsAfterRejoin.validators).anyMatch {
             it.pubKey.key == zeroParticipantKey.key

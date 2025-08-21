@@ -132,7 +132,7 @@ class GovernanceTests : TestermintTest() {
         }
         assertThat(paramsProposal.finalTallyResult.noCount).isEqualTo(12)
         assertThat(paramsProposal.finalTallyResult.yesCount).isEqualTo(11)
-        assertThat(paramsProposal.status).isEqualTo(4)
+        assertThat(paramsProposal.getStatusAsInt()).isEqualTo(4)
         
         // Mark for reboot to reset parameters for subsequent tests
         genesis.markNeedsReboot()

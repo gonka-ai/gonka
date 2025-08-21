@@ -17,7 +17,7 @@ class NodeAdminStateTests : TestermintTest() {
 
         val genesisValidatorBeforeDisabled = genesis.node.getStakeValidator()
         assertThat(genesisValidatorBeforeDisabled.tokens).isEqualTo(10)
-        assertThat(genesisValidatorBeforeDisabled.status).isEqualTo(StakeValidatorStatus.BONDED.value)
+        assertThat(genesisValidatorBeforeDisabled.getStatusAsInt()).isEqualTo(StakeValidatorStatus.BONDED.value)
 
         logSection("Getting initial nodes")
         val nodes = genesis.api.getNodes()
@@ -75,7 +75,7 @@ class NodeAdminStateTests : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 3)
         val genesisValidatorAfterNodeIsDisabled = genesis.node.getStakeValidator()
         assertThat(genesisValidatorAfterNodeIsDisabled.tokens).isEqualTo(0)
-        assertThat(genesisValidatorAfterNodeIsDisabled.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
+        assertThat(genesisValidatorAfterNodeIsDisabled.getStatusAsInt()).isEqualTo(StakeValidatorStatus.UNBONDING.value)
     }
 
     @Test
@@ -106,7 +106,7 @@ class NodeAdminStateTests : TestermintTest() {
         // It's too late to disable at PoC, so we expect the node to participate and keep its weight
         val genesisStakeValidatorWhenDisabledAtPoc = genesis.node.getStakeValidator()
         assertThat(genesisStakeValidatorWhenDisabledAtPoc.tokens).isEqualTo(10)
-        assertThat(genesisStakeValidatorWhenDisabledAtPoc.status).isEqualTo(StakeValidatorStatus.BONDED.value)
+        assertThat(genesisStakeValidatorWhenDisabledAtPoc.getStatusAsInt()).isEqualTo(StakeValidatorStatus.BONDED.value)
 
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.END_OF_POC_VALIDATION, offset = 3)
@@ -114,7 +114,7 @@ class NodeAdminStateTests : TestermintTest() {
         // At this point, disabled node should not be participating in new PoC
         val genesisValidatorAfterOneMoreEpoch = genesis.node.getStakeValidator()
         assertThat(genesisValidatorAfterOneMoreEpoch.tokens).isEqualTo(0)
-        assertThat(genesisValidatorAfterOneMoreEpoch.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
+        assertThat(genesisValidatorAfterOneMoreEpoch.getStatusAsInt()).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         
         logSection("Verifying disabled node state persists across epochs")
         val nodesInNewEpoch = genesis.api.getNodes()
