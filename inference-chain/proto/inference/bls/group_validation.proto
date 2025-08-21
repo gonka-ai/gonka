@@ -21,11 +21,11 @@ enum GroupKeyValidationStatus {
 
 // GroupKeyValidationState contains the state of a group key validation process for a specific epoch
 message GroupKeyValidationState {
-  // new_epoch_id is the epoch ID of the new epoch whose group public key is being validated
-  uint64 new_epoch_id = 1;
+  // new_epoch_index is the epoch index of the new epoch whose group public key is being validated
+  uint64 new_epoch_index = 1;
   
-  // previous_epoch_id is the epoch ID of the previous epoch whose validators are performing the validation
-  uint64 previous_epoch_id = 2;
+  // previous_epoch_index is the epoch index of the previous epoch whose validators are performing the validation
+  uint64 previous_epoch_index = 2;
   
   // status indicates the current status of the validation process
   GroupKeyValidationStatus status = 3;

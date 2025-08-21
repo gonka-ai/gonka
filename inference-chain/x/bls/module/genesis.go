@@ -15,7 +15,7 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	// Set the active epoch ID from genesis
-	k.SetActiveEpochID(ctx, genState.ActiveEpochId)
+	k.SetActiveEpochIndex(ctx, genState.ActiveEpochIndex)
 }
 
 // ExportGenesis returns the module's exported genesis.
@@ -24,9 +24,9 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.Params = k.GetParams(ctx)
 
 	// Export the current active epoch ID
-	activeEpochID, found := k.GetActiveEpochID(ctx)
+	activeEpochIndex, found := k.GetActiveEpochIndex(ctx)
 	if found {
-		genesis.ActiveEpochId = activeEpochID
+		genesis.ActiveEpochIndex = activeEpochIndex
 	}
 
 	// this line is used by starport scaffolding # genesis/module/export

@@ -29,9 +29,9 @@ func TestSubmitGroupKeyValidationSignature_AlreadySigned(t *testing.T) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Create test epoch data for epoch 2 that is already signed
-	epochID := uint64(2)
+	epochIndex := uint64(2)
 	epochBLSData := types.EpochBLSData{
-		EpochId:        epochID,
+		EpochIndex:     epochIndex,
 		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
 		ITotalSlots:    4,
 		GroupPublicKey: make([]byte, 96), // Valid length
@@ -40,7 +40,7 @@ func TestSubmitGroupKeyValidationSignature_AlreadySigned(t *testing.T) {
 
 	// Create previous epoch data (epoch 1)
 	previousEpochBLSData := types.EpochBLSData{
-		EpochId:        1,
+		EpochIndex:     1,
 		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
 		ITotalSlots:    4,
 		GroupPublicKey: make([]byte, 96),
@@ -57,7 +57,7 @@ func TestSubmitGroupKeyValidationSignature_AlreadySigned(t *testing.T) {
 	// Create message to submit validation signature
 	msg := &types.MsgSubmitGroupKeyValidationSignature{
 		Creator:          "test_address",
-		NewEpochId:       epochID,
+		NewEpochIndex:    epochIndex,
 		SlotIndices:      []uint32{0, 1},
 		PartialSignature: make([]byte, 48), // Valid signature length
 	}
@@ -68,7 +68,7 @@ func TestSubmitGroupKeyValidationSignature_AlreadySigned(t *testing.T) {
 	require.NotNil(t, resp)
 
 	// Verify epoch is still in SIGNED phase (unchanged)
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_SIGNED, storedData.DkgPhase)
 }

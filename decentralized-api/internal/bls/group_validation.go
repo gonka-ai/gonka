@@ -24,39 +24,39 @@ const (
 
 // ProcessGroupPublicKeyGenerated handles validation signing when a new group public key is generated
 func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JSONRPCResponse) error {
-	// Extract epochID from event
-	epochIDs, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_id"]
-	if !ok || len(epochIDs) == 0 {
-		return fmt.Errorf("epoch_id not found in group public key generated event")
+	// Extract epochIndex from event
+	epochIndexes, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_index"]
+	if !ok || len(epochIndexes) == 0 {
+		return fmt.Errorf("epoch_index not found in group public key generated event")
 	}
 
-	// Unquote the epoch_id value
-	unquotedEpochID, err := utils.UnquoteEventValue(epochIDs[0])
+	// Unquote the epoch_index value
+	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
-		return fmt.Errorf("failed to unquote epoch_id: %w", err)
+		return fmt.Errorf("failed to unquote epoch_index: %w", err)
 	}
 
-	newEpochID, err := strconv.ParseUint(unquotedEpochID, 10, 64)
+	newEpochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
-		return fmt.Errorf("failed to parse epoch_id: %w", err)
+		return fmt.Errorf("failed to parse epoch_index: %w", err)
 	}
 
-	logging.Debug(validatorLogTag+"Processing group key validation", inferenceTypes.BLS, "newEpochID", newEpochID)
+	logging.Debug(validatorLogTag+"Processing group key validation", inferenceTypes.BLS, "newEpochIndex", newEpochIndex)
 
-	// Genesis case: Epoch 1 doesn't need validation (no previous epoch)
-	if newEpochID == 1 {
-		logging.Info(validatorLogTag+"Skipping validation for genesis epoch", inferenceTypes.BLS, "epochID", newEpochID)
+	// Genesis case: Epoch 0 doesn't need validation (no previous epoch)
+	if newEpochIndex == 0 {
+		logging.Info(validatorLogTag+"Skipping validation for genesis epoch", inferenceTypes.BLS, "epochIndex", newEpochIndex)
 		return nil
 	}
 
-	previousEpochID := newEpochID - 1
+	previousEpochIndex := newEpochIndex - 1
 
 	// Check if we participated in the previous epoch
-	previousEpochResult := bm.GetVerificationResult(previousEpochID)
+	previousEpochResult := bm.GetVerificationResult(previousEpochIndex)
 	if previousEpochResult == nil || !previousEpochResult.IsParticipant {
 		logging.Debug(validatorLogTag+"Not a participant in previous epoch, skipping validation", inferenceTypes.BLS,
-			"newEpochID", newEpochID,
-			"previousEpochID", previousEpochID)
+			"newEpochIndex", newEpochIndex,
+			"previousEpochIndex", previousEpochIndex)
 		return nil
 	}
 
@@ -93,7 +93,7 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 	}
 
 	// Compute the validation message hash
-	messageHash, err := bm.computeValidationMessageHash(groupPublicKeyBytes, previousEpochID, newEpochID, chainID)
+	messageHash, err := bm.computeValidationMessageHash(groupPublicKeyBytes, previousEpochIndex, newEpochIndex, chainID)
 	if err != nil {
 		return fmt.Errorf("failed to compute validation message hash: %w", err)
 	}
@@ -107,7 +107,7 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 	// Submit the group key validation signature
 	msg := &blstypes.MsgSubmitGroupKeyValidationSignature{
 		Creator:          bm.cosmosClient.GetAddress(),
-		NewEpochId:       newEpochID,
+		NewEpochIndex:    newEpochIndex,
 		SlotIndices:      slotIndices,
 		PartialSignature: partialSignature,
 	}
@@ -118,16 +118,16 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 	}
 
 	logging.Info(validatorLogTag+"Successfully submitted group key validation signature", inferenceTypes.BLS,
-		"newEpochID", newEpochID,
-		"previousEpochID", previousEpochID,
+		"newEpochIndex", newEpochIndex,
+		"previousEpochIndex", previousEpochIndex,
 		"slotIndices", slotIndices)
 
 	return nil
 }
 
 // computeValidationMessageHash computes the validation message hash using the same format as the chain
-// Format: abi.encodePacked(previous_epoch_id, chain_id, new_epoch_id, data[0], data[1], data[2])
-func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previousEpochID, newEpochID uint64, chainID string) ([]byte, error) {
+// Format: abi.encodePacked(previous_epoch_index, chain_id, new_epoch_index, data[0], data[1], data[2])
+func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previousEpochIndex, newEpochIndex uint64, chainID string) ([]byte, error) {
 	if len(groupPublicKey) != 96 {
 		return nil, fmt.Errorf("invalid group public key length: expected 96 bytes, got %d", len(groupPublicKey))
 	}
@@ -138,16 +138,16 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 	// Implement Ethereum-compatible abi.encodePacked
 	var encodedData []byte
 
-	// Add previous_epoch_id (uint64 -> 8 bytes big endian)
+	// Add previous_epoch_index (uint64 -> 8 bytes big endian)
 	previousEpochBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(previousEpochBytes, previousEpochID)
+	binary.BigEndian.PutUint64(previousEpochBytes, previousEpochIndex)
 	encodedData = append(encodedData, previousEpochBytes...)
 
 	// Add chain_id (32 bytes)
 	encodedData = append(encodedData, chainIdBytes...)
 
-	// Note: Removed new_epoch_id from hash as it doesn't provide additional security
-	// Format: abi.encodePacked(previous_epoch_id, chain_id, data[0], data[1], data[2])
+	// Note: Removed new_epoch_index from hash as it doesn't provide additional security
+	// Format: abi.encodePacked(previous_epoch_index, chain_id, data[0], data[1], data[2])
 
 	// Add data[0] (first 32 bytes of group public key)
 	encodedData = append(encodedData, groupPublicKey[0:32]...)

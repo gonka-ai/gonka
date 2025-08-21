@@ -17,6 +17,7 @@ const (
 
 	TopRewardPoolAccName     = "top_reward"
 	PreProgrammedSaleAccName = "pre_programmed_sale"
+	BridgeEscrowAccName      = "bridge_escrow"
 )
 
 var (

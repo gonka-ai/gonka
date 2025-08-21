@@ -31,7 +31,7 @@ func TestNewBlsManager(t *testing.T) {
 func TestVerificationResult(t *testing.T) {
 	// Test VerificationResult structure
 	result := &VerificationResult{
-		EpochID:       1,
+		EpochIndex:    1,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_VERIFYING,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1}, // Slots 0 and 1
@@ -45,7 +45,7 @@ func TestVerificationResult(t *testing.T) {
 
 	result.AggregatedShares = []fr.Element{share1, share2}
 
-	assert.Equal(t, uint64(1), result.EpochID)
+	assert.Equal(t, uint64(1), result.EpochIndex)
 	assert.Equal(t, types.DKGPhase_DKG_PHASE_VERIFYING, result.DkgPhase)
 	assert.True(t, result.IsParticipant)
 	assert.Equal(t, [2]uint32{0, 1}, result.SlotRange)
@@ -86,21 +86,21 @@ func TestVerificationCache(t *testing.T) {
 
 	// Create test verification results
 	result1 := &VerificationResult{
-		EpochID:       1,
+		EpochIndex:    1,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_VERIFYING,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
 	}
 
 	result2 := &VerificationResult{
-		EpochID:       2,
+		EpochIndex:    2,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_COMPLETED,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{2, 3},
 	}
 
 	result3 := &VerificationResult{
-		EpochID:       3,
+		EpochIndex:    3,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_VERIFYING,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{4, 5},
@@ -143,16 +143,16 @@ func TestVerificationCacheEdgeCases(t *testing.T) {
 
 	// Test epoch 0
 	result0 := &VerificationResult{
-		EpochID:  0,
-		DkgPhase: types.DKGPhase_DKG_PHASE_DEALING,
+		EpochIndex: 0,
+		DkgPhase:   types.DKGPhase_DKG_PHASE_DEALING,
 	}
 	cache.Store(result0)
 	assert.Equal(t, result0, cache.Get(0))
 
 	// Test epoch 1
 	result1 := &VerificationResult{
-		EpochID:  1,
-		DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING,
+		EpochIndex: 1,
+		DkgPhase:   types.DKGPhase_DKG_PHASE_VERIFYING,
 	}
 	cache.Store(result1)
 	assert.Equal(t, result0, cache.Get(0)) // Should still exist
@@ -174,14 +174,14 @@ func TestVerifierCacheIntegration(t *testing.T) {
 
 	// Manually create and store verification results
 	result1 := &VerificationResult{
-		EpochID:       1,
+		EpochIndex:    1,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_VERIFYING,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
 	}
 
 	result2 := &VerificationResult{
-		EpochID:       2,
+		EpochIndex:    2,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_COMPLETED,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{2, 3},
@@ -206,7 +206,7 @@ func TestStoreVerificationResult(t *testing.T) {
 
 	// Test storing a valid result
 	result1 := &VerificationResult{
-		EpochID:       1,
+		EpochIndex:    1,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_VERIFYING,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
@@ -217,7 +217,7 @@ func TestStoreVerificationResult(t *testing.T) {
 	// Verify it was stored
 	stored := blsManager.GetVerificationResult(1)
 	assert.NotNil(t, stored)
-	assert.Equal(t, uint64(1), stored.EpochID)
+	assert.Equal(t, uint64(1), stored.EpochIndex)
 	assert.Equal(t, types.DKGPhase_DKG_PHASE_VERIFYING, stored.DkgPhase)
 	assert.True(t, stored.IsParticipant)
 	assert.Equal(t, [2]uint32{0, 1}, stored.SlotRange)
@@ -230,7 +230,7 @@ func TestStoreVerificationResult(t *testing.T) {
 
 	// Test storing another result
 	result2 := &VerificationResult{
-		EpochID:       2,
+		EpochIndex:    2,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_COMPLETED,
 		IsParticipant: false,
 		SlotRange:     [2]uint32{2, 3},
@@ -245,7 +245,7 @@ func TestStoreVerificationResult(t *testing.T) {
 
 	// Current should be the latest (highest epoch ID)
 	current := blsManager.GetCurrentVerificationResult()
-	assert.Equal(t, uint64(2), current.EpochID)
+	assert.Equal(t, uint64(2), current.EpochIndex)
 	assert.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, current.DkgPhase)
 }
 
@@ -254,7 +254,7 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 
 	// Mock event for epoch 5 with complete and proper mock data
 	completeEpochData := `{
-		"epoch_id": "5",
+		"epoch_index": "5",
 		"i_total_slots": "100",
 		"t_slots_degree": "50",
 		"dkg_phase": "DKG_PHASE_VERIFYING",
@@ -278,7 +278,7 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 	event := &chainevents.JSONRPCResponse{
 		Result: chainevents.Result{
 			Events: map[string][]string{
-				"inference.bls.EventVerifyingPhaseStarted.epoch_id":                       {"5"},
+				"inference.bls.EventVerifyingPhaseStarted.epoch_index":                    {"5"},
 				"inference.bls.EventVerifyingPhaseStarted.verifying_phase_deadline_block": {"1000"},
 				"inference.bls.EventVerifyingPhaseStarted.epoch_data":                     {completeEpochData},
 			},
@@ -287,7 +287,7 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 
 	// Manually store a verification result for epoch 5 with VERIFYING phase
 	result := &VerificationResult{
-		EpochID:       5,
+		EpochIndex:    5,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_VERIFYING,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
@@ -300,7 +300,7 @@ func TestProcessVerifyingPhaseStartedWithExistingResult(t *testing.T) {
 
 	// Update the result to COMPLETED phase
 	resultCompleted := &VerificationResult{
-		EpochID:       5,
+		EpochIndex:    5,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_COMPLETED,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
@@ -319,7 +319,7 @@ func TestProcessGroupPublicKeyGeneratedWithExistingResult(t *testing.T) {
 	event := &chainevents.JSONRPCResponse{
 		Result: chainevents.Result{
 			Events: map[string][]string{
-				"inference.bls.EventGroupPublicKeyGenerated.epoch_id":         {"10"},
+				"inference.bls.EventGroupPublicKeyGenerated.epoch_index":      {"10"},
 				"inference.bls.EventGroupPublicKeyGenerated.group_public_key": {"0123456789abcdef" + strings.Repeat("00", 88)}, // 96 bytes hex
 			},
 		},
@@ -327,7 +327,7 @@ func TestProcessGroupPublicKeyGeneratedWithExistingResult(t *testing.T) {
 
 	// Store a COMPLETED result and verify it skips processing
 	completedResult := &VerificationResult{
-		EpochID:       10,
+		EpochIndex:    10,
 		DkgPhase:      types.DKGPhase_DKG_PHASE_COMPLETED,
 		IsParticipant: true,
 		SlotRange:     [2]uint32{0, 1},
@@ -347,7 +347,7 @@ func TestProcessGroupPublicKeyGeneratedWithExistingResult(t *testing.T) {
 func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 	blsManager := NewBlsManager(createMockCosmosClient())
 
-	// Test invalid event - missing epoch_id
+	// Test invalid event - missing epoch_index
 	invalidEvent := &chainevents.JSONRPCResponse{
 		Result: chainevents.Result{
 			Events: map[string][]string{
@@ -358,18 +358,18 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 
 	err := blsManager.ProcessGroupPublicKeyGeneratedToVerify(invalidEvent)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "epoch_id not found")
+	assert.Contains(t, err.Error(), "epoch_index not found")
 
-	// Test invalid epoch_id format
+	// Test invalid epoch_index format
 	invalidEpochEvent := &chainevents.JSONRPCResponse{
 		Result: chainevents.Result{
 			Events: map[string][]string{
-				"inference.bls.EventGroupPublicKeyGenerated.epoch_id": {"invalid"},
+				"inference.bls.EventGroupPublicKeyGenerated.epoch_index": {"invalid"},
 			},
 		},
 	}
 
 	err = blsManager.ProcessGroupPublicKeyGeneratedToVerify(invalidEpochEvent)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse epoch_id")
+	assert.Contains(t, err.Error(), "failed to parse epoch_index")
 }

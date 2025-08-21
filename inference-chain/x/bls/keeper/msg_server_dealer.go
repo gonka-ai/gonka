@@ -13,19 +13,19 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Get the epoch BLS data
-	epochBLSData, found := ms.GetEpochBLSData(ctx, msg.EpochId)
+	epochBLSData, found := ms.GetEpochBLSData(ctx, msg.EpochIndex)
 	if !found {
-		return nil, fmt.Errorf("epoch %d not found", msg.EpochId)
+		return nil, fmt.Errorf("epoch %d not found", msg.EpochIndex)
 	}
 
 	// Check if DKG is in dealing phase
 	if epochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_DEALING {
-		return nil, fmt.Errorf("DKG for epoch %d is not in dealing phase (current phase: %s)", msg.EpochId, epochBLSData.DkgPhase.String())
+		return nil, fmt.Errorf("DKG for epoch %d is not in dealing phase (current phase: %s)", msg.EpochIndex, epochBLSData.DkgPhase.String())
 	}
 
 	// Check if dealing phase deadline has passed
 	if ctx.BlockHeight() > epochBLSData.DealingPhaseDeadlineBlock {
-		return nil, fmt.Errorf("dealing phase deadline has passed for epoch %d", msg.EpochId)
+		return nil, fmt.Errorf("dealing phase deadline has passed for epoch %d", msg.EpochIndex)
 	}
 
 	// Find the participant in the participants list
@@ -38,12 +38,12 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 	}
 
 	if participantIndex == -1 {
-		return nil, fmt.Errorf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochId)
+		return nil, fmt.Errorf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochIndex)
 	}
 
 	// Check if this participant has already submitted their dealer part
 	if epochBLSData.DealerParts[participantIndex] != nil && epochBLSData.DealerParts[participantIndex].DealerAddress != "" {
-		return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
+		return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochIndex)
 	}
 
 	// Validate that encrypted shares are provided for all participants
@@ -71,7 +71,7 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 
 	// Emit EventDealerPartSubmitted
 	event := &types.EventDealerPartSubmitted{
-		EpochId:       msg.EpochId,
+		EpochIndex:    msg.EpochIndex,
 		DealerAddress: msg.Creator,
 	}
 
@@ -81,7 +81,7 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 
 	ms.Logger().Info(
 		"Dealer part submitted",
-		"epoch_id", msg.EpochId,
+		"epoch_index", msg.EpochIndex,
 		"dealer", msg.Creator,
 		"commitments_count", len(msg.Commitments),
 	)

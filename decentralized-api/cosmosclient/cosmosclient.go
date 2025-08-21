@@ -9,13 +9,14 @@ import (
 	"decentralized-api/logging"
 	"errors"
 	"fmt"
-	ctypes "github.com/cometbft/cometbft/rpc/core/types"
-	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"log"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
+
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -177,6 +178,7 @@ type CosmosMessageClient interface {
 	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	BridgeExchange(transaction *types.MsgBridgeExchange) error
+	GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error)
 	NewInferenceQueryClient() types.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -384,6 +386,20 @@ func (icc *InferenceCosmosClient) BridgeExchange(transaction *types.MsgBridgeExc
 	transaction.Validator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
 	return err
+}
+
+// GetBridgeAddresses retrieves all bridge addresses for a specific chain
+func (icc *InferenceCosmosClient) GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error) {
+	queryClient := icc.NewInferenceQueryClient()
+
+	resp, err := queryClient.BridgeAddressesByChain(ctx, &types.QueryBridgeAddressesByChainRequest{
+		ChainId: chainId,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Addresses, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg) (*sdk.TxResponse, error) {

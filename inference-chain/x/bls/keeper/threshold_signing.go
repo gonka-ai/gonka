@@ -15,18 +15,18 @@ import (
 // RequestThresholdSignature is the main entry point for other modules to request BLS threshold signatures
 func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.SigningData) error {
 	// Validate current epoch has completed DKG
-	epochBLSData, found := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
+	epochBLSData, found := k.GetEpochBLSData(ctx, signingData.CurrentEpochIndex)
 	if !found {
-		return fmt.Errorf("epoch BLS data not found for epoch %d", signingData.CurrentEpochId)
+		return fmt.Errorf("epoch BLS data not found for epoch %d", signingData.CurrentEpochIndex)
 	}
 
 	// Verify epoch has completed DKG (has group public key)
 	if epochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED && epochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
-		return fmt.Errorf("epoch %d DKG not completed, current phase: %s", signingData.CurrentEpochId, epochBLSData.DkgPhase.String())
+		return fmt.Errorf("epoch %d DKG not completed, current phase: %s", signingData.CurrentEpochIndex, epochBLSData.DkgPhase.String())
 	}
 
 	if len(epochBLSData.GroupPublicKey) == 0 {
-		return fmt.Errorf("epoch %d has no group public key", signingData.CurrentEpochId)
+		return fmt.Errorf("epoch %d has no group public key", signingData.CurrentEpochIndex)
 	}
 
 	// Validate uniqueness - ensure request_id doesn't already exist
@@ -55,7 +55,7 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 	// Create threshold signing request
 	request := &types.ThresholdSigningRequest{
 		RequestId:           signingData.RequestId,
-		CurrentEpochId:      signingData.CurrentEpochId,
+		CurrentEpochIndex:   signingData.CurrentEpochIndex,
 		ChainId:             signingData.ChainId,
 		Data:                signingData.Data,
 		EncodedData:         encodedData,
@@ -84,7 +84,7 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 	// Emit event for controllers (message event, not block event)
 	err = ctx.EventManager().EmitTypedEvent(&types.EventThresholdSigningRequested{
 		RequestId:           signingData.RequestId,
-		CurrentEpochId:      signingData.CurrentEpochId,
+		CurrentEpochIndex:   signingData.CurrentEpochIndex,
 		EncodedData:         encodedData,
 		MessageHash:         messageHash,
 		DeadlineBlockHeight: deadlineBlockHeight,
@@ -115,7 +115,7 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 }
 
 // ListActiveSigningRequests returns all active threshold signing requests for a given epoch
-func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64) ([]*types.ThresholdSigningRequest, error) {
+func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochIndex uint64) ([]*types.ThresholdSigningRequest, error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	signingStore := prefix.NewStore(store, types.ThresholdSigningRequestPrefix)
 
@@ -129,7 +129,7 @@ func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64
 		k.cdc.MustUnmarshal(iterator.Value(), &request)
 
 		// Filter by epoch and active status
-		if request.CurrentEpochId == currentEpochID &&
+		if request.CurrentEpochIndex == currentEpochIndex &&
 			(request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_PENDING_SIGNING ||
 				request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES) {
 			activeRequests = append(activeRequests, &request)
@@ -141,12 +141,12 @@ func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64
 
 // encodeSigningData encodes signing data using Ethereum-compatible abi.encodePacked format
 func (k Keeper) encodeSigningData(signingData types.SigningData) []byte {
-	// abi.encodePacked(currentEpochID, chainID, requestID, data[0], data[1], ...)
+	// abi.encodePacked(currentEpochIndex, chainID, requestID, data[0], data[1], ...)
 	var encoded []byte
 
-	// Add currentEpochID (8 bytes, big endian)
+	// Add currentEpochIndex (8 bytes, big endian)
 	epochBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(epochBytes, signingData.CurrentEpochId)
+	binary.BigEndian.PutUint64(epochBytes, signingData.CurrentEpochIndex)
 	encoded = append(encoded, epochBytes...)
 
 	// Add chainID (32 bytes)
@@ -187,13 +187,13 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
 			return err
 		}
-		return k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, "request expired")
+		return k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochIndex, "request expired")
 	}
 
 	// Get current epoch BLS data for validation
-	epochBLSData, found := k.GetEpochBLSData(ctx, request.CurrentEpochId)
+	epochBLSData, found := k.GetEpochBLSData(ctx, request.CurrentEpochIndex)
 	if !found {
-		return fmt.Errorf("epoch BLS data not found for epoch %d", request.CurrentEpochId)
+		return fmt.Errorf("epoch BLS data not found for epoch %d", request.CurrentEpochIndex)
 	}
 
 	// Validate submitter owns the claimed slot indices
@@ -251,7 +251,7 @@ func (k Keeper) validateSlotOwnership(ctx sdk.Context, submitter string, slotInd
 	}
 
 	if !found {
-		return fmt.Errorf("submitter %s not found in epoch %d participants", submitter, epochBLSData.EpochId)
+		return fmt.Errorf("submitter %s not found in epoch %d participants", submitter, epochBLSData.EpochIndex)
 	}
 
 	// Verify all claimed slot indices are within submitter's range
@@ -315,7 +315,7 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 		// Remove from expiration index since it's no longer collecting signatures
 		k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
 
-		return k.emitThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId,
+		return k.emitThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochIndex,
 			fmt.Sprintf("signature aggregation failed: %v", err))
 	}
 
@@ -327,7 +327,7 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
 
 	// Emit completion event
-	return k.emitThresholdSigningCompleted(ctx, request.RequestId, request.CurrentEpochId,
+	return k.emitThresholdSigningCompleted(ctx, request.RequestId, request.CurrentEpochIndex,
 		finalSignature, totalSlotsCovered)
 }
 
@@ -351,21 +351,21 @@ func (k Keeper) storeThresholdSigningRequest(ctx sdk.Context, request *types.Thr
 }
 
 // emitThresholdSigningCompleted emits completion event
-func (k Keeper) emitThresholdSigningCompleted(ctx sdk.Context, requestID []byte, epochID uint64, finalSignature []byte, participatingSlots uint32) error {
+func (k Keeper) emitThresholdSigningCompleted(ctx sdk.Context, requestID []byte, EpochIndex uint64, finalSignature []byte, participatingSlots uint32) error {
 	return ctx.EventManager().EmitTypedEvent(&types.EventThresholdSigningCompleted{
 		RequestId:          requestID,
-		CurrentEpochId:     epochID,
+		CurrentEpochIndex:  EpochIndex,
 		FinalSignature:     finalSignature,
 		ParticipatingSlots: participatingSlots,
 	})
 }
 
 // emitThresholdSigningFailed emits failure event
-func (k Keeper) emitThresholdSigningFailed(ctx sdk.Context, requestID []byte, epochID uint64, reason string) error {
+func (k Keeper) emitThresholdSigningFailed(ctx sdk.Context, requestID []byte, EpochIndex uint64, reason string) error {
 	return ctx.EventManager().EmitTypedEvent(&types.EventThresholdSigningFailed{
-		RequestId:      requestID,
-		CurrentEpochId: epochID,
-		Reason:         reason,
+		RequestId:         requestID,
+		CurrentEpochIndex: EpochIndex,
+		Reason:            reason,
 	})
 }
 
@@ -426,7 +426,7 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 			k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, requestID)
 
 			// Emit failure event
-			if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, "deadline expired"); err != nil {
+			if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochIndex, "deadline expired"); err != nil {
 				k.Logger().Error("Failed to emit threshold signing failed event",
 					"request_id", fmt.Sprintf("%x", requestID), "error", err)
 				// Continue processing even if event emission fails

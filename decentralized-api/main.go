@@ -151,7 +151,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, config, blockQueue)
 	adminServer.Start(addr)
 
 	mlGrpcServerPort := config.GetApiConfig().MlGrpcServerPort

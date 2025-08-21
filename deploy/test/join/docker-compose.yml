@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.21
+    image: ghcr.io/product-science/inferenced:0.1.22.alphabridge
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -36,7 +36,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.21
+    image: ghcr.io/product-science/api:0.1.22.alphabridge
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -62,9 +62,29 @@ services:
       - "9200:9200"
     restart: always
 
+  bridge:
+    container_name: bridge
+    image: ghcr.io/product-science/bridge-ethereum:0.1.22.alphabridge
+    environment:
+      - GETH_DATA_DIR=/data/geth
+      - PRYSM_DATA_DIR=/data/prysm
+      - JWT_SECRET_PATH=/data/jwt/jwt.hex
+      - BRIDGE_API_BASE=http://api:9000
+      - BRIDGE_POSTBLOCK=/admin/v1/bridge/block
+      - BRIDGE_GETADDRESSES=/v1/bridge/addresses
+      - BEACON_STATE_URL=https://beaconstate.ethstaker.cc/
+    volumes:
+      - .inference-eth/geth:/data/geth
+      - .inference-eth/prysm:/data/prysm
+      - .inference-eth/jwt:/data/jwt
+      - .inference-eth/logs:/var/log
+      - .inference-eth/persistent-db:/persistent-db
+    depends_on:
+      - api
+
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.21
+    image: ghcr.io/product-science/proxy:0.1.22.alphabridge
     ports:
       - "${API_PORT:-8000}:80"
     environment:

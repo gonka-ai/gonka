@@ -159,19 +159,19 @@ func TestActiveEpochTracking(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Initially no active epoch
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 
 	// Set an active epoch
-	k.SetActiveEpochID(ctx, 123)
-	activeEpoch, found = k.GetActiveEpochID(ctx)
+	k.SetActiveEpochIndex(ctx, 123)
+	activeEpoch, found = k.GetActiveEpochIndex(ctx)
 	require.True(t, found)
 	require.Equal(t, uint64(123), activeEpoch)
 
 	// Clear active epoch
-	k.ClearActiveEpochID(ctx)
-	activeEpoch, found = k.GetActiveEpochID(ctx)
+	k.ClearActiveEpochIndex(ctx)
+	activeEpoch, found = k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 }
@@ -188,10 +188,10 @@ func TestProcessDKGPhaseTransitions_ActiveEpoch(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Create and store epoch data
-	epochID := uint64(10)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(10)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	k.SetEpochBLSData(ctx, epochBLSData)
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Set block height before deadline - should not transition
 	ctx = ctx.WithBlockHeight(epochBLSData.DealingPhaseDeadlineBlock - 1)
@@ -199,25 +199,25 @@ func TestProcessDKGPhaseTransitions_ActiveEpoch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify phase didn't change
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, storedData.DkgPhase)
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.True(t, found)
-	require.Equal(t, epochID, activeEpoch) // Still active
+	require.Equal(t, epochIndex, activeEpoch) // Still active
 }
 
 func TestActiveEpochClearedOnFailure(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Create epoch data with insufficient participation
-	epochID := uint64(11)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(11)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	// Only mark first participant as having submitted (insufficient)
 	epochBLSData.DealerParts[0].DealerAddress = "participant1"
 
 	k.SetEpochBLSData(ctx, epochBLSData)
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Trigger transition at deadline
 	ctx = ctx.WithBlockHeight(epochBLSData.DealingPhaseDeadlineBlock)
@@ -225,16 +225,16 @@ func TestActiveEpochClearedOnFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify DKG failed and active epoch was cleared
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch) // Should be cleared
 }
 
 // Helper function to create test epoch BLS data
-func createTestEpochBLSData(epochID uint64, numParticipants int) types.EpochBLSData {
+func createTestEpochBLSData(epochIndex uint64, numParticipants int) types.EpochBLSData {
 	participants := make([]types.BLSParticipantInfo, numParticipants)
 	dealerParts := make([]*types.DealerPartStorage, numParticipants)
 
@@ -275,7 +275,7 @@ func createTestEpochBLSData(epochID uint64, numParticipants int) types.EpochBLSD
 	}
 
 	return types.EpochBLSData{
-		EpochId:                     epochID,
+		EpochIndex:                  epochIndex,
 		ITotalSlots:                 totalSlots,
 		TSlotsDegree:                50, // floor(100/2)
 		Participants:                participants,
@@ -313,8 +313,8 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Create test epoch data in VERIFYING phase
-	epochID := uint64(20)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(20)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
 
 	// Set up dealer parts with valid commitments for first 2 participants
@@ -330,7 +330,7 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Call CompleteDKG
 	err := k.CompleteDKG(ctx, &epochBLSData)
@@ -342,14 +342,14 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	require.Equal(t, 96, len(epochBLSData.GroupPublicKey)) // Compressed G2 point (96 bytes)
 
 	// Verify epoch data was stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 	require.NotNil(t, storedData.GroupPublicKey)
 	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
 
 	// Verify active epoch was cleared
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 }
@@ -358,15 +358,15 @@ func TestCompleteDKG_InsufficientVerification(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Create test epoch data in VERIFYING phase
-	epochID := uint64(21)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(21)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
 
 	// Only set up verification submission for first participant (insufficient <50%)
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Call CompleteDKG
 	err := k.CompleteDKG(ctx, &epochBLSData)
@@ -377,12 +377,12 @@ func TestCompleteDKG_InsufficientVerification(t *testing.T) {
 	require.Nil(t, epochBLSData.GroupPublicKey)
 
 	// Verify epoch data was stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 
 	// Verify active epoch was cleared
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 }
@@ -481,8 +481,8 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Create test epoch data in VERIFYING phase with sufficient verification
-	epochID := uint64(26)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(26)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
 
 	// Set up dealer parts and verification for sufficient participation
@@ -497,24 +497,24 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Set block height at verifying deadline
 	ctx = ctx.WithBlockHeight(epochBLSData.VerifyingPhaseDeadlineBlock)
 
 	// Process transition
-	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochID)
+	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochIndex)
 	require.NoError(t, err)
 
 	// Verify DKG completed
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 	require.NotNil(t, storedData.GroupPublicKey)
 	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
 
 	// Verify active epoch was cleared
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 }
@@ -523,31 +523,31 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToFailed(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	// Create test epoch data in VERIFYING phase with insufficient verification
-	epochID := uint64(27)
-	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochIndex := uint64(27)
+	epochBLSData := createTestEpochBLSData(epochIndex, 3)
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
 
 	// Set up verification submission for only one participant (insufficient)
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, false, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Set block height at verifying deadline
 	ctx = ctx.WithBlockHeight(epochBLSData.VerifyingPhaseDeadlineBlock)
 
 	// Process transition
-	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochID)
+	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochIndex)
 	require.NoError(t, err)
 
 	// Verify DKG failed
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
+	storedData, found := k.GetEpochBLSData(ctx, epochIndex)
 	require.True(t, found)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 	require.Nil(t, storedData.GroupPublicKey)
 
 	// Verify active epoch was cleared
-	activeEpoch, found := k.GetActiveEpochID(ctx)
+	activeEpoch, found := k.GetActiveEpochIndex(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
 }

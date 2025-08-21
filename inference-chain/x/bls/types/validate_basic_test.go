@@ -68,7 +68,7 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		msg := &MsgSubmitDealerPart{
 			Creator:     creator,
-			EpochId:     1,
+			EpochIndex:  1,
 			Commitments: [][]byte{validCommitment},
 			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
 				EncryptedShares: [][]byte{validShare},
@@ -78,24 +78,24 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 	})
 
 	t.Run("invalid creator", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: "bad", EpochId: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
+		msg := &MsgSubmitDealerPart{Creator: "bad", EpochIndex: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
 		err := msg.ValidateBasic()
 		require.Error(t, err)
 		require.True(t, errorsmod.IsOf(err, sdkerrors.ErrInvalidAddress))
 	})
 
 	t.Run("epoch zero", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 0, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
+		msg := &MsgSubmitDealerPart{Creator: creator, EpochIndex: 0, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty commitments", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: nil, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
+		msg := &MsgSubmitDealerPart{Creator: creator, EpochIndex: 1, Commitments: nil, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty encrypted shares list", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: nil}
+		msg := &MsgSubmitDealerPart{Creator: creator, EpochIndex: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: nil}
 		require.Error(t, msg.ValidateBasic())
 	})
 }
@@ -104,24 +104,24 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 	creator := mkAddr(t)
 
 	t.Run("valid", func(t *testing.T) {
-		msg := &MsgSubmitVerificationVector{Creator: creator, EpochId: 1, DealerValidity: []bool{true, false}}
+		msg := &MsgSubmitVerificationVector{Creator: creator, EpochIndex: 1, DealerValidity: []bool{true, false}}
 		require.NoError(t, msg.ValidateBasic())
 	})
 
 	t.Run("invalid creator", func(t *testing.T) {
-		msg := &MsgSubmitVerificationVector{Creator: "bad", EpochId: 1, DealerValidity: []bool{true}}
+		msg := &MsgSubmitVerificationVector{Creator: "bad", EpochIndex: 1, DealerValidity: []bool{true}}
 		err := msg.ValidateBasic()
 		require.Error(t, err)
 		require.True(t, errorsmod.IsOf(err, sdkerrors.ErrInvalidAddress))
 	})
 
 	t.Run("epoch zero", func(t *testing.T) {
-		msg := &MsgSubmitVerificationVector{Creator: creator, EpochId: 0, DealerValidity: []bool{true}}
+		msg := &MsgSubmitVerificationVector{Creator: creator, EpochIndex: 0, DealerValidity: []bool{true}}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty dealer_validity", func(t *testing.T) {
-		msg := &MsgSubmitVerificationVector{Creator: creator, EpochId: 1, DealerValidity: nil}
+		msg := &MsgSubmitVerificationVector{Creator: creator, EpochIndex: 1, DealerValidity: nil}
 		require.Error(t, msg.ValidateBasic())
 	})
 }
@@ -130,24 +130,24 @@ func TestMsgSubmitGroupKeyValidationSignature_ValidateBasic(t *testing.T) {
 	creator := mkAddr(t)
 
 	t.Run("valid", func(t *testing.T) {
-		msg := &MsgSubmitGroupKeyValidationSignature{Creator: creator, NewEpochId: 1, SlotIndices: []uint32{0, 2}}
+		msg := &MsgSubmitGroupKeyValidationSignature{Creator: creator, NewEpochIndex: 1, SlotIndices: []uint32{0, 2}}
 		require.NoError(t, msg.ValidateBasic())
 	})
 
 	t.Run("invalid creator", func(t *testing.T) {
-		msg := &MsgSubmitGroupKeyValidationSignature{Creator: "bad", NewEpochId: 1, SlotIndices: []uint32{0}}
+		msg := &MsgSubmitGroupKeyValidationSignature{Creator: "bad", NewEpochIndex: 1, SlotIndices: []uint32{0}}
 		err := msg.ValidateBasic()
 		require.Error(t, err)
 		require.True(t, errorsmod.IsOf(err, sdkerrors.ErrInvalidAddress))
 	})
 
 	t.Run("epoch zero", func(t *testing.T) {
-		msg := &MsgSubmitGroupKeyValidationSignature{Creator: creator, NewEpochId: 0, SlotIndices: []uint32{0}}
+		msg := &MsgSubmitGroupKeyValidationSignature{Creator: creator, NewEpochIndex: 0, SlotIndices: []uint32{0}}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty slot indices", func(t *testing.T) {
-		msg := &MsgSubmitGroupKeyValidationSignature{Creator: creator, NewEpochId: 1, SlotIndices: nil}
+		msg := &MsgSubmitGroupKeyValidationSignature{Creator: creator, NewEpochIndex: 1, SlotIndices: nil}
 		require.Error(t, msg.ValidateBasic())
 	})
 }
@@ -178,24 +178,24 @@ func TestMsgRequestThresholdSignature_ValidateBasic(t *testing.T) {
 	data := [][]byte{{1, 2, 3}} // any non-empty data slice is acceptable
 
 	t.Run("valid", func(t *testing.T) {
-		msg := &MsgRequestThresholdSignature{Creator: creator, CurrentEpochId: 1, Data: data}
+		msg := &MsgRequestThresholdSignature{Creator: creator, CurrentEpochIndex: 1, Data: data}
 		require.NoError(t, msg.ValidateBasic())
 	})
 
 	t.Run("invalid creator", func(t *testing.T) {
-		msg := &MsgRequestThresholdSignature{Creator: "bad", CurrentEpochId: 1, Data: data}
+		msg := &MsgRequestThresholdSignature{Creator: "bad", CurrentEpochIndex: 1, Data: data}
 		err := msg.ValidateBasic()
 		require.Error(t, err)
 		require.True(t, errorsmod.IsOf(err, sdkerrors.ErrInvalidAddress))
 	})
 
 	t.Run("epoch zero", func(t *testing.T) {
-		msg := &MsgRequestThresholdSignature{Creator: creator, CurrentEpochId: 0, Data: data}
+		msg := &MsgRequestThresholdSignature{Creator: creator, CurrentEpochIndex: 0, Data: data}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty data", func(t *testing.T) {
-		msg := &MsgRequestThresholdSignature{Creator: creator, CurrentEpochId: 1, Data: nil}
+		msg := &MsgRequestThresholdSignature{Creator: creator, CurrentEpochIndex: 1, Data: nil}
 		require.Error(t, msg.ValidateBasic())
 	})
 }

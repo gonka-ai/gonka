@@ -321,7 +321,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 	// Check for BLS events in NewBlock events (emitted from EndBlocker)
 	// Note: Threshold signing events are handled separately in handleBLSTransactionEvents
 
-	if epochIdValues := event.Result.Events[blsKeyGenerationInitiatedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+	if epochIndexValues := event.Result.Events[blsKeyGenerationInitiatedEvent+".epoch_index"]; len(epochIndexValues) > 0 {
 		logging.Info("Key generation initiated event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessKeyGenerationInitiated(event)
 		if err != nil {
@@ -329,7 +329,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		}
 	}
 
-	if epochIdValues := event.Result.Events[blsVerifyingPhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+	if epochIndexValues := event.Result.Events[blsVerifyingPhaseStartedEvent+".epoch_index"]; len(epochIndexValues) > 0 {
 		logging.Info("Verifying phase started event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessVerifyingPhaseStarted(event)
 		if err != nil {
@@ -337,7 +337,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		}
 	}
 
-	if epochIdValues := event.Result.Events[blsGroupPublicKeyGeneratedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+	if epochIndexValues := event.Result.Events[blsGroupPublicKeyGeneratedEvent+".epoch_index"]; len(epochIndexValues) > 0 {
 		logging.Info("Group public key generated event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessGroupPublicKeyGenerated(event)
 		if err != nil {

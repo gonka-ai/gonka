@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -36,24 +37,8 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	// Parse the amount to ensure it's valid
 	_, ok := new(big.Int).SetString(msg.Amount, 10)
 	if !ok {
-		k.LogError("Invalid amount", types.Messages, "amount", msg.Amount)
+		k.LogError("Bridge exchange: Invalid amount", types.Messages, "amount", msg.Amount)
 		return nil, fmt.Errorf("invalid amount: %s", msg.Amount)
-	}
-
-	// Get current epoch group and active participants
-	currentEpochGroup, error := k.Keeper.GetCurrentEpochGroup(goCtx)
-	if error != nil {
-		k.LogError(
-			"Bridge exchange: unable to get current epoch group",
-			types.Messages,
-			"error", error)
-		return nil, fmt.Errorf("unable to get current epoch group: %v", error)
-	}
-
-	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochGroup.GroupData.EpochGroupId)
-
-	if !found {
-		return nil, fmt.Errorf("no active participants found for current epoch")
 	}
 
 	// Get the account address
@@ -66,23 +51,195 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	// Check if the validator is in active participants by checking their account
+	// Check if the validator account exists
 	acc := k.AccountKeeper.GetAccount(ctx, addr)
 	if acc == nil {
 		k.LogError("Bridge exchange: Account not found for validator", types.Messages, "validator", msg.Validator)
 		return nil, fmt.Errorf("account not found for validator")
 	}
 
+	// Create transaction object with all the content for secure validation
+	proposedTx := &types.BridgeTransaction{
+		ChainId:         msg.OriginChain,
+		ContractAddress: msg.ContractAddress,
+		OwnerAddress:    msg.OwnerAddress,
+		Amount:          msg.Amount,
+		BlockNumber:     msg.BlockNumber,
+		ReceiptIndex:    msg.ReceiptIndex,
+		ReceiptsRoot:    msg.ReceiptsRoot,
+		// Status and other fields will be set later
+	}
+
+	// Check if this exact transaction content has already been processed
+	existingTx, found := k.GetBridgeTransactionByContent(ctx, proposedTx)
+	if found {
+		// Validate that the existing transaction has identical content (double-check security)
+		if !bridgeTransactionsEqual(existingTx, proposedTx) {
+			k.LogError("Bridge exchange: Content mismatch for existing transaction", types.Messages,
+				"existingChainId", existingTx.ChainId,
+				"proposedChainId", proposedTx.ChainId,
+				"existingContract", existingTx.ContractAddress,
+				"proposedContract", proposedTx.ContractAddress,
+				"existingOwner", existingTx.OwnerAddress,
+				"proposedOwner", proposedTx.OwnerAddress,
+				"existingAmount", existingTx.Amount,
+				"proposedAmount", proposedTx.Amount)
+			return nil, fmt.Errorf("transaction content mismatch - potential attack detected")
+		}
+		// Get the epoch group for the existing transaction using epochIndex
+		epochGroup, err := k.GetEpochGroup(goCtx, existingTx.EpochIndex, "")
+		if err != nil {
+			k.LogError("Bridge exchange: unable to get epoch group for existing transaction", types.Messages,
+				"epochIndex", existingTx.EpochIndex, "error", err)
+			return nil, fmt.Errorf("unable to get epoch group for existing transaction: %v", err)
+		}
+
+		// Get epoch group members directly
+		epochGroupMembers, err := epochGroup.GetGroupMembers(ctx)
+		if err != nil {
+			k.LogError("Bridge exchange: unable to get epoch group members", types.Messages,
+				"epochIndex", existingTx.EpochIndex, "error", err)
+			return nil, fmt.Errorf("unable to get epoch group members: %v", err)
+		}
+
+		// Check if validator is in the epoch group
+		isInEpochGroup := false
+		var validatorPower int64
+		for _, member := range epochGroupMembers {
+			memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
+			if err != nil {
+				continue
+			}
+			if memberAddr.Equals(addr) {
+				isInEpochGroup = true
+				// Parse weight from string (group module stores weight as string)
+				weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+				if err != nil {
+					k.LogError("Bridge exchange: unable to parse member weight", types.Messages,
+						"member", member.Member.Address, "weight", member.Member.Weight, "error", err)
+					continue
+				}
+				validatorPower = weight
+				break
+			}
+		}
+
+		if !isInEpochGroup {
+			k.LogError("Bridge exchange: Validator not in transaction's epoch group", types.Messages,
+				"validator", msg.Validator, "epochIndex", existingTx.EpochIndex)
+			return nil, fmt.Errorf("validator not in transaction's epoch group")
+		}
+
+		// Check if validator already validated
+		for _, validator := range existingTx.Validators {
+			if validator == msg.Validator {
+				k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
+				return nil, fmt.Errorf("validator has already validated this transaction")
+			}
+		}
+
+		// Add validator and their power to totals
+		existingTx.Validators = append(existingTx.Validators, msg.Validator)
+		existingTx.TotalValidationPower += validatorPower
+
+		// Use total epoch power from epoch group data
+		totalEpochPower := epochGroup.GroupData.TotalWeight
+
+		k.LogInfo("Bridge exchange: Additional validator added",
+			types.Messages,
+			"originChain", msg.OriginChain,
+			"blockNumber", msg.BlockNumber,
+			"receiptIndex", msg.ReceiptIndex,
+			"validator", msg.Validator,
+			"validatorPower", validatorPower,
+			"totalValidationPower", existingTx.TotalValidationPower,
+			"totalEpochPower", totalEpochPower,
+			"status", existingTx.Status)
+
+		// Check if we have majority (50+% of total power)
+		requiredPower := (totalEpochPower / 2) + 1
+
+		if existingTx.TotalValidationPower >= requiredPower {
+			// Only process completion once to avoid duplicate mints
+			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
+				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
+				k.SetBridgeTransaction(ctx, existingTx)
+
+				// Handle token minting for completed transaction
+				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
+					k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
+						types.Messages,
+						"error", err,
+						"originChain", msg.OriginChain,
+						"blockNumber", msg.BlockNumber,
+						"receiptIndex", msg.ReceiptIndex)
+					return nil, err
+				}
+
+				k.LogInfo("Bridge exchange: transaction reached majority validation",
+					types.Messages,
+					"originChain", msg.OriginChain,
+					"blockNumber", msg.BlockNumber,
+					"receiptIndex", msg.ReceiptIndex,
+					"powerRequired", requiredPower,
+					"powerReceived", existingTx.TotalValidationPower,
+					"totalEpochPower", totalEpochPower)
+
+				return &types.MsgBridgeExchangeResponse{
+					Id: existingTx.Id,
+				}, nil
+			}
+		} else {
+			k.LogInfo("Bridge exchange: transaction pending majority validation",
+				types.Messages,
+				"originChain", msg.OriginChain,
+				"blockNumber", msg.BlockNumber,
+				"receiptIndex", msg.ReceiptIndex,
+				"powerRequired", requiredPower,
+				"powerReceived", existingTx.TotalValidationPower,
+				"totalEpochPower", totalEpochPower)
+		}
+
+		k.SetBridgeTransaction(ctx, existingTx)
+		return &types.MsgBridgeExchangeResponse{
+			Id: existingTx.Id,
+		}, nil
+	}
+
+	// Transaction doesn't exist, create new one
+	// Get current epoch group
+	currentEpochGroup, err := k.GetCurrentEpochGroup(goCtx)
+	if err != nil {
+		k.LogError("Bridge exchange: unable to get current epoch group", types.Messages, "error", err)
+		return nil, fmt.Errorf("unable to get current epoch group: %v", err)
+	}
+
+	// Get current epoch group members directly
+	currentEpochMembers, err := currentEpochGroup.GetGroupMembers(ctx)
+	if err != nil {
+		k.LogError("Bridge exchange: unable to get current epoch group members", types.Messages,
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex, "error", err)
+		return nil, fmt.Errorf("unable to get current epoch group members: %v", err)
+	}
+
+	// Check if validator is in current epoch group
 	isActive := false
-	for _, participant := range activeParticipants.Participants {
-		// Get the account associated with this participant
-		participantAddr, err := sdk.AccAddressFromBech32(participant.Index)
+	var validatorPower int64
+	for _, member := range currentEpochMembers {
+		memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
 		if err != nil {
 			continue
 		}
-
-		if participantAddr.Equals(addr) {
+		if memberAddr.Equals(addr) {
 			isActive = true
+			// Parse weight from string (group module stores weight as string)
+			weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+			if err != nil {
+				k.LogError("Bridge exchange: unable to parse member weight", types.Messages,
+					"member", member.Member.Address, "weight", member.Member.Weight, "error", err)
+				continue
+			}
+			validatorPower = weight
 			break
 		}
 	}
@@ -92,99 +249,27 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("validator not in active participants")
 	}
 
-	// Check if this transaction has already been processed
-	existingTx, found := k.GetBridgeTransaction(ctx, msg.OriginChain, msg.BlockNumber, msg.ReceiptIndex)
-	if found {
-		// If exists, check if validator already validated
-		for _, validator := range existingTx.Validators {
-			if validator == msg.Validator {
-				return nil, fmt.Errorf("validator has already validated this transaction")
-			}
-		}
+	// Complete the proposed transaction with epoch and validation data
+	proposedTx.Id = "" // Will be set by SetBridgeTransaction
+	proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
+	proposedTx.EpochIndex = currentEpochGroup.GroupData.EpochIndex
+	proposedTx.Validators = []string{msg.Validator}
+	proposedTx.TotalValidationPower = validatorPower
 
-		// Add validator
-		existingTx.Validators = append(existingTx.Validators, msg.Validator)
-		existingTx.ValidationCount++
-
-		k.LogInfo("Bridge exchange: Additional validator added",
-			types.Messages,
-			"originChain", msg.OriginChain,
-			"blockNumber", msg.BlockNumber,
-			"receiptIndex", msg.ReceiptIndex,
-			"validator", msg.Validator,
-			"currentValidations", existingTx.ValidationCount)
-
-		// Check if we have majority
-		requiredValidators := (len(activeParticipants.Participants) * 2) / 3
-
-		if existingTx.ValidationCount >= uint32(requiredValidators) {
-			existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
-
-			// Handle token minting for completed transaction
-			if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
-				k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
-					types.Messages,
-					"error", err,
-					"originChain", msg.OriginChain,
-					"blockNumber", msg.BlockNumber,
-					"receiptIndex", msg.ReceiptIndex)
-				return nil, err
-			}
-
-			k.LogInfo("Bridge exchange: transaction reached majority validation",
-				types.Messages,
-				"originChain", msg.OriginChain,
-				"blockNumber", msg.BlockNumber,
-				"receiptIndex", msg.ReceiptIndex,
-				"validationsRequired", requiredValidators,
-				"validationsReceived", existingTx.ValidationCount,
-				"totalValidators", len(activeParticipants.Participants))
-		} else {
-			k.LogInfo("Bridge exchange: transaction pending majority validation",
-				types.Messages,
-				"originChain", msg.OriginChain,
-				"blockNumber", msg.BlockNumber,
-				"receiptIndex", msg.ReceiptIndex,
-				"validationsRequired", requiredValidators,
-				"validationsReceived", existingTx.ValidationCount,
-				"totalValidators", len(activeParticipants.Participants))
-		}
-
-		k.SetBridgeTransaction(ctx, existingTx)
-		return &types.MsgBridgeExchangeResponse{
-			Id: existingTx.Id,
-		}, nil
-	}
-
-	// Create new bridge transaction
-	bridgeTx := &types.BridgeTransaction{
-		Id:              "", // Will be set by SetBridgeTransaction
-		OriginChain:     msg.OriginChain,
-		ContractAddress: msg.ContractAddress,
-		OwnerAddress:    msg.OwnerAddress,
-		Amount:          msg.Amount,
-		Recipient:       msg.OwnerAddress, // The original owner should receive the bridged tokens
-		BlockHeight:     ctx.BlockHeight(),
-		Timestamp:       ctx.BlockTime().Unix(),
-		Status:          types.BridgeTransactionStatus_BRIDGE_PENDING,
-		Validators:      []string{msg.Validator},
-		ValidationCount: 1,
-		BlockNumber:     msg.BlockNumber,
-		ReceiptIndex:    msg.ReceiptIndex,
-		ReceiptsRoot:    msg.ReceiptsRoot,
-	}
-	k.SetBridgeTransaction(ctx, bridgeTx)
+	k.SetBridgeTransaction(ctx, proposedTx)
 
 	k.LogInfo("Bridge exchange: New transaction created",
 		types.Messages,
-		"originChain", msg.OriginChain,
+		"chainId", msg.OriginChain,
 		"blockNumber", msg.BlockNumber,
 		"receiptIndex", msg.ReceiptIndex,
 		"validator", msg.Validator,
+		"validatorPower", validatorPower,
+		"epochIndex", currentEpochGroup.GroupData.EpochIndex,
 		"amount", msg.Amount,
-		"uniqueId", bridgeTx.Id)
+		"uniqueId", proposedTx.Id)
 
 	return &types.MsgBridgeExchangeResponse{
-		Id: bridgeTx.Id,
+		Id: proposedTx.Id,
 	}, nil
 }

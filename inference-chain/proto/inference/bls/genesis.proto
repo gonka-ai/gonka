@@ -15,8 +15,8 @@ message GenesisState {
     (amino.dont_omitempty) = true
   ];
   
-  // active_epoch_id is the current epoch undergoing DKG process
+  // active_epoch_index is the current epoch undergoing DKG process
   // Only one epoch can have active DKG at a time
   // 0 means no active DKG
-  uint64 active_epoch_id = 2;
+  uint64 active_epoch_index = 2;
 }

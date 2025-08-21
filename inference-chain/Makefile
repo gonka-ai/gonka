@@ -18,7 +18,7 @@ TESTS ?= 0
 TESTS := $(shell if [ "$(TESTS)" = "1" ]; then echo 1; else echo 0; fi)
 
 # wasmvm static library URLs
-WASMVM_VERSION := v1.5.9
+WASMVM_VERSION := v2.2.4
 WASMVM_STATIC_DARWIN_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvmstatic_darwin.a
 WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.x86_64.a
 WASMVM_STATIC_LINUX_ARM64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.aarch64.a

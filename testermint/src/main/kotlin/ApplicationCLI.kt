@@ -662,7 +662,7 @@ data class ApplicationCLI(
     }
 
     fun requestThresholdSignature(
-        currentEpochId: Long,
+        currentEpochIndex: Long,
         chainId: String,
         requestId: String,
         data: List<String>
@@ -670,7 +670,7 @@ data class ApplicationCLI(
         val from = this.getColdAccountName()
         val baseArgs = listOf(
             "tx", "bls", "request-threshold-signature",
-            currentEpochId.toString(),
+            currentEpochIndex.toString(),
             chainId.toByteArray().toHexString(),
             requestId.toByteArray().toHexString(),
         ) + data.map { it.toByteArray().toHexString() }

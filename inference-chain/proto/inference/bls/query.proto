@@ -20,7 +20,7 @@ service Query {
   
   // EpochBLSData queries complete BLS data for a specific epoch
   rpc EpochBLSData(QueryEpochBLSDataRequest) returns (QueryEpochBLSDataResponse) {
-    option (google.api.http).get = "/productscience/inference/bls/epoch_data/{epoch_id}";
+    option (google.api.http).get = "/productscience/inference/bls/epoch_data/{epoch_index}";
   }
   
   // SigningStatus queries the status of a specific threshold signing request
@@ -48,8 +48,8 @@ message QueryParamsResponse {
 
 // QueryEpochBLSDataRequest is request type for the Query/EpochBLSData RPC method.
 message QueryEpochBLSDataRequest {
-  // epoch_id identifies the DKG round to query complete data for
-  uint64 epoch_id = 1;
+  // epoch_index identifies the DKG round to query complete data for
+  uint64 epoch_index = 1;
 }
 
 // QueryEpochBLSDataResponse is response type for the Query/EpochBLSData RPC method.
@@ -72,8 +72,8 @@ message QuerySigningStatusResponse {
 
 // QuerySigningHistoryRequest is request type for the Query/SigningHistory RPC method.
 message QuerySigningHistoryRequest {
-  // current_epoch_id filters requests by epoch (optional, 0 means all epochs)
-  uint64 current_epoch_id = 1;
+  // current_epoch_index filters requests by epoch (optional, 0 means all epochs)
+  uint64 current_epoch_index = 1;
   
   // status_filter filters requests by status (optional, UNDEFINED means all statuses)
   ThresholdSigningStatus status_filter = 2;

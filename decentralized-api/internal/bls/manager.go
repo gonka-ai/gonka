@@ -29,7 +29,7 @@ type BlsManager struct {
 
 // VerificationResult holds the results of DKG verification for an epoch
 type VerificationResult struct {
-	EpochID          uint64
+	EpochIndex       uint64
 	DkgPhase         types.DKGPhase // The DKG phase when verification was performed
 	IsParticipant    bool
 	SlotRange        [2]uint32      // [start_index, end_index]
@@ -42,7 +42,7 @@ type VerificationResult struct {
 
 // VerificationCache manages verification results for multiple epochs
 type VerificationCache struct {
-	results map[uint64]*VerificationResult // epochID -> VerificationResult
+	results map[uint64]*VerificationResult // epochIndex -> VerificationResult
 }
 
 // NewVerificationCache creates a new verification cache
@@ -59,37 +59,37 @@ func (vc *VerificationCache) Store(result *VerificationResult) {
 	}
 
 	// Store the new result
-	vc.results[result.EpochID] = result
+	vc.results[result.EpochIndex] = result
 
 	// Clean up old entries (keep only current and previous epoch)
-	if result.EpochID >= 2 {
-		epochToRemove := result.EpochID - 2
+	if result.EpochIndex >= 2 {
+		epochToRemove := result.EpochIndex - 2
 		if _, exists := vc.results[epochToRemove]; exists {
 			delete(vc.results, epochToRemove)
 			logging.Debug(verifierLogTag+"Removed old verification result from cache", inferenceTypes.BLS,
-				"removedEpochID", epochToRemove,
-				"currentEpochID", result.EpochID)
+				"removedEpochIndex", epochToRemove,
+				"currentEpochIndex", result.EpochIndex)
 		}
 	}
 
 	logging.Debug(verifierLogTag+"Stored verification result in cache", inferenceTypes.BLS,
-		"epochID", result.EpochID,
+		"epochIndex", result.EpochIndex,
 		"cachedEpochs", len(vc.results))
 }
 
 // Get retrieves a verification result for a specific epoch
-func (vc *VerificationCache) Get(epochID uint64) *VerificationResult {
-	return vc.results[epochID]
+func (vc *VerificationCache) Get(epochIndex uint64) *VerificationResult {
+	return vc.results[epochIndex]
 }
 
 // GetCurrent returns the verification result for the highest epoch ID
 func (vc *VerificationCache) GetCurrent() *VerificationResult {
 	var current *VerificationResult
-	var maxEpochID uint64 = 0
+	var maxEpochIndex uint64 = 0
 
-	for epochID, result := range vc.results {
-		if epochID > maxEpochID {
-			maxEpochID = epochID
+	for epochIndex, result := range vc.results {
+		if epochIndex > maxEpochIndex {
+			maxEpochIndex = epochIndex
 			current = result
 		}
 	}
@@ -100,8 +100,8 @@ func (vc *VerificationCache) GetCurrent() *VerificationResult {
 // GetCachedEpochs returns a list of all cached epoch IDs
 func (vc *VerificationCache) GetCachedEpochs() []uint64 {
 	epochs := make([]uint64, 0, len(vc.results))
-	for epochID := range vc.results {
-		epochs = append(epochs, epochID)
+	for epochIndex := range vc.results {
+		epochs = append(epochs, epochIndex)
 	}
 	return epochs
 }
@@ -130,8 +130,8 @@ func NewBlsManager(cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager 
 }
 
 // GetVerificationResult returns the verification result for a specific epoch
-func (v *BlsManager) GetVerificationResult(epochID uint64) *VerificationResult {
-	return v.cache.Get(epochID)
+func (v *BlsManager) GetVerificationResult(epochIndex uint64) *VerificationResult {
+	return v.cache.Get(epochIndex)
 }
 
 // GetCurrentVerificationResult returns the current verification result (highest epoch)
@@ -155,7 +155,7 @@ func (bm *BlsManager) storeVerificationResult(result *VerificationResult) {
 	bm.cache.Store(result)
 
 	logging.Debug(verifierLogTag+"Stored verification result", inferenceTypes.BLS,
-		"epochID", result.EpochID,
+		"epochIndex", result.EpochIndex,
 		"isParticipant", result.IsParticipant,
 		"slotRange", result.SlotRange,
 		"totalCachedEpochs", len(bm.cache.GetCachedEpochs()))

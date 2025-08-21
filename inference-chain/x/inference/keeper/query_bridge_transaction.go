@@ -5,7 +5,6 @@ import (
 
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -17,14 +16,16 @@ func (k Keeper) BridgeTransaction(goCtx context.Context, req *types.QueryGetBrid
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	ctx := sdk.UnwrapSDKContext(goCtx)
-	bridgeTx, found := k.GetBridgeTransaction(ctx, req.OriginChain, req.BlockNumber, req.ReceiptIndex)
-	if !found {
-		return nil, status.Error(codes.NotFound, "bridge transaction not found")
-	}
+	// Find all bridge transactions that match the receipt location
+	transactions := k.GetBridgeTransactionsByReceipt(goCtx, req.OriginChain, req.BlockNumber, req.ReceiptIndex)
 
+	// Return all matching transactions (empty array if none found)
+	// This allows API consumers to:
+	// - See if there are no transactions (empty array)
+	// - See normal case (single transaction)
+	// - Detect conflicts (multiple transactions with different content)
 	return &types.QueryGetBridgeTransactionResponse{
-		BridgeTransaction: *bridgeTx,
+		BridgeTransactions: transactions,
 	}, nil
 }
 

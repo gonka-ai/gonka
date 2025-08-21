@@ -17,16 +17,16 @@ func (k Keeper) EpochBLSData(ctx context.Context, req *types.QueryEpochBLSDataRe
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	if req.EpochId == 0 {
-		return nil, status.Error(codes.InvalidArgument, "epoch_id cannot be zero")
+	if req.EpochIndex == 0 {
+		return nil, status.Error(codes.InvalidArgument, "epoch_index cannot be zero")
 	}
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	// Retrieve EpochBLSData for the requested epoch
-	epochBLSData, found := k.GetEpochBLSData(sdkCtx, req.EpochId)
+	epochBLSData, found := k.GetEpochBLSData(sdkCtx, req.EpochIndex)
 	if !found {
-		return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", req.EpochId))
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", req.EpochIndex))
 	}
 
 	// Return complete epoch data

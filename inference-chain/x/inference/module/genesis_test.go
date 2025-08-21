@@ -11,11 +11,9 @@ import (
 )
 
 func TestGenesis(t *testing.T) {
-	baseGenesis := types.MockedGenesis()
 	genesisState := types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
-		CosmWasmParams:    baseGenesis.CosmWasmParams,
 		ModelList: []types.Model{
 			{
 				ProposedBy:             "genesis",

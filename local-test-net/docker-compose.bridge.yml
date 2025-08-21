@@ -1,0 +1,37 @@
+services:
+  bridge:
+    container_name: ${KEY_NAME}-bridge
+    image: ghcr.io/product-science/bridge-ethereum:latest
+    build:
+      context: ../bridge
+      dockerfile: Dockerfile
+    
+    volumes:
+      - ./prod-local/${KEY_NAME}/ethereum/geth:/data/geth
+      - ./prod-local/${KEY_NAME}/ethereum/prysm:/data/prysm
+      - ./prod-local/${KEY_NAME}/ethereum/jwt:/data/jwt
+      - ./prod-local/${KEY_NAME}/ethereum/logs:/var/log
+      - ./temp/persistent-db:/persistent-db
+    environment:
+      - GETH_DATA_DIR=/data/geth
+      - PRYSM_DATA_DIR=/data/prysm
+      - JWT_SECRET_PATH=/data/jwt/jwt.hex
+      - BRIDGE_API_BASE=${BRIDGE_API_BASE:-http://${KEY_NAME}-api}
+      - BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-:9200/admin/v1/bridge/block}
+      - BRIDGE_GETADDRESSES=${BRIDGE_GETADDRESSES:-:9000/v1/bridge/addresses}
+      - BEACON_STATE_URL=${BEACON_STATE_URL:-https://beaconstate.ethstaker.cc/}
+      # Internal-only ports (no host exposure)
+      - GETH_HTTP_PORT=${GETH_HTTP_PORT:-8545}
+      - GETH_AUTHRPC_PORT=${GETH_AUTHRPC_PORT:-8551}
+      - GETH_P2P_PORT=${GETH_P2P_PORT:-30303}
+      - GETH_DISCOVERY_PORT=${GETH_DISCOVERY_PORT:-30303}
+      - PRYSM_P2P_TCP_PORT=${PRYSM_P2P_TCP_PORT:-13000}
+      - PRYSM_P2P_UDP_PORT=${PRYSM_P2P_UDP_PORT:-12000}
+      - PERSISTENT_DB_DIR=/persistent-db
+      - DEBUG=true
+      # Copy start.sh content instead of mounting the file
+      - START_SCRIPT_PATH=/usr/local/bin/start.sh
+    networks:
+      - chain-public
+    depends_on:
+      - api

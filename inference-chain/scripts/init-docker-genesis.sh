@@ -27,11 +27,11 @@ fi
 echo "Using the following arguments"
 echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
-KEY_NAME="genesis"
-APP_NAME="inferenced"
-CHAIN_ID="gonka-rehearsal"
-COIN_DENOM="nicoin"
-STATE_DIR="/root/.inference"
+export KEY_NAME="genesis"
+export APP_NAME="inferenced"
+export CHAIN_ID="gonka-rehearsal"
+export COIN_DENOM="nicoin"
+export STATE_DIR="/root/.inference"
 
 update_configs() {
   if [ "${REST_API_ACTIVE:-}" = true ]; then
@@ -128,7 +128,7 @@ NATIVE="000000000$COIN_DENOM"
 MILLION_NATIVE="000000$NATIVE"
 
 echo "Adding the keys to the genesis account"
-$APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis add-genesis-account "$KEY_NAME" "120000002$NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 
 # Get the warm key address for ML operations
@@ -202,6 +202,79 @@ cosmovisor run start &
 COSMOVISOR_PID=$!
 sleep 20 # wait for the first block
 
+# Deploy bridge-related contracts at genesis (liquidity pool, wrapped-token)
+deploy_bridge_contracts() {
+  echo "Deploying bridge-related contracts at Genesis..."
+
+  CONTRACTS_DIR="/root/contracts"
+  VOTE_SCRIPT="$CONTRACTS_DIR/auto_vote.sh"
+
+  # Wait for chain to be ready before deploying
+  echo "Waiting for chain to be ready..."
+  for i in {1..30}; do
+    if $APP_NAME query bank balances $($APP_NAME keys show "$KEY_NAME" -a --keyring-backend $KEYRING_BACKEND) >/dev/null 2>&1; then
+      echo "Chain is ready"
+      break
+    fi
+    echo "Waiting for chain... ($i/30)"
+    sleep 2
+  done
+  
+  # Fund community pool
+  echo "Funding community pool with 120M tokens for liquidity pool..."
+  fund_output=$($APP_NAME tx distribution fund-community-pool "120000000000000000$COIN_DENOM" \
+    --from "$KEY_NAME" \
+    --keyring-backend "$KEYRING_BACKEND" \
+    --chain-id "$CHAIN_ID" \
+    --gas auto \
+    --gas-adjustment 1.3 \
+    --fees "1000$COIN_DENOM" \
+    --yes 2>&1)
+  fund_status=$?
+
+  if [ $fund_status -ne 0 ]; then
+    echo "Community pool funding failed with exit code $fund_status."
+    echo "See transaction output above for details."
+    exit 1
+  fi
+  
+  sleep 5
+
+  # Deploy Liquidity Pool
+  echo "Step LP-1: Submitting LP deployment proposal via script..."
+  if ! sh "$CONTRACTS_DIR/deploy_liquidity_pool.sh"; then
+    echo "LP deploy script failed, skipping LP deployment"
+  else
+    sh "$VOTE_SCRIPT"
+  fi
+
+  sleep 5
+
+  echo "Step LP-2: Funding LP contract..."
+  if ! sh "$CONTRACTS_DIR/fund_liquidity_pool.sh"; then
+    echo "LP deploy script failed, skipping LP deployment"
+  else
+    sh "$VOTE_SCRIPT"
+  fi
+
+  sleep 5
+
+  # Deploy Wrapped Token code id registration
+  echo "Step WT-1: Submitting Wrapped Token registration proposal via script..."
+  if ! sh "$CONTRACTS_DIR/deploy_wrapped_token.sh"; then
+    echo "Wrapped Token deploy script failed, skipping WT deployment"
+  else
+    sh "$VOTE_SCRIPT"
+  fi
+}
+
+# Deploy bridge contracts if enabled
+if [ "${DEPLOY_BRIDGE_CONTRACTS:-}" = "true" ]; then
+  deploy_bridge_contracts
+else
+  echo "Skipping bridge contracts deployment"
+fi
+
 # import private key for tgbot and sign tx to make tgbot public key registered n the network
 if [ "$INIT_TGBOT" = "true" ]; then
     echo "Initializing tgbot account..."
@@ -214,7 +287,7 @@ if [ "$INIT_TGBOT" = "true" ]; then
     echo "$TGBOT_PRIVATE_KEY_PASS" | inferenced keys import tgbot tgbot_private_key.json
 
     inferenced tx bank send $TG_ACC $TG_ACC 100nicoin --from tgbot --yes
-    echo "✅ tgbot account successfully initialized!"
+    echo "tgbot account successfully initialized!"
 else
     echo "INIT_TGBOT is not set to true. Skipping tgbot initialization."
 fi

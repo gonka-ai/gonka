@@ -14,14 +14,14 @@ import (
 // getBLSEpochByID handles requests for BLS epoch data
 func (s *Server) getBLSEpochByID(c echo.Context) error {
 	idStr := c.Param("id")
-	epochID, err := strconv.ParseUint(idStr, 10, 64)
+	epochIndex, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid epoch ID")
 	}
 
 	blsQueryClient := s.recorder.NewBLSQueryClient()
 	res, err := blsQueryClient.EpochBLSData(context.Background(), &blsTypes.QueryEpochBLSDataRequest{
-		EpochId: epochID,
+		EpochIndex: epochIndex,
 	})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to query BLS epoch data: "+err.Error())

@@ -249,7 +249,7 @@ class BLSDKGSuccessTest : TestermintTest() {
 
         // Request a threshold signature via the API
         val requestDto = RequestThresholdSignatureDto(
-            currentEpochId = epochId.toULong(),  // Convert Long to ULong
+            currentEpochIndex = epochId.toULong(),  // Convert Long to ULong
             chainId = "inference".toByteArray(),
             requestId = requestIdBytes,
             data = data.map { it.toByteArray() }

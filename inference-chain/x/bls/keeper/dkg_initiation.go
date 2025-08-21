@@ -10,7 +10,7 @@ import (
 )
 
 // InitiateKeyGenerationForEpoch initiates DKG for a given epoch with finalized participants
-func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
+func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochIndex uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
 	// Get module parameters
 	params := k.GetParams(ctx)
 	iTotalSlots := params.ITotalSlots
@@ -47,7 +47,7 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 
 	// Create EpochBLSData
 	epochBLSData := types.EpochBLSData{
-		EpochId:                     epochID,
+		EpochIndex:                  epochIndex,
 		ITotalSlots:                 iTotalSlots,
 		TSlotsDegree:                tSlotsDegree,
 		Participants:                blsParticipants,
@@ -63,11 +63,11 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Set this as the active epoch since only one DKG can be active at a time
-	k.SetActiveEpochID(ctx, epochID)
+	k.SetActiveEpochIndex(ctx, epochIndex)
 
 	// Emit EventKeyGenerationInitiated
 	event := types.EventKeyGenerationInitiated{
-		EpochId:      epochID,
+		EpochIndex:   epochIndex,
 		ITotalSlots:  iTotalSlots,
 		TSlotsDegree: tSlotsDegree,
 		Participants: blsParticipants,
@@ -77,7 +77,7 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 
 	k.Logger().Info(
 		"DKG initiated for epoch",
-		"epoch_id", epochID,
+		"epoch_index", epochIndex,
 		"participants", len(blsParticipants),
 		"total_slots", iTotalSlots,
 		"t_degree", tSlotsDegree,
@@ -159,15 +159,15 @@ func (k Keeper) AssignSlots(participants []types.ParticipantWithWeightAndKey, to
 // SetEpochBLSData stores EpochBLSData in the state
 func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := types.EpochBLSDataKey(epochBLSData.EpochId)
+	key := types.EpochBLSDataKey(epochBLSData.EpochIndex)
 	value := k.cdc.MustMarshal(&epochBLSData)
 	store.Set(key, value)
 }
 
 // GetEpochBLSData retrieves EpochBLSData from the state
-func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLSData, bool) {
+func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochIndex uint64) (types.EpochBLSData, bool) {
 	store := k.storeService.OpenKVStore(ctx)
-	key := types.EpochBLSDataKey(epochID)
+	key := types.EpochBLSDataKey(epochIndex)
 
 	value, err := store.Get(key)
 	if err != nil || value == nil {

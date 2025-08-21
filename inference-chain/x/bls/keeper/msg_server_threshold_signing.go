@@ -50,10 +50,10 @@ func (ms msgServer) RequestThresholdSignature(ctx context.Context, msg *types.Ms
 
 	// Create SigningData struct from the message with custom domain prefix
 	signingData := types.SigningData{
-		CurrentEpochId: msg.CurrentEpochId,
-		ChainId:        msg.ChainId,
-		RequestId:      msg.RequestId,
-		Data:           customData,
+		CurrentEpochIndex: msg.CurrentEpochIndex,
+		ChainId:           msg.ChainId,
+		RequestId:         msg.RequestId,
+		Data:              customData,
 	}
 
 	// Call the core RequestThresholdSignature function which handles:
