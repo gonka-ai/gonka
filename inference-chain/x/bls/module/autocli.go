@@ -19,11 +19,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod: "EpochBLSData",
-					Use:       "epoch-data [epoch_id]",
+					Use:       "epoch-data [epoch_index]",
 					Short:     "Query BLS DKG data for a specific epoch",
 					Long:      "Query complete BLS distributed key generation data for a specific epoch including participants, phase, dealer parts, verification submissions, and group public key",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
-						{ProtoField: "epoch_id"},
+						{ProtoField: "epoch_index"},
 					},
 				},
 				{
@@ -48,11 +48,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod: "RequestThresholdSignature",
-					Use:       "request-threshold-signature [current_epoch_id] [chain_id] [request_id] [data...]",
+					Use:       "request-threshold-signature [current_epoch_index] [chain_id] [request_id] [data...]",
 					Short:     "Request a threshold signature from the BLS module",
 					Long:      "Request a threshold signature from the BLS module for the given data. The request_id must be a unique identifier for this request.",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
-						{ProtoField: "current_epoch_id"},
+						{ProtoField: "current_epoch_index"},
 						{ProtoField: "chain_id"},
 						{ProtoField: "request_id"},
 						{ProtoField: "data", Varargs: true},
