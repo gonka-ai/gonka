@@ -20,10 +20,13 @@ data class StakeValidator(
     val commission: Commission,
     val minSelfDelegation: String
 ) {
-    // Helper function to get status as integer, handling both Int and String values
+    // Helper function to get status as integer, handling Int, Double, and String values
     fun getStatusAsInt(): Int {
         return when (status) {
             is Int -> status
+            is Double -> status.toInt()
+            is Float -> status.toInt()
+            is Number -> status.toInt()
             is String -> {
                 when (status) {
                     "BOND_STATUS_UNSPECIFIED" -> 0

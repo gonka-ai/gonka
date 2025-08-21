@@ -15,10 +15,14 @@ data class EpochResponse(
     @SerializedName("epoch_params")
     val epochParams: EpochParams
 ) {
-    // Helper function to get phase as enum, handling both String and enum values
+    // Helper function to get phase as enum, handling Int, Double, String, and enum values
     fun getPhaseAsEnum(): EpochPhase {
         return when (phase) {
             is EpochPhase -> phase
+            is Int -> EpochPhase.values().find { it.ordinal == phase } ?: EpochPhase.Inference
+            is Double -> EpochPhase.values().find { it.ordinal == phase.toInt() } ?: EpochPhase.Inference
+            is Float -> EpochPhase.values().find { it.ordinal == phase.toInt() } ?: EpochPhase.Inference
+            is Number -> EpochPhase.values().find { it.ordinal == phase.toInt() } ?: EpochPhase.Inference
             is String -> {
                 when (phase) {
                     "POC_GENERATE" -> EpochPhase.PoCGenerate

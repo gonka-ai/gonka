@@ -37,10 +37,13 @@ data class EpochBLSData(
     @SerializedName("validation_signature")
     val validationSignature: String?
 ) {
-    // Helper function to get DKG phase as enum, handling both Int and String values
+    // Helper function to get DKG phase as enum, handling Int, Double, and String values
     fun getDkgPhaseAsEnum(): DKGPhase {
         return when (dkgPhase) {
             is Int -> DKGPhase.values().find { it.value == dkgPhase } ?: DKGPhase.UNDEFINED
+            is Double -> DKGPhase.values().find { it.value == dkgPhase.toInt() } ?: DKGPhase.UNDEFINED
+            is Float -> DKGPhase.values().find { it.value == dkgPhase.toInt() } ?: DKGPhase.UNDEFINED
+            is Number -> DKGPhase.values().find { it.value == dkgPhase.toInt() } ?: DKGPhase.UNDEFINED
             is String -> {
                 when (dkgPhase) {
                     "DKG_PHASE_UNDEFINED" -> DKGPhase.UNDEFINED
@@ -51,7 +54,7 @@ data class EpochBLSData(
                     "DKG_PHASE_SIGNED" -> DKGPhase.SIGNED
                     else -> {
                         // Try to parse as number if it's a numeric string
-                        val intValue = dkgPhase.toIntOrNull()
+                        val intValue = dkgPhase.toString().toIntOrNull()
                         if (intValue != null) {
                             DKGPhase.values().find { it.value == intValue } ?: DKGPhase.UNDEFINED
                         } else {
@@ -119,10 +122,13 @@ data class ThresholdSigningRequest(
     @SerializedName("deadline_block_height")
     val deadlineBlockHeight: Long
 ) {
-    // Helper function to get status as enum, handling both Int and String values
+    // Helper function to get status as enum, handling Int, Double, and String values
     fun getStatusAsEnum(): ThresholdSigningStatus {
         return when (status) {
             is Int -> ThresholdSigningStatus.values().find { it.value == status } ?: ThresholdSigningStatus.UNSPECIFIED
+            is Double -> ThresholdSigningStatus.values().find { it.value == status.toInt() } ?: ThresholdSigningStatus.UNSPECIFIED
+            is Float -> ThresholdSigningStatus.values().find { it.value == status.toInt() } ?: ThresholdSigningStatus.UNSPECIFIED
+            is Number -> ThresholdSigningStatus.values().find { it.value == status.toInt() } ?: ThresholdSigningStatus.UNSPECIFIED
             is String -> {
                 when (status) {
                     "THRESHOLD_SIGNING_STATUS_UNSPECIFIED" -> ThresholdSigningStatus.UNSPECIFIED
