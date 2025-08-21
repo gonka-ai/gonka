@@ -35,25 +35,11 @@ data class ApplicationAPI(
 
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
-        var lastException: Exception? = null
-        for (attempt in 1..3) {
-            try {
-                val resp = Fuel.get("$url/v1/participants")
-                    .timeout(1000 * 10)
-                    .timeoutRead(1000 * 10)
-                    .responseObject<ParticipantsResponse>(gsonDeserializer(cosmosJson))
-                logResponse(resp)
-                return@wrapLog resp.third.get().participants
-            } catch (e: Exception) {
-                lastException = e
-                Logger.warn(e, "Exception during getParticipants, retrying")
-                if (attempt < 3) {
-                    Thread.sleep(5000)
-                    continue
-                }
-            }
-        }
-        throw lastException ?: Exception("Failed to get participants after 3 attempts")
+        val resp = Fuel.get("$url/v1/participants")
+            .timeoutRead(1000 * 60)
+            .responseObject<ParticipantsResponse>(gsonDeserializer(cosmosJson))
+        logResponse(resp)
+        resp.third.get().participants
     }
 
     fun addInferenceParticipant(inferenceParticipant: InferenceParticipant) = wrapLog("AddInferenceParticipant", true) {

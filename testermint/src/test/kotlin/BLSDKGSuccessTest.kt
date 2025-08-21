@@ -45,38 +45,38 @@ class BLSDKGSuccessTest : TestermintTest() {
         triggerDKGInitiation(genesis)
         
         // Capture the epoch ID immediately after DKG initiation to avoid race conditions
-        val epochIndex = getCurrentEpochIndex(genesis)
-        logSection("Captured epoch ID for test: $epochIndex")
+        val epochId = getCurrentEpochId(genesis)
+        logSection("Captured epoch ID for test: $epochId")
         
         // Monitor DKG phases and validate progression (using captured epoch ID)
         logSection("Monitoring DKG phase progression")
-        monitorDKGPhaseProgression(genesis, epochIndex)
+        monitorDKGPhaseProgression(genesis, epochId)
         
         // Validate cross-node consistency (using captured epoch ID)
         logSection("Validating cross-node consistency")
-        validateCrossNodeConsistency(allPairs, epochIndex)
+        validateCrossNodeConsistency(allPairs, epochId)
         
         // Validate cryptographic correctness (using captured epoch ID)
         logSection("Validating cryptographic correctness")
-        validateCryptographicCorrectness(allPairs, epochIndex)
+        validateCryptographicCorrectness(allPairs, epochId)
         
         // Validate controller readiness for threshold signing (using captured epoch ID)
         logSection("Validating threshold signing readiness")
-        validateThresholdSigningReadiness(allPairs, epochIndex)
+        validateThresholdSigningReadiness(allPairs, epochId)
 
         // Validate group key signature from previous epoch
-        if (epochIndex > 1) {
+        if (epochId > 1) {
             logSection("BLS_TEST: Validating group key signature from previous epoch")
-            waitForDKGPhase(genesis, DKGPhase.SIGNED, epochIndex)
-            logSection("BLS_TEST: Group key signature validated for epoch $epochIndex")
-            validateGroupKeySignature(allPairs, epochIndex)
+            waitForDKGPhase(genesis, DKGPhase.SIGNED, epochId)
+            logSection("BLS_TEST: Group key signature validated for epoch $epochId")
+            validateGroupKeySignature(allPairs, epochId)
         } else {
             logSection("BLS_TEST: No previous epoch, skipping group key signature validation")
         }
 
         // Test threshold signing
         logSection("BLS_TEST: Testing threshold signing")
-        testThresholdSigning(allPairs, epochIndex)        
+        testThresholdSigning(allPairs, epochId)        
         
         logSection("BLS DKG Success Flow Test completed successfully!")
     }
@@ -95,13 +95,13 @@ class BLSDKGSuccessTest : TestermintTest() {
         
         // Capture epoch ID once to avoid race conditions
         logSection("Waiting for DKG Phase")
-        val epochIndex = getCurrentEpochIndex(genesis)
-        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochIndex)
+        val epochId = getCurrentEpochId(genesis)
+        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
 
         logSection("Verifying BLS State from all nodes")
         // Query BLS state from all nodes
         val blsDataFromNodes = allPairs.map { pair ->
-            pair.name to queryEpochBLSData(pair, epochIndex)
+            pair.name to queryEpochBLSData(pair, epochId)
         }
         
         // Validate all nodes have identical BLS state
@@ -130,10 +130,10 @@ class BLSDKGSuccessTest : TestermintTest() {
         triggerDKGInitiation(genesis)
         
         // Capture epoch ID once to avoid race conditions
-        val epochIndex = getCurrentEpochIndex(genesis)
-        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochIndex)
+        val epochId = getCurrentEpochId(genesis)
+        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
         
-        val blsData = queryEpochBLSData(genesis, epochIndex)
+        val blsData = queryEpochBLSData(genesis, epochId)
         assertThat(blsData).isNotNull()
         assertThat(blsData?.groupPublicKey).isNotNull()
         
@@ -159,21 +159,21 @@ class BLSDKGSuccessTest : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         
         logSection("Waiting for DKG to start (DEALING phase)")
-        waitForDKGPhase(genesis, DKGPhase.DEALING, getCurrentEpochIndex(genesis))
+        waitForDKGPhase(genesis, DKGPhase.DEALING, getCurrentEpochId(genesis))
         
         logSection("DKG initiated successfully")
     }
     
-    private fun monitorDKGPhaseProgression(genesis: com.productscience.LocalInferencePair, epochIndex: Long) {
+    private fun monitorDKGPhaseProgression(genesis: com.productscience.LocalInferencePair, epochId: Long) {
         logSection("Monitoring DKG phase progression until completion")
-        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochIndex)
+        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
         logSection("DKG phase progression completed successfully!")
     }
     
-    private fun validateCrossNodeConsistency(allPairs: List<com.productscience.LocalInferencePair>, epochIndex: Long) {
+    private fun validateCrossNodeConsistency(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
         // Query BLS data from all nodes
         val blsDataList = allPairs.map { pair ->
-            pair.name to queryEpochBLSData(pair, epochIndex)
+            pair.name to queryEpochBLSData(pair, epochId)
         }
         
         val referenceData = blsDataList.first().second
@@ -182,15 +182,15 @@ class BLSDKGSuccessTest : TestermintTest() {
         // Validate consistency across all nodes
         blsDataList.forEach { (nodeName, blsData) ->
             assertThat(blsData).isNotNull()
-            assertThat(blsData?.epochIndex).isEqualTo(referenceData?.epochIndex)
+            assertThat(blsData?.epochId).isEqualTo(referenceData?.epochId)
             assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.COMPLETED)
             assertThat(blsData?.groupPublicKey).isEqualTo(referenceData?.groupPublicKey)
             Logger.info("Cross-node consistency validated for node: $nodeName")
         }
     }
     
-    private fun validateCryptographicCorrectness(allPairs: List<com.productscience.LocalInferencePair>, epochIndex: Long) {
-        val blsData = queryEpochBLSData(allPairs.first(), epochIndex)
+    private fun validateCryptographicCorrectness(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
+        val blsData = queryEpochBLSData(allPairs.first(), epochId)
         
         assertThat(blsData).isNotNull()
         assertThat(blsData?.groupPublicKey).isNotNull()
@@ -211,13 +211,13 @@ class BLSDKGSuccessTest : TestermintTest() {
         Logger.info("Cryptographic correctness validated")
     }
     
-    private fun validateThresholdSigningReadiness(allPairs: List<com.productscience.LocalInferencePair>, epochIndex: Long) {
+    private fun validateThresholdSigningReadiness(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
         // Validate that controllers have the necessary data for threshold signing
-        Logger.info("Validating threshold signing readiness for epoch $epochIndex with ${allPairs.size} controllers")
+        Logger.info("Validating threshold signing readiness for epoch $epochId with ${allPairs.size} controllers")
         
         allPairs.forEach { pair ->
             // Check that each controller can query the group public key
-            val blsData = queryEpochBLSData(pair, epochIndex)
+            val blsData = queryEpochBLSData(pair, epochId)
             Logger.info("Node ${pair.name}: blsData = ${if (blsData != null) "found" else "null"}")
             
             if (blsData != null) {
@@ -233,23 +233,23 @@ class BLSDKGSuccessTest : TestermintTest() {
         Logger.info("All controllers ready for threshold signing")
     }
 
-    private fun validateGroupKeySignature(allPairs: List<com.productscience.LocalInferencePair>, epochIndex: Long) {
-        val blsData = queryEpochBLSData(allPairs.first(), epochIndex)
+    private fun validateGroupKeySignature(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
+        val blsData = queryEpochBLSData(allPairs.first(), epochId)
         assertThat(blsData?.validationSignature).isNotNull()
         assertThat(blsData?.validationSignature).hasSize(48) // Compressed G1 format
-        Logger.info("Group key signature validated for epoch $epochIndex")
+        Logger.info("Group key signature validated for epoch $epochId")
     }
 
-    private fun testThresholdSigning(allPairs: List<com.productscience.LocalInferencePair>, epochIndex: Long) {
+    private fun testThresholdSigning(allPairs: List<com.productscience.LocalInferencePair>, epochId: Long) {
         val genesis = allPairs.first()
-        val requestId = "test_request_${epochIndex}"
+        val requestId = "test_request_${epochId}"
         val requestIdBytes = requestId.toByteArray()
         val requestIdHex = requestIdBytes.toHexString()  // Convert to hex for API query
         val data = listOf("test_data")
 
         // Request a threshold signature via the API
         val requestDto = RequestThresholdSignatureDto(
-            currentEpochIndex = epochIndex.toULong(),  // Convert Long to ULong
+            currentEpochIndex = epochId.toULong(),  // Convert Long to ULong
             chainId = "inference".toByteArray(),
             requestId = requestIdBytes,
             data = data.map { it.toByteArray() }
@@ -281,25 +281,25 @@ class BLSDKGSuccessTest : TestermintTest() {
     // DKG Phase Management
     // ========================================
     
-    private fun waitForDKGPhase(pair: com.productscience.LocalInferencePair, targetPhase: DKGPhase, epochIndex: Long, maxAttempts: Int = 20) {
+    private fun waitForDKGPhase(pair: com.productscience.LocalInferencePair, targetPhase: DKGPhase, epochId: Long, maxAttempts: Int = 20) {
         var currentPhase: DKGPhase? = null
         var attempts = 0
         
-        Logger.info("Waiting for DKG phase $targetPhase (or higher) for epoch $epochIndex")
+        Logger.info("Waiting for DKG phase $targetPhase (or higher) for epoch $epochId")
         
         while (attempts < maxAttempts) {
-            val epochBLSData = queryEpochBLSData(pair, epochIndex)
+            val epochBLSData = queryEpochBLSData(pair, epochId)
             currentPhase = epochBLSData?.dkgPhase
             
             // Check if DKG failed - this is always an error regardless of target phase
             if (currentPhase == DKGPhase.FAILED) {
-                Logger.error("❌ DKG failed for epoch $epochIndex while waiting for $targetPhase")
-                error("DKG failed for epoch $epochIndex while waiting for $targetPhase")
+                Logger.error("❌ DKG failed for epoch $epochId while waiting for $targetPhase")
+                error("DKG failed for epoch $epochId while waiting for $targetPhase")
             }
             
             // Check if we've reached the target phase or higher
             if (currentPhase != null && currentPhase.value >= targetPhase.value) {
-                Logger.info("✅ DKG Phase $currentPhase reached for epoch $epochIndex (target was $targetPhase)")
+                Logger.info("✅ DKG Phase $currentPhase reached for epoch $epochId (target was $targetPhase)")
                 return
             }
             
@@ -315,8 +315,8 @@ class BLSDKGSuccessTest : TestermintTest() {
         error("Timeout waiting for DKG phase $targetPhase (current: $currentPhase, attempts: $attempts)")
     }
     
-    private fun validateDKGPhase(pair: com.productscience.LocalInferencePair, epochIndex: Long, expectedPhase: DKGPhase) {
-        val blsData = queryEpochBLSData(pair, epochIndex)
+    private fun validateDKGPhase(pair: com.productscience.LocalInferencePair, epochId: Long, expectedPhase: DKGPhase) {
+        val blsData = queryEpochBLSData(pair, epochId)
         assertThat(blsData).isNotNull()
         assertThat(blsData?.dkgPhase).isEqualTo(expectedPhase)
         Logger.info("DKG phase validation passed: $expectedPhase")
@@ -326,53 +326,53 @@ class BLSDKGSuccessTest : TestermintTest() {
     // Chain Query Functions
     // ========================================
     
-    private fun getCurrentEpochIndex(pair: com.productscience.LocalInferencePair): Long {
+    private fun getCurrentEpochId(pair: com.productscience.LocalInferencePair): Long {
         // Calculate current epoch based on block height and epoch length
         val currentHeight = pair.getCurrentBlockHeight()
         val epochLength = pair.getEpochLength()
         // TODO: It's a temparary fix, remove it. Generate odd-numbered epochs (1, 3, 5, 7...) instead of sequential (1, 2, 3, 4...)
-        val calculatedEpochIndex = (currentHeight / epochLength)
-        Logger.info("Calculated epoch ID: $calculatedepochIndex (block: $currentHeight, epoch length: $epochLength)")
+        val calculatedEpochId = (currentHeight / epochLength)
+        Logger.info("Calculated epoch ID: $calculatedEpochId (block: $currentHeight, epoch length: $epochLength)")
         
         // Try to find which epoch actually has DKG data by checking recent epochs
         // DKG might be running for the current epoch or the next epoch
-        val epochsToTry = listOf(calculatedEpochIndex, calculatedEpochIndex + 1, calculatedEpochIndex - 2).filter { it >= 1 }
+        val epochsToTry = listOf(calculatedEpochId, calculatedEpochId + 1, calculatedEpochId - 2).filter { it >= 1 }
         
-        for (epochIndex in epochsToTry) {
+        for (epochId in epochsToTry) {
             try {
-                val blsData = pair.node.queryEpochBLSData(epochIndex)
+                val blsData = pair.node.queryEpochBLSData(epochId)
                 if (blsData != null) {
-                    Logger.info("Found DKG data for epoch $epochIndex")
-                    return epochIndex
+                    Logger.info("Found DKG data for epoch $epochId")
+                    return epochId
                 }
             } catch (e: Exception) {
-                Logger.debug("No DKG data found for epoch $epochIndex: ${e.message}")
+                Logger.debug("No DKG data found for epoch $epochId: ${e.message}")
             }
         }
         
         // If no existing DKG data found, return the calculated epoch (DKG might start soon)
-        Logger.info("No existing DKG data found, using calculated epoch ID: $calculatedEpochIndex")
-        return calculatedEpochIndex
+        Logger.info("No existing DKG data found, using calculated epoch ID: $calculatedEpochId")
+        return calculatedEpochId
     }
     
-    private fun queryEpochBLSData(pair: com.productscience.LocalInferencePair, epochIndex: Long): EpochBLSData? {
+    private fun queryEpochBLSData(pair: com.productscience.LocalInferencePair, epochId: Long): EpochBLSData? {
         return try {
             // Query BLS module for epoch data using the extension function
-            pair.node.queryEpochBLSData(epochIndex)
+            pair.node.queryEpochBLSData(epochId)
         } catch (e: Exception) {
             // Handle specific error cases more gracefully
             val errorMessage = e.message ?: "Unknown error"
             when {
                 errorMessage.contains("NotFound") || errorMessage.contains("key not found") -> {
-                    Logger.debug("No DKG data found for epoch $epochIndex")
+                    Logger.debug("No DKG data found for epoch $epochId")
                     null
                 }
                 errorMessage.contains("Expected BEGIN_OBJECT but was STRING") -> {
-                    Logger.debug("CLI returned error string instead of JSON for epoch $epochIndex")
+                    Logger.debug("CLI returned error string instead of JSON for epoch $epochId")
                     null
                 }
                 else -> {
-                    Logger.warn("Failed to query epoch BLS data for epoch $epochIndex: $errorMessage")
+                    Logger.warn("Failed to query epoch BLS data for epoch $epochId: $errorMessage")
                     null
                 }
             }
@@ -384,7 +384,7 @@ class BLSDKGSuccessTest : TestermintTest() {
     // ========================================
     
     private fun validateDealerCommitments(blsData: EpochBLSData) {
-        logHighlight("Validating dealer commitments for epoch ${blsData.epochIndex}")
+        logHighlight("Validating dealer commitments for epoch ${blsData.epochId}")
         
         // Validate that we have dealer parts
         assertThat(blsData.dealerParts).isNotEmpty()
@@ -455,7 +455,7 @@ class BLSDKGSuccessTest : TestermintTest() {
     }
     
     private fun validateParticipantSlotAssignments(blsData: EpochBLSData) {
-        Logger.info("Validating participant slot assignments for epoch ${blsData.epochIndex}")
+        Logger.info("Validating participant slot assignments for epoch ${blsData.epochId}")
         
         // Validate that we have participants
         assertThat(blsData.participants).isNotEmpty()
@@ -532,7 +532,7 @@ enum class ThresholdSigningStatus(val value: Int) {
 }
 
 data class EpochBLSData(
-    val epochIndex: Long,
+    val epochId: Long,
     val iTotalSlots: Int,
     val tSlotsDegree: Int,
     val participants: List<BLSParticipantInfo>,
@@ -576,11 +576,11 @@ data class VerificationVectorSubmission(
  * Extension function to query BLS epoch data from the chain
  * This implements the actual gRPC query to the BLS module
  */
-fun com.productscience.ApplicationCLI.queryEpochBLSData(epochIndex: Long): EpochBLSData? {
+fun com.productscience.ApplicationCLI.queryEpochBLSData(epochId: Long): EpochBLSData? {
     return try {
         // Query the BLS module for epoch data using the established pattern
         val result: Map<String, Any> = this.execAndParse(
-            listOf("query", "bls", "epoch-data", epochIndex.toString())
+            listOf("query", "bls", "epoch-data", epochId.toString())
         )
         
         // Parse the result into our data structure
@@ -590,15 +590,15 @@ fun com.productscience.ApplicationCLI.queryEpochBLSData(epochIndex: Long): Epoch
         val errorMessage = e.message ?: "Unknown error"
         when {
             errorMessage.contains("NotFound") || errorMessage.contains("key not found") -> {
-                Logger.debug("No DKG data found for epoch $epochIndex")
+                Logger.debug("No DKG data found for epoch $epochId")
                 null
             }
             errorMessage.contains("Expected BEGIN_OBJECT but was STRING") -> {
-                Logger.debug("CLI returned error string instead of JSON for epoch $epochIndex")
+                Logger.debug("CLI returned error string instead of JSON for epoch $epochId")
                 null
             }
             else -> {
-                Logger.warn("Failed to query epoch BLS data for epoch $epochIndex: $errorMessage")
+                Logger.warn("Failed to query epoch BLS data for epoch $epochId: $errorMessage")
                 null
             }
         }
@@ -616,7 +616,7 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? 
         val epochData = (result["epoch_data"] as? Map<String, Any>) ?: return null
         
         // Parse basic fields
-        val epochIndex = when (val value = epochData["epoch_index"]) {
+        val epochId = when (val value = epochData["epoch_id"]) {
             is String -> value.toLongOrNull() ?: 0L
             is Number -> value.toLong()
             else -> 0L
@@ -724,7 +724,7 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? 
         val validationSignature = parseByteArrayFromChain(epochData["validation_signature"])
         
         EpochBLSData(
-            epochIndex = epochIndex,
+            epochId = epochId,
             iTotalSlots = iTotalSlots,
             tSlotsDegree = tSlotsDegree,
             participants = participants,
