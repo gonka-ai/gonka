@@ -67,11 +67,11 @@ while IFS=$'\t' read -r address amount_str || [ -n "$address" ]; do
         continue
     fi
     
-    echo "Adding account: $address with ${amount}nicoin"
+    echo "Adding account: $address with ${amount}ngonka"
     
     # Add the vesting account using inferenced CLI
-    if $INFERENCED_PATH genesis add-genesis-account "$address" "${amount}nicoin" \
-        --vesting-amount "${amount}nicoin" \
+    if $INFERENCED_PATH genesis add-genesis-account "$address" "${amount}ngonka" \
+        --vesting-amount "${amount}ngonka" \
         --vesting-start-time "$START_TIME" \
         --vesting-end-time "$END_TIME" \
         --home "$GENESIS_HOME" 2>/dev/null; then
@@ -88,7 +88,7 @@ done < "$FOUNDERS_LEDGER"
 echo ""
 echo "=== SUMMARY ==="
 echo "Successfully added: $account_count accounts"
-echo "Total vesting amount: $(printf "%'d" $total_amount) nicoin"
+echo "Total vesting amount: $(printf "%'d" $total_amount) ngonka"
 echo "Genesis file updated at: $GENESIS_HOME/genesis-draft.json"
 echo ""
 echo "Vesting schedule:"
