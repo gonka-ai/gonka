@@ -383,7 +383,7 @@ fun createDockerGroup(
 fun getRepoRoot(): String {
     val currentDir = Path.of("").toAbsolutePath()
     return generateSequence(currentDir) { it.parent }
-        .firstOrNull { it.fileName.toString() == "gonka" }
+        .firstOrNull { it.fileName.toString() == "inference-ignite" }
         ?.toString()
         ?: throw IllegalStateException("Repository root 'gonka' not found")
 }
