@@ -342,7 +342,7 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	epochAttr := false
 	dealerAttr := false
 	for _, attr := range dealerSubmittedEvent.Attributes {
-		if attr.Key == "epoch_id" {
+		if attr.Key == "epoch_index" {
 			assert.Equal(t, "\"1\"", attr.Value)
 			epochAttr = true
 		}
@@ -351,6 +351,6 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 			dealerAttr = true
 		}
 	}
-	assert.True(t, epochAttr, "Event should contain epoch_id")
+	assert.True(t, epochAttr, "Event should contain epoch_index")
 	assert.True(t, dealerAttr, "Event should contain dealer_address")
 }

@@ -20,20 +20,20 @@ const verifierLogTag = "[bls-verifier] "
 // ProcessVerifyingPhaseStarted handles the EventVerifyingPhaseStarted event
 func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCResponse) error {
 	// Extract event data from chain event (typed event from EmitTypedEvent)
-	epochIndexes, ok := event.Result.Events["inference.bls.EventVerifyingPhaseStarted.epoch_id"]
+	epochIndexes, ok := event.Result.Events["inference.bls.EventVerifyingPhaseStarted.epoch_index"]
 	if !ok || len(epochIndexes) == 0 {
-		return fmt.Errorf("epoch_id not found in verifying phase started event")
+		return fmt.Errorf("epoch_index not found in verifying phase started event")
 	}
 
-	// Unquote the epoch_id value (handles JSON-encoded strings like "\"1\"")
+	// Unquote the epoch_index value (handles JSON-encoded strings like "\"1\"")
 	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
-		return fmt.Errorf("failed to unquote epoch_id: %w", err)
+		return fmt.Errorf("failed to unquote epoch_index: %w", err)
 	}
 
 	epochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
-		return fmt.Errorf("failed to parse epoch_id: %w", err)
+		return fmt.Errorf("failed to parse epoch_index: %w", err)
 	}
 
 	existingResult := bm.GetVerificationResult(epochIndex)
@@ -482,20 +482,20 @@ func countTrueValues(values []bool) int {
 // ProcessGroupPublicKeyGenerated handles the DKG completion event
 func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.JSONRPCResponse) error {
 	// Extract EpochIndex from event
-	epochIndexes, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_id"]
+	epochIndexes, ok := event.Result.Events["inference.bls.EventGroupPublicKeyGenerated.epoch_index"]
 	if !ok || len(epochIndexes) == 0 {
-		return fmt.Errorf("epoch_id not found in group public key generated event")
+		return fmt.Errorf("epoch_index not found in group public key generated event")
 	}
 
-	// Unquote the epoch_id value (handles JSON-encoded strings like "\"1\"")
+	// Unquote the epoch_index value (handles JSON-encoded strings like "\"1\"")
 	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
-		return fmt.Errorf("failed to unquote epoch_id: %w", err)
+		return fmt.Errorf("failed to unquote epoch_index: %w", err)
 	}
 
 	epochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
-		return fmt.Errorf("failed to parse epoch_id: %w", err)
+		return fmt.Errorf("failed to parse epoch_index: %w", err)
 	}
 
 	logging.Debug(verifierLogTag+"Processing group public key generated", inferenceTypes.BLS, "epochIndex", epochIndex)
@@ -625,9 +625,9 @@ func (bm *BlsManager) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSDat
 	}
 
 	// Manually convert string numbers to proper types for protobuf fields
-	if epochIndexStr, ok := epochDataMap["epoch_id"].(string); ok {
+	if epochIndexStr, ok := epochDataMap["epoch_index"].(string); ok {
 		if epochIndex, err := strconv.ParseUint(epochIndexStr, 10, 64); err == nil {
-			epochDataMap["epoch_id"] = epochIndex
+			epochDataMap["epoch_index"] = epochIndex
 		}
 	}
 

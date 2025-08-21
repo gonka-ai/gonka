@@ -43,15 +43,15 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 		return fmt.Errorf("epoch_index not found in key generation initiated event")
 	}
 
-	// Unquote the epoch_id value (handles JSON-encoded strings like "\"1\"")
+	// Unquote the epoch_index value (handles JSON-encoded strings like "\"1\"")
 	unquotedEpochIndex, err := utils.UnquoteEventValue(epochIndexes[0])
 	if err != nil {
-		return fmt.Errorf("failed to unquote epoch_id: %w", err)
+		return fmt.Errorf("failed to unquote epoch_index: %w", err)
 	}
 
 	epochIndex, err := strconv.ParseUint(unquotedEpochIndex, 10, 64)
 	if err != nil {
-		return fmt.Errorf("failed to parse epoch_id: %w", err)
+		return fmt.Errorf("failed to parse epoch_index: %w", err)
 	}
 
 	totalSlotsStrs, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.i_total_slots"]
