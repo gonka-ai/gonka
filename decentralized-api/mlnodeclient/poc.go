@@ -15,7 +15,7 @@ const (
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
 
-	DefaultRTarget        = 1.3971164020989417
+	DefaultRTarget        = 1.4013564660458173
 	DefaultBatchSize      = 100
 	DefaultFraudThreshold = 1e-7
 )
