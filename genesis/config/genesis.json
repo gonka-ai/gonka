@@ -1823,7 +1823,7 @@
     "params": null,
     "restrictions": {
       "params": {
-        "restriction_end_block": "0",
+        "restriction_end_block": "1555000",
         "emergency_transfer_exemptions": [],
         "exemption_usage_tracking": []
       }
