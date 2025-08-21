@@ -215,21 +215,43 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test consumer only participant`() {
+        val gracefulSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::inferencePruningEpochThreshold] = 4L
+                        this[EpochParams::inferencePruningEpochThreshold] = 10000L
+                    }
+                    this[InferenceParams::dynamicPricingParams] = spec<DynamicPricingParams> {
+                        this[DynamicPricingParams::gracePeriodEndEpoch] = 10L
+                    }
+                }
+            }
+        }
+        val gracefulConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(gracefulSpec) ?: gracefulSpec,
+        )
+
+        val (localCluster, localGenesis) = initCluster(config = gracefulConfig, reboot = true)
+        localCluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
+        }
+
         logSection("Clearing claims")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        cluster.withConsumer("consumer1") { consumer ->
-            val balanceAtStart = genesis.node.getBalance(consumer.address, "ngonka").balance.amount
+        localGenesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        localCluster.withConsumer("consumer1") { consumer ->
+            val balanceAtStart = localGenesis.node.getBalance(consumer.address, "ngonka").balance.amount
             logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getColdAddress())
+            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = localGenesis.node.getColdAddress())
             assertThat(result).isNotNull
-            val inference = genesis.waitForInference(result.id, finished = true)
+            val inference = localGenesis.waitForInference(result.id, finished = true)
             assertNotNull(inference, "Inference never finished")
             logSection("Verifying inference balances")
             assertThat(inference.executedBy).isNotNull()
             assertThat(inference.requestedBy).isEqualTo(consumer.address)
-            val participantsAfter = genesis.api.getParticipants()
+            val participantsAfter = localGenesis.api.getParticipants()
             assertThat(participantsAfter).anyMatch { it.id == consumer.address }.`as`("Consumer listed in participants")
-            val balanceAfter = genesis.node.getBalance(consumer.address, "ngonka").balance.amount
+            val balanceAfter = localGenesis.node.getBalance(consumer.address, "ngonka").balance.amount
             assertThat(balanceAfter).isEqualTo(balanceAtStart - inference.actualCost!!)
                 .`as`("Balance matches expectation")
         }
