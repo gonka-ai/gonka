@@ -16,7 +16,19 @@
         "sig_verify_cost_ed25519": "590",
         "sig_verify_cost_secp256k1": "1000"
       },
-      "accounts": []
+      "accounts": [
+        {
+          "@type": "/cosmos.auth.v1beta1.ModuleAccount",
+          "name": "distribution",
+          "base_account": {
+            "address": "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa",
+            "pub_key": null,
+            "account_number": "0",
+            "sequence": "0"
+          },
+          "permissions": []
+        }
+      ]
     },
     "authz": {
       "authorization": []
@@ -26,8 +38,23 @@
         "send_enabled": [],
         "default_send_enabled": true
       },
-      "balances": [],
-      "supply": [],
+      "balances": [
+        {
+          "address": "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "120000000000000000"
+            }
+          ]
+        }
+      ],
+      "supply": [
+        {
+          "denom": "ngonka",
+          "amount": "120000000000000000"
+        }
+      ],
       "denom_metadata": [
         {
           "description": "The native staking and governance token for the Gonka network.",
@@ -111,7 +138,7 @@
         "withdraw_addr_enabled": true
       },
       "fee_pool": {
-        "community_pool": []
+        "community_pool": [{ "denom": "ngonka", "amount": "120000000000000000.000000000000000000" }]
       },
       "delegator_withdraw_infos": [],
       "previous_proposer": "",
