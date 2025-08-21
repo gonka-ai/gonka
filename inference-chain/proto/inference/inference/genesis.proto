@@ -17,7 +17,6 @@ import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
 import "inference/inference/partial_upgrade.proto";
-import "inference/inference/contracts.proto";
 import "inference/inference/bridge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
