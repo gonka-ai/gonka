@@ -96,11 +96,11 @@ ENV DAEMON_DOWNLOAD_RETRIES=-1
 COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
-COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
+COPY ./decentralized-api/config-prod.yaml /root/.dapi/api-config.yaml
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
 COPY --from=builder /lib/libwasmvm_muslc.*.a /lib/
 
-ENV API_CONFIG_PATH=/root/api-config.yaml
+ENV API_CONFIG_PATH=/root/.dapi/api-config.yaml
 
 RUN chmod +x /root/init-docker.sh
 
