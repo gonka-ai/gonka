@@ -96,5 +96,5 @@ fun runParallelInferences(
 ): List<Int> {
     // Use the new function and extract statuses for backward compatibility
     val inferences = runParallelInferencesWithResults(genesis, count, waitForBlocks, maxConcurrentRequests, models, inferenceRequest)
-    return inferences.map { it.status }
+    return inferences.map { it.getStatusAsInt() }
 } 

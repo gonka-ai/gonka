@@ -191,7 +191,7 @@ fun calculateBalanceChanges(
 ): Map<String, Long> {
     val payouts: MutableMap<String, Long> = mutableMapOf()
     inferences.forEach { inference ->
-        when (inference.status) {
+        when (inference.getStatusAsInt()) {
             InferenceStatus.STARTED.value -> {
                 require(inference.escrowAmount != null) { "Escrow amount is null for started inference" }
                 payouts.add(inference.requestedBy!!, inference.escrowAmount!!, "initial escrow")
@@ -285,7 +285,7 @@ fun MutableMap<String, Long>.add(key: String, amount: Long, reason: String) {
 fun expectedCoinBalanceChanges(inferences: List<InferencePayload>): Map<String, Long> {
     val payouts: MutableMap<String, Long> = mutableMapOf()
     inferences.forEach { inference ->
-        when (inference.status) {
+        when (inference.getStatusAsInt()) {
             InferenceStatus.STARTED.value -> {}
             // no payouts
             InferenceStatus.FINISHED.value -> {
@@ -342,7 +342,7 @@ fun calculateVestingScheduleChanges(
     
     // Process each inference following the same logic as calculateBalanceChanges
     inferences.forEach { inference ->
-        when (inference.status) {
+        when (inference.getStatusAsInt()) {
             InferenceStatus.STARTED.value -> {
                 require(inference.escrowAmount != null) { "Escrow amount is null for started inference" }
                 costs.add(inference.requestedBy!!, inference.escrowAmount!!)

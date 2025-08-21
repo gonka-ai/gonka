@@ -11,7 +11,7 @@ data class InferencePayload(
     val completionTokenCount: Int?,
     val requestedBy: String?,
     val executedBy: String?,
-    val status: Int,
+    val status: Any,  // Changed from Int to Any to handle both Int and String
     val startBlockHeight: Long,
     val endBlockHeight: Long?,
     val startBlockTimestamp: Long,
@@ -56,11 +56,33 @@ data class InferencePayload(
 
     }
 
+    // Helper function to get status as integer, handling both Int and String values
+    fun getStatusAsInt(): Int {
+        return when (status) {
+            is Int -> status
+            is String -> {
+                when (status) {
+                    "STARTED" -> InferenceStatus.STARTED.value
+                    "FINISHED" -> InferenceStatus.FINISHED.value
+                    "VALIDATED" -> InferenceStatus.VALIDATED.value
+                    "INVALIDATED" -> InferenceStatus.INVALIDATED.value
+                    "VOTING" -> InferenceStatus.VOTING.value
+                    "EXPIRED" -> InferenceStatus.EXPIRED.value
+                    else -> {
+                        // Try to parse as number if it's a numeric string
+                        status.toIntOrNull() ?: InferenceStatus.STARTED.value
+                    }
+                }
+            }
+            else -> InferenceStatus.STARTED.value
+        }
+    }
+
     fun checkComplete(): Boolean =
         !this.requestedBy.isNullOrEmpty() &&
             !this.executedBy.isNullOrEmpty() &&
             !this.model.isNullOrEmpty() &&
-            this.status > 0
+            getStatusAsInt() > 0
 }
 
 enum class InferenceStatus(val value: Int) {
