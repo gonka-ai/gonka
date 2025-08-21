@@ -563,7 +563,7 @@ data class LocalInferencePair(
                 description,
                 "--deposit",
                 // TODO: Denom and amount should not be hardcoded
-                "${deposit}nicoin",
+                "${deposit}ngonka",
             )
         )
     }

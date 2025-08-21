@@ -12,7 +12,7 @@ class InferenceFailureAccountingTests : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
-            val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+            val startBalance = genesis.node.getBalance(consumer.address, "ngonka").balance.amount
             val timeoutsAtStart = genesis.node.getInferenceTimeouts()
             localCluster.allPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
@@ -37,7 +37,7 @@ class InferenceFailureAccountingTests : TestermintTest() {
                 logSection("Waiting for inference to expire. expirationHeight = $expirationHeight")
                 genesis.node.waitForMinimumBlock(expirationHeight + 1, "inferenceExpiration")
                 logSection("Verifying inference was expired and refunded")
-                val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+                val balanceAfterSettle = genesis.node.getBalance(consumer.address, "ngonka").balance.amount
                 // NOTE: We don't need to add epoch rewards here as genesis node fails to claim rewards due to signature error
                 // if that fixed, we need to add epoch rewards here for bitcoin like rewards logic
                 val changes = startBalance - balanceAfterSettle

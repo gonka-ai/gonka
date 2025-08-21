@@ -218,7 +218,7 @@ class InferenceAccountingTests : TestermintTest() {
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         cluster.withConsumer("consumer1") { consumer ->
-            val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+            val balanceAtStart = genesis.node.getBalance(consumer.address, "ngonka").balance.amount
             logSection("Making inference with consumer account")
             val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getColdAddress())
             assertThat(result).isNotNull
@@ -229,7 +229,7 @@ class InferenceAccountingTests : TestermintTest() {
             assertThat(inference.requestedBy).isEqualTo(consumer.address)
             val participantsAfter = genesis.api.getParticipants()
             assertThat(participantsAfter).anyMatch { it.id == consumer.address }.`as`("Consumer listed in participants")
-            val balanceAfter = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+            val balanceAfter = genesis.node.getBalance(consumer.address, "ngonka").balance.amount
             assertThat(balanceAfter).isEqualTo(balanceAtStart - inference.actualCost!!)
                 .`as`("Balance matches expectation")
         }

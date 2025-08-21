@@ -72,7 +72,7 @@ class StreamVestingTests : TestermintTest() {
         logSection("=== SCENARIO 1: Test Reward Vesting ===")
         logHighlight("Querying initial participant balance")
         val initialBalance = participant.getBalance(participantAddress)
-        logHighlight("Initial balance: $initialBalance nicoin")
+        logHighlight("Initial balance: $initialBalance ngonka")
 
         // Query initial vesting schedule (should be empty)
         logHighlight("Querying initial vesting schedule")
@@ -107,7 +107,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Verifying reward vesting: balance should NOT increase immediately")
         val balanceAfterReward = participant.getBalance(participantAddress)
-        logHighlight("Balance after reward: $balanceAfterReward nicoin")
+        logHighlight("Balance after reward: $balanceAfterReward ngonka")
         
         // Balance should not increase immediately due to vesting
         assertThat(balanceAfterReward).isLessThanOrEqualTo(initialBalance)
@@ -129,7 +129,7 @@ class StreamVestingTests : TestermintTest() {
         participant.node.waitForNextBlock()
 
         val balanceAfterFirstEpoch = participant.getBalance(participantAddress)
-        logHighlight("Balance after first epoch unlock: $balanceAfterFirstEpoch nicoin")
+        logHighlight("Balance after first epoch unlock: $balanceAfterFirstEpoch ngonka")
         // Balance should increase after first epoch unlock
         assertThat(balanceAfterFirstEpoch).isGreaterThan(balanceAfterReward)
 
@@ -144,7 +144,7 @@ class StreamVestingTests : TestermintTest() {
         participant.node.waitForNextBlock()
 
         val balanceAfterSecondEpoch = participant.getBalance(participantAddress)
-        logHighlight("Balance after second epoch unlock: $balanceAfterSecondEpoch nicoin")
+        logHighlight("Balance after second epoch unlock: $balanceAfterSecondEpoch ngonka")
         // Balance should increase further after second epoch unlock
         assertThat(balanceAfterSecondEpoch).isGreaterThan(balanceAfterFirstEpoch)
 
@@ -180,7 +180,7 @@ class StreamVestingTests : TestermintTest() {
         participant.node.waitForNextBlock()
 
         val balanceBeforeAggregation = participant.getBalance(participantAddress)
-        logHighlight("Balance before aggregation test: $balanceBeforeAggregation nicoin")
+        logHighlight("Balance before aggregation test: $balanceBeforeAggregation ngonka")
 
         logSection("Making 20 parallel third inference requests to test aggregation")
         val thirdFutures = (1..20).map { i ->
@@ -216,7 +216,7 @@ class StreamVestingTests : TestermintTest() {
         val aggregatedTotalAmount = aggregatedVestingSchedule.vestingSchedule?.epochAmounts?.sumOf { 
             it.coins.sumOf { coin -> coin.amount } 
         } ?: 0
-        logHighlight("Total aggregated vesting amount: $aggregatedTotalAmount nicoin")
+        logHighlight("Total aggregated vesting amount: $aggregatedTotalAmount ngonka")
         
         // The aggregated amount should be greater than a single reward
         // TODO: unfortunatelly, it's not true, because we can't guarantee that the rewards are equal each time to the same validator
@@ -310,11 +310,11 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Verifying balance and vesting changes after claim rewards")
         val balanceAfterReward = participant.getBalance(participantAddress)
-        logSection("Balance after reward: $balanceAfterReward nicoin")
+        logSection("Balance after reward: $balanceAfterReward ngonka")
         
         // Balance change = -inference_costs + unlocked_initial_vesting (first epoch only)
         val actualBalanceChange = balanceAfterReward - initialBalance
-        logSection("Actual balance change: $actualBalanceChange nicoin")
+        logSection("Actual balance change: $actualBalanceChange ngonka")
         logSection("Expected components: ${expectedCosts} (costs) + $initialFirstEpochUnlock (first epoch unlock)")
         val expectedBalanceChange = expectedCosts + initialFirstEpochUnlock  // expectedCosts is negative
         
@@ -328,9 +328,9 @@ class StreamVestingTests : TestermintTest() {
         val newTotalVesting = newFirstEpoch + newSecondEpoch
         
         logSection("New vesting structure:")
-        logSection("  First epoch: $newFirstEpoch nicoin")
-        logSection("  Second epoch: $newSecondEpoch nicoin")
-        logSection("  Total: $newTotalVesting nicoin")
+        logSection("  First epoch: $newFirstEpoch ngonka")
+        logSection("  Second epoch: $newSecondEpoch ngonka")
+        logSection("  Total: $newTotalVesting ngonka")
         
         // Expected aggregation:
         // First epoch = initial second epoch + new first epoch
