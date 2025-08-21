@@ -17,10 +17,17 @@ mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
 	@cd testermint/mock_server && ./gradlew clean && ./gradlew shadowJar
 	@echo "Building mock-server docker image..."
-	@DOCKER_BUILDKIT=1 docker build --load \
-		$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
-		$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
-		-t inference-mock-server -f testermint/Dockerfile testermint
+	@if [ -n "$(BUILDX_CACHE_FROM)$(BUILDX_CACHE_TO)" ]; then \
+		echo "Using buildx with cache support"; \
+		DOCKER_BUILDKIT=1 docker buildx build --load \
+			$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
+			$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
+			-t inference-mock-server -f testermint/Dockerfile testermint; \
+	else \
+		echo "Using regular docker build (no cache)"; \
+		DOCKER_BUILDKIT=1 docker build --load \
+			-t inference-mock-server -f testermint/Dockerfile testermint; \
+	fi
 
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1

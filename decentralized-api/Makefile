@@ -20,18 +20,31 @@ define DOCKER_BUILD
 	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
-	@DOCKER_BUILDKIT=1 \
-	docker build \
-		--load \
-		--platform $(PLATFORM) \
-		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
-		--build-arg GOOS=$(GOOS) \
-		--build-arg GOARCH=$(GOARCH) \
-		$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
-		$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
-		-f $(DOCKER_FILE) \
-		.. \
-		-t $(DOCKER_TAG)
+	@if [ -n "$(BUILDX_CACHE_FROM)$(BUILDX_CACHE_TO)" ]; then \
+		echo "Using buildx with cache support"; \
+		DOCKER_BUILDKIT=1 docker buildx build \
+			--load \
+			--platform $(PLATFORM) \
+			--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
+			--build-arg GOOS=$(GOOS) \
+			--build-arg GOARCH=$(GOARCH) \
+			$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
+			$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
+			-f $(DOCKER_FILE) \
+			.. \
+			-t $(DOCKER_TAG); \
+	else \
+		echo "Using regular docker build (no cache)"; \
+		DOCKER_BUILDKIT=1 docker build \
+			--load \
+			--platform $(PLATFORM) \
+			--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
+			--build-arg GOOS=$(GOOS) \
+			--build-arg GOARCH=$(GOARCH) \
+			-f $(DOCKER_FILE) \
+			.. \
+			-t $(DOCKER_TAG); \
+	fi
 endef
 
 define DOCKER_BUILD_UPGRADE

@@ -68,19 +68,33 @@ define DOCKER_BUILD
 	@cp -r * .docker-context/inference-chain/ 2>/dev/null || true
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
-	@DOCKER_BUILDKIT=1 \
-	docker build \
-		--load \
-		--platform $(PLATFORM) \
-		--build-arg LDFLAGS='$(ldflags)' \
-		--build-arg GOOS=$(GOOS) \
-		--build-arg GOARCH=$(GOARCH) \
-		--build-arg GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE) \
-		$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
-		$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
-		-f $(DOCKER_FILE) \
-		.docker-context \
-		-t $(DOCKER_TAG)
+	@if [ -n "$(BUILDX_CACHE_FROM)$(BUILDX_CACHE_TO)" ]; then \
+		echo "Using buildx with cache support"; \
+		DOCKER_BUILDKIT=1 docker buildx build \
+			--load \
+			--platform $(PLATFORM) \
+			--build-arg LDFLAGS='$(ldflags)' \
+			--build-arg GOOS=$(GOOS) \
+			--build-arg GOARCH=$(GOARCH) \
+			--build-arg GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE) \
+			$(if $(BUILDX_CACHE_FROM),--cache-from $(BUILDX_CACHE_FROM),) \
+			$(if $(BUILDX_CACHE_TO),--cache-to $(BUILDX_CACHE_TO),) \
+			-f $(DOCKER_FILE) \
+			.docker-context \
+			-t $(DOCKER_TAG); \
+	else \
+		echo "Using regular docker build (no cache)"; \
+		DOCKER_BUILDKIT=1 docker build \
+			--load \
+			--platform $(PLATFORM) \
+			--build-arg LDFLAGS='$(ldflags)' \
+			--build-arg GOOS=$(GOOS) \
+			--build-arg GOARCH=$(GOARCH) \
+			--build-arg GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE) \
+			-f $(DOCKER_FILE) \
+			.docker-context \
+			-t $(DOCKER_TAG); \
+	fi
 	@rm -rf .docker-context
 endef
 
