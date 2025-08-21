@@ -1,7 +1,7 @@
 {
   "app_name": "inferenced",
   "app_version": "7d7f652d",
-  "genesis_time": "2025-08-21T01:30:55.815122089Z",
+  "genesis_time": "2025-08-21T01:46:02.027649000Z",
   "chain_id": "gonka-rehearsal",
   "initial_height": 1,
   "app_hash": null,
@@ -23,6 +23,27 @@
           "pub_key": null,
           "account_number": "0",
           "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1d57qquhqk9cxs78ju9393n4apn4wrrdjh5ead6",
+          "pub_key": null,
+          "account_number": "1",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1nzjrtcj6v92sqpj0xmepk9z9x8cg9z9t8lvzm6",
+          "pub_key": null,
+          "account_number": "2",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1ft2qjzcz6rk0mkvkq2mld2tyq98a6tkglpmyqj",
+          "pub_key": null,
+          "account_number": "3",
+          "sequence": "0"
         }
       ]
     },
@@ -36,6 +57,15 @@
       },
       "balances": [
         {
+          "address": "gonka1ft2qjzcz6rk0mkvkq2mld2tyq98a6tkglpmyqj",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
           "address": "gonka1vcrvf84p5mftntzndvuhh9tu3mlp9f8sxc5tvz",
           "coins": [
             {
@@ -43,12 +73,30 @@
               "amount": "160000000000000000"
             }
           ]
+        },
+        {
+          "address": "gonka1d57qquhqk9cxs78ju9393n4apn4wrrdjh5ead6",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1nzjrtcj6v92sqpj0xmepk9z9x8cg9z9t8lvzm6",
+          "coins": [
+            {
+              "denom": "nicoin",
+              "amount": "1"
+            }
+          ]
         }
       ],
       "supply": [
         {
           "denom": "nicoin",
-          "amount": "160000000000000000"
+          "amount": "160000000000000003"
         }
       ],
       "denom_metadata": [
