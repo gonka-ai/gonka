@@ -89,9 +89,9 @@ type UpgradePlan struct {
 }
 
 type SeedInfo struct {
-	Seed      int64  `koanf:"seed"`
-	Height    int64  `koanf:"height"`
-	Signature string `koanf:"signature"`
+	Seed       int64  `koanf:"seed"`
+	EpochIndex uint64 `koanf:"epoch_index"`
+	Signature  string `koanf:"signature"`
 }
 
 type ApiConfig struct {

@@ -34,307 +34,307 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 
 // Query defines the gRPC querier service.
 service Query {
-  
+
   // Parameters queries the parameters of the module.
   rpc Params (QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/params";
-  
+
   }
-  
+
   // Queries a list of Inference items.
   rpc Inference    (QueryGetInferenceRequest) returns (QueryGetInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference/{index}";
-  
+
   }
   rpc InferenceAll (QueryAllInferenceRequest) returns (QueryAllInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference";
-  
+
   }
-  
+
   // Queries a list of Participant items.
   rpc Participant    (QueryGetParticipantRequest) returns (QueryGetParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant/{index}";
-  
+
   }
   rpc ParticipantAll (QueryAllParticipantRequest) returns (QueryAllParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant";
-  
+
   }
-  
+
   // Queries a list of InferenceParticipant items.
   rpc InferenceParticipant (QueryInferenceParticipantRequest) returns (QueryInferenceParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_participant/{address}";
-  
+
   }
-  
+
   // Queries a list of GetRandomExecutor items.
   rpc GetRandomExecutor (QueryGetRandomExecutorRequest) returns (QueryGetRandomExecutorResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_random_executor";
-  
+
   }
-  
+
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
-  
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{epoch_index}";
+
   }
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
-  
+
   }
-  
+
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-  
+
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-  
+
   }
-  
+
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{poc_start_block_height}";
-  
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{epoch_index}";
+
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-  
+
   }
-  
+
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{block_height}";
-  
+
   }
-  
+
   // Queries a list of GetCurrentEpoch items.
   rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
-  
+
   }
-  
+
   // Queries a TokenomicsData by index.
   rpc TokenomicsData (QueryGetTokenomicsDataRequest) returns (QueryGetTokenomicsDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/tokenomics_data";
-  
+
   }
-  
+
   // Queries a list of GetUnitOfComputePriceProposal items.
   rpc GetUnitOfComputePriceProposal (QueryGetUnitOfComputePriceProposalRequest) returns (QueryGetUnitOfComputePriceProposalResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_unit_of_compute_price_proposal";
-  
+
   }
-  
+
   // Queries a list of CurrentEpochGroupData items.
   rpc CurrentEpochGroupData (QueryCurrentEpochGroupDataRequest) returns (QueryCurrentEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/current_epoch_group_data";
-  
+
   }
-  
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
-  
+
   }
-  
+
   // Queries a list of TopMiner items.
   rpc TopMiner    (QueryGetTopMinerRequest) returns (QueryGetTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner/{address}";
-  
+
   }
   rpc TopMinerAll (QueryAllTopMinerRequest) returns (QueryAllTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner";
-  
+
   }
-  
+
   // Queries a list of InferenceTimeout items.
   rpc InferenceTimeout    (QueryGetInferenceTimeoutRequest) returns (QueryGetInferenceTimeoutResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_timeout/{expirationHeight}/{inferenceId}";
-  
+
   }
   rpc InferenceTimeoutAll (QueryAllInferenceTimeoutRequest) returns (QueryAllInferenceTimeoutResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_timeout";
-  
+
   }
-  
+
   // BE CAREFUL, epoch_id in the request body meand epoch_group_id!!
   rpc InferenceValidationDetails (QueryGetInferenceValidationDetailsRequest) returns (QueryGetInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details/{epochId}/{inferenceId}";
-  
+
   }
-  
+
   // Queries a list of InferenceValidationDetails items.
   rpc InferenceValidationDetailsAll (QueryAllInferenceValidationDetailsRequest) returns (QueryAllInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
-  
+
   }
-  
+
   // Queries a list of GetInferenceValidationParameters items.
   rpc GetInferenceValidationParameters (QueryGetInferenceValidationParametersRequest) returns (QueryGetInferenceValidationParametersResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_inference_validation_parameters/{ids}/{requester}";
-  
+
   }
-  
+
   // Queries a list of EpochPerformanceSummary items.
   rpc EpochPerformanceSummary    (QueryGetEpochPerformanceSummaryRequest) returns (QueryGetEpochPerformanceSummaryResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
-  
+    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epoch_index}/{participantId}";
+
   }
   rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
-  
+
   }
-  
+
   // Queries a list of TrainingTask items.
   rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task";
-  
+
   }
-  
+
   // Queries a list of HardwareNodes items.
   rpc HardwareNodes (QueryHardwareNodesRequest) returns (QueryHardwareNodesResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
-  
+
   }
-  
+
   // Queries a list of HardwareNodesAll items.
   rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
-  
+
   }
-  
+
   // Queries a list of QueuedTrainingTasks items.
   rpc QueuedTrainingTasks (QueryQueuedTrainingTasksRequest) returns (QueryQueuedTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/queued_training_tasks";
-  
+
   }
-  
+
   // Queries a list of TrainingTaskAll items.
   rpc TrainingTaskAll (QueryTrainingTaskAllRequest) returns (QueryTrainingTaskAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task_all";
-  
+
   }
-  
+
   // Queries a list of GetParticipantCurrentStats items.
   rpc GetParticipantCurrentStats (QueryGetParticipantCurrentStatsRequest) returns (QueryGetParticipantCurrentStatsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_participant_current_stats/{participantId}";
-  
+
   }
-  
+
   // Queries a list of GetAllParticipantCurrentStats items.
   rpc GetAllParticipantCurrentStats             (QueryGetAllParticipantCurrentStatsRequest            ) returns (QueryGetAllParticipantCurrentStatsResponse   ) {
     option (google.api.http).get = "/productscience/inference/inference/get_all_participant_current_stats";
-  
+
   }
   rpc GetParticipantsFullStats                  (QueryParticipantsFullStatsRequest                    ) returns (QueryParticipantsFullStatsResponse           ) {
     option (google.api.http).get = "/productscience/inference/inference/participants_stats";
-  
+
   }
   rpc StatsByTimePeriodByDeveloper              (QueryStatsByTimePeriodByDeveloperRequest             ) returns (QueryStatsByTimePeriodByDeveloperResponse    ) {
     option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_time";
-  
+
   }
   rpc StatsByDeveloperAndEpochsBackwards        (QueryStatsByDeveloperAndEpochBackwardsRequest        ) returns (QueryInferencesAndTokensStatsResponse        ) {
     option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_epochs_backwards";
-  
+
   }
   rpc CountParticipants                         (QueryCountAllParticipantsRequest                     ) returns (QueryCountAllParticipantsResponse            ) {
     option (google.api.http).get = "/productscience/inference/inference/participants/count";
-  
+
   }
   rpc DebugStatsDeveloperStats                  (QueryDebugStatsRequest                               ) returns (QueryDebugStatsResponse                      ) {
     option (google.api.http).get = "/productscience/inference/inference/debug/developer/all_stats";
-  
+
   }
   rpc InferencesAndTokensStatsByEpochsBackwards (QueryInferencesAndTokensStatsByEpochsBackwardsRequest) returns (QueryInferencesAndTokensStatsResponse        ) {
     option (google.api.http).get = "/productscience/inference/inference/developer/stats_by_epochs_backwards";
-  
+
   }
   rpc InferencesAndTokensStatsByTimePeriod      (QueryInferencesAndTokensStatsByTimePeriodRequest     ) returns (QueryInferencesAndTokensStatsResponse        ) {
     option (google.api.http).get = "/productscience/inference/inference/all_stats_by_time";
-  
+
   }
   rpc InferencesAndTokensStatsByModels          (QueryInferencesAndTokensStatsByModelsRequest         ) returns (QueryInferencesAndTokensStatsByModelsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_stats_by_time";
-  
+
   }
-  
+
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
-  
+
   }
-  
+
   // Queries a list of InProgressTrainingTasks items.
   rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
-  
+
   }
-  
+
   // Queries a list of PartialUpgrade items.
   rpc PartialUpgrade    (QueryGetPartialUpgradeRequest) returns (QueryGetPartialUpgradeResponse) {
     option (google.api.http).get = "/productscience/inference/inference/partial_upgrade/{height}";
-  
+
   }
   rpc PartialUpgradeAll (QueryAllPartialUpgradeRequest) returns (QueryAllPartialUpgradeResponse) {
     option (google.api.http).get = "/productscience/inference/inference/partial_upgrade";
-  
+
   }
-  
+
   // Queries a bridge transaction by its composite key
   rpc BridgeTransaction (QueryGetBridgeTransactionRequest) returns (QueryGetBridgeTransactionResponse) {
     option (google.api.http).get = "/inference/inference/bridge_transaction/{origin_chain}/{block_number}/{receipt_index}";
-  
+
   }
-  
+
   // Queries all bridge transactions
   rpc BridgeTransactions (QueryAllBridgeTransactionsRequest) returns (QueryAllBridgeTransactionsResponse) {
     option (google.api.http).get = "/inference/inference/bridge_transactions";
-  
+
   }
-  
+
   // Queries a list of TrainingKvRecord items.
   rpc TrainingKvRecord (QueryTrainingKvRecordRequest) returns (QueryTrainingKvRecordResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{key}";
-  
+
   }
-  
+
   // Queries a list of ListTrainingKvRecordKeys items.
   rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
     option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}";
-  
+
   }
-  
+
   // Queries a list of TrainingBarrier items.
   rpc TrainingBarrier (QueryTrainingBarrierRequest) returns (QueryTrainingBarrierResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_barrier";
-  
+
   }
-  
+
   // Queries a list of TrainingAliveNodes items.
   rpc TrainingAliveNodes (QueryTrainingAliveNodesRequest) returns (QueryTrainingAliveNodesResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_alive_nodes";
-  
+
   }
-  
+
   // Queries a list of EpochInfo items.
   rpc EpochInfo (QueryEpochInfoRequest) returns (QueryEpochInfoResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_info";
-  
+
   }
-  
+
   // Queries a list of CountPoCbatchesAtHeight items.
   rpc CountPoCbatchesAtHeight (QueryCountPoCbatchesAtHeightRequest) returns (QueryCountPoCbatchesAtHeightResponse) {
     option (google.api.http).get = "/productscience/inference/inference/count_po_c_batches_at_height/{blockHeight}";
-  
+
   }
-  
+
   // Queries a list of CountPoCvalidationsAtHeight items.
   rpc CountPoCvalidationsAtHeight (QueryCountPoCvalidationsAtHeightRequest) returns (QueryCountPoCvalidationsAtHeightResponse) {
     option (google.api.http).get = "/productscience/inference/inference/count_po_c_validations_at_height/{blockHeight}";
-  
+
   }
 
   // Dynamic pricing queries (Task 7.1)
@@ -369,7 +369,7 @@ message QueryParamsRequest {}
 
 // QueryParamsResponse is response type for the Query/Params RPC method.
 message QueryParamsResponse {
-  
+
   // params holds all the parameters of this module.
   Params params = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
@@ -427,7 +427,7 @@ message QueryGetRandomExecutorResponse {
 }
 
 message QueryGetEpochGroupDataRequest {
-  uint64 poc_start_block_height = 1;
+  uint64 epoch_index = 1;
   string model_id               = 2;
 }
 
@@ -463,7 +463,7 @@ message QueryAllSettleAmountResponse {
 
 message QueryGetEpochGroupValidationsRequest {
   string participant            = 1;
-  uint64 poc_start_block_height = 2;
+  uint64 epoch_index            = 2;
 }
 
 message QueryGetEpochGroupValidationsResponse {
@@ -600,7 +600,7 @@ message QueryGetInferenceValidationParametersResponse {
 }
 
 message QueryGetEpochPerformanceSummaryRequest {
-  uint64 epochStartHeight = 1;
+  uint64 epoch_index = 1;
   string participantId    = 2;
 }
 

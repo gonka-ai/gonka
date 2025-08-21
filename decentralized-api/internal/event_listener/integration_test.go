@@ -137,7 +137,7 @@ type MockRandomSeedManager struct {
 	mock.Mock
 }
 
-func (m *MockRandomSeedManager) GenerateSeed(blockHeight int64) {
+func (m *MockRandomSeedManager) GenerateSeed(blockHeight uint64) {
 	m.Called(blockHeight)
 }
 
@@ -278,7 +278,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	}, nil)
 
 	// Setup mock expectations for RandomSeedManager
-	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("int64")).Return()
+	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("uint64")).Return()
 	mockSeedManager.On("ChangeCurrentSeed").Return()
 	mockSeedManager.On("RequestMoney").Return()
 

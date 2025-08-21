@@ -217,7 +217,7 @@ func CalculateParticipantBitcoinRewards(participants []types.Participant, epochG
 	}
 
 	// Calculate current epoch number from genesis
-	currentEpoch := epochGroupData.GetEpochId()
+	currentEpoch := epochGroupData.GetEpochIndex()
 	epochsSinceGenesis := currentEpoch - bitcoinParams.GenesisEpoch
 
 	// 1. Calculate fixed epoch reward using exponential decay

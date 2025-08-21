@@ -23,7 +23,8 @@ func TestMsgInvalidateInference_ValidateBasic(t *testing.T) {
 		}, {
 			name: "valid address",
 			msg: MsgInvalidateInference{
-				Creator: sample.AccAddress(),
+				Creator:     sample.AccAddress(),
+				InferenceId: "iid",
 			},
 		},
 	}

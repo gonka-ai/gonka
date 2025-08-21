@@ -3,8 +3,7 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -16,25 +15,17 @@ func (k Keeper) InferenceTimeoutAll(ctx context.Context, req *types.QueryAllInfe
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	var inferenceTimeouts []types.InferenceTimeout
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	inferenceTimeoutStore := prefix.NewStore(store, types.KeyPrefix(types.InferenceTimeoutKeyPrefix))
-
-	pageRes, err := query.Paginate(inferenceTimeoutStore, req.Pagination, func(key []byte, value []byte) error {
-		var inferenceTimeout types.InferenceTimeout
-		if err := k.cdc.Unmarshal(value, &inferenceTimeout); err != nil {
-			return err
-		}
-
-		inferenceTimeouts = append(inferenceTimeouts, inferenceTimeout)
-		return nil
-	})
-
+	inferenceTimeouts, pageRes, err := query.CollectionPaginate(
+		ctx,
+		k.InferenceTimeouts,
+		req.Pagination,
+		func(_ collections.Pair[uint64, string], v types.InferenceTimeout) (types.InferenceTimeout, error) {
+			return v, nil
+		},
+	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-
 	return &types.QueryAllInferenceTimeoutResponse{InferenceTimeout: inferenceTimeouts, Pagination: pageRes}, nil
 }
 
