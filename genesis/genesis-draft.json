@@ -102,7 +102,7 @@
           "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -111,7 +111,7 @@
           "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -120,7 +120,7 @@
           "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -129,7 +129,7 @@
           "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -138,7 +138,7 @@
           "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -147,7 +147,7 @@
           "address": "gonka1dltwc37njhkapzklt9frfhvlk3lpcfz69faly9",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -156,7 +156,7 @@
           "address": "gonka1szdfz8vlsajzyejc6d5220j5v5jrn6zcslqaxh",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -165,7 +165,7 @@
           "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -174,7 +174,7 @@
           "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "160000000000000000"
             }
           ]
@@ -183,7 +183,7 @@
           "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
           "coins": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "amount": "1"
             }
           ]
@@ -191,7 +191,7 @@
       ],
       "supply": [
         {
-          "denom": "ngonka",
+          "denom": "nicoin",
           "amount": "160000000000000009"
         }
       ],
@@ -200,7 +200,7 @@
           "description": "AI Inference and training token",
           "denom_units": [
             {
-              "denom": "ngonka",
+              "denom": "nicoin",
               "exponent": 0,
               "aliases": []
             },
@@ -215,7 +215,7 @@
               "aliases": []
             },
             {
-              "denom": "gonka",
+              "denom": "icoin",
               "exponent": 9,
               "aliases": []
             },
@@ -230,8 +230,8 @@
               "aliases": []
             }
           ],
-          "base": "ngonka",
-          "display": "gonka",
+          "base": "nicoin",
+          "display": "icoin",
           "name": "AI Coin",
           "symbol": "AIC",
           "uri": "",
@@ -272,7 +272,7 @@
     "consensus": null,
     "crisis": {
       "constant_fee": {
-        "denom": "ngonka",
+        "denom": "nicoin",
         "amount": "1000"
       }
     },
@@ -322,7 +322,7 @@
       "params": {
         "min_deposit": [
           {
-            "denom": "ngonka",
+            "denom": "nicoin",
             "amount": "25_000_000"
           }
         ],
@@ -338,7 +338,7 @@
         "expedited_threshold": "0.667000000000000000",
         "expedited_min_deposit": [
           {
-            "denom": "ngonka",
+            "denom": "nicoin",
             "amount": "50_000_000"
           }
         ],
@@ -562,7 +562,7 @@
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
-        "supply_denom": "ngonka",
+        "supply_denom": "nicoin",
         "top_reward_period": "31536000",
         "top_reward_payouts": "12",
         "top_reward_payouts_per_miner": "4",
@@ -639,7 +639,7 @@
         "annual_provisions": "0.000000000000000000"
       },
       "params": {
-        "mint_denom": "ngonka",
+        "mint_denom": "nicoin",
         "inflation_rate_change": "0.130000000000000000",
         "inflation_max": "0.200000000000000000",
         "inflation_min": "0.070000000000000000",
@@ -670,7 +670,7 @@
         "max_validators": 100,
         "max_entries": 7,
         "historical_entries": 10000,
-        "bond_denom": "ngonka",
+        "bond_denom": "nicoin",
         "min_commission_rate": "0.000000000000000000"
       },
       "last_total_power": "0",
