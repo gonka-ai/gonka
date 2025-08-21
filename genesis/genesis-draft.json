@@ -248,7 +248,7 @@
         "verification_phase_duration_blocks": "3",
         "signing_deadline_blocks": "10"
       },
-      "active_epoch_id": "0"
+      "active_epoch_index": "0"
     },
     "bookkeeper": {
       "params": {}
