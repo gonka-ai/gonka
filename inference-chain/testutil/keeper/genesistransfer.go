@@ -81,6 +81,9 @@ func (m mockBookkeepingBankKeeper) SendCoinsFromModuleToAccount(ctx context.Cont
 }
 
 func GenesistransferKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
+	// Configure SDK with proper Bech32 prefix for gonka
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
