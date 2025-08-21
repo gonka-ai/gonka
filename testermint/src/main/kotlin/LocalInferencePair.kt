@@ -647,7 +647,9 @@ data class LocalInferencePair(
         wrapLog("waitForInference", true) {
             var inference: InferencePayload? = null
             var tries = 0
-            while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
+            while (tries < blocks &&
+                (if (finished) inference?.actualCost == null else inference == null)
+            ) {
                 this.node.waitForNextBlock()
                 inference = this.api.getInferenceOrNull(inferenceId)
                 tries++
