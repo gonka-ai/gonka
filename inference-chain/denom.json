@@ -3,7 +3,7 @@
     "bank": {
       "denom_metadata": [
         {
-          "description": "The native staking and governance token for the Gonka network.",
+          "description": "Coins for the Gonka network.",
           "base": "ngonka",
           "display": "ngonka",
           "name": "Gonka",
