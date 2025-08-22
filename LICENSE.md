@@ -8,7 +8,7 @@ This License applies to all portions of the Work expressly designated as subject
 
     (b) “Forking” means the act of copying and using the Genesis Code to create a separate, independent, or disconnected network.  
 
-    (c) “Genesis Code” means the portions of the source code listed in Appendix A (Genesis Code Reference). The Genesis Code Reference, including commit hashes or specific files, will be published at https://github.com/gonka-ai/gonka   
+    (c) “Genesis Code” means the portions of the source code listed in Appendix A (Genesis Code Reference). The Genesis Code Reference, including commit hashes or specific files, will be published at https://github.com/gonka-ai/gonka. The initial reference point for the Genesis Code is commit `f9850bb4d5cfe018302d8d5c69de3d19967aa815` (“Genesis Commit”).    
 
     (d) “Requisite Threshold” means the affirmative vote of active participants, with voting weight determined proportionally to their verified computational power contributed to the network during the most recent Sprint, optionally augmented by staked gonka collateral, as defined by the Proof-of-Compute consensus procedure and the on-chain Governance rules encoded in the Genesis Code.  
 
