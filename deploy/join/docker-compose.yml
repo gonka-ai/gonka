@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.0
+    image: ghcr.io/product-science/inferenced:0.2.0-debug
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -31,9 +31,9 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=true
+      - INIT_ONLY=false
       - IS_GENESIS=true
-      - GENESIS_SEEDS=TMP
+      - GENESIS_SEEDS=44240a2b29b29ddca3b900488d43fd1a57da0a00@node1.gonka.ai:5000,0e006c0c658a3b3c796c415dbc33fd27cc0a1d9f@node2.gonka.ai:5000,a89484d84901ce12ee84a174316ad55b6dc32566@node3.gonka.ai:5000
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
@@ -45,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.0
+    image: ghcr.io/product-science/api:0.2.0-debug
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi

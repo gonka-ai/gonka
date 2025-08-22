@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	"log"
 
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -20,33 +21,39 @@ type GenesisGuardianEnhancementResult struct {
 func ShouldApplyGenesisGuardianEnhancement(ctx context.Context, k keeper.Keeper, totalNetworkPower int64, computeResults []stakingkeeper.ComputeResult) bool {
 	// Enhancement only applies if feature is enabled
 	if !k.GetGenesisGuardianEnabled(ctx) {
+		log.Println("GenesisGuardianEnhancement: feature is disabled")
 		return false
 	}
 
 	// Enhancement only applies if network is below maturity threshold
 	if k.IsNetworkMature(ctx, totalNetworkPower) {
+		log.Println("GenesisGuardianEnhancement: network is mature")
 		return false
 	}
 
 	// Enhancement only applies if we have at least 2 participants
 	if len(computeResults) < 2 {
+		log.Println("GenesisGuardianEnhancement: less than 2 participants")
 		return false
 	}
 
 	// Enhancement only applies if genesis guardians are identified
 	genesisGuardianAddresses := k.GetGenesisGuardianAddresses(ctx)
 	if len(genesisGuardianAddresses) == 0 {
+		log.Println("GenesisGuardianEnhancement: no genesis guardians")
 		return false
 	}
 
 	// Check if at least one genesis guardian exists in compute results
 	guardianAddressMap := make(map[string]bool)
 	for _, address := range genesisGuardianAddresses {
+		log.Println("GenesisGuardianEnhancement: genesis guardian address", address)
 		guardianAddressMap[address] = true
 	}
 
 	for _, result := range computeResults {
 		if guardianAddressMap[result.OperatorAddress] {
+			log.Println("GenesisGuardianEnhancement: genesis guardian found in compute results", result.OperatorAddress)
 			return true
 		}
 	}
