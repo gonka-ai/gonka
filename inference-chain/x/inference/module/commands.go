@@ -29,7 +29,7 @@ Example:
     gonka-account-key \
     gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm \
     --from gonka-account-key \
-    --node http://195.242.13.239:8000/chain-rpc/
+    --node http://node2.gonka.ai:8000/chain-rpc/
 
 Note: Chain ID will be auto-detected from the chain if not specified with --chain-id`,
 		Args: cobra.ExactArgs(2),

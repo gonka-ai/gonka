@@ -40,7 +40,15 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	k.SetContractsParams(ctx, genState.CosmWasmParams)
 
-	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
+	// Set genesis only params from configuration
+	genesisOnlyParams := genState.GenesisOnlyParams
+	if len(genesisOnlyParams.GenesisGuardianAddresses) > 0 {
+		k.LogInfo("Using configured genesis guardian addresses", types.System, "addresses", genesisOnlyParams.GenesisGuardianAddresses, "count", len(genesisOnlyParams.GenesisGuardianAddresses))
+	} else {
+		k.LogInfo("No genesis guardian addresses configured - genesis guardian enhancement will be disabled", types.System)
+	}
+
+	k.SetGenesisOnlyParams(ctx, &genesisOnlyParams)
 
 	// Import participants provided in genesis
 	for _, p := range genState.ParticipantList {

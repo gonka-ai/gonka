@@ -35,7 +35,7 @@ class CollateralTests : TestermintTest() {
         logHighlight("Verifying collateral and balance changes")
         val collateralAfterDeposit = participant.queryCollateral(participantAddress)
         assertThat(collateralAfterDeposit.amount?.amount).isEqualTo(depositAmount)
-        assertThat(collateralAfterDeposit.amount?.denom).isEqualTo("nicoin")
+        assertThat(collateralAfterDeposit.amount?.denom).isEqualTo("ngonka")
 
         val balanceAfterDeposit = participant.getBalance(participantAddress)
         // In the local testnet, fees are zero, so the balance should be exactly the initial amount minus the deposit.
@@ -47,6 +47,8 @@ class CollateralTests : TestermintTest() {
         val params = participant.node.queryCollateralParams()
         val unbondingPeriod = params.params.unbondingPeriodEpochs.toLong()
         val expectedCompletionEpoch = epochBeforeWithdraw + unbondingPeriod
+        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $epochBeforeWithdraw + $unbondingPeriod)")
+        Thread.sleep(10000)
 
         participant.withdrawCollateral(depositAmount)
         participant.node.waitForNextBlock()

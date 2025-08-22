@@ -1,0 +1,35 @@
+syntax = "proto3";
+package inference.genesistransfer;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/genesistransfer/params.proto";
+
+option go_package = "github.com/productscience/inference/x/genesistransfer/types";
+
+// TransferRecord tracks completed ownership transfers for audit trail and one-time enforcement
+message TransferRecord {
+  option (gogoproto.equal) = true;
+  
+  string genesis_address = 1;     // Source genesis account that was transferred
+  string recipient_address = 2;   // Destination account that received the transfer
+  uint64 transfer_height = 3;     // Block height when transfer was executed
+  bool completed = 4;             // Transfer completion status
+  repeated string transferred_denoms = 5; // List of token denoms that were transferred
+  string transfer_amount = 6;     // Total amount transferred (for audit)
+}
+
+// GenesisState defines the genesistransfer module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  
+  // transfer_records list of completed transfers for state persistence
+  repeated TransferRecord transfer_records = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}

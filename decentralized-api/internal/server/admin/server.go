@@ -7,6 +7,7 @@ import (
 	"decentralized-api/internal/server/middleware"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	blstypes "github.com/productscience/inference/x/bls/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -16,6 +17,7 @@ import (
 	"github.com/productscience/inference/app"
 	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
+	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
 type Server struct {
@@ -73,6 +75,8 @@ func getCodec() *codec.ProtoCodec {
 	v1.RegisterInterfaces(interfaceRegistry)
 	upgradetypes.RegisterInterfaces(interfaceRegistry)
 	collateraltypes.RegisterInterfaces(interfaceRegistry)
+	restrictionstypes.RegisterInterfaces(interfaceRegistry)
+	blstypes.RegisterInterfaces(interfaceRegistry)
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 	return cdc
 }

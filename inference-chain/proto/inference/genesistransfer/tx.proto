@@ -1,0 +1,67 @@
+syntax = "proto3";
+package inference.genesistransfer;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "inference/genesistransfer/params.proto";
+import "inference/genesistransfer/genesis.proto";
+
+option go_package = "github.com/productscience/inference/x/genesistransfer/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams defines a (governance) operation for updating the module
+  // parameters. The authority defaults to the x/gov module account.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+  
+  // TransferOwnership transfers complete ownership of a genesis account including
+  // all liquid balances and vesting schedules to the recipient account
+  rpc TransferOwnership(MsgTransferOwnership) returns (MsgTransferOwnershipResponse);
+}
+
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "inference/x/genesistransfer/MsgUpdateParams";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params defines the module parameters to update.
+  //
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse defines the response structure for executing a
+// MsgUpdateParams message.
+message MsgUpdateParamsResponse {}
+
+// MsgTransferOwnership is the Msg/TransferOwnership request type.
+message MsgTransferOwnership {
+  option (cosmos.msg.v1.signer) = "genesis_address";
+  option (amino.name) = "inference/x/genesistransfer/MsgTransferOwnership";
+
+  // genesis_address is the source genesis account to transfer from (must be the signer)
+  string genesis_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // recipient_address is the destination account to transfer ownership to
+  string recipient_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgTransferOwnershipResponse defines the response structure for executing a
+// MsgTransferOwnership message.
+message MsgTransferOwnershipResponse {
+  // transfer_record contains the details of the completed transfer
+  TransferRecord transfer_record = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}

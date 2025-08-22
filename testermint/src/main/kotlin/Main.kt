@@ -452,7 +452,7 @@ val inferenceConfig = ApplicationConfig(
     genesisNodeImage = "ghcr.io/product-science/inferenced",
     mockImageName = "inference-mock-server",
     apiImageName = "ghcr.io/product-science/api",
-    denom = "nicoin",
+    denom = "ngonka",
     stateDirName = ".inference",
     // TODO: probably need to add more to the spec here, so if tests change them we change back
     genesisSpec = createSpec()
@@ -462,7 +462,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
     this[AppState::gov] = spec<GovState> {
         this[GovState::params] = spec<GovParams> {
             this[GovParams::votingPeriod] = Duration.ofSeconds(30)
-            this[GovParams::minDeposit] = listOf(Coin("nicoin", 1000))
+            this[GovParams::minDeposit] = listOf(Coin("ngonka", 1000))
         }
     }
     this[AppState::inference] = spec<InferenceState> {
@@ -523,6 +523,16 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 validationThreshold = Decimal.fromDouble(0.85),
             )
         )
+    }
+
+    // Default restrictions module params (tests can override via spec in test files)
+    this[AppState::restrictions] = spec<RestrictionsState> {
+        this[RestrictionsState::params] = spec<RestrictionsParams> {
+            // Set a sane default far in the future so tests relying on default behavior keep working
+            this[RestrictionsParams::restrictionEndBlock] = 1_555_000L
+            this[RestrictionsParams::emergencyTransferExemptions] = emptyList<EmergencyTransferExemption>()
+            this[RestrictionsParams::exemptionUsageTracking] = emptyList<ExemptionUsageEntry>()
+        }
     }
 }
 

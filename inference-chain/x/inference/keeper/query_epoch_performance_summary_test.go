@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	testutil "github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	"github.com/productscience/inference/x/inference/types"
@@ -29,24 +30,24 @@ func TestEpochPerformanceSummaryQuerySingle(t *testing.T) {
 		{
 			desc: "First",
 			request: &types.QueryGetEpochPerformanceSummaryRequest{
-				EpochStartHeight: msgs[0].EpochStartHeight,
-				ParticipantId:    msgs[0].ParticipantId,
+				EpochIndex:    msgs[0].EpochIndex,
+				ParticipantId: msgs[0].ParticipantId,
 			},
 			response: &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: msgs[0]},
 		},
 		{
 			desc: "Second",
 			request: &types.QueryGetEpochPerformanceSummaryRequest{
-				EpochStartHeight: msgs[1].EpochStartHeight,
-				ParticipantId:    msgs[1].ParticipantId,
+				EpochIndex:    msgs[1].EpochIndex,
+				ParticipantId: msgs[1].ParticipantId,
 			},
 			response: &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: msgs[1]},
 		},
 		{
 			desc: "KeyNotFound",
 			request: &types.QueryGetEpochPerformanceSummaryRequest{
-				EpochStartHeight: 100000,
-				ParticipantId:    strconv.Itoa(100000),
+				EpochIndex:    100000,
+				ParticipantId: testutil.Bech32Addr(100000),
 			},
 			err: status.Error(codes.NotFound, "not found"),
 		},

@@ -4,17 +4,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.random.Random
 import kotlin.test.assertNotNull
-import java.time.Instant
 
 const val DELAY_SEED = 8675309
 
@@ -24,11 +25,10 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     fun `test with maximum tokens`() {
         logSection("=== STARTING TEST: test with maximum tokens ===")
-        val (cluster, genesis) = initCluster()
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        
+
         val maxCompletionTokens = 100
-        
+
         // Test 1: maxCompletionTokens parameter
         logSection("=== TEST 1: Testing maxCompletionTokens = $maxCompletionTokens ===")
         val expectedTokens1 = (maxCompletionTokens + inferenceRequestObject.textLength())
@@ -38,10 +38,10 @@ class InferenceAccountingTests : TestermintTest() {
             expectedTokens1,
             maxCompletionTokens
         )
-        
+
         logSection("=== TEST 1 COMPLETED ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        
+
         // Test 2: maxTokens parameter  
         logSection("=== TEST 2: Testing maxTokens = $maxCompletionTokens ===")
         val expectedTokens2 = (maxCompletionTokens + inferenceRequestObject.textLength())
@@ -51,10 +51,10 @@ class InferenceAccountingTests : TestermintTest() {
             expectedTokens2,
             maxCompletionTokens
         )
-        
+
         logSection("=== TEST 2 COMPLETED ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        
+
         // Test 3: Default tokens
         logSection("=== TEST 3: Testing default tokens = $DEFAULT_TOKENS ===")
         val expectedTokens3 = (DEFAULT_TOKENS + inferenceRequestObject.textLength())
@@ -64,7 +64,7 @@ class InferenceAccountingTests : TestermintTest() {
             expectedTokens3.toInt(),
             DEFAULT_TOKENS.toInt()
         )
-        
+
         logSection("=== ALL TESTS COMPLETED SUCCESSFULLY ===")
     }
 
@@ -98,7 +98,8 @@ class InferenceAccountingTests : TestermintTest() {
         while (lastRequest == null && attempts < 15) {
             Thread.sleep(Duration.ofSeconds(1))
             attempts++
-            lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+            lastRequest =
+                cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
         }
 
         // Mock verification
@@ -119,7 +120,7 @@ class InferenceAccountingTests : TestermintTest() {
             startBalance - currentBalance
         }.filter { it != 0L }.first()
         val expectedCost = expectedTokens * (chainInference.perTokenPrice ?: DEFAULT_TOKEN_COST)
-        
+
         logHighlight("Balance verification: deducted $difference nicoin (expected: $expectedCost)")
         assertThat(difference).isEqualTo(expectedCost)
         logHighlight("✅ Escrow verification completed successfully")
@@ -128,7 +129,6 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test immediate pre settle amounts`() {
-        val (_, genesis) = initCluster()
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference")
@@ -146,7 +146,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test prompt larger than max_tokens`() {
-        val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
         cluster.allPairs.forEach {
             it.mock?.setInferenceResponse(
@@ -179,19 +178,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `start comes after finish inference`() {
-        val delayPruningSpec = spec {
-            this[AppState::inference] = spec<InferenceState> {
-                this[InferenceState::params] = spec<InferenceParams> {
-                    this[InferenceParams::epochParams] = spec<EpochParams> {
-                        this[EpochParams::inferencePruningEpochThreshold] = 4L
-                    }
-                }
-            }
-        }
-        val delayPruningConfig = inferenceConfig.copy(
-            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
-        )
-        val (_, genesis) = initCluster(config = delayPruningConfig, reboot = true)
         logSection("Clearing Claims")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -212,19 +198,6 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test post settle amounts`() {
-        val delayPruningSpec = spec {
-            this[AppState::inference] = spec<InferenceState> {
-                this[InferenceState::params] = spec<InferenceParams> {
-                    this[InferenceParams::epochParams] = spec<EpochParams> {
-                        this[EpochParams::inferencePruningEpochThreshold] = 4L
-                    }
-                }
-            }
-        }
-        val delayPruningConfig = inferenceConfig.copy(
-            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
-        )
-        val (_, genesis) = initCluster(config = delayPruningConfig, reboot = true)
         logSection("Clearing claims")
         // If we don't wait until the next rewards claim, there may be lingering requests that mess with our math
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
@@ -241,29 +214,6 @@ class InferenceAccountingTests : TestermintTest() {
         verifySettledInferences(genesis, inferences, participants, startLastRewardedEpoch)
     }
 
-    @Test
-    fun `test consumer only participant`() {
-        val (cluster, genesis) = initCluster()
-        logSection("Clearing claims")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        cluster.withConsumer("consumer1") { consumer ->
-            val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getColdAddress())
-            assertThat(result).isNotNull
-            val inference = genesis.waitForInference(result.id, finished = true)
-            assertNotNull(inference, "Inference never finished")
-            logSection("Verifying inference balances")
-            assertThat(inference.executedBy).isNotNull()
-            assertThat(inference.requestedBy).isEqualTo(consumer.address)
-            val participantsAfter = genesis.api.getParticipants()
-            assertThat(participantsAfter).anyMatch { it.id == consumer.address }.`as`("Consumer listed in participants")
-            val balanceAfter = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            assertThat(balanceAfter).isEqualTo(balanceAtStart - inference.actualCost!!)
-                .`as`("Balance matches expectation")
-        }
-    }
-
     private fun getFailingInference(
         cluster: LocalCluster,
         requestingNode: LocalInferencePair = cluster.genesis,
@@ -275,7 +225,11 @@ class InferenceAccountingTests : TestermintTest() {
         while (!failed) {
             val currentBlock = cluster.genesis.getCurrentBlockHeight()
             try {
-                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getColdAddress())
+                val response = requestingNode.makeInferenceRequest(
+                    inferenceRequest,
+                    requester,
+                    taAddress = requestingNode.node.getColdAddress()
+                )
                 cluster.genesis.node.waitForNextBlock()
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {
@@ -297,6 +251,35 @@ class InferenceAccountingTests : TestermintTest() {
             }
         }
         return results
+    }
+
+    companion object {
+        @JvmStatic
+        @BeforeAll
+        fun getCluster(): Unit {
+            val delayPruningSpec = spec {
+                this[AppState::inference] = spec<InferenceState> {
+                    this[InferenceState::params] = spec<InferenceParams> {
+                        this[InferenceParams::epochParams] = spec<EpochParams> {
+                            this[EpochParams::inferencePruningEpochThreshold] = 4L
+                        }
+                    }
+                }
+            }
+            val delayPruningConfig = inferenceConfig.copy(
+                genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
+            )
+
+            val (clus, gen) = initCluster(config = delayPruningConfig)
+            clus.allPairs.forEach { pair ->
+                pair.waitForMlNodesToLoad()
+            }
+            cluster = clus
+            genesis = gen
+        }
+
+        lateinit var cluster: LocalCluster
+        lateinit var genesis: LocalInferencePair
     }
 
 

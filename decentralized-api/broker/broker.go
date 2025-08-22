@@ -91,11 +91,11 @@ func (b *BrokerChainBridgeImpl) GetCurrentEpochGroupData() (*types.QueryCurrentE
 	return queryClient.CurrentEpochGroupData(b.client.GetContext(), req)
 }
 
-func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	req := &types.QueryGetEpochGroupDataRequest{
-		PocStartBlockHeight: pocHeight,
-		ModelId:             modelId,
+		EpochIndex: epochIndex,
+		ModelId:    modelId,
 	}
 	return queryClient.EpochGroupData(b.client.GetContext(), req)
 }
@@ -924,7 +924,7 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 
 	if needsPocParams {
-		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(int64(epochState.LatestEpoch.PocStartBlockHeight))
+		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(epochState.LatestEpoch.PocStartBlockHeight)
 		if pocParamsErr != nil {
 			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
 		}
@@ -1140,7 +1140,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		"old_phase", b.lastEpochPhase, "new_phase", epochState.CurrentPhase)
 
 	// 1. Get the parent epoch group to find all subgroup models
-	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(uint64(epochState.LatestEpoch.PocStartBlockHeight), "")
+	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(epochState.LatestEpoch.EpochIndex, "")
 	if err != nil {
 		logging.Error("Failed to get parent epoch group", types.Nodes, "error", err)
 		return err
@@ -1160,7 +1160,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	// 2. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
-		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.PocStartBlockHeight, modelId)
+		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
 		if err != nil {
 			logging.Error("Failed to get subgroup epoch data", types.Nodes, "model_id", modelId, "error", err)
 			continue

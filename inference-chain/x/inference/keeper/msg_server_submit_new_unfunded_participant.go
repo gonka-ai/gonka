@@ -45,20 +45,5 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 		})
 	k.LogDebug("Adding new participant", types.Participants, "participant", newParticipant)
 	k.SetParticipant(ctx, newParticipant)
-	if newParticipant.GetInferenceUrl() == "" {
-		// Consumer only!
-		k.LogInfo("Funding new consumer", types.Participants, "consumer", newParticipant)
-		starterAmount := int64(DefaultMaxTokens * TokenCost * FaucetRequests)
-		err := k.MintRewardCoins(ctx, starterAmount, "starter_coins:"+newParticipant.GetAddress())
-		if err != nil {
-			k.LogError("Error minting coins", types.Participants, "error", err)
-			return nil, err
-		}
-		err = k.PayParticipantFromModule(ctx, msg.GetAddress(), uint64(starterAmount), types.ModuleName, "starter_coins:"+newParticipant.GetAddress(), nil)
-		if err != nil {
-			k.LogError("Error sending coins", types.Participants, "error", err)
-			return nil, err
-		}
-	}
 	return &types.MsgSubmitNewUnfundedParticipantResponse{}, nil
 }

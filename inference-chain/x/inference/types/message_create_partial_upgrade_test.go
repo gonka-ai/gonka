@@ -17,13 +17,19 @@ func TestMsgCreatePartialUpgrade_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgCreatePartialUpgrade{
-				Authority: "invalid_address",
+				Authority:       "invalid_address",
+				Height:          1,
+				NodeVersion:     "v1",
+				ApiBinariesJson: "{}",
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "valid address",
+			name: "valid address and fields",
 			msg: MsgCreatePartialUpgrade{
-				Authority: sample.AccAddress(),
+				Authority:       sample.AccAddress(),
+				Height:          1,
+				NodeVersion:     "v1",
+				ApiBinariesJson: "{}",
 			},
 		},
 	}

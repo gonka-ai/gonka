@@ -43,6 +43,16 @@ data class UpdateParams(
     }
 }
 
+data class UpdateRestrictionsParams(
+    val authority: String = "",
+    val params: RestrictionsParams,
+) : GovernanceMessage {
+    override val type: String = "/inference.restrictions.MsgUpdateParams"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
 data class DepositorAmount(
     val denom: String,
     val amount: BigInteger

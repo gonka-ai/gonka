@@ -3,35 +3,31 @@
     "bank": {
       "denom_metadata": [
         {
-          "description": "AI Inference and training token",
-          "base": "nicoin",
-          "display": "icoin",
-          "name": "AI Coin",
-          "symbol": "AIC",
+          "description": "Coins for the Gonka network.",
+          "base": "ngonka",
+          "display": "ngonka",
+          "name": "Gonka",
+          "symbol": "GNK",
           "denom_units": [
             {
-              "denom": "nicoin",
-              "exponent": 0
+              "denom": "ngonka",
+              "exponent": 0,
+              "aliases": ["nanogonka"]
             },
             {
-              "denom": "uicoin",
-              "exponent": 3
+              "denom": "ugonka",
+              "exponent": 3,
+              "aliases": ["microgonka"]
             },
             {
-              "denom": "micoin",
-              "exponent": 6
+              "denom": "mgonka",
+              "exponent": 6,
+              "aliases": ["milligonka"]
             },
             {
-              "denom": "icoin",
-              "exponent": 9
-            },
-            {
-              "denom": "kicoin",
-              "exponent": 12
-            },
-            {
-              "denom": "mcicoin",
-              "exponent": 15
+              "denom": "gonka",
+              "exponent": 9,
+              "aliases": []
             }
           ]
         }

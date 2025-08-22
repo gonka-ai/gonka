@@ -61,6 +61,8 @@ import (
 
 	blsmodulev1 "github.com/productscience/inference/api/inference/bls/module"
 	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
+	genesistransfermodulev1 "github.com/productscience/inference/api/inference/genesistransfer/module"
+	restrictionsmodulev1 "github.com/productscience/inference/api/inference/restrictions/module"
 	streamvestingmodulev1 "github.com/productscience/inference/api/inference/streamvesting/module"
 	_ "github.com/productscience/inference/x/bls/module" // import for side-effects
 	blstypes "github.com/productscience/inference/x/bls/types"
@@ -68,8 +70,12 @@ import (
 	bookkeepermoduletypes "github.com/productscience/inference/x/bookkeeper/types"
 	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
 	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
+	_ "github.com/productscience/inference/x/genesistransfer/module" // import for side-effects
+	genesistransfermoduletypes "github.com/productscience/inference/x/genesistransfer/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
+	_ "github.com/productscience/inference/x/restrictions/module" // import for side-effects
+	restrictionsmoduletypes "github.com/productscience/inference/x/restrictions/types"
 	_ "github.com/productscience/inference/x/streamvesting/module" // import for side-effects
 	streamvestingmoduletypes "github.com/productscience/inference/x/streamvesting/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
@@ -115,6 +121,8 @@ var (
 		collateralmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
+		restrictionsmoduletypes.ModuleName,
+		genesistransfermoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 
@@ -145,6 +153,8 @@ var (
 		inferencemoduletypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		restrictionsmoduletypes.ModuleName,
+		genesistransfermoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	}
 
@@ -169,6 +179,8 @@ var (
 		inferencemoduletypes.ModuleName,
 		streamvestingmoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		restrictionsmoduletypes.ModuleName,
+		genesistransfermoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	}
 
@@ -197,6 +209,7 @@ var (
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: collateralmoduletypes.ModuleName, Permissions: []string{authtypes.Burner}},
 		{Account: streamvestingmoduletypes.ModuleName, Permissions: []string{authtypes.Minter}},
+		{Account: genesistransfermoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 
@@ -359,6 +372,14 @@ var (
 			{
 				Name:   streamvestingmoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&streamvestingmodulev1.Module{}),
+			},
+			{
+				Name:   restrictionsmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&restrictionsmodulev1.Module{}),
+			},
+			{
+				Name:   genesistransfermoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&genesistransfermodulev1.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},

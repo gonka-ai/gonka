@@ -9,13 +9,14 @@ import (
 	"decentralized-api/logging"
 	"errors"
 	"fmt"
-	ctypes "github.com/cometbft/cometbft/rpc/core/types"
-	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"log"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
+
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -31,6 +32,7 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
+	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
 type InferenceCosmosClient struct {
@@ -112,8 +114,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		cosmosclient.WithKeyringServiceName("inferenced"),
 		cosmosclient.WithNodeAddress(nodeConfig.Url),
 		cosmosclient.WithKeyringDir(keyringDir),
-		cosmosclient.WithGasPrices("0icoin"),
-		cosmosclient.WithFees("0icoin"),
+		cosmosclient.WithGasPrices("0ngonka"),
+		cosmosclient.WithFees("0ngonka"),
 		cosmosclient.WithGas("auto"),
 		cosmosclient.WithGasAdjustment(5),
 	)
@@ -194,6 +196,7 @@ type CosmosMessageClient interface {
 	SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error
 	SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error
 	NewBLSQueryClient() blstypes.QueryClient
+	NewRestrictionsQueryClient() restrictionstypes.QueryClient
 	GetAddress() string
 	GetApiAccount() apiconfig.ApiAccount
 }
@@ -462,4 +465,8 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
 	return blstypes.NewQueryClient(icc.manager.GetClientContext())
+}
+
+func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
+	return restrictionstypes.NewQueryClient(icc.manager.GetClientContext())
 }

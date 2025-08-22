@@ -7,7 +7,7 @@ message SettleAmount {
   string participant = 1;
   uint64 reward_coins = 2;
   uint64 work_coins = 3;
-  uint64 poc_start_height = 4;
+  uint64 epoch_index = 4;
   string seed_signature = 5;
 }
 

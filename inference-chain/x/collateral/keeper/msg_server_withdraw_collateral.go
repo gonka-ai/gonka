@@ -45,6 +45,13 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 	// Calculate the completion epoch
 	completionEpoch := currentEpoch + params.UnbondingPeriodEpochs
 
+	k.Logger().Info("adding unbonding entry for collateral withdrawal",
+		"participant", msg.Participant,
+		"amount", msg.Amount.String(),
+		"completion_epoch", completionEpoch,
+		"current_epoch", currentEpoch,
+		"unbonding_period_epochs", params.UnbondingPeriodEpochs,
+	)
 	// Create the unbonding entry
 	k.AddUnbondingCollateral(ctx, participantAddr, completionEpoch, msg.Amount)
 

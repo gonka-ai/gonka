@@ -1,6 +1,7 @@
 import com.productscience.EpochStage
 import com.productscience.LocalCluster
 import com.productscience.data.AppState
+import com.productscience.data.Decimal
 import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.InferenceState
 import com.productscience.data.spec
@@ -15,7 +16,20 @@ import org.junit.jupiter.api.Test
 class TokenomicsTests : TestermintTest() {
     @Test
     fun createTopMiner() {
-        val (_, genesis) = initCluster(reboot = true)
+        // Disable power capping for this test to allow unlimited weight accumulation
+        val noCappingSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
+                    this[GenesisOnlyParams::maxIndividualPowerPercentage] = Decimal.fromDouble(0.0) // Disable power capping
+                }
+            }
+        }
+
+        val noCappingConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(noCappingSpec) ?: noCappingSpec
+        )
+
+        val (_, genesis) = initCluster(config = noCappingConfig, reboot = true)
         logSection("Setting PoC weight to 100")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.changePoc(100)
@@ -58,7 +72,7 @@ class TokenomicsTests : TestermintTest() {
         )
         val (localCluster, genesis) = initCluster(config = fastRewards, reboot = true)
         val firstJoin = localCluster.joinPairs.first()
-        val initialBalance = firstJoin.node.getSelfBalance("nicoin")
+        val initialBalance = firstJoin.node.getSelfBalance("ngonka")
         logSection("Setting PoC weight to 100")
         firstJoin.changePoc(100)
         val blockUntilReward = genesis.node.getGenesisState().appState.inference.genesisOnlyParams.topRewardPeriod / 5
@@ -80,7 +94,7 @@ class TokenomicsTests : TestermintTest() {
         val topMiner = topMiners.topMiner.first()
         assertThat(topMiner.address).isEqualTo(firstJoin.node.getColdAddress())
         val standardizedExpectedReward = getTopMinerReward(localCluster)
-        val currentBalance = firstJoin.node.getSelfBalance("nicoin")
+        val currentBalance = firstJoin.node.getSelfBalance("ngonka")
         // greater, because it's done validation work at some point, no doubt.
         assertThat(currentBalance - initialBalance).isGreaterThan(standardizedExpectedReward)
         
