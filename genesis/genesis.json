@@ -1,7 +1,7 @@
 {
   "app_name": "inferenced",
   "app_version": "50e0a6c3",
-  "genesis_time": "2025-08-22T04:32:59.744579000Z",
+  "genesis_time": "2025-08-22T04:43:45.006185000Z",
   "chain_id": "gonka-mainnet",
   "initial_height": 1,
   "app_hash": null,
@@ -933,7 +933,7 @@
         },
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+          "address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
           "pub_key": null,
           "account_number": "44",
           "sequence": "0"
@@ -947,7 +947,7 @@
         },
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+          "address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
           "pub_key": null,
           "account_number": "46",
           "sequence": "0"
@@ -955,14 +955,14 @@
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
           "account_number": "47",
-          "address": "gonka1pu2437qrtr50kwzfdtxufg4k65w2cyj7ld0g8s",
+          "address": "gonka18jz7mcertewzqzmzduwjmskxel8sxkml8rpzhu",
           "pub_key": null,
           "sequence": "0"
         },
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
           "account_number": "48",
-          "address": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
+          "address": "gonka1pu2437qrtr50kwzfdtxufg4k65w2cyj7ld0g8s",
           "pub_key": null,
           "sequence": "0"
         },
@@ -970,27 +970,6 @@
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
           "account_number": "49",
           "address": "gonka1luuppe3llpfeu2c8r62j7x8eedm05rznr3mk9f",
-          "pub_key": null,
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "50",
-          "address": "gonka18jz7mcertewzqzmzduwjmskxel8sxkml8rpzhu",
-          "pub_key": null,
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "51",
-          "address": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "pub_key": null,
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "52",
-          "address": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
           "pub_key": null,
           "sequence": "0"
         }
@@ -1005,7 +984,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgStartInference"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1014,7 +993,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1023,7 +1002,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimRewards"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1032,7 +1011,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgValidation"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1041,7 +1020,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitPocBatch"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1050,7 +1029,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitPocValidation"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1059,7 +1038,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitSeed"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1068,7 +1047,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgBridgeExchange"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1077,7 +1056,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitTrainingKvRecord"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1086,7 +1065,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgJoinTraining"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1095,7 +1074,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgJoinTrainingStatus"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1104,7 +1083,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgTrainingHeartbeat"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1113,7 +1092,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSetBarrier"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1122,7 +1101,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimTrainingTaskForAssignment"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1131,7 +1110,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgAssignTrainingTask"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1140,7 +1119,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1149,7 +1128,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitNewParticipant"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1158,7 +1137,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitHardwareDiff"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1167,7 +1146,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgInvalidateInference"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1176,7 +1155,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgRevalidateInference"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1185,7 +1164,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitDealerPart"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1194,7 +1173,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitVerificationVector"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1203,7 +1182,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgRequestThresholdSignature"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1212,7 +1191,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitPartialSignature"
           },
-          "expiration": "2026-08-22T04:25:57Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
@@ -1221,457 +1200,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
           },
-          "expiration": "2026-08-22T04:25:57Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgStartInference"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgFinishInference"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgClaimRewards"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgValidation"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitPocBatch"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitPocValidation"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitSeed"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgBridgeExchange"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitTrainingKvRecord"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgJoinTraining"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgJoinTrainingStatus"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgTrainingHeartbeat"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSetBarrier"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgClaimTrainingTaskForAssignment"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgAssignTrainingTask"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitNewParticipant"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitHardwareDiff"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgInvalidateInference"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgRevalidateInference"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitDealerPart"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitVerificationVector"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgRequestThresholdSignature"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitPartialSignature"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
-          "grantee": "gonka1rhzhmj325ytj5mlfj902ms2avllllt8w7e6p7y",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
-          },
-          "expiration": "2026-08-22T03:42:50Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgStartInference"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgFinishInference"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgClaimRewards"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgValidation"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitPocBatch"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitPocValidation"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitSeed"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgBridgeExchange"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitTrainingKvRecord"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgJoinTraining"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgJoinTrainingStatus"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgTrainingHeartbeat"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSetBarrier"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgClaimTrainingTaskForAssignment"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgAssignTrainingTask"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitNewParticipant"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitHardwareDiff"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgInvalidateInference"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgRevalidateInference"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitDealerPart"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitVerificationVector"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgRequestThresholdSignature"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitPartialSignature"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
-        },
-        {
-          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "grantee": "gonka1rgxjk5dpmgnmctgc232smy76rrnmgqhgvr8ds7",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
-          },
-          "expiration": "2026-08-22T03:42:36Z"
+          "expiration": "2026-08-22T04:38:15Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1680,7 +1209,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgStartInference"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1689,7 +1218,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1698,7 +1227,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimRewards"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1707,7 +1236,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgValidation"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1716,7 +1245,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitPocBatch"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1725,7 +1254,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitPocValidation"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1734,7 +1263,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitSeed"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1743,7 +1272,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgBridgeExchange"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1752,7 +1281,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitTrainingKvRecord"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1761,7 +1290,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgJoinTraining"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1770,7 +1299,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgJoinTrainingStatus"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1779,7 +1308,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgTrainingHeartbeat"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1788,7 +1317,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSetBarrier"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1797,7 +1326,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimTrainingTaskForAssignment"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1806,7 +1335,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgAssignTrainingTask"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1815,7 +1344,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1824,7 +1353,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitNewParticipant"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1833,7 +1362,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitHardwareDiff"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1842,7 +1371,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgInvalidateInference"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1851,7 +1380,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgRevalidateInference"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1860,7 +1389,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitDealerPart"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1869,7 +1398,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitVerificationVector"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1878,7 +1407,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgRequestThresholdSignature"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1887,7 +1416,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitPartialSignature"
           },
-          "expiration": "2026-08-22T04:26:09Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
@@ -1896,232 +1425,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
           },
-          "expiration": "2026-08-22T04:26:09Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgStartInference"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgFinishInference"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgClaimRewards"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgValidation"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitPocBatch"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitPocValidation"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitSeed"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgBridgeExchange"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitTrainingKvRecord"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgJoinTraining"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgJoinTrainingStatus"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgTrainingHeartbeat"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSetBarrier"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgClaimTrainingTaskForAssignment"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgAssignTrainingTask"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitNewParticipant"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgSubmitHardwareDiff"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgInvalidateInference"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.inference.MsgRevalidateInference"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitDealerPart"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitVerificationVector"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgRequestThresholdSignature"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitPartialSignature"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
-        },
-        {
-          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
-          "grantee": "gonka1wyktg2tvjmk64ck5n6w3t40spjx2u53k3g0emz",
-          "authorization": {
-            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
-            "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
-          },
-          "expiration": "2026-08-22T03:43:05Z"
+          "expiration": "2026-08-22T04:38:23Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2130,7 +1434,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgStartInference"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2139,7 +1443,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2148,7 +1452,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimRewards"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2157,7 +1461,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgValidation"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2166,7 +1470,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitPocBatch"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2175,7 +1479,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitPocValidation"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2184,7 +1488,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitSeed"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2193,7 +1497,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgBridgeExchange"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2202,7 +1506,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitTrainingKvRecord"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2211,7 +1515,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgJoinTraining"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2220,7 +1524,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgJoinTrainingStatus"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2229,7 +1533,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgTrainingHeartbeat"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2238,7 +1542,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSetBarrier"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2247,7 +1551,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimTrainingTaskForAssignment"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2256,7 +1560,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgAssignTrainingTask"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2265,7 +1569,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2274,7 +1578,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitNewParticipant"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2283,7 +1587,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgSubmitHardwareDiff"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2292,7 +1596,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgInvalidateInference"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2301,7 +1605,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgRevalidateInference"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2310,7 +1614,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitDealerPart"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2319,7 +1623,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitVerificationVector"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2328,7 +1632,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgRequestThresholdSignature"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2337,7 +1641,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitPartialSignature"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         },
         {
           "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
@@ -2346,7 +1650,7 @@
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
           },
-          "expiration": "2026-08-22T04:25:43Z"
+          "expiration": "2026-08-22T04:38:05Z"
         }
       ]
     },
@@ -2979,134 +2283,6 @@
               {
                 "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
                 "description": {
-                  "moniker": "node-2",
-                  "identity": "",
-                  "website": "",
-                  "security_contact": "",
-                  "details": ""
-                },
-                "commission": {
-                  "rate": "0.100000000000000000",
-                  "max_rate": "0.200000000000000000",
-                  "max_change_rate": "0.010000000000000000"
-                },
-                "min_self_delegation": "1",
-                "delegator_address": "",
-                "validator_address": "gonkavaloper1dkl4mah5erqggvhqkpc8j3qs5tyuetgdc59d0v",
-                "pubkey": {
-                  "@type": "/cosmos.crypto.ed25519.PubKey",
-                  "key": "7vaIJo4Ue2KwlzgisYGTA/LpMm3NzJt0jqrVFVz2HGo="
-                },
-                "value": {
-                  "denom": "ngonka",
-                  "amount": "1"
-                }
-              }
-            ],
-            "memo": "",
-            "timeout_height": "0",
-            "unordered": false,
-            "timeout_timestamp": null,
-            "extension_options": [],
-            "non_critical_extension_options": []
-          },
-          "auth_info": {
-            "signer_infos": [
-              {
-                "public_key": {
-                  "@type": "/cosmos.crypto.secp256k1.PubKey",
-                  "key": "A9CX2rkp0YxVAvKW2bv4nXEU12UEnw/gHjQND1tPWCoY"
-                },
-                "mode_info": {
-                  "single": {
-                    "mode": "SIGN_MODE_DIRECT"
-                  }
-                },
-                "sequence": "0"
-              }
-            ],
-            "fee": {
-              "amount": [],
-              "gas_limit": "200000",
-              "payer": "",
-              "granter": ""
-            },
-            "tip": null
-          },
-          "signatures": [
-            "wibK5HugqNV8kPjF2HSkq7csgmnHmOty6t/VzDTQHgwPjS/pHFDMR56MVGaEuOgw75BkNIe9VBCf3TENk7INYQ=="
-          ]
-        },
-        {
-          "body": {
-            "messages": [
-              {
-                "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
-                "description": {
-                  "moniker": "node-1",
-                  "identity": "",
-                  "website": "",
-                  "security_contact": "",
-                  "details": ""
-                },
-                "commission": {
-                  "rate": "0.100000000000000000",
-                  "max_rate": "0.200000000000000000",
-                  "max_change_rate": "0.010000000000000000"
-                },
-                "min_self_delegation": "1",
-                "delegator_address": "",
-                "validator_address": "gonkavaloper1y2a9p56kv044327uycmqdexl7zs82fs5lyang5",
-                "pubkey": {
-                  "@type": "/cosmos.crypto.ed25519.PubKey",
-                  "key": "LDCS1O/FO8t5vkN1AjPG9hUKmO5VQqXXOe63axaCQxI="
-                },
-                "value": {
-                  "denom": "ngonka",
-                  "amount": "1"
-                }
-              }
-            ],
-            "memo": "",
-            "timeout_height": "0",
-            "unordered": false,
-            "timeout_timestamp": null,
-            "extension_options": [],
-            "non_critical_extension_options": []
-          },
-          "auth_info": {
-            "signer_infos": [
-              {
-                "public_key": {
-                  "@type": "/cosmos.crypto.secp256k1.PubKey",
-                  "key": "A/EHY6CWbAH8evT5gRDSJdsTMmtQQLQspeRT32La8cX8"
-                },
-                "mode_info": {
-                  "single": {
-                    "mode": "SIGN_MODE_DIRECT"
-                  }
-                },
-                "sequence": "0"
-              }
-            ],
-            "fee": {
-              "amount": [],
-              "gas_limit": "200000",
-              "payer": "",
-              "granter": ""
-            },
-            "tip": null
-          },
-          "signatures": [
-            "l1xhTFN0Lq8fzP6Ft5/qQeKZ26lOaxabe/PQvkWI+chwRIxuDdtApftg1CJ8vrrAy7bEiwvizRjEpM0xbSMXtg=="
-          ]
-        },
-        {
-          "body": {
-            "messages": [
-              {
-                "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
-                "description": {
                   "moniker": "node-3",
                   "identity": "",
                   "website": "",
@@ -3163,70 +2339,6 @@
           },
           "signatures": [
             "loAu/XlMjYbQTWYkIuezYZDVJ6Zn5+IPB/FWM3QONEJBpO/HBqNTQy3CCdrGWYnE2FZ9ZK7d6riYZdIsixmXcQ=="
-          ]
-        },
-        {
-          "body": {
-            "messages": [
-              {
-                "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
-                "description": {
-                  "moniker": "node-3",
-                  "identity": "",
-                  "website": "",
-                  "security_contact": "",
-                  "details": ""
-                },
-                "commission": {
-                  "rate": "0.100000000000000000",
-                  "max_rate": "0.200000000000000000",
-                  "max_change_rate": "0.010000000000000000"
-                },
-                "min_self_delegation": "1",
-                "delegator_address": "",
-                "validator_address": "gonkavaloper1kx9mca3xm8u8ypzfuhmxey66u0ufxhs70mtf0e",
-                "pubkey": {
-                  "@type": "/cosmos.crypto.ed25519.PubKey",
-                  "key": "Uo25c6Tice8Dm53ZZLo1PsUHo40J1BCQKlJyAv3l40c="
-                },
-                "value": {
-                  "denom": "ngonka",
-                  "amount": "1"
-                }
-              }
-            ],
-            "memo": "",
-            "timeout_height": "0",
-            "unordered": false,
-            "timeout_timestamp": null,
-            "extension_options": [],
-            "non_critical_extension_options": []
-          },
-          "auth_info": {
-            "signer_infos": [
-              {
-                "public_key": {
-                  "@type": "/cosmos.crypto.secp256k1.PubKey",
-                  "key": "A+yokzwLbyIn2jzTirjONexkP36AYMv6RxDXMrbCnJzR"
-                },
-                "mode_info": {
-                  "single": {
-                    "mode": "SIGN_MODE_DIRECT"
-                  }
-                },
-                "sequence": "0"
-              }
-            ],
-            "fee": {
-              "amount": [],
-              "gas_limit": "200000",
-              "payer": "",
-              "granter": ""
-            },
-            "tip": null
-          },
-          "signatures": [
-            "4pNXYaulsC3MI5MZS+2RzZveSbmz8tYnS6KbfvuUXBsr/JFOYeDjwh0P0yCE38QSJnPHRj+/m8mAWXH1v6XXVw=="
           ]
         },
         {
@@ -3391,11 +2503,11 @@
           "epoch_multiplier": "1",
           "epoch_shift": "130",
           "default_unit_of_compute_price": "100",
-          "poc_stage_duration": "60",
+          "poc_stage_duration": "40",
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
           "poc_validation_duration": "20",
-          "set_new_validators_delay": "10",
+          "set_new_validators_delay": "20",
           "inference_validation_cutoff": "20",
           "inference_pruning_epoch_threshold": "2"
         },
@@ -3614,33 +2726,33 @@
           "index": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
           "address": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
           "weight": 1,
-          "join_time": 1755836779,
-          "last_inference_time": 1755836779,
+          "join_time": 1755837517,
+          "last_inference_time": 1755837517,
           "inference_url": "http://node2.gonka.ai:8000",
           "status": 1,
-          "validator_key": "7vaIJo4Ue2KwlzgisYGTA/LpMm3NzJt0jqrVFVz2HGo=",
-          "current_epoch_stats": {}
-        },
-        {
-          "index": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
-          "weight": 1,
-          "join_time": 1755836779,
-          "last_inference_time": 1755836779,
-          "inference_url": "http://node1.gonka.ai:8000",
-          "status": 1,
-          "validator_key": "gFQhA5/SVypA+2FCSAhrl403G0QPy+8/TVwEuhMz7FQ=",
+          "validator_key": "JfTjpre8dUryiKW+NOfoS15gKZaq+hUTpid38b550M0=",
           "current_epoch_stats": {}
         },
         {
           "index": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
           "address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
           "weight": 1,
-          "join_time": 1755836779,
-          "last_inference_time": 1755836779,
+          "join_time": 1755837517,
+          "last_inference_time": 1755837517,
           "inference_url": "http://node3.gonka.ai:8000",
           "status": 1,
-          "validator_key": "Uo25c6Tice8Dm53ZZLo1PsUHo40J1BCQKlJyAv3l40c=",
+          "validator_key": "xTWR9IzIRTBq0qcSFLwyvtF5MKGJsHCT47+09R75ZU8=",
+          "current_epoch_stats": {}
+        },
+        {
+          "index": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+          "address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+          "weight": 1,
+          "join_time": 1755837517,
+          "last_inference_time": 1755837517,
+          "inference_url": "http://node1.gonka.ai:8000",
+          "status": 1,
+          "validator_key": "gFQhA5/SVypA+2FCSAhrl403G0QPy+8/TVwEuhMz7FQ=",
           "current_epoch_stats": {}
         }
       ]
