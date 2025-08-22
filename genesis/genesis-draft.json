@@ -1634,9 +1634,9 @@
             "exponent": -1
           },
           "top_miner_poc_qualification": "10",
-          "work_vesting_period": "0",
-          "reward_vesting_period": "0",
-          "top_miner_vesting_period": "0"
+          "work_vesting_period": "180",
+          "reward_vesting_period": "180",
+          "top_miner_vesting_period": "180"
         },
         "collateral_params": {
           "slash_fraction_invalid": {
@@ -1663,7 +1663,7 @@
         },
         "bitcoin_reward_params": {
           "use_bitcoin_rewards": true,
-          "initial_epoch_reward": "285000000000000",
+          "initial_epoch_reward": "323000000000000",
           "decay_rate": {
             "value": "-475",
             "exponent": -6
@@ -1715,9 +1715,9 @@
       },
       "genesis_only_params": {
         "total_supply": "1000000000000000000",
-        "originator_supply": "160000000000000000",
-        "top_reward_amount": "120000000000000000",
-        "standard_reward_amount": "600000000000000000",
+        "originator_supply": "200000000000000000",
+        "top_reward_amount": "0",
+        "standard_reward_amount": "680000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
         "supply_denom": "ngonka",
