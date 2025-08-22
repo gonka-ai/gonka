@@ -930,6 +930,83 @@
             "end_time": "1881894000"
           },
           "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
+          "pub_key": null,
+          "account_number": "44",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "pub_key": null,
+          "account_number": "45",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+          "pub_key": null,
+          "account_number": "46",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+          "pub_key": null,
+          "account_number": "47",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
+          "pub_key": null,
+          "account_number": "48",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
+          "pub_key": null,
+          "account_number": "49",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+          "pub_key": null,
+          "account_number": "50",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1n7njfqnq7z64efe7xma23zu78xex93e04lm52u",
+          "pub_key": null,
+          "account_number": "51",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
+          "pub_key": null,
+          "account_number": "52",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+          "pub_key": null,
+          "account_number": "53",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
+          "pub_key": null,
+          "account_number": "54",
+          "sequence": "0"
         }
       ]
     },
@@ -970,11 +1047,29 @@
           ]
         },
         {
+          "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
           "address": "gonka1z5a69mz9gzhphf4eu6yznzru2la0em89xutepm",
           "coins": [
             {
               "denom": "ngonka",
               "amount": "72278000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
             }
           ]
         },
@@ -988,11 +1083,29 @@
           ]
         },
         {
+          "address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
           "address": "gonka19xcrqllduyr6ur3l5ldln4qj0jfpaqfx20280q",
           "coins": [
             {
               "denom": "ngonka",
               "amount": "10841652000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
             }
           ]
         },
@@ -1123,11 +1236,38 @@
           ]
         },
         {
+          "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
           "address": "gonka1dtvqtnq6fjvetajs25kuc9f3944fctveuukxpx",
           "coins": [
             {
               "denom": "ngonka",
               "amount": "800000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
             }
           ]
         },
@@ -1204,11 +1344,47 @@
           ]
         },
         {
+          "address": "gonka1n7njfqnq7z64efe7xma23zu78xex93e04lm52u",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
           "address": "gonka1469wnu47q925a4ekazp09tx9k5phyj2nv67jv3",
           "coins": [
             {
               "denom": "ngonka",
               "amount": "144555000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
+            }
+          ]
+        },
+        {
+          "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1"
             }
           ]
         },
@@ -1342,7 +1518,7 @@
       "supply": [
         {
           "denom": "ngonka",
-          "amount": "320000000000000000"
+          "amount": "320000000000000011"
         }
       ],
       "denom_metadata": [
