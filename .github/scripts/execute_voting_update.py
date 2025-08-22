@@ -248,7 +248,7 @@ class Node:
         output = self.exec_inferenced(["keys", "list", "--output", "json"])
         return json.loads(output)
 
-    def generate_upgrade_proposal(self, upgrade_name, upgrade_height, upgrade_info, title=None, summary="", deposit="100000nicoin", from_address=None, chain_id="prod-sim"):
+    def generate_upgrade_proposal(self, upgrade_name, upgrade_height, upgrade_info, title=None, summary="", deposit="100000ngonka", from_address=None, chain_id="prod-sim"):
         """
         Generate an upgrade proposal transaction.
 
@@ -377,7 +377,7 @@ class Node:
         return None
 
     def get_upgrade_json(self, upgrade_name, upgrade_height, node_binaries=None, api_binaries=None, node_version="",
-                         title=None, summary="For testing", deposit="500000nicoin", from_address=None):
+                         title=None, summary="For testing", deposit="500000ngonka", from_address=None):
         """
         Submit an upgrade proposal.
 
@@ -667,7 +667,7 @@ def main():
                 node_version="",
                 title=upgrade_name,
                 summary=f"Upgrade to {upgrade_name}",
-                deposit="500000nicoin",
+                deposit="500000ngonka",
                 from_address="genesis"
             )
         except Exception as e:

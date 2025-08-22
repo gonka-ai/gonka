@@ -7,11 +7,12 @@ import (
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
-	comettypes "github.com/cometbft/cometbft/types"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	comettypes "github.com/cometbft/cometbft/types"
 
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
@@ -201,7 +202,7 @@ func (s *Server) getAllParticipants(ctx echo.Context) error {
 		if err == nil {
 			for _, balance := range balances {
 				// TODO: surely there is a place to get denom from
-				if balance.Denom == "nicoin" {
+				if balance.Denom == "ngonka" {
 					pBalance = balance.Amount.Int64()
 				}
 			}

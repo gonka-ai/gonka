@@ -1,8 +1,8 @@
 {
   "app_name": "inferenced",
-  "app_version": "69243844",
-  "genesis_time": "2025-08-20T17:00:00.000000000Z",
-  "chain_id": "gonka-rehearsal",
+  "app_version": "50e0a6c3",
+  "genesis_time": "2025-08-21T20:48:23.205041299Z",
+  "chain_id": "gonka-mainnet",
   "initial_height": 1,
   "app_hash": null,
   "app_state": {
@@ -18,74 +18,918 @@
       },
       "accounts": [
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
-          "pub_key": null,
-          "account_number": "0",
-          "sequence": "0"
+          "@type": "/cosmos.auth.v1beta1.ModuleAccount",
+          "base_account": {
+            "address": "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa",
+            "pub_key": null,
+            "account_number": "0",
+            "sequence": "0"
+          },
+          "name": "distribution",
+          "permissions": []
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1dltwc37njhkapzklt9frfhvlk3lpcfz69faly9",
-          "pub_key": null,
-          "account_number": "1",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka18299ldv2cym0gh5spmm6yncv3at3qgn0t7km5w",
+              "pub_key": null,
+              "account_number": "1",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "100470678000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1szdfz8vlsajzyejc6d5220j5v5jrn6zcslqaxh",
-          "pub_key": null,
-          "account_number": "2",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka16fdw9ve0xj5yy42asg85wgykr4y4kw2l37rkfp",
+              "pub_key": null,
+              "account_number": "2",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "2400000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
-          "pub_key": null,
-          "account_number": "3",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1dtvqtnq6fjvetajs25kuc9f3944fctveuukxpx",
+              "pub_key": null,
+              "account_number": "3",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "800000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
-          "pub_key": null,
-          "account_number": "4",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1k4rnc2e9upscac85tkjwa43wr6kqpfyqcmdwej",
+              "pub_key": null,
+              "account_number": "4",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "800000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
-          "pub_key": null,
-          "account_number": "5",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1s7jy6fajstlxzhtxgqmdh4a2cgq26uxcu7jptk",
+              "pub_key": null,
+              "account_number": "5",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "800000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
-          "pub_key": null,
-          "account_number": "6",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1rusnaafgmk0h464fthswch3pzh0zzpsegrda09",
+              "pub_key": null,
+              "account_number": "6",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "320000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
-          "pub_key": null,
-          "account_number": "7",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka12tz8qs5kxjp6qsdgj2u3rzx009z2qf6hjrwrrl",
+              "pub_key": null,
+              "account_number": "7",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "320000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
-          "pub_key": null,
-          "account_number": "8",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1n7ph0qezwcr666kp6tesylw4eqnyqwd0g76u7d",
+              "pub_key": null,
+              "account_number": "8",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "320000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         },
         {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
-          "pub_key": null,
-          "account_number": "9",
-          "sequence": "0"
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1ld2e89rhfmdlke69m444jcd99h7fra4whksdk4",
+              "pub_key": null,
+              "account_number": "9",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "320000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1a0rh2dej6lrnj5zkx005f5jrxem0tpdh4cpcmg",
+              "pub_key": null,
+              "account_number": "10",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "160000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka18qmj244rxzt3274357jd2mp45tv8n4508g29r8",
+              "pub_key": null,
+              "account_number": "11",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "160000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1v86vj8e8eqd3gk5zlf9zawrg0w7c7tfa7x9k25",
+              "pub_key": null,
+              "account_number": "12",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "160000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka108eh38a2pelplqz2lh3ujjnvk7ucdylql6gfmg",
+              "pub_key": null,
+              "account_number": "13",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "160000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1cpxpnskkf6hlpldu76tya7d53rklnjlqu4uars",
+              "pub_key": null,
+              "account_number": "14",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "80000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka17u7kemct38fx3cuj2yh0x5j2fd9zxkuwkes6q7",
+              "pub_key": null,
+              "account_number": "15",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "15000000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1th0qvf05sqdd09p9rgq69nlchw5xzpc3ddply8",
+              "pub_key": null,
+              "account_number": "16",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "4800001000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1pq9r54md9zrd9xqyxx9f3h7as9kfgnp2c0ucat",
+              "pub_key": null,
+              "account_number": "17",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "40000000000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1gvx5swzrur89kg5r0z5jn9a0krvmhvzx3f2fea",
+              "pub_key": null,
+              "account_number": "18",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "3613884000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1x29n95z989ycxymqw60w56dpz7kcdxpp8w8y6x",
+              "pub_key": null,
+              "account_number": "19",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "722777000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1327uf364ql39e63fax5n8t8y5e8lag4xjl7e49",
+              "pub_key": null,
+              "account_number": "20",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "722777000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1tyfdmaulndss4wqpxr24e8reytj03aw338sphz",
+              "pub_key": null,
+              "account_number": "21",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "8673322000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1akmamql0z9vnd48tfw3d75zexu3dswqcawtnxa",
+              "pub_key": null,
+              "account_number": "22",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "361388000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka13t3cvaeke9z5vlwps3z7eyp9uj98z2xkt02352",
+              "pub_key": null,
+              "account_number": "23",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "361388000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka19cw7kkrkdcxkxmkz56hjatfwrunn79fsyvfky5",
+              "pub_key": null,
+              "account_number": "24",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "110044000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1689695npe7amwyunaaj9dwz58v8n7cgkw5emn4",
+              "pub_key": null,
+              "account_number": "25",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "34381000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1fxls283es0m7cymxky9xuml9x74flfjhkfrz4q",
+              "pub_key": null,
+              "account_number": "26",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "7163000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka179nv57lqeana9nvgeul8twegj58ccrd2hm5uzc",
+              "pub_key": null,
+              "account_number": "27",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "144555000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1ucl3pfq6sy9ggxuxahvjhm52hgl3qu4wg46hsk",
+              "pub_key": null,
+              "account_number": "28",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "72278000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1jle7z5mmfczkvy76gvsxud6kjryzhr8c3cpyal",
+              "pub_key": null,
+              "account_number": "29",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "361388000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1xn25n0hphw8tkfg6r3hjvh8d6nerpzqjpql3nx",
+              "pub_key": null,
+              "account_number": "30",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "72278000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1z5a69mz9gzhphf4eu6yznzru2la0em89xutepm",
+              "pub_key": null,
+              "account_number": "31",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "72278000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1lrwu2czkxwaadqnvsttfa5uvc6mshv8wjd3wyz",
+              "pub_key": null,
+              "account_number": "32",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "144555000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1469wnu47q925a4ekazp09tx9k5phyj2nv67jv3",
+              "pub_key": null,
+              "account_number": "33",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "144555000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1h78hmsvknwp86qzu9xftv9znwga7u0sjghmz20",
+              "pub_key": null,
+              "account_number": "34",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "1445554000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1qm66c5gqyew27nefdknspf2x5nwvetsk80zvay",
+              "pub_key": null,
+              "account_number": "35",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "361388000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1qgstmj6k2xwx5p8s2p0ch2qd32lkgegqkcsljs",
+              "pub_key": null,
+              "account_number": "36",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "36074000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1g02qwpgju9xu8lwtqpgrzfqrj7x45tnnhgh3xz",
+              "pub_key": null,
+              "account_number": "37",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "72278000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1clvs7fyag6zjkpnvapjj6m0jn38mgsn63tdnhc",
+              "pub_key": null,
+              "account_number": "38",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "180629000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka18weyd0tlmtvnn47c0fqg0p8jj3q6s2hz3w67nc",
+              "pub_key": null,
+              "account_number": "39",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "36074000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1l4z4swg3e0pf937qm08u0cnkszss34kpe32y52",
+              "pub_key": null,
+              "account_number": "40",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "361388000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka10k4rmsg3e9xrmm2my9dp6lal4nxlenck9uur39",
+              "pub_key": null,
+              "account_number": "41",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "3252496000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka1vthfz8j7gkeu04jx2ju6akcyv6s9apc497x2e3",
+              "pub_key": null,
+              "account_number": "42",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "722777000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
+        },
+        {
+          "@type": "/cosmos.vesting.v1beta1.ContinuousVestingAccount",
+          "base_vesting_account": {
+            "base_account": {
+              "address": "gonka19xcrqllduyr6ur3l5ldln4qj0jfpaqfx20280q",
+              "pub_key": null,
+              "account_number": "43",
+              "sequence": "0"
+            },
+            "original_vesting": [
+              {
+                "denom": "ngonka",
+                "amount": "10841652000000000"
+              }
+            ],
+            "delegated_free": [],
+            "delegated_vesting": [],
+            "end_time": "1881894000"
+          },
+          "start_time": "1755750000"
         }
       ]
     },
@@ -99,141 +943,443 @@
       },
       "balances": [
         {
-          "address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+          "address": "gonka1qgstmj6k2xwx5p8s2p0ch2qd32lkgegqkcsljs",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "36074000000000"
             }
           ]
         },
         {
-          "address": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
+          "address": "gonka1qm66c5gqyew27nefdknspf2x5nwvetsk80zvay",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "361388000000000"
             }
           ]
         },
         {
-          "address": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
+          "address": "gonka1pq9r54md9zrd9xqyxx9f3h7as9kfgnp2c0ucat",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "40000000000000000"
             }
           ]
         },
         {
-          "address": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
+          "address": "gonka1z5a69mz9gzhphf4eu6yznzru2la0em89xutepm",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "72278000000000"
             }
           ]
         },
         {
-          "address": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "address": "gonka1rusnaafgmk0h464fthswch3pzh0zzpsegrda09",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "320000000000000"
             }
           ]
         },
         {
-          "address": "gonka1dltwc37njhkapzklt9frfhvlk3lpcfz69faly9",
+          "address": "gonka19xcrqllduyr6ur3l5ldln4qj0jfpaqfx20280q",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "10841652000000000"
             }
           ]
         },
         {
-          "address": "gonka1szdfz8vlsajzyejc6d5220j5v5jrn6zcslqaxh",
+          "address": "gonka19cw7kkrkdcxkxmkz56hjatfwrunn79fsyvfky5",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "110044000000000"
             }
           ]
         },
         {
-          "address": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
+          "address": "gonka1x29n95z989ycxymqw60w56dpz7kcdxpp8w8y6x",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "722777000000000"
             }
           ]
         },
         {
-          "address": "gonka15eeac82te4ms4wkznxtu82777ayjvveet8dqwm",
+          "address": "gonka1xn25n0hphw8tkfg6r3hjvh8d6nerpzqjpql3nx",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "160000000000000000"
+              "denom": "ngonka",
+              "amount": "72278000000000"
             }
           ]
         },
         {
-          "address": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
+          "address": "gonka18qmj244rxzt3274357jd2mp45tv8n4508g29r8",
           "coins": [
             {
-              "denom": "nicoin",
-              "amount": "1"
+              "denom": "ngonka",
+              "amount": "160000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka18299ldv2cym0gh5spmm6yncv3at3qgn0t7km5w",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "100470678000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka18weyd0tlmtvnn47c0fqg0p8jj3q6s2hz3w67nc",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "36074000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1gvx5swzrur89kg5r0z5jn9a0krvmhvzx3f2fea",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "3613884000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1g02qwpgju9xu8lwtqpgrzfqrj7x45tnnhgh3xz",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "72278000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1fxls283es0m7cymxky9xuml9x74flfjhkfrz4q",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "7163000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka12tz8qs5kxjp6qsdgj2u3rzx009z2qf6hjrwrrl",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "320000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1tyfdmaulndss4wqpxr24e8reytj03aw338sphz",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "8673322000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1th0qvf05sqdd09p9rgq69nlchw5xzpc3ddply8",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "4800001000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1v86vj8e8eqd3gk5zlf9zawrg0w7c7tfa7x9k25",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "160000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1vthfz8j7gkeu04jx2ju6akcyv6s9apc497x2e3",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "722777000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1dtvqtnq6fjvetajs25kuc9f3944fctveuukxpx",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "800000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka108eh38a2pelplqz2lh3ujjnvk7ucdylql6gfmg",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "160000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka10k4rmsg3e9xrmm2my9dp6lal4nxlenck9uur39",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "3252496000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1s7jy6fajstlxzhtxgqmdh4a2cgq26uxcu7jptk",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "800000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1327uf364ql39e63fax5n8t8y5e8lag4xjl7e49",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "722777000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka13t3cvaeke9z5vlwps3z7eyp9uj98z2xkt02352",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "361388000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "120000000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1jle7z5mmfczkvy76gvsxud6kjryzhr8c3cpyal",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "361388000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1n7ph0qezwcr666kp6tesylw4eqnyqwd0g76u7d",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "320000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1469wnu47q925a4ekazp09tx9k5phyj2nv67jv3",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "144555000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1k4rnc2e9upscac85tkjwa43wr6kqpfyqcmdwej",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "800000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1h78hmsvknwp86qzu9xftv9znwga7u0sjghmz20",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1445554000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1cpxpnskkf6hlpldu76tya7d53rklnjlqu4uars",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "80000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1clvs7fyag6zjkpnvapjj6m0jn38mgsn63tdnhc",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "180629000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1689695npe7amwyunaaj9dwz58v8n7cgkw5emn4",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "34381000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka16fdw9ve0xj5yy42asg85wgykr4y4kw2l37rkfp",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "2400000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1ucl3pfq6sy9ggxuxahvjhm52hgl3qu4wg46hsk",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "72278000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1a0rh2dej6lrnj5zkx005f5jrxem0tpdh4cpcmg",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "160000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1akmamql0z9vnd48tfw3d75zexu3dswqcawtnxa",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "361388000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka179nv57lqeana9nvgeul8twegj58ccrd2hm5uzc",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "144555000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka17u7kemct38fx3cuj2yh0x5j2fd9zxkuwkes6q7",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "15000000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1lrwu2czkxwaadqnvsttfa5uvc6mshv8wjd3wyz",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "144555000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1ld2e89rhfmdlke69m444jcd99h7fra4whksdk4",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "320000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1l4z4swg3e0pf937qm08u0cnkszss34kpe32y52",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "361388000000000"
             }
           ]
         }
       ],
       "supply": [
         {
-          "denom": "nicoin",
-          "amount": "160000000000000009"
+          "denom": "ngonka",
+          "amount": "320000000000000000"
         }
       ],
       "denom_metadata": [
         {
-          "description": "AI Inference and training token",
+          "description": "Coins for the Gonka network.",
           "denom_units": [
             {
-              "denom": "nicoin",
+              "denom": "ngonka",
               "exponent": 0,
-              "aliases": []
+              "aliases": [
+                "nanogonka"
+              ]
             },
             {
-              "denom": "uicoin",
+              "denom": "ugonka",
               "exponent": 3,
-              "aliases": []
+              "aliases": [
+                "microgonka"
+              ]
             },
             {
-              "denom": "micoin",
+              "denom": "mgonka",
               "exponent": 6,
-              "aliases": []
+              "aliases": [
+                "milligonka"
+              ]
             },
             {
-              "denom": "icoin",
+              "denom": "gonka",
               "exponent": 9,
-              "aliases": []
-            },
-            {
-              "denom": "kicoin",
-              "exponent": 12,
-              "aliases": []
-            },
-            {
-              "denom": "mcicoin",
-              "exponent": 15,
               "aliases": []
             }
           ],
-          "base": "nicoin",
-          "display": "icoin",
-          "name": "AI Coin",
-          "symbol": "AIC",
+          "base": "ngonka",
+          "display": "ngonka",
+          "name": "Gonka",
+          "symbol": "GNK",
           "uri": "",
           "uri_hash": ""
         }
@@ -272,7 +1418,7 @@
     "consensus": null,
     "crisis": {
       "constant_fee": {
-        "denom": "nicoin",
+        "denom": "ngonka",
         "amount": "1000"
       }
     },
@@ -284,7 +1430,12 @@
         "withdraw_addr_enabled": true
       },
       "fee_pool": {
-        "community_pool": []
+        "community_pool": [
+          {
+            "denom": "ngonka",
+            "amount": "120000000000000000.000000000000000000"
+          }
+        ]
       },
       "delegator_withdraw_infos": [],
       "previous_proposer": "",
@@ -308,6 +1459,13 @@
       "registered_counterparty_payees": [],
       "forward_relayers": []
     },
+    "genesistransfer": {
+      "params": {
+        "allowed_accounts": [],
+        "restrict_to_list": false
+      },
+      "transfer_records": []
+    },
     "genutil": {
       "gen_txs": []
     },
@@ -322,23 +1480,23 @@
       "params": {
         "min_deposit": [
           {
-            "denom": "nicoin",
+            "denom": "ngonka",
             "amount": "25_000_000"
           }
         ],
         "max_deposit_period": "172800s",
-        "voting_period": "0h10m0s",
-        "quorum": "0.00100000000000000",
+        "voting_period": "48h0m0s",
+        "quorum": "0.334000000000000000",
         "threshold": "0.500000000000000000",
         "veto_threshold": "0.334000000000000000",
         "min_initial_deposit_ratio": "0.000000000000000000",
         "proposal_cancel_ratio": "0.500000000000000000",
         "proposal_cancel_dest": "",
-        "expedited_voting_period": "0h5m0s",
+        "expedited_voting_period": "12h0m0s",
         "expedited_threshold": "0.667000000000000000",
         "expedited_min_deposit": [
           {
-            "denom": "nicoin",
+            "denom": "ngonka",
             "amount": "50_000_000"
           }
         ],
@@ -403,16 +1561,16 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "1800",
+          "epoch_length": "17280",
           "epoch_multiplier": "1",
-          "epoch_shift": "1700",
+          "epoch_shift": "16980",
           "default_unit_of_compute_price": "100",
           "poc_stage_duration": "60",
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
           "poc_validation_duration": "20",
-          "set_new_validators_delay": "80",
-          "inference_validation_cutoff": "50",
+          "set_new_validators_delay": "120",
+          "inference_validation_cutoff": "80",
           "inference_pruning_epoch_threshold": "2"
         },
         "validation_params": {
@@ -499,8 +1657,8 @@
             "exponent": -1
           },
           "collateral_per_weight_unit": {
-            "value": "1",
-            "exponent": 0
+            "value": "42",
+            "exponent": -1
           }
         },
         "bitcoin_reward_params": {
@@ -562,11 +1720,22 @@
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
-        "supply_denom": "nicoin",
+        "supply_denom": "ngonka",
         "top_reward_period": "31536000",
         "top_reward_payouts": "12",
         "top_reward_payouts_per_miner": "4",
-        "top_reward_max_duration": "126144000"
+        "top_reward_max_duration": "126144000",
+        "max_individual_power_percentage": {
+          "value": "25",
+          "exponent": -2
+        },
+        "genesis_guardian_enabled": true,
+        "genesis_guardian_network_maturity_threshold": "2000000",
+        "genesis_guardian_multiplier": {
+          "value": "52",
+          "exponent": -2
+        },
+        "genesis_guardian_addresses": []
       },
       "model_list": [
         {
@@ -584,7 +1753,7 @@
           "v_ram": "80",
           "throughput_per_nonce": "1000",
           "validation_threshold": {
-            "value": "85",
+            "value": "98",
             "exponent": -2
           }
         },
@@ -601,7 +1770,7 @@
           "v_ram": "24",
           "throughput_per_nonce": "10000",
           "validation_threshold": {
-            "value": "85",
+            "value": "98",
             "exponent": -2
           }
         }
@@ -639,7 +1808,7 @@
         "annual_provisions": "0.000000000000000000"
       },
       "params": {
-        "mint_denom": "nicoin",
+        "mint_denom": "ngonka",
         "inflation_rate_change": "0.130000000000000000",
         "inflation_max": "0.200000000000000000",
         "inflation_min": "0.070000000000000000",
@@ -652,6 +1821,13 @@
       "entries": []
     },
     "params": null,
+    "restrictions": {
+      "params": {
+        "restriction_end_block": "1555000",
+        "emergency_transfer_exemptions": [],
+        "exemption_usage_tracking": []
+      }
+    },
     "runtime": null,
     "slashing": {
       "params": {
@@ -670,7 +1846,7 @@
         "max_validators": 100,
         "max_entries": 7,
         "historical_entries": 10000,
-        "bond_denom": "nicoin",
+        "bond_denom": "ngonka",
         "min_commission_rate": "0.000000000000000000"
       },
       "last_total_power": "0",

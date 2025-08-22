@@ -111,11 +111,11 @@ class RestrictionsTests : TestermintTest() {
         val initialToBalance = genesis.getBalance(toAddress)
         
         logHighlight("Initial balances:")
-        logHighlight("  • From ($fromAddress): $initialFromBalance nicoin")
-        logHighlight("  • To ($toAddress): $initialToBalance nicoin")
+        logHighlight("  • From ($fromAddress): $initialFromBalance ngonka")
+        logHighlight("  • To ($toAddress): $initialToBalance ngonka")
         
         // Attempt direct transfer (should fail)
-        logHighlight("Attempting direct user-to-user transfer of 1000 nicoin")
+        logHighlight("Attempting direct user-to-user transfer of 1000 ngonka")
         
         val transferResult = genesis.submitTransaction(
             listOf(
@@ -123,7 +123,7 @@ class RestrictionsTests : TestermintTest() {
                 "send",
                 fromAddress,
                 toAddress,
-                "1000nicoin"
+                "1000ngonka"
             )
         )
         
@@ -179,9 +179,9 @@ class RestrictionsTests : TestermintTest() {
         val inferenceCost = beforeInferenceBalance - afterInferenceBalance
         
         logHighlight("✅ Inference payment successful:")
-        logHighlight("  • Before: $beforeInferenceBalance nicoin")
-        logHighlight("  • After: $afterInferenceBalance nicoin") 
-        logHighlight("  • Cost: $inferenceCost nicoin")
+        logHighlight("  • Before: $beforeInferenceBalance ngonka")
+        logHighlight("  • After: $afterInferenceBalance ngonka") 
+        logHighlight("  • Cost: $inferenceCost ngonka")
         
         assertThat(inferenceCost).isGreaterThan(0)
         logHighlight("✅ Module payments (escrow) work correctly during restrictions")
@@ -202,7 +202,7 @@ class RestrictionsTests : TestermintTest() {
         logHighlight("  • ID: $exemptionId")
         logHighlight("  • From: $fromAddress")
         logHighlight("  • To: $toAddress")
-        logHighlight("  • Max amount: $exemptionAmount nicoin")
+        logHighlight("  • Max amount: $exemptionAmount ngonka")
         logHighlight("  • Usage limit: $usageLimit")
         logHighlight("  • Expiry block: $expiryBlock")
         
@@ -241,11 +241,11 @@ class RestrictionsTests : TestermintTest() {
         val initialToBalance = genesis.getBalance(toAddress)
         
         logHighlight("Balances before emergency transfer:")
-        logHighlight("  • From: $initialFromBalance nicoin")
-        logHighlight("  • To: $initialToBalance nicoin")
+        logHighlight("  • From: $initialFromBalance ngonka")
+        logHighlight("  • To: $initialToBalance ngonka")
         
         val emergencyTx = runCatching {
-            genesis.node.executeEmergencyTransfer(exemptionId, fromAddress, toAddress, "2000", "nicoin")
+            genesis.node.executeEmergencyTransfer(exemptionId, fromAddress, toAddress, "2000", "ngonka")
         }
         assertThat(emergencyTx.isSuccess).isTrue()
         
@@ -376,7 +376,7 @@ class RestrictionsTests : TestermintTest() {
                             "send", 
                             fromAddress,
                             toAddress,
-                            "500nicoin"
+                            "500ngonka"
                         )
                     )
                     
@@ -387,8 +387,8 @@ class RestrictionsTests : TestermintTest() {
                         val finalToBalance = genesis.getBalance(toAddress)
                         
                         logHighlight("✅ User-to-user transfer successful after restriction lifting:")
-                        logHighlight("  • From: $initialFromBalance → $finalFromBalance nicoin")
-                        logHighlight("  • To: $initialToBalance → $finalToBalance nicoin")
+                        logHighlight("  • From: $initialFromBalance → $finalFromBalance ngonka")
+                        logHighlight("  • To: $initialToBalance → $finalToBalance ngonka")
                         
                         assertThat(finalFromBalance).isLessThan(initialFromBalance)
                         assertThat(finalToBalance).isGreaterThan(initialToBalance)

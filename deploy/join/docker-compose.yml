@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.1.23
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.0
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.23
+    image: ghcr.io/product-science/inferenced:0.2.0
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -31,9 +31,9 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=false
+      - INIT_ONLY=true
       - IS_GENESIS=true
-      - GENESIS_SEEDS=c637495acea140a2f76e52b20f7e80e5cb6784ef@gonka.spv.re:5000,c2556c33c3c30f04f31817815eab844104fea034@47.236.26.199:5000,dbca3846804a0495850048e35898b97c60fb89ab@195.242.13.239:5000,9712d51caa666c15c0ae37067d61e312209aa51d@36.189.234.197:18027,f99c57f258ef042d02bce33482135fb5cfb69bdb@185.216.21.98:5000,5511e206df2d7e582bd329ff2bfcdc2c79a3445e@47.236.19.22:15000,94c113ce4e2f7f6ffcacae238a924342a7a8b0df@36.189.234.237:17240,44f7c802202a7aed0c6a7facff7bf009268c28eb@89.169.103.180:5000,345cb118044901a7df585a6925b84193ac281c71@69.19.136.233:5000
+      - GENESIS_SEEDS=TMP
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
@@ -45,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.23
+    image: ghcr.io/product-science/api:0.2.0
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -73,7 +73,7 @@ services:
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.1.23
+    image: ghcr.io/product-science/proxy:0.2.0
     ports:
       - "${API_PORT:-8000}:80"
     environment:

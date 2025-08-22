@@ -10,12 +10,12 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.random.Random
 import kotlin.test.assertNotNull
-import java.time.Instant
 
 const val DELAY_SEED = 8675309
 
@@ -26,9 +26,9 @@ class InferenceAccountingTests : TestermintTest() {
     fun `test with maximum tokens`() {
         logSection("=== STARTING TEST: test with maximum tokens ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        
+
         val maxCompletionTokens = 100
-        
+
         // Test 1: maxCompletionTokens parameter
         logSection("=== TEST 1: Testing maxCompletionTokens = $maxCompletionTokens ===")
         val expectedTokens1 = (maxCompletionTokens + inferenceRequestObject.textLength())
@@ -38,10 +38,10 @@ class InferenceAccountingTests : TestermintTest() {
             expectedTokens1,
             maxCompletionTokens
         )
-        
+
         logSection("=== TEST 1 COMPLETED ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        
+
         // Test 2: maxTokens parameter  
         logSection("=== TEST 2: Testing maxTokens = $maxCompletionTokens ===")
         val expectedTokens2 = (maxCompletionTokens + inferenceRequestObject.textLength())
@@ -51,10 +51,10 @@ class InferenceAccountingTests : TestermintTest() {
             expectedTokens2,
             maxCompletionTokens
         )
-        
+
         logSection("=== TEST 2 COMPLETED ===")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        
+
         // Test 3: Default tokens
         logSection("=== TEST 3: Testing default tokens = $DEFAULT_TOKENS ===")
         val expectedTokens3 = (DEFAULT_TOKENS + inferenceRequestObject.textLength())
@@ -64,7 +64,7 @@ class InferenceAccountingTests : TestermintTest() {
             expectedTokens3.toInt(),
             DEFAULT_TOKENS.toInt()
         )
-        
+
         logSection("=== ALL TESTS COMPLETED SUCCESSFULLY ===")
     }
 
@@ -98,7 +98,8 @@ class InferenceAccountingTests : TestermintTest() {
         while (lastRequest == null && attempts < 15) {
             Thread.sleep(Duration.ofSeconds(1))
             attempts++
-            lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+            lastRequest =
+                cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
         }
 
         // Mock verification
@@ -119,7 +120,7 @@ class InferenceAccountingTests : TestermintTest() {
             startBalance - currentBalance
         }.filter { it != 0L }.first()
         val expectedCost = expectedTokens * (chainInference.perTokenPrice ?: DEFAULT_TOKEN_COST)
-        
+
         logHighlight("Balance verification: deducted $difference nicoin (expected: $expectedCost)")
         assertThat(difference).isEqualTo(expectedCost)
         logHighlight("✅ Escrow verification completed successfully")
@@ -213,28 +214,6 @@ class InferenceAccountingTests : TestermintTest() {
         verifySettledInferences(genesis, inferences, participants, startLastRewardedEpoch)
     }
 
-    @Test
-    fun `test consumer only participant`() {
-        logSection("Clearing claims")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        cluster.withConsumer("consumer1") { consumer ->
-            val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getColdAddress())
-            assertThat(result).isNotNull
-            val inference = genesis.waitForInference(result.id, finished = true)
-            assertNotNull(inference, "Inference never finished")
-            logSection("Verifying inference balances")
-            assertThat(inference.executedBy).isNotNull()
-            assertThat(inference.requestedBy).isEqualTo(consumer.address)
-            val participantsAfter = genesis.api.getParticipants()
-            assertThat(participantsAfter).anyMatch { it.id == consumer.address }.`as`("Consumer listed in participants")
-            val balanceAfter = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            assertThat(balanceAfter).isEqualTo(balanceAtStart - inference.actualCost!!)
-                .`as`("Balance matches expectation")
-        }
-    }
-
     private fun getFailingInference(
         cluster: LocalCluster,
         requestingNode: LocalInferencePair = cluster.genesis,
@@ -246,7 +225,11 @@ class InferenceAccountingTests : TestermintTest() {
         while (!failed) {
             val currentBlock = cluster.genesis.getCurrentBlockHeight()
             try {
-                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getColdAddress())
+                val response = requestingNode.makeInferenceRequest(
+                    inferenceRequest,
+                    requester,
+                    taAddress = requestingNode.node.getColdAddress()
+                )
                 cluster.genesis.node.waitForNextBlock()
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {

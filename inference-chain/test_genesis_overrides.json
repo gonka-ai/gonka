@@ -4,13 +4,13 @@
       "params": {
         "min_deposit": [
           {
-            "denom": "nicoin",
+            "denom": "ngonka",
             "amount": "1_000"
           }
         ],
         "expedited_min_deposit": [
           {
-            "denom": "nicoin",
+            "denom": "ngonka",
             "amount": "2_000"
           }
         ],
@@ -67,7 +67,7 @@
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
-        "supply_denom": "nicoin"
+        "supply_denom": "ngonka"
       },
       "model_list": [
         {

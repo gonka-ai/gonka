@@ -72,7 +72,7 @@ class TokenomicsTests : TestermintTest() {
         )
         val (localCluster, genesis) = initCluster(config = fastRewards, reboot = true)
         val firstJoin = localCluster.joinPairs.first()
-        val initialBalance = firstJoin.node.getSelfBalance("nicoin")
+        val initialBalance = firstJoin.node.getSelfBalance("ngonka")
         logSection("Setting PoC weight to 100")
         firstJoin.changePoc(100)
         val blockUntilReward = genesis.node.getGenesisState().appState.inference.genesisOnlyParams.topRewardPeriod / 5
@@ -94,7 +94,7 @@ class TokenomicsTests : TestermintTest() {
         val topMiner = topMiners.topMiner.first()
         assertThat(topMiner.address).isEqualTo(firstJoin.node.getColdAddress())
         val standardizedExpectedReward = getTopMinerReward(localCluster)
-        val currentBalance = firstJoin.node.getSelfBalance("nicoin")
+        val currentBalance = firstJoin.node.getSelfBalance("ngonka")
         // greater, because it's done validation work at some point, no doubt.
         assertThat(currentBalance - initialBalance).isGreaterThan(standardizedExpectedReward)
         
