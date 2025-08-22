@@ -1,7 +1,7 @@
 {
   "app_name": "inferenced",
   "app_version": "50e0a6c3",
-  "genesis_time": "2025-08-22T04:43:45.006185000Z",
+  "genesis_time": "2025-08-22T05:10:03.558128000Z",
   "chain_id": "gonka-mainnet",
   "initial_height": 1,
   "app_hash": null,
@@ -2501,14 +2501,14 @@
         "epoch_params": {
           "epoch_length": "150",
           "epoch_multiplier": "1",
-          "epoch_shift": "130",
+          "epoch_shift": "140",
           "default_unit_of_compute_price": "100",
-          "poc_stage_duration": "40",
+          "poc_stage_duration": "30",
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
-          "poc_validation_duration": "20",
-          "set_new_validators_delay": "20",
-          "inference_validation_cutoff": "20",
+          "poc_validation_duration": "10",
+          "set_new_validators_delay": "1",
+          "inference_validation_cutoff": "1",
           "inference_pruning_epoch_threshold": "2"
         },
         "validation_params": {
