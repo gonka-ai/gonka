@@ -2,7 +2,7 @@
   "app_name": "inferenced",
   "app_version": "fe931c6b",
   "genesis_time": "2025-08-21T05:59:29.430719000Z",
-  "chain_id": "gonka-rehearsal",
+  "chain_id": "gonka-mainnet",
   "initial_height": 1,
   "app_hash": null,
   "app_state": {
