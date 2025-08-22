@@ -31,9 +31,9 @@ services:
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - REST_API_ACTIVE=true
-      - INIT_ONLY=true
+      - INIT_ONLY=false
       - IS_GENESIS=true
-      - GENESIS_SEEDS=TMP
+      - GENESIS_SEEDS=5d59fd3051b2ea3c527934049ae6915ed64b0fd5@node3.gonka.ai:5000,083d485f20c6227eed84bb88e9135a31eaa28d05@node2.gonka.ai:5000,d12171d8d868231db8f861adbaaa8aa1c9c074d0@node1.gonka.ai:5000
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
