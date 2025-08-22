@@ -7,7 +7,7 @@
 Testermint handles the orchestration of:
 
 - **Docker containers** containing running versions of the blockchain node and the API binary
-- **WireMock** mocks for external systems like customers or third-party APIs
+- **MockServer** mocks for external systems like customers or third-party APIs
 
 ---
 
@@ -31,16 +31,20 @@ To address this, we built **Testermint**, a Kotlin-based test harness that:
 
 ### Running the Full Test Suite
 
-Before running tests, you’ll need to build the required Docker containers for both the Node (blockchain) and the API. This is done using the `make all` command.
+Before running tests, you’ll need to build the required Docker containers for both the Node (blockchain) and the API. This is done using `local-test-net/stop-rebuild.sh` 
 
 To execute the full Testermint integration test suite:
-
+#### Build the docker images
 ```bash
-./test-chain.sh
+./local-test-net/stop-rebuild.sh
+```
+
+#### Run the tests
+```bash
 make run-tests
 ```
 
-- `./test-chain.sh`: Builds the Docker images for both the chain Node and the DAPI for testing and launches local tests.
+- `./stop-rebuild.sh`: Builds the Docker images for Chain node, the DAPI node and the MockServe.
 - `make run-tests`: Compiles the Kotlin test suite, brings up the environment, and runs the integration tests.
 
 Test output is saved to the `testermint/logs` directory.
@@ -56,8 +60,7 @@ To write or debug tests interactively:
 3. From the root of the project, run:
 
    ```bash
-   ./local-test-net/stop.sh
-   make build-docker
+   ./local-test-net/stop-rebuild.sh
    ```
 
    This ensures the necessary Docker containers are built and ready.
