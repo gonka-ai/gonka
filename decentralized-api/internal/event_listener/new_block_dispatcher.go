@@ -187,7 +187,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	}
 
 	// Fetch validation parameters - skip in tests
-	if d.configManager != nil && !strings.HasPrefix(blockInfo.BlockId.Hash, "hash-") { // Skip in tests where hash has format "hash-N"
+	if d.configManager != nil && !strings.HasPrefix(blockInfo.BlockId.Hash.String(), "686173682D") { // Skip in tests where hash has format "hash-N encoded to HEX (upper case)"
 		params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
 		if err != nil {
 			logging.Error("Failed to get params", types.Validation, "error", err)
@@ -245,7 +245,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// TODO: log block that came from event vs block returned by query
 	// TODO: can we add the state to the block event? As a future optimization?
 
-	d.phaseTracker.Update(chainphase.BlockInfo{Height: height, Hash: blockInfo.BlockId.Hash}, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced)
+	d.phaseTracker.Update(chainphase.BlockInfo{Height: height, Hash: blockInfo.BlockId.Hash.String()}, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	if epochState == nil {
 		logging.Error("[ILLEGAL_STATE]: Epoch state is nil right after an update call to phase tracker. "+
@@ -472,7 +472,6 @@ func (el *OnNewBlockDispatcher) collectBlockProofs(block chainevents.FinalizedBl
 		logging.Error("Failed to parse block height to int", types.System, "height", block.Block.LastCommit.Height, "error", err)
 		return
 	}
-
 	logging.Info("collectBlockProofs: check if proof pending", types.System, "height", block.Block.LastCommit.Height)
 	pendingProofResp, err := el.transactionRecorder.NewInferenceQueryClient().IfProofPending(context.Background(), &types.QueryIsProofPendingRequest{ProofHeight: height})
 	if err != nil {
@@ -501,9 +500,9 @@ func (el *OnNewBlockDispatcher) collectBlockProofs(block chainevents.FinalizedBl
 		BlockHeight: height,
 		Round:       int64(block.Block.LastCommit.Round),
 		BlockId: &types.BlockID{
-			Hash:               block.Block.LastCommit.BlockId.Hash,
-			PartSetHeaderTotal: int64(block.Block.LastCommit.BlockId.Parts.Total),
-			PartSetHeaderHash:  block.Block.LastCommit.BlockId.Parts.Hash,
+			Hash:               block.Block.LastCommit.BlockId.Hash.String(),
+			PartSetHeaderTotal: int64(block.Block.LastCommit.BlockId.PartSetHeader.Total),
+			PartSetHeaderHash:  block.Block.LastCommit.BlockId.PartSetHeader.Hash.String(),
 		},
 		Signatures: make([]*types.SignatureInfo, 0),
 	}
@@ -516,8 +515,8 @@ func (el *OnNewBlockDispatcher) collectBlockProofs(block chainevents.FinalizedBl
 			"validator_address", sign.ValidatorAddress)
 
 		proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
-			SignatureBase64:     sign.Signature,
-			ValidatorAddressHex: sign.ValidatorAddress,
+			SignatureBase64:     base64.StdEncoding.EncodeToString(sign.Signature),
+			ValidatorAddressHex: sign.ValidatorAddress.String(),
 			Timestamp:           sign.Timestamp,
 		})
 	}

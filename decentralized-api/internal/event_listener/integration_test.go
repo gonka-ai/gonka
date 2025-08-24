@@ -9,6 +9,7 @@ import (
 	"decentralized-api/participant"
 	"errors"
 	"fmt"
+	"github.com/cometbft/cometbft/libs/bytes"
 	"strconv"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"decentralized-api/chainphase"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -398,7 +400,7 @@ func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 	setup.advanceBlockHeight(height)
 	blockInfo := chainevents.FinalizedBlock{
 		Block:   chainevents.Block{Header: chainevents.Header{Height: fmt.Sprintf("%v", height)}},
-		BlockId: chainevents.BlockId{Hash: fmt.Sprintf("hash-%d", height)},
+		BlockId: cmttypes.BlockID{Hash: bytes.HexBytes(fmt.Sprintf("hash-%d", height))},
 	}
 	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo, height-1)
 }

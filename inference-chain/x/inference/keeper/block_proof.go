@@ -56,6 +56,9 @@ func (k Keeper) GetBlockProof(ctx context.Context, height int64) (types.BlockPro
 
 func (k Keeper) SetPendingProof(ctx context.Context, height int64, participantsEpoch uint64) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	if store.Has(pendingProofKey(uint64(height))) {
+		return
+	}
 	store.Set(pendingProofKey(uint64(height)), sdk.Uint64ToBigEndian(participantsEpoch))
 }
 
@@ -69,9 +72,4 @@ func (k Keeper) GetPendingProof(ctx context.Context, height int64) (uint64, bool
 
 	epochId := sdk.BigEndianToUint64(bz)
 	return epochId, true
-}
-
-func (k Keeper) ClearPendingProof(ctx context.Context, height int64) {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store.Delete(pendingProofKey(uint64(height)))
 }

@@ -3,8 +3,6 @@ package event_listener
 import (
 	"decentralized-api/chainphase"
 	"decentralized-api/internal/event_listener/chainevents"
-	"flag"
-	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
@@ -125,18 +123,5 @@ func TestParseNewBlockInfo(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, "12345", blockInfo.Block.Header.Height)
-	assert.Equal(t, "ABCDEF123456", blockInfo.BlockId.Hash)
-}
-
-func TestName(t *testing.T) {
-	var (
-		rpcURL = flag.String("rpc", "http://localhost:26657", "CometBFT RPC URL")
-	)
-	flag.Parse()
-
-	client, err := rpcclient.New(*rpcURL, "/websocket")
-	assert.NoError(t, err)
-
-	_, err = getParticipantsProof(client, 0, 1)
-	assert.NoError(t, err)
+	assert.Equal(t, "ABCDEF123456", blockInfo.BlockId.Hash.String())
 }

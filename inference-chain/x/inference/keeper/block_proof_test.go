@@ -17,7 +17,7 @@ func TestBlockProof(t *testing.T) {
 		_, found := k.GetBlockProof(ctx, height)
 		assert.False(t, found)
 
-		found = k.GetPendingProof(ctx, height)
+		_, found = k.GetPendingProof(ctx, height)
 		assert.False(t, found)
 	})
 
@@ -49,13 +49,21 @@ func TestBlockProof(t *testing.T) {
 
 	t.Run("get block proof", func(t *testing.T) {
 		h := int64(20)
-		assert.False(t, k.GetPendingProof(ctx, h))
+		_, found := k.GetPendingProof(ctx, h)
+		assert.False(t, found)
 
-		k.SetPendingProof(ctx, h)
-		assert.True(t, k.GetPendingProof(ctx, h))
+		epoch := uint64(345)
+		k.SetPendingProof(ctx, h, epoch)
 
-		k.ClearPendingProof(ctx, h)
-		assert.False(t, k.GetPendingProof(ctx, h))
+		pendingProofEpochId, found := k.GetPendingProof(ctx, h)
+		assert.True(t, found)
+		assert.Equal(t, epoch, pendingProofEpochId)
+
+		k.SetPendingProof(ctx, h, 123214)
+
+		pendingProofEpochId, found = k.GetPendingProof(ctx, h)
+		assert.True(t, found)
+		assert.Equal(t, epoch, pendingProofEpochId)
 	})
 }
 
