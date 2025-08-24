@@ -11,14 +11,14 @@ data:
             "voting_period": "4m0s",
             "min_deposit": [
               {
-                "denom": "nicoin",
+                "denom": "ngonka",
                 "amount": "25_000_000"
               }
             ],
             "expedited_voting_period": "2m0s",
             "expedited_min_deposit": [
               {
-                "denom": "nicoin",
+                "denom": "ngonka",
                 "amount": "50_000_000"
               }
             ],
@@ -99,7 +99,7 @@ data:
             "standard_reward_amount": "600000000000000000",
             "pre_programmed_sale_amount": "120000000000000000",
             "top_rewards": 3,
-            "supply_denom": "nicoin"
+            "supply_denom": "ngonka"
           }
         }
       }

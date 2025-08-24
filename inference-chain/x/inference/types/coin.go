@@ -3,11 +3,11 @@ package types
 import sdk "github.com/cosmos/cosmos-sdk/types"
 
 const (
-	BaseCoin   = "nicoin"
-	NanoCoin   = "nicoin"
-	NativeCoin = "icoin"
-	MilliCoin  = "micoin"
-	MicroCoin  = "uicoin"
+	BaseCoin   = "ngonka"
+	NanoCoin   = "ngonka"
+	NativeCoin = "gonka"
+	MilliCoin  = "mgonka"
+	MicroCoin  = "ugonka"
 )
 
 // NOTE: In ALL cases, if we represent coins as an int, they should be in BaseCoin units

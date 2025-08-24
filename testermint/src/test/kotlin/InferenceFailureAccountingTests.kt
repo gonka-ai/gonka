@@ -5,47 +5,6 @@ import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 
 class InferenceFailureAccountingTests : TestermintTest() {
-    @Test
-    fun `verify failed inference is refunded to consumer`() {
-        val (localCluster, genesis) = initCluster()
-        logSection("Waiting to clear claims")
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        localCluster.withConsumer("consumer1") { consumer ->
-            logSection("Making inference that will fail")
-            val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            val timeoutsAtStart = genesis.node.getInferenceTimeouts()
-            localCluster.allPairs.forEach {
-                it.mock?.setInferenceResponse("This is invalid json!!!")
-            }
-            Thread.sleep(5000)
-            genesis.markNeedsReboot() // Failed inferences mess with reputations!
-            var failure: Exception? = null
-            try {
-                genesis.waitForNextInferenceWindow()
-                val result = consumer.pair.makeInferenceRequest(
-                    inferenceRequest,
-                    consumer.address,
-                    taAddress = genesis.node.getColdAddress()
-                )
-            } catch(e: com.github.kittinunf.fuel.core.FuelError) {
-                failure = e
-                genesis.node.waitForNextBlock()
-                val timeouts = genesis.node.getInferenceTimeouts()
-                val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
-                assertThat(newTimeouts).hasSize(1)
-                val expirationHeight = newTimeouts.first().expirationHeight.toLong()
-                logSection("Waiting for inference to expire. expirationHeight = $expirationHeight")
-                genesis.node.waitForMinimumBlock(expirationHeight + 1, "inferenceExpiration")
-                logSection("Verifying inference was expired and refunded")
-                val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-                // NOTE: We don't need to add epoch rewards here as genesis node fails to claim rewards due to signature error
-                // if that fixed, we need to add epoch rewards here for bitcoin like rewards logic
-                val changes = startBalance - balanceAfterSettle
-                assertThat(changes).isZero()
-            }
-            assertThat(failure).isNotNull()
-        }
-    }
 
     @Test
     fun `verify failed inference is refunded`() {

@@ -5,6 +5,7 @@ import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
 import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
+import okhttp3.Address
 import org.tinylog.kotlin.Logger
 import java.io.File
 import java.time.Duration
@@ -563,7 +564,7 @@ data class LocalInferencePair(
                 description,
                 "--deposit",
                 // TODO: Denom and amount should not be hardcoded
-                "${deposit}nicoin",
+                "${deposit}ngonka",
             )
         )
     }
@@ -646,7 +647,9 @@ data class LocalInferencePair(
         wrapLog("waitForInference", true) {
             var inference: InferencePayload? = null
             var tries = 0
-            while (if (finished) inference?.actualCost == null else inference == null && tries < blocks) {
+            while (tries < blocks &&
+                (if (finished) inference?.actualCost == null else inference == null)
+            ) {
                 this.node.waitForNextBlock()
                 inference = this.api.getInferenceOrNull(inferenceId)
                 tries++

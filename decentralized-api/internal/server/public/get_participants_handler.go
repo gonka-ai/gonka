@@ -77,7 +77,7 @@ func (s *Server) getAllParticipants(ctx echo.Context) error {
 		if err == nil {
 			for _, balance := range balances {
 				// TODO: surely there is a place to get denom from
-				if balance.Denom == "nicoin" {
+				if balance.Denom == "ngonka" {
 					pBalance = balance.Amount.Int64()
 				}
 			}

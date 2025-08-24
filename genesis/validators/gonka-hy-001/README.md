@@ -1,15 +1,5 @@
 Account Public Key: `AxbqG2vVhIHEJ375h/B+ei4HiQeboZF6EujXGVvBoLYg`
-Node ID: `f99c57f258ef042d02bce33482135fb5cfb69bdb`
-ML Operational Address: `gonka1qc3r6s69nk6g6xwlct7z7dgmmejad44cuuze7p`
-Consensus Public Key: `8OrV20a3T9qRZOV5jYdEq/SEOXZcB5U/FiGic2+CqW4=` 
+Node ID: `78f3279bd30fe6f1b84a9c40c3b97bd74e575981`
+ML Operational Address: `gonka1fcfw2mfw7x803dzr8ss2xldfhvkg22wllr0nyt`
+Consensus Public Key: `jFC9XywnI7hzIEQ1kmSQf8Q1iuqy861P7vBrqa3LQxs=`
 P2P_EXTERNAL_ADDRESS: `tcp://185.216.21.98:5000`
-
-inferenced genesis gentx \
---keyring-backend file \
-gonka-hy 1nicoin \
---moniker gonka-hy-001 \         
---pubkey 8OrV20a3T9qRZOV5jYdEq/SEOXZcB5U/FiGic2+CqW4= \
---ml-operational-address gonka1qc3r6s69nk6g6xwlct7z7dgmmejad44cuuze7p \
---url http://185.216.21.98:8000 \
---chain-id gonka-rehearsal \
---node-id f99c57f258ef042d02bce33482135fb5cfb69bdb

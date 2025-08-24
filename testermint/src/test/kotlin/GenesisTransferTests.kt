@@ -272,12 +272,12 @@ class GenesisTransferTests : TestermintTest() {
         val initialRecipientBalance = genesis.getBalance(recipientAddress)
         
         logHighlight("Initial balances:")
-        logHighlight("  • Genesis ($genesisAddress): $initialGenesisBalance nicoin")
-        logHighlight("  • Recipient ($recipientAddress): $initialRecipientBalance nicoin")
+        logHighlight("  • Genesis ($genesisAddress): $initialGenesisBalance ngonka")
+        logHighlight("  • Recipient ($recipientAddress): $initialRecipientBalance ngonka")
         
         // Verify genesis account has balance to transfer
         if (initialGenesisBalance <= 0) {
-            throw AssertionError("Genesis account has no balance to transfer: $initialGenesisBalance nicoin")
+            throw AssertionError("Genesis account has no balance to transfer: $initialGenesisBalance ngonka")
         }
 
         // Check for vesting schedules
@@ -318,8 +318,8 @@ class GenesisTransferTests : TestermintTest() {
                 val finalRecipientBalance = genesis.getBalance(recipientAddress)
                 
                 logHighlight("Final balances:")
-                logHighlight("  • Genesis: $initialGenesisBalance → $finalGenesisBalance nicoin")
-                logHighlight("  • Recipient: $initialRecipientBalance → $finalRecipientBalance nicoin")
+                logHighlight("  • Genesis: $initialGenesisBalance → $finalGenesisBalance ngonka")
+                logHighlight("  • Recipient: $initialRecipientBalance → $finalRecipientBalance ngonka")
                 
                 // Verify transfer completion
                 val transferAmount = initialGenesisBalance - finalGenesisBalance
@@ -327,8 +327,8 @@ class GenesisTransferTests : TestermintTest() {
                 
                 if (transferAmount > 0 && recipientGain > 0) {
                     logHighlight("✅ Balance transfer verified:")
-                    logHighlight("  • Transferred amount: $transferAmount nicoin")
-                    logHighlight("  • Recipient gained: $recipientGain nicoin")
+                    logHighlight("  • Transferred amount: $transferAmount ngonka")
+                    logHighlight("  • Recipient gained: $recipientGain ngonka")
                     
                     // Verify the amounts match (accounting for potential fees)
                     if (transferAmount == recipientGain) {
@@ -414,8 +414,8 @@ class GenesisTransferTests : TestermintTest() {
                 val finalRecipientBalance = genesis.getBalance(recipientAddress)
                 
                 logHighlight("Balances after second transfer attempt:")
-                logHighlight("  • Genesis: $finalGenesisBalance nicoin")
-                logHighlight("  • Recipient: $finalRecipientBalance nicoin")
+                logHighlight("  • Genesis: $finalGenesisBalance ngonka")
+                logHighlight("  • Recipient: $finalRecipientBalance ngonka")
                 
                 // After first transfer, genesis should have 0 balance, recipient should have the full amount
                 // If second transfer succeeded, balances would be different (but genesis is already at 0)

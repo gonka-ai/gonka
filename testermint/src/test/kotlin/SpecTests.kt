@@ -174,7 +174,7 @@ class SpecTests {
     @Test
     fun `test spec with list of coins`() {
         val coins = listOf(
-            Coin("nicoin", 100),
+            Coin("ngonka", 100),
             Coin("bitcoin", 200)
         )
 
@@ -186,7 +186,7 @@ class SpecTests {
         assertThat(spec.matches(actual)).isTrue()
 
         val differentCoins = listOf(
-            Coin("nicoin", 300),
+            Coin("ngonka", 300),
             Coin("bitcoin", 400)
         )
         val different = WithCoins(differentCoins)
@@ -211,7 +211,7 @@ class SpecTests {
     @Test
     fun `output spec with list of coins to json`() {
         val coins = listOf(
-            Coin("nicoin", 100),
+            Coin("ngonka", 100),
             Coin("bitcoin", 200)
         )
 

@@ -1,6 +1,6 @@
 services:
   mlnode-308:
-    image: ghcr.io/product-science/mlnode:3.0.8
+    image: ghcr.io/product-science/mlnode:3.0.9
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache

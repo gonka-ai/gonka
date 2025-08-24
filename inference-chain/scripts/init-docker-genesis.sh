@@ -29,8 +29,8 @@ echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 KEY_NAME="genesis"
 APP_NAME="inferenced"
-CHAIN_ID="gonka-rehearsal"
-COIN_DENOM="nicoin"
+CHAIN_ID="gonka-mainnet"
+COIN_DENOM="ngonka"
 STATE_DIR="/root/.inference"
 
 update_configs() {
