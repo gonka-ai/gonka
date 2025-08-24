@@ -32,7 +32,6 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgClaimTrainingTaskForAssignment{},
 	&types.MsgAssignTrainingTask{},
 	&types.MsgSubmitNewUnfundedParticipant{},
-	&types.MsgSubmitNewParticipant{},
 	&types.MsgSubmitHardwareDiff{},
 	&types.MsgInvalidateInference{},
 	&types.MsgRevalidateInference{},

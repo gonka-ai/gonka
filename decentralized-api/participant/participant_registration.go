@@ -18,7 +18,6 @@ import (
 
 	"github.com/cometbft/cometbft/crypto"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
-	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -99,36 +98,6 @@ func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, conf
 	} else {
 		return registerJoiningParticipant(recorder, config)
 	}
-}
-
-func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager) error {
-	if exists, err := participantExistsWithWait(recorder, configManager.GetChainNodeConfig().Url); exists {
-		logging.Info("Genesis participant already exists", types.Participants)
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("Failed to check if genesis participant exists: %w", err)
-	}
-
-	validatorKey, err := getValidatorKey(configManager.GetChainNodeConfig().Url)
-	if err != nil {
-		return err
-	}
-	validatorKeyString := keyToString(validatorKey)
-	workerPublicKey, err := configManager.CreateWorkerKey()
-	if err != nil {
-		return fmt.Errorf("failed to create worker key: %w", err)
-	}
-
-	publicUrl := configManager.GetApiConfig().PublicUrl
-	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", publicUrl)
-
-	msg := &inference.MsgSubmitNewParticipant{
-		Url:          publicUrl,
-		ValidatorKey: validatorKeyString,
-		WorkerKey:    workerPublicKey,
-	}
-
-	return recorder.SubmitNewParticipant(msg)
 }
 
 func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager) error {

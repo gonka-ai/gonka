@@ -3,10 +3,11 @@ package public
 import (
 	"decentralized-api/internal/server/public_entities"
 	"decentralized-api/logging"
+	"net/http"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
@@ -18,29 +19,14 @@ func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
 	}
 
 	logging.Debug("SubmitNewParticipantDto", types.Participants, "body", body)
-	if body.Address != "" && body.PubKey != "" {
-		if err := s.submitNewUnfundedParticipant(body); err != nil {
-			return err
-		}
-		return ctx.NoContent(http.StatusOK)
-	}
 
-	msg := &inference.MsgSubmitNewParticipant{
-		Url:          body.Url,
-		ValidatorKey: body.ValidatorKey,
-		WorkerKey:    body.WorkerKey,
+	if body.Address == "" || body.PubKey == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Address and PubKey are required")
 	}
-
-	logging.Info("ValidatorKey in dapi", types.Participants, "key", body.ValidatorKey)
-	if err := s.recorder.SubmitNewParticipant(msg); err != nil {
-		logging.Error("Failed to submit MsgSubmitNewParticipant", types.Participants, "error", err)
+	if err := s.submitNewUnfundedParticipant(body); err != nil {
 		return err
 	}
-
-	return ctx.JSON(http.StatusOK, &ParticipantDto{
-		Id:  msg.Creator,
-		Url: msg.Url,
-	})
+	return ctx.NoContent(http.StatusOK)
 }
 
 func (s *Server) submitNewUnfundedParticipant(body public_entities.SubmitUnfundedNewParticipantDto) error {

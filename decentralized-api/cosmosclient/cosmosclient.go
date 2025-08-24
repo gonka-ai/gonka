@@ -167,7 +167,6 @@ type CosmosMessageClient interface {
 	StartInference(transaction *inference.MsgStartInference) error
 	FinishInference(transaction *inference.MsgFinishInference) error
 	ReportValidation(transaction *inference.MsgValidation) error
-	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
 	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
@@ -296,12 +295,6 @@ func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgVal
 	transaction.Creator = icc.Address
 	logging.Info("Reporting validation", types.Validation, "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
-}
-
-func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
-	transaction.Creator = icc.Address
-	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
 	return err
 }
 
