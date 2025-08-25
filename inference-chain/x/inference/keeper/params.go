@@ -15,6 +15,7 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
 		return params
 	}
 
+	// PANIC: MustUnmarshal panics if params bytes are invalid or incompatible with codec
 	k.cdc.MustUnmarshal(bz, &params)
 	return params
 }

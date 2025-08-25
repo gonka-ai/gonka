@@ -9,8 +9,8 @@ services:
       - KEY_NAME=${KEY_NAME}
       - REST_API_ACTIVE=${REST_API_ACTIVE:-false}
       - P2P_EXTERNAL_ADDRESS=${P2P_EXTERNAL_ADDRESS}
-      - SNAPSHOT_INTERVAL=100
-      - SNAPSHOT_KEEP_RECENT=5
+      - SNAPSHOT_INTERVAL=20
+      - SNAPSHOT_KEEP_RECENT=3
       - DEBUG=false
     ports:
       - "${RPC_PORT:-26657}:26657"  # RPC
@@ -41,6 +41,7 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
       - DAPI_API__ML_GRPC_SERVER_PORT=9300
       - DAPI_API__TEST_MODE=true
+      - DAPI_API__GENESIS_APP_HASH_HEX=${GENESIS_APP_HASH}
       - NODE_CONFIG_PATH=/root/node_config.json
       - DEBUG=true
     networks:

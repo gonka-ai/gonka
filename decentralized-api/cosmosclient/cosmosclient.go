@@ -195,6 +195,7 @@ type CosmosMessageClient interface {
 	SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*blstypes.MsgSubmitVerificationVectorResponse, error)
 	SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error
 	SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error
+	SubmitActiveParticipantsPendingProof(proof *types.MsgSubmitParticipantsProof) error
 	NewBLSQueryClient() blstypes.QueryClient
 	NewRestrictionsQueryClient() restrictionstypes.QueryClient
 	GetAddress() string
@@ -296,6 +297,12 @@ func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgVal
 	transaction.Creator = icc.Address
 	logging.Info("Reporting validation", types.Validation, "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitActiveParticipantsPendingProof(tx *types.MsgSubmitParticipantsProof) error {
+	tx.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncWithRetry(tx)
 	return err
 }
 

@@ -51,9 +51,28 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	k.SetGenesisOnlyParams(ctx, &genesisOnlyParams)
 
 	// Import participants provided in genesis
+
+	activeParticiapntGenesisEpoch := types.ActiveParticipants{
+		Participants:         make([]*types.ActiveParticipant, 0),
+		CreatedAtBlockHeight: 1,
+	}
+
 	for _, p := range genState.ParticipantList {
 		k.SetParticipant(ctx, p)
+		if p.ValidatorKey != "" {
+			k.LogInfo("INIT GENESTS: adding active particiapnt", types.Participants, "val_key", p.ValidatorKey)
+			activeParticiapntGenesisEpoch.Participants = append(activeParticiapntGenesisEpoch.Participants,
+				&types.ActiveParticipant{
+					Index:        p.Index,
+					ValidatorKey: p.ValidatorKey,
+					Weight:       int64(p.Weight),
+					InferenceUrl: p.InferenceUrl,
+				})
+		}
 	}
+
+	k.SetActiveParticipants(ctx, activeParticiapntGenesisEpoch)
+	k.SetPendingProof(ctx, 1, 0)
 
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {

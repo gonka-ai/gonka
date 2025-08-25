@@ -104,6 +104,7 @@ type ApiConfig struct {
 	AdminServerPort       int    `koanf:"admin_server_port"`
 	MlGrpcServerPort      int    `koanf:"ml_grpc_server_port"`
 	TestMode              bool   `koanf:"test_mode"`
+	GenesisAppHashHex     string `koanf:"genesis_app_hash_hex"`
 }
 
 type ChainNodeConfig struct {

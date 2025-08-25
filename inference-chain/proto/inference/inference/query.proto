@@ -29,6 +29,7 @@ import "inference/inference/network_node.proto";
 import "inference/inference/bridge_transaction.proto";
 import "inference/inference/stats_developer.proto";
 import "inference/inference/epoch.proto";
+import "inference/inference/block_proof.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -363,7 +364,21 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/grantees_by_message_type/{granter_address}/{message_type_url}";
 
   }
+
+  rpc GetBlockProofByHeight (QueryBlockProofRequest) returns (QueryBlockProofResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/block_proof/{proof_height}";
+  }
+  
+  rpc GetParticipantsProofByHeight (QueryGetParticipantsProofRequest) returns (QueryGetParticipantsProofResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/validators_proof/{proof_height}";
+  }
+
+  rpc IfProofPending(QueryIsProofPendingRequest) returns (QueryIsProofPendingResponse){
+    option (google.api.http).get = "/productscience/inference/inference/participants_proof/{proof_height}";
+  }
+
 }
+
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
 
@@ -917,4 +932,31 @@ message Grantee {
 
 message QueryGranteesByMessageTypeResponse {
   repeated Grantee grantees = 1;
+}
+
+
+message QueryBlockProofRequest{
+  int64 proof_height = 1;
+}
+
+message QueryBlockProofResponse{
+  BlockProof proof = 1;
+}
+
+message QueryGetParticipantsProofRequest {
+  int64 proof_height = 1;
+}
+
+message QueryGetParticipantsProofResponse{
+  ValidatorsProof validators_proof = 1;
+  ProofOps merkle_proof = 2;
+}
+
+message QueryIsProofPendingRequest {
+  int64 proof_height = 1;
+}
+
+message QueryIsProofPendingResponse {
+  bool pending = 1;
+  uint64 pending_proof_epoch_id = 2;
 }

@@ -42,16 +42,6 @@ type ModelsResponse struct {
 	Models []types.Model `json:"models"`
 }
 
-type ActiveParticipantWithProof struct {
-	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
-	Addresses               []string                 `json:"addresses"`
-	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
-	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
-	Validators              []*comettypes.Validator  `json:"validators"`
-	Block                   *comettypes.Block        `json:"block"`
-	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
-}
-
 type ParticipantDto struct {
 	Id          string  `json:"id"`
 	Url         string  `json:"url"`

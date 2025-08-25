@@ -7,6 +7,7 @@ import (
 
 const ActiveParticipantsKeyPrefixV1 = "ActiveParticipants/"
 const ActiveParticipantsKeyPrefix = "ActiveParticipants/value/"
+const ActiveParticipantsProofKeyPrefix = "ActiveParticipantsProof/"
 
 func ActiveParticipantsFullKeyV1(epochGroupId uint64) []byte {
 	var key []byte
@@ -23,6 +24,15 @@ func ActiveParticipantsFullKey(epoch uint64) []byte {
 
 	key = append(key, []byte(ActiveParticipantsKeyPrefix)...)
 	key = append(key, sdk.Uint64ToBigEndian(epoch)...)
+	key = append(key, []byte("/")...)
+
+	return key
+}
+
+func ActiveParticipantsProofFullKey(blockHeight uint64) []byte {
+	var key []byte
+	key = append(key, []byte(ActiveParticipantsProofKeyPrefix)...)
+	key = append(key, sdk.Uint64ToBigEndian(blockHeight)...)
 	key = append(key, []byte("/")...)
 
 	return key

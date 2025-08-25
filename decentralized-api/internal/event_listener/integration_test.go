@@ -2,11 +2,14 @@ package event_listener
 
 import (
 	"context"
+	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"errors"
 	"fmt"
+	"github.com/cometbft/cometbft/libs/bytes"
 	"strconv"
 	"testing"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"decentralized-api/chainphase"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -151,6 +155,11 @@ func (m *MockRandomSeedManager) RequestMoney() {
 
 type MockQueryClient struct {
 	mock.Mock
+}
+
+func (m *MockQueryClient) GetCurrentEpoch(ctx context.Context, req *types.QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*types.QueryGetCurrentEpochResponse, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
@@ -300,6 +309,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		mockSeedManager,
 		finalReconciliationConfig,
 		mockConfigManager,
+		cosmos_client.InferenceCosmosClient{},
 	)
 
 	return &IntegrationTestSetup{
@@ -388,12 +398,11 @@ func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool
 func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 	// Now call to chain mock will return new blockHeight
 	setup.advanceBlockHeight(height)
-
-	blockInfo := chainphase.BlockInfo{
-		Height: height,
-		Hash:   fmt.Sprintf("hash-%d", height),
+	blockInfo := chainevents.FinalizedBlock{
+		Block:   chainevents.Block{Header: chainevents.Header{Height: fmt.Sprintf("%v", height)}},
+		BlockId: cmttypes.BlockID{Hash: bytes.HexBytes(fmt.Sprintf("hash-%d", height))},
 	}
-	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo, height-1)
 }
 
 func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnodeclient.MockClient {

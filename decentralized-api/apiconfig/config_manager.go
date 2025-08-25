@@ -152,6 +152,10 @@ func (cm *ConfigManager) GetHeight() int64 {
 	return cm.currentConfig.CurrentHeight
 }
 
+func (cm *ConfigManager) GetGenesisAppHash() string {
+	return cm.currentConfig.Api.GenesisAppHashHex
+}
+
 func (cm *ConfigManager) SetPreviousSeed(seed SeedInfo) error {
 	cm.currentConfig.PreviousSeed = seed
 	logging.Info("Setting previous seed", types.Config, "seed", seed)

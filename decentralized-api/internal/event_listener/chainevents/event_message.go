@@ -16,26 +16,3 @@ type Data struct {
 	Type  string                 `json:"type"`
 	Value map[string]interface{} `json:"value"`
 }
-
-type Attribute struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	Index bool   `json:"index"`
-}
-
-type Event struct {
-	Type       string      `json:"type"`
-	Attributes []Attribute `json:"attributes"`
-}
-
-type TxResult struct {
-	Height string `json:"height"`
-	Tx     string `json:"tx"`
-	Result struct {
-		Events []Event `json:"events"`
-	} `json:"result"`
-}
-
-type Value struct {
-	TxResult TxResult `json:"TxResult"`
-}

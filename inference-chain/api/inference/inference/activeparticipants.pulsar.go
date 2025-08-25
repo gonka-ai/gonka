@@ -2308,7 +2308,7 @@ type ActiveParticipant struct {
 	unknownFields protoimpl.UnknownFields
 
 	Index        string          `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	ValidatorKey string          `protobuf:"bytes,2,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	ValidatorKey string          `protobuf:"bytes,2,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"` // consensus address base64
 	Weight       int64           `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
 	InferenceUrl string          `protobuf:"bytes,4,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
 	Models       []string        `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
