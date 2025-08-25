@@ -1,15 +1,17 @@
 import time
-from itertools import chain
+import os
 from typing import Any, List
 
 import torch
-import torch.multiprocessing as mp
-from torch.nn.parallel import DataParallel
 
+from accelerate import dispatch_model, infer_auto_device_map
+from accelerate.utils import get_balanced_memory
+
+from pow.compute.autobs import get_total_GPU_memory
 from pow.compute.utils import TimeStats
 from pow.models.llama31 import ModelArgs, Transformer
 from pow.models.utils import Params, count_params, set_default_dtype
-from pow.random import get_rng, initialize_model_weights_from_rng
+from pow.random_pool_optimized import initialize_model_with_pool
 from common.logger import create_logger
 
 
@@ -27,68 +29,14 @@ class ModelWrapper(torch.nn.Module):
         super().__init__()
         self.output_device = output_device
         self.stats = stats
-        self.num_gpus = len(devices)
-        self.device_ids = [torch.device(device) for device in devices]
-        if self.num_gpus > 1:
-            self.module = DataParallel(module, device_ids=self.device_ids)
-        else:
-            self.module = module
+        self.module = module
 
     def forward(self, inputs: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-        assert inputs.device.type == "cpu", "Inputs must be on CPU"
-
-        if not torch.cuda.is_available():
-            logger.warning("CUDA is not available, using CPU instead")
-            return self.module(inputs, **kwargs)
-
-        if self.num_gpus > 1:
-            return self.forward_parallel(inputs, **kwargs)
-        else:
-            return self.forward_single(inputs, **kwargs)
-
-    def forward_single(self, inputs: torch.Tensor, **kwargs: Any) -> Any:
-        assert self.num_gpus == 1, "This method is intended for single GPU models"
-
-        if torch.cuda.is_available():
-            with self.stats.time_to_cuda():
-                inputs = inputs.to(self.device_ids[0])
-
-        with self.stats.time_infer():
-            return self.module(inputs, **kwargs)
-
-    def forward_parallel(self, *inputs: Any, **kwargs: Any) -> Any:
-        assert self.num_gpus > 1, "This method is intended for parallel models"
-
-        with self.stats.time_to_cuda():
-            if not self.device_ids:
-                return self.module.module(*inputs, **kwargs)
-
-            for t in chain(
-                self.module.module.parameters(), self.module.module.buffers()
-            ):
-                if t.device != self.module.src_device_obj:
-                    raise RuntimeError(
-                        "module must have its parameters and buffers "
-                        f"on device {self.module.src_device_obj} (device_ids[0]) but found one of "
-                        f"them on device: {t.device}"
-                    )
-
-            inputs, module_kwargs = self.module.scatter(
-                inputs, kwargs, self.module.device_ids
-            )
-            if not inputs and not module_kwargs:
-                inputs = ((),)
-                module_kwargs = ({},)
-
-            if len(self.module.device_ids) == 1:
-                return self.module.module(*inputs[0], **module_kwargs[0])
-            replicas = self.module.replicate(
-                self.module.module, self.module.device_ids[: len(inputs)]
-            )
-
-        with self.stats.time_infer():
-            outputs = self.module.parallel_apply(replicas, inputs, module_kwargs)
-            return self.module.gather(outputs, self.module.output_device)
+        with torch.no_grad():
+            with self.stats.time_infer():
+                device = self.module.layers[0].attention.wq.weight.device
+                inputs = inputs.to(device)
+                return self.module(inputs, **kwargs)
 
     @staticmethod
     def build(
@@ -103,9 +51,7 @@ class ModelWrapper(torch.nn.Module):
     ) -> "ModelWrapper":
         with stats.time_model_load():
             devices = [torch.device(device) for device in devices]
-            if len([d.type for d in devices]) > 1:
-                raise ValueError(f"Only one device type is supported: {devices}")
-            device = devices[0]
+            primary_device = devices[0]
 
             torch.manual_seed(seed)
             start_time = time.time()
@@ -118,23 +64,59 @@ class ModelWrapper(torch.nn.Module):
             )
 
             logger.info("Creating model...")
-            model = Transformer(model_args)
+            with torch.device("meta"):
+                model = Transformer(model_args)
+            model.to_empty(device="cpu")
             logger.info(f"Loaded in {time.time() - start_time:.2f} seconds")
 
             model.eval()
             model.requires_grad_(False)
+            
+            # Convert model to specified dtype before moving to GPUs
+            if dtype == torch.float16:
+                model = model.half()
+                logger.info("Model converted to float16")
+            elif dtype == torch.bfloat16:
+                model = model.bfloat16()
+                logger.info("Model converted to bfloat16")
+            elif dtype == torch.float32:
+                model = model.float()
+                logger.info("Model converted to float32")
 
-            rng = get_rng(str(hash_), 4)
-            initialize_model_weights_from_rng(model, rng)
+            initialize_model_with_pool(model, str(hash_), dtype=dtype, pool_fraction=0.05)
+            # Recompute freqs_cis after model is on CPU and properly initialized
+            model.recompute_freqs_cis()
+
             init_time = time.time() - start_time
-
             logger.info(f"Model initialized in {init_time:.2f}s | {count_params(model)} params")
 
-            set_default_dtype(device=device, dtype=dtype)
-            model = model.to(device=device, dtype=dtype)
+            try:
+                max_memory = {}
+                for device in devices:
+                    device_id = device.index
+                    max_memory[device_id] = f"{get_total_GPU_memory(device_id)}MB"
+                max_memory = get_balanced_memory(model, max_memory=max_memory)
+                device_map = infer_auto_device_map(
+                    model,
+                    max_memory=max_memory,
+                    no_split_module_classes=["TransformerBlock"],
+                    dtype=dtype
+                )
+                logger.info(f"Inferred device map: {device_map}")
+                model = dispatch_model(model, device_map=device_map)
+                logger.info("Multi-GPU distribution successful")
+            except Exception as e:
+                logger.error(f"Multi-GPU distribution failed: {e}")
+                logger.error("Falling back to single GPU")
+                raise e
+            
+            model.eval()
+            model.requires_grad_(False)
 
+            set_default_dtype(device=primary_device, dtype=dtype)
+            
             logger.info("Wrapping model in ModelWrapper")
-            model = ModelWrapper(model, devices=devices, stats=stats)
+            model_wrapper = ModelWrapper(model, devices=devices, stats=stats)
             logger.info(f"ModelWrapper created in {stats.model_load_time:.2f}s")
 
-        return model
+            return model_wrapper

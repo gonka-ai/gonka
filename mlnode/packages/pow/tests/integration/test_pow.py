@@ -51,7 +51,7 @@ def model_params():
         multiple_of=1024,
         norm_eps=1e-05,
         rope_theta=500000.0,
-        use_scaled_rope=True,
+        use_scaled_rope=False,
         seq_len=4
     )
 
@@ -110,7 +110,8 @@ def create_correct_batch(pb, n=10000):
         'block_hash': pb.block_hash,
         'block_height': pb.block_height,
         'nonces': [pb.nonces[0]] * n,
-        'dist': [pb.dist[0]] * n
+        'dist': [pb.dist[0]] * n,
+        'node_id': pb.node_id,
     })
 
 def get_incorrect_nonce(pb):
@@ -125,7 +126,8 @@ def create_incorrect_batch(pb, n, n_invalid):
         'block_hash': pb.block_hash,
         'block_height': pb.block_height,
         'nonces': [get_incorrect_nonce(pb)] * n_invalid,
-        'dist': [pb.dist[0]] * n_invalid
+        'dist': [pb.dist[0]] * n_invalid,
+        'node_id': pb.node_id,
     }
     correct_pb = create_correct_batch(pb, n - n_invalid)
     incorrect_pb = ProofBatch(**incorrect_pb_dict)

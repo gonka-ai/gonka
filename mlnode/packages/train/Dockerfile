@@ -1,5 +1,5 @@
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:v0.9.1 AS app
+FROM ghcr.io/gonka-ai/vllm:v0.9.1 AS app
 
 ENV APP_PATH=/app/packages/train
 

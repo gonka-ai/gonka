@@ -5,35 +5,25 @@ from pow.compute.autobs import (
     get_total_GPU_memory, 
     get_batch_size, 
     empirical_memory_estimate,
-    WEIGHTS_GPU_MEMORY_CONSUMPTION,
+    get_model_weights_memory_mb,
     GPUMemoryMonitor,
     compute_memory_profile
 )
+from pow.compute.gpu_group import create_gpu_groups
 from pow.compute.compute import Compute
-from pow.models.utils import Params
+from pow.models.utils import PARAMS_V1
 
 def main():
-    device_id = 0
-    device_name = f'cuda:{device_id}'
+    gpu_groups = create_gpu_groups(params=PARAMS_V1)
+    print(f"GPU groups: {gpu_groups}")
+    gpu_group = gpu_groups[0]
     
     block_hash = "test_block_hash_12345"
     public_key = "test_public_key_67890"
     block_height = 12345
     r_target = 0.5
     
-    params = Params(
-        dim=MODEL_PARAMS.dim,
-        n_layers=MODEL_PARAMS.n_layers,
-        n_heads=MODEL_PARAMS.n_heads,
-        n_kv_heads=MODEL_PARAMS.n_kv_heads,
-        vocab_size=MODEL_PARAMS.vocab_size,
-        ffn_dim_multiplier=MODEL_PARAMS.ffn_dim_multiplier,
-        multiple_of=MODEL_PARAMS.multiple_of,
-        norm_eps=MODEL_PARAMS.norm_eps,
-        rope_theta=MODEL_PARAMS.rope_theta,
-        use_scaled_rope=MODEL_PARAMS.use_scaled_rope,
-        seq_len=MODEL_PARAMS.seq_len,
-    )
+    params = PARAMS_V1
     
     print("Initializing Compute instance...")
     compute_instance = Compute(
@@ -42,17 +32,18 @@ def main():
         block_height=block_height,
         public_key=public_key,
         r_target=r_target,
-        devices=[device_name],
+        devices=gpu_group.get_device_strings(),
+        node_id=0,
     )
     print("Compute instance initialized!")
     
-    total_mem_mb = get_total_GPU_memory(device_id)
-    model_size_mb = WEIGHTS_GPU_MEMORY_CONSUMPTION
+    total_mem_mb = get_total_GPU_memory(gpu_group.primary_device)
+    model_size_mb = get_model_weights_memory_mb(compute_instance)
     target_memory_usage = 0.95
     max_batch_size = int(get_batch_size(total_mem_mb, target_memory_usage=target_memory_usage))
     
     batch_sizes = np.linspace(1, max_batch_size, 10, dtype=int)
-    gpu_monitor = GPUMemoryMonitor(device_id=device_id)
+    gpu_monitor = GPUMemoryMonitor(device_id=gpu_group.primary_device)
     
     print("Compute Instance Memory Profiling Results:")
     print("------------------------------------------------------------------------------------------------------------")
@@ -61,7 +52,8 @@ def main():
     
     for batch_size in batch_sizes:
         torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats(device_id)
+        for device_id in gpu_group.devices:
+            torch.cuda.reset_peak_memory_stats(device_id)
         torch.cuda.synchronize()
         
         compute_instance.model.eval()

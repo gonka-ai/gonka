@@ -115,7 +115,7 @@ Also you can run them for specific package with the same commands.
 To create and publish a new release, you can use the following Make targets:
 
 - `build-release` – builds the Docker image for **MLNode** based on `packages/api/Dockerfile`
-- `push-release` – pushes the versioned Docker image to `gcr.io/decentralized-ai/mlnode`
+- `push-release` – pushes the versioned Docker image to `ghcr.io/gonka-ai/mlnode`
 - `push-latest` – tags the same image as `latest` and pushes it to the registry
 - `release` – runs all tests, builds and pushes the Docker image, creates a new Git tag in the format `release/v<version>`, and pushes that tag to the repository
 - `release-latest` – does everything that `release` does, plus tags and pushes the `latest` image
@@ -132,7 +132,7 @@ VERSION=<version> make release
 That command will:
 1. Run all tests (unit, GPU, and integration)
 2. Build the Docker image with the provided version (or `git describe --always` if not provided)
-3. Push the image to `gcr.io/decentralized-ai/mlnode:<version>`
+3. Push the image to `ghcr.io/gonka-ai/mlnode:<version>`
 4. Create and push a Git tag named `release/v<version>`
 
 If you also want to update the `latest` tag, use:
@@ -143,7 +143,7 @@ If you also want to update the `latest` tag, use:
 VERSION=<version> make release-latest
 ```
 
-At the moment, all the images are pushed to the `gcr.io/decentralized-ai/mlnode` registry.  
+At the moment, all the images are pushed to the `ghcr.io/gonka-ai/mlnode` registry.  
 Also, they all are based on one of `gcr.io/decentralized-ai/vllm:<version>` images.  
 
 

@@ -282,6 +282,7 @@ class Transformer(nn.Module):
         )
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
+        self.params = params
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -289,13 +290,21 @@ class Transformer(nn.Module):
             params.rope_theta,
             params.use_scaled_rope,
         )
+    
+    def recompute_freqs_cis(self):
+        self.freqs_cis = precompute_freqs_cis(
+            self.params.dim // self.params.n_heads,
+            self.params.max_seq_len * 2,
+            self.params.rope_theta,
+            self.params.use_scaled_rope,
+        )
 
     def forward_inference(self, tokens: torch.Tensor, start_pos: int):
         # for use during inference
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
 
-        self.freqs_cis = self.freqs_cis.to(h.device)
+        self.freqs_cis = self.freqs_cis.to(h.device, h.dtype)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
@@ -324,7 +333,7 @@ class Transformer(nn.Module):
         h: torch.Tensor,
         start_pos: int
     ):
-        self.freqs_cis = self.freqs_cis.to(h.device)
+        self.freqs_cis = self.freqs_cis.to(h.device, h.dtype)
         _, seqlen = h.shape[:2]
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
@@ -348,7 +357,7 @@ class Transformer(nn.Module):
         # forward the model first
         _bsz, seqlen = inputs.shape
         h = self.tok_embeddings(inputs)
-        self.freqs_cis = self.freqs_cis.to(h.device)
+        self.freqs_cis = self.freqs_cis.to(h.device, h.dtype)
         freqs_cis = self.freqs_cis[:seqlen]
         mask = torch.full((seqlen, seqlen), float("-inf"), device=inputs.device)
         mask = torch.triu(mask, diagonal=1)
