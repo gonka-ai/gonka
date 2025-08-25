@@ -3,7 +3,6 @@ package event_listener
 import (
 	"context"
 	"decentralized-api/internal/utils"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
@@ -334,34 +333,16 @@ func (el *OnNewBlockDispatcher) collectGenesisBlockProof() error {
 		logging.Error("EventListener: Failed to get genesis block", types.System, "error", err)
 	}
 
-	proof := types.ValidatorsProof{
-		BlockHeight: block.Block.LastCommit.Height,
-		Round:       int64(block.Block.LastCommit.Round),
-		BlockId: &types.BlockID{
-			Hash:               block.Block.LastCommit.BlockID.Hash.String(),
-			PartSetHeaderTotal: int64(block.Block.LastCommit.BlockID.PartSetHeader.Total),
-			PartSetHeaderHash:  block.Block.LastCommit.BlockID.PartSetHeader.Hash.String(),
-		},
-		Signatures: make([]*types.SignatureInfo, 0),
-	}
-
-	for _, sign := range block.Block.LastCommit.Signatures {
-		logging.Info("collectMissingBlocksSignatures: preparing signature to send", types.System,
-			"sign_ts", sign.Timestamp,
-			"signature", sign.Signature,
-			"height", block.Block.LastCommit.Height,
-			"validator_address", sign.ValidatorAddress)
-
-		proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
-			SignatureBase64:     base64.StdEncoding.EncodeToString(sign.Signature),
-			ValidatorAddressHex: sign.ValidatorAddress.String(),
-			Timestamp:           sign.Timestamp,
-		})
-	}
+	proof := fillValidatorsProof(chainevents.LastCommit{
+		BlockId:    block.Block.LastCommit.BlockID,
+		Height:     fmt.Sprintf("%v", block.Block.LastCommit.Height),
+		Round:      int(block.Block.LastCommit.Round),
+		Signatures: block.Block.LastCommit.Signatures,
+	})
 
 	// we do not collect proof here, because cosmos can't get merkle proof for block_height <= 1
 	if err := el.transactionRecorder.SubmitActiveParticipantsPendingProof(
-		&types.MsgSubmitParticipantsProof{BlockHeight: uint64(1), ValidatorsProof: &proof}); err != nil {
+		&types.MsgSubmitParticipantsProof{BlockHeight: uint64(1), ValidatorsProof: proof}); err != nil {
 		// TODO think later what to do if error is critical
 		logging.Error("Failed to set validators proof", types.System, "error", err)
 	}
@@ -491,40 +472,16 @@ func (el *OnNewBlockDispatcher) collectBlockProofs(block chainevents.FinalizedBl
 		return
 	}
 
-	proofOps, err := getParticipantsProof(rpcClient, pendingProofResp.UpcomingEpochId, height)
+	proofOps, err := getParticipantsProof(rpcClient, pendingProofResp.PendingProofEpochId, height)
 	if err != nil {
 		logging.Error("EventListener: Failed to get participants proof", types.System, "error", err)
 	}
 
-	proof := types.ValidatorsProof{
-		BlockHeight: height,
-		Round:       int64(block.Block.LastCommit.Round),
-		BlockId: &types.BlockID{
-			Hash:               block.Block.LastCommit.BlockId.Hash.String(),
-			PartSetHeaderTotal: int64(block.Block.LastCommit.BlockId.PartSetHeader.Total),
-			PartSetHeaderHash:  block.Block.LastCommit.BlockId.PartSetHeader.Hash.String(),
-		},
-		Signatures: make([]*types.SignatureInfo, 0),
-	}
-
-	for _, sign := range block.Block.LastCommit.Signatures {
-		logging.Info("Preparing signature to send", types.System,
-			"sign_ts", sign.Timestamp,
-			"signature", sign.Signature,
-			"height", height,
-			"validator_address", sign.ValidatorAddress)
-
-		proof.Signatures = append(proof.Signatures, &types.SignatureInfo{
-			SignatureBase64:     base64.StdEncoding.EncodeToString(sign.Signature),
-			ValidatorAddressHex: sign.ValidatorAddress.String(),
-			Timestamp:           sign.Timestamp,
-		})
-	}
-
+	proof := fillValidatorsProof(block.Block.LastCommit)
 	if err := el.transactionRecorder.SubmitActiveParticipantsPendingProof(
 		&types.MsgSubmitParticipantsProof{
 			BlockHeight:     uint64(height),
-			ValidatorsProof: &proof,
+			ValidatorsProof: proof,
 			ProofOpts:       proofOps,
 		}); err != nil {
 		// TODO: think later what to do if error is critical

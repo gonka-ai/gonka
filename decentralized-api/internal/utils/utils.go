@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/cometbft/cometbft/crypto/tmhash"
-	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -169,51 +168,9 @@ func QueryActiveParticipants(rpcClient *rpcclient.HTTP, queryClient types.QueryC
 			}
 		}
 
-		block := &contracts.BlockProof{
-			CreatedAtBlockHeight: blockProof.Proof.CreatedAtBlockHeight,
-			AppHashHex:           blockProof.Proof.AppHashHex,
-			TotalVotingPower:     blockProof.Proof.TotalVotingPower,
-			Commits:              make([]*contracts.CommitInfo, 0),
-		}
-
-		for _, commit := range blockProof.Proof.Commits {
-			block.Commits = append(block.Commits, &contracts.CommitInfo{
-				ValidatorAddress: commit.ValidatorAddress,
-				ValidatorPubKey:  commit.ValidatorPubKey,
-				VotingPower:      commit.VotingPower,
-			})
-		}
-
-		validatorsProof := proofResp.ValidatorsProof
-		validators := &contracts.ValidatorsProof{
-			BlockHeight: validatorsProof.BlockHeight,
-			Round:       validatorsProof.Round,
-			BlockId: &contracts.BlockID{
-				Hash:               validatorsProof.BlockId.Hash,
-				PartSetHeaderTotal: validatorsProof.BlockId.PartSetHeaderTotal,
-				PartSetHeaderHash:  validatorsProof.BlockId.PartSetHeaderHash,
-			},
-			Signatures: make([]*contracts.SignatureInfo, 0),
-		}
-
-		for _, sign := range validatorsProof.Signatures {
-			validators.Signatures = append(validators.Signatures, &contracts.SignatureInfo{
-				SignatureBase64:     sign.SignatureBase64,
-				ValidatorAddressHex: sign.ValidatorAddressHex,
-				Timestamp:           sign.Timestamp,
-			})
-		}
-
-		var proofOps *cryptotypes.ProofOps
-		if proofResp.MerkleProof != nil {
-			proofOps = &cryptotypes.ProofOps{
-				Ops: make([]cryptotypes.ProofOp, 0),
-			}
-			for _, op := range proofResp.MerkleProof.Ops {
-				proofOps.Ops = append(proofOps.Ops, cryptotypes.ProofOp(op))
-
-			}
-		}
+		block := ToContractsBlockProof(blockProof.Proof)
+		validators := ToContractsValidatorsProof(proofResp.ValidatorsProof)
+		proofOps := ToCryptoProofOps(proofResp.MerkleProof)
 		return &contracts.ActiveParticipantWithProof{
 			ActiveParticipants:      finalParticipants,
 			Addresses:               addresses,

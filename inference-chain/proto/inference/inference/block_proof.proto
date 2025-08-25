@@ -15,16 +15,14 @@ option (gogoproto.unmarshaler_all)      = true;
 message CommitInfo {
   string validator_address = 1;
   string validator_pub_key = 2;
-  string operator_address  = 3;
-  int64 voting_power       = 4;
+  int64  voting_power       = 3;
 }
 
 message BlockProof {
   int64 created_at_block_height = 1; // H
   string app_hash_hex           = 2; // Header(H).AppHash (from Header(H+1))
   int64 total_voting_power      = 3;
-  int64 signed_voting_power     = 4;
-  repeated CommitInfo commits   = 5;
+  repeated CommitInfo commits   = 4;
 }
 
 message SignatureInfo {

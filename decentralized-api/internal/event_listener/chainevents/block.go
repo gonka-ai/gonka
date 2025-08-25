@@ -35,6 +35,13 @@ type Header struct {
 	} `json:"version"`
 }
 
+type LastCommit struct {
+	BlockId    types.BlockID     `json:"block_id"`
+	Height     string            `json:"height"`
+	Round      int               `json:"round"`
+	Signatures []types.CommitSig `json:"signatures"`
+}
+
 type Block struct {
 	Data struct {
 		Txs []string `json:"txs"`
@@ -42,13 +49,8 @@ type Block struct {
 	Evidence struct {
 		Evidence []interface{} `json:"evidence"`
 	} `json:"evidence"`
-	Header     Header `json:"header"`
-	LastCommit struct {
-		BlockId    types.BlockID     `json:"block_id"`
-		Height     string            `json:"height"`
-		Round      int               `json:"round"`
-		Signatures []types.CommitSig `json:"signatures"`
-	} `json:"last_commit"`
+	Header     Header     `json:"header"`
+	LastCommit LastCommit `json:"last_commit"`
 }
 
 type FinalizedBlock struct {

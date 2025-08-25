@@ -47,6 +47,10 @@ func (k Keeper) SetActiveParticipantsProof(ctx context.Context, proof types.Proo
 	store := prefix.NewStore(storeAdapter, []byte{})
 
 	key := types.ActiveParticipantsProofFullKey(blockHeight)
+	if store.Has(key) {
+		return
+	}
+
 	b := k.cdc.MustMarshal(&proof)
 	store.Set(key, b)
 }
