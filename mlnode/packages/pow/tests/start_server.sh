@@ -7,7 +7,9 @@ echo "Starting PoW Server..."
 echo "====================="
 
 # Set up PYTHONPATH to include required packages
-export PYTHONPATH="/mnt/ramdisk/tamaz/mlnode/packages/pow/src:/mnt/ramdisk/tamaz/mlnode/packages/common/src:$PYTHONPATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT/packages/pow/src:$PROJECT_ROOT/packages/common/src:$PYTHONPATH"
 
 # Set default environment variables if not set
 export GPU_DEVICE_ID=${GPU_DEVICE_ID:-0}

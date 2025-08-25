@@ -20,6 +20,7 @@ fire = ">=0.7.0"
 tqdm = ">=4.66.0"
 fastapi = ">=0.115.8"
 uvicorn = ">=0.34.0"
+accelerate = ">=0.26.0"
 mlnode-common = { path = "../common", develop = true }
 
 [tool.poetry.group.dev.dependencies]

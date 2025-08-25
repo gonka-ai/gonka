@@ -34,6 +34,7 @@ class Worker(multiprocessing.Process):
         r_target: float,
         devices: List[str],
         generator: Iterator[int],
+        node_id: int,
     ):
         super().__init__()
         self.phase = phase
@@ -50,9 +51,11 @@ class Worker(multiprocessing.Process):
         self.devices = devices
         self.generator = generator
         self.id = idx
+        self.node_id = node_id
         self.compute: Compute = None
         self.interrupt_flag = False
         self.exception = None
+        self.last_report_time = 0  # Track last time debug was printed
 
     def run(self):
         self.compute = Compute(
@@ -62,6 +65,7 @@ class Worker(multiprocessing.Process):
             public_key=self.public_key,
             r_target=self.r_target,
             devices=self.devices,
+            node_id=self.node_id,
         )
         self.model_init_event.set()
         logger.info(f"[{self.id}] Worker initiated and models are created")
@@ -97,7 +101,7 @@ class Worker(multiprocessing.Process):
 
             nonces = next_nonces
             next_nonces = [next(self.generator) for _ in range(self.batch_size)]
-            logger.info(f"[{self.id}] Generated batch: {nonces}")
+            logger.debug(f"[{self.id}] Generated batch: {nonces}")
 
             batch = self.compute(
                 nonces=nonces,
@@ -105,8 +109,14 @@ class Worker(multiprocessing.Process):
                 target=self.compute.target,
                 next_nonces=next_nonces,
             )
-            # Not checking if prev call is done. Hope it's done during inference.
             batch.add_done_callback(self._process_result)
+            
+            current_time = time.time()
+            if current_time - self.last_report_time >= 15.0:
+                if self.compute.stats.total_valid_nonces > 0:
+                    stats_report = self.compute.stats.report(detailed=False, worker_id=self.id)
+                    logger.info(stats_report)
+                self.last_report_time = current_time
 
     def _process_result(self, future: Future):
         try:
@@ -138,29 +148,21 @@ class Worker(multiprocessing.Process):
         q: Queue,
         max_wait_time: float = 1.
     ):
-        grouped_batches = defaultdict(list)
-        batch_sizes = defaultdict(int)
         start_time = time.time()
 
+        batches_to_process = []
         while (time.time() - start_time) < max_wait_time:
             try:
                 batch = q.get_nowait()
-                grouped_batches[batch.public_key].append(batch)
-                batch_sizes[batch.public_key] += len(batch.nonces)
-                
-                if any(size >= self.batch_size for size in batch_sizes.values()):
-                    break
+                batches_to_process.append(batch)
             except queue.Empty:
                 break
 
-        merged_batches = []
-        for _, batches in grouped_batches.items():
-            merged_batch = ProofBatch.merge(batches)
-            merged_batches.extend(
-                merged_batch.split(self.batch_size)
-            )
+        batches = []
+        for batch in batches_to_process:
+            batches.extend(batch.split(self.batch_size))
 
-        return merged_batches
+        return batches
 
     def _validate(self):
         logger.info(f"[{self.id}] Starting validate phase")
@@ -173,10 +175,10 @@ class Worker(multiprocessing.Process):
                 continue
 
             for idx, batch in enumerate(merged_batches):
-                logger.debug(f"[{self.id}] Validating batch {idx} / {len(merged_batches)}")
+                logger.info(f"[{self.id}] Validating batch {idx} / {len(merged_batches)}")
                 try:
                     validated_batch = self.compute.validate(batch)
-                    logger.debug(f"[{self.id}] Validated batch: {validated_batch}")
+                    logger.info(f"[{self.id}] Validated batch: {validated_batch}")
                     self.validated_batch_queue.put(validated_batch, timeout=10)
                 except Exception as e:
                     logger.error(f"[{self.id}] Validation failed: {e}\n{batch}")
