@@ -84,10 +84,13 @@ func ApplyGenesisGuardianEnhancement(ctx context.Context, k keeper.Keeper, compu
 	// Apply enhancement
 	enhancedResults, enhancedTotalPower := calculateEnhancedPower(ctx, k, computeResults, totalNetworkPower)
 
+	// Detect if enhancement was applied by comparing total power
+	wasEnhanced := enhancedTotalPower != totalNetworkPower
+
 	return &GenesisGuardianEnhancementResult{
 		ComputeResults: enhancedResults,
 		TotalPower:     enhancedTotalPower,
-		WasEnhanced:    true,
+		WasEnhanced:    wasEnhanced,
 	}
 }
 

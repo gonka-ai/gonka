@@ -427,13 +427,14 @@ func TestApplyGenesisGuardianEnhancement_TwoGuardians(t *testing.T) {
 		{OperatorAddress: "validator3", Power: 2000},
 		{OperatorAddress: "validator4", Power: 1500},
 	}
-	// Total: 5500, Others (non-guardians): 3500
-	// Expected enhancement per guardian: (3500 * 0.52) / 2 = 910
+	// Total: 5500, Others (non-guardians): 3500, Guardian total: 2000
+	// Enhancement calculation: 3500 * 0.52 = 1820
+	// Since 1820 < 2000 (guardian total), enhancement should be skipped
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	require.True(t, result.WasEnhanced, "Should apply enhancement for immature network")
+	require.False(t, result.WasEnhanced, "Should NOT apply enhancement when guardians already have enough power")
 
-	// Find guardian powers in results
+	// Find guardian powers in results - they should remain unchanged
 	guardian1Power := int64(0)
 	guardian2Power := int64(0)
 	for _, cr := range result.ComputeResults {
@@ -444,14 +445,14 @@ func TestApplyGenesisGuardianEnhancement_TwoGuardians(t *testing.T) {
 		}
 	}
 
-	// Both guardians should have equal enhanced power: (3500 * 0.52) / 2 = 910
-	expectedPower := int64(910)
-	require.Equal(t, expectedPower, guardian1Power, "Guardian1 should have distributed enhanced power")
-	require.Equal(t, expectedPower, guardian2Power, "Guardian2 should have distributed enhanced power")
+	// Guardians should keep their original power since enhancement is skipped
+	// Enhancement (1820) < Total guardian power (2000), so no enhancement applied
+	require.Equal(t, int64(800), guardian1Power, "Guardian1 should keep original power")
+	require.Equal(t, int64(1200), guardian2Power, "Guardian2 should keep original power")
 
-	// Verify total power calculation
-	expectedTotal := int64(3500 + 910 + 910) // others + guardian1 + guardian2 = 5320
-	require.Equal(t, expectedTotal, result.TotalPower, "Total power should be correctly calculated")
+	// Verify total power calculation - should be original total
+	expectedTotal := int64(800 + 1200 + 2000 + 1500) // original powers = 5500
+	require.Equal(t, expectedTotal, result.TotalPower, "Total power should remain unchanged")
 }
 
 // Test distributed enhancement with 3 genesis guardians
@@ -487,13 +488,14 @@ func TestApplyGenesisGuardianEnhancement_ThreeGuardians(t *testing.T) {
 		{OperatorAddress: "validator4", Power: 2000},
 		{OperatorAddress: "validator5", Power: 1500},
 	}
-	// Total: 5500, Others (non-guardians): 3500
-	// Expected enhancement per guardian: (3500 * 0.52) / 3 = 606
+	// Total: 5500, Others (non-guardians): 3500, Guardian total: 2000
+	// Enhancement calculation: 3500 * 0.52 = 1820
+	// Since 1820 < 2000 (guardian total), enhancement should be skipped
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	require.True(t, result.WasEnhanced, "Should apply enhancement for immature network")
+	require.False(t, result.WasEnhanced, "Should NOT apply enhancement when guardians already have enough power")
 
-	// Find guardian powers in results
+	// Find guardian powers in results - they should remain unchanged
 	guardianPowers := make(map[string]int64)
 	for _, cr := range result.ComputeResults {
 		if cr.OperatorAddress == "guardian1" || cr.OperatorAddress == "guardian2" || cr.OperatorAddress == "guardian3" {
@@ -501,15 +503,15 @@ func TestApplyGenesisGuardianEnhancement_ThreeGuardians(t *testing.T) {
 		}
 	}
 
-	// All guardians should have equal enhanced power: (3500 * 0.52) / 3 = 606
-	expectedPower := int64(606)
-	require.Equal(t, expectedPower, guardianPowers["guardian1"], "Guardian1 should have distributed enhanced power")
-	require.Equal(t, expectedPower, guardianPowers["guardian2"], "Guardian2 should have distributed enhanced power")
-	require.Equal(t, expectedPower, guardianPowers["guardian3"], "Guardian3 should have distributed enhanced power")
+	// Guardians should keep their original power since enhancement is skipped
+	// Enhancement (1820) < Total guardian power (2000), so no enhancement applied
+	require.Equal(t, int64(500), guardianPowers["guardian1"], "Guardian1 should keep original power")
+	require.Equal(t, int64(700), guardianPowers["guardian2"], "Guardian2 should keep original power")
+	require.Equal(t, int64(800), guardianPowers["guardian3"], "Guardian3 should keep original power")
 
-	// Verify total power calculation
-	expectedTotal := int64(3500 + 606*3) // others + 3*guardian_power = 5318
-	require.Equal(t, expectedTotal, result.TotalPower, "Total power should be correctly calculated")
+	// Verify total power calculation - should be original total
+	expectedTotal := int64(500 + 700 + 800 + 2000 + 1500) // original powers = 5500
+	require.Equal(t, expectedTotal, result.TotalPower, "Total power should remain unchanged")
 }
 
 // Test partial guardian identification (some guardians not found in compute results)
