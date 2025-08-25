@@ -2,15 +2,17 @@ package inference
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
+
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -29,7 +31,6 @@ import (
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
-	"strings"
 
 	// this line is used by starport scaffolding # 1
 
@@ -236,7 +237,9 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 				am.LogError("BeginBlock: unable to unpack validator public key", types.Participants, "epoch", epochIndex)
 			}
 
+			// PANIC: consPubKey may be nil if UnpackAny failed; calling Bytes() on a nil interface panics
 			pk := ed25519.PubKey(consPubKey.Bytes())
+			// PANIC: pk.Address() may panic if the underlying ed25519 key bytes are invalid length
 			addr := strings.ToUpper(pk.Address().String())
 
 			am.LogInfo("BeginBlock participant address from validator cons address", types.Participants, "consensus addr hex", addr)
@@ -257,6 +260,7 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 			continue
 		}
 		pk := ed25519.PubKey(keyBytes)
+		// PANIC: pk.Address() may panic if keyBytes length is invalid (e.g., empty or not 32 bytes)
 		addr := strings.ToUpper(pk.Address().String())
 		am.LogInfo("BeginBlock participant address", types.Participants, "consensus addr hex", addr)
 

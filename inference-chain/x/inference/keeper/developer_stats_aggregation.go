@@ -70,6 +70,7 @@ func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr str
 	}
 
 	var stats types.DeveloperStatsByEpoch
+	// PANIC: MustUnmarshal panics if stored stats are corrupted or codec mismatch
 	k.cdc.MustUnmarshal(bz, &stats)
 	return stats, true
 }
@@ -96,6 +97,7 @@ func (k Keeper) GetDeveloperStatsByTime(
 		}
 
 		var stats types.DeveloperStatsByTime
+		// PANIC: MustUnmarshal panics if the time-based stats record is corrupted
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
 		results = append(results, &stats)
 	}
@@ -121,6 +123,7 @@ func (k Keeper) GetSummaryByTime(ctx context.Context, from, to int64) StatsSumma
 		}
 
 		var stats types.DeveloperStatsByTime
+		// PANIC: MustUnmarshal panics if the time-based stats record is corrupted
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
 		summary.TokensUsed += int64(stats.Inference.TotalTokenCount)
 		summary.InferenceCount++
@@ -160,6 +163,7 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 		}
 
 		var stats types.DeveloperStatsByEpoch
+		// PANIC: MustUnmarshal panics if the epoch-based stats record is corrupted
 		k.cdc.MustUnmarshal(iter.Value(), &stats)
 		for _, infId := range stats.InferenceIds {
 			timeKey := byInferenceStore.Get([]byte(infId))
@@ -170,6 +174,7 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
+				// PANIC: MustUnmarshal panics if the time-based stats record is corrupted
 				k.cdc.MustUnmarshal(val, &statsByTime)
 				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)
 				summary.InferenceCount++
@@ -220,6 +225,7 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
+				// PANIC: MustUnmarshal panics if the time-based stats record is corrupted
 				k.cdc.MustUnmarshal(val, &statsByTime)
 				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)
 				summary.InferenceCount++
@@ -279,6 +285,7 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.
 	epochStats := make(map[string][]*types.DeveloperStatsByEpoch)
 	for ; epochIter.Valid(); epochIter.Next() {
 		var stats types.DeveloperStatsByEpoch
+		// PANIC: MustUnmarshal panics if epoch stats record is corrupted
 		k.cdc.MustUnmarshal(epochIter.Value(), &stats)
 
 		developer := extractDeveloperAddrFromKey(epochIter.Key())
@@ -298,6 +305,7 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.
 	timeStats := make(map[string][]*types.DeveloperStatsByTime)
 	for ; timeIter.Valid(); timeIter.Next() {
 		var stats types.DeveloperStatsByTime
+		// PANIC: MustUnmarshal panics if time stats record is corrupted
 		k.cdc.MustUnmarshal(timeIter.Value(), &stats)
 
 		developer := extractDeveloperAddrFromKey(timeIter.Key())

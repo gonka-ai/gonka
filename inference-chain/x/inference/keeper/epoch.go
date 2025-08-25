@@ -8,6 +8,7 @@ import (
 
 func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) {
 	if err := k.EffectiveEpochIndex.Set(ctx, epoch); err != nil {
+		// PANIC: Explicit panic on failed write to EffectiveEpochIndex (collections Set error)
 		panic(err)
 	}
 }
@@ -26,6 +27,7 @@ func (k Keeper) SetEpoch(ctx context.Context, epoch *types.Epoch) {
 		return
 	}
 	if err := k.Epochs.Set(ctx, epoch.Index, *epoch); err != nil {
+		// PANIC: Explicit panic on failed write to Epochs map (collections Set error)
 		panic(err)
 	}
 }

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -36,6 +37,7 @@ func (k Keeper) SetBlockProof(ctx context.Context, proof types.BlockProof) error
 		return errors.New("block proof already exists")
 	}
 
+	// PANIC: MustMarshal panics if the proof cannot be marshaled (codec error/corrupted types)
 	bz := k.cdc.MustMarshal(&proof)
 	store.Set(key, bz)
 	return nil
@@ -50,6 +52,7 @@ func (k Keeper) GetBlockProof(ctx context.Context, height int64) (types.BlockPro
 	}
 
 	var proof types.BlockProof
+	// PANIC: MustUnmarshal panics if stored BlockProof bytes are invalid
 	k.cdc.MustUnmarshal(bz, &proof)
 	return proof, true
 }
