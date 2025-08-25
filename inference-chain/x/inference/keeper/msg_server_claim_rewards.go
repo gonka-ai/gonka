@@ -95,7 +95,7 @@ func (ms msgServer) handleUnderfundedWork(ctx sdk.Context, err error, settleAmou
 }
 
 func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required int64) {
-	_, err := fmt.Sscanf(errMsg, "spendable balance %dnicoin is smaller than %dnicoin", &spendable, &required)
+	_, err := fmt.Sscanf(errMsg, "spendable balance %dnicoin is smaller than %dngonka", &spendable, &required)
 	if err != nil {
 		return 0, 0
 	}

@@ -134,6 +134,12 @@ func calculateEnhancedPower(ctx context.Context, k keeper.Keeper, computeResults
 	otherParticipantsTotalDecimal := decimal.NewFromInt(otherParticipantsTotal)
 	totalEnhancementDecimal := otherParticipantsTotalDecimal.Mul(multiplierDecimal)
 
+	// If the calculated enhancement is less than total guardian power, don't do adjustment
+	totalGuardianPowerDecimal := decimal.NewFromInt(totalGuardianPower)
+	if totalEnhancementDecimal.LessThan(totalGuardianPowerDecimal) {
+		return computeResults, totalNetworkPower
+	}
+
 	// Calculate per-guardian enhancement: total_enhancement / number_of_guardians
 	guardianCount := len(guardianIndices)
 	perGuardianEnhancementDecimal := totalEnhancementDecimal.Div(decimal.NewFromInt(int64(guardianCount)))

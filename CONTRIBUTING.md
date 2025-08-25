@@ -28,34 +28,6 @@ Currently, GitHub will remain our primary development platform, however, governa
 - Participant nodes monitor the repository for unauthorized changes in the main branch of the repo.
 - If an unapproved commit is detected, all network participants are notified immediately.
 
-## Future plans
-
-To achieve complete decentralization, the network repository will migrate from GitHub to a customized fork of Gitopia, a decentralized Git hosting solution built on Cosmos SDK. This fork will be integrated directly into the blockchain and hosted across currently active Participant nodes. As a result, voting on repository changes will utilize the same voting weights assigned to each Participant during the Race.
-  
-This will enable the network to own and manage its repository without external dependencies.
-1. Hosting the repository on the network:
-	1. Gitopia has already forked Cosmos SDK, and their modifications are minimal.
-	2. The relevant modules will be extracted and integrated into the network. 
-	3. The repository will be hosted across network nodes and governed by the same consensus mechanism as the rest of the network.
-2. Decentralized governance:
-	1. Gitopia’s existing DAO framework will be reused to manage repository decisions.
-	2. Voting weight will be automatically assigned based on the Proof of Work.
-	3. Every software update will be subject to explicit voting before being merged.
-3. Access and user experience:
-	1. The Gitopia web interface will be hosted on network nodes.
-	2. Users will be able to access it via an IP-based connection.
-4. Maintaining a GitHub mirror:
-	1. For ease of collaboration, the network will maintain a mirror repository on GitHub.
-	2. However, GitHub will no longer be the ground-truth version of the repository.
-	3. Developers can continue contributing via GitHub, but the official version will be stored on the network itself.
-
-**Why this approach?**
-- **No centralization points.** The repository is owned and maintained by the network itself.
-- **Greater security.** No single entity can alter the code without consensus. 
-- **Explicit voting rights.** Control is determined by network participation, ensuring fairness.
-- **No external dependencies.** Unlike GitHub, there is no need for external wallets or separate network balances to vote or propose changes.
-
-This approach ensures a smooth transition from GitHub-based governance to complete decentralization. Initially, the network leverages GitHub’s ease of use while maintaining strict on-chain governance to prevent unauthorized changes. As the network matures, migration to the customized Gitopia fork will follow, ensuring that the network’s consensus entirely controls the repository, aligning code governance with network participation.
 ## Testing requirements
 
 Before opening a PR, run unit tests and integration tests:

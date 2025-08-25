@@ -6,7 +6,7 @@ INFERENCED_BIN="./build/inferenced"
 fi
 
 CHAIN_ID="prod-sim"
-COIN_DENOM="icoin"
+COIN_DENOM="gonka"
 STATE_DIR="$HOME/.inference"
 
 rm -rf "$STATE_DIR"

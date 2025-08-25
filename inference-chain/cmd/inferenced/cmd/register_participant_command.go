@@ -135,14 +135,14 @@ Examples:
   inferenced register-new-participant \
     http://my-node:8080 \
     "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
-    --node-address http://195.242.13.239:8000
+    --node-address http://node2.gonka.ai:8000
 
   # Provide explicit consensus key (for manual/external usage):
   inferenced register-new-participant \
     http://my-node:8080 \
     "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
     --consensus-key "x+OH2yt/GC/zK/fR5ImKnlfrmE6nZO/11FKXOpWRmAA=" \
-    --node-address http://195.242.13.239:8000`,
+    --node-address http://node2.gonka.ai:8000`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			nodeAddress, err := cmd.Flags().GetString(NodeAddress)
@@ -222,7 +222,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().String(NodeAddress, "", "Seed node address to send the request to. Example: http://195.242.13.239:8000")
+	cmd.Flags().String(NodeAddress, "", "Seed node address to send the request to. Example: http://node2.gonka.ai:8000")
 	cmd.MarkFlagRequired(NodeAddress)
 
 	cmd.Flags().String("consensus-key", "", "Base64-encoded validator consensus public key (optional). If not provided, will be auto-fetched from node status endpoint")

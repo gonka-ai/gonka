@@ -2,35 +2,35 @@
   "app_state": {
     "gov": {
       "params": {
-        "voting_period": "0h10m0s",
+        "voting_period": "48h0m0s",
+        "quorum": "0.334000000000000000",
         "min_deposit": [
           {
-            "denom": "nicoin",
+            "denom": "ngonka",
             "amount": "25_000_000"
           }
         ],
-        "expedited_voting_period": "0h5m0s",
+        "expedited_voting_period": "12h0m0s",
         "expedited_min_deposit": [
           {
-            "denom": "nicoin",
+            "denom": "ngonka",
             "amount": "50_000_000"
           }
-        ],
-        "quorum": "0.00100000000000000"
+        ]
       }
     },
     "inference": {
       "params": {
         "epoch_params": {
-        "epoch_length": "1800",
+        "epoch_length": "17280",
         "epoch_multiplier": "1",
-        "epoch_shift": "1700",
+        "epoch_shift": "16980",
         "poc_stage_duration": "60",
         "poc_exchange_duration": "5",
         "poc_validation_delay": "5",
         "poc_validation_duration": "20",
-        "set_new_validators_delay": "80",
-        "inference_validation_cutoff": "50",
+        "set_new_validators_delay": "120",
+        "inference_validation_cutoff": "80",
         "default_unit_of_compute_price": "100"
         },
         "bandwidth_limits_params": {
@@ -61,7 +61,7 @@
           "v_ram": "80",
           "throughput_per_nonce": "1000",
           "validation_threshold": {
-            "value": "85",
+            "value": "98",
             "exponent": -2
           }
         },
@@ -78,7 +78,7 @@
           "v_ram": "24",
           "throughput_per_nonce": "10000",
           "validation_threshold": {
-            "value": "85",
+            "value": "98",
             "exponent": -2
           }
         }
@@ -90,7 +90,7 @@
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
         "top_rewards": 3,
-        "supply_denom": "nicoin"
+        "supply_denom": "ngonka"
       }
     }
   }

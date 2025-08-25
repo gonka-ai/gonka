@@ -1,17 +1,5 @@
-Account Public Key: `A+t/ala7HFwLn7fWFLRgwM62HspfLAitC2lSQPmeUJOv`  
-Node ID: `dbca3846804a0495850048e35898b97c60fb89ab`  
-ML Operational Address: `gonka14qgett9lfv6plx00jxewn8ds53r0dpac05sztu`  
-Consensus Public Key: `rYIx602qGNshZ09jtBA/b3GwQ5WYfhBMDWeXTKs58tc=`  
-P2P_EXTERNAL_ADDRESS: `tcp://195.242.13.239:5000`  
-
-
-./inferenced genesis gentx \
-    --keyring-backend file \
-    gonka-2 1nicoin \
-    --moniker gonka-2 \
-    --pubkey rYIx602qGNshZ09jtBA/b3GwQ5WYfhBMDWeXTKs58tc= \
-    --ml-operational-address gonka14qgett9lfv6plx00jxewn8ds53r0dpac05sztu \
-    --url http://195.242.13.239:8000 \
-    --chain-id gonka-rehearsal \
-    --node-id dbca3846804a0495850048e35898b97c60fb89ab \
-    --home ~/.testnet
+Account Public Key: `A9CX2rkp0YxVAvKW2bv4nXEU12UEnw/gHjQND1tPWCoY`  
+Node ID: `645fbce2dedcc7166f4df7931d2c87ca5188b569`  
+ML Operational Address: `gonka17t3qfgyddzlucyv7jgvp0pezqcxntutw3rtxy5`   
+Consensus Public Key: `YHtcky8VaH0qQNhYJkN61RPf83oKWsCPXdaewvDEYLo=`  
+P2P_EXTERNAL_ADDRESS: `tcp://node2.gonka.ai:5000`  

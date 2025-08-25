@@ -15,7 +15,7 @@ const (
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
 
-	DefaultRTarget        = 1.3971164020989417
+	DefaultRTarget        = 1.4013564660458173
 	DefaultBatchSize      = 100
 	DefaultFraudThreshold = 1e-7
 )
@@ -41,7 +41,7 @@ func BuildInitDto(blockHeight int64, pubKey string, totalNodes int64, nodeNum ui
 		BatchSize:      DefaultBatchSize,
 		RTarget:        DefaultRTarget,
 		FraudThreshold: DefaultFraudThreshold,
-		Params:         &TestNetParams,
+		Params:         &MainNetParams,
 		URL:            callbackUrl,
 		TotalNodes:     totalNodes,
 		NodeNum:        nodeNum,
@@ -102,6 +102,20 @@ var TestNetParams = Params{
 	RopeTheta:        10000.0,
 	UseScaledRope:    false,
 	SeqLen:           128,
+}
+
+var MainNetParams = Params{
+	Dim:              1792,
+	NLayers:          64,
+	NHeads:           64,
+	NKVHeads:         64,
+	VocabSize:        8196,
+	FFNDimMultiplier: 10.0,
+	MultipleOf:       4 * 2048,
+	NormEps:          1e-5,
+	RopeTheta:        10000.0,
+	UseScaledRope:    false,
+	SeqLen:           256,
 }
 
 type ProofBatch struct {
