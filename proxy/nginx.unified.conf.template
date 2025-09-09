@@ -3,20 +3,25 @@ events {
 }
 
 http {
+    ${RESOLVER_DIRECTIVE}
     upstream api_backend {
-        server ${FINAL_API_SERVICE}:${API_PORT};
+        zone api_backend 64k;
+        server ${FINAL_API_SERVICE}:${GONKA_API_PORT} resolve;
     }
 
     upstream chain_rpc_backend {
-        server ${FINAL_NODE_SERVICE}:${CHAIN_RPC_PORT};
+        zone chain_rpc_backend 64k;
+        server ${FINAL_NODE_SERVICE}:${CHAIN_RPC_PORT} resolve;
     }
 
     upstream chain_api_backend {
-        server ${FINAL_NODE_SERVICE}:${CHAIN_API_PORT};
+        zone chain_api_backend 64k;
+        server ${FINAL_NODE_SERVICE}:${CHAIN_API_PORT} resolve;
     }
 
     upstream chain_grpc_backend {
-        server ${FINAL_NODE_SERVICE}:${CHAIN_GRPC_PORT};
+        zone chain_grpc_backend 64k;
+        server ${FINAL_NODE_SERVICE}:${CHAIN_GRPC_PORT} resolve;
     }
 
     # Dashboard upstream - only included if DASHBOARD_PORT is set
@@ -32,8 +37,10 @@ http {
     add_header X-XSS-Protection "1; mode=block";
 
     server {
-        listen 80;
-        server_name localhost;
+        ${LISTEN_HTTP}
+        ${LISTEN_HTTPS}
+        server_name ${SERVER_NAME};
+        ${SSL_CONFIG}
 
         # Increase client body size for large requests
         client_max_body_size 10M;
@@ -52,12 +59,13 @@ http {
             proxy_set_header X-Real-IP $$remote_addr;
             proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $$scheme;
-            
+            proxy_set_header Authorization $$http_authorization;
+
             # Handle WebSocket connections if needed
             proxy_http_version 1.1;
             proxy_set_header Upgrade $$http_upgrade;
             proxy_set_header Connection "upgrade";
-            
+
             # Extended timeouts for inference API (20 minutes)
             proxy_connect_timeout 120s;
             proxy_send_timeout 1200s;
@@ -71,12 +79,13 @@ http {
             proxy_set_header X-Real-IP $$remote_addr;
             proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $$scheme;
-            
+            proxy_set_header Authorization $$http_authorization;
+
             # Handle WebSocket connections if needed
             proxy_http_version 1.1;
             proxy_set_header Upgrade $$http_upgrade;
             proxy_set_header Connection "upgrade";
-            
+
             # Extended timeouts for inference API (20 minutes)
             proxy_connect_timeout 120s;
             proxy_send_timeout 1200s;
@@ -90,12 +99,12 @@ http {
             proxy_set_header X-Real-IP $$remote_addr;
             proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $$scheme;
-            
+
             # WebSocket support for RPC connections
             proxy_http_version 1.1;
             proxy_set_header Upgrade $$http_upgrade;
             proxy_set_header Connection "upgrade";
-            
+
             # Standard timeouts for chain API (2 minutes)
             proxy_connect_timeout 30s;
             proxy_send_timeout 120s;
@@ -109,7 +118,8 @@ http {
             proxy_set_header X-Real-IP $$remote_addr;
             proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $$scheme;
-            
+            proxy_set_header Authorization $$http_authorization;
+
             # Standard timeouts for chain API (2 minutes)
             proxy_connect_timeout 30s;
             proxy_send_timeout 120s;
@@ -119,15 +129,16 @@ http {
         # Chain gRPC endpoint (if needed)
         location /chain-grpc/ {
             grpc_pass grpc://chain_grpc_backend;
-            proxy_set_header Host $$host;
-            proxy_set_header X-Real-IP $$remote_addr;
-            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $$scheme;
-            
+            grpc_set_header Host $$host;
+            grpc_set_header X-Real-IP $$remote_addr;
+            grpc_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            grpc_set_header X-Forwarded-Proto $$scheme;
+            grpc_set_header Authorization $$http_authorization;
+
             # Standard timeouts for chain gRPC (2 minutes)
-            proxy_connect_timeout 30s;
-            proxy_send_timeout 120s;
-            proxy_read_timeout 120s;
+            grpc_connect_timeout 30s;
+            grpc_send_timeout 120s;
+            grpc_read_timeout 120s;
         }
 
         # Root location - either dashboard or not configured page
@@ -142,4 +153,6 @@ http {
             add_header Content-Type text/plain;
         }
     }
-} 
+}
+
+

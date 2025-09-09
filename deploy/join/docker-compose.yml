@@ -73,19 +73,35 @@ services:
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.1
+    image: ghcr.io/product-science/proxy:0.2.1.0.11
     ports:
       - "${API_PORT:-8000}:80"
+      - "${API_SSL_PORT:-8443}:443"
     environment:
-      - API_PORT=9000
+      - NGINX_MODE=${NGINX_MODE:-http}
+      - GONKA_API_PORT=9000
       - CHAIN_RPC_PORT=26657
       - CHAIN_API_PORT=1317
       - CHAIN_GRPC_PORT=9090
       - DASHBOARD_PORT=5173
+      # SSL enablement (entrypoint enables SSL if CERT_ISSUER_DOMAIN is set)
+      - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN}
+      - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
+      # Optional: override proxy-ssl discovery
+      - PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
+      - PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
+    volumes:
+      - cert_storage:/etc/nginx/ssl
     depends_on:
-      - node
-      - api
-      - explorer
+      node:
+        condition: service_started
+      api:
+        condition: service_started
+      explorer:
+        condition: service_started
+      proxy-ssl:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
@@ -94,10 +110,54 @@ services:
       retries: 3
       start_period: 10s
 
+  proxy-ssl:
+    container_name: proxy-ssl
+    image: ghcr.io/product-science/proxy-ssl:0.2.1.0.11
+    environment:
+      # ACME Configuration
+      - ACME_ACCOUNT_EMAIL=${ACME_ACCOUNT_EMAIL}
+      - ACME_DNS_PROVIDER=${ACME_DNS_PROVIDER}
+      - ACME_ENV=${ACME_ENV:-prod}
+      - DATA_PATH=/app/data/${ACME_ENV}
+
+      # Service Configuration
+      - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN}
+      - CERT_ISSUER_ALLOWED_SUBDOMAINS=${CERT_ISSUER_ALLOWED_SUBDOMAINS:-explorer,api,rpc}
+      - CERT_ISSUER_JWT_SECRET=${CERT_ISSUER_JWT_SECRET}
+
+      # DNS Provider Configuration (if needed for your provider)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - CF_ZONE_API_TOKEN=${CF_ZONE_API_TOKEN}
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      - GCE_PROJECT=${GCE_PROJECT}
+      - GCE_SERVICE_ACCOUNT_JSON_B64=${GCE_SERVICE_ACCOUNT_JSON_B64}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - DO_AUTH_TOKEN=${DO_AUTH_TOKEN}
+      - HETZNER_API_KEY=${HETZNER_API_KEY}
+    volumes:
+      - cert_storage:/app/certs
+      - cert_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   explorer:
     container_name: explorer
     image: ghcr.io/product-science/explorer:latest
     expose:
       - "5173"
     restart: unless-stopped
+
+volumes:
+  cert_storage:
+  cert_data:
 

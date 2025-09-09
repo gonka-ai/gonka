@@ -1,0 +1,54 @@
+services:
+  proxy:  
+    environment:
+      # SSL Configuration
+      - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN}
+      - CERT_ISSUER_ADDR=${CERT_ISSUER_ADDR:-proxy-ssl:8080}
+    volumes:
+      - cert_storage:/etc/nginx/ssl  # Mount SSL certificates (read-write for auto-issuance)
+
+  proxy-ssl:
+    container_name: ${KEY_NAME}-proxy-ssl
+    image: ghcr.io/product-science/proxy-ssl:latest
+    build:
+      context: ../proxy-ssl
+      dockerfile: Dockerfile
+    environment:
+      # ACME Configuration
+      - ACME_ACCOUNT_EMAIL=${ACME_ACCOUNT_EMAIL}
+      - ACME_DNS_PROVIDER=${ACME_DNS_PROVIDER}
+      - ACME_ENV=${ACME_ENV:-prod}
+      - DATA_PATH=/app/data/${ACME_ENV}
+
+      # Service Configuration
+      - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN}
+      - CERT_ISSUER_ALLOWED_SUBDOMAINS=${CERT_ISSUER_ALLOWED_SUBDOMAINS:-explorer,api,rpc}
+      - CERT_ISSUER_JWT_SECRET=${CERT_ISSUER_JWT_SECRET}
+
+      # DNS Provider Configuration (will be loaded from secrets)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - CF_ZONE_API_TOKEN=${CF_ZONE_API_TOKEN}
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      - GCE_PROJECT=${GCE_PROJECT}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - DO_AUTH_TOKEN=${DO_AUTH_TOKEN}
+      - HETZNER_API_KEY=${HETZNER_API_KEY}
+    volumes:
+      - cert_storage:/app/certs
+      - cert_data:/app/data
+    networks:
+      - chain-public
+    restart: unless-stopped
+
+volumes:
+  cert_storage:
+  cert_data:
+
+networks:
+  chain-public:
+    external: true

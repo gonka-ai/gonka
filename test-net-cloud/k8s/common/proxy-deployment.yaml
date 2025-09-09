@@ -24,7 +24,9 @@ spec:
         - containerPort: 80
           name: http
         env:
-        - name: API_PORT
+        - name: NGINX_MODE
+          value: "http"
+        - name: GONKA_API_PORT
           value: "9000"
         - name: CHAIN_RPC_PORT
           value: "26657"
