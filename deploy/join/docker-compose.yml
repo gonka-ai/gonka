@@ -117,8 +117,6 @@ services:
       # ACME Configuration
       - ACME_ACCOUNT_EMAIL=${ACME_ACCOUNT_EMAIL}
       - ACME_DNS_PROVIDER=${ACME_DNS_PROVIDER}
-      - ACME_ENV=${ACME_ENV:-prod}
-      - DATA_PATH=/app/data/${ACME_ENV}
 
       # Service Configuration
       - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN}
@@ -126,18 +124,24 @@ services:
       - CERT_ISSUER_JWT_SECRET=${CERT_ISSUER_JWT_SECRET}
 
       # DNS Provider Configuration (if needed for your provider)
+      # AWS
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-us-east-1}
+      # Cloudflare
       - CF_ZONE_API_TOKEN=${CF_ZONE_API_TOKEN}
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      # Google Cloud
       - GCE_PROJECT=${GCE_PROJECT}
       - GCE_SERVICE_ACCOUNT_JSON_B64=${GCE_SERVICE_ACCOUNT_JSON_B64}
+      # Azure
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
       - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      # DigitalOcean
       - DO_AUTH_TOKEN=${DO_AUTH_TOKEN}
+      # Hetzner
       - HETZNER_API_KEY=${HETZNER_API_KEY}
     volumes:
       - cert_storage:/app/certs
