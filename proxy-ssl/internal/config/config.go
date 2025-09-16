@@ -140,10 +140,9 @@ func (c *Config) validateDNSProviderConfig() error {
 			return fmt.Errorf("AWS_SECRET_ACCESS_KEY is required for Route53")
 		}
 	case "cloudflare":
-		cfZone := c.DNSProviderConfig["CF_ZONE_API_TOKEN"]
 		cfDNS := c.DNSProviderConfig["CF_DNS_API_TOKEN"]
-		if cfZone == "" || cfDNS == "" {
-			return fmt.Errorf("Cloudflare credentials required: set CF_ZONE_API_TOKEN and CF_DNS_API_TOKEN")
+		if cfDNS == "" {
+			return fmt.Errorf("Cloudflare credentials required: set CF_DNS_API_TOKEN")
 		}
 	case "gcloud":
 		if c.DNSProviderConfig["GCE_PROJECT"] == "" {
@@ -189,7 +188,7 @@ func loadDNSProviderConfig() map[string]string {
 	config["AWS_SECRET_ACCESS_KEY"] = os.Getenv("AWS_SECRET_ACCESS_KEY")
 	config["AWS_REGION"] = os.Getenv("AWS_REGION")
 
-	config["CF_ZONE_API_TOKEN"] = os.Getenv("CF_ZONE_API_TOKEN")
+	// Cloudflare
 	config["CF_DNS_API_TOKEN"] = os.Getenv("CF_DNS_API_TOKEN")
 
 	// Google Cloud DNS

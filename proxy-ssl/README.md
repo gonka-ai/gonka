@@ -28,8 +28,6 @@ Notes:
 - Only `proxy` and `proxy-ssl` need to be started/restarted when enabling SSL or updating their env.
 - The rest of the stack can keep running unchanged.
 
-
-
 ### Required environment variables
 
 - **ACME configuration**
@@ -199,12 +197,24 @@ Option B — Cloud Console
 
 Option A — Portal
 
-1. Cloudflare Dashboard → My Profile → API Tokens → Create Token.
-2. Use the "Edit DNS" template. Scope it to your specific Zone.
-3. Copy the token value.
-4. Set both `CF_ZONE_API_TOKEN` and `CF_DNS_API_TOKEN` to this value (the same token). Both are required by the current service configuration.
-
-Note: Token creation is UI-driven; there is no first-party CLI to create API tokens non-interactively.
+1. Log in to Cloudflare Dashboard.
+2. Go to your Profile:
+   - Click your avatar (top-right).
+   - Select My Profile.
+3. Open API Tokens:
+   - In the left sidebar, click API Tokens.
+   - You will see two sections: API Tokens and API Keys.
+4. Click Create Token:
+   - Choose the Edit zone DNS template (recommended), or Create Custom Token.
+5. Set Permissions (for custom token):
+   - Zone → Zone → Read
+   - Zone → DNS → Edit
+6. Limit Resources:
+   - Under Zone Resources, select your specific zone (domain) instead of All zones.
+7. Create & Copy:
+   - Continue to summary → Create Token.
+   - Copy the token immediately; Cloudflare shows it only once.
+   - Set `CF_DNS_API_TOKEN`
 
 #### DigitalOcean DNS
 

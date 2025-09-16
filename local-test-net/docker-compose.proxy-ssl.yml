@@ -29,7 +29,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       # Cloudflare
-      - CF_ZONE_API_TOKEN=${CF_ZONE_API_TOKEN}
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
       # Google Cloud
       - GCE_PROJECT=${GCE_PROJECT}
