@@ -8,7 +8,7 @@ It is not implemented yet. We plan to use the x/gov module from the Cosmos SDK.
 
 
 ### Operational Voting
-Operational voting is voting on short lived proposals when something seems wrong. Voting period is minutes. For example:
+Operational voting is voting on short-lived proposals when something seems wrong. Voting period is minutes. For example:
 
 1. An inference does not appear to be using the right model or parameters
 2. A PoC does not appear to be valid
