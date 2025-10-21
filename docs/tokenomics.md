@@ -34,7 +34,7 @@ It is important to understand that an initial amount, calculated using the user-
 
 2.  **Final Settlement and Refund**: After the inference request is completed, the system calculates the **Actual Cost** based on the *actual* number of tokens generated (as shown in the formula above). The provider is paid this `ActualCost` from the escrowed amount. Any remaining funds are immediately **refunded** to the user.
 
-This two-step process ensures that users are only charged for the computational resources they actually consume, while providers are protected against un-funded requests.
+This two-step process ensures that users are only charged for the computational resources they actually consume, while providers are protected against unfunded requests.
 
 ### Blockchain Transaction Fees
 
