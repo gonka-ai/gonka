@@ -4,6 +4,8 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -66,7 +68,71 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 	return cap(r.Response)
 }
 
+// validateInferenceNodeConfig validates node configuration:
+// - Requires either (Host+Ports) OR baseURL, not both
+// - baseURL must be valid HTTP(S) URL
+// - AuthToken is always optional (no validation needed)
+func validateInferenceNodeConfig(node apiconfig.InferenceNodeConfig) error {
+	hasHostPorts := strings.TrimSpace(node.Host) != "" && node.InferencePort > 0 && node.PoCPort > 0
+	hasBaseURL := strings.TrimSpace(node.BaseURL) != ""
+
+	if hasHostPorts && hasBaseURL {
+		return fmt.Errorf("node configuration error: cannot specify both (Host+Ports) and baseURL. Use either Host+InferencePort+PoCPort OR baseURL")
+	}
+
+	if !hasHostPorts && !hasBaseURL {
+		return fmt.Errorf("node configuration error: must specify either (Host+InferencePort+PoCPort) OR baseURL")
+	}
+
+	if hasBaseURL {
+		// Validate baseURL is a valid HTTP(S) URL
+		parsedURL, err := url.Parse(node.BaseURL)
+		if err != nil {
+			return fmt.Errorf("node configuration error: baseURL is not a valid URL: %w", err)
+		}
+
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			return fmt.Errorf("node configuration error: baseURL must use http:// or https:// scheme, got: %s", parsedURL.Scheme)
+		}
+
+		if parsedURL.Host == "" {
+			return fmt.Errorf("node configuration error: baseURL must include a valid host")
+		}
+
+		// Validate host is either a valid IP address or a valid domain name
+		hostname := parsedURL.Hostname()
+		if hostname == "" {
+			return fmt.Errorf("node configuration error: baseURL must include a valid hostname")
+		}
+
+		// Check if it's a valid IP address
+		if ip := net.ParseIP(hostname); ip != nil {
+			// Valid IP address, allow it
+		} else {
+			// Not an IP, check if it's a valid domain name format
+			// Basic validation: domain should contain at least one dot or be localhost
+			if hostname != "localhost" && !strings.Contains(hostname, ".") {
+				return fmt.Errorf("node configuration error: baseURL hostname '%s' is not a valid IP address or domain name", hostname)
+			}
+			// Additional check: domain should not start or end with dot or hyphen
+			if strings.HasPrefix(hostname, ".") || strings.HasSuffix(hostname, ".") ||
+				strings.HasPrefix(hostname, "-") || strings.HasSuffix(hostname, "-") {
+				return fmt.Errorf("node configuration error: baseURL hostname '%s' has invalid format", hostname)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (c RegisterNode) Execute(b *Broker) {
+	// Validate node configuration (Host+Ports vs baseURL)
+	if err := validateInferenceNodeConfig(c.Node); err != nil {
+		logging.Error("RegisterNode. Invalid node configuration", types.Nodes, "error", err, "node_id", c.Node.Id)
+		c.Response <- NodeCommandResponse{Node: nil, Error: err}
+		return
+	}
+
 	// Enforce model if configured
 	EnforceModel(&c.Node)
 
@@ -112,6 +178,8 @@ func (c RegisterNode) Execute(b *Broker) {
 		InferencePort:    c.Node.InferencePort,
 		PoCSegment:       c.Node.PoCSegment,
 		PoCPort:          c.Node.PoCPort,
+		BaseURL:          c.Node.BaseURL,
+		AuthToken:        c.Node.AuthToken,
 		Models:           models,
 		Id:               c.Node.Id,
 		MaxConcurrent:    c.Node.MaxConcurrent,
@@ -194,6 +262,13 @@ func (u UpdateNode) GetResponseChannelCapacity() int {
 }
 
 func (c UpdateNode) Execute(b *Broker) {
+	// Validate node configuration (Host+Ports vs baseURL)
+	if err := validateInferenceNodeConfig(c.Node); err != nil {
+		logging.Error("UpdateNode. Invalid node configuration", types.Nodes, "error", err, "node_id", c.Node.Id)
+		c.Response <- NodeCommandResponse{Node: nil, Error: err}
+		return
+	}
+
 	// Fetch existing node first to check if it exists
 	b.mu.RLock()
 	existing, exists := b.nodes[c.Node.Id]
@@ -251,6 +326,8 @@ func (c UpdateNode) Execute(b *Broker) {
 		InferencePort:    c.Node.InferencePort,
 		PoCSegment:       c.Node.PoCSegment,
 		PoCPort:          c.Node.PoCPort,
+		BaseURL:          c.Node.BaseURL,
+		AuthToken:        c.Node.AuthToken,
 		Models:           models,
 		Id:               c.Node.Id,
 		MaxConcurrent:    c.Node.MaxConcurrent,
