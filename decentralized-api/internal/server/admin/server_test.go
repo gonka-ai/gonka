@@ -205,7 +205,7 @@ func TestPostVersionStatus(t *testing.T) {
 
 		// Pre-configure the mock client to return an error
 		pocURL := "http://localhost:8081/v1.2.4/api/v1"
-		mockClient := mockClientFactory.CreateClient(pocURL, "", "").(*mlnodeclient.MockClient)
+		mockClient := mockClientFactory.CreateClient(pocURL, "", "", "").(*mlnodeclient.MockClient)
 		mockClient.NodeStateError = errors.New("connection failed")
 
 		s.e.ServeHTTP(rec, req)

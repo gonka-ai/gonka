@@ -518,7 +518,7 @@ func (b *Broker) QueueMessage(command Command) error {
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 	version := b.configManager.GetCurrentNodeVersion()
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version), node.AuthToken)
+	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version), node.AuthToken, node.BaseURL)
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {

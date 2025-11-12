@@ -3,13 +3,13 @@ package mlnodeclient
 import "sync"
 
 type ClientFactory interface {
-	CreateClient(pocUrl string, inferenceUrl string, authToken string) MLNodeClient
+	CreateClient(pocUrl string, inferenceUrl string, authToken string, baseURL string) MLNodeClient
 }
 
 type HttpClientFactory struct{}
 
-func (f *HttpClientFactory) CreateClient(pocUrl string, inferenceUrl string, authToken string) MLNodeClient {
-	return NewNodeClient(pocUrl, inferenceUrl, authToken)
+func (f *HttpClientFactory) CreateClient(pocUrl string, inferenceUrl string, authToken string, baseURL string) MLNodeClient {
+	return NewNodeClient(pocUrl, inferenceUrl, authToken, baseURL)
 }
 
 type MockClientFactory struct {
@@ -23,7 +23,7 @@ func NewMockClientFactory() *MockClientFactory {
 	}
 }
 
-func (f *MockClientFactory) CreateClient(pocUrl string, inferenceUrl string, authToken string) MLNodeClient {
+func (f *MockClientFactory) CreateClient(pocUrl string, inferenceUrl string, authToken string, baseURL string) MLNodeClient {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

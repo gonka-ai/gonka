@@ -74,7 +74,7 @@ type mockClientFactory struct {
 	client mlnodeclient.MLNodeClient
 }
 
-func (m *mockClientFactory) CreateClient(pocUrl, inferenceUrl string, authToken string) mlnodeclient.MLNodeClient {
+func (m *mockClientFactory) CreateClient(pocUrl, inferenceUrl string, authToken string, baseURL string) mlnodeclient.MLNodeClient {
 	return m.client
 }
 

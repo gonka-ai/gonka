@@ -27,15 +27,17 @@ const (
 type Client struct {
 	pocUrl                string
 	inferenceUrl          string
+	baseURL               string
 	client                http.Client
 	mlGrpcCallbackAddress string
 	authToken             string
 }
 
-func NewNodeClient(pocUrl string, inferenceUrl string, authToken string) *Client {
+func NewNodeClient(pocUrl string, inferenceUrl string, authToken string, baseURL string) *Client {
 	return &Client{
 		pocUrl:       pocUrl,
 		inferenceUrl: inferenceUrl,
+		baseURL:      baseURL,
 		client: http.Client{
 			Timeout: 15 * time.Minute,
 		},
@@ -284,8 +286,18 @@ func (api *Client) GetPowStatus(ctx context.Context) (*PowStatusResponse, error)
 }
 
 func (api *Client) InferenceHealth(ctx context.Context) (bool, error) {
-	requestURL, err := url.JoinPath(api.inferenceUrl, "/health")
-	///todo 1
+	var requestURL string
+	var err error
+
+	// Determine health endpoint based on registration method
+	if api.baseURL != "" {
+		// New registration (baseURL): Check <baseURL>/readyz
+		requestURL, err = url.JoinPath(api.baseURL, "/readyz")
+	} else {
+		// Legacy registration (Host/Port/Segment): Check http://<host>:<inference_port>/health
+		requestURL, err = url.JoinPath(api.inferenceUrl, "/health")
+	}
+
 	if err != nil {
 		return false, err
 	}

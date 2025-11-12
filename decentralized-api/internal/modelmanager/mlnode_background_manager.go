@@ -128,7 +128,7 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 	version := m.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(node, version)
 	inferenceUrl := getInferenceUrlWithVersion(node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken)
+	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, node.BaseURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -322,7 +322,7 @@ func (m *MLNodeBackgroundManager) fetchNodeGPUHardware(ctx context.Context, node
 	version := m.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(*node, version)
 	inferenceUrl := getInferenceUrlWithVersion(*node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken)
+	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, node.BaseURL)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
