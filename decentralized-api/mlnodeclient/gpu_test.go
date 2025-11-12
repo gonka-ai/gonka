@@ -36,7 +36,7 @@ func TestClient_GetGPUDevices(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.GetGPUDevices(ctx)
 
 		if err != nil {
@@ -63,7 +63,7 @@ func TestClient_GetGPUDevices(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.GetGPUDevices(ctx)
 
 		if err != nil {
@@ -80,7 +80,7 @@ func TestClient_GetGPUDevices(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.GetGPUDevices(ctx)
 
 		if err == nil {
@@ -104,7 +104,7 @@ func TestClient_GetGPUDevices(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.GetGPUDevices(ctx)
 
 		if err == nil {
@@ -121,7 +121,7 @@ func TestClient_GetGPUDevices(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.GetGPUDevices(ctx)
 
 		if err == nil {
@@ -156,7 +156,7 @@ func TestClient_GetGPUDriver(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.GetGPUDriver(ctx)
 
 		if err != nil {
@@ -176,7 +176,7 @@ func TestClient_GetGPUDriver(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.GetGPUDriver(ctx)
 
 		if err == nil {
@@ -193,7 +193,7 @@ func TestClient_GetGPUDriver(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.GetGPUDriver(ctx)
 
 		if err == nil {

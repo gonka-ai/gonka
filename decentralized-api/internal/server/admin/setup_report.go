@@ -784,10 +784,16 @@ func getPoCUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) st
 }
 
 func getPoCUrl(node apiconfig.InferenceNodeConfig) string {
+	if node.BaseURL != "" {
+		return formatBaseURL(node.BaseURL, node.PoCSegment)
+	}
 	return formatURL(node.Host, node.PoCPort, node.PoCSegment)
 }
 
 func getPoCUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
+	if node.BaseURL != "" {
+		return formatBaseURLWithVersion(node.BaseURL, version, node.PoCSegment)
+	}
 	return formatURLWithVersion(node.Host, node.PoCPort, version, node.PoCSegment)
 }
 
@@ -797,4 +803,22 @@ func formatURL(host string, port int, segment string) string {
 
 func formatURLWithVersion(host string, port int, version string, segment string) string {
 	return fmt.Sprintf("http://%s:%d/%s%s", host, port, version, segment)
+}
+
+func formatBaseURL(baseURL string, segment string) string {
+	// seg := segment
+	// if seg == "" {
+	// 	seg = "/"
+	// }
+	base := strings.TrimRight(baseURL, "/")
+	return fmt.Sprintf("%s%s", base, segment)
+}
+
+func formatBaseURLWithVersion(baseURL string, version string, segment string) string {
+	// seg := segment
+	// if seg == "" {
+	// 	seg = "/"
+	// }
+	base := strings.TrimRight(baseURL, "/")
+	return fmt.Sprintf("%s/%s%s", base, version, segment)
 }

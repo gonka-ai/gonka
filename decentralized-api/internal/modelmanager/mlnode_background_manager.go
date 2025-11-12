@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -127,7 +128,7 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 	version := m.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(node, version)
 	inferenceUrl := getInferenceUrlWithVersion(node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl)
+	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -207,18 +208,30 @@ func getInferenceUrlWithVersion(node apiconfig.InferenceNodeConfig, version stri
 }
 
 func getPoCUrl(node apiconfig.InferenceNodeConfig) string {
+	if node.BaseURL != "" {
+		return formatBaseURL(node.BaseURL, node.PoCSegment)
+	}
 	return formatURL(node.Host, node.PoCPort, node.PoCSegment)
 }
 
 func getPoCUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
+	if node.BaseURL != "" {
+		return formatBaseURLWithVersion(node.BaseURL, version, node.PoCSegment)
+	}
 	return formatURLWithVersion(node.Host, node.PoCPort, version, node.PoCSegment)
 }
 
 func getInferenceUrl(node apiconfig.InferenceNodeConfig) string {
+	if node.BaseURL != "" {
+		return formatBaseURL(node.BaseURL, node.InferenceSegment)
+	}
 	return formatURL(node.Host, node.InferencePort, node.InferenceSegment)
 }
 
 func getInferenceUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
+	if node.BaseURL != "" {
+		return formatBaseURLWithVersion(node.BaseURL, version, node.InferenceSegment)
+	}
 	return formatURLWithVersion(node.Host, node.InferencePort, version, node.InferenceSegment)
 }
 
@@ -228,6 +241,24 @@ func formatURL(host string, port int, segment string) string {
 
 func formatURLWithVersion(host string, port int, version string, segment string) string {
 	return fmt.Sprintf("http://%s:%d/%s%s", host, port, version, segment)
+}
+
+func formatBaseURL(baseURL string, segment string) string {
+	// seg := segment
+	// if seg == "" {
+	// 	seg = "/"
+	// }
+	base := strings.TrimRight(baseURL, "/")
+	return fmt.Sprintf("%s%s", base, segment)
+}
+
+func formatBaseURLWithVersion(baseURL string, version string, segment string) string {
+	// seg := segment
+	// if seg == "" {
+	// 	seg = "/"
+	// }
+	base := strings.TrimRight(baseURL, "/")
+	return fmt.Sprintf("%s/%s%s", base, version, segment)
 }
 
 // checkAndUpdateGPUs fetches GPU info from all nodes and updates hardware
@@ -291,7 +322,7 @@ func (m *MLNodeBackgroundManager) fetchNodeGPUHardware(ctx context.Context, node
 	version := m.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(*node, version)
 	inferenceUrl := getInferenceUrlWithVersion(*node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl)
+	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

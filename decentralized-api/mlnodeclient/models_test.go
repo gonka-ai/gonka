@@ -44,7 +44,7 @@ func TestClient_CheckModelStatus(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.CheckModelStatus(ctx, model)
 
 		if err != nil {
@@ -76,7 +76,7 @@ func TestClient_CheckModelStatus(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.CheckModelStatus(ctx, model)
 
 		if err != nil {
@@ -110,7 +110,7 @@ func TestClient_CheckModelStatus(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.CheckModelStatus(ctx, model)
 
 		if err != nil {
@@ -127,7 +127,7 @@ func TestClient_CheckModelStatus(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		model := Model{HfRepo: "test/model"}
 		_, err := client.CheckModelStatus(ctx, model)
 
@@ -168,7 +168,7 @@ func TestClient_DownloadModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.DownloadModel(ctx, model)
 
 		if err != nil {
@@ -188,7 +188,7 @@ func TestClient_DownloadModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		model := Model{HfRepo: "test/model"}
 		_, err := client.DownloadModel(ctx, model)
 
@@ -206,7 +206,7 @@ func TestClient_DownloadModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		model := Model{HfRepo: "test/model"}
 		_, err := client.DownloadModel(ctx, model)
 
@@ -224,7 +224,7 @@ func TestClient_DownloadModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		model := Model{HfRepo: "test/model"}
 		_, err := client.DownloadModel(ctx, model)
 
@@ -272,7 +272,7 @@ func TestClient_DeleteModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.DeleteModel(ctx, model)
 
 		if err != nil {
@@ -300,7 +300,7 @@ func TestClient_DeleteModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.DeleteModel(ctx, model)
 
 		if err != nil {
@@ -317,7 +317,7 @@ func TestClient_DeleteModel(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		model := Model{HfRepo: "test/model"}
 		_, err := client.DeleteModel(ctx, model)
 
@@ -367,7 +367,7 @@ func TestClient_ListModels(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.ListModels(ctx)
 
 		if err != nil {
@@ -392,7 +392,7 @@ func TestClient_ListModels(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.ListModels(ctx)
 
 		if err != nil {
@@ -409,7 +409,7 @@ func TestClient_ListModels(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.ListModels(ctx)
 
 		if err == nil {
@@ -444,7 +444,7 @@ func TestClient_GetDiskSpace(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		resp, err := client.GetDiskSpace(ctx)
 
 		if err != nil {
@@ -467,7 +467,7 @@ func TestClient_GetDiskSpace(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewNodeClient(server.URL, "")
+		client := NewNodeClient(server.URL, "", "")
 		_, err := client.GetDiskSpace(ctx)
 
 		if err == nil {

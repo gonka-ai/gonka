@@ -444,7 +444,7 @@ func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnod
 	client := setup.MockClientFactory.GetClientForNode(pocUrl)
 	if client == nil {
 		// Create the client if it doesn't exist (should have been created by node registration)
-		setup.MockClientFactory.CreateClient(pocUrl, inferenceUrl)
+		setup.MockClientFactory.CreateClient(pocUrl, inferenceUrl, "")
 		client = setup.MockClientFactory.GetClientForNode(pocUrl)
 		if client == nil {
 			panic(fmt.Sprintf("Mock client is still nil after creation for pocUrl: %s", pocUrl))

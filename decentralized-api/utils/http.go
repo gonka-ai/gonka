@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/logging"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,6 +19,11 @@ func NewHttpClient(timeout time.Duration) *http.Client {
 }
 
 func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
+	return SendPostJsonRequestWithAuth(ctx, client, url, payload, "")
+}
+
+// SendPostJsonRequestWithAuth sends a POST request with JSON payload and adds Authorization header if authToken is set
+func SendPostJsonRequestWithAuth(ctx context.Context, client *http.Client, url string, payload any, authToken string) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
@@ -26,34 +32,57 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	} else {
 		// Marshal the payload to JSON.
-		jsonData, err := json.Marshal(payload)
+		var jsonData []byte
+		jsonData, err = json.Marshal(payload)
 		if err != nil {
 			return nil, err
 		}
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	if err != nil {
 		return nil, err
 	}
 	if req == nil {
-		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
+		logging.Error("SendPostJsonRequestWithAuth. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
+	}
+
+	if authToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
 	}
 
 	return client.Do(req)
 }
 
 func SendGetRequest(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	return SendGetRequestWithAuth(ctx, client, url, "")
+}
+
+// SendGetRequestWithAuth sends a GET request and adds Authorization header if authToken is set
+func SendGetRequestWithAuth(ctx context.Context, client *http.Client, url string, authToken string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if authToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
 	}
 
 	return client.Do(req)
 }
 
 func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
+	return SendDeleteJsonRequestWithAuth(ctx, client, url, payload, "")
+}
+
+// SendDeleteJsonRequestWithAuth sends a DELETE request with JSON payload and adds Authorization header if authToken is set
+func SendDeleteJsonRequestWithAuth(ctx context.Context, client *http.Client, url string, payload any, authToken string) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
@@ -62,7 +91,8 @@ func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string,
 		req, err = http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	} else {
 		// Marshal the payload to JSON.
-		jsonData, err := json.Marshal(payload)
+		var jsonData []byte
+		jsonData, err = json.Marshal(payload)
 		if err != nil {
 			return nil, err
 		}
@@ -77,8 +107,12 @@ func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string,
 		return nil, err
 	}
 	if req == nil {
-		logging.Error("SendDeleteJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
+		logging.Error("SendDeleteJsonRequestWithAuth. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
+	}
+
+	if authToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
 	}
 
 	return client.Do(req)
