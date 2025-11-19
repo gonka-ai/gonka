@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -103,6 +104,43 @@ type InferenceNodeConfig struct {
 // Returns an error describing what is wrong, or nil if valid.
 func ValidateInferenceNodeBasic(node InferenceNodeConfig) []string {
 	var errors []string
+
+	// Validate host/baseURL configuration
+	// ensures that a node configuration uses either the legacy host/port registration or the new baseURL registration, but not both.
+	// When baseURL is provided, it must be a valid HTTP(S) URL. AuthToken is always optional (no validation needed)
+	hasHostPorts := strings.TrimSpace(node.Host) != "" || node.InferencePort > 0 || node.PoCPort > 0
+	hasBaseURL := strings.TrimSpace(node.BaseURL) != ""
+
+	if hasHostPorts && hasBaseURL {
+		errors = append(errors, "node configuration error: cannot specify both (Host+Ports) and baseURL. Use either Host+InferencePort+PoCPort OR baseURL")
+	}
+
+	if !hasHostPorts && !hasBaseURL {
+		errors = append(errors, "node configuration error: must specify either (Host+InferencePort+PoCPort) OR baseURL")
+	}
+
+	if hasHostPorts {
+		if strings.TrimSpace(node.Host) == "" {
+			errors = append(errors, "host is required and cannot be empty when using host+port registration")
+		}
+
+		if node.InferencePort <= 0 || node.InferencePort > 65535 {
+			errors = append(errors, fmt.Sprintf("inference_port must be between 1 and 65535, got %d", node.InferencePort))
+		}
+
+		if node.PoCPort <= 0 || node.PoCPort > 65535 {
+			errors = append(errors, fmt.Sprintf("poc_port must be between 1 and 65535, got %d", node.PoCPort))
+		}
+	}
+
+	if hasBaseURL {
+		parsedURL, err := url.Parse(node.BaseURL)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("node configuration error: baseURL is not a valid URL: %v", err))
+		} else if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			errors = append(errors, fmt.Sprintf("node configuration error: baseURL must use http:// or https:// scheme, got: %s", parsedURL.Scheme))
+		}
+	}
 
 	// Validate required fields
 	if strings.TrimSpace(node.Id) == "" {
