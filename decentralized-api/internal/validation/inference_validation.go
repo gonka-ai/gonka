@@ -1,15 +1,15 @@
 package validation
 
 import (
-	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/completionapi"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/utils"
+	internalutils "decentralized-api/internal/utils"
 	"decentralized-api/logging"
+	"decentralized-api/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -884,22 +884,13 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 	requestMap["skip_special_tokens"] = false
 	delete(requestMap, "stream_options")
 
-	requestBody, err := json.Marshal(requestMap)
-	if err != nil {
-		return nil, err
-	}
-
 	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "v1/chat/completions")
 	if err != nil {
 		logging.Error("Failed to join url", types.Validation, "url", inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "error", err)
 		return nil, err
 	}
 
-	resp, err := http.Post(
-		completionsUrl,
-		"application/json",
-		bytes.NewReader(requestBody),
-	)
+	resp, err := utils.SendPostJsonRequestWithAuth(context.Background(), http.DefaultClient, completionsUrl, requestMap, inferenceNode.AuthToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1182,7 +1173,7 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		return nil, errors.New("unknown validation result type")
 	}
 
-	responseHash, _, err := utils.GetResponseHash(result.GetValidationResponseBytes())
+	responseHash, _, err := internalutils.GetResponseHash(result.GetValidationResponseBytes())
 	if err != nil {
 		logging.Error("Failed to get response hash", types.Validation, "error", err)
 		return nil, err

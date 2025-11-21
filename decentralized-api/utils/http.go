@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -52,8 +53,8 @@ func SendPostJsonRequestWithAuth(ctx context.Context, client *http.Client, url s
 		return nil, err
 	}
 
-	if authToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	if strings.TrimSpace(authToken) != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", strings.TrimSpace(authToken)))
 	}
 
 	return client.Do(req)
@@ -70,8 +71,8 @@ func SendGetRequestWithAuth(ctx context.Context, client *http.Client, url string
 		return nil, err
 	}
 
-	if authToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	if strings.TrimSpace(authToken) != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", strings.TrimSpace(authToken)))
 	}
 
 	return client.Do(req)
@@ -111,8 +112,8 @@ func SendDeleteJsonRequestWithAuth(ctx context.Context, client *http.Client, url
 		return nil, err
 	}
 
-	if authToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	if strings.TrimSpace(authToken) != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", strings.TrimSpace(authToken)))
 	}
 
 	return client.Do(req)

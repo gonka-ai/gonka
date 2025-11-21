@@ -469,16 +469,8 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			Model:  model,
 			Prompt: text,
 		}
-		jsonData, err := json.Marshal(reqBody)
-		if err != nil {
-			return nil, broker.NewApplicationActionError(err)
-		}
 
-		resp, postErr := s.httpClient.Post(
-			tokenizeUrl,
-			"application/json",
-			bytes.NewReader(jsonData),
-		)
+		resp, postErr := utils.SendPostJsonRequestWithAuth(context.Background(), http.DefaultClient, tokenizeUrl, reqBody, node.AuthToken)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
@@ -556,11 +548,11 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		resp, postErr := s.httpClient.Post(
-			completionsUrl,
-			request.Request.Header.Get("Content-Type"),
-			bytes.NewReader(modifiedRequestBody.NewBody),
-		)
+		var requestBody map[string]interface{}
+		if err := json.Unmarshal(modifiedRequestBody.NewBody, &requestBody); err != nil {
+			return nil, broker.NewApplicationActionError(fmt.Errorf("failed to unmarshal request body: %w", err))
+		}
+		resp, postErr := utils.SendPostJsonRequestWithAuth(context.Background(), http.DefaultClient, completionsUrl, requestBody, node.AuthToken)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
