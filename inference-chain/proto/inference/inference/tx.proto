@@ -11,7 +11,7 @@ import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
-import "inference/inference/bridge_transaction.proto";
+import "inference/inference/bridge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -47,6 +47,14 @@ service Msg {
   rpc JoinTrainingStatus               (MsgJoinTrainingStatus) returns (MsgJoinTrainingStatusResponse);
   rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask) returns (MsgCreateDummyTrainingTaskResponse);
   rpc BridgeExchange                   (MsgBridgeExchange) returns (MsgBridgeExchangeResponse);
+  rpc RegisterBridgeAddresses          (MsgRegisterBridgeAddresses         ) returns (MsgRegisterBridgeAddressesResponse         );
+  rpc RegisterLiquidityPool            (MsgRegisterLiquidityPool           ) returns (MsgRegisterLiquidityPoolResponse           );
+  rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata           ) returns (MsgRegisterTokenMetadataResponse           );
+  rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading    ) returns (MsgApproveBridgeTokenForTradingResponse    );
+  rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal         ) returns (MsgRequestBridgeWithdrawalResponse         );
+  rpc RequestBridgeMint                (MsgRequestBridgeMint               ) returns (MsgRequestBridgeMintResponse               );
+  rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract    ) returns (MsgRegisterWrappedTokenContractResponse    );
+  rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens         ) returns (MsgMigrateAllWrappedTokensResponse         );
   rpc AddUserToTrainingAllowList       (MsgAddUserToTrainingAllowList) returns (MsgAddUserToTrainingAllowListResponse);
   rpc RemoveUserFromTrainingAllowList  (MsgRemoveUserFromTrainingAllowList) returns (MsgRemoveUserFromTrainingAllowListResponse);
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
@@ -399,3 +407,100 @@ message MsgSetTrainingAllowList {
 
 message MsgSetTrainingAllowListResponse {}
 
+
+
+message MsgRegisterBridgeAddresses {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority              = 1;
+  string chainName              = 2;
+  repeated string addresses     = 3;
+}
+
+message MsgRegisterBridgeAddressesResponse {}
+
+message MsgRegisterTokenMetadata {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string chainId = 2;
+  string contractAddress = 3;
+  string name = 4;
+  string symbol = 5;
+  uint32 decimals = 6;
+  bool overwrite = 7;
+}
+
+message MsgRegisterTokenMetadataResponse {}
+
+message MsgApproveBridgeTokenForTrading {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority              = 1;
+  string chainId                = 2;  // e.g. "ethereum"
+  string contractAddress        = 3;  // original chain contract address
+}
+
+message MsgApproveBridgeTokenForTradingResponse {}
+
+message MsgRegisterLiquidityPool {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority              = 1;
+  string code_id                = 2;
+  string label                  = 3;
+  string instantiate_msg        = 4;  // JSON string for contract instantiation
+}
+
+message MsgRegisterLiquidityPoolResponse {}
+
+// Contract-only bridge withdrawal request - can only be executed by smart contracts
+message MsgRequestBridgeWithdrawal {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator                = 1; // Contract requesting withdrawal (must be the msg sender, validated automatically by SDK)
+  string user_address           = 2; // User address that triggered the withdrawal
+  string amount                 = 3; // Amount to withdraw (as string to handle large numbers)
+  string destination_address    = 4; // Ethereum address to receive tokens
+}
+
+message MsgRequestBridgeWithdrawalResponse {
+  string request_id     = 1; // Generated request ID (transaction hash)
+  uint64 epoch_index    = 2; // Current epoch ID used for signature
+  string bls_request_id = 3; // BLS signing request ID
+}
+
+// Native Gonka bridge mint request - bridges native tokens to WGNK
+message MsgRequestBridgeMint {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator              = 1; // User address sending native tokens
+  string amount               = 2; // Amount of native Gonka to bridge (as string to handle large numbers)
+  string destination_address  = 3; // Ethereum address to receive WGNK tokens
+  string chain_id             = 4; // Target chain identifier (e.g., "ethereum", "sepolia")
+}
+
+message MsgRequestBridgeMintResponse {
+  string request_id     = 1; // Generated request ID for tracking
+  uint64 epoch_index    = 2; // Current epoch ID used for signature
+  string bls_request_id = 3; // BLS signing request ID
+}
+
+// SetCw20CodeId updates the code id used for new wrapped-token instantiations.
+message MsgRegisterWrappedTokenContract {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 code_id = 2;
+}
+
+message MsgRegisterWrappedTokenContractResponse {}
+
+// MigrateAllWrappedTokens migrates all known wrapped-token instances to new_code_id.
+// migrate_msg_json can be "{}" for no-op migrations.
+message MsgMigrateAllWrappedTokens {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 new_code_id = 2;
+  string migrate_msg_json = 3;
+  // Optional batch limit per call; 0 means migrate all.
+  uint32 limit = 4;
+}
+
+message MsgMigrateAllWrappedTokensResponse {
+  // number of contracts attempted; success/failure details are in logs/events
+  uint32 attempted = 1;
+}

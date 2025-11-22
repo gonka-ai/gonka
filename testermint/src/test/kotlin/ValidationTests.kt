@@ -1,4 +1,5 @@
 import com.productscience.*
+import com.productscience.assertions.assertThat
 import com.productscience.data.*
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -25,10 +26,11 @@ class ValidationTests : TestermintTest() {
                     epochShift = 80
                 ),
             ),
-            reboot = true
+            reboot = true,
+            mergeSpec = ignoreDowntime
         )
 
-        genesis.node.waitForMinimumBlock(35)
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 3)
         logSection("Making inference requests in parallel")
         val requests = 50
         val inferenceRequest = inferenceRequestObject.copy(
@@ -55,7 +57,7 @@ class ValidationTests : TestermintTest() {
     fun `test invalid gets marked invalid`() {
         var tries = 3
         val (cluster, genesis) = initCluster(reboot = true)
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForNextInferenceWindow(10)
         val oddPair = cluster.joinPairs.last()
         val badResponse = defaultInferenceResponseObject.withMissingLogit()
         oddPair.mock?.setInferenceResponse(badResponse)
@@ -71,8 +73,7 @@ class ValidationTests : TestermintTest() {
     @Test
     @Timeout(15, unit = TimeUnit.MINUTES)
     @Order(Int.MAX_VALUE - 1)
-    @Tag("unstable")
-    fun `test invalid gets removed`() {
+    fun `test invalid gets removed and restored`() {
         val (cluster, genesis) = initCluster(mergeSpec = alwaysValidate)
         cluster.allPairs.forEach { pair ->
             pair.waitForMlNodesToLoad()
@@ -81,9 +82,9 @@ class ValidationTests : TestermintTest() {
 
         val dispatcher = Executors.newFixedThreadPool(10).asCoroutineDispatcher()
         runBlocking(dispatcher) {
-            val deferreds = (1..10).map {
+        val deferreds = (1..10).map {
                 async {
-                    InferenceTestHelper(cluster, genesis, responsePayload = "Invalid JSON!!").runFullInference()
+            InferenceTestHelper(cluster, genesis, responsePayload = "Invalid JSON!!").runFullInference()
                 }
             }
             deferreds.awaitAll()
@@ -93,10 +94,21 @@ class ValidationTests : TestermintTest() {
 
         genesis.markNeedsReboot()
         logSection("Waiting for removal")
-        genesis.node.waitForNextBlock(10)
+        genesis.node.waitForNextBlock(2)
         val participants = genesis.api.getActiveParticipants()
-        assertThat(participants.activeParticipants.participants).noneMatch { it.index == genesis.node.getColdAddress() }
-        assertThat(participants.validators).hasSize(2)
+        val excluded = participants.excludedParticipants.firstOrNull()
+        assertNotNull(excluded, "Participant was not excluded")
+        assertThat(excluded.address).isEqualTo(genesis.node.getColdAddress())
+        val genesisValidatorInfo = genesis.node.getValidatorInfo()
+        val validators = genesis.node.getValidators()
+        assertThat(validators.validators).hasSize(3)
+        val genesisValidator = validators.validators.first { it.consensusPubkey.value ==  genesisValidatorInfo.key }
+        assertThat(genesisValidator.tokens).isEqualTo(0)
+        genesis.waitForNextEpoch()
+        val newParticipants = genesis.api.getActiveParticipants()
+        assertThat(newParticipants.excludedParticipants).isEmpty()
+        val removedRestored = newParticipants.activeParticipants.getParticipant(genesis)
+        assertNotNull(removedRestored, "Excluded participant was not restored")
     }
 
     @Test
@@ -127,12 +139,16 @@ class ValidationTests : TestermintTest() {
     @Test
     fun `late validation of inference`() {
         val (cluster, genesis) = initCluster(mergeSpec = alwaysValidate)
+        genesis.waitForNextEpoch()
         cluster.allPairs.forEach { pair ->
             pair.waitForMlNodesToLoad()
         }
         val helper = InferenceTestHelper(cluster, genesis)
         val lateValidator = cluster.joinPairs.first()
-        lateValidator.mock?.setInferenceErrorResponse(500)
+        val mlNodeVersionResponse = genesis.node.getMlNodeVersion()
+        val mlNodeVersion = mlNodeVersionResponse.mlnodeVersion.currentVersion
+        val segment = "/${mlNodeVersion}"
+        lateValidator.mock?.setInferenceErrorResponse(500, segment = segment)
         logSection("Make sure we're in safe inference zone")
         if (!genesis.getEpochData().safeForInference) {
             genesis.waitForStage(EpochStage.CLAIM_REWARDS, 3)
@@ -165,7 +181,7 @@ class ValidationTests : TestermintTest() {
         )
 
         val validation = lateValidator.submitMessage(validationMessage)
-        assertThat(validation.code).isZero()
+        assertThat(validation).isSuccess()
         val afterCoinsOwed =
             lateValidator.api.getParticipants().first { it.id == lateValidator.node.getColdAddress() }.coinsOwed
         assertThat(afterCoinsOwed).isEqualTo(beforeCoinsOwed)
@@ -177,7 +193,7 @@ class ValidationTests : TestermintTest() {
             epochIndex = seed.epochIndex,
         )
         val reclaim = lateValidator.submitMessage(claim)
-        assertThat(reclaim.code).isZero()
+        assertThat(reclaim).isSuccess()
         val afterClaimBalance = lateValidator.node.getSelfBalance()
         assertThat(afterClaimBalance).isGreaterThan(beforeClaimBalance)
     }
@@ -206,9 +222,34 @@ class ValidationTests : TestermintTest() {
             this[AppState::inference] = spec<InferenceState> {
                 this[InferenceState::params] = spec<InferenceParams> {
                     this[InferenceParams::validationParams] = spec<ValidationParams> {
-                        this[ValidationParams::minValidationAverage] = Decimal.fromDouble(10.0)
-                        this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(10.0)
+                        this[ValidationParams::minValidationAverage] = Decimal.fromDouble(100.0)
+                        this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(100.0)
+                        this[ValidationParams::downtimeHThreshold] = Decimal.fromDouble(100.0)
 
+                    }
+                    this[InferenceParams::bandwidthLimitsParams] = spec<BandwidthLimitsParams> {
+                        this[BandwidthLimitsParams::minimumConcurrentInvalidations] = 100L
+                    }
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::inferencePruningEpochThreshold] = 100L
+                        // need longer epochs to have time for invalidations
+//                        this[EpochParams::epochLength] = 20L
+                    }
+                }
+            }
+        }
+
+        val ignoreDowntime = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::validationParams] = spec<ValidationParams> {
+                        this[ValidationParams::minValidationAverage] = Decimal.fromDouble(100.0)
+                        this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(100.0)
+                        this[ValidationParams::downtimeHThreshold] = Decimal.fromDouble(100.0)
+
+                    }
+                    this[InferenceParams::bandwidthLimitsParams] = spec<BandwidthLimitsParams> {
+                        this[BandwidthLimitsParams::minimumConcurrentInvalidations] = 100L
                     }
                     this[InferenceParams::epochParams] = spec<EpochParams> {
                         this[EpochParams::inferencePruningEpochThreshold] = 100L
@@ -269,12 +310,10 @@ data class InferenceTestHelper(
     fun runFullInference(): InferencePayload {
         val startMessage = getStartInference()
         val response = genesis.submitMessage(startMessage)
-        println(response)
-        assertThat(response.code).isZero()
+        assertThat(response).isSuccess()
         val finishMessage = getFinishInference()
         val response2 = genesis.submitMessage(finishMessage)
-        println(response)
-        assertThat(response2.code).isZero()
+        assertThat(response2).isSuccess()
         val inference = genesis.node.getInference(finishMessage.inferenceId)?.inference
         assertNotNull(inference)
         return inference

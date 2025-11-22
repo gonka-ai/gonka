@@ -213,6 +213,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
             post(urlEqualTo("/api/v1/pow/init/validate"))
                 .inScenario(scenarioName)
                 .whenScenarioStateIs("POW") // Assuming this is the required state as per validate_poc.json
+                .willSetStateTo("POW_VALIDATE") // Transition state so batch validation template can match
                 .willReturn(
                     aResponse()
                         .withStatus(200)

@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"context"
+
+	"github.com/cosmos/cosmos-sdk/types/query"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -15,19 +17,22 @@ func (k Keeper) ModelsAll(goCtx context.Context, req *types.QueryModelsAllReques
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	models, err := k.GetGovernanceModels(ctx)
+	models, pageRes, err := query.CollectionPaginate(
+		ctx,
+		k.Models,
+		req.Pagination,
+		func(_ string, value types.Model) (types.Model, error) {
+			return value, nil
+		},
+	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	modelsValues, err := PointersToValues(models)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	k.LogInfo("Retrieved models", types.Inferences, "len(models)", len(modelsValues), "models", modelsValues)
+	k.LogInfo("Retrieved models", types.Inferences, "len(models)", len(models), "has_next_page", pageRes != nil && len(pageRes.NextKey) > 0)
 
 	return &types.QueryModelsAllResponse{
-		Model: modelsValues,
+		Model:      models,
+		Pagination: pageRes,
 	}, nil
 }

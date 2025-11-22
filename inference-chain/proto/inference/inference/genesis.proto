@@ -17,10 +17,17 @@ import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
 import "inference/inference/partial_upgrade.proto";
-import "inference/inference/contracts.proto";
+import "inference/inference/bridge.proto";
 import "inference/inference/mlnode_version.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
+
+// Deprecated: kept for backward compatibility with existing genesis data
+message CosmWasmParams {
+  option (gogoproto.equal) = true;
+  bytes cw20_code = 1;
+  uint64 cw20_code_id = 2;
+}
 
 // GenesisState defines the inference module's genesis state.
 message GenesisState {
@@ -29,7 +36,11 @@ message GenesisState {
            Params                     params                         =  1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
            GenesisOnlyParams          genesis_only_params            =  2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
   repeated Model                      model_list                     =  3 [(gogoproto.nullable) = false] ;
-           CosmWasmParams             cosm_wasm_params               =  4 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+  
+  // Deprecated: kept for backward compatibility with existing genesis data. This field is ignored during InitGenesis.
+           CosmWasmParams             cosm_wasm_params               =  4 [deprecated = true];
+  
   repeated Participant                participant_list               =  5 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
            MLNodeVersion              mlnode_version                 =  6;
+           Bridge                     bridge                         =  7;
 }

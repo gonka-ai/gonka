@@ -267,11 +267,7 @@ func (k Keeper) validateSlotOwnership(ctx sdk.Context, submitter string, slotInd
 
 // verifyPartialSignature verifies a partial signature against the message hash
 func (k Keeper) verifyPartialSignature(partialSignature []byte, messageHash []byte, slotIndices []uint32, epochBLSData *types.EpochBLSData) error {
-	// Basic validation
-	if len(partialSignature) != 48 {
-		return fmt.Errorf("invalid partial signature length: expected 48 bytes, got %d", len(partialSignature))
-	}
-
+	// Basic guards; detailed signature payload validation is centralized in verifyBLSPartialSignature
 	if len(messageHash) != 32 {
 		return fmt.Errorf("invalid message hash length: expected 32 bytes, got %d", len(messageHash))
 	}

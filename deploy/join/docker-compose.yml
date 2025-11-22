@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.4
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.5
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.4
+    image: ghcr.io/product-science/inferenced:0.2.5
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -45,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.4
+    image: ghcr.io/product-science/api:0.2.5
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -68,12 +68,33 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
     ports:
       - "9100:9100"
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     restart: always
+  
+  bridge:
+    container_name: bridge
+    image: ghcr.io/product-science/bridge:0.2.5
+    restart: unless-stopped
+    environment:
+      - GETH_DATA_DIR=/data/geth
+      - PRYSM_DATA_DIR=/data/prysm
+      - JWT_SECRET_PATH=/data/jwt/jwt.hex
+      - BRIDGE_POSTBLOCK=http://api:9200/admin/v1/bridge/block
+      - BRIDGE_GETADDRESSES=http://api:9000/v1/bridge/addresses
+      - BEACON_STATE_URL=https://beaconstate.ethstaker.cc/
+      - PERSISTENT_DB_DIR=/persistent-db
+    volumes:
+      - .inference-eth/geth:/data/geth
+      - .inference-eth/prysm:/data/prysm
+      - .inference-eth/jwt:/data/jwt
+      - .inference-eth/logs:/var/log
+      - .inference-eth/persistent-db:/persistent-db
+    depends_on:
+      - api
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.4
+    image: ghcr.io/product-science/proxy:0.2.5
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -113,7 +134,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.4
+    image: ghcr.io/product-science/proxy-ssl:0.2.5
     profiles:
       - ssl
     environment:

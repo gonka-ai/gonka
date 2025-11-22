@@ -27,9 +27,24 @@ func (k Keeper) EpochInfo(goCtx context.Context, req *types.QueryEpochInfoReques
 		return nil, types.ErrLatestEpochNotFound
 	}
 
-	return &types.QueryEpochInfoResponse{
-		BlockHeight: ctx.BlockHeight(),
-		Params:      params,
-		LatestEpoch: *latestEpoch,
-	}, nil
+	// Check for active confirmation PoC event
+	activeEvent, isActive, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		k.LogError("Error getting active confirmation PoC event", types.PoC, "error", err)
+		// Continue without event rather than failing the query
+		isActive = false
+	}
+
+	response := &types.QueryEpochInfoResponse{
+		BlockHeight:             ctx.BlockHeight(),
+		Params:                  params,
+		LatestEpoch:             *latestEpoch,
+		IsConfirmationPocActive: isActive,
+	}
+
+	if isActive && activeEvent != nil {
+		response.ActiveConfirmationPocEvent = activeEvent
+	}
+
+	return response, nil
 }

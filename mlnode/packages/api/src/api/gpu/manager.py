@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List
 
@@ -38,6 +39,9 @@ class GPUManager:
     def is_cuda_available(self) -> bool:
         """Check if CUDA is available."""
         return self._nvml_initialized
+    
+    async def is_cuda_available_async(self) -> bool:
+        return await asyncio.to_thread(self.is_cuda_available)
 
     def get_devices(self) -> List[GPUDevice]:
         """
@@ -118,6 +122,9 @@ class GPUManager:
         except Exception as e:
             logger.error(f"Error enumerating GPU devices: {e}")
             return []
+    
+    async def get_devices_async(self) -> List[GPUDevice]:
+        return await asyncio.to_thread(self.get_devices)
 
     def get_driver_info(self) -> DriverInfo:
         """
@@ -155,4 +162,7 @@ class GPUManager:
         except Exception as e:
             logger.error(f"Error querying driver info: {e}")
             raise RuntimeError(f"Failed to query driver information: {e}")
+    
+    async def get_driver_info_async(self) -> DriverInfo:
+        return await asyncio.to_thread(self.get_driver_info)
 

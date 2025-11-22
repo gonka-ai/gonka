@@ -7,6 +7,14 @@ interface TxMessage {
     val type: String
 }
 
+data class MsgSubmitNewParticipant(
+    override val type: String = "/inference.inference.MsgSubmitNewParticipant",
+    val creator: String = "",
+    val url: String = "",
+    val validatorKey: String = "",
+    val workerKey: String = "",
+) : TxMessage
+
 interface GovernanceMessage : TxMessage {
     override val type: String
     fun withAuthority(authority: String): GovernanceMessage
@@ -150,4 +158,3 @@ data class TransactionBody(
     val memo: String,
     val timeoutHeight: Long,
 )
-

@@ -11,6 +11,7 @@ import java.time.Instant
 import kotlin.experimental.xor
 import kotlin.test.assertNotNull
 import java.util.Base64
+import com.productscience.assertions.assertThat
 
 class InferenceTests : TestermintTest() {
     @Test
@@ -80,7 +81,7 @@ class InferenceTests : TestermintTest() {
         )
 
         val response = genesis.submitMessage(message)
-        assertThat(response.code).isZero()
+        assertThat(response).isSuccess()
         println(response)
         val inference = genesis.node.getInference(signature)
         assertNotNull(inference)
@@ -113,11 +114,9 @@ class InferenceTests : TestermintTest() {
             transferSignature = taSignature
         )
         val response = genesis.submitMessage(message)
-        assertThat(response.code).isZero()
-        println(response)
+        assertThat(response).isSuccess()
         val response2 = genesis.submitMessage(message)
-        println(response2)
-        assertThat(response2.code).isNotZero()
+        assertThat(response2).isFailure()
     }
 
     @Test
@@ -142,8 +141,7 @@ class InferenceTests : TestermintTest() {
             transferSignature = taSignature
         )
         val response = genesis.submitMessage(message)
-        println(response)
-        assertThat(response.code).isNotZero()
+        assertThat(response).isFailure()
     }
 
     @Test
@@ -168,8 +166,7 @@ class InferenceTests : TestermintTest() {
             transferSignature = taSignature.invalidate()
         )
         val response = genesis.submitMessage(message)
-        println(response)
-        assertThat(response.code).isNotZero()
+        assertThat(response).isFailure()
     }
 
     @Test
@@ -361,8 +358,7 @@ class InferenceTests : TestermintTest() {
             model = defaultModel
         )
         val response = genesis.submitMessage(finishMessage)
-        println(response)
-        assertThat(response.code).isZero()
+        assertThat(response).isSuccess()
     }
 
     @Test
@@ -389,8 +385,7 @@ class InferenceTests : TestermintTest() {
             originalPrompt = inferenceRequest,
         )
         val response = genesis.submitMessage(message)
-        println(response)
-        assertThat(response.code).isNotZero()
+        assertThat(response).isFailure()
     }
 
     @Test
@@ -417,8 +412,7 @@ class InferenceTests : TestermintTest() {
             originalPrompt = inferenceRequest
         )
         val response = genesis.submitMessage(message)
-        println(response)
-        assertThat(response.code).isNotZero()
+        assertThat(response).isFailure()
     }
 
     @Test
@@ -445,8 +439,7 @@ class InferenceTests : TestermintTest() {
             originalPrompt = inferenceRequest,
         )
         val response = genesis.submitMessage(message)
-        println(response)
-        assertThat(response.code).isNotZero()
+        assertThat(response).isFailure()
     }
 
 

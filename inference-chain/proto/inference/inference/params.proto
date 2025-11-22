@@ -19,6 +19,7 @@ message Params {
   BitcoinRewardParams bitcoin_reward_params = 6;
   DynamicPricingParams dynamic_pricing_params = 7;
   BandwidthLimitsParams bandwidth_limits_params = 8;
+  ConfirmationPoCParams confirmation_poc_params = 9;
 }
 
 message GenesisOnlyParams {
@@ -67,6 +68,7 @@ message EpochParams {
   uint64 inference_pruning_epoch_threshold = 11;
   int64 inference_pruning_max = 12;
   int64 poc_pruning_max = 13;
+  Decimal poc_slot_allocation = 14; // Fraction of slots allocated to PoC (0.0 to 1.0, default 0.5)
 }
 
 message ValidationParams {
@@ -86,6 +88,14 @@ message ValidationParams {
   int64  timestamp_expiration = 13;  // Max time in seconds until timestamps are "too old"
   int64  timestamp_advance = 14;     // Max time in seconds until timestamps are "in the future"
   uint64 estimated_limits_per_block_kb = 15; // Max estimated KB per block per Transfer Agent
+  Decimal invalid_reputation_preserve = 16; // How much reputation to keep after an invalidation hit (defaults to 0)
+  Decimal bad_participant_invalidation_rate = 17;
+  Decimal invalidation_h_threshold = 18; // The H value for the SPRT algorithm for invalid inferences
+  Decimal downtime_good_percentage = 19;
+  Decimal downtime_bad_percentage = 20;
+  Decimal downtime_h_threshold = 21;
+  Decimal downtime_reputation_preserve = 22; // How much reputation to keep after a downtime him (defaults to 0)
+  Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
 }
 
 message PocParams {
@@ -199,4 +209,24 @@ message BandwidthLimitsParams {
   // The curve for the tanh function for determining how quickly traffic expands the
   // max invalidations allowed
   uint64 invalidations_limit_curve = 6;
+
+  // The least amount of concurrent invalidations
+  uint32 minimum_concurrent_invalidations = 7;
+}
+
+// ConfirmationPoCParams defines the parameters for confirmation PoC feature.
+message ConfirmationPoCParams {
+  option (gogoproto.equal) = true;
+
+  // expected_confirmations_per_epoch is N in the trigger probability formula (e.g., 1)
+  uint64 expected_confirmations_per_epoch = 1;
+
+  // alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
+  Decimal alpha_threshold = 2;
+
+  // slash_fraction is the collateral slashed for failure (e.g., "0.10")
+  Decimal slash_fraction = 3;
+
+  // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
+  int64 upgrade_protection_window = 4;
 }

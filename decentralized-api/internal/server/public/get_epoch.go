@@ -8,12 +8,14 @@ import (
 )
 
 type EpochResponse struct {
-	BlockHeight     int64             `json:"block_height"`
-	LatestEpoch     LatestEpochDto    `json:"latest_epoch"`
-	Phase           types.EpochPhase  `json:"phase"`
-	EpochStages     types.EpochStages `json:"epoch_stages"`
-	NextEpochStages types.EpochStages `json:"next_epoch_stages"`
-	EpochParams     types.EpochParams `json:"epoch_params"`
+	BlockHeight                int64                          `json:"block_height"`
+	LatestEpoch                LatestEpochDto                 `json:"latest_epoch"`
+	Phase                      types.EpochPhase               `json:"phase"`
+	EpochStages                types.EpochStages              `json:"epoch_stages"`
+	NextEpochStages            types.EpochStages              `json:"next_epoch_stages"`
+	EpochParams                types.EpochParams              `json:"epoch_params"`
+	IsConfirmationPocActive    bool                           `json:"is_confirmation_poc_active"`
+	ActiveConfirmationPocEvent *types.ConfirmationPoCEvent    `json:"active_confirmation_poc_event,omitempty"`
 }
 
 // LatestEpochDto, had to indroduced it, because types.Epoch doesn't serialize when
@@ -47,10 +49,12 @@ func (s *Server) getEpochById(ctx echo.Context) error {
 			Index:               epochInfo.LatestEpoch.Index,
 			PocStartBlockHeight: epochInfo.LatestEpoch.PocStartBlockHeight,
 		},
-		Phase:           epochContext.GetCurrentPhase(epochInfo.BlockHeight),
-		EpochStages:     epochContext.GetEpochStages(),
-		NextEpochStages: nextEpochContext.GetEpochStages(),
-		EpochParams:     *epochInfo.Params.EpochParams,
+		Phase:                      epochContext.GetCurrentPhase(epochInfo.BlockHeight),
+		EpochStages:                epochContext.GetEpochStages(),
+		NextEpochStages:            nextEpochContext.GetEpochStages(),
+		EpochParams:                *epochInfo.Params.EpochParams,
+		IsConfirmationPocActive:    epochInfo.IsConfirmationPocActive,
+		ActiveConfirmationPocEvent: epochInfo.ActiveConfirmationPocEvent,
 	}
 	return ctx.JSON(http.StatusOK, response)
 }

@@ -4,8 +4,10 @@ import (
 	"decentralized-api/cosmosclient"
 	cosmos_client "decentralized-api/cosmosclient"
 
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,33 @@ type BridgeQueue struct {
 	minBlocksBeforeProcessing int // Minimum number of blocks needed before starting processing
 	recorder                  cosmosclient.CosmosMessageClient
 	processCh                 chan struct{} // Channel to signal processing is needed
+}
+
+// PostBlockResponse is returned by postBlock on success
+type PostBlockResponse struct {
+	Status        string `json:"status"`
+	Message       string `json:"message"`
+	BlockNumber   string `json:"blockNumber"`
+	ReceiptsCount int    `json:"receiptsCount"`
+	QueueSize     int    `json:"queueSize"`
+}
+
+// BridgeStatusResponse represents the current status of the bridge queue
+type BridgeStatusResponse struct {
+	PendingBlocksCount        int            `json:"pendingBlocksCount"`
+	PendingReceiptsCount      int            `json:"pendingReceiptsCount"`
+	BlockCountByNumber        map[string]int `json:"blockCountByNumber"`
+	EarliestBlockNumber       uint64         `json:"earliestBlockNumber"`
+	LatestBlockNumber         uint64         `json:"latestBlockNumber"`
+	ReadyToProcess            bool           `json:"readyToProcess"`
+	MinBlocksBeforeProcessing int            `json:"minBlocksBeforeProcessing"`
+}
+
+// BridgeAddressesResponse returns bridge contract addresses for a chain
+type BridgeAddressesResponse struct {
+	ChainName string   `json:"chain_name"`
+	ChainID   string   `json:"chain_id"`
+	Addresses []string `json:"addresses"`
 }
 
 // NewBlockQueue creates a new queue for blocks with receipts
@@ -232,7 +261,7 @@ func (s *Server) postBlock(c echo.Context) error {
 	bodyBytes, err := io.ReadAll(rawBody)
 	if err != nil {
 		slog.Error("Failed to read request body", "error", err)
-		return c.JSON(400, map[string]string{"error": "Failed to read request body"})
+		return echo.NewHTTPError(http.StatusBadRequest, "Failed to read request body")
 	}
 
 	// Log the raw JSON for debugging
@@ -244,12 +273,12 @@ func (s *Server) postBlock(c echo.Context) error {
 	var blockData BridgeBlock
 	if err := c.Bind(&blockData); err != nil {
 		slog.Error("Failed to decode block data", "error", err)
-		return c.JSON(400, map[string]string{"error": "Invalid request body: " + err.Error()})
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body: "+err.Error())
 	}
 
 	// Validate required fields
 	if blockData.BlockNumber == "" || blockData.ReceiptsRoot == "" || blockData.OriginChain == "" {
-		return c.JSON(400, map[string]string{"error": "Required fields missing: blockNumber, receiptsRoot, originChain"})
+		return echo.NewHTTPError(http.StatusBadRequest, "Required fields missing: blockNumber, receiptsRoot, originChain")
 	}
 
 	slog.Info("Received finalized block",
@@ -274,12 +303,12 @@ func (s *Server) postBlock(c echo.Context) error {
 	blockNumber := s.blockQueue.AddBlock(blockData)
 
 	// Return success response
-	return c.JSON(200, map[string]interface{}{
-		"status":        "success",
-		"message":       "Block queued for processing",
-		"blockNumber":   blockNumber,
-		"receiptsCount": len(blockData.Receipts),
-		"queueSize":     len(s.blockQueue.pendingBlocks),
+	return c.JSON(http.StatusOK, &PostBlockResponse{
+		Status:        "success",
+		Message:       "Block queued for processing",
+		BlockNumber:   blockNumber,
+		ReceiptsCount: len(blockData.Receipts),
+		QueueSize:     len(s.blockQueue.pendingBlocks),
 	})
 }
 
@@ -323,15 +352,45 @@ func (s *Server) getBridgeStatus(c echo.Context) error {
 		totalReceipts += len(block.Receipts)
 	}
 
-	response := map[string]interface{}{
-		"pendingBlocksCount":        len(pendingBlocks),
-		"pendingReceiptsCount":      totalReceipts,
-		"blockCountByNumber":        blockCountByNumber,
-		"earliestBlockNumber":       earliestBlock,
-		"latestBlockNumber":         latestBlock,
-		"readyToProcess":            readyToProcess,
-		"minBlocksBeforeProcessing": s.blockQueue.minBlocksBeforeProcessing,
+	response := &BridgeStatusResponse{
+		PendingBlocksCount:        len(pendingBlocks),
+		PendingReceiptsCount:      totalReceipts,
+		BlockCountByNumber:        blockCountByNumber,
+		EarliestBlockNumber:       earliestBlock,
+		LatestBlockNumber:         latestBlock,
+		ReadyToProcess:            readyToProcess,
+		MinBlocksBeforeProcessing: s.blockQueue.minBlocksBeforeProcessing,
 	}
 
-	return c.JSON(200, response)
+	return c.JSON(http.StatusOK, response)
+}
+
+// getBridgeAddresses returns bridge addresses for a specific chain by name
+func (s *Server) getBridgeAddresses(c echo.Context) error {
+	chainName := c.QueryParam("chain")
+
+	if chainName == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Chain parameter is required (e.g., 'ethereum', 'polygon')")
+	}
+
+	// Use chainName directly as chainId
+	chainId := chainName
+
+	// Get addresses for this chain
+	addresses, err := s.recorder.GetBridgeAddresses(c.Request().Context(), chainId)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to get addresses for chain '%s': %v", chainName, err))
+	}
+
+	// Convert to simple address list for API response
+	var addressList []string
+	for _, item := range addresses {
+		addressList = append(addressList, item.Address)
+	}
+
+	return c.JSON(http.StatusOK, &BridgeAddressesResponse{
+		ChainName: chainName,
+		ChainID:   chainId,
+		Addresses: addressList,
+	})
 }

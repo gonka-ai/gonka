@@ -101,7 +101,17 @@ func main() {
 
 	nodes := config.GetNodes()
 	for _, node := range nodes {
-		nodeBroker.LoadNodeToBroker(&node)
+		responseChan := nodeBroker.LoadNodeToBroker(&node)
+		if responseChan != nil {
+			response := <-responseChan
+			if response.Error != nil {
+				logging.Error("Failed to load node to broker. Skipping", types.Nodes, "node_id", node.Id, "error", response.Error)
+			} else if response.Node == nil {
+				logging.Error("Failed to load node to broker, response.Node == nil and response.Error == nil. Skipping", types.Nodes, "node_id", node.Id)
+			} else {
+				logging.Info("Successfully loaded node to broker", types.Nodes, "node_id", response.Node.Id)
+			}
+		}
 	}
 
 	if err := participant.RegisterParticipantIfNeeded(recorder, config); err != nil {
@@ -168,7 +178,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue)
 	adminServer.Start(addr)
 
 	mlGrpcServerPort := config.GetApiConfig().MlGrpcServerPort

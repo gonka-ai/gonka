@@ -9,8 +9,12 @@ import (
 	"math/big"
 	"strconv"
 
+	"crypto/sha256"
+
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 	"golang.org/x/crypto/sha3"
@@ -126,14 +130,21 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 }
 
 // computeValidationMessageHash computes the validation message hash using the same format as the chain
-// Format: abi.encodePacked(previous_epoch_id, chain_id, new_epoch_id, data[0], data[1], data[2])
+// Format: abi.encodePacked(previous_epoch_id (8 BE), sha256(chain_id) (32), new_group_key_uncompressed_256 (X.c0||X.c1||Y.c0||Y.c1; each 64-byte BE limb))
 func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previousEpochID, newEpochID uint64, chainID string) ([]byte, error) {
 	if len(groupPublicKey) != 96 {
 		return nil, fmt.Errorf("invalid group public key length: expected 96 bytes, got %d", len(groupPublicKey))
 	}
 
-	chainIdBytes := make([]byte, 32)
-	copy(chainIdBytes[32-len(chainID):], []byte(chainID)) // Right-pad with zeros
+	// Decompress 96-byte compressed G2 key
+	var g2 bls12381.G2Affine
+	if err := g2.Unmarshal(groupPublicKey); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal compressed G2 key: %w", err)
+	}
+
+	// Use sha256(chainID) to form 32-byte chain id (matches keeper)
+	gonkaIdHash := sha256.Sum256([]byte(chainID))
+	chainIdBytes := gonkaIdHash[:]
 
 	// Implement Ethereum-compatible abi.encodePacked
 	var encodedData []byte
@@ -146,17 +157,17 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 	// Add chain_id (32 bytes)
 	encodedData = append(encodedData, chainIdBytes...)
 
-	// Note: Removed new_epoch_id from hash as it doesn't provide additional security
-	// Format: abi.encodePacked(previous_epoch_id, chain_id, data[0], data[1], data[2])
-
-	// Add data[0] (first 32 bytes of group public key)
-	encodedData = append(encodedData, groupPublicKey[0:32]...)
-
-	// Add data[1] (second 32 bytes of group public key)
-	encodedData = append(encodedData, groupPublicKey[32:64]...)
-
-	// Add data[2] (last 32 bytes of group public key)
-	encodedData = append(encodedData, groupPublicKey[64:96]...)
+	// Append uncompressed G2 (256 bytes): X.c0||X.c1||Y.c0||Y.c1, each 64-byte big-endian (48-byte left-padded)
+	appendFp64 := func(e fp.Element) {
+		be48 := e.Bytes()
+		var limb [64]byte
+		copy(limb[64-48:], be48[:])
+		encodedData = append(encodedData, limb[:]...)
+	}
+	appendFp64(g2.X.A0) // c0
+	appendFp64(g2.X.A1) // c1
+	appendFp64(g2.Y.A0) // c0
+	appendFp64(g2.Y.A1) // c1
 
 	// Compute keccak256 hash (Ethereum-compatible)
 	hash := sha3.NewLegacyKeccak256()
@@ -164,7 +175,9 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 	return hash.Sum(nil), nil
 }
 
-// createPartialSignature creates a BLS partial signature for the validation message
+// createPartialSignature creates per-slot BLS partial signatures for the validation message.
+// Returns a concatenation of 48-byte compressed G1 signatures (one per slot, in SlotIndices order),
+// and the corresponding absolute SlotIndices.
 func (bm *BlsManager) createPartialSignature(messageHash []byte, previousEpochResult *VerificationResult) ([]byte, []uint32, error) {
 	if len(previousEpochResult.AggregatedShares) == 0 {
 		return nil, nil, fmt.Errorf("no aggregated shares available for previous epoch")
@@ -176,77 +189,58 @@ func (bm *BlsManager) createPartialSignature(messageHash []byte, previousEpochRe
 		return nil, nil, fmt.Errorf("failed to hash message to G1: %w", err)
 	}
 
-	// Create slot indices array for our assigned slots
-	slotIndices := make([]uint32, 0)
-	for i := previousEpochResult.SlotRange[0]; i <= previousEpochResult.SlotRange[1]; i++ {
-		slotIndices = append(slotIndices, i)
+	// Create slot indices array for our assigned slots (absolute slot IDs)
+	slotIndices := make([]uint32, 0, int(previousEpochResult.SlotRange[1]-previousEpochResult.SlotRange[0]+1))
+	for abs := previousEpochResult.SlotRange[0]; abs <= previousEpochResult.SlotRange[1]; abs++ {
+		slotIndices = append(slotIndices, abs)
 	}
 
-	// Initialize aggregated signature as G1 identity
-	var aggregatedSignature bls12381.G1Affine
-
-	// For each slot in our range, compute partial signature and aggregate
-	for slotOffset := range slotIndices {
-		if slotOffset >= len(previousEpochResult.AggregatedShares) {
-			return nil, nil, fmt.Errorf("slot offset %d exceeds available aggregated shares %d", slotOffset, len(previousEpochResult.AggregatedShares))
+	// For each relative slot offset in our range, compute signing key using consensus ValidDealers,
+	// then compute per-slot partial signature: sig_rel = (sum_dealers share[rel]) * H
+	var concatenated []byte
+	for rel := 0; rel < len(slotIndices); rel++ {
+		// Sum shares across dealers using consensus ValidDealers mask, falling back to DealerValidity if consensus not present
+		var signingKey fr.Element
+		signingKey.SetZero()
+		for dealerIdx := 0; dealerIdx < len(previousEpochResult.DealerShares); dealerIdx++ {
+			// Check consensus valid dealers if available, otherwise skip if dealer shares missing
+			isValidDealer := true
+			if len(previousEpochResult.ValidDealers) == len(previousEpochResult.DealerShares) {
+				isValidDealer = previousEpochResult.ValidDealers[dealerIdx]
+			}
+			if !isValidDealer {
+				continue
+			}
+			shares := previousEpochResult.DealerShares[dealerIdx]
+			if len(shares) == 0 || rel >= len(shares) {
+				continue
+			}
+			signingKey.Add(&signingKey, &shares[rel])
 		}
-
-		// Get the slot share for this slot
-		slotShare := &previousEpochResult.AggregatedShares[slotOffset]
-
-		// Compute partial signature: signature = slotShare * messageG1
+		// Compute partial signature for this slot offset: signature = signingKey * H
 		var partialSignature bls12381.G1Affine
-		partialSignature.ScalarMultiplication(&messageG1, slotShare.BigInt(new(big.Int)))
-
-		// Add to aggregated signature
-		aggregatedSignature.Add(&aggregatedSignature, &partialSignature)
+		partialSignature.ScalarMultiplication(&messageG1, signingKey.BigInt(new(big.Int)))
+		// Append compressed 48-byte signature
+		sigBytes := partialSignature.Bytes()
+		concatenated = append(concatenated, sigBytes[:]...)
 	}
 
-	// Return compressed signature bytes
-	signatureBytes := aggregatedSignature.Bytes()
-	return signatureBytes[:], slotIndices, nil
+	return concatenated, slotIndices, nil
 }
 
-// hashToG1 converts a hash to a G1 point using the same method as the chain
+// hashToG1 converts a 32-byte hash to a G1 point using the same method as the chain:
+// Left-pad to 48-byte fp.Element, SWU map, isogeny, and clear cofactor.
 func (bm *BlsManager) hashToG1(hash []byte) (bls12381.G1Affine, error) {
-	var result bls12381.G1Affine
-
-	// Try up to 256 attempts to find a valid point (same as chain implementation)
-	for counter := 0; counter < 256; counter++ {
-		// Create hash input with counter for domain separation
-		hashInput := make([]byte, len(hash)+4)
-		copy(hashInput, hash)
-		binary.BigEndian.PutUint32(hashInput[len(hash):], uint32(counter))
-
-		// Hash the input with counter using keccak256
-		hashFunc := sha3.NewLegacyKeccak256()
-		hashFunc.Write(hashInput)
-		attempt := hashFunc.Sum(nil)
-
-		// Try to create a valid G1 point from this hash
-		if bm.trySetFromHash(&result, attempt) {
-			return result, nil
-		}
+	var out bls12381.G1Affine
+	if len(hash) != 32 {
+		return out, fmt.Errorf("message hash must be 32 bytes, got %d", len(hash))
 	}
-
-	return result, fmt.Errorf("failed to hash to G1 point after 256 attempts")
-}
-
-// trySetFromHash attempts to create a valid G1 point from a hash (same as chain implementation)
-func (bm *BlsManager) trySetFromHash(point *bls12381.G1Affine, hash []byte) bool {
-	// Create field element from hash
-	var x fr.Element
-	x.SetBytes(hash)
-
-	// Use the hash as a scalar multiplier with the generator
-	g1GenJac, _, _, _ := bls12381.Generators()
-	var g1Gen bls12381.G1Affine
-	g1Gen.FromJacobian(&g1GenJac)
-
-	// Multiply generator by the scalar derived from hash
-	scalar := x.BigInt(new(big.Int))
-	point.ScalarMultiplication(&g1Gen, scalar)
-
-	// Check if the point is valid (always true for scalar multiplication of generator)
-	return !point.IsInfinity()
+	var be [48]byte
+	copy(be[48-32:], hash)
+	var u fp.Element
+	u.SetBytes(be[:])
+	p := bls12381.MapToCurve1(&u)
+	hash_to_curve.G1Isogeny(&p.X, &p.Y)
+	out.ClearCofactor(&p)
+	return out, nil
 }

@@ -64,7 +64,7 @@ class NodeManagementTests : TestermintTest() {
         val node1Name = "multinode1"
         val node2Name = "multinode2"
         val (node1, node2) = genesis.api.addNodes(listOf(InferenceNode(
-            host = "http://localhost:8080",
+            host = "localhost",
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
@@ -75,9 +75,9 @@ class NodeManagementTests : TestermintTest() {
             id = node1Name,
             maxConcurrent = 1
         ), InferenceNode(
-            host = "http://localhost:8080",
-            pocPort = 100,
-            inferencePort = 200,
+            host = "localhost",
+            pocPort = 300,
+            inferencePort = 400,
             models = mapOf(
                         "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()

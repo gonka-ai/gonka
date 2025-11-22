@@ -492,4 +492,194 @@ class GenesisTransferTests : TestermintTest() {
 
         logHighlight("✅ Transfer records and audit trail verification completed")
     }
+
+    @Test
+    fun `vesting account ownership transfer with schedule preservation`() {
+        // Create cluster with vesting account using custom init script via docker-compose overlay
+        val vestingConfig = inferenceConfig.copy(
+            additionalDockerFilesByKeyName = mapOf(
+                GENESIS_KEY_NAME to listOf("docker-compose.genesis-vesting.yml")
+            )
+        )
+        val (cluster, genesis) = initCluster(config = vestingConfig, reboot = true)
+        
+        logSection("=== VESTING ACCOUNT OWNERSHIP TRANSFER TEST ===")
+        logHighlight("Testing vesting schedule transfer functionality:")
+        logHighlight("  • ContinuousVestingAccount as source")
+        logHighlight("  • Both liquid and vesting coins transfer")
+        logHighlight("  • Vesting schedule preserved for recipient")
+        logHighlight("  • Timeline and amounts correctly calculated")
+        
+        // Import the test vesting account key so we can sign transactions from it
+        logSection("Importing test vesting account key")
+        logHighlight("Using keyring backend: ${genesis.node.config.keyringBackend}")
+        logHighlight("Using mnemonic: $TEST_VESTING_ACCOUNT_MNEMONIC")
+        logHighlight("Expected address: $TEST_VESTING_ACCOUNT_ADDRESS")
+        
+        val importResult = runCatching {
+            // Use keys add --recover to import from mnemonic
+            val output = genesis.node.exec(
+                listOf(genesis.node.config.execName, "keys", "add", TEST_VESTING_ACCOUNT_NAME, "--recover", "--output", "json") + genesis.node.config.keychainParams,
+                stdin = TEST_VESTING_ACCOUNT_MNEMONIC + "\n"
+            )
+            logHighlight("Import output: ${output.joinToString("\n")}")
+            output
+        }
+        
+        if (importResult.isFailure) {
+            logHighlight("Failed to import vesting account key: ${importResult.exceptionOrNull()?.message}")
+            throw AssertionError("Could not import test vesting account key")
+        }
+        logHighlight("✅ Vesting account key imported successfully")
+        
+        // Verify the key was imported by listing keys
+        logSection("Verifying key import")
+        val listKeysResult = runCatching {
+            val output = genesis.node.exec(
+                listOf(genesis.node.config.execName, "keys", "list") + genesis.node.config.keychainParams
+            )
+            logHighlight("Keys in keyring: ${output.joinToString("\n")}")
+            output
+        }
+        
+        if (listKeysResult.isFailure) {
+            logHighlight("❌ Failed to list keys in keyring!")
+            throw AssertionError("Could not list keys in keyring")
+        }
+        val keysOutput = listKeysResult.getOrNull() ?: emptyList()
+        if (!keysOutput.any { it.contains(TEST_VESTING_ACCOUNT_NAME) }) {
+            logHighlight("❌ Vesting account key not found in keyring!")
+            throw AssertionError("Vesting account key not found after import")
+        }
+        logHighlight("✅ Vesting account key verified in keyring")
+        
+        // Create new recipient account
+        logSection("Creating recipient account")
+        val recipientKeyName = "vesting_recipient_${System.currentTimeMillis()}"
+        val recipientKey = genesis.node.createKey(recipientKeyName)
+        val recipientAddress = recipientKey.address
+        logHighlight("Created recipient account: $recipientAddress")
+        
+        val vestingAddress = TEST_VESTING_ACCOUNT_ADDRESS
+        
+        logSection("Test setup:")
+        logHighlight("  Vesting account: $vestingAddress")
+        logHighlight("  Recipient: $recipientAddress (newly created)")
+        
+        // Wait for system ready
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        
+        // Verify vesting account setup
+        logSection("=== Verify Vesting Account Configuration ===")
+        val totalBalance = genesis.getBalance(vestingAddress)
+        logHighlight("Total balance: $totalBalance ngonka")
+        
+        assertThat(totalBalance).isGreaterThan(0)
+        logHighlight("✅ Vesting account has balance")
+        
+        // Check it's a Cosmos SDK vesting account
+        val isVestingAccount = genesis.node.isCosmosVestingAccount(vestingAddress)
+        assertThat(isVestingAccount).isTrue()
+        logHighlight("✅ Vesting account properly configured as Cosmos SDK vesting account")
+        
+        // Get initial balances and locked amounts
+        val initialVestingBalance = totalBalance
+        val initialRecipientBalance = genesis.getBalance(recipientAddress)
+        val initialSourceLocked = genesis.node.getLockedCoins(vestingAddress)
+        val initialSourceSpendable = genesis.node.getSpendableBalance(vestingAddress)
+        
+        logSection("Initial balances:")
+        logHighlight("  Vesting account total: $initialVestingBalance ngonka")
+        logHighlight("  Vesting account spendable: $initialSourceSpendable ngonka")
+        logHighlight("  Vesting account locked: $initialSourceLocked ngonka")
+        logHighlight("  Recipient: $initialRecipientBalance ngonka")
+        
+        // Execute transfer
+        logSection("=== Execute Vesting Ownership Transfer ===")
+        val transferResult = runCatching {
+            genesis.node.submitGenesisTransferOwnership(
+                vestingAddress, 
+                recipientAddress,
+                TEST_VESTING_ACCOUNT_NAME
+            )
+        }
+        
+        if (transferResult.isFailure) {
+            val error = transferResult.exceptionOrNull()
+            logHighlight("❌ Transfer submission failed: ${error?.message}")
+            throw AssertionError("Failed to submit vesting transfer: ${error?.message}")
+        }
+        
+        val txResponse = transferResult.getOrNull()!!
+        logHighlight("Transfer transaction submitted:")
+        logHighlight("  • Transaction hash: ${txResponse.txhash}")
+        logHighlight("  • Result code: ${txResponse.code}")
+        
+        assertThat(txResponse.code).isEqualTo(0)
+        logHighlight("✅ Transfer transaction successful")
+        
+        genesis.node.waitForNextBlock(2)
+        
+        // Verify balances transferred
+        logSection("=== Verify Balance Transfer ===")
+        val finalVestingBalance = genesis.getBalance(vestingAddress)
+        val finalRecipientBalance = genesis.getBalance(recipientAddress)
+        
+        logHighlight("Final balances:")
+        logHighlight("  Vesting account: $finalVestingBalance ngonka")
+        logHighlight("  Recipient: $finalRecipientBalance ngonka")
+        
+        assertThat(finalVestingBalance).isEqualTo(0L)
+        logHighlight("✅ All balance transferred from vesting account")
+        
+        assertThat(finalRecipientBalance).isGreaterThan(initialRecipientBalance)
+        logHighlight("✅ Recipient received transferred balance")
+        
+        val transferredAmount = initialVestingBalance - finalVestingBalance
+        val recipientGain = finalRecipientBalance - initialRecipientBalance
+        logHighlight("  Transferred: $transferredAmount ngonka")
+        logHighlight("  Received: $recipientGain ngonka")
+        
+        // Verify vesting schedule transferred
+        logSection("=== Verify Vesting Schedule Transfer ===")
+        
+        // Check recipient has Cosmos SDK vesting account
+        val recipientIsVesting = genesis.node.isCosmosVestingAccount(recipientAddress)
+        assertThat(recipientIsVesting).isTrue()
+        logHighlight("✅ Recipient is now a Cosmos SDK vesting account")
+        
+        // Get recipient's locked and spendable amounts
+        val recipientLocked = genesis.node.getLockedCoins(recipientAddress)
+        val recipientSpendable = genesis.node.getSpendableBalance(recipientAddress)
+        val recipientTotal = finalRecipientBalance
+        
+        logHighlight("Recipient vesting breakdown:")
+        logHighlight("  Total balance: $recipientTotal ngonka")
+        logHighlight("  Spendable: $recipientSpendable ngonka")
+        logHighlight("  Locked (vesting): $recipientLocked ngonka")
+        
+        // Verify locked amount is close to what source had (within 1% tolerance for rounding)
+        val lockedDifference = kotlin.math.abs(recipientLocked - initialSourceLocked)
+        val tolerance = initialSourceLocked / 100 // 1% tolerance
+        assertThat(lockedDifference).isLessThanOrEqualTo(tolerance)
+        logHighlight("✅ Locked amount preserved: $initialSourceLocked → $recipientLocked ngonka")
+        
+        // Verify source account no longer has Cosmos SDK vesting
+        val sourceStillVesting = genesis.node.isCosmosVestingAccount(vestingAddress)
+        assertThat(sourceStillVesting).isFalse()
+        logHighlight("✅ Source account converted to regular BaseAccount (no vesting)")
+        
+        // Verify source has minimal/no remaining locked coins (allow for coins that vested during transfer)
+        val sourceRemainingLocked = genesis.node.getLockedCoins(vestingAddress)
+        val maxAllowedRemaining = initialSourceLocked / 100 // Allow up to 1% remaining due to vesting during transfer
+        assertThat(sourceRemainingLocked).isLessThanOrEqualTo(maxAllowedRemaining)
+        logHighlight("✅ Source has minimal remaining locked coins: $sourceRemainingLocked ngonka (initial: $initialSourceLocked ngonka)")
+        
+        logSection("=== VESTING TRANSFER TEST COMPLETED SUCCESSFULLY ===")
+        logHighlight("✅ All vesting transfer scenarios verified:")
+        logHighlight("✅ Balance transfer completed (liquid + vesting coins)")
+        logHighlight("✅ Vesting schedule preserved and transferred to recipient")
+        logHighlight("✅ Source account cleaned up properly")
+        logHighlight("✅ Vesting account ownership transfer provides secure asset migration")
+    }
 }

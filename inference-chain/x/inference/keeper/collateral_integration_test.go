@@ -93,6 +93,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		authority.String(),
 	)
 
+	upgradeMock := keepertest.NewMockUpgradeKeeper(ctrl)
 	inferenceKeeper := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(inferenceStoreKey),
@@ -109,6 +110,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		streamvestingMock,
 		authzMock,
 		nil,
+		upgradeMock,
 	)
 
 	// Initialize default params for both keepers
@@ -145,18 +147,15 @@ func TestSlashingForInvalidStatus_Integration(t *testing.T) {
 		Status:  types.ParticipantStatus_INVALID, // The new status
 	}
 
-	// The original status before the change
-	originalStatus := types.ParticipantStatus_ACTIVE
-
 	// Mock the slash call on the collateral keeper
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction).
+		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation).
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	// Execute the function under test directly
-	k.CheckAndSlashForInvalidStatus(ctx, originalStatus, participant)
+	k.SlashForInvalidStatus(ctx, participant, params)
 }
 
 func TestSlashingForDowntime_Integration(t *testing.T) {
@@ -187,11 +186,11 @@ func TestSlashingForDowntime_Integration(t *testing.T) {
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction).
+		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonDowntime).
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	// Execute the function under test directly
-	k.CheckAndSlashForDowntime(ctx, participant)
+	k.SlashForDowntime(ctx, participant, params)
 }
 
 func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
@@ -228,8 +227,8 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	// Mock Slash to modify our fake collateral
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), participantAcc, expectedSlashFraction).DoAndReturn(
-		func(ctx sdk.Context, pa sdk.AccAddress, fraction math.LegacyDec) (sdk.Coin, error) {
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation).DoAndReturn(
+		func(ctx sdk.Context, pa sdk.AccAddress, fraction math.LegacyDec, reason string) (sdk.Coin, error) {
 			slashedAmount := fakeCollateralAmount.ToLegacyDec().Mul(fraction).TruncateInt()
 			fakeCollateralAmount = fakeCollateralAmount.Sub(slashedAmount)
 			return sdk.NewCoin(types.BaseCoin, slashedAmount), nil
@@ -331,7 +330,7 @@ func TestDoubleJeopardy_DowntimeThenInvalidSlash(t *testing.T) {
 	require.True(t, found)
 
 	// Manually call the downtime slashing logic.
-	k.CheckAndSlashForDowntime(ctx, &participant)
+	k.SlashForDowntime(ctx, &participant, params)
 
 	// Verify collateral was slashed for downtime
 	collateralAfterDowntimeCoin, found := ck.GetCollateral(ctx, participantAcc)

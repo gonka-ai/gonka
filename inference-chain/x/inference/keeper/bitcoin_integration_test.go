@@ -107,14 +107,30 @@ func TestBitcoinRewardIntegration_RewardCalculationFunctions(t *testing.T) {
 			EpochIndex: 10,
 			ValidationWeights: []*types.ValidationWeight{
 				{
-					MemberAddress: "participant1",
-					Weight:        1000,
-					Reputation:    100,
+					MemberAddress:      "participant1",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "participant1-node",
+							PocWeight:          1000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 				{
-					MemberAddress: "participant2",
-					Weight:        2000,
-					Reputation:    150,
+					MemberAddress:      "participant2",
+					Weight:             2000,
+					Reputation:         150,
+					ConfirmationWeight: 2000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "participant2-node",
+							PocWeight:          2000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 			},
 			TotalWeight: 3000,
@@ -141,14 +157,30 @@ func TestBitcoinRewardIntegration_DistributionLogic(t *testing.T) {
 		EpochIndex: 25,
 		ValidationWeights: []*types.ValidationWeight{
 			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
+				MemberAddress:      "participant1",
+				Weight:             1000,
+				Reputation:         100,
+				ConfirmationWeight: 1000,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "participant1-node",
+						PocWeight:          1000,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
 			},
 			{
-				MemberAddress: "participant2",
-				Weight:        3000,
-				Reputation:    150,
+				MemberAddress:      "participant2",
+				Weight:             3000,
+				Reputation:         150,
+				ConfirmationWeight: 3000,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "participant2-node",
+						PocWeight:          3000,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
 			},
 		},
 		TotalWeight: 4000,
@@ -192,7 +224,7 @@ func TestBitcoinRewardIntegration_DistributionLogic(t *testing.T) {
 
 		// Test GetBitcoinSettleAmounts function
 		logger := log.NewTestLogger(t)
-		settleResults, bitcoinResult, err := keeper.GetBitcoinSettleAmounts(participants, epochGroupData, params.BitcoinRewardParams, settleParams, logger)
+		settleResults, bitcoinResult, err := keeper.GetBitcoinSettleAmounts(participants, epochGroupData, params.BitcoinRewardParams, settleParams, nil, logger)
 		require.NoError(t, err, "Bitcoin settle amounts calculation should succeed")
 		require.Len(t, settleResults, 2, "Should have settle results for both participants")
 
@@ -210,15 +242,19 @@ func TestBitcoinRewardIntegration_DistributionLogic(t *testing.T) {
 		p1Result := settleMap["participant1"]
 		require.NotNil(t, p1Result, "Participant1 should have settle result")
 		require.Equal(t, uint64(2000), p1Result.Settle.WorkCoins, "Participant1 WorkCoins should be preserved")
-		// Participant1 has 1000/4000 = 25% of total weight, so should get 25% of 80000 = 20000 RewardCoins
-		require.Equal(t, uint64(20000), p1Result.Settle.RewardCoins, "Participant1 should get 25% of epoch reward")
+		// Participant1 has 1000/4000 = 25% before capping
+		// After power capping (30% max), participant2 is capped, both end up with equal weight (1000 each)
+		// So each gets 50% of 80000 = 40000 RewardCoins
+		require.Equal(t, uint64(40000), p1Result.Settle.RewardCoins, "Participant1 should get 50% after power capping")
 
 		// Verify participant2 rewards
 		p2Result := settleMap["participant2"]
 		require.NotNil(t, p2Result, "Participant2 should have settle result")
 		require.Equal(t, uint64(6000), p2Result.Settle.WorkCoins, "Participant2 WorkCoins should be preserved")
-		// Participant2 has 3000/4000 = 75% of total weight, so should get 75% of 80000 = 60000 RewardCoins
-		require.Equal(t, uint64(60000), p2Result.Settle.RewardCoins, "Participant2 should get 75% of epoch reward")
+		// Participant2 has 3000/4000 = 75% before capping, but gets capped to 30% max
+		// After capping, ends up with 1000 weight, same as participant1
+		// So gets 50% of 80000 = 40000 RewardCoins
+		require.Equal(t, uint64(40000), p2Result.Settle.RewardCoins, "Participant2 should get 50% after power capping")
 
 		// Verify total distribution equals epoch reward exactly
 		totalDistributed := p1Result.Settle.RewardCoins + p2Result.Settle.RewardCoins
@@ -269,9 +305,17 @@ func TestBitcoinRewardIntegration_Phase2Stubs(t *testing.T) {
 		EpochIndex: 15,
 		ValidationWeights: []*types.ValidationWeight{
 			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
+				MemberAddress:      "participant1",
+				Weight:             1000,
+				Reputation:         100,
+				ConfirmationWeight: 1000,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "participant1-node",
+						PocWeight:          1000,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
 			},
 		},
 		TotalWeight: 1000,

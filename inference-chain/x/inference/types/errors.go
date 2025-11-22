@@ -56,4 +56,5 @@ var (
 	ErrSignatureTooOld                       = sdkerrors.Register(ModuleName, 1150, "signature is too old")
 	ErrSignatureInFuture                     = sdkerrors.Register(ModuleName, 1151, "signature is in the future")
 	ErrValidationPayloadDeprecated           = sdkerrors.Register(ModuleName, 1152, "validation response payload is deprecated")
+	ErrBridgeAddressNotFound                 = sdkerrors.Register(ModuleName, 1153, "bridge addresses not found")
 )

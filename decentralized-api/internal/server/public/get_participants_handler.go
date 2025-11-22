@@ -60,7 +60,7 @@ func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 		return err
 	}
 
-	resp, err := s.getParticipants(epoch)
+	resp, err := s.getParticipants(c.Request().Context(), epoch)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (s *Server) resolveEpochFromContext(c echo.Context) (uint64, error) {
 	}
 }
 
-func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, error) {
+func (s *Server) getParticipants(ctx context.Context, epoch uint64) (*ActiveParticipantWithProof, error) {
 	// FIXME: now we can set active participants even for epoch 0, fix InitGenesis for that
 	if epoch == 0 {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "Epoch enumeration starts with 1")
@@ -172,7 +172,29 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		ProofOps:                result.Response.ProofOps,
 		Validators:              vals.Validators,
 		Block:                   returnBlock,
+		ExcludedParticipants:    s.getExcludedParticipants(ctx, epoch),
 	}, nil
+}
+
+func (s *Server) getExcludedParticipants(ctx context.Context, epoch uint64) []ExcludedParticipant {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	excluded, err := queryClient.ExcludedParticipants(ctx, &types.QueryExcludedParticipantsRequest{EpochIndex: epoch})
+	if err != nil {
+		logging.Error("Failed to get excluded participants", types.Participants, "error", err)
+		return make([]ExcludedParticipant, 0)
+	}
+
+	excludedList := make([]ExcludedParticipant, len(excluded.Items))
+	for i, participant := range excluded.Items {
+		excludedList[i] = ExcludedParticipant{
+			Address:              participant.Address,
+			Reason:               participant.Reason,
+			ExclusionBlockHeight: int64(participant.ExclusionBlockHeight),
+		}
+	}
+
+	logging.Debug("Retrieved excluded participants", types.Participants, "count", len(excludedList))
+	return excludedList
 }
 
 func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, block *coretypes.ResultBlock) {

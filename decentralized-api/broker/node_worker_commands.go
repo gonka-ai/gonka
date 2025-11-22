@@ -212,6 +212,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
+	var selectedModel *types.Model
 	if len(worker.node.State.EpochModels) == 0 {
 		govModels, err := worker.broker.chainBridge.GetGovernanceModels()
 		if err != nil {
@@ -226,6 +227,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		for _, govModel := range govModels.Model {
 			if _, ok := worker.node.Node.Models[govModel.Id]; ok {
 				hasIntersection = true
+				selectedModel = &govModel
 				break
 			}
 		}
@@ -238,23 +240,15 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			return result
 		}
 
-		// Node has models that match governance but not yet assigned to epoch, skip for now
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_STOPPED
-		result.FinalPocStatus = PocStatusIdle
-		logging.Info("Node has governance models configured but not yet assigned to epoch, skipping inference start", types.Nodes, "node_id", worker.nodeId)
-		return result
+		logging.Info("No epoch models configured for this node, using a governance model from one the supported by the node", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
+	} else {
+		for _, m := range worker.node.State.EpochModels {
+			selectedModel = &m
+			break
+		}
 	}
 
-	var modelId string
-	var epochModel types.Model
-	for id, m := range worker.node.State.EpochModels {
-		modelId = id
-		epochModel = m
-		break
-	}
-
-	if modelId == "" {
+	if selectedModel == nil || selectedModel.Id == "" {
 		result.Succeeded = false
 		result.Error = "Could not select a model from epoch models"
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
@@ -262,14 +256,16 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
+	logging.Info("Selected model for inference", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
+
 	// Merge epoch model args with local ones
-	localArgs := []string{}
-	if localModelConfig, ok := worker.node.Node.Models[modelId]; ok {
+	var localArgs []string
+	if localModelConfig, ok := worker.node.Node.Models[selectedModel.Id]; ok {
 		localArgs = localModelConfig.Args
 	}
-	mergedArgs := worker.broker.MergeModelArgs(epochModel.ModelArgs, localArgs)
+	mergedArgs := worker.broker.MergeModelArgs(selectedModel.ModelArgs, localArgs)
 
-	if err := worker.GetClient().InferenceUp(ctx, epochModel.Id, mergedArgs); err != nil {
+	if err := worker.GetClient().InferenceUp(ctx, selectedModel.Id, mergedArgs); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()

@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 import os
 import toml
@@ -81,3 +82,6 @@ class TrainManager(IManager):
 
     def _is_healthy(self) -> bool:
         return self.is_running()
+    
+    async def start_async(self, train_dict: dict):
+        return await asyncio.to_thread(self.start, train_dict)

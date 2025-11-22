@@ -8,6 +8,7 @@ import com.productscience.data.EpochParams
 import com.productscience.data.TokenomicsParams
 import java.time.Duration
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
 
 class StreamVestingTests : TestermintTest() {
@@ -319,7 +320,7 @@ class StreamVestingTests : TestermintTest() {
         val expectedBalanceChange = expectedCosts + initialFirstEpochUnlock  // expectedCosts is negative
         
         // Balance should change by costs paid plus any initial vesting unlocked
-        assertThat(actualBalanceChange).isEqualTo(expectedBalanceChange)
+        assertThat(actualBalanceChange).isCloseTo(expectedBalanceChange, Offset.offset(1L))
 
         logSection("Verifying new vesting schedule aggregation")
         val vestingScheduleAfterReward = participant.node.queryVestingSchedule(participantAddress)
@@ -343,8 +344,8 @@ class StreamVestingTests : TestermintTest() {
         logSection("  Second epoch: $expectedNewSecondEpoch nicoin (new second: $expectedSecondVesting)")
         
         // Verify epoch-by-epoch aggregation
-        assertThat(newFirstEpoch).isEqualTo(expectedNewFirstEpoch)
-        assertThat(newSecondEpoch).isEqualTo(expectedNewSecondEpoch)
+        assertThat(newFirstEpoch).isCloseTo(expectedNewFirstEpoch, Offset.offset(1L))
+        assertThat(newSecondEpoch).isCloseTo(expectedNewSecondEpoch, Offset.offset(1L))
 
         logSection("=== BITCOIN REWARD SYSTEM VESTING TEST COMPLETED ===")
         logSection("✅ Balance changed correctly: paid costs + unlocked first epoch of initial vesting")

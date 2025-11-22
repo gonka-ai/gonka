@@ -10,7 +10,7 @@ async def start(request: Request, training_dict: dict):
     manager: TrainManager = request.app.state.train_manager
     if manager.is_running():
         raise HTTPException(status_code=400, detail="Training is already running")
-    manager.start(training_dict)
+    await manager.start_async(training_dict)
     return {"status": "Training started"}
 
 @router.post("/train/stop")

@@ -360,27 +360,36 @@ class BLSDKGSuccessTest : TestermintTest() {
     }
     
     private fun queryEpochBLSData(pair: com.productscience.LocalInferencePair, epochId: Long): EpochBLSData? {
-        return try {
-            // Query BLS module for epoch data using the extension function
-            pair.node.queryEpochBLSData(epochId)
-        } catch (e: Exception) {
-            // Handle specific error cases more gracefully
-            val errorMessage = e.message ?: "Unknown error"
-            when {
-                errorMessage.contains("NotFound") || errorMessage.contains("key not found") -> {
-                    Logger.debug("No DKG data found for epoch $epochId")
-                    null
-                }
-                errorMessage.contains("Expected BEGIN_OBJECT but was STRING") -> {
-                    Logger.debug("CLI returned error string instead of JSON for epoch $epochId")
-                    null
-                }
-                else -> {
-                    Logger.warn("Failed to query epoch BLS data for epoch $epochId: $errorMessage")
-                    null
+        for (attempt in 1..3) {
+            try {
+                // Query BLS module for epoch data using the extension function
+                return pair.node.queryEpochBLSData(epochId)
+            } catch (e: Exception) {
+                // Handle specific error cases more gracefully
+                val errorMessage = e.message ?: "Unknown error"
+                when {
+                    errorMessage.contains("NotFound") || errorMessage.contains("key not found") -> {
+                        Logger.debug("No DKG data found for epoch $epochId")
+                        return null
+                    }
+                    errorMessage.contains("Expected BEGIN_OBJECT but was STRING") -> {
+                        Logger.debug("CLI returned error string instead of JSON for epoch $epochId")
+                        return null
+                    }
+                    else -> {
+                        if (attempt < 3) {
+                            val sleepMs = 100L * attempt * attempt
+                            Logger.warn("Failed to query epoch BLS data for epoch $epochId (attempt $attempt/3): $errorMessage. Retrying in ${sleepMs}ms...")
+                            Thread.sleep(sleepMs)
+                        } else {
+                            Logger.warn("Failed to query epoch BLS data for epoch $epochId after 3 attempts: $errorMessage")
+                            return null
+                        }
+                    }
                 }
             }
         }
+        return null
     }
     
     // ========================================

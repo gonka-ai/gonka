@@ -131,7 +131,22 @@ class CollateralTests : TestermintTest() {
 
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.node.waitForNextBlock(2)
-        
+
+        // NEW: Withdraw portion of collateral to create unbonding entry
+        val withdrawAmount = 400L
+        val activeAmount = depositAmount - withdrawAmount
+        logSection("Withdrawing $withdrawAmount nicoin to create unbonding collateral")
+        genesis.withdrawCollateral(withdrawAmount)
+        genesis.node.waitForNextBlock()
+
+        logSection("Verifying pre-slash state: $activeAmount active, $withdrawAmount unbonding")
+        val activeCollateralBeforeSlash = genesis.queryCollateral(genesisAddress)
+        assertThat(activeCollateralBeforeSlash.amount?.amount).isEqualTo(activeAmount)
+        val unbondingQueueBeforeSlash = genesis.node.queryUnbondingCollateral(genesisAddress)
+        assertThat(unbondingQueueBeforeSlash.unbondings).hasSize(1)
+        assertThat(unbondingQueueBeforeSlash.unbondings!!.first().amount.amount).isEqualTo(withdrawAmount)
+
+
         logSection("Getting bad inferences")
         genesis.mock!!.setInferenceResponse("This is invalid json!!!")
 
@@ -152,22 +167,7 @@ class CollateralTests : TestermintTest() {
         logSection("Total timeouts after expiration wait: ${timeoutsAfter.inferenceTimeout?.count() ?: 0}")
         genesis.node.waitForNextBlock()
 
-        // NEW: Withdraw portion of collateral to create unbonding entry
-        val withdrawAmount = 400L
-        val activeAmount = depositAmount - withdrawAmount
-        logSection("Withdrawing $withdrawAmount nicoin to create unbonding collateral")
-        genesis.withdrawCollateral(withdrawAmount)
-        genesis.node.waitForNextBlock()
-
-        logSection("Verifying pre-slash state: $activeAmount active, $withdrawAmount unbonding")
-        val activeCollateralBeforeSlash = genesis.queryCollateral(genesisAddress)
-        assertThat(activeCollateralBeforeSlash.amount?.amount).isEqualTo(activeAmount)
-        val unbondingQueueBeforeSlash = genesis.node.queryUnbondingCollateral(genesisAddress)
-        assertThat(unbondingQueueBeforeSlash.unbondings).hasSize(1)
-        assertThat(unbondingQueueBeforeSlash.unbondings!!.first().amount.amount).isEqualTo(withdrawAmount)
-
-        logSection("Waiting for SET_NEW_VALIDATORS for slashing on downtime")
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        logSection("Waiting for slashing on downtime")
         genesis.node.waitForNextBlock(2)
         logSection("Verifying inference was processed and status updated")
 

@@ -1,6 +1,7 @@
 import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
 import com.productscience.GENESIS_KEY_NAME
+import com.productscience.data.NodeResponse
 import com.productscience.data.Pubkey2
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
@@ -21,7 +22,7 @@ class SchedulingTests : TestermintTest() {
                 GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
             ),
         )
-        val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodes = false)
+        val (cluster, genesis) = initCluster(config = config, reboot = true, resetMlNodes = false)
         val genesisParticipantKey = genesis.node.getValidatorInfo()
 
         // Wait for all participants to join and validators to be applied

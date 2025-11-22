@@ -445,32 +445,27 @@ func dumpTable(ctx context.Context, db *sql.DB, table string) ([]map[string]any,
 	// Prepare scanners based on decl types
 	results := make([]map[string]any, 0, 64)
 	for rows.Next() {
+		// Allocate stable per-column holders to avoid slice reallocation pointer invalidation
 		scanHolders := make([]any, len(cols))
-		// temporary holders
-		intH := make([]sql.NullInt64, 0)
-		floatH := make([]sql.NullFloat64, 0)
-		strH := make([]sql.NullString, 0)
-		rawH := make([][]byte, 0)
 		holderKinds := make([]string, len(cols))
-		// build holders per column
 		for i, c := range cols {
 			t := strings.ToUpper(c.declType)
 			switch {
 			case strings.Contains(t, "INT") || strings.Contains(t, "BOOL"):
-				intH = append(intH, sql.NullInt64{})
-				scanHolders[i] = &intH[len(intH)-1]
+				h := new(sql.NullInt64)
+				scanHolders[i] = h
 				holderKinds[i] = "int"
 			case strings.Contains(t, "REAL") || strings.Contains(t, "FLOA") || strings.Contains(t, "DOUB"):
-				floatH = append(floatH, sql.NullFloat64{})
-				scanHolders[i] = &floatH[len(floatH)-1]
+				h := new(sql.NullFloat64)
+				scanHolders[i] = h
 				holderKinds[i] = "float"
 			case strings.Contains(t, "BLOB"):
-				rawH = append(rawH, nil)
-				scanHolders[i] = &rawH[len(rawH)-1]
+				var b []byte
+				scanHolders[i] = &b
 				holderKinds[i] = "blob"
 			default:
-				strH = append(strH, sql.NullString{})
-				scanHolders[i] = &strH[len(strH)-1]
+				h := new(sql.NullString)
+				scanHolders[i] = h
 				holderKinds[i] = "text"
 			}
 		}
@@ -479,14 +474,11 @@ func dumpTable(ctx context.Context, db *sql.DB, table string) ([]map[string]any,
 		}
 		// reconstruct per row map
 		rowMap := make(map[string]any, len(cols))
-		// We need indices for each holder slice to read in the same order
-		intIdx, floatIdx, strIdx, rawIdx := 0, 0, 0, 0
 		for i, c := range cols {
 			kind := holderKinds[i]
 			switch kind {
 			case "int":
-				v := intH[intIdx]
-				intIdx++
+				v := scanHolders[i].(*sql.NullInt64)
 				if !v.Valid {
 					rowMap[c.name] = nil
 					break
@@ -498,24 +490,21 @@ func dumpTable(ctx context.Context, db *sql.DB, table string) ([]map[string]any,
 					rowMap[c.name] = v.Int64
 				}
 			case "float":
-				v := floatH[floatIdx]
-				floatIdx++
+				v := scanHolders[i].(*sql.NullFloat64)
 				if !v.Valid {
 					rowMap[c.name] = nil
 					break
 				}
 				rowMap[c.name] = v.Float64
 			case "blob":
-				v := rawH[rawIdx]
-				rawIdx++
-				if v == nil {
+				b := *(scanHolders[i].(*[]byte))
+				if b == nil {
 					rowMap[c.name] = nil
 					break
 				}
-				rowMap[c.name] = v // will JSON-encode as base64
+				rowMap[c.name] = b // will JSON-encode as base64
 			default: // text
-				v := strH[strIdx]
-				strIdx++
+				v := scanHolders[i].(*sql.NullString)
 				if !v.Valid {
 					rowMap[c.name] = nil
 					break
@@ -525,7 +514,7 @@ func dumpTable(ctx context.Context, db *sql.DB, table string) ([]map[string]any,
 					var parsed any
 					if err := json.Unmarshal([]byte(v.String), &parsed); err == nil {
 						rowMap[c.name] = parsed
-						break
+						continue
 					}
 				}
 				rowMap[c.name] = v.String

@@ -11,6 +11,7 @@ local-test-net/
 ├── docker-compose.join.yml      # Join network specific settings  
 ├── docker-compose.explorer.yml  # Adds blockchain explorer
 ├── docker-compose.proxy.yml     # Adds reverse proxy
+├── docker-compose.bridge.yml    # Adds Ethereum bridge service
 ├── docker-compose.tmkms.yml     # Adds TMKMS security layer
 └── Makefile                     # Easy commands for common combinations
 ```
@@ -27,7 +28,7 @@ docker-compose -f docker-compose-base.yml -f docker-compose.genesis.yml up
 docker-compose -f docker-compose-base.yml -f docker-compose.join.yml -f docker-compose.explorer.yml up
 
 # Any combination you want
-docker-compose -f docker-compose-base.yml -f docker-compose.genesis.yml -f docker-compose.explorer.yml -f docker-compose.proxy.yml up
+docker-compose -f docker-compose-base.yml -f docker-compose.genesis.yml -f docker-compose.explorer.yml -f docker-compose.proxy.yml -f docker-compose.bridge.yml up
 ```
 
 ## Components
@@ -54,8 +55,16 @@ docker-compose -f docker-compose-base.yml -f docker-compose.genesis.yml -f docke
 
 ### Proxy Addon (`docker-compose.proxy.yml`)
 - Reverse proxy for unified access
-- Single entry point on port 80
+- HTTP entry point on port 80 (redirects to HTTPS)
+- HTTPS entry point on port 443 with automatic SSL certificate generation
 - Health checks and dependency management
+- Automatic SSL certificate generation on container startup
+
+### Bridge Addon (`docker-compose.bridge.yml`)
+- Ethereum bridge service for cross-chain operations
+- Monitors Ethereum events and forwards to inference chain
+- No external ports exposed (internal monitoring only)
+- Geth + Prysm beacon chain for Ethereum connectivity
 
 ### TMKMS Addon (`docker-compose.tmkms.yml`)
 - Adds Tendermint Key Management System for enhanced validator security
@@ -79,6 +88,8 @@ ADMIN_SERVER_PORT=9200
 ML_GRPC_SERVER_PORT=9300
 WIREMOCK_PORT=8080
 TMKMS_PORT=26658
+PROXY_PORT=80      # HTTP proxy port
+PROXY_HTTPS_PORT=443  # HTTPS proxy port
 
 # For joining networks
 SEED_NODE_RPC_URL=http://seed-node:26657
@@ -86,6 +97,8 @@ SEED_NODE_P2P_URL=seed-node:26656
 
 # Optional
 REST_API_ACTIVE=true  # Enable/disable REST API server
+PROXY_ACTIVE=true     # Enable/disable proxy service
+BRIDGE_ACTIVE=true    # Enable/disable bridge service
 ```
 
 ## Migration from Old Files

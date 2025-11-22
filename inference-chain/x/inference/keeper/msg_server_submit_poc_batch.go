@@ -21,6 +21,61 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
+
+	// Check for active confirmation PoC event first
+	activeEvent, isActive, err := k.Keeper.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] Error checking confirmation PoC event", types.PoC, "error", err)
+		// Continue with regular PoC check
+	}
+
+	// Route to confirmation PoC handler if active and in GENERATION phase
+	if isActive && activeEvent != nil && activeEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
+		// Verify the message is for this confirmation PoC event
+		if startBlockHeight != activeEvent.TriggerHeight {
+			k.LogError(PocFailureTag+"[SubmitPocBatch] Confirmation PoC: start block height mismatch", types.PoC,
+				"participant", msg.Creator,
+				"msg.PocStageStartBlockHeight", startBlockHeight,
+				"event.TriggerHeight", activeEvent.TriggerHeight,
+				"currentBlockHeight", currentBlockHeight)
+			errMsg := fmt.Sprintf("[SubmitPocBatch] Confirmation PoC active but start block height doesn't match. "+
+				"participant = %s. msg.PocStageStartBlockHeight = %d. event.TriggerHeight = %d",
+				msg.Creator, startBlockHeight, activeEvent.TriggerHeight)
+			return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
+		}
+
+		// Verify we're in the batch submission window (generation + exchange period)
+		epochParams := k.GetParams(ctx).EpochParams
+		if !activeEvent.IsInBatchSubmissionWindow(currentBlockHeight, epochParams) {
+			k.LogError(PocFailureTag+"[SubmitPocBatch] Confirmation PoC: outside batch submission window", types.PoC,
+				"participant", msg.Creator,
+				"currentBlockHeight", currentBlockHeight,
+				"generationStartHeight", activeEvent.GenerationStartHeight,
+				"exchangeEndHeight", activeEvent.GetExchangeEnd(epochParams))
+			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "Confirmation PoC batch submission window closed")
+		}
+
+		// Store batch using trigger_height as key
+		storedBatch := types.PoCBatch{
+			ParticipantAddress:       msg.Creator,
+			PocStageStartBlockHeight: activeEvent.TriggerHeight, // Use trigger_height as key
+			ReceivedAtBlockHeight:    currentBlockHeight,
+			Nonces:                   msg.Nonces,
+			Dist:                     msg.Dist,
+			BatchId:                  msg.BatchId,
+			NodeId:                   msg.NodeId,
+		}
+
+		k.SetPocBatch(ctx, storedBatch)
+		k.LogInfo("[SubmitPocBatch] Confirmation PoC batch stored", types.PoC,
+			"participant", msg.Creator,
+			"triggerHeight", activeEvent.TriggerHeight,
+			"nodeId", msg.NodeId)
+
+		return &types.MsgSubmitPocBatchResponse{}, nil
+	}
+
+	// Regular PoC logic
 	epochParams := k.Keeper.GetParams(goCtx).EpochParams
 	upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 	if !found {

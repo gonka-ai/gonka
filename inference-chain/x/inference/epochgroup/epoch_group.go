@@ -8,6 +8,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -17,29 +18,63 @@ import (
 
 // EpochMember contains all the parameters related to a member in an epoch group
 type EpochMember struct {
-	Address       string
-	Weight        int64
-	Pubkey        string
-	SeedSignature string
-	Reputation    int64
-	Models        []string
-	MlNodes       []*types.ModelMLNodes
+	Address            string
+	Weight             int64
+	Pubkey             string
+	SeedSignature      string
+	Reputation         int64
+	Models             []string
+	MlNodes            []*types.ModelMLNodes
+	ConfirmationWeight int64 // Minimum confirmation weight from confirmation PoC events
 }
 
-func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
+func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64, confirmationWeight int64) EpochMember {
 	seedSignature := ""
 	if p.Seed != nil {
 		seedSignature = p.Seed.Signature
 	}
-	return EpochMember{
-		Address:       p.Index,
-		Weight:        p.Weight,
-		Pubkey:        p.ValidatorKey,
-		SeedSignature: seedSignature,
-		Reputation:    reputation,
-		Models:        p.Models,
-		MlNodes:       p.MlNodes,
+
+	// If confirmation weight is not provided (0), initialize it from inference-serving nodes (POC_SLOT=false)
+	// This is the baseline weight that can be verified through confirmation PoC
+	if confirmationWeight == 0 {
+		confirmationWeight = calculateInferenceServingWeight(p.MlNodes)
 	}
+
+	return EpochMember{
+		Address:            p.Index,
+		Weight:             p.Weight,
+		Pubkey:             p.ValidatorKey,
+		SeedSignature:      seedSignature,
+		Reputation:         reputation,
+		Models:             p.Models,
+		MlNodes:            p.MlNodes,
+		ConfirmationWeight: confirmationWeight,
+	}
+}
+
+// calculateInferenceServingWeight calculates the total weight of nodes serving inference (POC_SLOT=false)
+func calculateInferenceServingWeight(mlNodes []*types.ModelMLNodes) int64 {
+	totalWeight := int64(0)
+
+	for _, modelNodes := range mlNodes {
+		if modelNodes == nil {
+			continue
+		}
+
+		for _, node := range modelNodes.MlNodes {
+			if node == nil {
+				continue
+			}
+
+			// POC_SLOT is at index 1 (second timeslot)
+			// false => participant in PoC phase, true => continues inference during PoC
+			if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
+				totalWeight += node.PocWeight
+			}
+		}
+	}
+
+	return totalWeight
 }
 
 func NewEpochMemberFromStakingValidator(
@@ -173,10 +208,11 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 	mlNodes := eg.getMLNodeInfo(member, eg.GroupData.ModelId)
 
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
-		MemberAddress: member.Address,
-		Weight:        int64(member.Weight),
-		Reputation:    int32(member.Reputation),
-		MlNodes:       mlNodes,
+		MemberAddress:      member.Address,
+		Weight:             int64(member.Weight),
+		Reputation:         int32(member.Reputation),
+		MlNodes:            mlNodes,
+		ConfirmationWeight: member.ConfirmationWeight, // Populated by confirmation PoC weight calculation
 	})
 	eg.GroupData.TotalWeight += member.Weight
 
@@ -334,13 +370,24 @@ func (eg *EpochGroup) updateMember(ctx context.Context, address string, weight i
 	return err
 }
 
-func (eg *EpochGroup) UpdateMember(ctx context.Context, previousVersion *types.Participant, currentVersion *types.Participant) error {
-	if previousVersion != nil && previousVersion.Status != currentVersion.Status {
-		if currentVersion.Status == types.ParticipantStatus_INVALID {
-			// Effectively delete the member
-			return eg.updateMember(ctx, currentVersion.Address, 0, "")
-		}
+func (eq *EpochGroup) RemoveMember(ctx context.Context, participant *types.Participant) error {
+	err := eq.updateMember(ctx, participant.Address, 0, "")
+	if err != nil {
+		return err
 	}
+	for _, model := range eq.GroupData.GetSubGroupModels() {
+		subGroup, err := eq.GetSubGroup(ctx, model)
+		if err != nil {
+			eq.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", model)
+			continue
+		}
+		err = subGroup.RemoveMember(ctx, participant)
+		if err != nil {
+			eq.Logger.LogError("Error removing member from sub-group", types.EpochGroup, "error", err, "model", model)
+		}
+		// for sub groups, continue on and remove as much as we can
+	}
+
 	return nil
 }
 
@@ -379,14 +426,40 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 }
 
 func (eg *EpochGroup) GetGroupMembers(ctx context.Context) ([]*group.GroupMember, error) {
-	members, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
-		GroupId: eg.GroupData.EpochGroupId,
-	})
+	members, err := eg.getAllGroupMembersPaginated(ctx, eg.GroupData.EpochGroupId)
 	if err != nil {
 		eg.Logger.LogError("Error getting group members", types.EpochGroup, "error", err)
 		return nil, err
 	}
-	return members.Members, nil
+	return members, nil
+}
+
+// getAllGroupMembersPaginated fetches all group members using pagination
+func (eg *EpochGroup) getAllGroupMembersPaginated(ctx context.Context, groupId uint64) ([]*group.GroupMember, error) {
+	var allMembers []*group.GroupMember
+	var nextKey []byte
+
+	for {
+		resp, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
+			GroupId: groupId,
+			Pagination: &query.PageRequest{
+				Key:   nextKey,
+				Limit: 100,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		allMembers = append(allMembers, resp.Members...)
+
+		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
+			break
+		}
+		nextKey = resp.Pagination.NextKey
+	}
+
+	return allMembers, nil
 }
 
 // CreateSubGroup creates a new sub-group for a specific model

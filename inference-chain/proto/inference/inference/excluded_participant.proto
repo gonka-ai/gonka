@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package inference.inference;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// ExcludedParticipant represents a participant excluded for a given epoch.
+// Upgrade-safety: New, additive message. Epoch-scoped; no migration required.
+message ExcludedParticipant {
+  string address = 1;           // Bech32 address of the participant
+  uint64 epoch_index = 2;       // Epoch index for which the participant is excluded
+  string reason = 3;            // Free-form reason string (e.g., "invalidated")
+  uint64 exclusion_block_height = 4;  // Block height when exclusion took effect
+}

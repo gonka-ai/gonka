@@ -1,0 +1,5 @@
+services:
+  chain-node:
+    volumes:
+      - ./local-test-net/init-docker-genesis-vesting.sh:/root/init-docker-genesis.sh:ro
+

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 from enum import Enum
 from pydantic import BaseModel
@@ -56,6 +57,12 @@ class PowManager(IManager):
         
         self.init(init_request)
         self.start()
+    
+    async def switch_to_pow_async(
+        self,
+        init_request: PowInitRequest
+    ):
+        return await asyncio.to_thread(self.switch_to_pow, init_request)
 
     def init(
         self,

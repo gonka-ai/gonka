@@ -1,15 +1,6 @@
-import com.productscience.EpochStage
-import com.productscience.createSpec
-import com.productscience.data.EpochPhase
-import com.productscience.data.StakeValidator
-import com.productscience.data.StakeValidatorStatus
-import com.productscience.data.spec
-import com.productscience.getNextStage
-import com.productscience.inferenceConfig
-import com.productscience.inferenceRequestObject
-import com.productscience.initCluster
-import com.productscience.logSection
-import com.productscience.runParallelInferences
+import com.productscience.*
+import com.productscience.data.MsgSubmitNewParticipant
+import com.productscience.data.getParticipant
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -17,7 +8,8 @@ import org.tinylog.kotlin.Logger
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.time.Duration
-
+import kotlin.test.assertNotNull
+import com.productscience.assertions.assertThat
 class ParticipantTests : TestermintTest() {
     @Test
     @Tag("exclude")
@@ -97,7 +89,8 @@ class ParticipantTests : TestermintTest() {
         val inferenceRequest = inferenceRequestObject.copy(
             maxTokens = 20 // To not trigger bandwidth limit
         )
-        runParallelInferences(genesis, 50, waitForBlocks = 3, maxConcurrentRequests = 50,
+        runParallelInferences(
+            genesis, 50, waitForBlocks = 3, maxConcurrentRequests = 50,
             inferenceRequest = inferenceRequest
         )
         genesis.waitForBlock(2) {
@@ -106,5 +99,32 @@ class ParticipantTests : TestermintTest() {
         logSection("verifying traffic basis decrease")
         val stopMin = genesis.node.getMinimumValidationAverage()
         assertThat(stopMin.minimumValidationAverage).isLessThan(startMin.minimumValidationAverage)
+    }
+
+    @Test
+    fun `changing url propagates`() {
+        val (_, genesis) = initCluster()
+        logSection("waiting for next epoch")
+        genesis.waitForNextEpoch()
+        val genesisParticipant = genesis.node.getRawParticipants().getParticipant(genesis)
+        assertNotNull(genesisParticipant, "Unable to get participant stats for genesis")
+        assertThat(genesisParticipant.epochsCompleted).isGreaterThan(0)
+        val addNewParticipantMessage = MsgSubmitNewParticipant(
+            creator = genesis.node.getColdAddress(),
+            url = "https://new-url.com",
+        )
+        val newMessage = genesis.submitMessage(addNewParticipantMessage)
+        assertThat(newMessage).isSuccess()
+        val updatedGenesisParticipant = genesis.node.getRawParticipants().getParticipant(genesis)
+        assertNotNull(updatedGenesisParticipant, "Unable to get stats for new participant")
+        assertThat(updatedGenesisParticipant.epochsCompleted).isEqualTo(genesisParticipant.epochsCompleted)
+        assertThat(updatedGenesisParticipant.inferenceUrl).isEqualTo("https://new-url.com")
+        assertThat(updatedGenesisParticipant.status).isEqualTo(genesisParticipant.status)
+        assertThat(updatedGenesisParticipant.joinTime).isEqualTo(genesisParticipant.joinTime)
+        assertThat(updatedGenesisParticipant.joinHeight).isEqualTo(genesisParticipant.joinHeight)
+        genesis.waitForNextEpoch()
+        val genesisParticipantAfterNewEpoch = genesis.api.getActiveParticipants().getParticipant(genesis)
+        assertNotNull(genesisParticipantAfterNewEpoch, "Unable to get stats for new participant")
+        assertThat(genesisParticipantAfterNewEpoch.inferenceUrl).isEqualTo("https://new-url.com")
     }
 }

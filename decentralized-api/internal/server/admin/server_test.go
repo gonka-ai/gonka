@@ -71,7 +71,11 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 	// 2. Broker Dependencies
 	mockCosmos := &cosmosclient.MockCosmosMessageClient{}
 	mockQueryClient := &mockInferenceQueryClient{}
-	mockQueryClient.On("ModelsAll", mock.Anything, mock.Anything).Return(&types.QueryModelsAllResponse{Model: []types.Model{}}, nil)
+	mockQueryClient.On("ModelsAll", mock.Anything, mock.Anything).Return(&types.QueryModelsAllResponse{
+		Model: []types.Model{
+			{Id: "test-model"},
+		},
+	}, nil)
 	mockCosmos.On("NewInferenceQueryClient").Return(mockQueryClient)
 	bridge := broker.NewBrokerChainBridgeImpl(mockCosmos, "")
 	mockParticipant := &mockParticipantInfo{}
@@ -84,7 +88,7 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 	nodeBroker := broker.NewBroker(bridge, nil, mockParticipant, "", mockClientFactory, configManager)
 
 	// 4. Server
-	s := NewServer(mockCosmos, nodeBroker, configManager, nil)
+	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil)
 
 	return s, configManager, mockClientFactory
 }
@@ -118,15 +122,28 @@ func TestGetUpgradeStatus(t *testing.T) {
 func TestPostVersionStatus(t *testing.T) {
 	s, configManager, mockClientFactory := setupTestServer(t)
 
-	nodeConfig := apiconfig.InferenceNodeConfig{Id: "node-1", Host: "localhost", PoCPort: 8081, PoCSegment: "/api/v1"}
+	nodeConfig := apiconfig.InferenceNodeConfig{
+		Id:               "node-1",
+		Host:             "localhost",
+		InferencePort:    8080,
+		InferenceSegment: "/api/v1",
+		PoCPort:          8081,
+		PoCSegment:       "/api/v1",
+		MaxConcurrent:    3,
+		Models: map[string]apiconfig.ModelConfig{
+			"test-model": {Args: []string{}},
+		},
+	}
 	nodes := configManager.GetNodes()
 	nodes = append(nodes, nodeConfig)
 	err := configManager.SetNodes(nodes)
 	assert.NoError(t, err)
 	respChan := s.nodeBroker.LoadNodeToBroker(&nodeConfig)
 	select {
-	case <-respChan:
-		// continue
+	case response := <-respChan:
+		if response.Error != nil || response.Node == nil {
+			t.Fatal("failed to register node - node validation failed")
+		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for node to register")
 	}

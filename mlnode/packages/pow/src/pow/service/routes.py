@@ -21,7 +21,7 @@ async def init(
     init_request: PowInitRequestUrl
 ):
     manager: PowManager = request.app.state.pow_manager
-    manager.switch_to_pow(init_request)
+    await manager.switch_to_pow_async(init_request)
     return {
         "status": "OK",
         "pow_status": manager.get_pow_status()
@@ -43,10 +43,10 @@ async def init_generate(
         )
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
-        manager.switch_to_pow(init_request)
+        await manager.switch_to_pow_async(init_request)
 
     if manager.init_request != init_request:
-        manager.switch_to_pow(init_request)
+        await manager.switch_to_pow_async(init_request)
 
     manager.pow_controller.start_generate()
     return {
@@ -65,10 +65,10 @@ async def init_validate(
 ):
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
-        manager.switch_to_pow(init_request)
+        await manager.switch_to_pow_async(init_request)
 
     if manager.init_request != init_request:
-        manager.switch_to_pow(init_request)
+        await manager.switch_to_pow_async(init_request)
 
     manager.pow_controller.start_validate()
     return {

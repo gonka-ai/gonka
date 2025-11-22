@@ -43,6 +43,8 @@ message ValidationWeight {
   // We may decide to move ml_nodes directly to EpochGroupData,
   // but for now, this is a good solution.
   repeated MLNodeInfo ml_nodes = 4;
+  // confirmation_weight is the final confirmed weight for epoch (from confirmation PoC events)
+  int64 confirmation_weight = 5;
 }
 
 message SeedSignature {

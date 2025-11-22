@@ -1,0 +1,20 @@
+services:
+  mock-server-3:
+    container_name: ${KEY_NAME}-mock-server-3
+    image: inference-mock-server
+    build:
+      context: ../testermint
+      dockerfile: Dockerfile
+    environment:
+      - KEY_NAME=${KEY_NAME}
+    ports:
+      - "${WIREMOCK_PORT_3}:8080"
+    networks:
+      - chain-public
+
+networks:
+  chain-public:
+    name: chain-public
+
+
+

@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detection Algorithm Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #F8F8F8;
+            padding: 20px;
+            color: #4D4D4D;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #4D4D4D;
+        }
+
+        .description {
+            margin-bottom: 30px;
+            line-height: 1.6;
+            color: #666;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #F8F8F8;
+            border-radius: 6px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-weight: 600;
+            font-size: 14px;
+            color: #4D4D4D;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: #ddd;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #5DA5DA;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #5DA5DA;
+            cursor: pointer;
+            border: none;
+        }
+
+        input[type="number"] {
+            width: 80px;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        button {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #f0f0f0;
+        }
+
+        button:active {
+            background: #e0e0e0;
+        }
+
+        .run-button {
+            background: #5DA5DA;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .run-button:hover {
+            background: #4a8ac2;
+        }
+
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .chart-wrapper {
+            background: white;
+            padding: 20px;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #4D4D4D;
+        }
+
+        canvas {
+            max-height: 400px;
+        }
+
+        .stats-panel {
+            background: #F8F8F8;
+            padding: 20px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 15px;
+            border-radius: 4px;
+            border-left: 4px solid #5DA5DA;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: #4D4D4D;
+        }
+
+        @media (max-width: 768px) {
+            .charts-container {
+                grid-template-columns: 1fr;
+            }
+
+            .controls-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Sequential Detection Algorithm Visualizer</h1>
+    <div class="description">
+        <p><strong>Algorithm:</strong> Sequential Probability Ratio Test (SPRT) with continuous monitoring for detecting bad participants based on failure rates.</p>
+        <p>This visualization tests participants with <strong>configurable failure rates</strong> against a detector configured with parameters p0 and p1. <strong>Critical asymmetric behavior:</strong> Once a participant's LLR crosses the "bad" threshold (LLR ≥ H), they are <strong>immediately stopped and excluded</strong> permanently. However, participants continue being monitored indefinitely even if their LLR drops below -H (would be "marked good" in standard SPRT) - this prevents gaming the system by behaving well initially.</p>
+        <p><strong>Key questions:</strong> (1) How often do good participants get falsely flagged? (2) How quickly are bad participants detected and excluded?</p>
+    </div>
+
+    <div class="controls-grid">
+        <div class="control-group">
+            <label>p0 (Detector: Null Hypothesis Rate)</label>
+            <div class="input-row">
+                <button onclick="adjustValue('p0', -0.01)">−</button>
+                <input type="range" id="p0Slider" min="0.01" max="0.5" step="0.01" value="0.05">
+                <input type="number" id="p0Input" min="0.01" max="0.5" step="0.01" value="0.05">
+                <button onclick="adjustValue('p0', 0.01)">+</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>p1 (Detector: Alternative Hypothesis Rate)</label>
+            <div class="input-row">
+                <button onclick="adjustValue('p1', -0.01)">−</button>
+                <input type="range" id="p1Slider" min="0.01" max="0.9" step="0.01" value="0.5">
+                <input type="number" id="p1Input" min="0.01" max="0.9" step="0.01" value="0.5">
+                <button onclick="adjustValue('p1', 0.01)">+</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>H (Decision Threshold)</label>
+            <div class="input-row">
+                <button onclick="adjustValue('h', -1)">−</button>
+                <input type="range" id="hSlider" min="1" max="50" step="1" value="10">
+                <input type="number" id="hInput" min="1" max="50" step="1" value="10">
+                <button onclick="adjustValue('h', 1)">+</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Good Participant Actual Failure Rate</label>
+            <div class="input-row">
+                <button onclick="adjustValue('goodRate', -0.01)">−</button>
+                <input type="range" id="goodRateSlider" min="0.01" max="0.5" step="0.01" value="0.05">
+                <input type="number" id="goodRateInput" min="0.01" max="0.5" step="0.01" value="0.05">
+                <button onclick="adjustValue('goodRate', 0.01)">+</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Bad Participant Actual Failure Rate</label>
+            <div class="input-row">
+                <button onclick="adjustValue('badRate', -0.01)">−</button>
+                <input type="range" id="badRateSlider" min="0.01" max="0.9" step="0.01" value="0.5">
+                <input type="number" id="badRateInput" min="0.01" max="0.9" step="0.01" value="0.5">
+                <button onclick="adjustValue('badRate', 0.01)">+</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Number of Trials</label>
+            <div class="input-row">
+                <button onclick="adjustValue('trials', -100)">−</button>
+                <input type="range" id="trialsSlider" min="100" max="2000" step="100" value="500">
+                <input type="number" id="trialsInput" min="100" max="2000" step="100" value="500">
+                <button onclick="adjustValue('trials', 100)">+</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Max Measurements per Trial</label>
+            <div class="input-row">
+                <button onclick="adjustValue('maxMeasurements', -50)">−</button>
+                <input type="range" id="maxMeasurementsSlider" min="50" max="1000" step="50" value="200">
+                <input type="number" id="maxMeasurementsInput" min="50" max="1000" step="50" value="200">
+                <button onclick="adjustValue('maxMeasurements', 50)">+</button>
+            </div>
+        </div>
+    </div>
+
+    <button class="run-button" onclick="runSimulation()">Run Simulation</button>
+
+    <div class="stats-panel">
+        <div class="stats-grid">
+            <div class="stat-item" style="border-left-color: #F15854;">
+                <div class="stat-label">Good Participants Marked Bad (FPR)</div>
+                <div class="stat-value" id="fprStat">-</div>
+            </div>
+            <div class="stat-item" style="border-left-color: #60BD68;">
+                <div class="stat-label">Good Participants Not Flagged</div>
+                <div class="stat-value" id="tnrStat">-</div>
+            </div>
+            <div class="stat-item" style="border-left-color: #5DA5DA;">
+                <div class="stat-label">Bad Participants Detected</div>
+                <div class="stat-value" id="tprStat">-</div>
+            </div>
+            <div class="stat-item" style="border-left-color: #FAA43A;">
+                <div class="stat-label">Avg Detection Time (Bad Participants)</div>
+                <div class="stat-value" id="detectionTimeStat">-</div>
+            </div>
+            <div class="stat-item" style="border-left-color: #F17CB0;">
+                <div class="stat-label">Avg Bad Inferences Before Caught</div>
+                <div class="stat-value" id="badInferencesStat">-</div>
+            </div>
+            <div class="stat-item" style="border-left-color: #B2912F;">
+                <div class="stat-label">Bad Participants Not Detected</div>
+                <div class="stat-value" id="fnrStat">-</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="charts-container">
+        <div class="chart-wrapper">
+            <div class="chart-title">Detection Time: Good vs Bad Participants</div>
+            <canvas id="detectionChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
+            <div class="chart-title">Sample LLR Paths (Bad Participants)</div>
+            <canvas id="llrChart"></canvas>
+        </div>
+    </div>
+
+    <div class="chart-wrapper">
+        <div class="chart-title">Decision Outcomes: Good Participants vs Bad Participants</div>
+        <canvas id="outcomesChart"></canvas>
+    </div>
+</div>
+
+<script>
+    // Initialize charts
+    const detectionChart = new Chart(document.getElementById('detectionChart'), {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Good Participants (Not Flagged - Full Duration)',
+                data: [],
+                backgroundColor: '#60BD68',
+                stack: 'good'
+            }, {
+                label: 'Good Participants (Wrongly Flagged as Bad)',
+                data: [],
+                backgroundColor: '#F15854',
+                stack: 'good'
+            }, {
+                label: 'Bad Participants (Correctly Detected)',
+                data: [],
+                backgroundColor: '#5DA5DA',
+                stack: 'bad'
+            }, {
+                label: 'Bad Participants (Missed - Full Duration)',
+                data: [],
+                backgroundColor: '#FAA43A',
+                stack: 'bad'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                x: {
+                    title: { display: true, text: 'Measurements Until Stopped (or Max)' },
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                },
+                y: {
+                    title: { display: true, text: 'Frequency' },
+                    grid: { color: 'rgba(0,0,0,0.05)' },
+                    beginAtZero: true,
+                    stacked: false
+                }
+            },
+            plugins: {
+                legend: { display: true, position: 'top' }
+            }
+        }
+    });
+
+    const llrChart = new Chart(document.getElementById('llrChart'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Sample Path 1',
+                data: [],
+                borderColor: '#5DA5DA',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 0
+            }, {
+                label: 'Sample Path 2',
+                data: [],
+                borderColor: '#FAA43A',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 0
+            }, {
+                label: 'Sample Path 3',
+                data: [],
+                borderColor: '#60BD68',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 0
+            }, {
+                label: 'Threshold H',
+                data: [],
+                borderColor: '#F15854',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                pointRadius: 0
+            }, {
+                label: 'Threshold -H',
+                data: [],
+                borderColor: '#60BD68',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                pointRadius: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                x: {
+                    title: { display: true, text: 'Measurement Number' },
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                },
+                y: {
+                    title: { display: true, text: 'Log-Likelihood Ratio' },
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                }
+            },
+            plugins: {
+                legend: { display: true, position: 'top' }
+            }
+        }
+    });
+
+    const outcomesChart = new Chart(document.getElementById('outcomesChart'), {
+        type: 'bar',
+        data: {
+            labels: ['Not Flagged', 'Marked Bad'],
+            datasets: [{
+                label: 'Good Participants',
+                data: [],
+                backgroundColor: '#60BD68'
+            }, {
+                label: 'Bad Participants',
+                data: [],
+                backgroundColor: '#5DA5DA'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                y: {
+                    title: { display: true, text: 'Number of Trials' },
+                    grid: { color: 'rgba(0,0,0,0.05)' },
+                    beginAtZero: true
+                },
+                x: {
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                }
+            },
+            plugins: {
+                legend: { display: true, position: 'top' }
+            }
+        }
+    });
+
+    // Synchronize controls
+    function syncControls(param) {
+        const slider = document.getElementById(param + 'Slider');
+        const input = document.getElementById(param + 'Input');
+        const value = parseFloat(slider.value);
+        input.value = value;
+    }
+
+    function syncControlsReverse(param) {
+        const slider = document.getElementById(param + 'Slider');
+        const input = document.getElementById(param + 'Input');
+        let value = parseFloat(input.value);
+        const min = parseFloat(slider.min);
+        const max = parseFloat(slider.max);
+        value = Math.max(min, Math.min(max, value));
+        input.value = value;
+        slider.value = value;
+    }
+
+    function adjustValue(param, delta) {
+        const slider = document.getElementById(param + 'Slider');
+        const step = parseFloat(slider.step);
+        let value = parseFloat(slider.value) + delta;
+        const min = parseFloat(slider.min);
+        const max = parseFloat(slider.max);
+        value = Math.max(min, Math.min(max, value));
+        slider.value = value;
+        syncControls(param);
+    }
+
+    // Add event listeners
+    ['p0', 'p1', 'h', 'goodRate', 'badRate', 'trials', 'maxMeasurements'].forEach(param => {
+        document.getElementById(param + 'Slider').addEventListener('input', () => syncControls(param));
+        document.getElementById(param + 'Input').addEventListener('change', () => syncControlsReverse(param));
+    });
+
+    // SPRT Algorithm Implementation with Continuous Monitoring (Peeking)
+    // Once a participant crosses into "bad" territory (LLR >= H), they are immediately stopped
+    // Participants can go below -H (marked "good") but continue being tested
+    function runSPRTTrial(p0, p1, H, trueFailureRate, maxMeasurements) {
+        let llr = 0;
+        const llrPath = [0];
+        let failureCount = 0;
+
+        for (let i = 0; i < maxMeasurements; i++) {
+            const failure = Math.random() < trueFailureRate;
+
+            if (failure) {
+                llr += Math.log(p1 / p0);
+                failureCount++;
+            } else {
+                llr += Math.log((1 - p1) / (1 - p0));
+            }
+
+            llrPath.push(llr);
+
+            // Check for bad threshold - immediate exclusion
+            if (llr >= H) {
+                return { decision: 'bad', measurements: i + 1, llrPath, failureCount };
+            }
+            // No stopping for good threshold - continue monitoring
+        }
+
+        // If we reach max measurements without being marked bad, they're considered "good"
+        return { decision: 'good', measurements: maxMeasurements, llrPath, failureCount };
+    }
+
+    function runSimulation() {
+        const p0 = parseFloat(document.getElementById('p0Slider').value);
+        const p1 = parseFloat(document.getElementById('p1Slider').value);
+        const H = parseFloat(document.getElementById('hSlider').value);
+        const goodRate = parseFloat(document.getElementById('goodRateSlider').value);
+        const badRate = parseFloat(document.getElementById('badRateSlider').value);
+        const trials = parseInt(document.getElementById('trialsSlider').value);
+        const maxMeasurements = parseInt(document.getElementById('maxMeasurementsSlider').value);
+
+        // Run trials for "good" participants (actual failure rate = goodRate)
+        const goodResults = [];
+        for (let i = 0; i < trials; i++) {
+            goodResults.push(runSPRTTrial(p0, p1, H, goodRate, maxMeasurements));
+        }
+
+        // Run trials for "bad" participants (actual failure rate = badRate)
+        const badResults = [];
+        for (let i = 0; i < trials; i++) {
+            badResults.push(runSPRTTrial(p0, p1, H, badRate, maxMeasurements));
+        }
+
+        // Calculate statistics
+        const goodMarkedGood = goodResults.filter(r => r.decision === 'good').length;
+        const goodMarkedBad = goodResults.filter(r => r.decision === 'bad').length;
+
+        const badDetected = badResults.filter(r => r.decision === 'bad').length;
+        const badNotDetected = badResults.filter(r => r.decision === 'good').length;
+
+        const fpr = (goodMarkedBad / trials * 100).toFixed(1);
+        const tnr = (goodMarkedGood / trials * 100).toFixed(1);
+        const tpr = (badDetected / trials * 100).toFixed(1);
+        const fnr = (badNotDetected / trials * 100).toFixed(1);
+
+        const detectedBadParticipants = badResults.filter(r => r.decision === 'bad');
+        const avgBadDetectionTime = detectedBadParticipants.length > 0
+            ? (detectedBadParticipants.reduce((sum, r) => sum + r.measurements, 0) / detectedBadParticipants.length).toFixed(1)
+            : 'N/A';
+
+        // Calculate average bad inferences (failures) before detection
+        // This is the actual failures minus the expected failures at p0 rate
+        const avgBadInferences = detectedBadParticipants.length > 0
+            ? (detectedBadParticipants.reduce((sum, r) => {
+                const expectedFailures = r.measurements * p0;
+                const excessFailures = r.failureCount - expectedFailures;
+                return sum + excessFailures;
+            }, 0) / detectedBadParticipants.length).toFixed(2)
+            : 'N/A';
+
+        // Update stats
+        document.getElementById('fprStat').textContent = fpr + '%';
+        document.getElementById('tnrStat').textContent = tnr + '%';
+        document.getElementById('tprStat').textContent = tpr + '%';
+        document.getElementById('fnrStat').textContent = fnr + '%';
+        document.getElementById('detectionTimeStat').textContent = avgBadDetectionTime;
+        document.getElementById('badInferencesStat').textContent = avgBadInferences;
+
+        // Update detection time distribution
+        const binSize = Math.ceil(maxMeasurements / 20);
+        const timeBins = {};
+        for (let i = binSize; i <= maxMeasurements; i += binSize) {
+            timeBins[i] = { goodCorrect: 0, goodWrong: 0, badCorrect: 0, badWrong: 0 };
+        }
+
+        // Good participants marked good always run to max measurements
+        goodResults.filter(r => r.decision === 'good').forEach(r => {
+            const bin = Math.ceil(r.measurements / binSize) * binSize;
+            if (timeBins[bin]) timeBins[bin].goodCorrect++;
+        });
+
+        // Good participants wrongly marked bad (false positives)
+        goodResults.filter(r => r.decision === 'bad').forEach(r => {
+            const bin = Math.ceil(r.measurements / binSize) * binSize;
+            if (timeBins[bin]) timeBins[bin].goodWrong++;
+        });
+
+        // Bad participants correctly detected
+        badResults.filter(r => r.decision === 'bad').forEach(r => {
+            const bin = Math.ceil(r.measurements / binSize) * binSize;
+            if (timeBins[bin]) timeBins[bin].badCorrect++;
+        });
+
+        // Bad participants that weren't detected (ran to max measurements)
+        badResults.filter(r => r.decision === 'good').forEach(r => {
+            const bin = Math.ceil(r.measurements / binSize) * binSize;
+            if (timeBins[bin]) timeBins[bin].badWrong++;
+        });
+
+        detectionChart.data.labels = Object.keys(timeBins);
+        detectionChart.data.datasets[0].data = Object.values(timeBins).map(v => v.goodCorrect);
+        detectionChart.data.datasets[1].data = Object.values(timeBins).map(v => v.goodWrong);
+        detectionChart.data.datasets[2].data = Object.values(timeBins).map(v => v.badCorrect);
+        detectionChart.data.datasets[3].data = Object.values(timeBins).map(v => v.badWrong);
+        detectionChart.update('none');
+
+        // Update LLR paths (show 3 sample paths from bad participants)
+        const samplePaths = [
+            badResults[0]?.llrPath || [],
+            badResults[Math.floor(trials / 2)]?.llrPath || [],
+            badResults[trials - 1]?.llrPath || []
+        ];
+
+        const maxLen = Math.max(...samplePaths.map(p => p.length));
+        llrChart.data.labels = Array.from({ length: maxLen }, (_, i) => i);
+        llrChart.data.datasets[0].data = samplePaths[0];
+        llrChart.data.datasets[1].data = samplePaths[1];
+        llrChart.data.datasets[2].data = samplePaths[2];
+        llrChart.data.datasets[3].data = Array(maxLen).fill(H);
+        llrChart.data.datasets[4].data = Array(maxLen).fill(-H);
+        llrChart.update('none');
+
+        // Update outcomes chart
+        outcomesChart.data.datasets[0].data = [goodMarkedGood, goodMarkedBad];
+        outcomesChart.data.datasets[1].data = [badNotDetected, badDetected];
+        outcomesChart.update('none');
+    }
+
+    // Run initial simulation
+    window.addEventListener('load', () => {
+        runSimulation();
+    });
+</script>
+</body>
+</html>

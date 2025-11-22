@@ -39,18 +39,12 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 
 	k.LogInfo("Inference invalidated", types.Inferences, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
 
-	// Store the original status to check for a state transition to INVALID.
-	originalStatus := executor.Status
-	executor.Status = calculateStatus(k.Keeper.GetParams(ctx).ValidationParams, *executor)
-
-	// Check for a status transition and slash if necessary.
-	k.CheckAndSlashForInvalidStatus(ctx, originalStatus, executor)
-
-	err = k.SetInference(ctx, *inference)
+	err = k.SetParticipant(ctx, *executor)
 	if err != nil {
 		return nil, err
 	}
-	err = k.SetParticipant(ctx, *executor)
+
+	err = k.SetInference(ctx, *inference)
 	if err != nil {
 		return nil, err
 	}

@@ -38,7 +38,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         address recipient;        // 20 bytes - Ethereum address to receive tokens
         address tokenContract;    // 20 bytes - ERC-20 contract address
         uint256 amount;          // 32 bytes - token amount to withdraw
-        bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
+        bytes signature;         // 128 bytes - BLS threshold signature (G1 point, uncompressed)
     }
 
     struct MintCommand {
@@ -46,7 +46,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         bytes32 requestId;        // 32 bytes - unique request identifier from source chain
         address recipient;        // 20 bytes - Ethereum address to receive WGNK
         uint256 amount;          // 32 bytes - WGNK amount to mint
-        bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
+        bytes signature;         // 128 bytes - BLS threshold signature (G1 point, uncompressed)
     }
 
     // =============================================================================
@@ -55,40 +55,61 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
 
     // Optimized group key storage (3 slots instead of 4)
     struct GroupKey {
-        bytes32 part0;  // bytes 0-31
-        bytes32 part1;  // bytes 32-63  
-        bytes32 part2;  // bytes 64-95
+        // Uncompressed G2 point: X.c0, X.c1, Y.c0, Y.c1 (each 64 bytes → 8 x bytes32)
+        bytes32 part0;
+        bytes32 part1;
+        bytes32 part2;
+        bytes32 part3;
+        bytes32 part4;
+        bytes32 part5;
+        bytes32 part6;
+        bytes32 part7;
     }
     
     /**
      * @dev Convert bytes to GroupKey struct
      */
     function _bytesToGroupKey(bytes memory data) internal pure returns (GroupKey memory) {
-        require(data.length == 96, "Invalid group key length");
+        require(data.length == 256, "Invalid group key length");
         
         bytes32 part0;
         bytes32 part1; 
-        bytes32 part2;
+        bytes32 part2; 
+        bytes32 part3;
+        bytes32 part4;
+        bytes32 part5;
+        bytes32 part6;
+        bytes32 part7;
         
         assembly {
-            part0 := mload(add(data, 0x20))        // bytes 0-31
-            part1 := mload(add(data, 0x40))        // bytes 32-63  
-            part2 := mload(add(data, 0x60))        // bytes 64-95
+            part0 := mload(add(data, 0x20))
+            part1 := mload(add(data, 0x40))
+            part2 := mload(add(data, 0x60))
+            part3 := mload(add(data, 0x80))
+            part4 := mload(add(data, 0xA0))
+            part5 := mload(add(data, 0xC0))
+            part6 := mload(add(data, 0xE0))
+            part7 := mload(add(data, 0x100))
         }
         
-        return GroupKey(part0, part1, part2);
+        return GroupKey(part0, part1, part2, part3, part4, part5, part6, part7);
     }
     
     /**
      * @dev Convert GroupKey struct to bytes
      */
     function _groupKeyToBytes(GroupKey memory key) internal pure returns (bytes memory) {
-        bytes memory result = new bytes(96);
+        bytes memory result = new bytes(256);
         
         assembly {
-            mstore(add(result, 0x20), mload(key))         // part0
-            mstore(add(result, 0x40), mload(add(key, 0x20))) // part1  
-            mstore(add(result, 0x60), mload(add(key, 0x40))) // part2
+            mstore(add(result, 0x20), mload(key))              // part0
+            mstore(add(result, 0x40), mload(add(key, 0x20)))   // part1  
+            mstore(add(result, 0x60), mload(add(key, 0x40)))   // part2
+            mstore(add(result, 0x80), mload(add(key, 0x60)))   // part3
+            mstore(add(result, 0xA0), mload(add(key, 0x80)))   // part4
+            mstore(add(result, 0xC0), mload(add(key, 0xA0)))   // part5
+            mstore(add(result, 0xE0), mload(add(key, 0xC0)))   // part6
+            mstore(add(result, 0x100), mload(add(key, 0xE0)))  // part7
         }
         
         return result;
@@ -98,11 +119,13 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      * @dev Check if GroupKey is empty (all zeros)
      */
     function _isGroupKeyEmpty(GroupKey memory key) internal pure returns (bool) {
-        return key.part0 == bytes32(0) && key.part1 == bytes32(0) && key.part2 == bytes32(0);
+        return key.part0 == bytes32(0) && key.part1 == bytes32(0) && key.part2 == bytes32(0)
+            && key.part3 == bytes32(0) && key.part4 == bytes32(0) && key.part5 == bytes32(0)
+            && key.part6 == bytes32(0) && key.part7 == bytes32(0);
     }
     
     // Efficient storage: only what's needed
-    mapping(uint64 => GroupKey) public epochGroupKeys;  // epochId => 96-byte G2 public key (3 slots)
+    mapping(uint64 => GroupKey) public epochGroupKeys;  // epochId => 256-byte G2 public key (8 slots)
     mapping(uint64 => mapping(bytes32 => bool)) public processedRequests;  // epochId => requestId => processed
 
     // Packed metadata (single 32-byte storage slot)
@@ -112,12 +135,23 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     uint64 public constant MAX_STORED_EPOCHS = 365;  // 365 epochs = 365 days
     uint64 public constant TIMEOUT_DURATION = 30 days;
 
-    // BLS signature verification (using Ethereum's native precompiles)
-    address constant BLS_PRECOMPILE = 0x000000000000000000000000000000000000000f;
+    // Chain ID constants for cross-chain replay protection
+    bytes32 public immutable GONKA_CHAIN_ID;    // Source chain identifier (e.g., keccak256("gonka-mainnet-v1"))
+    bytes32 public immutable ETHEREUM_CHAIN_ID; // This chain identifier (e.g., bytes32(uint256(1)))
+
+    // EIP-2537 precompiles
+    address constant BLS12_PAIRING = 0x000000000000000000000000000000000000000F;       // BLS12_PAIRING_CHECK
+    address constant BLS12_MAP_FP_TO_G1 = 0x0000000000000000000000000000000000000010;  // BLS12_MAP_FP_TO_G1
     
     // Operation type identifiers for message hash domain separation
     bytes32 constant WITHDRAW_OPERATION = keccak256("WITHDRAW_OPERATION");
     bytes32 constant MINT_OPERATION = keccak256("MINT_OPERATION");
+    
+    // Field modulus p for BLS12-381 (64-byte big-endian, padded)
+    bytes constant FP_MODULUS = hex"000000000000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab";
+    
+    // Uncompressed G2 generator (X.c0, X.c1, Y.c0, Y.c1), each 64-byte big-endian (padded)
+    bytes constant G2_GENERATOR = hex"00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be";
 
     // =============================================================================
     // EVENTS
@@ -156,7 +190,11 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // CONSTRUCTOR
     // =============================================================================
 
-    constructor() ERC20("Wrapped Gonka", "WGNK") {
+    constructor(bytes32 _gonkaChainId, bytes32 _ethereumChainId) ERC20("Wrapped Gonka", "WGNK") {
+        // Set immutable chain IDs for cross-chain replay protection
+        GONKA_CHAIN_ID = _gonkaChainId;
+        ETHEREUM_CHAIN_ID = _ethereumChainId;
+        
         // Start in admin control state - requires genesis epoch setup
         epochMeta.currentState = ContractState.ADMIN_CONTROL;
         epochMeta.latestEpochId = 0;
@@ -186,32 +224,24 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // =============================================================================
 
     /**
-     * @dev Submit a new group public key for an epoch (admin only during ADMIN_CONTROL)
+     * @dev Set a new group public key for an epoch (admin only during ADMIN_CONTROL)
      * @param epochId The epoch ID (must be sequential)
-     * @param groupPublicKey The 96-byte G2 public key for the epoch
-     * @param validationSig The validation signature from previous epoch (not stored)
+     * @param groupPublicKey The 256-byte G2 public key (uncompressed) for the epoch
      */
-    function submitGroupKey(
+    function setGroupKey(
         uint64 epochId,
-        bytes calldata groupPublicKey,
-        bytes calldata validationSig
+        bytes calldata groupPublicKey
     ) external onlyOwner onlyAdminControl {
         // Verify sequential submission
-        if (epochId != epochMeta.latestEpochId + 1) {
+        if (epochId < epochMeta.latestEpochId + 1) {
             revert InvalidEpochSequence();
         }
 
-        // Verify group public key is 96 bytes (G2 point compressed)
-        require(groupPublicKey.length == 96, "Invalid group key length");
+        // Verify group public key is 256 bytes (G2 point uncompressed)
+        require(groupPublicKey.length == 256, "Invalid group key length");
 
         // Verify validation signature against previous epoch (if not genesis)
         GroupKey memory newGroupKeyStruct = _bytesToGroupKey(groupPublicKey);
-        if (epochId > 1) {
-            GroupKey memory prevGroupKeyStruct = epochGroupKeys[epochId - 1];
-            require(!_isGroupKeyEmpty(prevGroupKeyStruct), "Previous epoch not found");
-            
-            require(_verifyTransitionSignature(prevGroupKeyStruct, newGroupKeyStruct, validationSig, epochId - 1), "Invalid transition signature");
-        }
 
         // Store only the group public key
         epochGroupKeys[epochId] = newGroupKeyStruct;
@@ -249,6 +279,51 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // =============================================================================
 
     /**
+     * @dev Submit a new group public key for the next epoch
+     * @param epochId The epoch ID (must be sequential)
+     * @param groupPublicKey The 256-byte G2 public key (uncompressed) for the epoch
+     * @param validationSig The validation signature from previous epoch (not stored)
+     */
+    function submitGroupKey(
+        uint64 epochId,
+        bytes calldata groupPublicKey,
+        bytes calldata validationSig
+    ) public {
+        // Verify sequential submission
+        if (epochId != epochMeta.latestEpochId + 1) {
+            revert InvalidEpochSequence();
+        }
+
+        // Verify group public key is 256 bytes (G2 point uncompressed)
+        require(groupPublicKey.length == 256, "Invalid group key length");
+
+        // Verify validation signature against previous epoch (if not genesis)
+        GroupKey memory newGroupKeyStruct = _bytesToGroupKey(groupPublicKey);
+        if (epochId > 1) {
+            GroupKey memory prevGroupKeyStruct = epochGroupKeys[epochId - 1];
+            require(!_isGroupKeyEmpty(prevGroupKeyStruct), "Previous epoch not found");
+            
+            require(_verifyTransitionSignature(prevGroupKeyStruct, newGroupKeyStruct, validationSig, epochId - 1), "Invalid transition signature");
+        }
+
+        // Store only the group public key
+        epochGroupKeys[epochId] = newGroupKeyStruct;
+
+        // Update metadata in packed storage (single SSTORE)
+        epochMeta = EpochMetadata({
+            latestEpochId: epochId,
+            submissionTimestamp: uint64(block.timestamp),
+            currentState: epochMeta.currentState,  // Preserve current state
+            reserved: 0
+        });
+
+        // Clean up old epochs (keep last 365 epochs = 365 days)
+        _cleanupOldEpochs(epochId);
+
+        emit GroupKeySubmitted(epochId, groupPublicKey, block.timestamp);
+    }
+
+    /**
      * @dev Process a withdrawal command with BLS threshold signature
      * @param cmd The withdrawal command containing all necessary data
      */
@@ -265,9 +340,19 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert RequestAlreadyProcessed();
         }
 
-        // 3. Signature Verification: Use cached group key with operation domain separation
+        // 3. Signature Verification: Use cached group key with dual chain ID protection
+        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, tokenContract, amount]
         bytes32 messageHash = keccak256(
-            abi.encodePacked(cmd.epochId, cmd.requestId, WITHDRAW_OPERATION, cmd.recipient, cmd.tokenContract, cmd.amount)
+            abi.encodePacked(
+                cmd.epochId,        // Gonka epoch
+                GONKA_CHAIN_ID,     // Gonka chain identifier (prevents cross-Gonka-chain replays)
+                cmd.requestId,      // Unique request ID
+                ETHEREUM_CHAIN_ID,  // This Ethereum chain ID (prevents cross-Ethereum-chain replays)
+                WITHDRAW_OPERATION, // Operation type
+                cmd.recipient,      // Withdrawal details
+                cmd.tokenContract,
+                cmd.amount
+            )
         );
         
         if (!_verifyBLSSignature(groupKey, messageHash, cmd.signature)) {
@@ -316,9 +401,18 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert RequestAlreadyProcessed();
         }
 
-        // 3. Signature Verification: Use cached group key with operation domain separation
+        // 3. Signature Verification: Use cached group key with dual chain ID protection
+        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, MINT_OPERATION, recipient, amount]
         bytes32 messageHash = keccak256(
-            abi.encodePacked(cmd.epochId, cmd.requestId, MINT_OPERATION, cmd.recipient, cmd.amount)
+            abi.encodePacked(
+                cmd.epochId,        // Gonka epoch
+                GONKA_CHAIN_ID,     // Gonka chain identifier (prevents cross-Gonka-chain replays)
+                cmd.requestId,      // Unique request ID
+                ETHEREUM_CHAIN_ID,  // This Ethereum chain ID (prevents cross-Ethereum-chain replays)
+                MINT_OPERATION,     // Operation type
+                cmd.recipient,      // Mint details
+                cmd.amount
+            )
         );
         
         if (!_verifyBLSSignature(groupKey, messageHash, cmd.signature)) {
@@ -490,27 +584,83 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Verify BLS signature using Ethereum's native precompiles
-     * @param groupPublicKey The 96-byte G2 public key
+     * @dev Verify BLS signature using EIP-2537 precompiles (pairing check)
+     * @param groupPublicKey The 256-byte G2 public key (uncompressed)
      * @param messageHash The 32-byte message hash
-     * @param signature The 48-byte G1 signature
+     * @param signature The 128-byte G1 signature (uncompressed)
      */
     function _verifyBLSSignature(
         bytes memory groupPublicKey,
         bytes32 messageHash,
         bytes memory signature
     ) internal view returns (bool) {
-        require(groupPublicKey.length == 96, "Invalid group key length");
-        require(signature.length == 48, "Invalid signature length");
+        require(groupPublicKey.length == 256, "Invalid group key length");
+        require(signature.length == 128, "Invalid signature length");
 
-        // Prepare data for BLS precompile
-        // Format: message_hash (32) + signature (48) + public_key (96)
-        bytes memory input = abi.encodePacked(messageHash, signature, groupPublicKey);
+        // 1) Map message hash (interpreted as Fp element) to a G1 point via precompile
+        bytes memory hG1 = _mapMessageToG1(messageHash);
 
-        // Call BLS precompile for signature verification
-        (bool success, bytes memory result) = BLS_PRECOMPILE.staticcall(input);
-        
+        // 2) Negate mapped G1 point for product-of-pairings check
+        bytes memory negHG1 = _negateG1(hG1);
+
+        // 3) Build input for pairing check:
+        //    e(signature, G2) * e(-H(m), pubkey) == 1
+        bytes memory pairingInput = abi.encodePacked(
+            signature,            // 128
+            G2_GENERATOR,         // 256
+            negHG1,               // 128
+            groupPublicKey        // 256
+        );
+
+        // 4) Pairing precompile returns true if product equals 1
+        (bool success, bytes memory result) = BLS12_PAIRING.staticcall(pairingInput);
         return success && result.length == 32 && abi.decode(result, (bool));
+    }
+
+    /**
+     * @dev Map a 32-byte message hash (as field element) to a G1 point using EIP-2537 MAP_FP_TO_G1
+     *      Input must be a 64-byte big-endian field element; we left-pad the 32-byte hash.
+     *      Returns 128-byte uncompressed G1 point (x||y), big-endian coords (64-bytes each).
+     */
+    function _mapMessageToG1(bytes32 messageHash) internal view returns (bytes memory) {
+        bytes memory fp = new bytes(64);
+        // Left-pad 32 zero bytes, then place messageHash as big-endian
+        assembly {
+            mstore(add(fp, 0x40), messageHash)
+        }
+        (bool ok, bytes memory out) = BLS12_MAP_FP_TO_G1.staticcall(fp);
+        require(ok && out.length == 128, "MAP_FP_TO_G1 failed");
+        return out;
+    }
+
+    /**
+     * @dev Negate a G1 point (x, y) by computing (x, p - y) modulo field p.
+     *      Expects/unpacks 128-byte uncompressed G1 encoding (x||y), 64-byte big-endian coords.
+     */
+    function _negateG1(bytes memory g1) internal pure returns (bytes memory) {
+        require(g1.length == 128, "Invalid G1 length");
+        bytes memory out = new bytes(128);
+        // Copy x as-is
+        for (uint256 i = 0; i < 64; i++) {
+            out[i] = g1[i];
+        }
+        // Compute y' = p - y (big-endian, byte-by-byte with borrow)
+        uint8 borrow = 0;
+        for (uint256 i = 0; i < 64; i++) {
+            uint256 idx = 63 - i;
+            uint8 pi = uint8(FP_MODULUS[idx]);
+            uint8 yi = uint8(g1[64 + idx]);
+            uint16 subtrahend = uint16(yi) + uint16(borrow);
+            if (pi >= subtrahend) {
+                out[64 + idx] = bytes1(uint8(pi - subtrahend));
+                borrow = 0;
+            } else {
+                out[64 + idx] = bytes1(uint8(uint16(pi) + 256 - subtrahend));
+                borrow = 1;
+            }
+        }
+        // If borrow == 1 here, input y >= p, which should not happen for valid points.
+        return out;
     }
 
     /**
@@ -526,22 +676,27 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         bytes memory validationSignature,
         uint64 previousEpochId
     ) internal view returns (bool) {
-        require(validationSignature.length == 48, "Invalid validation signature length");
+        require(validationSignature.length == 128, "Invalid validation signature length");
 
         // Compute validation message hash following the format:
         // abi.encodePacked(previous_epoch_id, chain_id, data[0], data[1], data[2])
         // where data[0], data[1], data[2] are the 3 parts of the new group public key
         
-        // Chain ID as bytes32 (constant for this contract deployment)
-        bytes32 chainId = bytes32(block.chainid);
+        // Use GONKA chain id (source chain) for transition binding
+        bytes32 chainId = GONKA_CHAIN_ID;
         
-        // Encode message: abi.encodePacked(previousEpochId, chainId, part0, part1, part2)
+        // Encode message: abi.encodePacked(previousEpochId, chainId, part0..part7)
         bytes memory encodedMessage = abi.encodePacked(
             previousEpochId,        // 8 bytes
             chainId,                // 32 bytes
             newGroupKey.part0,      // 32 bytes - direct access, no intermediate variables
             newGroupKey.part1,      // 32 bytes
-            newGroupKey.part2       // 32 bytes
+            newGroupKey.part2,      // 32 bytes
+            newGroupKey.part3,      // 32 bytes
+            newGroupKey.part4,      // 32 bytes
+            newGroupKey.part5,      // 32 bytes
+            newGroupKey.part6,      // 32 bytes
+            newGroupKey.part7       // 32 bytes
         );
         
         // Compute message hash

@@ -57,6 +57,10 @@ class MockState:
         mock_device2.index = 1
         mock_device2.name = "NVIDIA A100"
         self.gpu_manager.get_devices.return_value = [mock_device1, mock_device2]
+        
+        # Mock async methods for GPU manager
+        self.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        self.gpu_manager.get_devices_async = AsyncMock(return_value=[mock_device1, mock_device2])
 
 
 class MockApp:
@@ -165,6 +169,8 @@ class TestGetHealthData:
         request = MockRequest()
         request.app.state.gpu_manager.is_cuda_available.return_value = False
         request.app.state.gpu_manager.get_devices.return_value = []
+        request.app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=False)
+        request.app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         health_data = await get_health_data(request)
         
@@ -201,6 +207,8 @@ class TestHealthEndpoints:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         assert response.status_code == 200
@@ -226,6 +234,8 @@ class TestHealthEndpoints:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/livez")
         assert response.status_code == 200
@@ -250,6 +260,8 @@ class TestHealthEndpoints:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -277,6 +289,8 @@ class TestHealthEndpoints:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -304,6 +318,8 @@ class TestHealthEndpoints:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -477,6 +493,8 @@ class TestResponseCaching:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         # First request should populate cache
         response1 = client.get("/health")
@@ -531,6 +549,8 @@ class TestPOWManagerHealth:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -589,6 +609,8 @@ class TestTRAINManagerHealth:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -619,6 +641,8 @@ class TestTRAINManagerHealth:
         app.state.train_manager.is_healthy.return_value = False
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -683,6 +707,8 @@ class TestEdgeCases:
         
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = mock_devices
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=mock_devices)
         
         response = client.get("/health")
         data = response.json()
@@ -711,6 +737,8 @@ class TestEdgeCases:
         
         app.state.gpu_manager.is_cuda_available.return_value = False
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=False)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()
@@ -740,6 +768,8 @@ class TestEdgeCases:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         # Clear cache to ensure fresh calls
         from api import health as health_module
@@ -811,6 +841,8 @@ class TestIntegration:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         # Step 1: Inference starting (running but not yet healthy)
         app.state.inference_manager.is_running.return_value = True
@@ -861,6 +893,8 @@ class TestIntegration:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         # Make 5 rapid requests
         for _ in range(5):
@@ -892,6 +926,8 @@ class TestIntegration:
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
         app.state.gpu_manager.get_devices.return_value = []
+        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
+        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
         
         response = client.get("/health")
         data = response.json()

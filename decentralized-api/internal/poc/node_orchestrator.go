@@ -17,7 +17,7 @@ const (
 )
 
 type NodePoCOrchestrator interface {
-	ValidateReceivedBatches(startOfValStageHeight int64)
+	ValidateReceivedBatches(pocStageStartBlockHeight int64)
 }
 
 type NodePoCOrchestratorImpl struct {
@@ -95,31 +95,51 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 	}
 }
 
-func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
-	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(pocStageStartBlockHeight int64) {
+	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight)
 	epochState := o.phaseTracker.GetCurrentEpochState()
-	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
-	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
+	// Use the parameter as storage key (trigger_height for confirmation PoC, validation start for regular PoC)
+	startOfPoCBlockHeight := pocStageStartBlockHeight
 	logging.Info("ValidateReceivedBatches. Current epoch state.", types.PoC,
-		"startOfValStageHeight", startOfValStageHeight,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight,
 		"epochState.CurrentBlock.Height", epochState.CurrentBlock.Height,
 		"epochState.CurrentPhase", epochState.CurrentPhase,
 		"epochState.LatestEpoch.PocStartBlockHeight", epochState.LatestEpoch.PocStartBlockHeight,
 		"epochState.LatestEpoch.EpochIndex", epochState.LatestEpoch.EpochIndex)
 
-	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
-	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
-		return
+	// Determine block hash based on PoC type
+	var blockHash string
+	if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
+		// Confirmation PoC - use hash from event (hash of block generation_start_height - 1)
+		blockHash = epochState.ActiveConfirmationPoCEvent.PocSeedBlockHash
+		logging.Info("ValidateReceivedBatches. Using confirmation PoC block hash from event.", types.PoC,
+			"pocStageStartBlockHeight", pocStageStartBlockHeight,
+			"triggerHeight", epochState.ActiveConfirmationPoCEvent.TriggerHeight,
+			"generationStartHeight", epochState.ActiveConfirmationPoCEvent.GenerationStartHeight,
+			"blockHash", blockHash)
+	} else {
+		// Regular PoC - query hash at startOfPoCBlockHeight
+		var err error
+		blockHash, err = o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
+		if err != nil {
+			logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC,
+				"pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err)
+			return
+		}
+		logging.Info("ValidateReceivedBatches. Got start of PoC block hash.", types.PoC,
+			"pocStageStartBlockHeight", pocStageStartBlockHeight,
+			"pocStartBlockHeight", startOfPoCBlockHeight,
+			"blockHash", blockHash)
 	}
-	logging.Info("ValidateReceivedBatches. Got start of PoC block hash.", types.PoC,
-		"startOfValStageHeight", startOfValStageHeight, "pocStartBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
 
 	// 1. GET ALL SUBMITTED BATCHES!
 	// FIXME: might be too long of a transaction, paging might be needed
+	logging.Info("ValidateReceivedBatches. Querying batches from chain.", types.PoC,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight,
+		"startOfPoCBlockHeight", startOfPoCBlockHeight)
 	allParticipantsBatches, err := o.chainBridge.PoCBatchesForStage(startOfPoCBlockHeight)
 	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get PoC allParticipantsBatches", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get PoC allParticipantsBatches", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err)
 		return
 	}
 	participants := make([]string, len(allParticipantsBatches.PocBatch))
@@ -127,32 +147,33 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		participants[i] = participantBatches.Participant
 	}
 	logging.Info("ValidateReceivedBatches. Got PoC allParticipantsBatches.", types.PoC,
-		"startOfValStageHeight", startOfValStageHeight,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight,
+		"startOfPoCBlockHeight", startOfPoCBlockHeight,
 		"numParticipants", len(participants),
 		"participants", participants)
 
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get nodes", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get nodes", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err)
 		return
 	}
-	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "startOfValStageHeight", startOfValStageHeight, "numNodes", len(nodes))
+	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "numNodes", len(nodes))
 	nodes = filterNodes(nodes)
 	logging.Info("ValidateReceivedBatches. Filtered nodes available for PoC validation.", types.PoC, "numNodes", len(nodes))
 
 	if len(nodes) == 0 {
-		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight)
 		return
 	}
 
 	pocParams, err := o.chainBridge.GetPocParams()
 	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get chain parameters", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get chain parameters", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err)
 		return
 	}
 	samplesPerBatch := int64(pocParams.ValidationSampleSize)
 	if pocParams.ValidationSampleSize == 0 {
-		logging.Info("Defaulting to 200 samples per batch", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+		logging.Info("Defaulting to 200 samples per batch", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight)
 		samplesPerBatch = POC_VALIDATE_SAMPLES_PER_BATCH
 	}
 
@@ -203,7 +224,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			logging.Info("ValidateReceivedBatches. Sending sampled batch for validation.", types.PoC,
 				"attempt", attempt,
 				"length", len(batchToValidate.Nonces),
-				"startOfValStageHeight", startOfValStageHeight,
+				"pocStageStartBlockHeight", pocStageStartBlockHeight,
 				"node.Id", node.Node.Id, "node.Host", node.Node.Host,
 				"participantBatches.Participant", participantBatches.Participant)
 			logging.Debug("ValidateReceivedBatches. Sending batch", types.PoC, "node", node.Node.Host, "participantBatches", batchToValidate)
@@ -212,7 +233,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
 			err = nodeClient.ValidateBatch(context.Background(), batchToValidate)
 			if err != nil {
-				logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
+				logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "node", node.Node.Host, "error", err)
 				continue
 			}
 
@@ -225,14 +246,14 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		} else {
 			failedValidations++
 			logging.Error("ValidateReceivedBatches. Failed to validate batch after all retry attempts", types.PoC,
-				"startOfValStageHeight", startOfValStageHeight,
+				"pocStageStartBlockHeight", pocStageStartBlockHeight,
 				"participantBatches.Participant", participantBatches.Participant,
 				"maxAttempts", POC_VALIDATE_BATCH_RETRIES)
 		}
 	}
 
 	logging.Info("ValidateReceivedBatches. Finished.", types.PoC,
-		"startOfValStageHeight", startOfValStageHeight,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight,
 		"totalBatches", len(allParticipantsBatches.PocBatch),
 		"successfulValidations", successfulValidations,
 		"failedValidations", failedValidations)

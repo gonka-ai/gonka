@@ -118,3 +118,15 @@ class MessageSerializer(val namingPolicy: com.google.gson.FieldNamingPolicy) : J
         return jsonObject
     }
 }
+
+class ConfirmationPoCPhaseDeserializer : JsonDeserializer<ConfirmationPoCPhase> {
+    override fun deserialize(
+        json: JsonElement,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): ConfirmationPoCPhase {
+        val intValue = json.asInt
+        return ConfirmationPoCPhase.values().find { it.value == intValue }
+            ?: throw IllegalArgumentException("Unknown ConfirmationPoCPhase value: $intValue")
+    }
+}

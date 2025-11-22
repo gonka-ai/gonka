@@ -31,7 +31,7 @@ func (s *KeeperTestSuite) TestStakingHooks_BeforeValidatorSlashed() {
 		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
-			s.Require().Equal("collateral slashed", memo)
+			s.Require().Equal("collateral_slashed:", memo)
 			return nil
 		}).
 		Times(1)

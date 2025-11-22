@@ -9,7 +9,6 @@ import (
 	"strconv"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -119,7 +118,8 @@ func (bm *BlsManager) submitPartialSignatures(epochId uint64, requestId []byte, 
 	return nil
 }
 
-// computePartialSignature computes a BLS partial signature for the given message hash
+// computePartialSignature computes per-slot BLS partial signatures for the given message hash.
+// Returns a concatenation of 48-byte compressed G1 signatures (one per slot in our assigned range).
 func (bm *BlsManager) computePartialSignature(messageHash []byte, result *VerificationResult) ([]byte, error) {
 	if len(result.AggregatedShares) == 0 {
 		return nil, fmt.Errorf("no aggregated shares available for signing")
@@ -131,20 +131,16 @@ func (bm *BlsManager) computePartialSignature(messageHash []byte, result *Verifi
 		return nil, fmt.Errorf("failed to hash message to G1: %w", err)
 	}
 
-	// Aggregate all our slot shares for signing
-	// In threshold BLS, we combine all our slot shares into a single signing key
-	var aggregatedSigningKey fr.Element
-	for _, share := range result.AggregatedShares {
-		aggregatedSigningKey.Add(&aggregatedSigningKey, &share)
+	// For each relative slot offset, compute per-slot signature and append 48 bytes
+	var concatenated []byte
+	for rel := 0; rel < len(result.AggregatedShares); rel++ {
+		sk := result.AggregatedShares[rel]
+		var sig bls12381.G1Affine
+		sig.ScalarMultiplication(&messageG1, sk.BigInt(new(big.Int)))
+		sb := sig.Bytes()
+		concatenated = append(concatenated, sb[:]...)
 	}
-
-	// Compute BLS signature: signature = signing_key * message_G1
-	var signature bls12381.G1Affine
-	signature.ScalarMultiplication(&messageG1, aggregatedSigningKey.BigInt(new(big.Int)))
-
-	// Return compressed signature bytes
-	signatureBytes := signature.Bytes()
-	return signatureBytes[:], nil
+	return concatenated, nil
 }
 
 // extractEventData extracts byte data from event (base64, hex, or raw string)

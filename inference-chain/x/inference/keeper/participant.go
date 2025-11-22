@@ -9,32 +9,22 @@ import (
 
 // SetParticipant set a specific participant in the store from its index
 func (k Keeper) SetParticipant(ctx context.Context, participant types.Participant) error {
+	// Compute new status and delegate transition handling to a unified method.
+	err := k.UpdateParticipantStatus(ctx, &participant)
+	if err != nil {
+		k.LogError("Failed to update participant status", types.Validation, "error", err)
+		return err
+	}
+
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Index)
 	if err != nil {
 		return err
-	}
-	var oldParticipant *types.Participant
-	p, err := k.Participants.Get(ctx, participantAddress)
-	if err != nil {
-		oldParticipant = nil
-	} else {
-		oldParticipant = &p
 	}
 	err = k.Participants.Set(ctx, participantAddress, participant)
 	if err != nil {
 		return err
 	}
 	k.LogDebug("Saved Participant", types.Participants, "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)
-	group, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		k.LogWarn("Failed to get current epoch group", types.Participants, "error", err)
-		return nil
-	}
-	err = group.UpdateMember(ctx, oldParticipant, &participant)
-	if err != nil {
-		k.LogWarn("Failed to update member", types.Participants, "error", err)
-		return nil
-	}
 	return nil
 }
 

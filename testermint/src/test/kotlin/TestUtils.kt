@@ -1,14 +1,6 @@
 package com.productscience
 
-import com.productscience.EpochStage
-import com.productscience.InferenceResult
-import com.productscience.LocalInferencePair
-import com.productscience.calculateBalanceChanges
-import com.productscience.calculateCumulativeEpochRewards
-import com.productscience.getEpochsSinceGenesis
-import com.productscience.isBitcoinRewardsEnabled
 import com.productscience.data.Participant
-import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.tinylog.kotlin.Logger
@@ -41,11 +33,17 @@ fun verifySettledInferences(
     }
     val afterSettleInferences = allInferences.map { highestFunded.api.getInference(it.inference.inferenceId) }
     val params = highestFunded.node.getInferenceParams().params
-    
+
     // Calculate epochs since genesis for Bitcoin reward decay
     val endLastRewardedEpoch = getRewardCalculationEpochIndex(highestFunded)
-    
-    val payouts = calculateBalanceChanges(afterSettleInferences, params, beforeParticipants, startLastRewardedEpoch, endLastRewardedEpoch)
+
+    val payouts = calculateBalanceChanges(
+        afterSettleInferences,
+        params,
+        beforeParticipants,
+        startLastRewardedEpoch,
+        endLastRewardedEpoch
+    )
     val actualChanges = beforeParticipants.associate {
         it.id to afterSettleParticipants.first { participant -> participant.id == it.id }.balance - it.balance
     }
@@ -71,24 +69,24 @@ fun getRewardCalculationEpochIndex(inferencePair: LocalInferencePair): Long {
     val epochResponse = inferencePair.getEpochData()
     val currentEpochIndex = epochResponse.latestEpoch.index
     val claimRewardsBlockHeight = epochResponse.epochStages.claimMoney
-    
+
     val claimRewardsHappened = currentBlockHeight > claimRewardsBlockHeight
     val rewardCalculationEpoch = if (claimRewardsHappened) {
         currentEpochIndex - 1 // CLAIM_REWARDS has completed, include current epoch
     } else {
         maxOf(currentEpochIndex - 2, 0L) // CLAIM_REWARDS hasn't completed, use previous epoch
     }
-    
+
     Logger.info("Reward epoch calculation - LiveCurrentBlock: $currentBlockHeight, ClaimRewardsBlock: $claimRewardsBlockHeight")
     Logger.info("Reward epoch result - CurrentEpoch: $currentEpochIndex, ClaimRewardsHappened: $claimRewardsHappened, RewardCalculationEpoch: $rewardCalculationEpoch")
-    
+
     return rewardCalculationEpoch
 }
 
 /**
  * Calculate expected balance change from epoch rewards.
  * Handles both legacy (simple refund) and Bitcoin (refund + cumulative epoch rewards) systems.
- * 
+ *
  * @param inferencePair LocalInferencePair to get parameters and participant information
  * @param participantAddress Address of the participant to calculate changes for
  * @param startEpochIndex Epoch index when test measurement started
@@ -105,19 +103,19 @@ fun calculateExpectedChangeFromEpochRewards(
 ): Long {
     val params = inferencePair.node.getInferenceParams().params
     val participants = inferencePair.api.getParticipants()
-    
+
     // Determine which epochs to exclude from rewards
     val excludedEpochs = if (failureEpoch != null) {
         setOf(failureEpoch)
     } else {
         emptySet()
     }
-    
+
     Logger.info("Bitcoin reward calculation - Participant: $participantAddress")
     Logger.info("Bitcoin reward params - Use: ${params.bitcoinRewardParams?.useBitcoinRewards}, Initial: ${params.bitcoinRewardParams?.initialEpochReward}, Decay: ${params.bitcoinRewardParams?.decayRate}")
     Logger.info("Epoch timing - StartLastRewardedEpoch: $startEpochIndex, CurrentLastRewardedEpoch: $currentEpochIndex")
     Logger.info("Excluded epochs: $excludedEpochs, Participants count: ${participants.size}")
-    
+
     // calculateCumulativeEpochRewards handles all Bitcoin/Legacy checks internally
     val reward = calculateCumulativeEpochRewards(
         participants,
@@ -126,7 +124,7 @@ fun calculateExpectedChangeFromEpochRewards(
         currentEpochIndex,
         excludedEpochs
     )[participantAddress] ?: 0L
-    
+
     Logger.info("Final calculated reward for $participantAddress: $reward")
     return reward
 } 

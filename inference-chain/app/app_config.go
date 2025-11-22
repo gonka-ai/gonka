@@ -206,6 +206,7 @@ var (
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter}},
 		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
+		{Account: inferencemoduletypes.BridgeEscrowAccName},
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: collateralmoduletypes.ModuleName, Permissions: []string{authtypes.Burner}},
 		{Account: streamvestingmoduletypes.ModuleName, Permissions: []string{authtypes.Minter}},

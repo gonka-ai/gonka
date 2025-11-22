@@ -82,6 +82,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		authority.String(),
 	)
 
+	upgradeMock := keepertest.NewMockUpgradeKeeper(ctrl)
 	inferenceKeeper := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(inferenceStoreKey),
@@ -98,6 +99,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		svKeeper,
 		authzKeeper,
 		nil,
+		upgradeMock,
 	)
 
 	// Initialize default params for both keepers

@@ -1,0 +1,78 @@
+[
+  {
+    "id": "wiremock",
+    "host": "genesis-mock-server",
+    "inference_port": 8080,
+    "poc_port": 8080,
+    "max_concurrent": 10,
+    "models": {
+      "Qwen/Qwen2.5-7B-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
+    "hardware": [
+      {
+        "type": "A100",
+        "count": 1
+      },
+      {
+        "type": "T4",
+        "count": 2
+      }
+    ]
+  },
+  {
+    "id": "wiremock-2",
+    "host": "genesis-mock-server-2",
+    "inference_port": 8080,
+    "poc_port": 8080,
+    "max_concurrent": 10,
+    "models": {
+      "Qwen/Qwen2.5-7B-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
+    "hardware": [
+      {
+        "type": "A100",
+        "count": 1
+      },
+      {
+        "type": "T4",
+        "count": 2
+      }
+    ]
+  },
+  {
+    "id": "wiremock-3",
+    "host": "genesis-mock-server-3",
+    "inference_port": 8080,
+    "poc_port": 8080,
+    "max_concurrent": 10,
+    "models": {
+      "Qwen/Qwen2.5-7B-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
+    "hardware": [
+      {
+        "type": "A100",
+        "count": 1
+      },
+      {
+        "type": "T4",
+        "count": 2
+      }
+    ]
+  }
+]
+

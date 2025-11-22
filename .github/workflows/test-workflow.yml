@@ -208,7 +208,7 @@ jobs:
       - name: Set up Docker (Latest Version)
         uses: docker/setup-docker-action@v4
         with:
-          version: 'latest'
+          version: '28.5.2'
 
       - name: Download Docker Images
         uses: actions/download-artifact@v4

@@ -158,6 +158,11 @@ func (m *MockCosmosMessageClient) BridgeExchange(transaction *types.MsgBridgeExc
 	return args.Error(0)
 }
 
+func (m *MockCosmosMessageClient) GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error) {
+	args := m.Called(ctx, chainId)
+	return args.Get(0).([]types.BridgeContractAddress), args.Error(1)
+}
+
 func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
 	args := m.Called(msg)
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)

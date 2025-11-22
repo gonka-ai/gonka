@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	mathsdk "cosmossdk.io/math"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
 
@@ -207,4 +210,119 @@ func ValidateGuardianEnhancementResults(original []stakingkeeper.ComputeResult, 
 	}
 
 	return nil
+}
+
+// ApplyBLSGuardianSlotReservation computes adjusted percentage weights for BLS slot assignment
+// using the genesis guardian multiplier f = m/(1+m). It is applied only when:
+// - genesis guardian enhancement is enabled,
+// - network is not mature,
+// - at least one guardian is present among active participants,
+// - at least two participants exist.
+// It returns a map from participant account address to percentage (0..100) and the list of guardian
+// account addresses present in the set. If no adjustment is applied, returns (nil, guardiansInSet).
+func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activeParticipants []*types.ActiveParticipant) map[string]mathsdk.LegacyDec {
+	// Basic gating
+	if len(activeParticipants) < 2 {
+		return nil
+	}
+
+	// Total network power
+	totalWeight := int64(0)
+	for _, p := range activeParticipants {
+		totalWeight += p.Weight
+	}
+	if totalWeight <= 0 {
+		return nil
+	}
+
+	// Build temporary compute-like results to reuse central gating logic
+	tmpResults := make([]stakingkeeper.ComputeResult, 0, len(activeParticipants))
+	for _, p := range activeParticipants {
+		acc, err := sdk.AccAddressFromBech32(p.Index)
+		if err != nil {
+			continue
+		}
+		op := sdk.ValAddress(acc).String()
+		tmpResults = append(tmpResults, stakingkeeper.ComputeResult{Power: p.Weight, OperatorAddress: op})
+	}
+
+	// Centralized gating: feature enabled, maturity, guardians configured and present, len>=2
+	if !ShouldApplyGenesisGuardianEnhancement(ctx, k, totalWeight, tmpResults) {
+		return nil
+	}
+
+	// Guardian operator addresses
+	guardianOperators := k.GetGenesisGuardianAddresses(ctx)
+	guardianOpSet := make(map[string]bool, len(guardianOperators))
+	for _, op := range guardianOperators {
+		guardianOpSet[op] = true
+	}
+
+	// Identify guardians present and compute sums (by operator address)
+	guardianIndices := []int{}
+	totalGuardianPower := int64(0)
+	for i, p := range activeParticipants {
+		acc, err := sdk.AccAddressFromBech32(p.Index)
+		if err != nil {
+			continue
+		}
+		op := sdk.ValAddress(acc).String()
+		if guardianOpSet[op] {
+			guardianIndices = append(guardianIndices, i)
+			totalGuardianPower += p.Weight
+		}
+	}
+	if len(guardianIndices) == 0 {
+		return nil
+	}
+
+	// Compute guardian fraction f = m/(1+m)
+	m := k.GetGenesisGuardianMultiplier(ctx)
+	if m == nil {
+		return nil
+	}
+	mDec := m.ToDecimal()
+	onePlusM := mDec.Add(decimal.NewFromInt(1))
+	if onePlusM.IsZero() {
+		return nil
+	}
+	f := mDec.Div(onePlusM)
+
+	// Idempotency: detect if current guardian percentage already ≈ f
+	currentGuardianFraction := decimal.NewFromInt(totalGuardianPower).Div(decimal.NewFromInt(totalWeight))
+	if currentGuardianFraction.Sub(f).Abs().LessThan(decimal.NewFromFloat(0.005)) {
+		return nil
+	}
+
+	// Build adjusted percentage map (0..100)
+	adjusted := make(map[string]mathsdk.LegacyDec)
+
+	// Guardians: equal split of f
+	guardianShare := f.Div(decimal.NewFromInt(int64(len(guardianIndices))))
+	guardianPercent := mathsdk.LegacyMustNewDecFromStr(guardianShare.Mul(decimal.NewFromInt(100)).String())
+	for _, idx := range guardianIndices {
+		acc := activeParticipants[idx].Index
+		adjusted[acc] = guardianPercent
+	}
+
+	// Non-guardians: scale to (1 - f) proportionally by their weights
+	remainderFraction := decimal.NewFromInt(1).Sub(f)
+	nonGuardianWeight := totalWeight - totalGuardianPower
+	if nonGuardianWeight > 0 && remainderFraction.GreaterThan(decimal.Zero) {
+		for _, ap := range activeParticipants {
+			acc, err := sdk.AccAddressFromBech32(ap.Index)
+			if err != nil {
+				continue
+			}
+			op := sdk.ValAddress(acc).String()
+			if guardianOpSet[op] {
+				continue
+			}
+			share := decimal.NewFromInt(ap.Weight).Div(decimal.NewFromInt(nonGuardianWeight))
+			percent := share.Mul(remainderFraction).Mul(decimal.NewFromInt(100))
+			adjusted[ap.Index] = mathsdk.LegacyMustNewDecFromStr(percent.String())
+		}
+	}
+
+	return adjusted
 }

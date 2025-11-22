@@ -89,7 +89,7 @@ async def check_model_status(
     manager = get_model_manager(request)
     
     try:
-        status = manager.get_model_status(model)
+        status = await manager.get_model_status_async(model)
         logger.info(f"Status check for {model.hf_repo}: {status.status}")
         return status
     except Exception as e:
@@ -317,7 +317,7 @@ async def list_models(request: Request) -> ModelListResponse:
     manager = get_model_manager(request)
     
     try:
-        models = manager.list_models()
+        models = await manager.list_models_async()
         logger.info(f"Listed {len(models)} models")
         
         return ModelListResponse(models=models)

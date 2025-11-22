@@ -86,6 +86,7 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	streamvestingmodulekeeper "github.com/productscience/inference/x/streamvesting/keeper"
 
+	blsmodulekeeper "github.com/productscience/inference/x/bls/keeper"
 	bookkeepermodulekeeper "github.com/productscience/inference/x/bookkeeper/keeper"
 	restrictionsmodulekeeper "github.com/productscience/inference/x/restrictions/keeper"
 
@@ -163,6 +164,7 @@ type App struct {
 	WasmKeeper       wasmkeeper.Keeper
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 
+	BlsKeeper             blsmodulekeeper.Keeper
 	BookkeeperKeeper      bookkeepermodulekeeper.Keeper
 	InferenceKeeper       inferencemodulekeeper.Keeper
 	CollateralKeeper      collateralmodulekeeper.Keeper
@@ -254,6 +256,7 @@ func New(
 		&app.interfaceRegistry,
 		&app.AccountKeeper,
 		&app.BankKeeper,
+		&app.BlsKeeper,
 		&app.BookkeeperKeeper,
 		&app.StakingKeeper,
 		&app.DistrKeeper,
@@ -287,7 +290,7 @@ func New(
 	// The bank module automatically collects and applies all registered send restrictions
 
 	// register legacy modules
-	wasmConfig := app.registerLegacyModules(appOpts, wasmOpts)
+	nodeConfig := app.registerLegacyModules(appOpts, wasmOpts)
 
 	// register streaming services
 	if err := app.RegisterStreamingServices(appOpts, app.kvStoreKeys()); err != nil {
@@ -318,7 +321,7 @@ func New(
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
 	app.sm.RegisterStoreDecoders()
 
-	app.setAnteHandler(app.txConfig, wasmConfig, app.GetKey(wasmtypes.StoreKey))
+	app.setAnteHandler(app.txConfig, nodeConfig, app.GetKey(wasmtypes.StoreKey))
 
 	app.registerMigrations()
 

@@ -392,9 +392,9 @@ func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex
 		return false, fmt.Errorf("no commitments provided")
 	}
 
-	// Convert slot index to fr.Element for polynomial evaluation
+	// Convert slot index to fr.Element for polynomial evaluation (x = slotIndex+1, to avoid x=0 and match chain)
 	slotIndexFr := &fr.Element{}
-	slotIndexFr.SetUint64(uint64(slotIndex))
+	slotIndexFr.SetUint64(uint64(slotIndex + 1))
 
 	// Evaluate the polynomial at slotIndex using the commitments
 	// This computes: sum(commitments[j] * slotIndex^j) for j = 0 to degree
@@ -425,7 +425,7 @@ func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex
 		// Add to running total
 		expectedCommitment.Add(&expectedCommitment, &scaledCommitment)
 
-		// Update slotIndexPower for next iteration: slotIndexPower *= slotIndex
+		// Update slotIndexPower for next iteration: slotIndexPower *= (slotIndex+1)
 		slotIndexPower.Mul(slotIndexPower, slotIndexFr)
 	}
 

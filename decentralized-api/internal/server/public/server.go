@@ -79,8 +79,8 @@ func NewServer(
 
 	g.GET("versions", s.getVersions)
 
-	g.POST("bridge/block", s.postBlock)
 	g.GET("bridge/status", s.getBridgeStatus)
+	g.GET("bridge/addresses", s.getBridgeAddresses)
 
 	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
@@ -88,6 +88,7 @@ func NewServer(
 	// BLS Query Endpoints
 	blsGroup := g.Group("bls/")
 	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
+	blsGroup.GET("epochs/:id", s.getBLSEpochByID)
 	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
 
 	// Restrictions public API (query-only)

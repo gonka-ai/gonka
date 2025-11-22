@@ -1,4 +1,4 @@
-# Ethereum Bridge Smart Contract
+# [IMPLEMENTED]: Ethereum Bridge Smart Contract
 
 This directory contains the Ethereum smart contract implementation for the cross-chain bridge using BLS threshold signatures.
 

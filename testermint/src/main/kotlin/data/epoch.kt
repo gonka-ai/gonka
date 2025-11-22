@@ -13,7 +13,11 @@ data class EpochResponse(
     @SerializedName("next_epoch_stages")
     val nextEpochStages: EpochStages,
     @SerializedName("epoch_params")
-    val epochParams: EpochParams
+    val epochParams: EpochParams,
+    @SerializedName("is_confirmation_poc_active")
+    val isConfirmationPocActive: Boolean = false,
+    @SerializedName("active_confirmation_poc_event")
+    val activeConfirmationPocEvent: ConfirmationPoCEvent? = null
 ) {
     val safeForInference: Boolean =
         if (phase == EpochPhase.Inference) {
@@ -70,3 +74,25 @@ data class EpochExchangeWindow(
     val start: Long,
     val end: Long
 )
+
+data class ConfirmationPoCEvent(
+    @SerializedName("epoch_index")
+    val epochIndex: Long,
+    @SerializedName("event_sequence")
+    val eventSequence: Long,
+    @SerializedName("trigger_height")
+    val triggerHeight: Long,
+    @SerializedName("generation_start_height")
+    val generationStartHeight: Long,
+    val phase: ConfirmationPoCPhase,
+    @SerializedName("poc_seed_block_hash")
+    val pocSeedBlockHash: String = ""
+)
+
+enum class ConfirmationPoCPhase(val value: Int) {
+    CONFIRMATION_POC_INACTIVE(0),
+    CONFIRMATION_POC_GRACE_PERIOD(1),
+    CONFIRMATION_POC_GENERATION(2),
+    CONFIRMATION_POC_VALIDATION(3),
+    CONFIRMATION_POC_COMPLETED(4)
+}

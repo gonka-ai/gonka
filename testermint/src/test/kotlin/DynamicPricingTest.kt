@@ -12,7 +12,7 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 import kotlin.test.assertNotNull
-
+import com.productscience.assertions.assertThat
 /**
  * Comprehensive end-to-end test for dynamic pricing algorithm.
  *
@@ -198,6 +198,7 @@ class DynamicPricingTest : TestermintTest() {
         )
 
         val response = genesis.submitMessage(message)
+        assertThat(response).isSuccess()
         assertThat(response.code).isZero()
         println(response)
         val inference = genesis.node.getInference(signature)
@@ -230,7 +231,7 @@ class DynamicPricingTest : TestermintTest() {
             model = defaultModel,
         )
         val finishResponse = genesis.submitMessage(finishMessage)
-        assertThat(finishResponse.code).isZero()
+        assertThat(finishResponse).isSuccess()
         val finishInference = genesis.node.getInference(finishSignature)
         assertNotNull(finishInference)
         assertThat(finishInference.inference.perTokenPrice).isGreaterThan(1000L)

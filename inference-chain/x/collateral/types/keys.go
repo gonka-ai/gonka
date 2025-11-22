@@ -38,4 +38,8 @@ var (
 
 	// JailedKey is the prefix for jailed participant entries
 	JailedKey = collections.NewPrefix(6)
+
+	// SlashedInEpochKey is a keyset to record that a participant was slashed for a given reason in a given epoch
+	// Key: (epoch:uint64, participant:AccAddress, reason:string)
+	SlashedInEpochKey = collections.NewPrefix(7)
 )

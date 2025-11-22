@@ -352,6 +352,78 @@ func TestValidationParamsNilFieldChecks(t *testing.T) {
 			expectedErrMsg: "min validation average cannot be nil",
 		},
 		{
+			name: "nil BadParticipantInvalidationRate",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.BadParticipantInvalidationRate = nil
+				return params
+			},
+			expectedErrMsg: "bad participant invalidation rate cannot be nil",
+		},
+		{
+			name: "nil InvalidationHThreshold",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.InvalidationHThreshold = nil
+				return params
+			},
+			expectedErrMsg: "invalidation h threshold cannot be nil",
+		},
+		{
+			name: "nil DowntimeGoodPercentage",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.DowntimeGoodPercentage = nil
+				return params
+			},
+			expectedErrMsg: "downtime good percentage cannot be nil",
+		},
+		{
+			name: "nil DowntimeBadPercentage",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.DowntimeBadPercentage = nil
+				return params
+			},
+			expectedErrMsg: "downtime bad percentage cannot be nil",
+		},
+		{
+			name: "nil DowntimeHThreshold",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.DowntimeHThreshold = nil
+				return params
+			},
+			expectedErrMsg: "downtime h threshold cannot be nil",
+		},
+		{
+			name: "nil QuickFailureThreshold",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.QuickFailureThreshold = nil
+				return params
+			},
+			expectedErrMsg: "quick failure threshold cannot be nil",
+		},
+		{
+			name: "nil InvalidReputationPreserve",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.InvalidReputationPreserve = nil
+				return params
+			},
+			expectedErrMsg: "invalid reputation preserve cannot be nil",
+		},
+		{
+			name: "nil DowntimeReputationPreserve",
+			setupParams: func() *types.ValidationParams {
+				params := types.DefaultValidationParams()
+				params.DowntimeReputationPreserve = nil
+				return params
+			},
+			expectedErrMsg: "downtime reputation preserve cannot be nil",
+		},
+		{
 			name: "valid ValidationParams",
 			setupParams: func() *types.ValidationParams {
 				return types.DefaultValidationParams()

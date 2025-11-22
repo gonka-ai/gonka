@@ -24,15 +24,15 @@ RUN apk add --no-cache make gcc musl-dev git patchelf
 
 # Use the musl libc version of wasmvm and create a symlink for the linker
 RUN if [ "$GOARCH" = "arm64" ]; then \
-        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.9/libwasmvm_muslc.aarch64.a \
-        && echo "a43cb22bf85e89bea45c9af04a229bc92f70ddd8216fee7db21d349d7579cff6 /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
+        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.aarch64.a \
+        && echo "27fb13821dbc519119f4f98c30a42cb32429b111b0fdc883686c34a41777488f /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
         && ln -s /lib/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a \
-        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.9/internal/api/libwasmvm.aarch64.so; \
+        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v2.2.4/internal/api/libwasmvm.aarch64.so; \
     else \
-        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.9/libwasmvm_muslc.x86_64.a \
-        && echo "797a235aefb5f8b2d60ecd0f3a430bab28d913b46b7661c0280dc7195a7e1144 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
+        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a \
+        && echo "70c989684d2b48ca17bbd55bb694bbb136d75c393c067ef3bdbca31d2b23b578 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
         && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
-        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.9/internal/api/libwasmvm.x86_64.so; \
+        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v2.2.4/internal/api/libwasmvm.x86_64.so; \
     fi
 
 COPY inference-chain/ /app/inference-chain

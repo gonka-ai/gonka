@@ -15,6 +15,23 @@ func createTestLogger(t *testing.T) log.Logger {
 	return log.NewTestLogger(t)
 }
 
+// createTestValidationWeight creates a ValidationWeight with proper MLNode structure for testing
+func createTestValidationWeight(memberAddress string, weight int64, reputation int32) *types.ValidationWeight {
+	return &types.ValidationWeight{
+		MemberAddress:      memberAddress,
+		Weight:             weight,
+		Reputation:         reputation,
+		ConfirmationWeight: weight, // For tests, assume all weight is confirmed
+		MlNodes: []*types.MLNodeInfo{
+			{
+				NodeId:             memberAddress + "-node",
+				PocWeight:          weight,
+				TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+			},
+		},
+	}
+}
+
 func TestCalculateFixedEpochReward(t *testing.T) {
 	// Test parameters matching Bitcoin proposal defaults
 	initialReward := uint64(285000000000000)
@@ -76,20 +93,20 @@ func TestGetParticipantPoCWeight(t *testing.T) {
 	// Create test epoch group data with validation weights
 	epochGroupData := &types.EpochGroupData{
 		ValidationWeights: []*types.ValidationWeight{
+			createTestValidationWeight("participant1", 1000, 100),
+			createTestValidationWeight("participant2", 2500, 150),
 			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
-			},
-			{
-				MemberAddress: "participant2",
-				Weight:        2500,
-				Reputation:    150,
-			},
-			{
-				MemberAddress: "participant3",
-				Weight:        0, // Zero weight participant
-				Reputation:    50,
+				MemberAddress:      "participant3",
+				Weight:             0, // Zero weight participant
+				Reputation:         50,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "participant3-node",
+						PocWeight:          0,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
 			},
 			{
 				MemberAddress: "participant4",
@@ -149,24 +166,48 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		GenesisEpoch:       1,
 	}
 
-	// Create epoch group data with validation weights
+	// Create epoch group data with validation weights and MLNodes
 	epochGroupData := &types.EpochGroupData{
 		EpochIndex: 100, // 99 epochs since genesis (epochsSinceGenesis = 100 - 1)
 		ValidationWeights: []*types.ValidationWeight{
 			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
+				MemberAddress:      "participant1",
+				Weight:             1000,
+				Reputation:         100,
+				ConfirmationWeight: 1000, // All weight confirmed (no split for these tests)
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          1000,
+						TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+					},
+				},
 			},
 			{
-				MemberAddress: "participant2",
-				Weight:        2000,
-				Reputation:    150,
+				MemberAddress:      "participant2",
+				Weight:             2000, // 50% weight - tests power capping to 30%
+				Reputation:         150,
+				ConfirmationWeight: 2000,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node2",
+						PocWeight:          2000,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
 			},
 			{
-				MemberAddress: "participant3",
-				Weight:        1000,
-				Reputation:    120,
+				MemberAddress:      "participant3",
+				Weight:             1000,
+				Reputation:         120,
+				ConfirmationWeight: 1000,
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node3",
+						PocWeight:          1000,
+						TimeslotAllocation: []bool{true, false},
+					},
+				},
 			},
 		},
 	}
@@ -204,7 +245,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 
 	t.Run("Successful Bitcoin reward distribution", func(t *testing.T) {
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
@@ -213,38 +254,51 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.Equal(t, uint64(100), bitcoinResult.EpochNumber)
 		require.True(t, bitcoinResult.DecayApplied) // Since epoch > genesis
 
-		// Calculate expected rewards
-		// Total PoC weight: 1000 + 2000 + 1000 = 4000
-		// Fixed epoch reward (at epoch 100, epochsSinceGenesis = 100 - 1 = 99): calculated by CalculateFixedEpochReward
+		// Calculate expected rewards with power capping
+		// Apply power capping to verify the algorithm works correctly
+		uncappedWeights := []*types.ActiveParticipant{
+			{Index: "participant1", Weight: 1000},
+			{Index: "participant2", Weight: 2000}, // 50% - should be capped
+			{Index: "participant3", Weight: 1000},
+		}
+		cappedWeights, wasCapped := ApplyPowerCappingForWeights(uncappedWeights)
+		require.True(t, wasCapped, "Power capping should be applied when participant2 has 50%")
+
+		// Calculate total after capping
+		totalPoCWeightAfterCapping := uint64(0)
+		for _, p := range cappedWeights {
+			totalPoCWeightAfterCapping += uint64(p.Weight)
+		}
+
 		expectedEpochReward := CalculateFixedEpochReward(99, 285000000000000, bitcoinParams.DecayRate)
 		require.Equal(t, int64(expectedEpochReward), bitcoinResult.Amount)
 
-		totalPoCWeight := uint64(4000)
-
-		// Calculate base rewards (before remainder distribution)
-		expectedP1Base := (uint64(1000) * expectedEpochReward) / totalPoCWeight
-		expectedP2Base := (uint64(2000) * expectedEpochReward) / totalPoCWeight
-		expectedP3Base := (uint64(1000) * expectedEpochReward) / totalPoCWeight
+		// Calculate base rewards using actual capped weights
+		expectedP1Base := (uint64(cappedWeights[0].Weight) * expectedEpochReward) / totalPoCWeightAfterCapping
+		expectedP2Base := (uint64(cappedWeights[1].Weight) * expectedEpochReward) / totalPoCWeightAfterCapping
+		expectedP3Base := (uint64(cappedWeights[2].Weight) * expectedEpochReward) / totalPoCWeightAfterCapping
 
 		// Calculate remainder
 		totalBase := expectedP1Base + expectedP2Base + expectedP3Base
 		remainder := expectedEpochReward - totalBase
 
-		// Verify participant1: 1000/4000 = 25% of rewards + any remainder
+		// Verify participant1: uses capped weight + any remainder
 		p1Result := results[0]
 		require.NoError(t, p1Result.Error)
 		require.Equal(t, "participant1", p1Result.Settle.Participant)
 		require.Equal(t, uint64(500), p1Result.Settle.WorkCoins) // Preserved user fees
 		require.Equal(t, expectedP1Base+remainder, p1Result.Settle.RewardCoins)
 
-		// Verify participant2: 2000/4000 = 50% of rewards
+		// Verify participant2: reward based on capped weight (should be less than 50% of total reward)
 		p2Result := results[1]
 		require.NoError(t, p2Result.Error)
 		require.Equal(t, "participant2", p2Result.Settle.Participant)
 		require.Equal(t, uint64(1000), p2Result.Settle.WorkCoins) // Preserved user fees
 		require.Equal(t, expectedP2Base, p2Result.Settle.RewardCoins)
+		// Verify capping worked: participant2 should get less than 50% despite having 50% uncapped weight
+		require.Less(t, p2Result.Settle.RewardCoins, expectedEpochReward/2, "Capped participant should get less than 50%")
 
-		// Verify participant3: 1000/4000 = 25% of rewards
+		// Verify participant3: uses capped weight
 		p3Result := results[2]
 		require.NoError(t, p3Result.Error)
 		require.Equal(t, "participant3", p3Result.Settle.Participant)
@@ -252,78 +306,6 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.Equal(t, expectedP3Base, p3Result.Settle.RewardCoins)
 
 		// Verify total rewards distributed matches epoch reward exactly
-		totalDistributed := p1Result.Settle.RewardCoins + p2Result.Settle.RewardCoins + p3Result.Settle.RewardCoins
-		require.Equal(t, expectedEpochReward, totalDistributed, "Complete epoch reward must be distributed")
-	})
-
-	t.Run("Bitcoin reward distribution with downtime punishment", func(t *testing.T) {
-		// Create participants with high missed request rate (30 out of 130 total = 23% missed)
-		participantsWithDowntime := []types.Participant{
-			{
-				Address:     "participant1",
-				CoinBalance: 500, // WorkCoins from user fees
-				Status:      types.ParticipantStatus_ACTIVE,
-				CurrentEpochStats: &types.CurrentEpochStats{
-					InferenceCount: 100,
-					MissedRequests: 30, // 30% missed rate - should trigger punishment
-				},
-			},
-			{
-				Address:     "participant2",
-				CoinBalance: 1000, // WorkCoins from user fees
-				Status:      types.ParticipantStatus_ACTIVE,
-				CurrentEpochStats: &types.CurrentEpochStats{
-					InferenceCount: 100,
-					MissedRequests: 30, // 30% missed rate - should trigger punishment
-				},
-			},
-			{
-				Address:     "participant3",
-				CoinBalance: 750, // WorkCoins from user fees
-				Status:      types.ParticipantStatus_ACTIVE,
-				CurrentEpochStats: &types.CurrentEpochStats{
-					InferenceCount: 100,
-					MissedRequests: 2, // 2% missed rate - should not trigger punishment
-				},
-			},
-		}
-
-		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participantsWithDowntime, epochGroupData, bitcoinParams, logger)
-		require.NoError(t, err)
-		require.Equal(t, 3, len(results))
-
-		// Verify BitcoinResult
-		require.Greater(t, bitcoinResult.Amount, int64(0))
-		require.Equal(t, uint64(100), bitcoinResult.EpochNumber)
-		require.True(t, bitcoinResult.DecayApplied) // Since epoch > genesis
-
-		// Calculate expected rewards - same as before
-		expectedEpochReward := CalculateFixedEpochReward(99, 285000000000000, bitcoinParams.DecayRate)
-
-		// Verify participant1: Should get 0 rewards due to downtime punishment (>5% missed)
-		p1Result := results[0]
-		require.NoError(t, p1Result.Error)
-		require.Equal(t, "participant1", p1Result.Settle.Participant)
-		require.Equal(t, uint64(500), p1Result.Settle.WorkCoins) // WorkCoins preserved
-		require.Equal(t, uint64(0), p1Result.Settle.RewardCoins) // No rewards due to downtime
-
-		// Verify participant2: Should get 0 rewards due to downtime punishment (>5% missed)
-		p2Result := results[1]
-		require.NoError(t, p2Result.Error)
-		require.Equal(t, "participant2", p2Result.Settle.Participant)
-		require.Equal(t, uint64(1000), p2Result.Settle.WorkCoins) // WorkCoins preserved
-		require.Equal(t, uint64(0), p2Result.Settle.RewardCoins)  // No rewards due to downtime
-
-		// Verify participant3: Should get all rewards since others were punished
-		p3Result := results[2]
-		require.NoError(t, p3Result.Error)
-		require.Equal(t, "participant3", p3Result.Settle.Participant)
-		require.Equal(t, uint64(750), p3Result.Settle.WorkCoins) // WorkCoins preserved
-		// Should get the full epoch reward since other participants were punished
-		require.Equal(t, expectedEpochReward, p3Result.Settle.RewardCoins)
-
-		// Verify total rewards distributed - only participant3 gets rewards
 		totalDistributed := p1Result.Settle.RewardCoins + p2Result.Settle.RewardCoins + p3Result.Settle.RewardCoins
 		require.Equal(t, expectedEpochReward, totalDistributed, "Complete epoch reward must be distributed")
 	})
@@ -348,12 +330,20 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 					MissedRequests: 0,
 				},
 			},
+			{
+				Address:     "participant3",
+				CoinBalance: 750,
+				Status:      types.ParticipantStatus_INACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+				},
+			},
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(invalidParticipants, epochGroupData, bitcoinParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(invalidParticipants, epochGroupData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
-		require.Equal(t, 2, len(results))
+		require.Equal(t, 3, len(results))
 
 		// Verify BitcoinResult still shows fixed epoch reward
 		require.Greater(t, bitcoinResult.Amount, int64(0))
@@ -370,6 +360,13 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.NoError(t, p2Result.Error)
 		require.Equal(t, uint64(1000), p2Result.Settle.WorkCoins)  // Valid participant gets WorkCoins
 		require.Greater(t, p2Result.Settle.RewardCoins, uint64(0)) // Valid participant gets all RewardCoins
+
+		// Valid participant gets all rewards (since they have all the PoC weight)
+		p3Result := results[2]
+		require.NoError(t, p3Result.Error)
+		require.Equal(t, uint64(0), p3Result.Settle.WorkCoins)   // Valid participant gets WorkCoins
+		require.Equal(t, uint64(0), p3Result.Settle.RewardCoins) // Valid participant gets all RewardCoins
+
 	})
 
 	t.Run("Negative coin balance error", func(t *testing.T) {
@@ -386,7 +383,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, logger)
+		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -401,14 +398,24 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 			EpochIndex: 50,
 			ValidationWeights: []*types.ValidationWeight{
 				{
-					MemberAddress: "participant1",
-					Weight:        0, // Zero weight
-					Reputation:    100,
+					MemberAddress:      "participant1",
+					Weight:             0, // Zero weight
+					Reputation:         100,
+					ConfirmationWeight: 0,
+					MlNodes:            []*types.MLNodeInfo{},
 				},
 				{
-					MemberAddress: "participant2",
-					Weight:        1000,
-					Reputation:    150,
+					MemberAddress:      "participant2",
+					Weight:             1000,
+					Reputation:         150,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node2",
+							PocWeight:          1000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 			},
 		}
@@ -435,7 +442,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(zeroWeightParticipants, zeroWeightEpochData, bitcoinParams, logger)
+		results, _, err := CalculateParticipantBitcoinRewards(zeroWeightParticipants, zeroWeightEpochData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -456,17 +463,17 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		logger := createTestLogger(t)
 
 		// Nil participants
-		_, _, err := CalculateParticipantBitcoinRewards(nil, epochGroupData, bitcoinParams, logger)
+		_, _, err := CalculateParticipantBitcoinRewards(nil, epochGroupData, bitcoinParams, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "participants cannot be nil")
 
 		// Nil epoch group data
-		_, _, err = CalculateParticipantBitcoinRewards(participants, nil, bitcoinParams, logger)
+		_, _, err = CalculateParticipantBitcoinRewards(participants, nil, bitcoinParams, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "epoch group data cannot be nil")
 
 		// Nil bitcoin params
-		_, _, err = CalculateParticipantBitcoinRewards(participants, epochGroupData, nil, logger)
+		_, _, err = CalculateParticipantBitcoinRewards(participants, epochGroupData, nil, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "bitcoin parameters cannot be nil")
 	})
@@ -477,9 +484,17 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 			EpochIndex: 1, // First reward epoch (epoch 0 is skipped)
 			ValidationWeights: []*types.ValidationWeight{
 				{
-					MemberAddress: "participant1",
-					Weight:        1000,
-					Reputation:    100,
+					MemberAddress:      "participant1",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          1000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 			},
 		}
@@ -497,7 +512,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(genesisParticipants, genesisEpochData, bitcoinParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(genesisParticipants, genesisEpochData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -527,19 +542,43 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 			EpochIndex: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
 				{
-					MemberAddress: "participant1",
-					Weight:        1000,
-					Reputation:    100,
+					MemberAddress:      "participant1",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          1000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 				{
-					MemberAddress: "participant2",
-					Weight:        1000,
-					Reputation:    100,
+					MemberAddress:      "participant2",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node2",
+							PocWeight:          1000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 				{
-					MemberAddress: "participant3",
-					Weight:        1000,
-					Reputation:    100,
+					MemberAddress:      "participant3",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node3",
+							PocWeight:          1000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 			},
 		}
@@ -575,7 +614,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(remainderParticipants, remainderEpochData, oddRewardParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(remainderParticipants, remainderEpochData, oddRewardParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
@@ -619,19 +658,12 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 		TotalSubsidySupply: 600000000000000000, // 600M total supply cap (600 * 10^15)
 	}
 
+	// Use equal weights to avoid power capping interference (testing supply cap, not power cap)
 	epochGroupData := &types.EpochGroupData{
 		EpochIndex: 100,
 		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
-			},
-			{
-				MemberAddress: "participant2",
-				Weight:        2000,
-				Reputation:    150,
-			},
+			createTestValidationWeight("participant1", 500, 100),
+			createTestValidationWeight("participant2", 500, 150),
 		},
 	}
 
@@ -659,12 +691,12 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 	t.Run("Main entry point function works correctly", func(t *testing.T) {
 		// Call the main entry point function
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, settleParams, logger)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, settleParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
 		// Verify it returns same results as the underlying function
-		expectedResults, expectedBitcoinResult, expectedErr := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, logger)
+		expectedResults, expectedBitcoinResult, expectedErr := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
 		require.Equal(t, expectedErr, err)
 		require.Equal(t, expectedBitcoinResult, bitcoinResult)
 		require.Equal(t, len(expectedResults), len(results))
@@ -693,22 +725,22 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 		logger := createTestLogger(t)
 
 		// Nil participants
-		_, _, err := GetBitcoinSettleAmounts(nil, epochGroupData, bitcoinParams, settleParams, logger)
+		_, _, err := GetBitcoinSettleAmounts(nil, epochGroupData, bitcoinParams, settleParams, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "participants cannot be nil")
 
 		// Nil epoch group data
-		_, _, err = GetBitcoinSettleAmounts(participants, nil, bitcoinParams, settleParams, logger)
+		_, _, err = GetBitcoinSettleAmounts(participants, nil, bitcoinParams, settleParams, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "epochGroupData cannot be nil")
 
 		// Nil bitcoin params
-		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, nil, settleParams, logger)
+		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, nil, settleParams, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "bitcoinParams cannot be nil")
 
 		// Nil settle params
-		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, logger)
+		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "settleParams cannot be nil")
 	})
@@ -722,7 +754,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 
 		// Call with supply cap constraints
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, supplyCappedParams, logger)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, supplyCappedParams, nil, logger)
 		require.NoError(t, err)
 
 		// Verify the amount was reduced to fit within cap
@@ -740,7 +772,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 		// Verify participants still received proportional rewards (reduced but fair)
 		require.Greater(t, results[0].Settle.RewardCoins, uint64(0), "Participant 1 should get some rewards")
 		require.Greater(t, results[1].Settle.RewardCoins, uint64(0), "Participant 2 should get some rewards")
-		require.Greater(t, results[1].Settle.RewardCoins, results[0].Settle.RewardCoins, "Participant 2 should get more (higher PoC weight)")
+		require.Equal(t, results[0].Settle.RewardCoins, results[1].Settle.RewardCoins, "Equal weights should get equal rewards (500 each)")
 	})
 
 	t.Run("Supply cap already reached - zero rewards", func(t *testing.T) {
@@ -752,7 +784,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 
 		// Call with supply cap already reached
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, capReachedParams, logger)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, capReachedParams, nil, logger)
 		require.NoError(t, err)
 
 		// Verify no rewards are minted
@@ -775,16 +807,8 @@ func TestPhase2BonusFunctions(t *testing.T) {
 	epochGroupData := &types.EpochGroupData{
 		EpochIndex: 100,
 		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
-			},
-			{
-				MemberAddress: "participant2",
-				Weight:        2000,
-				Reputation:    150,
-			},
+			createTestValidationWeight("participant1", 1000, 100),
+			createTestValidationWeight("participant2", 2000, 150),
 		},
 	}
 
@@ -863,16 +887,8 @@ func TestPhase2BonusFunctions(t *testing.T) {
 func TestBonusIntegrationInGetParticipantPoCWeight(t *testing.T) {
 	epochGroupData := &types.EpochGroupData{
 		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: "participant1",
-				Weight:        1000,
-				Reputation:    100,
-			},
-			{
-				MemberAddress: "participant2",
-				Weight:        2500,
-				Reputation:    150,
-			},
+			createTestValidationWeight("participant1", 1000, 100),
+			createTestValidationWeight("participant2", 2500, 150),
 		},
 	}
 
@@ -889,11 +905,7 @@ func TestBonusIntegrationInGetParticipantPoCWeight(t *testing.T) {
 		// Zero weight participant
 		zeroWeightData := &types.EpochGroupData{
 			ValidationWeights: []*types.ValidationWeight{
-				{
-					MemberAddress: "zeroParticipant",
-					Weight:        0,
-					Reputation:    100,
-				},
+				createTestValidationWeight("zeroParticipant", 0, 100),
 			},
 		}
 
@@ -927,9 +939,17 @@ func TestBonusIntegrationInGetParticipantPoCWeight(t *testing.T) {
 		largeWeightData := &types.EpochGroupData{
 			ValidationWeights: []*types.ValidationWeight{
 				{
-					MemberAddress: "participant1",
-					Weight:        1000000, // Large weight
-					Reputation:    100,
+					MemberAddress:      "participant1",
+					Weight:             1000000, // Large weight
+					Reputation:         100,
+					ConfirmationWeight: 1000000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "participant1-node",
+							PocWeight:          1000000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 			},
 		}
@@ -978,11 +998,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 					MissedRequests: 0,
 				},
 			}
-			largeValidationWeights[i] = &types.ValidationWeight{
-				MemberAddress: address,
-				Weight:        int64(1000 + i), // Different weights
-				Reputation:    100,
-			}
+			largeValidationWeights[i] = createTestValidationWeight(address, int64(1000+i), 100)
 		}
 
 		largeEpochData := &types.EpochGroupData{
@@ -998,7 +1014,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 
 		// Should handle large number of participants efficiently
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeEpochData, bitcoinParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeEpochData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, numParticipants, len(results))
 
@@ -1015,18 +1031,34 @@ func TestLargeValueEdgeCases(t *testing.T) {
 	})
 
 	t.Run("Large PoC weights", func(t *testing.T) {
-		// Test with very large PoC weights
+		// Test with very large PoC weights (equal to avoid power capping)
 		largeWeightData := &types.EpochGroupData{
 			ValidationWeights: []*types.ValidationWeight{
 				{
-					MemberAddress: "participant1",
-					Weight:        1000000000000, // 1 trillion
-					Reputation:    100,
+					MemberAddress:      "participant1",
+					Weight:             1000000000000, // 1 trillion
+					Reputation:         100,
+					ConfirmationWeight: 1000000000000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "participant1-node",
+							PocWeight:          1000000000000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 				{
-					MemberAddress: "participant2",
-					Weight:        2000000000000, // 2 trillion
-					Reputation:    150,
+					MemberAddress:      "participant2",
+					Weight:             1000000000000, // 1 trillion (equal weights)
+					Reputation:         150,
+					ConfirmationWeight: 1000000000000,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "participant2-node",
+							PocWeight:          1000000000000,
+							TimeslotAllocation: []bool{true, false},
+						},
+					},
 				},
 			},
 		}
@@ -1035,7 +1067,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		require.Equal(t, uint64(1000000000000), weight1)
 
 		weight2 := GetParticipantPoCWeight("participant2", largeWeightData)
-		require.Equal(t, uint64(2000000000000), weight2)
+		require.Equal(t, uint64(1000000000000), weight2)
 
 		// Test distribution with large weights
 		largeParticipants := []types.Participant{
@@ -1068,20 +1100,20 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		largeWeightData.EpochIndex = 1 // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeWeightData, bitcoinParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeWeightData, bitcoinParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
 		// Verify proportional distribution even with large weights
-		// participant1: 1T / 3T = 1/3 of rewards
-		// participant2: 2T / 3T = 2/3 of rewards
+		// participant1: 1T / 2T = 1/2 of rewards
+		// participant2: 1T / 2T = 1/2 of rewards (equal weights)
 		totalReward := uint64(bitcoinResult.Amount)
-		expectedP1 := totalReward / 3
-		expectedP2 := (totalReward * 2) / 3
+		expectedP1 := totalReward / 2
+		expectedP2 := totalReward / 2
 
 		// Allow for remainder adjustment on first participant
-		require.InDelta(t, expectedP1, results[0].Settle.RewardCoins, 1, "Large weight proportional distribution")
-		require.InDelta(t, expectedP2, results[1].Settle.RewardCoins, 1, "Large weight proportional distribution")
+		require.InDelta(t, expectedP1, results[0].Settle.RewardCoins, 1, "Large weight equal distribution")
+		require.InDelta(t, expectedP2, results[1].Settle.RewardCoins, 1, "Large weight equal distribution")
 
 		// Verify complete distribution
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins
@@ -1132,25 +1164,13 @@ func TestMathematicalPrecision(t *testing.T) {
 			GenesisEpoch:       1,
 		}
 
-		// Three participants with prime weights
+		// Three participants with equal weights (avoids power capping, still tests precision with prime reward)
 		primeEpochData := &types.EpochGroupData{
 			EpochIndex: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
-				{
-					MemberAddress: "participant1",
-					Weight:        7, // Prime
-					Reputation:    100,
-				},
-				{
-					MemberAddress: "participant2",
-					Weight:        11, // Prime
-					Reputation:    100,
-				},
-				{
-					MemberAddress: "participant3",
-					Weight:        13, // Prime
-					Reputation:    100,
-				},
+				createTestValidationWeight("participant1", 10, 100),
+				createTestValidationWeight("participant2", 10, 100),
+				createTestValidationWeight("participant3", 10, 100),
 			},
 		}
 
@@ -1161,26 +1181,24 @@ func TestMathematicalPrecision(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(primeParticipants, primeEpochData, primeRewardParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(primeParticipants, primeEpochData, primeRewardParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
-		// Total weight: 7 + 11 + 13 = 31
-		// Expected base distribution: 97/31 ≈ 3.129...
-		// participant1: 7/31 * 97 = 21.903... → 21
-		// participant2: 11/31 * 97 = 34.387... → 34
-		// participant3: 13/31 * 97 = 40.709... → 40
-		// Base total: 21 + 34 + 40 = 95, remainder: 97 - 95 = 2
+		// Total weight: 10 + 10 + 10 = 30
+		// Expected base distribution: 97/30 ≈ 3.233...
+		// participant1: 10/30 * 97 = 32.333... → 32
+		// participant2: 10/30 * 97 = 32.333... → 32
+		// participant3: 10/30 * 97 = 32.333... → 32
+		// Base total: 32 + 32 + 32 = 96, remainder: 97 - 96 = 1
 
-		expectedBase1 := uint64(21)
-		expectedBase2 := uint64(34)
-		expectedBase3 := uint64(40)
-		expectedRemainder := uint64(2)
+		expectedBase := uint64(32)
+		expectedRemainder := uint64(1)
 
-		// First participant should get base + remainder
-		require.Equal(t, expectedBase1+expectedRemainder, results[0].Settle.RewardCoins, "First participant gets base + remainder")
-		require.Equal(t, expectedBase2, results[1].Settle.RewardCoins, "Second participant gets base only")
-		require.Equal(t, expectedBase3, results[2].Settle.RewardCoins, "Third participant gets base only")
+		// First participant should get base + remainder (with equal weights, remainder goes to first)
+		require.Equal(t, expectedBase+expectedRemainder, results[0].Settle.RewardCoins, "First participant gets base + remainder")
+		require.Equal(t, expectedBase, results[1].Settle.RewardCoins, "Second participant gets base only")
+		require.Equal(t, expectedBase, results[2].Settle.RewardCoins, "Third participant gets base only")
 
 		// Verify total equals epoch reward exactly
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins + results[2].Settle.RewardCoins
@@ -1199,16 +1217,8 @@ func TestMathematicalPrecision(t *testing.T) {
 		evenEpochData := &types.EpochGroupData{
 			EpochIndex: 1, // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 			ValidationWeights: []*types.ValidationWeight{
-				{
-					MemberAddress: "participant1",
-					Weight:        25, // 25/100 = 25%
-					Reputation:    100,
-				},
-				{
-					MemberAddress: "participant2",
-					Weight:        75, // 75/100 = 75%
-					Reputation:    100,
-				},
+				createTestValidationWeight("participant1", 50, 100), // 50/100 = 50%
+				createTestValidationWeight("participant2", 50, 100), // 50/100 = 50%
 			},
 		}
 
@@ -1218,17 +1228,643 @@ func TestMathematicalPrecision(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(evenParticipants, evenEpochData, evenRewardParams, logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(evenParticipants, evenEpochData, evenRewardParams, nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
-		// Should divide evenly: 25% = 25, 75% = 75, total = 100, remainder = 0
-		require.Equal(t, uint64(25), results[0].Settle.RewardCoins, "25% of 100 = 25")
-		require.Equal(t, uint64(75), results[1].Settle.RewardCoins, "75% of 100 = 75")
+		// Should divide evenly: 50% = 50, 50% = 50, total = 100, remainder = 0
+		require.Equal(t, uint64(50), results[0].Settle.RewardCoins, "50% of 100 = 50")
+		require.Equal(t, uint64(50), results[1].Settle.RewardCoins, "50% of 100 = 50")
 
 		// Verify total distribution
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins
 		require.Equal(t, uint64(100), totalDistributed, "Even distribution should total exactly")
 		require.Equal(t, int64(100), bitcoinResult.Amount, "BitcoinResult shows correct amount")
 	})
+}
+
+// Test GetPreservedWeight function
+func TestGetPreservedWeight(t *testing.T) {
+	t.Run("Calculate preserved weight from POC_SLOT=true nodes", func(t *testing.T) {
+		epochGroupData := &types.EpochGroupData{
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "participant1",
+					Weight:        300,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (preserved)
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false (not preserved)
+						},
+					},
+				},
+			},
+		}
+
+		preservedWeight := GetPreservedWeight("participant1", epochGroupData)
+		require.Equal(t, int64(100), preservedWeight, "Should sum only POC_SLOT=true nodes")
+	})
+
+	t.Run("All nodes preserved", func(t *testing.T) {
+		epochGroupData := &types.EpochGroupData{
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "participant1",
+					Weight:        300,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+						},
+					},
+				},
+			},
+		}
+
+		preservedWeight := GetPreservedWeight("participant1", epochGroupData)
+		require.Equal(t, int64(300), preservedWeight, "Should sum all nodes when all preserved")
+	})
+
+	t.Run("No nodes preserved", func(t *testing.T) {
+		epochGroupData := &types.EpochGroupData{
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "participant1",
+					Weight:        300,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+			},
+		}
+
+		preservedWeight := GetPreservedWeight("participant1", epochGroupData)
+		require.Equal(t, int64(0), preservedWeight, "Should be 0 when no nodes preserved")
+	})
+
+	t.Run("Participant not found", func(t *testing.T) {
+		epochGroupData := &types.EpochGroupData{
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "participant1",
+					Weight:        300,
+				},
+			},
+		}
+
+		preservedWeight := GetPreservedWeight("nonexistent", epochGroupData)
+		require.Equal(t, int64(0), preservedWeight, "Should return 0 for nonexistent participant")
+	})
+}
+
+// Test confirmation weight capping without power capping
+func TestCalculateParticipantBitcoinRewards_ConfirmationCapping(t *testing.T) {
+	t.Run("Confirmation capping applies when confirmed < non-preserved", func(t *testing.T) {
+		bitcoinParams := &types.BitcoinRewardParams{
+			GenesisEpoch:       1,
+			InitialEpochReward: 600, // Total reward to distribute
+			DecayRate:          types.DecimalFromFloat(0.0),
+		}
+
+		epochGroupData := &types.EpochGroupData{
+			EpochIndex: 1,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "participant1",
+					Weight:             300, // Original total weight
+					ConfirmationWeight: 150, // Confirmed only 150 out of 200 non-preserved
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (preserved=100)
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false (should use confirmed)
+						},
+					},
+				},
+				{
+					MemberAddress:      "participant2",
+					Weight:             150, // Original total weight
+					ConfirmationWeight: 100, // Confirmed 100
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node3",
+							PocWeight:          50,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (preserved=50)
+						},
+						{
+							NodeId:             "node4",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+			},
+		}
+
+		participants := []types.Participant{
+			{Address: "participant1", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+			{Address: "participant2", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		}
+
+		logger := createTestLogger(t)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
+		require.NoError(t, err)
+		require.Equal(t, 2, len(results))
+
+		// Effective weights:
+		// participant1: preserved(100) + confirmed(150) = 250
+		// participant2: preserved(50) + confirmed(100) = 150
+		// Total = 400
+		// participant1 has 250/400 = 62.5% which exceeds 50% cap (2 participants)
+		// Power capping WILL apply
+
+		// After capping to 50%: both get equal weights = 150 each
+		// Total after cap = 300
+		// participant1: 150/300 * 600 = 300
+		// participant2: 150/300 * 600 = 300
+		require.Equal(t, uint64(300), results[0].Settle.RewardCoins, "participant1 capped to 50%")
+		require.Equal(t, uint64(300), results[1].Settle.RewardCoins, "participant2 also gets 50%")
+		require.Equal(t, int64(600), bitcoinResult.Amount)
+	})
+
+	t.Run("Zero confirmation weight - only preserved nodes earn", func(t *testing.T) {
+		bitcoinParams := &types.BitcoinRewardParams{
+			GenesisEpoch:       1,
+			InitialEpochReward: 300,
+			DecayRate:          types.DecimalFromFloat(0.0),
+		}
+
+		epochGroupData := &types.EpochGroupData{
+			EpochIndex: 1,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "participant1",
+					Weight:             300,
+					ConfirmationWeight: 0, // Failed confirmation PoC completely
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (preserved)
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+				{
+					MemberAddress:      "participant2",
+					Weight:             200,
+					ConfirmationWeight: 200, // Successful confirmation
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node3",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+			},
+		}
+
+		participants := []types.Participant{
+			{Address: "participant1", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+			{Address: "participant2", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		}
+
+		logger := createTestLogger(t)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
+		require.NoError(t, err)
+
+		// Effective weights:
+		// participant1: preserved(100) + confirmed(0) = 100
+		// participant2: preserved(0) + confirmed(200) = 200
+		// Total = 300
+		// participant2 has 200/300 = 66.7% which exceeds 50% cap (2 participants)
+		// Power capping WILL apply
+
+		// After capping to 50%: both get equal weights = 100 each
+		// Total after cap = 200
+		// participant1: 100/200 * 300 = 150
+		// participant2: 100/200 * 300 = 150
+		require.Equal(t, uint64(150), results[0].Settle.RewardCoins, "participant1 gets capped rewards")
+		require.Equal(t, uint64(150), results[1].Settle.RewardCoins, "participant2 capped to 50%")
+	})
+}
+
+// Test confirmation capping WITH power capping
+func TestCalculateParticipantBitcoinRewards_ConfirmationAndPowerCapping(t *testing.T) {
+	t.Run("Power capping applies after confirmation capping", func(t *testing.T) {
+		bitcoinParams := &types.BitcoinRewardParams{
+			GenesisEpoch:       1,
+			InitialEpochReward: 1000,
+			DecayRate:          types.DecimalFromFloat(0.0),
+		}
+
+		epochGroupData := &types.EpochGroupData{
+			EpochIndex: 1,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "participant1",
+					Weight:             700,
+					ConfirmationWeight: 600, // Large confirmed weight
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (preserved)
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          600,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+				{
+					MemberAddress:      "participant2",
+					Weight:             100,
+					ConfirmationWeight: 100,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node3",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+			},
+		}
+
+		participants := []types.Participant{
+			{Address: "participant1", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+			{Address: "participant2", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		}
+
+		logger := createTestLogger(t)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
+		require.NoError(t, err)
+
+		// Effective weights before power capping:
+		// participant1: preserved(100) + confirmed(600) = 700
+		// participant2: preserved(0) + confirmed(100) = 100
+		// Total = 800
+
+		// participant1 has 700/800 = 87.5% (exceeds 30% cap for 2 participants = 50%)
+		// Power capping will reduce participant1's weight
+
+		// With 2 participants, max allowed = 50%
+		// Cap calculation: participant1 capped, participant2 unchanged
+		// After capping, participant1 should be capped to at most 50% of total
+
+		totalReward := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins
+		require.Equal(t, uint64(1000), totalReward, "Total should equal full reward")
+
+		// Verify participant1 was capped (should get less than 87.5%)
+		participant1Percentage := float64(results[0].Settle.RewardCoins) / float64(totalReward)
+		require.LessOrEqual(t, participant1Percentage, 0.51, "participant1 should be capped below original 87.5%")
+		require.GreaterOrEqual(t, participant1Percentage, 0.45, "participant1 should still get substantial reward")
+	})
+}
+
+// Test edge cases
+func TestCalculateParticipantBitcoinRewards_ConfirmationEdgeCases(t *testing.T) {
+	t.Run("Single participant with confirmation capping", func(t *testing.T) {
+		bitcoinParams := &types.BitcoinRewardParams{
+			GenesisEpoch:       1,
+			InitialEpochReward: 500,
+			DecayRate:          types.DecimalFromFloat(0.0),
+		}
+
+		epochGroupData := &types.EpochGroupData{
+			EpochIndex: 1,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "participant1",
+					Weight:             300,
+					ConfirmationWeight: 150,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+						},
+						{
+							NodeId:             "node2",
+							PocWeight:          200,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+						},
+					},
+				},
+			},
+		}
+
+		participants := []types.Participant{
+			{Address: "participant1", CoinBalance: 0, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		}
+
+		logger := createTestLogger(t)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(results))
+
+		// Single participant gets all rewards regardless of capping
+		// effective weight: preserved(100) + confirmed(150) = 250
+		require.Equal(t, uint64(500), results[0].Settle.RewardCoins, "Single participant gets full reward")
+		require.Equal(t, int64(500), bitcoinResult.Amount)
+	})
+
+	t.Run("All participants have zero effective weight", func(t *testing.T) {
+		bitcoinParams := &types.BitcoinRewardParams{
+			GenesisEpoch:       1,
+			InitialEpochReward: 1000,
+			DecayRate:          types.DecimalFromFloat(0.0),
+		}
+
+		epochGroupData := &types.EpochGroupData{
+			EpochIndex: 1,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "participant1",
+					Weight:             100,
+					ConfirmationWeight: 0,
+					MlNodes: []*types.MLNodeInfo{
+						{
+							NodeId:             "node1",
+							PocWeight:          100,
+							TimeslotAllocation: []bool{true, false}, // POC_SLOT=false, no preserved
+						},
+					},
+				},
+			},
+		}
+
+		participants := []types.Participant{
+			{Address: "participant1", CoinBalance: 100, Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		}
+
+		logger := createTestLogger(t)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, logger)
+		require.NoError(t, err)
+
+		// With zero effective weight, participant gets no reward coins (but still gets work coins)
+		require.Equal(t, uint64(0), results[0].Settle.RewardCoins, "Zero effective weight means no reward")
+		require.Equal(t, uint64(100), results[0].Settle.WorkCoins, "Work coins still distributed")
+	})
+}
+
+// Test RecomputeEffectiveWeightFromMLNodes helper function
+func TestRecomputeEffectiveWeightFromMLNodes(t *testing.T) {
+	t.Run("Mixed POC_SLOT allocations", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:      "participant1",
+			Weight:             450, // Total weight (for reference)
+			ConfirmationWeight: 250, // Sum of POC_SLOT=false weights
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+				},
+				{
+					NodeId:             "node3",
+					PocWeight:          150,
+					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+		// Should be: preservedWeight (200) + confirmationWeight (250) = 450
+		require.Equal(t, int64(450), effectiveWeight)
+	})
+
+	t.Run("Confirmation PoC revealed lower capacity", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:      "participant1",
+			Weight:             450, // Original total
+			ConfirmationWeight: 180, // Lower than initial (250), after confirmation PoC
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+				},
+				{
+					NodeId:             "node3",
+					PocWeight:          150,
+					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+		// Should be: preservedWeight (200) + confirmationWeight (180) = 380
+		// This is LESS than baseWeight (450) due to confirmation capping
+		require.Equal(t, int64(380), effectiveWeight)
+		require.Less(t, effectiveWeight, vw.Weight, "Effective weight should be less than base weight after capping")
+	})
+
+	t.Run("All nodes preserved (POC_SLOT=true)", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:      "participant1",
+			Weight:             300,
+			ConfirmationWeight: 0, // No confirmation weight (all preserved)
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+		// Should be: preservedWeight (300) + confirmationWeight (0) = 300
+		require.Equal(t, int64(300), effectiveWeight)
+	})
+
+	t.Run("All nodes subject to confirmation (POC_SLOT=false)", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:      "participant1",
+			Weight:             300,
+			ConfirmationWeight: 300, // All weight subject to confirmation
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+		// Should be: preservedWeight (0) + confirmationWeight (300) = 300
+		require.Equal(t, int64(300), effectiveWeight)
+	})
+
+	t.Run("Handles nil and invalid nodes gracefully", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:      "participant1",
+			Weight:             150,
+			ConfirmationWeight: 100,
+			MlNodes: []*types.MLNodeInfo{
+				nil, // Nil node
+				{
+					NodeId:             "node1",
+					PocWeight:          50,
+					TimeslotAllocation: []bool{}, // Empty allocation
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          50,
+					TimeslotAllocation: []bool{true}, // Too short
+				},
+				{
+					NodeId:             "node3",
+					PocWeight:          50,
+					TimeslotAllocation: []bool{true, true}, // Valid POC_SLOT=true
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+		// Should be: preservedWeight (50) + confirmationWeight (100) = 150
+		require.Equal(t, int64(150), effectiveWeight)
+	})
+
+}
+
+// Test settlement matching regular weight when no confirmation PoC
+func TestSettlementMatchesRegularWeightWithoutConfirmation(t *testing.T) {
+	// Create epoch group data with participant having mixed timeslot allocations
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      "participant1",
+				Weight:             450, // Total PoC weight (already capped)
+				ConfirmationWeight: 250, // Sum of POC_SLOT=false (initialized, no confirmation PoC occurred)
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          100,
+						TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+					},
+					{
+						NodeId:             "node2",
+						PocWeight:          200,
+						TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+					},
+					{
+						NodeId:             "node3",
+						PocWeight:          150,
+						TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+					},
+				},
+			},
+		},
+	}
+
+	// Verify effective weight matches base weight
+	vw := epochGroupData.ValidationWeights[0]
+	effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+	// preservedWeight (200) + confirmationWeight (250) = 450 = baseWeight
+	require.Equal(t, vw.Weight, effectiveWeight,
+		"When no confirmation PoC occurs, effective weight should equal base weight")
+}
+
+// Test settlement with confirmation PoC capping
+func TestSettlementWithConfirmationCapping(t *testing.T) {
+	// Initial: POC_SLOT=true: 200, POC_SLOT=false: 250, Total: 450
+	// Confirmation PoC revealed: 180 (< 250)
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      "participant1",
+				Weight:             450, // Original total weight
+				ConfirmationWeight: 180, // Updated after confirmation PoC (< 250)
+				MlNodes: []*types.MLNodeInfo{
+					{
+						NodeId:             "node1",
+						PocWeight:          100,
+						TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+					},
+					{
+						NodeId:             "node2",
+						PocWeight:          200,
+						TimeslotAllocation: []bool{true, true}, // POC_SLOT=true
+					},
+					{
+						NodeId:             "node3",
+						PocWeight:          150,
+						TimeslotAllocation: []bool{true, false}, // POC_SLOT=false
+					},
+				},
+			},
+		},
+	}
+
+	vw := epochGroupData.ValidationWeights[0]
+	effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, nil)
+
+	// Should be capped: preservedWeight (200) + confirmationWeight (180) = 380
+	require.Equal(t, int64(380), effectiveWeight)
+	require.Less(t, effectiveWeight, vw.Weight,
+		"When confirmation PoC reveals lower capacity, effective weight should be capped")
 }

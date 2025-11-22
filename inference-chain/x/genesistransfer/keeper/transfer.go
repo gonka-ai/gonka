@@ -33,11 +33,26 @@ func (k Keeper) TransferOwnership(ctx context.Context, genesisAddr, recipientAdd
 		return types.ErrAccountNotFound.Wrapf("genesis account %s does not exist", genesisAddr.String())
 	}
 
-	// Get all balances from the genesis account
-	genesisBalances := k.bankView.GetAllBalances(ctx, genesisAddr)
-	if genesisBalances.IsZero() {
-		return types.ErrInsufficientBalance.Wrap("genesis account has no balances to transfer")
+	// Get all balances and check for vesting
+	allBalances := k.bankView.GetAllBalances(ctx, genesisAddr)
+	spendableBalances := k.bankView.SpendableCoins(ctx, genesisAddr)
+	hasVesting, vestingCoins, _, err := k.GetVestingInfo(ctx, genesisAddr)
+	if err != nil {
+		return errorsmod.Wrapf(err, "failed to get vesting info")
 	}
+
+	// Calculate locked (vesting) coins
+	lockedCoins := allBalances.Sub(spendableBalances...)
+
+	// Log the breakdown of what will be transferred
+	k.Logger().Info(
+		"genesis account balance breakdown",
+		"genesis_address", genesisAddr.String(),
+		"total_balance", allBalances.String(),
+		"spendable_balance", spendableBalances.String(),
+		"locked_vesting_balance", lockedCoins.String(),
+		"has_vesting_schedule", hasVesting,
+	)
 
 	// Ensure recipient account exists, create if it doesn't
 	recipientAccount := k.accountKeeper.GetAccount(ctx, recipientAddr)
@@ -47,24 +62,96 @@ func (k Keeper) TransferOwnership(ctx context.Context, genesisAddr, recipientAdd
 		k.accountKeeper.SetAccount(ctx, recipientAccount)
 	}
 
-	// Step 1: Transfer all balances (both liquid and vesting coins)
-	if err := k.transferBalances(ctx, genesisAddr, recipientAddr, genesisBalances); err != nil {
-		return errorsmod.Wrapf(err, "balance transfer failed")
+	// Step 1: Transfer vesting schedule FIRST (if applicable) but don't set the account yet
+	// This prepares the vesting account structure
+	var preparedVestingAccount sdk.AccountI
+	if hasVesting && !vestingCoins.IsZero() {
+		currentTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+		switch v := genesisAccount.(type) {
+		case *vestingtypes.PeriodicVestingAccount:
+			preparedVestingAccount, err = k.createPeriodicVestingAccount(ctx, v, recipientAccount, currentTime)
+		case *vestingtypes.ContinuousVestingAccount:
+			preparedVestingAccount, err = k.createContinuousVestingAccount(ctx, v, recipientAccount, currentTime)
+		case *vestingtypes.DelayedVestingAccount:
+			preparedVestingAccount, err = k.createDelayedVestingAccount(ctx, v, recipientAccount, currentTime)
+		case *vestingtypes.BaseVestingAccount:
+			preparedVestingAccount, err = k.createBaseVestingAccount(ctx, v, recipientAccount, currentTime)
+		}
+		if err != nil {
+			return errorsmod.Wrapf(err, "failed to prepare vesting account")
+		}
 	}
 
-	// Step 2: Transfer vesting schedule (if applicable)
-	if err := k.transferVestingSchedule(ctx, genesisAccount, recipientAddr); err != nil {
-		return errorsmod.Wrapf(err, "vesting schedule transfer failed")
+	// Step 2: Convert genesis account to base account to unlock vesting coins for transfer
+	if hasVesting && !vestingCoins.IsZero() {
+		baseAccount := authtypes.NewBaseAccount(
+			genesisAccount.GetAddress(),
+			genesisAccount.GetPubKey(),
+			genesisAccount.GetAccountNumber(),
+			genesisAccount.GetSequence(),
+		)
+		k.accountKeeper.SetAccount(ctx, baseAccount)
+
+		k.Logger().Info(
+			"converted genesis account to base account to unlock vesting coins",
+			"genesis_address", genesisAddr.String(),
+			"unlocked_amount", vestingCoins.String(),
+		)
+	}
+
+	// Step 3: Transfer ALL balances (now that vesting coins are unlocked)
+	if !allBalances.IsZero() {
+		if err := k.transferBalances(ctx, genesisAddr, recipientAddr, allBalances); err != nil {
+			return errorsmod.Wrapf(err, "balance transfer failed")
+		}
+	}
+
+	// Step 4: Set the prepared vesting account on recipient (if we created one)
+	if preparedVestingAccount != nil {
+		k.accountKeeper.SetAccount(ctx, preparedVestingAccount)
+
+		// Get recipient's final balances for logging
+		recipientAllBalances := k.bankView.GetAllBalances(ctx, recipientAddr)
+		recipientSpendable := k.bankView.SpendableCoins(ctx, recipientAddr)
+		recipientLocked := recipientAllBalances.Sub(recipientSpendable...)
+
+		k.Logger().Info(
+			"vesting schedule applied to recipient",
+			"recipient_address", recipientAddr.String(),
+			"recipient_total_balance", recipientAllBalances.String(),
+			"recipient_spendable_balance", recipientSpendable.String(),
+			"recipient_locked_vesting_balance", recipientLocked.String(),
+		)
+	} else {
+		// No vesting account created, log final balances
+		recipientAllBalances := k.bankView.GetAllBalances(ctx, recipientAddr)
+		k.Logger().Info(
+			"transfer completed without vesting",
+			"recipient_address", recipientAddr.String(),
+			"recipient_total_balance", recipientAllBalances.String(),
+			"recipient_spendable_balance", recipientAllBalances.String(),
+		)
 	}
 
 	return nil
 }
 
-// transferBalances is an internal helper that transfers all balances from genesis to recipient
+// transferBalances is an internal helper that transfers spendable balances from genesis to recipient
 // Uses two-step transfer through module account to bypass transfer restrictions:
 // 1. Genesis account → GenesisTransfer module account (user-to-module: allowed)
 // 2. GenesisTransfer module account → Recipient (module-to-user: allowed)
+// Note: Only spendable coins can be transferred. Locked vesting coins are handled separately.
 func (k Keeper) transferBalances(ctx context.Context, genesisAddr, recipientAddr sdk.AccAddress, balances sdk.Coins) error {
+	// Defensive check: skip if no balances to transfer
+	if balances.IsZero() {
+		k.Logger().Debug(
+			"transferBalances called with zero balances - skipping",
+			"genesis_address", genesisAddr.String(),
+			"recipient_address", recipientAddr.String(),
+		)
+		return nil
+	}
+
 	memo := fmt.Sprintf("Genesis account ownership transfer from %s to %s", genesisAddr.String(), recipientAddr.String())
 
 	// Step 1: Transfer from genesis account to module account (bypasses restrictions: user-to-module allowed)
@@ -89,73 +176,8 @@ func (k Keeper) transferBalances(ctx context.Context, genesisAddr, recipientAddr
 	return nil
 }
 
-// transferVestingSchedule is an internal helper that transfers vesting schedule from genesis account to recipient
-// It takes the genesis account object to avoid redundant lookups
-func (k Keeper) transferVestingSchedule(ctx context.Context, genesisAccount sdk.AccountI, recipientAddr sdk.AccAddress) error {
-	// Check if the genesis account has vesting
-	hasVesting, vestingCoins, _, err := k.GetVestingInfo(ctx, genesisAccount.GetAddress())
-	if err != nil {
-		return errorsmod.Wrapf(err, "failed to get vesting info")
-	}
-
-	// If no vesting, nothing to transfer
-	if !hasVesting || vestingCoins.IsZero() {
-		k.Logger().Info(
-			"no vesting schedule to transfer",
-			"genesis_address", genesisAccount.GetAddress().String(),
-			"recipient_address", recipientAddr.String(),
-		)
-		return nil
-	}
-
-	// Create vesting account for recipient based on genesis account type
-	currentTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
-	var newVestingAccount sdk.AccountI
-
-	switch v := genesisAccount.(type) {
-	case *vestingtypes.PeriodicVestingAccount:
-		newVestingAccount, err = k.createPeriodicVestingAccount(ctx, v, recipientAddr, currentTime)
-	case *vestingtypes.ContinuousVestingAccount:
-		newVestingAccount, err = k.createContinuousVestingAccount(ctx, v, recipientAddr, currentTime)
-	case *vestingtypes.DelayedVestingAccount:
-		newVestingAccount, err = k.createDelayedVestingAccount(ctx, v, recipientAddr, currentTime)
-	case *vestingtypes.BaseVestingAccount:
-		newVestingAccount, err = k.createBaseVestingAccount(ctx, v, recipientAddr, currentTime)
-	default:
-		// No vesting account, nothing to transfer
-		return nil
-	}
-
-	if err != nil {
-		return errorsmod.Wrapf(err, "failed to create vesting account")
-	}
-
-	// Set the new vesting account for the recipient
-	k.accountKeeper.SetAccount(ctx, newVestingAccount)
-
-	// Convert the original genesis account to a regular BaseAccount (cleanup)
-	// This removes the vesting account structure since all assets have been transferred
-	baseAccount := authtypes.NewBaseAccount(
-		genesisAccount.GetAddress(),
-		genesisAccount.GetPubKey(),
-		genesisAccount.GetAccountNumber(),
-		genesisAccount.GetSequence(),
-	)
-	k.accountKeeper.SetAccount(ctx, baseAccount)
-
-	// Log successful vesting transfer
-	k.Logger().Info(
-		"vesting schedule transfer completed",
-		"genesis_address", genesisAccount.GetAddress().String(),
-		"recipient_address", recipientAddr.String(),
-		"vesting_amount", vestingCoins.String(),
-	)
-
-	return nil
-}
-
 // createPeriodicVestingAccount creates a periodic vesting account for the recipient
-func (k Keeper) createPeriodicVestingAccount(ctx context.Context, vestingAcc *vestingtypes.PeriodicVestingAccount, recipientAddr sdk.AccAddress, currentTime int64) (sdk.AccountI, error) {
+func (k Keeper) createPeriodicVestingAccount(ctx context.Context, vestingAcc *vestingtypes.PeriodicVestingAccount, recipientAccount sdk.AccountI, currentTime int64) (sdk.AccountI, error) {
 	// Calculate remaining periods and amounts
 	var remainingPeriods []vestingtypes.Period
 	var remainingCoins sdk.Coins
@@ -180,8 +202,13 @@ func (k Keeper) createPeriodicVestingAccount(ctx context.Context, vestingAcc *ve
 		accumulatedTime = periodEndTime
 	}
 
-	// Create base account for recipient
-	baseAccount := authtypes.NewBaseAccountWithAddress(recipientAddr)
+	// Use existing recipient account to preserve account number and sequence
+	baseAccount := authtypes.NewBaseAccount(
+		recipientAccount.GetAddress(),
+		recipientAccount.GetPubKey(),
+		recipientAccount.GetAccountNumber(),
+		recipientAccount.GetSequence(),
+	)
 
 	// Create new periodic vesting account with remaining periods
 	newVestingAcc, err := vestingtypes.NewPeriodicVestingAccount(baseAccount, remainingCoins, currentTime, remainingPeriods)
@@ -193,7 +220,7 @@ func (k Keeper) createPeriodicVestingAccount(ctx context.Context, vestingAcc *ve
 }
 
 // createContinuousVestingAccount creates a continuous vesting account for the recipient
-func (k Keeper) createContinuousVestingAccount(ctx context.Context, vestingAcc *vestingtypes.ContinuousVestingAccount, recipientAddr sdk.AccAddress, currentTime int64) (sdk.AccountI, error) {
+func (k Keeper) createContinuousVestingAccount(ctx context.Context, vestingAcc *vestingtypes.ContinuousVestingAccount, recipientAccount sdk.AccountI, currentTime int64) (sdk.AccountI, error) {
 	// Calculate remaining vesting amount proportionally
 	totalDuration := vestingAcc.EndTime - vestingAcc.StartTime
 	if totalDuration <= 0 || currentTime >= vestingAcc.EndTime {
@@ -212,8 +239,13 @@ func (k Keeper) createContinuousVestingAccount(ctx context.Context, vestingAcc *
 	remainingAmount := originalAmount.MulRaw(remainingDuration).QuoRaw(totalDuration)
 	remainingCoins := sdk.NewCoins(sdk.NewCoin(vestingAcc.OriginalVesting[0].Denom, remainingAmount))
 
-	// Create base account for recipient
-	baseAccount := authtypes.NewBaseAccountWithAddress(recipientAddr)
+	// Use existing recipient account to preserve account number and sequence
+	baseAccount := authtypes.NewBaseAccount(
+		recipientAccount.GetAddress(),
+		recipientAccount.GetPubKey(),
+		recipientAccount.GetAccountNumber(),
+		recipientAccount.GetSequence(),
+	)
 
 	// Create new continuous vesting account with remaining duration
 	newVestingAcc, err := vestingtypes.NewContinuousVestingAccount(baseAccount, remainingCoins, currentTime, vestingAcc.EndTime)
@@ -225,15 +257,20 @@ func (k Keeper) createContinuousVestingAccount(ctx context.Context, vestingAcc *
 }
 
 // createDelayedVestingAccount creates a delayed vesting account for the recipient
-func (k Keeper) createDelayedVestingAccount(ctx context.Context, vestingAcc *vestingtypes.DelayedVestingAccount, recipientAddr sdk.AccAddress, currentTime int64) (sdk.AccountI, error) {
+func (k Keeper) createDelayedVestingAccount(ctx context.Context, vestingAcc *vestingtypes.DelayedVestingAccount, recipientAccount sdk.AccountI, currentTime int64) (sdk.AccountI, error) {
 	// Check if vesting has ended
 	if currentTime >= vestingAcc.EndTime {
 		// Vesting has ended, no vesting account needed
 		return nil, nil
 	}
 
-	// Create base account for recipient
-	baseAccount := authtypes.NewBaseAccountWithAddress(recipientAddr)
+	// Use existing recipient account to preserve account number and sequence
+	baseAccount := authtypes.NewBaseAccount(
+		recipientAccount.GetAddress(),
+		recipientAccount.GetPubKey(),
+		recipientAccount.GetAccountNumber(),
+		recipientAccount.GetSequence(),
+	)
 	remainingCoins := vestingAcc.OriginalVesting
 
 	// Create new delayed vesting account with same end time
@@ -246,15 +283,20 @@ func (k Keeper) createDelayedVestingAccount(ctx context.Context, vestingAcc *ves
 }
 
 // createBaseVestingAccount creates a base vesting account for the recipient
-func (k Keeper) createBaseVestingAccount(ctx context.Context, vestingAcc *vestingtypes.BaseVestingAccount, recipientAddr sdk.AccAddress, currentTime int64) (sdk.AccountI, error) {
+func (k Keeper) createBaseVestingAccount(ctx context.Context, vestingAcc *vestingtypes.BaseVestingAccount, recipientAccount sdk.AccountI, currentTime int64) (sdk.AccountI, error) {
 	// Check if vesting has ended
 	if currentTime >= vestingAcc.EndTime {
 		// Vesting has ended, no vesting account needed
 		return nil, nil
 	}
 
-	// Create base account for recipient
-	baseAccount := authtypes.NewBaseAccountWithAddress(recipientAddr)
+	// Use existing recipient account to preserve account number and sequence
+	baseAccount := authtypes.NewBaseAccount(
+		recipientAccount.GetAddress(),
+		recipientAccount.GetPubKey(),
+		recipientAccount.GetAccountNumber(),
+		recipientAccount.GetSequence(),
+	)
 	remainingCoins := vestingAcc.OriginalVesting
 
 	// Create new base vesting account
@@ -343,7 +385,7 @@ func (k Keeper) ExecuteOwnershipTransfer(ctx context.Context, genesisAddr, recip
 		RecipientAddress:  recipientAddr.String(),
 		TransferHeight:    uint64(currentHeight),
 		Completed:         true,
-		TransferredDenoms: k.getTransferredDenoms(ctx, genesisAddr),
+		TransferredDenoms: k.getTransferredDenoms(ctx, recipientAddr),
 		TransferAmount:    k.getTotalTransferAmount(ctx, genesisAddr, recipientAddr),
 	}
 
@@ -393,21 +435,20 @@ func (k Keeper) ExecuteOwnershipTransfer(ctx context.Context, genesisAddr, recip
 }
 
 // getTransferredDenoms determines which denominations were transferred
-func (k Keeper) getTransferredDenoms(ctx context.Context, genesisAddr sdk.AccAddress) []string {
-	// Get the balances that were present before transfer
-	// Note: This is called after transfer, so we need to reconstruct from transfer record context
-	// For now, we'll use a simple approach - in production this might need more sophisticated tracking
+func (k Keeper) getTransferredDenoms(ctx context.Context, recipientAddr sdk.AccAddress) []string {
+	// This is called after transfer completion, so we check the recipient's balances
+	// to determine which denominations were transferred
 
 	denoms := make(map[string]bool)
 
-	// Check if there were any spendable coins (these would have been transferred)
-	spendableCoins := k.bankView.SpendableCoins(ctx, genesisAddr)
-	for _, coin := range spendableCoins {
+	// Get all balances from recipient (includes both spendable and vesting)
+	allBalances := k.bankView.GetAllBalances(ctx, recipientAddr)
+	for _, coin := range allBalances {
 		denoms[coin.Denom] = true
 	}
 
-	// Check vesting coins
-	hasVesting, vestingCoins, _, err := k.GetVestingInfo(ctx, genesisAddr)
+	// Check if recipient has vesting coins as well
+	hasVesting, vestingCoins, _, err := k.GetVestingInfo(ctx, recipientAddr)
 	if err == nil && hasVesting {
 		for _, coin := range vestingCoins {
 			denoms[coin.Denom] = true

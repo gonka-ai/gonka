@@ -144,10 +144,18 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "get-minimum-validation-average"))
     }
 
+    fun getRawParticipants(): RawParticipantWrapper = wrapLog("getRawParticipants", false) {
+        execAndParse(listOf("query", "inference", "list-participant"))
+    }
+
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
     fun getVersion(): String = wrapLog("getVersion", false) {
         exec(listOf(config.execName, "version")).first()
+    }
+
+    fun getMlNodeVersion(): MlNodeVersionQueryResponse = wrapLog("getMlNodeVersion", infoLevel = false) {
+        execAndParse(listOf("query", "inference", "ml-node-version"))
     }
 
     var coldAccountKey: Validator? = null
@@ -311,6 +319,18 @@ data class ApplicationCLI(
                 genesisAddress,
                 recipientAddress
             )
+        )
+    }
+
+    fun submitGenesisTransferOwnership(genesisAddress: String, recipientAddress: String, from: String): TxResponse = wrapLog("submitGenesisTransferOwnership", true) {
+        sendTransactionDirectly(
+            listOf(
+                "genesistransfer",
+                "transfer-ownership",
+                genesisAddress,
+                recipientAddress
+            ),
+            from
         )
     }
 
@@ -544,6 +564,57 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "auth", "module-account", accountName))
     }
 
+    // Query regular account (works for all account types)
+    fun queryAccount(address: String): Map<String, Any> = wrapLog("queryAccount", false) {
+        val output = execCli(listOf("query", "auth", "account", address))
+        cosmosJson.fromJson(output, Map::class.java) as Map<String, Any>
+    }
+
+    // Check if account is a Cosmos SDK vesting account
+    fun isCosmosVestingAccount(address: String): Boolean = wrapLog("isCosmosVestingAccount", false) {
+        try {
+            val accountData = queryAccount(address)
+            val account = accountData["account"] as? Map<String, Any> ?: return@wrapLog false
+            val accountType = account["type"] as? String ?: (account["@type"] as? String) ?: return@wrapLog false
+            
+            // Check if it's a Cosmos SDK vesting account type
+            // Format can be either "cosmos-sdk/ContinuousVestingAccount" or "/cosmos.vesting.v1beta1.ContinuousVestingAccount"
+            accountType.contains("VestingAccount") && 
+                (accountType.contains("cosmos-sdk/") || accountType.contains("cosmos.vesting"))
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Get locked (vesting) coins amount for an account
+    // This calculates the CURRENT locked amount: Total Balance - Spendable Balance
+    fun getLockedCoins(address: String, denom: String = this.config.denom): Long = wrapLog("getLockedCoins", false) {
+        try {
+            // To get current locked amount, we calculate: Total - Spendable
+            // Note: original_vesting never decreases, so we can't use it
+            val totalBalance = getBalance(address, denom).balance.amount
+            val spendableBalance = getSpendableBalance(address, denom)
+            val locked = totalBalance - spendableBalance
+            return@wrapLog if (locked > 0) locked else 0L
+        } catch (e: Exception) {
+            Logger.warn("Failed to get locked coins for $address: ${e.message}")
+            0L
+        }
+    }
+
+    // Get spendable coins from bank query
+    fun getSpendableBalance(address: String, denom: String = this.config.denom): Long = wrapLog("getSpendableBalance", false) {
+        try {
+            val output = execCli(listOf("query", "bank", "spendable-balances", address))
+            val response = cosmosJson.fromJson(output, BalanceListResponse::class.java)
+            val coin = response.balances?.find { it.denom == denom }
+            coin?.amount?.toLongOrNull() ?: 0L
+        } catch (e: Exception) {
+            Logger.warn("Failed to get spendable balance for $address: ${e.message}")
+            0L
+        }
+    }
+
 
     fun sendTransactionDirectly(args: List<String>, useColdAccount: Boolean = true): TxResponse {
         val from = if (useColdAccount) this.getColdAccountName() else this.getWarmAccountName()
@@ -551,6 +622,12 @@ data class ApplicationCLI(
         val finalArgs = listOf("tx") + args + getTransactionArgs(from)
         return execAndParse(finalArgs, stdIn = passwordInjection)
 
+    }
+
+    fun sendTransactionDirectly(args: List<String>, from: String): TxResponse {
+        Logger.info("Sending transaction from: $from")
+        val finalArgs = listOf("tx") + args + getTransactionArgs(from)
+        return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
     private fun getTransactionArgs(from: String) = listOf(

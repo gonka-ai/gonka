@@ -18,6 +18,7 @@ func TestCalculateInvalidationsTanh(t *testing.T) {
 		weight           decimal.Decimal
 		reputation       int32
 		maxInvalidations int64
+		minInvalidations int64
 		curveFactor      int64
 		expectedMin      int64
 		expectedMax      int64
@@ -47,6 +48,13 @@ func TestCalculateInvalidationsTanh(t *testing.T) {
 			expectedMin: 1, expectedMax: 1,
 		},
 		{
+			name:       "Minimum guaranteed invalidations set",
+			inferences: 0, weight: d(0.001), reputation: 1,
+			maxInvalidations: 1000, curveFactor: 500,
+			expectedMin: 2, expectedMax: 2,
+			minInvalidations: 2,
+		},
+		{
 			name:       "Capped by max invalidations",
 			inferences: 10000, weight: d(1.0), reputation: 100,
 			maxInvalidations: 1000, curveFactor: 500,
@@ -62,6 +70,7 @@ func TestCalculateInvalidationsTanh(t *testing.T) {
 				tt.reputation,
 				tt.maxInvalidations,
 				tt.curveFactor,
+				tt.minInvalidations,
 			)
 			assert.GreaterOrEqual(t, result, tt.expectedMin, "Too few invalidations")
 			assert.LessOrEqual(t, result, tt.expectedMax, "Too many invalidations")

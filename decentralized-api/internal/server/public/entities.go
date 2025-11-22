@@ -49,7 +49,14 @@ type ActiveParticipantWithProof struct {
 	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
 	Validators              []*comettypes.Validator  `json:"validators"`
 	Block                   *comettypes.Block        `json:"block"`
+	ExcludedParticipants    []ExcludedParticipant    `json:"excluded_participants"`
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
+}
+
+type ExcludedParticipant struct {
+	Address              string `json:"address"`
+	Reason               string `json:"reason"`
+	ExclusionBlockHeight int64  `json:"exclusion_block_height"`
 }
 
 type ParticipantDto struct {

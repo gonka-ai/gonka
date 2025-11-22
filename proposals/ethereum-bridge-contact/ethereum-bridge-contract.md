@@ -1,4 +1,4 @@
-# Ethereum Bridge Smart Contract Specification
+# [IMPLEMENTED]: Ethereum Bridge Smart Contract Specification
 
 ## Overview
 
@@ -525,3 +525,116 @@ uint256 private _totalSupply;
 - **Request Isolation**: Separate request ID namespaces for minting vs withdrawal prevent cross-operation replay attacks
 
 This specification provides a comprehensive foundation for a secure, decentralized bridge contract while maintaining necessary administrative controls for emergency situations.
+
+## Native Gonka Bridge Integration
+
+### 8. Special Bridge Module Account for Native Gonka
+
+**Bridge Module Account Creation:**
+
+A special module account needs to be created within the inference module to handle native Gonka token bridging to Ethereum as WGNK. This account serves as the escrow mechanism for native tokens being bridged.
+
+**Module Account Properties:**
+- **Account Name**: `"bridge_escrow"` - dedicated sub-account within the inference module
+- **Purpose**: Hold native Gonka tokens that are being bridged to Ethereum as WGNK
+- **Access Control**: Only the inference module can transfer tokens to/from this account
+- **Balance Tracking**: Standard Cosmos SDK coin tracking for native token amounts
+
+**Files to Create/Modify:**
+- `inference-chain/x/inference/keeper/bridge_native.go` - Native bridge operations
+- `inference-chain/x/inference/types/keys.go` - Add bridge escrow account constant
+- `inference-chain/x/inference/module/module.go` - Register the bridge escrow account
+
+### 9. MsgRequestBridgeMint Implementation
+
+**New Message Type:**
+
+Create `MsgRequestBridgeMint` to handle native Gonka bridging to WGNK. Users call this message directly to initiate the bridge process, which atomically transfers their native tokens to the bridge escrow account and generates the corresponding WGNK mint request.
+
+**Message Structure:**
+- **Creator**: User address sending native tokens
+- **Amount**: Amount of native Gonka tokens to bridge
+- **DestinationAddress**: Ethereum address to receive WGNK tokens
+- **ChainId**: Target chain identifier (e.g., "ethereum", "sepolia")
+
+**Processing Flow:**
+1. **Message Validation**: Verify sender has sufficient balance and destination address format is valid
+2. **Atomic Transfer**: Transfer native tokens from user to bridge escrow account using bank module
+3. **BLS Signature Request**: Generate BLS signature request for WGNK minting on Ethereum
+4. **Event Emission**: Emit bridge mint request event for off-chain monitoring
+5. **Response**: Return request ID and epoch information to user
+
+**Files to Create/Modify:**
+- `inference-chain/proto/inference/inference/tx.proto` - Add MsgRequestBridgeMint protobuf definition
+- `inference-chain/x/inference/types/message_request_bridge_mint.go` - Message validation logic
+- `inference-chain/x/inference/keeper/msg_server_request_bridge_mint.go` - Message handler implementation
+
+### 10. Bridge Transaction Processing for Native Tokens
+
+**Enhanced Bridge Transaction Handling:**
+
+Modify the existing bridge transaction processing to handle reverse direction - when BridgeTransaction is registered with a contract address matching the registered bridge address, it should release native tokens from escrow.
+
+**Processing Logic:**
+1. **Bridge Address Matching**: Check if `bridgeTx.ContractAddress` equals any registered bridge contract address
+2. **Validation**: Verify the transaction represents a valid WGNK burn on Ethereum
+3. **Token Release**: Transfer native Gonka tokens from bridge escrow account to `bridgeTx.OwnerAddress`
+4. **Balance Management**: Ensure sufficient escrow balance exists for the withdrawal
+
+**Owner Address Resolution:**
+- Use the same address derivation mechanism as wrapped tokens
+- `bridgeTx.OwnerAddress` should be a valid Cosmos bech32 address
+- Support address format conversion if needed (Ethereum → Cosmos)
+
+**Files to Modify:**
+- `inference-chain/x/inference/keeper/bridge_wrapped_token.go` - Extend `handleCompletedBridgeTransaction` function
+- `inference-chain/x/inference/keeper/bridge_native.go` - Add native token release logic
+- `inference-chain/x/inference/keeper/bridge.go` - Add bridge address matching utilities
+
+### 11. Integration with Existing Bridge Infrastructure
+
+**Bridge Address Registration:**
+
+Utilize the existing `MsgRegisterBridgeAddresses` mechanism to register Ethereum bridge contract addresses. These addresses will be used to identify when bridge transactions represent WGNK burns (reverse direction).
+
+**BLS Signature Integration:**
+
+Leverage the existing BLS signature infrastructure for both directions:
+- **Forward Direction**: Native → WGNK (mint signatures)
+- **Reverse Direction**: WGNK → Native (withdrawal validation)
+
+**Event System Enhancement:**
+
+Extend the existing event system to include native bridge operations:
+- `BridgeMintRequested`: When native tokens are escrowed for WGNK minting
+- `NativeTokensReleased`: When native tokens are released from escrow
+- `BridgeEscrowBalanceChanged`: For escrow account balance tracking
+
+**Files to Modify:**
+- `inference-chain/x/inference/keeper/msg_server_register_bridge_addresses.go` - Ensure bridge addresses are properly registered
+- `inference-chain/x/inference/keeper/msg_server_bridge_exchange.go` - Add native token handling to existing bridge exchange logic
+- `inference-chain/x/inference/types/events.go` - Add new event types for native bridge operations
+
+### 12. Complete Bridge Flow for Native Gonka ↔ WGNK
+
+**Native to WGNK (Forward Direction):**
+1. User calls `MsgRequestBridgeMint` with native Gonka amount and Ethereum destination
+2. Native tokens transferred to bridge escrow module account
+3. BLS signature request generated for WGNK minting on Ethereum
+4. Validators sign the mint command using existing BLS infrastructure
+5. Anyone can call `mintWithSignature` on Ethereum BridgeContract to mint WGNK
+
+**WGNK to Native (Reverse Direction):**
+1. User transfers WGNK to BridgeContract address on Ethereum (auto-burn triggered)
+2. Off-chain bridge detects `WGNKBurned` event
+3. Bridge submits `BridgeExchange` message with bridge contract address
+4. When majority validation reached, `handleCompletedBridgeTransaction` detects bridge address match
+5. Native Gonka tokens released from escrow to user's Cosmos address
+
+**Security Considerations:**
+- **Escrow Balance Monitoring**: Ensure escrow account always has sufficient balance for withdrawals
+- **Address Validation**: Strict validation of Cosmos ↔ Ethereum address conversions
+- **Double-Spend Prevention**: Prevent same Ethereum burn from being processed multiple times
+- **Emergency Controls**: Admin controls to pause native bridge operations if needed
+
+This integration completes the bidirectional bridge mechanism, allowing seamless conversion between native Gonka tokens and WGNK on Ethereum while maintaining the security guarantees of the existing BLS threshold signature system.

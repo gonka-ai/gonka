@@ -163,7 +163,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 7 }
+func (AppModule) ConsensusVersion() uint64 { return 8 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -220,6 +220,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
+
+	// Handle confirmation PoC trigger decisions and phase transitions
+	err := am.handleConfirmationPoC(ctx, blockHeight)
+	if err != nil {
+		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
+		// Don't return error - allow block processing to continue
+	}
+
 	params, err := am.keeper.GetParamsSafe(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
@@ -257,6 +265,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
+	// Track full chain upgrades from UpgradeKeeper
+	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
+	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {
+		am.LogInfo("FullUpgradeActive - tracking height", types.Upgrades,
+			"upgradeHeight", upgradePlan.Height, "blockHeight", blockHeight, "name", upgradePlan.Name)
+		err = am.keeper.SetLastUpgradeHeight(ctx, blockHeight)
+		if err != nil {
+			am.LogError("Failed to set last upgrade height for full upgrade", types.Upgrades, "error", err)
+		}
+	}
+
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
 		if pu.Height == uint64(blockHeight) {
@@ -266,6 +285,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 				am.keeper.SetMLNodeVersion(ctx, types.MLNodeVersion{
 					CurrentVersion: pu.NodeVersion,
 				})
+			}
+
+			// Track last upgrade height
+			err = am.keeper.SetLastUpgradeHeight(ctx, blockHeight)
+			if err != nil {
+				am.LogError("Failed to set last upgrade height", types.Upgrades, "error", err)
 			}
 		} else if pu.Height < uint64(blockHeight) {
 			am.LogInfo("PartialUpgradeExpired", types.Upgrades, "partialUpgradeHeight", pu.Height, "blockHeight", blockHeight)
@@ -415,6 +440,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// Apply universal power capping to epoch powers
 	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
 
+	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
+	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
+
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
@@ -510,7 +538,8 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 				"participantIndex", p.Index)
 			continue
 		}
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
+
+		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, 0)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
@@ -639,7 +668,6 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	if err != nil {
 		am.LogError("Unable to clear active invalidations", types.EpochGroup, "error", err.Error())
 	}
-
 }
 
 // applyEpochPowerCapping applies universal power capping to activeParticipants after ComputeNewWeights
@@ -769,6 +797,7 @@ type ModuleInputs struct {
 	StreamVestingKeeper types.StreamVestingKeeper
 	AuthzKeeper         authzkeeper.Keeper
 	GetWasmKeeper       func() wasmkeeper.Keeper `optional:"true"`
+	UpgradeKeeper       types.UpgradeKeeper
 }
 
 type ModuleOutputs struct {
@@ -802,6 +831,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.StreamVestingKeeper,
 		in.AuthzKeeper,
 		in.GetWasmKeeper,
+		in.UpgradeKeeper,
 	)
 
 	m := NewAppModule(
@@ -850,7 +880,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	// Convert ActiveParticipants to ParticipantWithWeightAndKey format expected by BLS module
 	finalizedParticipants := make([]blstypes.ParticipantWithWeightAndKey, 0, len(activeParticipants))
 
-	// Calculate total weight to convert to percentages
+	// Calculate total weight
 	totalWeight := int64(0)
 	for _, p := range activeParticipants {
 		totalWeight += p.Weight
@@ -860,6 +890,9 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		am.LogError("Total weight is zero, cannot initiate BLS key generation", types.EpochGroup, "epochID", epochID)
 		return
 	}
+
+	// Compute adjusted percentages if genesis guardian reservation applies
+	adjustedPercentages := ApplyBLSGuardianSlotReservation(ctx, am.keeper, activeParticipants)
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, ap := range activeParticipants {
@@ -892,12 +925,22 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			continue
 		}
 
-		// Use ap.Weight (from ActiveParticipant) as it's the computed weight for this epoch's DKG.
-		weightPercentage := math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+		// Determine percentage weight: use adjusted reservation if present, else raw share
+		var percentage math.LegacyDec
+		if adjustedPercentages != nil {
+			if p, ok := adjustedPercentages[ap.Index]; ok {
+				percentage = p
+			} else {
+				// Participant not present in adjusted map, compute from raw weight
+				percentage = math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+			}
+		} else {
+			percentage = math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+		}
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
 			Address:            ap.Index,
-			PercentageWeight:   weightPercentage,
+			PercentageWeight:   percentage,
 			Secp256k1PublicKey: pubKeyBytes,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
@@ -905,7 +948,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		am.LogInfo("Prepared participant for BLS key generation using AccountKeeper PubKey", types.EpochGroup,
 			"participant", ap.Index,
 			"weight", ap.Weight,
-			"percentage", weightPercentage.String(),
+			"percentage", percentage.String(),
 			"epochID", epochID,
 			"keyLength", len(pubKeyBytes))
 	}

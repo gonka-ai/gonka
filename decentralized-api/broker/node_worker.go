@@ -5,7 +5,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"sync"
-	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -19,8 +18,7 @@ type commandWithContext struct {
 type NodeWorker struct {
 	nodeId            string
 	node              *NodeWithState
-	mlClient          mlnodeclient.MLNodeClient
-	clientMu          sync.RWMutex
+	getClientFn       func(*NodeWithState) mlnodeclient.MLNodeClient
 	broker            *Broker
 	commands          chan commandWithContext
 	shutdown          chan struct{}
@@ -29,16 +27,33 @@ type NodeWorker struct {
 	versionsMu        sync.Mutex
 }
 
-// NewNodeWorkerWithClient creates a new worker with a custom client (for testing)
+// NewNodeWorker creates a worker that builds a new client for every operation using the latest node state.
+func NewNodeWorker(nodeId string, node *NodeWithState, broker *Broker) *NodeWorker {
+	return newNodeWorker(nodeId, node, broker, nil)
+}
+
+// NewNodeWorkerWithClient creates a new worker with a custom client provider (primarily for testing).
 func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodeclient.MLNodeClient, broker *Broker) *NodeWorker {
+	return newNodeWorker(nodeId, node, broker, func(*NodeWithState) mlnodeclient.MLNodeClient {
+		return client
+	})
+}
+
+func newNodeWorker(nodeId string, node *NodeWithState, broker *Broker, getClientFn func(*NodeWithState) mlnodeclient.MLNodeClient) *NodeWorker {
 	worker := &NodeWorker{
 		nodeId:            nodeId,
 		node:              node,
-		mlClient:          client,
 		broker:            broker,
 		commands:          make(chan commandWithContext, 10),
 		availableVersions: make(map[string]bool),
 		shutdown:          make(chan struct{}),
+	}
+	if getClientFn != nil {
+		worker.getClientFn = getClientFn
+	} else {
+		worker.getClientFn = func(nodeState *NodeWithState) mlnodeclient.MLNodeClient {
+			return broker.NewNodeClient(&nodeState.Node)
+		}
 	}
 	go worker.run()
 	return worker
@@ -95,25 +110,7 @@ func (w *NodeWorker) Shutdown() {
 }
 
 func (w *NodeWorker) RefreshClientImmediate(oldVersion, newVersion string) {
-	w.clientMu.Lock()
-	oldClient := w.mlClient
-	w.mlClient = w.broker.NewNodeClient(&w.node.Node)
-	w.clientMu.Unlock()
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		// TODO: should be /kill, not /stop
-		if err := oldClient.Stop(ctx); err != nil {
-			logging.Warn("Failed to stop old MLNode client during immediate version transition", types.Nodes,
-				"node_id", w.nodeId, "oldVersion", oldVersion, "newVersion", newVersion, "error", err)
-		} else {
-			logging.Info("Successfully stopped old MLNode client during immediate version transition", types.Nodes,
-				"node_id", w.nodeId, "oldVersion", oldVersion, "newVersion", newVersion)
-		}
-	}()
-
-	logging.Info("Immediately refreshed MLNode client", types.Nodes,
+	logging.Info("Node worker uses dynamic MLNode clients per request; future calls will use latest version info", types.Nodes,
 		"node_id", w.nodeId, "oldVersion", oldVersion, "newVersion", newVersion)
 }
 
@@ -151,9 +148,7 @@ func (w *NodeWorker) CheckClientVersionAlive(version string, factory mlnodeclien
 }
 
 func (w *NodeWorker) GetClient() mlnodeclient.MLNodeClient {
-	w.clientMu.RLock()
-	defer w.clientMu.RUnlock()
-	return w.mlClient
+	return w.getClientFn(w.node)
 }
 
 // NodeWorkGroup manages parallel execution across multiple node workers

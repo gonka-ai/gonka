@@ -25,7 +25,7 @@ func TestAddParticipantToGenesis_AddAndUpsert(t *testing.T) {
 		"params":              map[string]any{},
 		"genesis_only_params": map[string]any{},
 		"model_list":          []any{},
-		"cosm_wasm_params":    map[string]any{},
+		"bridge":              map[string]any{},
 		"participant_list":    []any{},
 	}
 	infBz, _ := json.Marshal(inferenceGenesis)
@@ -191,8 +191,8 @@ func TestPatchGenesis_ApplyRealGenparticipantFile(t *testing.T) {
 		"params":              map[string]any{},
 		"genesis_only_params": map[string]any{},
 		"model_list":          []any{},
-		"cosm_wasm_params":    map[string]any{},
 		"participant_list":    []any{},
+		"bridge":              map[string]any{},
 	}
 	initAuthz := map[string]any{
 		"authorization": []any{},

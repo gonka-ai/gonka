@@ -496,6 +496,9 @@ class ModelManager:
             status=ModelStatus.NOT_FOUND
         )
     
+    async def get_model_status_async(self, model: Model) -> ModelStatusResponse:
+        return await asyncio.to_thread(self.get_model_status, model)
+    
     async def cancel_download(self, model: Model):
         """Cancels an ongoing download.
         
@@ -639,6 +642,9 @@ class ModelManager:
         except Exception as e:
             logger.error(f"Error listing models: {e}", exc_info=True)
             return []
+    
+    async def list_models_async(self) -> List[ModelListItem]:
+        return await asyncio.to_thread(self.list_models)
     
     def get_disk_space(self) -> DiskSpaceInfo:
         """Gets disk space information for the cache."""

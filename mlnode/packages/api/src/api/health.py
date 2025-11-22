@@ -45,9 +45,10 @@ async def get_health_data(request: Request) -> HealthResponse:
     """Gathers health data from all relevant managers."""
     # GPU Manager
     gpu_manager = request.app.state.gpu_manager
-    gpu_devices = gpu_manager.get_devices()
+    gpu_devices = await gpu_manager.get_devices_async()
+    gpu_available = await gpu_manager.is_cuda_available_async()
     gpu_info = GPUInfo(
-        available=gpu_manager.is_cuda_available(),
+        available=gpu_available,
         count=len(gpu_devices),
         devices=gpu_devices,
     )

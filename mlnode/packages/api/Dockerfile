@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM ghcr.io/gonka-ai/vllm:v0.9.1 AS base
+FROM ghcr.io/gonka-ai/vllm:v0.9.1-blackwell AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \

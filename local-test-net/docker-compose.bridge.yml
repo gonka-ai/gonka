@@ -1,0 +1,26 @@
+services:
+  bridge:
+    container_name: ${KEY_NAME}-bridge
+    image: ghcr.io/product-science/bridge-ethereum:latest
+    build:
+      context: ../bridge
+      dockerfile: Dockerfile
+    
+    volumes:
+      - ./prod-local/${KEY_NAME}/ethereum/geth:/data/geth
+      - ./prod-local/${KEY_NAME}/ethereum/prysm:/data/prysm
+      - ./prod-local/${KEY_NAME}/ethereum/jwt:/data/jwt
+      - ./prod-local/${KEY_NAME}/ethereum/logs:/var/log
+      - ./temp/persistent-db:/persistent-db
+    environment:
+      - GETH_DATA_DIR=/data/geth
+      - PRYSM_DATA_DIR=/data/prysm
+      - JWT_SECRET_PATH=/data/jwt/jwt.hex
+      - BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-http://${KEY_NAME}-api:9200/admin/v1/bridge/block}
+      - BRIDGE_GETADDRESSES=${BRIDGE_GETADDRESSES:-http://${KEY_NAME}-api:9000/v1/bridge/addresses}
+      - BEACON_STATE_URL=${BEACON_STATE_URL:-https://beaconstate.ethstaker.cc/}
+      - PERSISTENT_DB_DIR=/persistent-db
+    networks:
+      - chain-public
+    depends_on:
+      - api

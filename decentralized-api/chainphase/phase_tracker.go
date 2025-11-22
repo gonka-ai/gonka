@@ -15,9 +15,10 @@ type ChainPhaseTracker struct {
 	currentBlock BlockInfo
 	// latestEpoch is not the effective epoch, but the latest epoch that has been set
 	// so if PoC has just started it will be effectiveEpoch + 1
-	latestEpoch        *types.Epoch
-	currentEpochParams *types.EpochParams
-	currentIsSynced    bool
+	latestEpoch                *types.Epoch
+	currentEpochParams         *types.EpochParams
+	currentIsSynced            bool
+	activeConfirmationPoCEvent *types.ConfirmationPoCEvent
 }
 
 type BlockInfo struct {
@@ -32,7 +33,7 @@ func NewChainPhaseTracker() *ChainPhaseTracker {
 
 // Update caches the latest Epoch information from the network.
 // This method should be called by the OnNewBlockDispatcher on every new block.
-func (t *ChainPhaseTracker) Update(block BlockInfo, epoch *types.Epoch, params *types.EpochParams, isSynced bool) {
+func (t *ChainPhaseTracker) Update(block BlockInfo, epoch *types.Epoch, params *types.EpochParams, isSynced bool, confirmationPoCEvent *types.ConfirmationPoCEvent) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -40,13 +41,15 @@ func (t *ChainPhaseTracker) Update(block BlockInfo, epoch *types.Epoch, params *
 	t.latestEpoch = epoch
 	t.currentEpochParams = params
 	t.currentIsSynced = isSynced
+	t.activeConfirmationPoCEvent = confirmationPoCEvent
 }
 
 type EpochState struct {
-	LatestEpoch  types.EpochContext
-	CurrentBlock BlockInfo
-	CurrentPhase types.EpochPhase
-	IsSynced     bool
+	LatestEpoch                types.EpochContext
+	CurrentBlock               BlockInfo
+	CurrentPhase               types.EpochPhase
+	IsSynced                   bool
+	ActiveConfirmationPoCEvent *types.ConfirmationPoCEvent
 }
 
 func (es *EpochState) IsNilOrNotSynced() bool {
@@ -66,10 +69,11 @@ func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	phase := ec.GetCurrentPhase(t.currentBlock.Height)
 
 	return &EpochState{
-		LatestEpoch:  ec,
-		CurrentBlock: t.currentBlock,
-		CurrentPhase: phase,
-		IsSynced:     t.currentIsSynced,
+		LatestEpoch:                ec,
+		CurrentBlock:               t.currentBlock,
+		CurrentPhase:               phase,
+		IsSynced:                   t.currentIsSynced,
+		ActiveConfirmationPoCEvent: t.activeConfirmationPoCEvent,
 	}
 }
 

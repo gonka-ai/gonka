@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -29,13 +30,15 @@ type Server struct {
 	recorder      cosmos_client.CosmosMessageClient
 	validator     *validation.InferenceValidator
 	cdc           *codec.ProtoCodec
+	blockQueue    *pserver.BridgeQueue
 }
 
 func NewServer(
 	recorder cosmos_client.CosmosMessageClient,
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
-	validator *validation.InferenceValidator) *Server {
+	validator *validation.InferenceValidator,
+	blockQueue *pserver.BridgeQueue) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
@@ -47,6 +50,7 @@ func NewServer(
 		recorder:      recorder,
 		validator:     validator,
 		cdc:           cdc,
+		blockQueue:    blockQueue,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -84,6 +88,9 @@ func NewServer(
 
 	// EXPERIMENTAL: Setup and health report endpoint for participant onboarding
 	g.GET("setup/report", s.getSetupReport)
+
+	// Bridge
+	g.POST("bridge/block", s.postBridgeBlock)
 
 	return s
 }

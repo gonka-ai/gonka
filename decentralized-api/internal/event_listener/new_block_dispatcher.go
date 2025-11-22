@@ -221,7 +221,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 	comes from a totally different source?
 	// TODO: log block that came from event vs block returned by query
 	// TODO: can we add the state to the block event? As a future optimization?
-	d.phaseTracker.Update(blockInfo, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced)
+	d.phaseTracker.Update(blockInfo, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced, networkInfo.ActiveConfirmationPoCEvent)
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	if epochState == nil {
 		logging.Error("[ILLEGAL_STATE]: Epoch state is nil right after an update call to phase tracker. "+
@@ -262,10 +262,11 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 // NetworkInfo contains information queried from the network
 type NetworkInfo struct {
-	EpochParams types.EpochParams
-	IsSynced    bool
-	LatestEpoch types.Epoch
-	BlockHeight int64
+	EpochParams                types.EpochParams
+	IsSynced                   bool
+	LatestEpoch                types.Epoch
+	BlockHeight                int64
+	ActiveConfirmationPoCEvent *types.ConfirmationPoCEvent
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -283,11 +284,18 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (NetworkInf
 		return NetworkInfo{}, err
 	}
 
+	// Extract confirmation PoC event if active
+	var confirmationEvent *types.ConfirmationPoCEvent
+	if epochInfo.IsConfirmationPocActive && epochInfo.ActiveConfirmationPocEvent != nil {
+		confirmationEvent = epochInfo.ActiveConfirmationPocEvent
+	}
+
 	return NetworkInfo{
-		EpochParams: *epochInfo.Params.EpochParams,
-		IsSynced:    isSynced,
-		LatestEpoch: epochInfo.LatestEpoch,
-		BlockHeight: epochInfo.BlockHeight,
+		EpochParams:                *epochInfo.Params.EpochParams,
+		IsSynced:                   isSynced,
+		LatestEpoch:                epochInfo.LatestEpoch,
+		BlockHeight:                epochInfo.BlockHeight,
+		ActiveConfirmationPoCEvent: confirmationEvent,
 	}, nil
 }
 
@@ -324,9 +332,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	}
 
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
-		logging.Info("DapiStage:IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
+		logging.Info("DapiStage:IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "pocStartBlockHeight", epochContext.PocStartBlockHeight)
 		go func() {
-			d.nodePocOrchestrator.ValidateReceivedBatches(blockHeight)
+			d.nodePocOrchestrator.ValidateReceivedBatches(epochContext.PocStartBlockHeight)
 		}()
 	}
 
@@ -379,6 +387,58 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 				logging.Error("Failed to mark seed as claimed", types.Claims, "epochIndex", expectedPreviousEpochIndex, "error", err)
 			}
 		}()
+	}
+
+	// Confirmation PoC transitions (during inference phase)
+	if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
+		event := epochState.ActiveConfirmationPoCEvent
+		epochParams := &epochState.LatestEpoch.EpochParams
+
+		// Start generation
+		if event.ShouldStartGeneration(blockHeight) {
+			logging.Info("Confirmation PoC generation starting", types.PoC,
+				"trigger_height", event.TriggerHeight,
+				"block_hash", event.PocSeedBlockHash)
+
+			command := broker.NewStartPocCommand()
+			if err := d.nodeBroker.QueueMessage(command); err != nil {
+				logging.Error("Failed to send confirmation PoC start command", types.PoC, "error", err)
+			}
+		}
+
+		// End of exchange period - initiate validation transition
+		if event.ShouldInitValidation(blockHeight, epochParams) {
+			logging.Info("Confirmation PoC: initiating validation transition", types.PoC,
+				"trigger_height", event.TriggerHeight,
+				"exchange_end", event.GetExchangeEnd(epochParams),
+				"validation_starts_at", event.GetValidationStart(epochParams))
+
+			command := broker.NewInitValidateCommand()
+			if err := d.nodeBroker.QueueMessage(command); err != nil {
+				logging.Error("Failed to send confirmation PoC validate command", types.PoC, "error", err)
+			}
+		}
+
+		// Start validation (now has proper gap from InitValidateCommand)
+		if event.ShouldStartValidation(blockHeight, epochParams) {
+			logging.Info("Confirmation PoC validation starting", types.PoC,
+				"trigger_height", event.TriggerHeight)
+
+			go func() {
+				d.nodePocOrchestrator.ValidateReceivedBatches(event.TriggerHeight)
+			}()
+		}
+
+		// End of event - return to inference
+		if event.ShouldReturnToInference(blockHeight, epochParams) {
+			logging.Info("Confirmation PoC completed", types.PoC,
+				"trigger_height", event.TriggerHeight)
+
+			command := broker.NewInferenceUpAllCommand()
+			if err := d.nodeBroker.QueueMessage(command); err != nil {
+				logging.Error("Failed to send inference up command", types.PoC, "error", err)
+			}
+		}
 	}
 }
 
@@ -440,6 +500,24 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.Epoch
 }
 
 func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan bool) {
+	// Handle confirmation PoC during inference phase
+	if phaseInfo.CurrentPhase == types.InferencePhase && phaseInfo.ActiveConfirmationPoCEvent != nil {
+		event := phaseInfo.ActiveConfirmationPoCEvent
+
+		switch event.Phase {
+		case types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION:
+			cmd := broker.NewStartPocCommand()
+			return cmd, &cmd.Response
+		case types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION:
+			cmd := broker.NewInitValidateCommand()
+			return cmd, &cmd.Response
+		}
+		// GRACE_PERIOD or COMPLETED - return to inference
+		cmd := broker.NewInferenceUpAllCommand()
+		return cmd, &cmd.Response
+	}
+
+	// Regular phase commands
 	switch phaseInfo.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase:
 		cmd := broker.NewStartPocCommand()

@@ -1,5 +1,7 @@
 package com.productscience.data
 
+import com.productscience.LocalInferencePair
+
 data class ParticipantsResponse(
     val participants: List<Participant>,
 )
@@ -41,11 +43,19 @@ data class UnfundedInferenceParticipant(
     val address: String
 )
 
-
 data class ActiveParticipantsResponse(
     val activeParticipants: ActiveParticipants,
     val addresses: List<String>,
     val validators: List<ActiveValidator>,
+    val excludedParticipants: List<ExcludedParticipant>
+) : HasParticipants<ActiveParticipant> {
+    override fun getParticipantList(): List<ActiveParticipant> = activeParticipants.participants
+}
+
+data class ExcludedParticipant(
+    val address: String,
+    val reason: String,
+    val exclusionBlockHeight: Long,
 )
 
 data class ActiveParticipants(
@@ -55,17 +65,19 @@ data class ActiveParticipants(
     val effectiveBlockHeight: Long,
     val createdAtBlockHeight: Long,
     val epochId: Long,
-)
+) : HasParticipants<ActiveParticipant> {
+    override fun getParticipantList(): List<ActiveParticipant> = participants
+}
 
 data class ActiveParticipant(
-    val index: String,
+    override val index: String,
     val validatorKey: String,
     val weight: Long,
     val inferenceUrl: String,
     val models: List<String>,
     val seed: Seed,
     val mlNodes: List<MlNodes>,
-)
+) : ParticipantInfo
 
 data class Seed(
     val participant: String,
@@ -89,3 +101,34 @@ data class ActiveValidator(
     val votingPower: Long,
     val proposerPriority: Long,
 )
+
+data class RawParticipant(
+    override val index: String,
+    val address: String,
+    val weight: Long,
+    val joinTime: Long,
+    val joinHeight: Long,
+    val inferenceUrl: String,
+    val status: Int,
+    val epochsCompleted: Long,
+) : ParticipantInfo
+
+data class RawParticipantWrapper(
+    val participant: List<RawParticipant>
+) : HasParticipants<RawParticipant> {
+    override fun getParticipantList(): List<RawParticipant> = participant
+}
+
+interface ParticipantInfo {
+    val index: String
+}
+
+interface HasParticipants<T : ParticipantInfo> {
+    fun getParticipantList(): Iterable<T>
+}
+
+inline fun <reified T : ParticipantInfo> Iterable<T>.getParticipant(pair: LocalInferencePair): T? =
+    this.firstOrNull { it.index == pair.node.getColdAddress() }
+
+inline fun <reified T: ParticipantInfo> HasParticipants<T>.getParticipant(pair: LocalInferencePair): T? =
+    this.getParticipantList().getParticipant(pair)

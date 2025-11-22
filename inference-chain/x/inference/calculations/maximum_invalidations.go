@@ -47,10 +47,14 @@ func CalculateInvalidations(
 	reputation int32, // 0 - 100
 	maxInvalidations int64,
 	curveFactor int64,
+	minimumInvalidations int64,
 ) int64 {
+	if minimumInvalidations == 0 {
+		minimumInvalidations = 1
+	}
 	reputationDecimal := decimal.NewFromInt32(reputation)
 	if curveFactor <= 0 || maxInvalidations <= 0 {
-		return 1
+		return minimumInvalidations
 	}
 
 	// I / curveFactor
@@ -63,8 +67,8 @@ func CalculateInvalidations(
 
 	// Final result
 	inv := curveMultiplier.Mul(scaling).Mul(maxInv).Floor().IntPart()
-	if inv < 1 {
-		return 1
+	if inv < minimumInvalidations {
+		return minimumInvalidations
 	}
 	return inv
 }

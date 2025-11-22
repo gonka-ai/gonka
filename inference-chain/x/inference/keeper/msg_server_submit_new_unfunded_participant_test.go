@@ -57,8 +57,8 @@ func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: 0,
 		InferenceUrl:      "",
-		Status:            types.ParticipantStatus_RAMPING,
-		CurrentEpochStats: &types.CurrentEpochStats{},
+		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: types.NewCurrentEpochStats(),
 	}, savedParticipant)
 }
 
@@ -135,7 +135,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: 0,
 		InferenceUrl:      "inference-url",
-		Status:            types.ParticipantStatus_RAMPING,
-		CurrentEpochStats: &types.CurrentEpochStats{},
+		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: types.NewCurrentEpochStats(),
 	}, savedParticipant)
 }

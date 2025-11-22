@@ -624,11 +624,11 @@ func TestComputeNewWeights(t *testing.T) {
 				PocStartBlockHeight: 100,
 			})
 
-			// Call the function
-			result := am.ComputeNewWeights(ctx, upcomingEpoch)
+		// Call the function
+		result := am.ComputeNewWeights(ctx, upcomingEpoch)
 
-			// Verify the result
-			require.Equal(t, tt.expectedParticipants, len(result))
+		// Verify the result
+		require.Equal(t, tt.expectedParticipants, len(result))
 		})
 	}
 }

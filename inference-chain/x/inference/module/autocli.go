@@ -92,6 +92,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query pocBatchesForStage",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}},
 				},
+				{
+					RpcMethod:      "PocValidationsForStage",
+					Use:            "poc-validations-for-stage [block-height]",
+					Short:          "Query pocValidationsForStage",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}},
+				},
 
 				{
 					RpcMethod:      "GetCurrentEpoch",
@@ -319,6 +325,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Skip:      true, // skipped because authority gated
 				},
 				{
+					RpcMethod: "RegisterTokenMetadata",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "ApproveBridgeTokenForTrading",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "RegisterLiquidityPool",
+					Skip:      true, // skipped because authority gated
+				},
+				{
 					RpcMethod:      "StartInference",
 					Use:            "start-inference [inference-id] [prompt-hash] [prompt-payload] [received-by]",
 					Short:          "Send a startInference tx",
@@ -443,6 +461,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "set-training-allow-list [authority] [addresses]",
 					Short:          "Send a setTrainingAllowList tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "authority"}, {ProtoField: "addresses"}},
+				},
+				{
+					RpcMethod:      "RequestBridgeMint",
+					Use:            "request-bridge-mint [amount] [destination-address] [target-chain-id]",
+					Short:          "Request minting of WGNK tokens on Ethereum by bridging native Gonka",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}, {ProtoField: "destination_address"}, {ProtoField: "chain_id"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

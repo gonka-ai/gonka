@@ -14,14 +14,15 @@ import (
 	reflect "reflect"
 
 	math "cosmossdk.io/math"
-	types "github.com/cosmos/cosmos-sdk/types"
+	types "cosmossdk.io/x/upgrade/types"
+	types0 "github.com/cosmos/cosmos-sdk/types"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
-	types0 "github.com/cosmos/cosmos-sdk/x/bank/types"
+	types1 "github.com/cosmos/cosmos-sdk/x/bank/types"
 	group "github.com/cosmos/cosmos-sdk/x/group"
 	keeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	types1 "github.com/cosmos/cosmos-sdk/x/staking/types"
-	types2 "github.com/productscience/inference/x/bls/types"
-	types3 "github.com/productscience/inference/x/inference/types"
+	types2 "github.com/cosmos/cosmos-sdk/x/staking/types"
+	types3 "github.com/productscience/inference/x/bls/types"
+	types4 "github.com/productscience/inference/x/inference/types"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -29,6 +30,7 @@ import (
 type MockAccountKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockAccountKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockAccountKeeperMockRecorder is the mock recorder for MockAccountKeeper.
@@ -49,10 +51,10 @@ func (m *MockAccountKeeper) EXPECT() *MockAccountKeeperMockRecorder {
 }
 
 // GetAccount mocks base method.
-func (m *MockAccountKeeper) GetAccount(arg0 context.Context, arg1 types.AccAddress) types.AccountI {
+func (m *MockAccountKeeper) GetAccount(arg0 context.Context, arg1 types0.AccAddress) types0.AccountI {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAccount", arg0, arg1)
-	ret0, _ := ret[0].(types.AccountI)
+	ret0, _ := ret[0].(types0.AccountI)
 	return ret0
 }
 
@@ -63,10 +65,10 @@ func (mr *MockAccountKeeperMockRecorder) GetAccount(arg0, arg1 any) *gomock.Call
 }
 
 // GetModuleAccount mocks base method.
-func (m *MockAccountKeeper) GetModuleAccount(ctx context.Context, moduleName string) types.ModuleAccountI {
+func (m *MockAccountKeeper) GetModuleAccount(ctx context.Context, moduleName string) types0.ModuleAccountI {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetModuleAccount", ctx, moduleName)
-	ret0, _ := ret[0].(types.ModuleAccountI)
+	ret0, _ := ret[0].(types0.ModuleAccountI)
 	return ret0
 }
 
@@ -77,10 +79,10 @@ func (mr *MockAccountKeeperMockRecorder) GetModuleAccount(ctx, moduleName any) *
 }
 
 // GetModuleAddress mocks base method.
-func (m *MockAccountKeeper) GetModuleAddress(moduleName string) types.AccAddress {
+func (m *MockAccountKeeper) GetModuleAddress(moduleName string) types0.AccAddress {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetModuleAddress", moduleName)
-	ret0, _ := ret[0].(types.AccAddress)
+	ret0, _ := ret[0].(types0.AccAddress)
 	return ret0
 }
 
@@ -91,10 +93,10 @@ func (mr *MockAccountKeeperMockRecorder) GetModuleAddress(moduleName any) *gomoc
 }
 
 // NewAccountWithAddress mocks base method.
-func (m *MockAccountKeeper) NewAccountWithAddress(arg0 context.Context, arg1 types.AccAddress) types.AccountI {
+func (m *MockAccountKeeper) NewAccountWithAddress(arg0 context.Context, arg1 types0.AccAddress) types0.AccountI {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NewAccountWithAddress", arg0, arg1)
-	ret0, _ := ret[0].(types.AccountI)
+	ret0, _ := ret[0].(types0.AccountI)
 	return ret0
 }
 
@@ -105,7 +107,7 @@ func (mr *MockAccountKeeperMockRecorder) NewAccountWithAddress(arg0, arg1 any) *
 }
 
 // SetAccount mocks base method.
-func (m *MockAccountKeeper) SetAccount(ctx context.Context, acc types.AccountI) {
+func (m *MockAccountKeeper) SetAccount(ctx context.Context, acc types0.AccountI) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetAccount", ctx, acc)
 }
@@ -120,6 +122,7 @@ func (mr *MockAccountKeeperMockRecorder) SetAccount(ctx, acc any) *gomock.Call {
 type MockBankKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockBankKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockBankKeeperMockRecorder is the mock recorder for MockBankKeeper.
@@ -140,10 +143,10 @@ func (m *MockBankKeeper) EXPECT() *MockBankKeeperMockRecorder {
 }
 
 // GetDenomMetaData mocks base method.
-func (m *MockBankKeeper) GetDenomMetaData(ctx context.Context, denom string) (types0.Metadata, bool) {
+func (m *MockBankKeeper) GetDenomMetaData(ctx context.Context, denom string) (types1.Metadata, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetDenomMetaData", ctx, denom)
-	ret0, _ := ret[0].(types0.Metadata)
+	ret0, _ := ret[0].(types1.Metadata)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -155,10 +158,10 @@ func (mr *MockBankKeeperMockRecorder) GetDenomMetaData(ctx, denom any) *gomock.C
 }
 
 // SpendableCoin mocks base method.
-func (m *MockBankKeeper) SpendableCoin(ctx context.Context, addr types.AccAddress, denom string) types.Coin {
+func (m *MockBankKeeper) SpendableCoin(ctx context.Context, addr types0.AccAddress, denom string) types0.Coin {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SpendableCoin", ctx, addr, denom)
-	ret0, _ := ret[0].(types.Coin)
+	ret0, _ := ret[0].(types0.Coin)
 	return ret0
 }
 
@@ -169,10 +172,10 @@ func (mr *MockBankKeeperMockRecorder) SpendableCoin(ctx, addr, denom any) *gomoc
 }
 
 // SpendableCoins mocks base method.
-func (m *MockBankKeeper) SpendableCoins(arg0 context.Context, arg1 types.AccAddress) types.Coins {
+func (m *MockBankKeeper) SpendableCoins(arg0 context.Context, arg1 types0.AccAddress) types0.Coins {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SpendableCoins", arg0, arg1)
-	ret0, _ := ret[0].(types.Coins)
+	ret0, _ := ret[0].(types0.Coins)
 	return ret0
 }
 
@@ -186,6 +189,7 @@ func (mr *MockBankKeeperMockRecorder) SpendableCoins(arg0, arg1 any) *gomock.Cal
 type MockGroupMessageKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockGroupMessageKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockGroupMessageKeeperMockRecorder is the mock recorder for MockGroupMessageKeeper.
@@ -344,6 +348,7 @@ func (mr *MockGroupMessageKeeperMockRecorder) Vote(goCtx, msg any) *gomock.Call 
 type MockParamSubspace struct {
 	ctrl     *gomock.Controller
 	recorder *MockParamSubspaceMockRecorder
+	isgomock struct{}
 }
 
 // MockParamSubspaceMockRecorder is the mock recorder for MockParamSubspace.
@@ -391,6 +396,7 @@ func (mr *MockParamSubspaceMockRecorder) Set(arg0, arg1, arg2 any) *gomock.Call 
 type MockStakingHooks struct {
 	ctrl     *gomock.Controller
 	recorder *MockStakingHooksMockRecorder
+	isgomock struct{}
 }
 
 // MockStakingHooksMockRecorder is the mock recorder for MockStakingHooks.
@@ -411,7 +417,7 @@ func (m *MockStakingHooks) EXPECT() *MockStakingHooksMockRecorder {
 }
 
 // AfterDelegationModified mocks base method.
-func (m *MockStakingHooks) AfterDelegationModified(ctx context.Context, delAddr types.AccAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) AfterDelegationModified(ctx context.Context, delAddr types0.AccAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AfterDelegationModified", ctx, delAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -425,7 +431,7 @@ func (mr *MockStakingHooksMockRecorder) AfterDelegationModified(ctx, delAddr, va
 }
 
 // AfterValidatorBeginUnbonding mocks base method.
-func (m *MockStakingHooks) AfterValidatorBeginUnbonding(ctx context.Context, consAddr types.ConsAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) AfterValidatorBeginUnbonding(ctx context.Context, consAddr types0.ConsAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AfterValidatorBeginUnbonding", ctx, consAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -439,7 +445,7 @@ func (mr *MockStakingHooksMockRecorder) AfterValidatorBeginUnbonding(ctx, consAd
 }
 
 // AfterValidatorBonded mocks base method.
-func (m *MockStakingHooks) AfterValidatorBonded(ctx context.Context, consAddr types.ConsAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) AfterValidatorBonded(ctx context.Context, consAddr types0.ConsAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AfterValidatorBonded", ctx, consAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -453,7 +459,7 @@ func (mr *MockStakingHooksMockRecorder) AfterValidatorBonded(ctx, consAddr, valA
 }
 
 // AfterValidatorCreated mocks base method.
-func (m *MockStakingHooks) AfterValidatorCreated(ctx context.Context, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) AfterValidatorCreated(ctx context.Context, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AfterValidatorCreated", ctx, valAddr)
 	ret0, _ := ret[0].(error)
@@ -467,7 +473,7 @@ func (mr *MockStakingHooksMockRecorder) AfterValidatorCreated(ctx, valAddr any) 
 }
 
 // AfterValidatorRemoved mocks base method.
-func (m *MockStakingHooks) AfterValidatorRemoved(ctx context.Context, consAddr types.ConsAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) AfterValidatorRemoved(ctx context.Context, consAddr types0.ConsAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AfterValidatorRemoved", ctx, consAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -481,7 +487,7 @@ func (mr *MockStakingHooksMockRecorder) AfterValidatorRemoved(ctx, consAddr, val
 }
 
 // BeforeDelegationCreated mocks base method.
-func (m *MockStakingHooks) BeforeDelegationCreated(ctx context.Context, delAddr types.AccAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) BeforeDelegationCreated(ctx context.Context, delAddr types0.AccAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BeforeDelegationCreated", ctx, delAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -495,7 +501,7 @@ func (mr *MockStakingHooksMockRecorder) BeforeDelegationCreated(ctx, delAddr, va
 }
 
 // BeforeDelegationRemoved mocks base method.
-func (m *MockStakingHooks) BeforeDelegationRemoved(ctx context.Context, delAddr types.AccAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) BeforeDelegationRemoved(ctx context.Context, delAddr types0.AccAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BeforeDelegationRemoved", ctx, delAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -509,7 +515,7 @@ func (mr *MockStakingHooksMockRecorder) BeforeDelegationRemoved(ctx, delAddr, va
 }
 
 // BeforeDelegationSharesModified mocks base method.
-func (m *MockStakingHooks) BeforeDelegationSharesModified(ctx context.Context, delAddr types.AccAddress, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) BeforeDelegationSharesModified(ctx context.Context, delAddr types0.AccAddress, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BeforeDelegationSharesModified", ctx, delAddr, valAddr)
 	ret0, _ := ret[0].(error)
@@ -523,7 +529,7 @@ func (mr *MockStakingHooksMockRecorder) BeforeDelegationSharesModified(ctx, delA
 }
 
 // BeforeValidatorModified mocks base method.
-func (m *MockStakingHooks) BeforeValidatorModified(ctx context.Context, valAddr types.ValAddress) error {
+func (m *MockStakingHooks) BeforeValidatorModified(ctx context.Context, valAddr types0.ValAddress) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BeforeValidatorModified", ctx, valAddr)
 	ret0, _ := ret[0].(error)
@@ -537,7 +543,7 @@ func (mr *MockStakingHooksMockRecorder) BeforeValidatorModified(ctx, valAddr any
 }
 
 // BeforeValidatorSlashed mocks base method.
-func (m *MockStakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr types.ValAddress, fraction math.LegacyDec) error {
+func (m *MockStakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr types0.ValAddress, fraction math.LegacyDec) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BeforeValidatorSlashed", ctx, valAddr, fraction)
 	ret0, _ := ret[0].(error)
@@ -554,6 +560,7 @@ func (mr *MockStakingHooksMockRecorder) BeforeValidatorSlashed(ctx, valAddr, fra
 type MockValidatorSet struct {
 	ctrl     *gomock.Controller
 	recorder *MockValidatorSetMockRecorder
+	isgomock struct{}
 }
 
 // MockValidatorSetMockRecorder is the mock recorder for MockValidatorSet.
@@ -574,7 +581,7 @@ func (m *MockValidatorSet) EXPECT() *MockValidatorSetMockRecorder {
 }
 
 // IterateValidators mocks base method.
-func (m *MockValidatorSet) IterateValidators(arg0 context.Context, arg1 func(int64, types1.ValidatorI) bool) error {
+func (m *MockValidatorSet) IterateValidators(arg0 context.Context, arg1 func(int64, types2.ValidatorI) bool) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IterateValidators", arg0, arg1)
 	ret0, _ := ret[0].(error)
@@ -591,6 +598,7 @@ func (mr *MockValidatorSetMockRecorder) IterateValidators(arg0, arg1 any) *gomoc
 type MockStakingKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockStakingKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockStakingKeeperMockRecorder is the mock recorder for MockStakingKeeper.
@@ -611,10 +619,10 @@ func (m *MockStakingKeeper) EXPECT() *MockStakingKeeperMockRecorder {
 }
 
 // GetAllValidators mocks base method.
-func (m *MockStakingKeeper) GetAllValidators(ctx context.Context) ([]types1.Validator, error) {
+func (m *MockStakingKeeper) GetAllValidators(ctx context.Context) ([]types2.Validator, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllValidators", ctx)
-	ret0, _ := ret[0].([]types1.Validator)
+	ret0, _ := ret[0].([]types2.Validator)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -626,10 +634,10 @@ func (mr *MockStakingKeeperMockRecorder) GetAllValidators(ctx any) *gomock.Call 
 }
 
 // SetComputeValidators mocks base method.
-func (m *MockStakingKeeper) SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult, isTestnet bool) ([]types1.Validator, error) {
+func (m *MockStakingKeeper) SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult, isTestnet bool) ([]types2.Validator, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SetComputeValidators", ctx, computeResults, isTestnet)
-	ret0, _ := ret[0].([]types1.Validator)
+	ret0, _ := ret[0].([]types2.Validator)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -644,6 +652,7 @@ func (mr *MockStakingKeeperMockRecorder) SetComputeValidators(ctx, computeResult
 type MockCollateralKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockCollateralKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockCollateralKeeperMockRecorder is the mock recorder for MockCollateralKeeper.
@@ -676,10 +685,10 @@ func (mr *MockCollateralKeeperMockRecorder) AdvanceEpoch(ctx, completedEpoch any
 }
 
 // GetCollateral mocks base method.
-func (m *MockCollateralKeeper) GetCollateral(ctx context.Context, participant types.AccAddress) (types.Coin, bool) {
+func (m *MockCollateralKeeper) GetCollateral(ctx context.Context, participant types0.AccAddress) (types0.Coin, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetCollateral", ctx, participant)
-	ret0, _ := ret[0].(types.Coin)
+	ret0, _ := ret[0].(types0.Coin)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -691,24 +700,25 @@ func (mr *MockCollateralKeeperMockRecorder) GetCollateral(ctx, participant any) 
 }
 
 // Slash mocks base method.
-func (m *MockCollateralKeeper) Slash(ctx context.Context, participant types.AccAddress, slashFraction math.LegacyDec) (types.Coin, error) {
+func (m *MockCollateralKeeper) Slash(ctx context.Context, participant types0.AccAddress, slashFraction math.LegacyDec, reason string) (types0.Coin, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Slash", ctx, participant, slashFraction)
-	ret0, _ := ret[0].(types.Coin)
+	ret := m.ctrl.Call(m, "Slash", ctx, participant, slashFraction, reason)
+	ret0, _ := ret[0].(types0.Coin)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Slash indicates an expected call of Slash.
-func (mr *MockCollateralKeeperMockRecorder) Slash(ctx, participant, slashFraction any) *gomock.Call {
+func (mr *MockCollateralKeeperMockRecorder) Slash(ctx, participant, slashFraction, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Slash", reflect.TypeOf((*MockCollateralKeeper)(nil).Slash), ctx, participant, slashFraction)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Slash", reflect.TypeOf((*MockCollateralKeeper)(nil).Slash), ctx, participant, slashFraction, reason)
 }
 
 // MockStreamVestingKeeper is a mock of StreamVestingKeeper interface.
 type MockStreamVestingKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockStreamVestingKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockStreamVestingKeeperMockRecorder is the mock recorder for MockStreamVestingKeeper.
@@ -729,7 +739,7 @@ func (m *MockStreamVestingKeeper) EXPECT() *MockStreamVestingKeeperMockRecorder 
 }
 
 // AddVestedRewards mocks base method.
-func (m *MockStreamVestingKeeper) AddVestedRewards(ctx context.Context, participantAddress, fundingModule string, amount types.Coins, vestingEpochs *uint64, memo string) error {
+func (m *MockStreamVestingKeeper) AddVestedRewards(ctx context.Context, participantAddress, fundingModule string, amount types0.Coins, vestingEpochs *uint64, memo string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AddVestedRewards", ctx, participantAddress, fundingModule, amount, vestingEpochs, memo)
 	ret0, _ := ret[0].(error)
@@ -760,6 +770,7 @@ func (mr *MockStreamVestingKeeperMockRecorder) AdvanceEpoch(ctx, completedEpoch 
 type MockParticipantKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockParticipantKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockParticipantKeeperMockRecorder is the mock recorder for MockParticipantKeeper.
@@ -780,10 +791,10 @@ func (m *MockParticipantKeeper) EXPECT() *MockParticipantKeeperMockRecorder {
 }
 
 // GetAllParticipant mocks base method.
-func (m *MockParticipantKeeper) GetAllParticipant(ctx context.Context) []types3.Participant {
+func (m *MockParticipantKeeper) GetAllParticipant(ctx context.Context) []types4.Participant {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllParticipant", ctx)
-	ret0, _ := ret[0].([]types3.Participant)
+	ret0, _ := ret[0].([]types4.Participant)
 	return ret0
 }
 
@@ -794,10 +805,10 @@ func (mr *MockParticipantKeeperMockRecorder) GetAllParticipant(ctx any) *gomock.
 }
 
 // GetParticipant mocks base method.
-func (m *MockParticipantKeeper) GetParticipant(ctx context.Context, index string) (types3.Participant, bool) {
+func (m *MockParticipantKeeper) GetParticipant(ctx context.Context, index string) (types4.Participant, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetParticipant", ctx, index)
-	ret0, _ := ret[0].(types3.Participant)
+	ret0, _ := ret[0].(types4.Participant)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -809,10 +820,10 @@ func (mr *MockParticipantKeeperMockRecorder) GetParticipant(ctx, index any) *gom
 }
 
 // ParticipantAll mocks base method.
-func (m *MockParticipantKeeper) ParticipantAll(ctx context.Context, req *types3.QueryAllParticipantRequest) (*types3.QueryAllParticipantResponse, error) {
+func (m *MockParticipantKeeper) ParticipantAll(ctx context.Context, req *types4.QueryAllParticipantRequest) (*types4.QueryAllParticipantResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ParticipantAll", ctx, req)
-	ret0, _ := ret[0].(*types3.QueryAllParticipantResponse)
+	ret0, _ := ret[0].(*types4.QueryAllParticipantResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -836,7 +847,7 @@ func (mr *MockParticipantKeeperMockRecorder) RemoveParticipant(ctx, index any) *
 }
 
 // SetParticipant mocks base method.
-func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types3.Participant) error {
+func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types4.Participant) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SetParticipant", ctx, participant)
 	ret0, _ := ret[0].(error)
@@ -853,6 +864,7 @@ func (mr *MockParticipantKeeperMockRecorder) SetParticipant(ctx, participant any
 type MockHardwareNodeKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockHardwareNodeKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockHardwareNodeKeeperMockRecorder is the mock recorder for MockHardwareNodeKeeper.
@@ -873,10 +885,10 @@ func (m *MockHardwareNodeKeeper) EXPECT() *MockHardwareNodeKeeperMockRecorder {
 }
 
 // GetHardwareNodes mocks base method.
-func (m *MockHardwareNodeKeeper) GetHardwareNodes(ctx context.Context, address string) (*types3.HardwareNodes, bool) {
+func (m *MockHardwareNodeKeeper) GetHardwareNodes(ctx context.Context, address string) (*types4.HardwareNodes, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetHardwareNodes", ctx, address)
-	ret0, _ := ret[0].(*types3.HardwareNodes)
+	ret0, _ := ret[0].(*types4.HardwareNodes)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -891,6 +903,7 @@ func (mr *MockHardwareNodeKeeperMockRecorder) GetHardwareNodes(ctx, address any)
 type MockEpochGroupDataKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockEpochGroupDataKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockEpochGroupDataKeeperMockRecorder is the mock recorder for MockEpochGroupDataKeeper.
@@ -911,10 +924,10 @@ func (m *MockEpochGroupDataKeeper) EXPECT() *MockEpochGroupDataKeeperMockRecorde
 }
 
 // GetAllEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Context) []types3.EpochGroupData {
+func (m *MockEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Context) []types4.EpochGroupData {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllEpochGroupData", ctx)
-	ret0, _ := ret[0].([]types3.EpochGroupData)
+	ret0, _ := ret[0].([]types4.EpochGroupData)
 	return ret0
 }
 
@@ -925,10 +938,10 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) GetAllEpochGroupData(ctx any) *g
 }
 
 // GetEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (types3.EpochGroupData, bool) {
+func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (types4.EpochGroupData, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetEpochGroupData", ctx, epochIndex, modelId)
-	ret0, _ := ret[0].(types3.EpochGroupData)
+	ret0, _ := ret[0].(types4.EpochGroupData)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -952,7 +965,7 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) RemoveEpochGroupData(ctx, epochI
 }
 
 // SetEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types3.EpochGroupData) {
+func (m *MockEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types4.EpochGroupData) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetEpochGroupData", ctx, epochGroupData)
 }
@@ -967,6 +980,7 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) SetEpochGroupData(ctx, epochGrou
 type MockBookkeepingBankKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockBookkeepingBankKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockBookkeepingBankKeeperMockRecorder is the mock recorder for MockBookkeepingBankKeeper.
@@ -987,7 +1001,7 @@ func (m *MockBookkeepingBankKeeper) EXPECT() *MockBookkeepingBankKeeperMockRecor
 }
 
 // BurnCoins mocks base method.
-func (m *MockBookkeepingBankKeeper) BurnCoins(ctx context.Context, moduleName string, amt types.Coins, memo string) error {
+func (m *MockBookkeepingBankKeeper) BurnCoins(ctx context.Context, moduleName string, amt types0.Coins, memo string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BurnCoins", ctx, moduleName, amt, memo)
 	ret0, _ := ret[0].(error)
@@ -1001,7 +1015,7 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) BurnCoins(ctx, moduleName, amt,
 }
 
 // LogSubAccountTransaction mocks base method.
-func (m *MockBookkeepingBankKeeper) LogSubAccountTransaction(ctx context.Context, recipient, sender, subAccount string, amt types.Coin, memo string) {
+func (m *MockBookkeepingBankKeeper) LogSubAccountTransaction(ctx context.Context, recipient, sender, subAccount string, amt types0.Coin, memo string) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "LogSubAccountTransaction", ctx, recipient, sender, subAccount, amt, memo)
 }
@@ -1013,7 +1027,7 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) LogSubAccountTransaction(ctx, r
 }
 
 // MintCoins mocks base method.
-func (m *MockBookkeepingBankKeeper) MintCoins(ctx context.Context, moduleName string, amt types.Coins, memo string) error {
+func (m *MockBookkeepingBankKeeper) MintCoins(ctx context.Context, moduleName string, amt types0.Coins, memo string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "MintCoins", ctx, moduleName, amt, memo)
 	ret0, _ := ret[0].(error)
@@ -1027,7 +1041,7 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) MintCoins(ctx, moduleName, amt,
 }
 
 // SendCoinsFromAccountToModule mocks base method.
-func (m *MockBookkeepingBankKeeper) SendCoinsFromAccountToModule(ctx context.Context, senderAddr types.AccAddress, recipientModule string, amt types.Coins, memo string) error {
+func (m *MockBookkeepingBankKeeper) SendCoinsFromAccountToModule(ctx context.Context, senderAddr types0.AccAddress, recipientModule string, amt types0.Coins, memo string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SendCoinsFromAccountToModule", ctx, senderAddr, recipientModule, amt, memo)
 	ret0, _ := ret[0].(error)
@@ -1041,7 +1055,7 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) SendCoinsFromAccountToModule(ct
 }
 
 // SendCoinsFromModuleToAccount mocks base method.
-func (m *MockBookkeepingBankKeeper) SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr types.AccAddress, amt types.Coins, memo string) error {
+func (m *MockBookkeepingBankKeeper) SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr types0.AccAddress, amt types0.Coins, memo string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SendCoinsFromModuleToAccount", ctx, senderModule, recipientAddr, amt, memo)
 	ret0, _ := ret[0].(error)
@@ -1055,7 +1069,7 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) SendCoinsFromModuleToAccount(ct
 }
 
 // SendCoinsFromModuleToModule mocks base method.
-func (m *MockBookkeepingBankKeeper) SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt types.Coins, memo string) error {
+func (m *MockBookkeepingBankKeeper) SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt types0.Coins, memo string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SendCoinsFromModuleToModule", ctx, senderModule, recipientModule, amt, memo)
 	ret0, _ := ret[0].(error)
@@ -1072,6 +1086,7 @@ func (mr *MockBookkeepingBankKeeperMockRecorder) SendCoinsFromModuleToModule(ctx
 type MockModelKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockModelKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockModelKeeperMockRecorder is the mock recorder for MockModelKeeper.
@@ -1092,10 +1107,10 @@ func (m *MockModelKeeper) EXPECT() *MockModelKeeperMockRecorder {
 }
 
 // GetGovernanceModel mocks base method.
-func (m *MockModelKeeper) GetGovernanceModel(ctx context.Context, id string) (*types3.Model, bool) {
+func (m *MockModelKeeper) GetGovernanceModel(ctx context.Context, id string) (*types4.Model, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetGovernanceModel", ctx, id)
-	ret0, _ := ret[0].(*types3.Model)
+	ret0, _ := ret[0].(*types4.Model)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -1107,10 +1122,10 @@ func (mr *MockModelKeeperMockRecorder) GetGovernanceModel(ctx, id any) *gomock.C
 }
 
 // GetGovernanceModels mocks base method.
-func (m *MockModelKeeper) GetGovernanceModels(ctx context.Context) ([]*types3.Model, error) {
+func (m *MockModelKeeper) GetGovernanceModels(ctx context.Context) ([]*types4.Model, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetGovernanceModels", ctx)
-	ret0, _ := ret[0].([]*types3.Model)
+	ret0, _ := ret[0].([]*types4.Model)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1125,6 +1140,7 @@ func (mr *MockModelKeeperMockRecorder) GetGovernanceModels(ctx any) *gomock.Call
 type MockAuthzKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockAuthzKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockAuthzKeeperMockRecorder is the mock recorder for MockAuthzKeeper.
@@ -1163,6 +1179,7 @@ func (mr *MockAuthzKeeperMockRecorder) GranterGrants(ctx, req any) *gomock.Call 
 type MockBlsKeeper struct {
 	ctrl     *gomock.Controller
 	recorder *MockBlsKeeperMockRecorder
+	isgomock struct{}
 }
 
 // MockBlsKeeperMockRecorder is the mock recorder for MockBlsKeeper.
@@ -1183,7 +1200,7 @@ func (m *MockBlsKeeper) EXPECT() *MockBlsKeeperMockRecorder {
 }
 
 // GetActiveEpochID mocks base method.
-func (m *MockBlsKeeper) GetActiveEpochID(ctx types.Context) (uint64, bool) {
+func (m *MockBlsKeeper) GetActiveEpochID(ctx types0.Context) (uint64, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetActiveEpochID", ctx)
 	ret0, _ := ret[0].(uint64)
@@ -1198,10 +1215,10 @@ func (mr *MockBlsKeeperMockRecorder) GetActiveEpochID(ctx any) *gomock.Call {
 }
 
 // GetEpochBLSData mocks base method.
-func (m *MockBlsKeeper) GetEpochBLSData(ctx types.Context, epochID uint64) (types2.EpochBLSData, bool) {
+func (m *MockBlsKeeper) GetEpochBLSData(ctx types0.Context, epochID uint64) (types3.EpochBLSData, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetEpochBLSData", ctx, epochID)
-	ret0, _ := ret[0].(types2.EpochBLSData)
+	ret0, _ := ret[0].(types3.EpochBLSData)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -1213,10 +1230,10 @@ func (mr *MockBlsKeeperMockRecorder) GetEpochBLSData(ctx, epochID any) *gomock.C
 }
 
 // GetSigningStatus mocks base method.
-func (m *MockBlsKeeper) GetSigningStatus(ctx types.Context, requestID []byte) (*types2.ThresholdSigningRequest, error) {
+func (m *MockBlsKeeper) GetSigningStatus(ctx types0.Context, requestID []byte) (*types3.ThresholdSigningRequest, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSigningStatus", ctx, requestID)
-	ret0, _ := ret[0].(*types2.ThresholdSigningRequest)
+	ret0, _ := ret[0].(*types3.ThresholdSigningRequest)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1228,7 +1245,7 @@ func (mr *MockBlsKeeperMockRecorder) GetSigningStatus(ctx, requestID any) *gomoc
 }
 
 // InitiateKeyGenerationForEpoch mocks base method.
-func (m *MockBlsKeeper) InitiateKeyGenerationForEpoch(ctx types.Context, epochID uint64, finalizedParticipants []types2.ParticipantWithWeightAndKey) error {
+func (m *MockBlsKeeper) InitiateKeyGenerationForEpoch(ctx types0.Context, epochID uint64, finalizedParticipants []types3.ParticipantWithWeightAndKey) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "InitiateKeyGenerationForEpoch", ctx, epochID, finalizedParticipants)
 	ret0, _ := ret[0].(error)
@@ -1242,10 +1259,10 @@ func (mr *MockBlsKeeperMockRecorder) InitiateKeyGenerationForEpoch(ctx, epochID,
 }
 
 // ListActiveSigningRequests mocks base method.
-func (m *MockBlsKeeper) ListActiveSigningRequests(ctx types.Context, currentEpochID uint64) ([]*types2.ThresholdSigningRequest, error) {
+func (m *MockBlsKeeper) ListActiveSigningRequests(ctx types0.Context, currentEpochID uint64) ([]*types3.ThresholdSigningRequest, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListActiveSigningRequests", ctx, currentEpochID)
-	ret0, _ := ret[0].([]*types2.ThresholdSigningRequest)
+	ret0, _ := ret[0].([]*types3.ThresholdSigningRequest)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1257,7 +1274,7 @@ func (mr *MockBlsKeeperMockRecorder) ListActiveSigningRequests(ctx, currentEpoch
 }
 
 // RequestThresholdSignature mocks base method.
-func (m *MockBlsKeeper) RequestThresholdSignature(ctx types.Context, signingData types2.SigningData) error {
+func (m *MockBlsKeeper) RequestThresholdSignature(ctx types0.Context, signingData types3.SigningData) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RequestThresholdSignature", ctx, signingData)
 	ret0, _ := ret[0].(error)
@@ -1271,7 +1288,7 @@ func (mr *MockBlsKeeperMockRecorder) RequestThresholdSignature(ctx, signingData 
 }
 
 // SetActiveEpochID mocks base method.
-func (m *MockBlsKeeper) SetActiveEpochID(ctx types.Context, epochID uint64) {
+func (m *MockBlsKeeper) SetActiveEpochID(ctx types0.Context, epochID uint64) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetActiveEpochID", ctx, epochID)
 }
@@ -1280,4 +1297,43 @@ func (m *MockBlsKeeper) SetActiveEpochID(ctx types.Context, epochID uint64) {
 func (mr *MockBlsKeeperMockRecorder) SetActiveEpochID(ctx, epochID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetActiveEpochID", reflect.TypeOf((*MockBlsKeeper)(nil).SetActiveEpochID), ctx, epochID)
+}
+
+// MockUpgradeKeeper is a mock of UpgradeKeeper interface.
+type MockUpgradeKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockUpgradeKeeperMockRecorder
+	isgomock struct{}
+}
+
+// MockUpgradeKeeperMockRecorder is the mock recorder for MockUpgradeKeeper.
+type MockUpgradeKeeperMockRecorder struct {
+	mock *MockUpgradeKeeper
+}
+
+// NewMockUpgradeKeeper creates a new mock instance.
+func NewMockUpgradeKeeper(ctrl *gomock.Controller) *MockUpgradeKeeper {
+	mock := &MockUpgradeKeeper{ctrl: ctrl}
+	mock.recorder = &MockUpgradeKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockUpgradeKeeper) EXPECT() *MockUpgradeKeeperMockRecorder {
+	return m.recorder
+}
+
+// GetUpgradePlan mocks base method.
+func (m *MockUpgradeKeeper) GetUpgradePlan(ctx context.Context) (types.Plan, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUpgradePlan", ctx)
+	ret0, _ := ret[0].(types.Plan)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUpgradePlan indicates an expected call of GetUpgradePlan.
+func (mr *MockUpgradeKeeperMockRecorder) GetUpgradePlan(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUpgradePlan", reflect.TypeOf((*MockUpgradeKeeper)(nil).GetUpgradePlan), ctx)
 }

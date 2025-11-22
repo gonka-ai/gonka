@@ -64,3 +64,11 @@ data class NodeAdminStateResponse(
     val message: String,
     val nodeId: String
 )
+
+data class MlNodeVersionQueryResponse(
+    val mlnodeVersion: MlNodeVersion
+)
+
+data class MlNodeVersion(
+    val currentVersion: String,
+)

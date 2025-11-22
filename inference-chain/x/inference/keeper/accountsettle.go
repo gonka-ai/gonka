@@ -121,6 +121,34 @@ func CheckAndPunishForDowntime(total, missed, reward uint64) uint64 {
 	return reward
 }
 
+// AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their aggregated MLNodes
+// by collecting MLNode data from all model-specific EpochGroup subgroups for the given epoch.
+func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string][]*types.MLNodeInfo {
+	participantMLNodes := make(map[string][]*types.MLNodeInfo)
+	allEpochGroups := k.GetAllEpochGroupData(ctx)
+
+	for _, vw := range validationWeights {
+		aggregated := make([]*types.MLNodeInfo, 0)
+		for _, subgroup := range allEpochGroups {
+			if subgroup.EpochIndex != epochIndex || subgroup.ModelId == "" {
+				continue // Skip wrong epoch or parent group
+			}
+			for _, subVw := range subgroup.ValidationWeights {
+				if subVw.MemberAddress == vw.MemberAddress {
+					aggregated = append(aggregated, subVw.MlNodes...)
+					break
+				}
+			}
+		}
+		participantMLNodes[vw.MemberAddress] = aggregated
+		k.LogInfo("Settlement: Aggregated MLNodes for participant", types.Settle,
+			"participant", vw.MemberAddress,
+			"numMLNodes", len(aggregated))
+	}
+
+	return participantMLNodes
+}
+
 func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, previousEpochIndex uint64) error {
 	if currentEpochIndex == 0 {
 		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "currentEpochIndex", currentEpochIndex, "skipping")
@@ -130,7 +158,16 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.LogInfo("SettleAccounts", types.Settle, "currentEpochIndex", currentEpochIndex)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
-	allParticipants := k.GetAllParticipant(ctx)
+	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochIndex)
+	if !found {
+		k.LogError("Active participants not found", types.Settle, "currentEpochIndex", currentEpochIndex)
+		return nil
+	}
+	activeParticipantAddresses := make([]string, len(activeParticipants.Participants))
+	for i, participant := range activeParticipants.Participants {
+		activeParticipantAddresses[i] = participant.Index
+	}
+	allParticipants := k.GetParticipants(ctx, activeParticipantAddresses)
 
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
 	k.LogInfo("Got all participants", types.Settle, "participants", len(allParticipants))
@@ -164,9 +201,13 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	if params.BitcoinRewardParams.UseBitcoinRewards {
 		// Use Bitcoin-style fixed reward system with its own parameters
 		k.LogInfo("Using Bitcoin-style reward system", types.Settle)
+
+		// Aggregate MLNodes from model-specific subgroups for preservedWeight calculation
+		participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
+
 		var bitcoinResult BitcoinResult
 		var err error
-		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, settleParameters, k.Logger())
+		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, settleParameters, participantMLNodes, k.Logger())
 		if err != nil {
 			k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
 		}
@@ -208,17 +249,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
-	for _, participant := range allParticipants {
-		k.LogDebug("Checking downtime for participant", types.Settle, "participant", participant.Address, "missed_requests", participant.CurrentEpochStats.MissedRequests, "inference_count", participant.CurrentEpochStats.InferenceCount)
-		// TODO: Check if it is better to move this function outside the settleAccounts function.
-		k.CheckAndSlashForDowntime(ctx, &participant)
-	}
 
 	for i, participant := range allParticipants {
 		// amount should have the same order as participants
 		amount := amounts[i]
 
-		if participant.Status != types.ParticipantStatus_INVALID {
+		if participant.Status == types.ParticipantStatus_ACTIVE {
 			participant.EpochsCompleted += 1
 		}
 		k.SafeLogSubAccountTransaction(ctx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
@@ -240,7 +276,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		if err != nil {
 			return err
 		}
-		participant.CurrentEpochStats = &types.CurrentEpochStats{}
+		participant.CurrentEpochStats = types.NewCurrentEpochStats()
 		err := k.SetParticipant(ctx, participant)
 		if err != nil {
 			return err
@@ -310,11 +346,10 @@ func getWorkTotals(participants []types.Participant, logger log.Logger) (int64, 
 	invalidatedBalance := int64(0)
 	for _, p := range participants {
 		// Do not count invalid participants work as "work", since it should not be part of the distributions
-		if p.CoinBalance > 0 && p.Status != types.ParticipantStatus_INVALID {
-			newCoinBalance := CheckAndPunishForDowntimeForParticipant(p, uint64(p.CoinBalance), logger)
-			totalWork += int64(newCoinBalance)
+		if p.CoinBalance > 0 && p.Status == types.ParticipantStatus_ACTIVE {
+			totalWork += p.CoinBalance
 		}
-		if p.CoinBalance > 0 && p.Status == types.ParticipantStatus_INVALID {
+		if p.CoinBalance > 0 && p.Status != types.ParticipantStatus_ACTIVE {
 			invalidatedBalance += p.CoinBalance
 		}
 	}
@@ -328,20 +363,19 @@ func getSettleAmount(participant types.Participant, rewardInfo []DistributedCoin
 	if participant.CoinBalance < 0 {
 		return settle, types.ErrNegativeCoinBalance
 	}
-	if participant.Status == types.ParticipantStatus_INVALID {
+	if participant.Status != types.ParticipantStatus_ACTIVE {
 		return settle, nil
 	}
-	workCoins := int64(CheckAndPunishForDowntimeForParticipant(participant, uint64(participant.CoinBalance), logger))
 	rewardCoins := int64(0)
 	for _, distribution := range rewardInfo {
-		if participant.Status == types.ParticipantStatus_INVALID {
+		if participant.Status != types.ParticipantStatus_ACTIVE {
 			continue
 		}
-		rewardCoins += distribution.calculateDistribution(workCoins)
+		rewardCoins += distribution.calculateDistribution(participant.CoinBalance)
 	}
 	return &types.SettleAmount{
 		RewardCoins: uint64(rewardCoins),
-		WorkCoins:   uint64(workCoins),
+		WorkCoins:   uint64(participant.CoinBalance),
 		Participant: participant.Address,
 	}, nil
 }
@@ -366,6 +400,9 @@ type DistributedCoinInfo struct {
 
 func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) int64 {
 	if participantWorkDone == 0 {
+		return 0
+	}
+	if rc.totalWork == 0 {
 		return 0
 	}
 	wd := decimal.NewFromInt(participantWorkDone)

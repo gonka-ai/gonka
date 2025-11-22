@@ -106,10 +106,6 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		return nil
 	}
 
-	if err != nil {
-		am.LogWarn("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get preserved nodes by participant", types.PoC, "error", err)
-	}
-
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
 		participantAddress := validationWeight.MemberAddress
@@ -235,7 +231,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
-
 	// STEP 1: Get preserved weights from inference-serving MLNodes in current epoch
 	preservedParticipants := am.GetPreviousEpochMLNodesWithInferenceAllocation(ctx, upcomingEpoch)
 	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
@@ -358,7 +353,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	)
 	pocMiningParticipants := calculator.Calculate()
 
-	// STEP 5: Merge preserved participants with PoC mining participants
+	// STEP 4: Merge preserved participants with PoC mining participants
 	var allActiveParticipants []*types.ActiveParticipant
 
 	// Add preserved participants first
@@ -425,7 +420,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	return allActiveParticipants
 }
 
-// Helper function to find participant by address in a slice
 func findParticipantByAddress(participants []*types.ActiveParticipant, address string) *types.ActiveParticipant {
 	for _, participant := range participants {
 		if participant.Index == address {
@@ -617,7 +611,7 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 	halfWeight := int64(totalWeight / 2)
 	shouldContinue := false
 
-	if wc.CurrentValidatorWeights != nil && len(wc.CurrentValidatorWeights) > 0 {
+	if len(wc.CurrentValidatorWeights) > 0 {
 		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
 		votedWeight := valOutcome.ValidWeight + valOutcome.InvalidWeight // For logging only
 		if valOutcome.ValidWeight > halfWeight {

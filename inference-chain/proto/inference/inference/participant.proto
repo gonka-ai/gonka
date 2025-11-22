@@ -1,5 +1,6 @@
 syntax = "proto3";
 package inference.inference;
+import "inference/inference/params.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -8,7 +9,8 @@ enum ParticipantStatus {
   ACTIVE = 1;
   INACTIVE = 2;
   INVALID = 3;
-  RAMPING = 4;
+  RAMPING = 4 [deprecated = true];
+  UNCONFIRMED = 5;
 }
 
 message Participant {
@@ -36,5 +38,8 @@ message CurrentEpochStats {
   uint64 burned_coins = 5;
   uint64 validated_inferences = 6;
   uint64 invalidated_inferences = 7;
+  Decimal invalidLLR = 8;
+  Decimal inactiveLLR = 9;
+  Decimal confirmationPoCRatio = 10;
 }
 

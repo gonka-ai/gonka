@@ -6,7 +6,6 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-
 	"github.com/productscience/inference/x/collateral/keeper"
 )
 
@@ -81,6 +80,7 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr sdk.Va
 		"fraction", fraction.String(),
 	)
 
-	_, err := h.k.Slash(sdkCtx, accAddr, fraction)
+	// Tendermint driven slashing is not limited per epoch, so pass in a blank reason
+	_, err := h.k.Slash(sdkCtx, accAddr, fraction, "")
 	return err
 }

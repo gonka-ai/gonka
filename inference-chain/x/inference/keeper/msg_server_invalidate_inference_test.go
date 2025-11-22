@@ -90,7 +90,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 
 	// We do NOT expect any slashing in this test
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
 	require.NoError(t, err)
@@ -122,12 +122,12 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 	executorAddr := sample.AccAddress()
 	payerAddr := sample.AccAddress()
 
-	// Set executor with 5 consecutive invalids so increment => 6, causing INVALID by probability rule
+	// Set executor with 4 consecutive invalids so increment => 5, causing INVALID by probability rule
 	executor := types.Participant{
 		Index:                        executorAddr,
 		Address:                      executorAddr,
 		Status:                       types.ParticipantStatus_ACTIVE,
-		ConsecutiveInvalidInferences: 5,
+		ConsecutiveInvalidInferences: 4,
 		CurrentEpochStats:            &types.CurrentEpochStats{},
 		CoinBalance:                  5_000,
 	}
@@ -161,7 +161,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 	// Expect a slash due to status transition to INVALID
 	execAcc, _ := sdk.AccAddressFromBech32(executorAddr)
 	slashFraction, _ := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), execAcc, slashFraction).Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), execAcc, slashFraction, types.SlashReasonInvalidation).Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
 	require.NoError(t, err)
@@ -227,7 +227,7 @@ func TestInvalidateInference_NextEpoch_NoRefundNoCharge_NoSlash(t *testing.T) {
 	// there should be NO refund and NO charge to executor, and NO slashing.
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestInvalidateInference_RemovesActiveInvalidations(t *testing.T) {
 	require.NoError(t, setEffectiveEpoch(ctx, k, 2, mocks))
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID, Invalidator: invalidator})
 	require.NoError(t, err)
@@ -352,7 +352,7 @@ func TestInvalidateInference_AlreadyInvalidated_RemovesActiveInvalidations(t *te
 	require.NoError(t, setEffectiveEpoch(ctx, k, 2, mocks))
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	// Call invalidate; should succeed and remove ActiveInvalidations
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID, Invalidator: invalidator})

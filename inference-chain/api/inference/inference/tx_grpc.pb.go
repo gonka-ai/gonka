@@ -45,6 +45,14 @@ const (
 	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
 	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
 	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
+	Msg_RegisterBridgeAddresses_FullMethodName          = "/inference.inference.Msg/RegisterBridgeAddresses"
+	Msg_RegisterLiquidityPool_FullMethodName            = "/inference.inference.Msg/RegisterLiquidityPool"
+	Msg_RegisterTokenMetadata_FullMethodName            = "/inference.inference.Msg/RegisterTokenMetadata"
+	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
+	Msg_RequestBridgeWithdrawal_FullMethodName          = "/inference.inference.Msg/RequestBridgeWithdrawal"
+	Msg_RequestBridgeMint_FullMethodName                = "/inference.inference.Msg/RequestBridgeMint"
+	Msg_RegisterWrappedTokenContract_FullMethodName     = "/inference.inference.Msg/RegisterWrappedTokenContract"
+	Msg_MigrateAllWrappedTokens_FullMethodName          = "/inference.inference.Msg/MigrateAllWrappedTokens"
 	Msg_AddUserToTrainingAllowList_FullMethodName       = "/inference.inference.Msg/AddUserToTrainingAllowList"
 	Msg_RemoveUserFromTrainingAllowList_FullMethodName  = "/inference.inference.Msg/RemoveUserFromTrainingAllowList"
 	Msg_SetTrainingAllowList_FullMethodName             = "/inference.inference.Msg/SetTrainingAllowList"
@@ -82,6 +90,14 @@ type MsgClient interface {
 	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error)
+	RegisterBridgeAddresses(ctx context.Context, in *MsgRegisterBridgeAddresses, opts ...grpc.CallOption) (*MsgRegisterBridgeAddressesResponse, error)
+	RegisterLiquidityPool(ctx context.Context, in *MsgRegisterLiquidityPool, opts ...grpc.CallOption) (*MsgRegisterLiquidityPoolResponse, error)
+	RegisterTokenMetadata(ctx context.Context, in *MsgRegisterTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterTokenMetadataResponse, error)
+	ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error)
+	RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error)
+	RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeMint, opts ...grpc.CallOption) (*MsgRequestBridgeMintResponse, error)
+	RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error)
+	MigrateAllWrappedTokens(ctx context.Context, in *MsgMigrateAllWrappedTokens, opts ...grpc.CallOption) (*MsgMigrateAllWrappedTokensResponse, error)
 	AddUserToTrainingAllowList(ctx context.Context, in *MsgAddUserToTrainingAllowList, opts ...grpc.CallOption) (*MsgAddUserToTrainingAllowListResponse, error)
 	RemoveUserFromTrainingAllowList(ctx context.Context, in *MsgRemoveUserFromTrainingAllowList, opts ...grpc.CallOption) (*MsgRemoveUserFromTrainingAllowListResponse, error)
 	SetTrainingAllowList(ctx context.Context, in *MsgSetTrainingAllowList, opts ...grpc.CallOption) (*MsgSetTrainingAllowListResponse, error)
@@ -329,6 +345,78 @@ func (c *msgClient) BridgeExchange(ctx context.Context, in *MsgBridgeExchange, o
 	return out, nil
 }
 
+func (c *msgClient) RegisterBridgeAddresses(ctx context.Context, in *MsgRegisterBridgeAddresses, opts ...grpc.CallOption) (*MsgRegisterBridgeAddressesResponse, error) {
+	out := new(MsgRegisterBridgeAddressesResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterBridgeAddresses_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterLiquidityPool(ctx context.Context, in *MsgRegisterLiquidityPool, opts ...grpc.CallOption) (*MsgRegisterLiquidityPoolResponse, error) {
+	out := new(MsgRegisterLiquidityPoolResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterLiquidityPool_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterTokenMetadata(ctx context.Context, in *MsgRegisterTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterTokenMetadataResponse, error) {
+	out := new(MsgRegisterTokenMetadataResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterTokenMetadata_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error) {
+	out := new(MsgApproveBridgeTokenForTradingResponse)
+	err := c.cc.Invoke(ctx, Msg_ApproveBridgeTokenForTrading_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error) {
+	out := new(MsgRequestBridgeWithdrawalResponse)
+	err := c.cc.Invoke(ctx, Msg_RequestBridgeWithdrawal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeMint, opts ...grpc.CallOption) (*MsgRequestBridgeMintResponse, error) {
+	out := new(MsgRequestBridgeMintResponse)
+	err := c.cc.Invoke(ctx, Msg_RequestBridgeMint_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error) {
+	out := new(MsgRegisterWrappedTokenContractResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterWrappedTokenContract_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) MigrateAllWrappedTokens(ctx context.Context, in *MsgMigrateAllWrappedTokens, opts ...grpc.CallOption) (*MsgMigrateAllWrappedTokensResponse, error) {
+	out := new(MsgMigrateAllWrappedTokensResponse)
+	err := c.cc.Invoke(ctx, Msg_MigrateAllWrappedTokens_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) AddUserToTrainingAllowList(ctx context.Context, in *MsgAddUserToTrainingAllowList, opts ...grpc.CallOption) (*MsgAddUserToTrainingAllowListResponse, error) {
 	out := new(MsgAddUserToTrainingAllowListResponse)
 	err := c.cc.Invoke(ctx, Msg_AddUserToTrainingAllowList_FullMethodName, in, out, opts...)
@@ -388,6 +476,14 @@ type MsgServer interface {
 	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error)
+	RegisterBridgeAddresses(context.Context, *MsgRegisterBridgeAddresses) (*MsgRegisterBridgeAddressesResponse, error)
+	RegisterLiquidityPool(context.Context, *MsgRegisterLiquidityPool) (*MsgRegisterLiquidityPoolResponse, error)
+	RegisterTokenMetadata(context.Context, *MsgRegisterTokenMetadata) (*MsgRegisterTokenMetadataResponse, error)
+	ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error)
+	RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error)
+	RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error)
+	RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error)
+	MigrateAllWrappedTokens(context.Context, *MsgMigrateAllWrappedTokens) (*MsgMigrateAllWrappedTokensResponse, error)
 	AddUserToTrainingAllowList(context.Context, *MsgAddUserToTrainingAllowList) (*MsgAddUserToTrainingAllowListResponse, error)
 	RemoveUserFromTrainingAllowList(context.Context, *MsgRemoveUserFromTrainingAllowList) (*MsgRemoveUserFromTrainingAllowListResponse, error)
 	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
@@ -475,6 +571,30 @@ func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreat
 }
 func (UnimplementedMsgServer) BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BridgeExchange not implemented")
+}
+func (UnimplementedMsgServer) RegisterBridgeAddresses(context.Context, *MsgRegisterBridgeAddresses) (*MsgRegisterBridgeAddressesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterBridgeAddresses not implemented")
+}
+func (UnimplementedMsgServer) RegisterLiquidityPool(context.Context, *MsgRegisterLiquidityPool) (*MsgRegisterLiquidityPoolResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterLiquidityPool not implemented")
+}
+func (UnimplementedMsgServer) RegisterTokenMetadata(context.Context, *MsgRegisterTokenMetadata) (*MsgRegisterTokenMetadataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterTokenMetadata not implemented")
+}
+func (UnimplementedMsgServer) ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproveBridgeTokenForTrading not implemented")
+}
+func (UnimplementedMsgServer) RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestBridgeWithdrawal not implemented")
+}
+func (UnimplementedMsgServer) RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestBridgeMint not implemented")
+}
+func (UnimplementedMsgServer) RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterWrappedTokenContract not implemented")
+}
+func (UnimplementedMsgServer) MigrateAllWrappedTokens(context.Context, *MsgMigrateAllWrappedTokens) (*MsgMigrateAllWrappedTokensResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MigrateAllWrappedTokens not implemented")
 }
 func (UnimplementedMsgServer) AddUserToTrainingAllowList(context.Context, *MsgAddUserToTrainingAllowList) (*MsgAddUserToTrainingAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AddUserToTrainingAllowList not implemented")
@@ -966,6 +1086,150 @@ func _Msg_BridgeExchange_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RegisterBridgeAddresses_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterBridgeAddresses)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterBridgeAddresses(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterBridgeAddresses_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterBridgeAddresses(ctx, req.(*MsgRegisterBridgeAddresses))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterLiquidityPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterLiquidityPool)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterLiquidityPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterLiquidityPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterLiquidityPool(ctx, req.(*MsgRegisterLiquidityPool))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterTokenMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterTokenMetadata)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterTokenMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterTokenMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterTokenMetadata(ctx, req.(*MsgRegisterTokenMetadata))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_ApproveBridgeTokenForTrading_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgApproveBridgeTokenForTrading)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ApproveBridgeTokenForTrading(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ApproveBridgeTokenForTrading_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ApproveBridgeTokenForTrading(ctx, req.(*MsgApproveBridgeTokenForTrading))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RequestBridgeWithdrawal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRequestBridgeWithdrawal)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RequestBridgeWithdrawal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RequestBridgeWithdrawal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RequestBridgeWithdrawal(ctx, req.(*MsgRequestBridgeWithdrawal))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RequestBridgeMint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRequestBridgeMint)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RequestBridgeMint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RequestBridgeMint_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RequestBridgeMint(ctx, req.(*MsgRequestBridgeMint))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterWrappedTokenContract_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterWrappedTokenContract)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterWrappedTokenContract(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterWrappedTokenContract_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterWrappedTokenContract(ctx, req.(*MsgRegisterWrappedTokenContract))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_MigrateAllWrappedTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgMigrateAllWrappedTokens)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).MigrateAllWrappedTokens(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_MigrateAllWrappedTokens_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).MigrateAllWrappedTokens(ctx, req.(*MsgMigrateAllWrappedTokens))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_AddUserToTrainingAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgAddUserToTrainingAllowList)
 	if err := dec(in); err != nil {
@@ -1130,6 +1394,38 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BridgeExchange",
 			Handler:    _Msg_BridgeExchange_Handler,
+		},
+		{
+			MethodName: "RegisterBridgeAddresses",
+			Handler:    _Msg_RegisterBridgeAddresses_Handler,
+		},
+		{
+			MethodName: "RegisterLiquidityPool",
+			Handler:    _Msg_RegisterLiquidityPool_Handler,
+		},
+		{
+			MethodName: "RegisterTokenMetadata",
+			Handler:    _Msg_RegisterTokenMetadata_Handler,
+		},
+		{
+			MethodName: "ApproveBridgeTokenForTrading",
+			Handler:    _Msg_ApproveBridgeTokenForTrading_Handler,
+		},
+		{
+			MethodName: "RequestBridgeWithdrawal",
+			Handler:    _Msg_RequestBridgeWithdrawal_Handler,
+		},
+		{
+			MethodName: "RequestBridgeMint",
+			Handler:    _Msg_RequestBridgeMint_Handler,
+		},
+		{
+			MethodName: "RegisterWrappedTokenContract",
+			Handler:    _Msg_RegisterWrappedTokenContract_Handler,
+		},
+		{
+			MethodName: "MigrateAllWrappedTokens",
+			Handler:    _Msg_MigrateAllWrappedTokens_Handler,
 		},
 		{
 			MethodName: "AddUserToTrainingAllowList",

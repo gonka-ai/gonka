@@ -55,7 +55,7 @@ current_node_version: "v3.0.8"
 	cfgPath := writeTempFile(t, tmp, "config.yaml", yaml)
 
 	// Present but must be ignored due to merged_node_config=true
-	nodeJson := `[{"host":"http://json-node:8080/","models":{"modelB":{"args":[]}},"id":"json-node-1","max_concurrent":10,"hardware":[]}]`
+	nodeJson := `[{"host":"http://json-node:8080/","inference_port":8080,"poc_port":5000,"models":{"modelB":{"args":[]}},"id":"json-node-1","max_concurrent":10,"hardware":[]}]`
 	nodePath := writeTempFile(t, tmp, "node-config.json", nodeJson)
 	dbPath := filepath.Join(tmp, "test.db")
 	_ = os.Remove(dbPath)
@@ -116,7 +116,7 @@ merged_node_config: false
 `
 	cfgPath := writeTempFile(t, tmp, "config.yaml", yaml)
 
-	nodeJson := `[{"host":"http://json-node:8080/","models":{"modelZ":{"args":[]}},"id":"json-node","max_concurrent":2,"hardware":[]}]`
+	nodeJson := `[{"host":"http://json-node:8080/","inference_port":8080,"poc_port":5000,"models":{"modelZ":{"args":[]}},"id":"json-node","max_concurrent":2,"hardware":[]}]`
 	nodePath := writeTempFile(t, tmp, "node-config.json", nodeJson)
 	dbPath := filepath.Join(tmp, "test.db")
 	_ = os.Remove(dbPath)
@@ -211,7 +211,7 @@ merged_node_config: false
 	cfgPath := writeTempFile(t, tmp, "config.yaml", yaml1)
 
 	// First run with JSON nodes imported
-	nodeJson := `[{"host":"http://json-node:8080/","models":{"modelZ":{"args":[]}},"id":"json-node","max_concurrent":2,"hardware":[]}]`
+	nodeJson := `[{"host":"http://json-node:8080/","inference_port":8080,"poc_port":5000,"models":{"modelZ":{"args":[]}},"id":"json-node","max_concurrent":2,"hardware":[]}]`
 	nodePath := writeTempFile(t, tmp, "node-config.json", nodeJson)
 	_ = os.Remove(dbPath)
 	mgr, err := apiconfig.LoadConfigManagerWithPaths(cfgPath, dbPath, nodePath)

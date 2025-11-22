@@ -23,20 +23,18 @@ RUN apk add --no-cache make gcc musl-dev git patchelf
 
 # Use the musl libc version of wasmvm and create a symlink for the linker
 RUN if [ "$GOARCH" = "arm64" ]; then \
-        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.9/libwasmvm_muslc.aarch64.a \
-        && echo "a43cb22bf85e89bea45c9af04a229bc92f70ddd8216fee7db21d349d7579cff6 /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
+        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.aarch64.a \
+        && echo "27fb13821dbc519119f4f98c30a42cb32429b111b0fdc883686c34a41777488f /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
         && ln -s /lib/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a \
-        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.9/internal/api/libwasmvm.aarch64.so; \
+        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v2.2.4/internal/api/libwasmvm.aarch64.so; \
     else \
-        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.9/libwasmvm_muslc.x86_64.a \
-        && echo "797a235aefb5f8b2d60ecd0f3a430bab28d913b46b7661c0280dc7195a7e1144 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
+        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a \
+        && echo "70c989684d2b48ca17bbd55bb694bbb136d75c393c067ef3bdbca31d2b23b578 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
         && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
-        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.9/internal/api/libwasmvm.x86_64.so; \
+        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v2.2.4/internal/api/libwasmvm.x86_64.so; \
     fi
 
-RUN wget -O /root/cw20_base.wasm \
-    https://github.com/CosmWasm/cw-plus/releases/download/v2.0.0/cw20_base.wasm \
-    && echo "4d8e90dd340993033f1b9e8e3a3ee7f8673c582ca9bcdd8c8cf3c7470d6537d5 /root/cw20_base.wasm" | sha256sum -c
+COPY inference-chain/contracts/wrapped-token/artifacts/wrapped_token.wasm /root/wrapped_token.wasm
 
 WORKDIR /app/inference-chain
 
@@ -67,7 +65,7 @@ FROM scratch AS binary-exporter
 # Copy all required files to a flat structure
 COPY --from=builder /app/inference-chain/build/inferenced /build_output/inferenced
 COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /build_output/libwasmvm_muslc.x86_64.a
-COPY --from=builder /root/cw20_base.wasm /build_output/cw20_base.wasm
+COPY --from=builder /root/wrapped_token.wasm /build_output/wrapped_token.wasm
 COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 
 ################################################################################
@@ -98,15 +96,17 @@ COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/init-docker.sh /root/init-docker.sh
 COPY inference-chain/scripts/reset-state.sh /root/reset-state.sh
+COPY inference-chain/contracts /root/contracts
 COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY inference-chain/app_overrides.toml /root/app_overrides.toml
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
 COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json
 COPY --from=builder /lib/libwasmvm_muslc.*.a /lib/
-COPY --from=builder /root/cw20_base.wasm /root/cw20_base.wasm
+COPY --from=builder /root/wrapped_token.wasm /root/wrapped_token.wasm
 
-RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh
+RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh \
+    && find /root/contracts -type f -name "*.sh" -exec chmod +x {} +
 
 EXPOSE 26656 26657 1317 9090
 

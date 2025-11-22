@@ -12,8 +12,9 @@ type Command interface {
 }
 
 type LockAvailableNode struct {
-	Model    string
-	Response chan *Node
+	Model       string
+	Response    chan *Node
+	SkipNodeIDs []string
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {
@@ -109,12 +110,10 @@ type InferenceResult interface {
 }
 
 type InferenceSuccess struct {
-	Response interface{}
 }
 
 type InferenceError struct {
 	Message string
-	IsFatal bool
 }
 
 func (i InferenceSuccess) IsSuccess() bool {

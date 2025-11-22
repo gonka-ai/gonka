@@ -6,7 +6,7 @@ router = APIRouter()
 
 
 @router.get("/devices", response_model=GPUDevicesResponse)
-def get_gpu_devices(request: Request) -> GPUDevicesResponse:
+async def get_gpu_devices(request: Request) -> GPUDevicesResponse:
     """
     List all CUDA devices with current metrics.
     
@@ -41,12 +41,12 @@ def get_gpu_devices(request: Request) -> GPUDevicesResponse:
     ```
     """
     gpu_manager = request.app.state.gpu_manager
-    devices = gpu_manager.get_devices()
+    devices = await gpu_manager.get_devices_async()
     return GPUDevicesResponse(devices=devices, count=len(devices))
 
 
 @router.get("/driver", response_model=DriverInfo)
-def get_driver_info(request: Request) -> DriverInfo:
+async def get_driver_info(request: Request) -> DriverInfo:
     """
     Get CUDA driver version information from NVML.
     
@@ -67,7 +67,7 @@ def get_driver_info(request: Request) -> DriverInfo:
     """
     gpu_manager = request.app.state.gpu_manager
     try:
-        return gpu_manager.get_driver_info()
+        return await gpu_manager.get_driver_info_async()
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 

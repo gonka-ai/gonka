@@ -268,7 +268,7 @@ func TestEvenAmong3(t *testing.T) {
 	participant1 := types.Participant{
 		Address:     "participant1",
 		CoinBalance: 255000,
-		Status:      types.ParticipantStatus_RAMPING,
+		Status:      types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{
 			InferenceCount: 100,
 			MissedRequests: 0,
@@ -286,7 +286,7 @@ func TestEvenAmong3(t *testing.T) {
 	participant3 := types.Participant{
 		Address:     "participant3",
 		CoinBalance: 255000,
-		Status:      types.ParticipantStatus_RAMPING,
+		Status:      types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{
 			InferenceCount: 100,
 			MissedRequests: 0,
@@ -413,6 +413,14 @@ func TestActualSettle(t *testing.T) {
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 10,
 	})
+	// Set active participants for the epoch
+	keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 10,
+		Participants: []*types.ActiveParticipant{
+			{Index: participant1.Address},
+			{Index: participant2.Address},
+		},
+	})
 	logger.Info("Set participants and epoch data", "epochIndex", 10)
 
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
@@ -422,7 +430,7 @@ func TestActualSettle(t *testing.T) {
 	require.NoError(t, err2, "Should be able to create coins from reward amount")
 	logger.Info("Created coins for minting", "coins", coins)
 
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, coins, gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, coins, gomock.Any()).Return(nil)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	err := keeper.SettleAccounts(ctx, 10, 0)
@@ -494,6 +502,17 @@ func TestActualSettleWithManyParticipants(t *testing.T) {
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 10,
 	})
+	// Set active participants for the epoch
+	activeParticipantInfos := make([]*types.ActiveParticipant, 150)
+	for i := 0; i < 150; i++ {
+		activeParticipantInfos[i] = &types.ActiveParticipant{
+			Index: participants[i].Address,
+		}
+	}
+	keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      10,
+		Participants: activeParticipantInfos,
+	})
 	logger.Info("Set epoch data", "epochIndex", 10)
 
 	expectedRewardCoin := calcExpectedRewards(participants)
@@ -501,7 +520,7 @@ func TestActualSettleWithManyParticipants(t *testing.T) {
 
 	coins, err2 := types.GetCoins(expectedRewardCoin)
 	require.NoError(t, err2, "Should be able to create coins from reward amount")
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, coins, gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, coins, gomock.Any()).Return(nil)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	// This should work with pagination and process all 150 participants

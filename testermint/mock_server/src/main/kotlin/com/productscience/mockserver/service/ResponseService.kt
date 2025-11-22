@@ -118,6 +118,7 @@ class ResponseService {
         val segment1 = if (cleanedSegment != null) "/$cleanedSegment" else ""
         val endpoint = "$segment1/v1/chat/completions"
         val errorResponse = ErrorResponse(statusCode, errorMessage, errorType)
+        println("DEBUG: Storing error response for endpoint='$endpoint' with statusCode=$statusCode")
         inferenceResponses[endpoint] = ResponseConfig.Error(errorResponse, delay, streamDelay)
         return endpoint
     }
@@ -146,6 +147,7 @@ class ResponseService {
         }
 
         // Fall back to generic response for the endpoint
+        print("DEBUG: Checking for generic response for endpoint='$endpoint'")
         return inferenceResponses[endpoint]
     }
 

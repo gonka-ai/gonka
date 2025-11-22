@@ -3,57 +3,141 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// Key prefix for bridge transactions
-const (
-	BridgeTransactionKeyPrefix = "bridge_tx:"
-)
-
-// generateBridgeTransactionKey creates a unique key for bridge transactions
-// Format: originChain_blockNumber_receiptIndex
-func generateBridgeTransactionKey(originChain, blockNumber, receiptIndex string) string {
-	return fmt.Sprintf("%s_%s_%s", originChain, blockNumber, receiptIndex)
-}
-
-// HasBridgeTransaction checks if a bridge transaction has been processed
-func (k Keeper) HasBridgeTransaction(ctx context.Context, originChain, blockNumber, receiptIndex string) bool {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, []byte(BridgeTransactionKeyPrefix))
-	key := generateBridgeTransactionKey(originChain, blockNumber, receiptIndex)
-	return store.Has([]byte(key))
-}
-
-// SetBridgeTransaction stores a bridge transaction
+// SetBridgeTransaction stores a bridge transaction using content-based key
 func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransaction) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, []byte(BridgeTransactionKeyPrefix))
+	key, id, err := buildBridgeTransactionKey(tx)
+	if err != nil {
+		k.LogError("Bridge exchange: Failed to build bridge transaction key",
+			types.Messages,
+			"error", err,
+		)
+		return
+	}
 
-	// Generate proper unique key
-	key := generateBridgeTransactionKey(tx.OriginChain, tx.BlockNumber, tx.ReceiptIndex)
-
-	// Update the Id field to match our storage key for consistency
-	tx.Id = key
-
-	bz := k.cdc.MustMarshal(tx)
-	store.Set([]byte(key), bz)
+	tx.Id = id
+	if err := k.BridgeTransactionsMap.Set(ctx, key, *tx); err != nil {
+		k.LogError("Bridge exchange: Failed to store bridge transaction",
+			types.Messages,
+			"chainId", tx.ChainId,
+			"blockNumber", tx.BlockNumber,
+			"receiptIndex", tx.ReceiptIndex,
+			"error", err,
+		)
+	}
 }
 
-// GetBridgeTransaction retrieves a bridge transaction
-func (k Keeper) GetBridgeTransaction(ctx context.Context, originChain, blockNumber, receiptIndex string) (*types.BridgeTransaction, bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, []byte(BridgeTransactionKeyPrefix))
-	key := generateBridgeTransactionKey(originChain, blockNumber, receiptIndex)
-	bz := store.Get([]byte(key))
-	if bz == nil {
+// GetBridgeTransactionByContent retrieves a bridge transaction by its content hash
+func (k Keeper) GetBridgeTransactionByContent(ctx context.Context, tx *types.BridgeTransaction) (*types.BridgeTransaction, bool) {
+	key, _, err := buildBridgeTransactionKey(tx)
+	if err != nil {
 		return nil, false
 	}
 
-	var tx types.BridgeTransaction
-	k.cdc.MustUnmarshal(bz, &tx)
-	return &tx, true
+	storedTx, err := k.BridgeTransactionsMap.Get(ctx, key)
+	if err != nil {
+		return nil, false
+	}
+	return &storedTx, true
+}
+
+// HasBridgeTransactionByContent checks if a bridge transaction exists by content hash
+func (k Keeper) HasBridgeTransactionByContent(ctx context.Context, tx *types.BridgeTransaction) bool {
+	key, _, err := buildBridgeTransactionKey(tx)
+	if err != nil {
+		return false
+	}
+
+	has, err := k.BridgeTransactionsMap.Has(ctx, key)
+	if err != nil {
+		return false
+	}
+	return has
+}
+
+// GetBridgeTransactionsByReceipt finds all bridge transactions that match a specific receipt location
+// This can return multiple transactions if there are conflicts (different content for same receipt)
+func (k Keeper) GetBridgeTransactionsByReceipt(ctx context.Context, chainId, blockNumber, receiptIndex string) []types.BridgeTransaction {
+	iter, err := k.BridgeTransactionsMap.Iterate(ctx, collections.NewPrefixedTripleRange[string, string, string](chainId))
+	if err != nil {
+		k.LogError("Bridge exchange: Failed to iterate bridge transactions by chain",
+			types.Messages,
+			"chainId", chainId,
+			"error", err,
+		)
+		return nil
+	}
+	defer iter.Close()
+
+	values, err := iter.Values()
+	if err != nil {
+		k.LogError("Bridge exchange: Failed to collect bridge transactions by chain",
+			types.Messages,
+			"chainId", chainId,
+			"error", err,
+		)
+		return nil
+	}
+
+	var matchingTransactions []types.BridgeTransaction
+	for _, tx := range values {
+		if tx.BlockNumber == blockNumber && tx.ReceiptIndex == receiptIndex {
+			matchingTransactions = append(matchingTransactions, tx)
+		}
+	}
+
+	return matchingTransactions
+}
+
+// CleanupOldBridgeTransactions removes bridge transactions older than the specified block number
+// This is efficient because block numbers are included in the key prefix
+func (k Keeper) CleanupOldBridgeTransactions(ctx context.Context, chainId string, maxBlockNumber string) (int, error) {
+	iter, err := k.BridgeTransactionsMap.Iterate(ctx, collections.NewPrefixedTripleRange[string, string, string](chainId))
+	if err != nil {
+		return 0, err
+	}
+	defer iter.Close()
+
+	values, err := iter.Values()
+	if err != nil {
+		return 0, err
+	}
+
+	var deletedCount int
+	var firstErr error
+	for _, tx := range values {
+		if tx.BlockNumber < maxBlockNumber {
+			if err := k.removeBridgeTransactionByID(ctx, tx.Id); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			deletedCount++
+		}
+	}
+
+	return deletedCount, firstErr
+}
+
+func buildBridgeTransactionKey(tx *types.BridgeTransaction) (collections.Triple[string, string, string], string, error) {
+	key := generateSecureBridgeTransactionKey(tx)
+	parts := strings.SplitN(key, "_", 3)
+	if len(parts) != 3 {
+		return collections.Triple[string, string, string]{}, "", fmt.Errorf("invalid bridge transaction key: %s", key)
+	}
+	return collections.Join3(parts[0], parts[1], parts[2]), key, nil
+}
+
+func (k Keeper) removeBridgeTransactionByID(ctx context.Context, id string) error {
+	parts := strings.SplitN(id, "_", 3)
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid bridge transaction id: %s", id)
+	}
+	return k.BridgeTransactionsMap.Remove(ctx, collections.Join3(parts[0], parts[1], parts[2]))
 }

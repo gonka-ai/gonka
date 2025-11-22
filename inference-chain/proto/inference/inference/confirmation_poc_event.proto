@@ -1,0 +1,34 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// ConfirmationPoCEvent tracks a single confirmation PoC event during the inference phase.
+// These events randomly trigger to verify that inference-serving nodes (POC_SLOT=false)
+// maintain their computational capacity.
+message ConfirmationPoCEvent {
+  uint64 epoch_index = 1;          // Which epoch this event belongs to
+  uint64 event_sequence = 2;       // Sequence number for multiple events per epoch (0, 1, 2...)
+  
+  int64 trigger_height = 3;        // Block height where trigger decision was made
+  int64 generation_start_height = 4;  // Anchor: all other heights calculated from this + EpochParams
+  
+  ConfirmationPoCPhase phase = 8;     // Current phase of the event
+  
+  // Block hash from (generation_start_height - 1) for PoC nonce generation.
+  // This hash is only set when transitioning to GENERATION phase to prevent
+  // precomputation during the grace period.
+  string poc_seed_block_hash = 9;
+}
+
+// ConfirmationPoCPhase defines the phases of a confirmation PoC event.
+enum ConfirmationPoCPhase {
+  CONFIRMATION_POC_INACTIVE = 0;     // No active event
+  CONFIRMATION_POC_GRACE_PERIOD = 1; // Grace period: nodes finish in-flight inference
+  CONFIRMATION_POC_GENERATION = 2;   // Generation phase: nodes generate PoC nonces
+  CONFIRMATION_POC_VALIDATION = 3;   // Validation phase: validators verify nonces
+  CONFIRMATION_POC_COMPLETED = 4;    // Event completed, weights recorded
+}
+
+
+

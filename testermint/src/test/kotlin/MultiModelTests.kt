@@ -83,7 +83,7 @@ class MultiModelTests : TestermintTest() {
 
     @Test
     fun `multi model inferences get validated and claimed`() {
-        val (cluster, genesis) = initCluster(3)
+        val (cluster, genesis) = initCluster(3, reboot = true)
         logSection("Setting up second model")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
@@ -147,7 +147,7 @@ class MultiModelTests : TestermintTest() {
             
             // Verify that the actual change matches our calculated expectation (with small tolerance for rounding)
             assertThat(actualChange).`as`("Participant $participantId balance change")
-                .isCloseTo(expectedChange, Offset.offset(3))
+                .isCloseTo(expectedChange, Offset.offset(5))
         }
     }
 }

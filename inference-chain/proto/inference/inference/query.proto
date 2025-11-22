@@ -26,10 +26,13 @@ import "inference/inference/training_task_sync.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
 import "inference/inference/network_node.proto";
-import "inference/inference/bridge_transaction.proto";
+import "inference/inference/bridge.proto";
 import "inference/inference/stats_developer.proto";
 import "inference/inference/epoch.proto";
 import "inference/inference/mlnode_version.proto";
+import "inference/inference/excluded_participant.proto";
+import "inference/inference/confirmation_poc_event.proto";
+import "inference/inference/liquidity_pool.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -107,6 +110,12 @@ service Query {
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{block_height}";
+
+  }
+
+  // Queries a list of PocValidationsForStage items.
+  rpc PocValidationsForStage (QueryPocValidationsForStageRequest) returns (QueryPocValidationsForStageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_validations_for_stage/{block_height}";
 
   }
 
@@ -286,13 +295,43 @@ service Query {
 
   // Queries a bridge transaction by its composite key
   rpc BridgeTransaction (QueryGetBridgeTransactionRequest) returns (QueryGetBridgeTransactionResponse) {
-    option (google.api.http).get = "/inference/inference/bridge_transaction/{origin_chain}/{block_number}/{receipt_index}";
+    option (google.api.http).get = "/productscience/inference/inference/bridge_transaction/{origin_chain}/{block_number}/{receipt_index}";
 
   }
 
   // Queries all bridge transactions
   rpc BridgeTransactions (QueryAllBridgeTransactionsRequest) returns (QueryAllBridgeTransactionsResponse) {
-    option (google.api.http).get = "/inference/inference/bridge_transactions";
+    option (google.api.http).get = "/productscience/inference/inference/bridge_transactions";
+
+  }
+
+  // Queries bridge addresses by chain
+  rpc BridgeAddressesByChain (QueryBridgeAddressesByChainRequest) returns (QueryBridgeAddressesByChainResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/bridge_addresses/{chain_id}";
+
+  }
+
+  // Queries the singleton liquidity pool
+  rpc LiquidityPool (QueryLiquidityPoolRequest) returns (QueryLiquidityPoolResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/liquidity_pool";
+
+  }
+
+  // Queries all wrapped token balances for a specific address
+  rpc WrappedTokenBalances(QueryWrappedTokenBalancesRequest) returns (QueryWrappedTokenBalancesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/wrapped_token_balances/{address}";
+
+  }
+
+  // Validates a wrapped token for trading through liquidity pools
+  rpc ValidateWrappedTokenForTrade(QueryValidateWrappedTokenForTradeRequest) returns (QueryValidateWrappedTokenForTradeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/validate_wrapped_token_for_trade/{contract_address}";
+
+  }
+
+  // Queries all approved bridge tokens for trading
+  rpc ApprovedTokensForTrade(QueryApprovedTokensForTradeRequest) returns (QueryApprovedTokensForTradeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/approved_tokens_for_trade";
 
   }
 
@@ -371,6 +410,18 @@ service Query {
   // Queries a list of TrainingAllowList items.
   rpc TrainingAllowList (QueryTrainingAllowListRequest) returns (QueryTrainingAllowListResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_allow_list";
+
+  }
+
+  // Queries the list of excluded participants for an epoch (0 = current epoch).
+  rpc ExcludedParticipants (QueryExcludedParticipantsRequest) returns (QueryExcludedParticipantsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/excluded_participants/{epoch_index}";
+
+  }
+
+  // Queries the currently active confirmation PoC event.
+  rpc ActiveConfirmationPoCEvent (QueryActiveConfirmationPoCEventRequest) returns (QueryActiveConfirmationPoCEventResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/active_confirmation_poc_event";
 
   }
 }
@@ -504,6 +555,21 @@ message PoCBatchesWithParticipants {
   repeated PoCBatch poc_batch   = 4 [(gogoproto.nullable) = false];
 }
 
+message QueryPocValidationsForStageRequest {
+  int64 block_height = 1;
+}
+
+message QueryPocValidationsForStageResponse {
+  repeated PoCValidationsWithParticipants poc_validation = 1 [(gogoproto.nullable) = false];
+}
+
+message PoCValidationsWithParticipants {
+           string        participant    = 1;
+           string        pub_key        = 2;
+           string        hex_pub_key    = 3;
+  repeated PoCValidation poc_validation = 4 [(gogoproto.nullable) = false];
+}
+
 message QueryGetCurrentEpochRequest {}
 
 // DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
@@ -538,10 +604,13 @@ message QueryPreviousEpochGroupDataResponse {
   EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
 }
 
-message QueryModelsAllRequest {}
+message QueryModelsAllRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
 
 message QueryModelsAllResponse {
   repeated Model model = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetTopMinerRequest {
@@ -838,7 +907,7 @@ message QueryGetBridgeTransactionRequest {
 }
 
 message QueryGetBridgeTransactionResponse {
-  BridgeTransaction bridgeTransaction = 1 [(gogoproto.nullable) = false];
+  repeated BridgeTransaction bridgeTransactions = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryAllBridgeTransactionsRequest {
@@ -850,12 +919,54 @@ message QueryAllBridgeTransactionsResponse {
            cosmos.base.query.v1beta1.PageResponse pagination         = 2;
 }
 
+message WrappedTokenBalance {
+  BridgeWrappedTokenContract token_info = 1;
+  string symbol = 2;
+  string balance = 3;                         // current balance (as string to handle large numbers)
+  string decimals = 4;
+  string formatted_balance = 5;               // human-readable balance (e.g. "1000.50")
+}
+
+message QueryWrappedTokenBalancesRequest {
+  string address = 1;
+}
+
+message QueryWrappedTokenBalancesResponse {
+  repeated WrappedTokenBalance balances = 1;
+}
+
+message QueryBridgeAddressesByChainRequest {
+  string chain_id = 1;
+}
+
+message QueryBridgeAddressesByChainResponse {
+  repeated BridgeContractAddress addresses = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryValidateWrappedTokenForTradeRequest {
+  string contract_address = 1;
+}
+
+message QueryValidateWrappedTokenForTradeResponse {
+  bool is_valid = 1;
+}
+
+message QueryLiquidityPoolRequest {}
+
+message QueryLiquidityPoolResponse {
+  string address = 1;
+  uint64 codeId = 2;
+  uint64 block_height = 3;
+}
+
 message QueryEpochInfoRequest {}
 
 message QueryEpochInfoResponse {
-  int64  block_height = 1;
-  Params params       = 2 [(gogoproto.nullable) = false];
-  Epoch  latest_epoch = 3 [(gogoproto.nullable) = false];
+  int64                 block_height                  = 1;
+  Params                params                        = 2 [(gogoproto.nullable) = false];
+  Epoch                 latest_epoch                  = 3 [(gogoproto.nullable) = false];
+  bool                  is_confirmation_poc_active    = 4;
+  ConfirmationPoCEvent  active_confirmation_poc_event = 5;
 }
 
 message QueryCountPoCbatchesAtHeightRequest {
@@ -872,6 +983,12 @@ message QueryCountPoCvalidationsAtHeightRequest {
 
 message QueryCountPoCvalidationsAtHeightResponse {
   uint64 count = 1;
+}
+
+message QueryApprovedTokensForTradeRequest {}
+
+message QueryApprovedTokensForTradeResponse {
+  repeated BridgeTokenReference approved_tokens = 1 [(gogoproto.nullable) = false];
 }
 
 // Dynamic pricing query messages
@@ -942,4 +1059,24 @@ message QueryGetMLNodeVersionRequest {}
 
 message QueryGetMLNodeVersionResponse {
   MLNodeVersion mlnode_version = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryExcludedParticipantsRequest requests excluded participants for an epoch.
+// If epoch_index is 0, the query should return for the current effective epoch.
+message QueryExcludedParticipantsRequest {
+  uint64 epoch_index = 1;
+}
+
+// QueryExcludedParticipantsResponse returns a list of excluded participants for the epoch.
+message QueryExcludedParticipantsResponse {
+  repeated ExcludedParticipant items = 1;
+}
+
+// QueryActiveConfirmationPoCEventRequest is request type for the Query/ActiveConfirmationPoCEvent RPC method.
+message QueryActiveConfirmationPoCEventRequest {}
+
+// QueryActiveConfirmationPoCEventResponse is response type for the Query/ActiveConfirmationPoCEvent RPC method.
+message QueryActiveConfirmationPoCEventResponse {
+  bool                 is_active = 1;
+  ConfirmationPoCEvent event     = 2;
 }

@@ -15,4 +15,5 @@ const (
 	AttributeKeyCompletionEpoch = "completion_epoch"
 	AttributeKeySlashAmount     = "slash_amount"
 	AttributeKeySlashFraction   = "slash_fraction"
+	AttributeKeySlashReason     = "slash_reason"
 )

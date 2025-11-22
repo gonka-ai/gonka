@@ -94,7 +94,7 @@ type Signer interface {
 }
 
 func Sign(signer Signer, components SignatureComponents, signatureType SignatureType) (string, error) {
-	slog.Info("Signing components", "type", signatureType, "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
+	slog.Debug("Signing components", "type", signatureType, "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
 	bytes := getSignatureBytes(components, signatureType)
 	hash := crypto.Sha256(bytes)
 	slog.Info("Hash for signing", "hash", hash)
@@ -108,14 +108,14 @@ func Sign(signer Signer, components SignatureComponents, signatureType Signature
 
 func ValidateSignature(components SignatureComponents, signatureType SignatureType, pubKey string, signature string) error {
 	slog.Info("Validating signature", "type", signatureType, "pubKey", pubKey, "signature", signature)
-	slog.Info("Components", "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
+	slog.Debug("Components", "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
 	bytes := getSignatureBytes(components, signatureType)
 	return validateSignature(bytes, pubKey, signature)
 }
 
 func ValidateSignatureWithGrantees(components SignatureComponents, signatureType SignatureType, pubKeys []string, signature string) error {
 	slog.Info("Validating signature with grantees", "type", signatureType, "pubKeys", pubKeys, "signature", signature)
-	slog.Info("Components", "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
+	slog.Debug("Components", "payload", components.Payload, "timestamp", components.Timestamp, "transferAddress", components.TransferAddress, "executorAddress", components.ExecutorAddress)
 	bytes := getSignatureBytes(components, signatureType)
 	return validateSignatureWithGrantees(bytes, pubKeys, signature)
 }

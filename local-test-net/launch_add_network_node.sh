@@ -7,6 +7,7 @@ set -e
 # PUBLIC_SERVER_PORT - the port to use for the API
 # PUBLIC_IP - the access point for getting to your API node from the public
 # PROXY_ACTIVE - set to "true" to include proxy service (optional)
+# BRIDGE_ACTIVE - set to "true" to include bridge service (optional)
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
@@ -59,11 +60,17 @@ if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
 fi
 
 
-# Build compose command with conditional proxy support
+# Build compose command with conditional services support
 COMPOSE_FILES="-f docker-compose-base.yml -f docker-compose.join.yml"
 if [ "${PROXY_ACTIVE}" = "true" ]; then
   COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.proxy.yml"
   echo "Starting with proxy support"
+fi
+if [ "${BRIDGE_ACTIVE}" = "true" ]; then
+  COMPOSE_FILES="$COMPOSE_FILES \
+  -f docker-compose.bridge.yml \
+  -f docker-compose.contracts.yml"
+  echo "Starting with bridge support"
 fi
 
 docker compose -p "$project_name" $COMPOSE_FILES up -d

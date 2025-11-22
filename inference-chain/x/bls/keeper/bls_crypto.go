@@ -1,20 +1,21 @@
 package keeper
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	"github.com/productscience/inference/x/bls/types"
-	"golang.org/x/crypto/sha3"
 )
 
 // computeParticipantPublicKey computes individual BLS public key for participant's slots
 func (k Keeper) computeParticipantPublicKey(epochBLSData *types.EpochBLSData, slotIndices []uint32) ([]byte, error) {
 	// Initialize aggregated public key as G2 identity
 	var aggregatedPubKey bls12381.G2Affine
+	aggregatedPubKey.SetInfinity()
 
 	// For each slot assigned to this participant
 	for _, slotIndex := range slotIndices {
@@ -49,10 +50,14 @@ func (k Keeper) computeParticipantPublicKey(epochBLSData *types.EpochBLSData, sl
 // evaluateCommitmentPolynomial evaluates polynomial at given slot index
 func (k Keeper) evaluateCommitmentPolynomial(commitments [][]byte, slotIndex uint32) (bls12381.G2Affine, error) {
 	var result bls12381.G2Affine
+	result.SetInfinity()
 
-	// Evaluate polynomial: result = Σ(commitments[i] * slotIndex^i)
-	slotIndexBig := big.NewInt(int64(slotIndex))
-	power := big.NewInt(1) // slotIndex^0 = 1
+	// Evaluate polynomial at x = slotIndex+1 using Fr arithmetic:
+	// result = Σ(commitments[i] * x^i)
+	var x fr.Element
+	x.SetUint64(uint64(slotIndex + 1))
+	var power fr.Element
+	power.SetOne() // x^0 = 1
 
 	for i, commitmentBytes := range commitments {
 		if len(commitmentBytes) != 96 {
@@ -65,56 +70,37 @@ func (k Keeper) evaluateCommitmentPolynomial(commitments [][]byte, slotIndex uin
 			return result, fmt.Errorf("failed to unmarshal commitment %d: %w", i, err)
 		}
 
-		// Multiply commitment by slotIndex^i
+		// Multiply commitment by x^i
 		var term bls12381.G2Affine
-		term.ScalarMultiplication(&commitment, power)
+		term.ScalarMultiplication(&commitment, power.BigInt(new(big.Int)))
 
 		// Add to result
 		result.Add(&result, &term)
 
-		// Update power for next iteration: power *= slotIndex
-		power.Mul(power, slotIndexBig)
+		// Update power for next iteration: power *= x
+		power.Mul(&power, &x)
 	}
 
 	return result, nil
 }
 
-// verifyBLSPartialSignature verifies a BLS partial signature against participant's individual public key
+// verifyBLSPartialSignature verifies BLS partial signatures per-slot.
+// The signature payload may contain N concatenated 48-byte compressed G1 signatures,
+// and SlotIndices must have the same length N (1:1 mapping). Each (slot, sig)
+// is verified against the aggregated slot public key computed from commitments.
 func (k Keeper) verifyBLSPartialSignature(signature []byte, messageHash []byte, epochBLSData *types.EpochBLSData, slotIndices []uint32) bool {
-	// Compute the participant's individual public key from stored commitments
-	participantPublicKey, err := k.computeParticipantPublicKey(epochBLSData, slotIndices)
-	if err != nil {
-		k.Logger().Error("Failed to compute participant public key", "error", err)
+	// Sanity: signature must be multiple of 48 and match slots length
+	if len(signature)%48 != 0 {
+		k.Logger().Error("Invalid signature payload length", "length", len(signature))
+		return false
+	}
+	sigCount := len(signature) / 48
+	if sigCount != len(slotIndices) {
+		k.Logger().Error("Signature count mismatch", "sigCount", sigCount, "slots", len(slotIndices))
 		return false
 	}
 
-	// Parse the G1 signature (48 bytes compressed)
-	if len(signature) != 48 {
-		k.Logger().Error("Invalid signature length", "expected", 48, "actual", len(signature))
-		return false
-	}
-
-	var g1Signature bls12381.G1Affine
-	err = g1Signature.Unmarshal(signature)
-	if err != nil {
-		k.Logger().Error("Failed to unmarshal G1 signature", "error", err)
-		return false
-	}
-
-	// Parse the G2 participant public key (96 bytes compressed)
-	if len(participantPublicKey) != 96 {
-		k.Logger().Error("Invalid participant public key length", "expected", 96, "actual", len(participantPublicKey))
-		return false
-	}
-
-	var g2PublicKey bls12381.G2Affine
-	err = g2PublicKey.Unmarshal(participantPublicKey)
-	if err != nil {
-		k.Logger().Error("Failed to unmarshal G2 participant public key", "error", err)
-		return false
-	}
-
-	// Hash message to G1 point for BLS verification using proper hash-to-curve
+	// Hash message to G1 once
 	messageG1, err := k.hashToG1(messageHash)
 	if err != nil {
 		k.Logger().Error("Failed to hash message to G1", "error", err)
@@ -124,49 +110,154 @@ func (k Keeper) verifyBLSPartialSignature(signature []byte, messageHash []byte, 
 	// Verify using pairing: e(signature, G2_generator) == e(message_hash, participant_public_key)
 	_, _, _, g2Gen := bls12381.Generators()
 
-	// Compute pairing e(signature, G2_generator)
-	var pairing1 bls12381.GT
-	pairing1, err = bls12381.Pair([]bls12381.G1Affine{g1Signature}, []bls12381.G2Affine{g2Gen})
-	if err != nil {
-		k.Logger().Error("Failed to compute pairing 1", "error", err)
-		return false
-	}
+	// Verify each (slot, sig) pair independently
+	for i, slotIndex := range slotIndices {
+		start := i * 48
+		end := start + 48
+		sigBytes := signature[start:end]
 
-	// Compute pairing e(message_hash, participant_public_key)
-	var pairing2 bls12381.GT
-	pairing2, err = bls12381.Pair([]bls12381.G1Affine{messageG1}, []bls12381.G2Affine{g2PublicKey})
-	if err != nil {
-		k.Logger().Error("Failed to compute pairing 2", "error", err)
-		return false
-	}
+		// Parse G1 signature
+		var g1Signature bls12381.G1Affine
+		if err := g1Signature.Unmarshal(sigBytes); err != nil {
+			k.Logger().Error("Failed to unmarshal per-slot G1 signature", "slot", slotIndex, "error", err)
+			return false
+		}
 
-	// Check if pairings are equal
-	return pairing1.Equal(&pairing2)
+		// Compute aggregated slot public key across valid dealers
+		var slotPubKey bls12381.G2Affine
+		slotPubKey.SetInfinity()
+		for dealerIdx, isValid := range epochBLSData.ValidDealers {
+			if !isValid || dealerIdx >= len(epochBLSData.DealerParts) {
+				continue
+			}
+			dealerPart := epochBLSData.DealerParts[dealerIdx]
+			if dealerPart == nil || len(dealerPart.Commitments) == 0 {
+				continue
+			}
+			eval, err := k.evaluateCommitmentPolynomial(dealerPart.Commitments, slotIndex)
+			if err != nil {
+				k.Logger().Error("Failed to evaluate commitment polynomial", "dealerIdx", dealerIdx, "slot", slotIndex, "error", err)
+				return false
+			}
+			slotPubKey.Add(&slotPubKey, &eval)
+		}
+
+		// Pairing checks
+		p1, err := bls12381.Pair([]bls12381.G1Affine{g1Signature}, []bls12381.G2Affine{g2Gen})
+		if err != nil {
+			k.Logger().Error("Failed to compute pairing 1", "slot", slotIndex, "error", err)
+			return false
+		}
+		p2, err := bls12381.Pair([]bls12381.G1Affine{messageG1}, []bls12381.G2Affine{slotPubKey})
+		if err != nil {
+			k.Logger().Error("Failed to compute pairing 2", "slot", slotIndex, "error", err)
+			return false
+		}
+		if !p1.Equal(&p2) {
+			k.Logger().Error("Per-slot signature verification failed", "slot", slotIndex)
+			return false
+		}
+	}
+	return true
 }
 
-// aggregateBLSPartialSignatures aggregates multiple G1 partial signatures into a single signature
+// aggregateBLSPartialSignatures aggregates per-slot signatures into a single signature using Lagrange weights.
 func (k Keeper) aggregateBLSPartialSignatures(partialSignatures []types.PartialSignature) ([]byte, error) {
 	if len(partialSignatures) == 0 {
 		return nil, fmt.Errorf("no partial signatures to aggregate")
 	}
 
+	// Flatten per-slot signatures
+	type slotSig struct {
+		slot uint32
+		sig  bls12381.G1Affine
+	}
+	var slotSigs []slotSig
+	slotSeen := make(map[uint32]struct{})
+	var slots []uint32
+	for i, ps := range partialSignatures {
+		if len(ps.Signature)%48 != 0 {
+			return nil, fmt.Errorf("invalid signature payload at index %d: length=%d", i, len(ps.Signature))
+		}
+		count := len(ps.Signature) / 48
+		if count != len(ps.SlotIndices) {
+			return nil, fmt.Errorf("signature count mismatch at index %d: sigs=%d slots=%d", i, count, len(ps.SlotIndices))
+		}
+		for j := 0; j < count; j++ {
+			slot := ps.SlotIndices[j]
+			start := j * 48
+			end := start + 48
+			var g1 bls12381.G1Affine
+			if err := g1.Unmarshal(ps.Signature[start:end]); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal signature at batch %d item %d: %w", i, j, err)
+			}
+			slotSigs = append(slotSigs, slotSig{slot: slot, sig: g1})
+			if _, ok := slotSeen[slot]; !ok {
+				slotSeen[slot] = struct{}{}
+				slots = append(slots, slot)
+			}
+		}
+	}
+	if len(slots) == 0 {
+		return nil, fmt.Errorf("no slot indices present in partial signatures")
+	}
+
+	// Precompute field elements for each slot index.
+	xElems := make([]fr.Element, len(slots))
+	for i, idx := range slots {
+		// Use x-domain as slotIndex+1 to avoid x=0
+		xElems[i].SetUint64(uint64(idx + 1))
+	}
+
+	// Compute Lagrange coefficients λ_i(0) for each slot index at evaluation point 0.
+	// λ_i(0) = Π_{j≠i} (0 - x_j) / (x_i - x_j) in the BLS12-381 scalar field.
+	type lambdaVal = fr.Element
+	lambdaBySlot := make(map[uint32]lambdaVal, len(slots))
+	for i := range slots {
+		// numerator = Π_{j≠i} (-x_j)
+		var numerator fr.Element
+		numerator.SetOne()
+		for j := range slots {
+			if j == i {
+				continue
+			}
+			var term fr.Element
+			term.Neg(&xElems[j]) // -x_j
+			numerator.Mul(&numerator, &term)
+		}
+
+		// denominator = Π_{j≠i} (x_i - x_j)
+		var denominator fr.Element
+		denominator.SetOne()
+		for j := range slots {
+			if j == i {
+				continue
+			}
+			var diff fr.Element
+			diff.Sub(&xElems[i], &xElems[j]) // x_i - x_j
+			denominator.Mul(&denominator, &diff)
+		}
+
+		// lam = numerator * inverse(denominator)
+		var denInv fr.Element
+		denInv.Inverse(&denominator)
+		var lam fr.Element
+		lam.Mul(&numerator, &denInv)
+		lambdaBySlot[slots[i]] = lam
+	}
+
 	// Initialize aggregated signature as G1 identity (zero point)
 	var aggregatedSignature bls12381.G1Affine
+	aggregatedSignature.SetInfinity()
 
-	for i, partialSig := range partialSignatures {
-		// Parse each partial signature
-		if len(partialSig.Signature) != 48 {
-			return nil, fmt.Errorf("invalid signature length at index %d: expected 48, got %d", i, len(partialSig.Signature))
+	for _, ss := range slotSigs {
+		lam, ok := lambdaBySlot[ss.slot]
+		if !ok {
+			return nil, fmt.Errorf("missing Lagrange coefficient for slot index %d", ss.slot)
 		}
-
-		var g1Signature bls12381.G1Affine
-		err := g1Signature.Unmarshal(partialSig.Signature)
-		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal signature at index %d: %w", i, err)
-		}
-
-		// Add to aggregated signature: aggregatedSignature += g1Signature
-		aggregatedSignature.Add(&aggregatedSignature, &g1Signature)
+		var scaledSig bls12381.G1Affine
+		scaledSig.ScalarMultiplication(&ss.sig, lam.BigInt(new(big.Int)))
+		aggregatedSignature.Add(&aggregatedSignature, &scaledSig)
 	}
 
 	// Return compressed bytes
@@ -174,55 +265,24 @@ func (k Keeper) aggregateBLSPartialSignatures(partialSignatures []types.PartialS
 	return signatureBytes[:], nil
 }
 
-// hashToG1 converts a hash to a G1 point using proper hash-to-curve
-// Implements a simplified but secure hash-to-curve for BLS12-381 G1
+// hashToG1 maps a 32-byte message hash (interpreted as an Fp element) to a G1 point.
+// This mirrors the EIP-2537 MAP_FP_TO_G1: single-field-element SWU map + isogeny, then cofactor clear.
 func (k Keeper) hashToG1(hash []byte) (bls12381.G1Affine, error) {
-	// Implement simplified hash-to-curve following BLS standards approach
-	// This uses the "hash and try" method with a counter for security
-
-	var result bls12381.G1Affine
-
-	// Try up to 256 attempts to find a valid point
-	for counter := 0; counter < 256; counter++ {
-		// Create hash input with counter for domain separation
-		hashInput := make([]byte, len(hash)+4)
-		copy(hashInput, hash)
-		binary.BigEndian.PutUint32(hashInput[len(hash):], uint32(counter))
-
-		// Hash the input with counter using keccak256
-		hashFunc := sha3.NewLegacyKeccak256()
-		hashFunc.Write(hashInput)
-		attempt := hashFunc.Sum(nil)
-
-		// Try to create a valid G1 point from this hash
-		// Use the hash as x-coordinate and try to find a valid point
-		if k.trySetFromHash(&result, attempt) {
-			return result, nil
-		}
+	var out bls12381.G1Affine
+	if len(hash) != 32 {
+		return out, fmt.Errorf("message hash must be 32 bytes, got %d", len(hash))
 	}
-
-	return result, fmt.Errorf("failed to hash to G1 point after 256 attempts")
+	// Build 48-byte big-endian Fp element from 32-byte hash (left-pad with zeros)
+	var be [48]byte
+	copy(be[48-32:], hash)
+	var u fp.Element
+	u.SetBytes(be[:])
+	// Map to curve using single-field SWU, then apply isogeny to the curve
+	p := bls12381.MapToCurve1(&u)
+	hash_to_curve.G1Isogeny(&p.X, &p.Y)
+	// Clear cofactor to ensure point is in G1 subgroup
+	out.ClearCofactor(&p)
+	return out, nil
 }
 
-// trySetFromHash attempts to create a valid G1 point from a hash
-// This implements a simplified version of hash-to-curve point generation
-func (k Keeper) trySetFromHash(point *bls12381.G1Affine, hash []byte) bool {
-	// This is a simplified implementation of point generation from hash
-	// In production, use proper hash-to-curve implementation from BLS standards
-
-	// Create field element from hash
-	var x fr.Element
-	x.SetBytes(hash)
-
-	// Use the hash as a scalar multiplier with the generator
-	// This ensures we get a valid point on the curve
-	g1GenJac, _, _, _ := bls12381.Generators()
-	var g1Gen bls12381.G1Affine
-	g1Gen.FromJacobian(&g1GenJac)
-
-	// Multiply generator by the scalar derived from hash
-	point.ScalarMultiplication(&g1Gen, x.BigInt(new(big.Int)))
-
-	// Check if the point is valid (always true for scalar multiplication of generator)
-	return !point.IsInfinity()
-}
+// trySetFromHash removed; mapping now uses single-field SWU map aligned with EIP-2537.

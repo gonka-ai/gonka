@@ -35,13 +35,13 @@ func (s *KeeperTestSuite) TestSlashing_Proportional() {
 		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(types.ModuleName, moduleName)
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
-			s.Require().Equal("collateral slashed", memo)
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
 
 	// Perform the slash
-	slashedAmount, err := s.k.Slash(s.ctx, participant, slashFraction)
+	slashedAmount, err := s.k.Slash(s.ctx, participant, slashFraction, inftypes.SlashReasonInvalidation)
 	s.Require().NoError(err)
 	s.Require().Equal(expectedSlashedAmount, slashedAmount.Amount)
 
@@ -76,13 +76,13 @@ func (s *KeeperTestSuite) TestSlashing_ActiveOnly() {
 		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
-			s.Require().Equal("collateral slashed", memo)
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
 
 	// Perform the slash
-	slashedAmount, err := s.k.Slash(s.ctx, participant, slashFraction)
+	slashedAmount, err := s.k.Slash(s.ctx, participant, slashFraction, inftypes.SlashReasonInvalidation)
 	s.Require().NoError(err)
 	s.Require().Equal(expectedSlashedAmount, slashedAmount.Amount)
 
@@ -115,13 +115,13 @@ func (s *KeeperTestSuite) TestSlashing_UnbondingOnly() {
 		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
-			s.Require().Equal("collateral slashed", memo)
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
 
 	// Perform the slash
-	slashedAmount, err := s.k.Slash(s.ctx, participant, slashFraction)
+	slashedAmount, err := s.k.Slash(s.ctx, participant, slashFraction, inftypes.SlashReasonInvalidation)
 	s.Require().NoError(err)
 	s.Require().Equal(expectedSlashedAmount, slashedAmount.Amount)
 
@@ -146,11 +146,11 @@ func (s *KeeperTestSuite) TestSlashing_InvalidFraction() {
 	s.k.SetCollateral(s.ctx, participant, initialCollateral)
 
 	// Case 1: Negative fraction
-	_, err = s.k.Slash(s.ctx, participant, math.LegacyNewDec(-1))
+	_, err = s.k.Slash(s.ctx, participant, math.LegacyNewDec(-1), inftypes.SlashReasonInvalidation)
 	s.Require().Error(err, "should error on negative slash fraction")
 
 	// Case 2: Fraction greater than 1
-	_, err = s.k.Slash(s.ctx, participant, math.LegacyNewDec(2))
+	_, err = s.k.Slash(s.ctx, participant, math.LegacyNewDec(2), inftypes.SlashReasonInvalidation)
 	s.Require().Error(err, "should error on slash fraction greater than 1")
 
 	// Verify collateral is unchanged

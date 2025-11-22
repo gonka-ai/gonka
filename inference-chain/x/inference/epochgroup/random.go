@@ -39,11 +39,10 @@ func (eg *EpochGroup) GetRandomMember(
 	// This allows the method to work with both SDK contexts and regular contexts
 	ctx := goCtx
 
-	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: uint64(eg.GroupData.EpochGroupId)})
+	activeParticipants, err := eg.getAllGroupMembersPaginated(ctx, uint64(eg.GroupData.EpochGroupId))
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	activeParticipants := groupMemberResponse.GetMembers()
 	if len(activeParticipants) == 0 {
 		return nil, status.Error(codes.Internal, "Active participants found, but length is 0")
 	}
