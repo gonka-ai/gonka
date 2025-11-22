@@ -184,14 +184,24 @@ async def _health_check_vllm(interval: float = 2.0):
             vllm_healthy[p] = ok
         
         # Manage backward compatibility server based on backend health
-        has_healthy_backends = any(vllm_healthy.values())
+        # Check if backward compatibility server is disabled via environment variable
+        disable_backward_compat = os.getenv("DISABLE_BACKWARD_COMPAT", "").lower() in ("true", "1", "yes")
         
-        if compatibility_server_task and not has_healthy_backends:
-            logger.info("No vLLM backends healthy, stopping backward compatibility server")
-            await stop_backward_compatibility()
-        elif not compatibility_server_task and has_healthy_backends:
-            logger.info("vLLM backends are healthy, starting backward compatibility server")
-            await start_backward_compatibility()
+        if disable_backward_compat:
+            # If disabled, stop server if running
+            if compatibility_server_task:
+                logger.info("Backward compatibility server is disabled via DISABLE_BACKWARD_COMPAT, stopping server")
+                await stop_backward_compatibility()
+        else:
+            # Only manage server if not disabled
+            has_healthy_backends = any(vllm_healthy.values())
+            
+            if compatibility_server_task and not has_healthy_backends:
+                logger.info("No vLLM backends healthy, stopping backward compatibility server")
+                await stop_backward_compatibility()
+            elif not compatibility_server_task and has_healthy_backends:
+                logger.info("vLLM backends are healthy, starting backward compatibility server")
+                await start_backward_compatibility()
         
         await asyncio.sleep(interval)
 
@@ -247,7 +257,7 @@ async def _compatibility_proxy_handler(request: Request, path: str):
 
 
 async def _run_compatibility_server():
-    """Run the backward compatibility server on port 5000."""
+    """Run the backward compatibility server on configurable port."""
     global compatibility_app, compatibility_server
     
     compatibility_app = FastAPI(title="vLLM Backward Compatibility Proxy")
@@ -257,11 +267,13 @@ async def _run_compatibility_server():
         return await _compatibility_proxy_handler(request, path)
     
     
-    logger.info("Starting backward compatibility server on port 5000")
+    # Read port from environment variable with fallback to 5000
+    backward_compat_port = int(os.getenv("BACKWARD_COMPAT_PORT", "5000"))
+    logger.info(f"Starting backward compatibility server on port {backward_compat_port}")
     config = uvicorn.Config(
         compatibility_app,
         host="0.0.0.0",
-        port=5000,
+        port=backward_compat_port,
         workers=1,
         timeout_keep_alive=300,
         log_level="info"
@@ -275,10 +287,18 @@ async def _run_compatibility_server():
 
 
 async def start_backward_compatibility():
-    """Start backward compatibility server on port 5000."""
+    """Start backward compatibility server on configurable port."""
     global compatibility_server_task
+    
+    # Check if backward compatibility server is disabled
+    disable_backward_compat = os.getenv("DISABLE_BACKWARD_COMPAT", "").lower() in ("true", "1", "yes")
+    if disable_backward_compat:
+        logger.info("Backward compatibility server is disabled via DISABLE_BACKWARD_COMPAT, skipping start")
+        return
+    
     if compatibility_server_task is None:
-        logger.info("Creating backward compatibility server task on port 5000...")
+        backward_compat_port = int(os.getenv("BACKWARD_COMPAT_PORT", "5000"))
+        logger.info(f"Creating backward compatibility server task on port {backward_compat_port}...")
         compatibility_server_task = asyncio.create_task(_run_compatibility_server())
         # Give it a moment to start
         await asyncio.sleep(0.1)
