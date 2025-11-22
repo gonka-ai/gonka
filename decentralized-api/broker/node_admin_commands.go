@@ -19,6 +19,12 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
+	if c.Node.Id == "" {
+		logging.Error("RegisterNode. Node ID is empty", types.Nodes)
+		c.Response <- nil
+		return
+	}
+
 	govModels, err := b.chainBridge.GetGovernanceModels()
 	if err != nil {
 		logging.Error("RegisterNode. Failed to get governance models", types.Nodes, "error", err)
