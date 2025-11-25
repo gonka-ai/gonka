@@ -1,5 +1,5 @@
 ################################################################################
-FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic AS app
+FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic AS app
 
 ENV APP_PATH=/app/packages/train
 

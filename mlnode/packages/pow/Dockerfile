@@ -1,5 +1,5 @@
 ################################################################################
-FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic AS builder
+FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic AS builder
 
 ENV POETRY_VERSION=2.0.1 \
     PYTHONUNBUFFERED=1 \
@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 ################################################################################
 
 ARG USERNAME=pow
-FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic AS app
+FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic AS app
 
 ARG USERNAME
 ENV PYTHONUNBUFFERED=1 \

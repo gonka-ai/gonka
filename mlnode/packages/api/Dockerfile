@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic AS base
+FROM ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \

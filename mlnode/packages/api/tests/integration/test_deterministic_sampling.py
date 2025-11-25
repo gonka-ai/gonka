@@ -370,8 +370,3 @@ def test_deterministic_sampling_with_longer_output(urls: tuple[str, str], model_
     assert len(output1) > 50, "Output should be reasonably long"
     
     logger.info(f"✅ Deterministic sampling works for longer sequences ({len(output1)} chars)")
-
-
-if __name__ == "__main__":
-    # Allow running tests directly for development
-    pytest.main([__file__, "-v", "-s"])

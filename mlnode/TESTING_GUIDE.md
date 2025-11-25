@@ -16,7 +16,7 @@ docker run -d --rm \
   -p 8000:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   --name vllm-test \
-  ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic \
+  ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic \
   --model meta-llama/Llama-3.2-1B-Instruct \
   --host 0.0.0.0 \
   --port 8000
@@ -136,7 +136,7 @@ Edit your docker-compose file(s) to use the new image:
 ```yaml
 services:
   vllm:
-    image: ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic
+    image: ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic
     # ... rest of your config
 ```
 
@@ -196,7 +196,7 @@ pytest tests/integration/test_deterministic_sampling.py -v
 
 **Solution:** Pull the image first:
 ```bash
-docker pull ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic
+docker pull ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic
 ```
 
 ### Issue: "CUDA out of memory"
@@ -207,7 +207,7 @@ docker run -d --rm \
   --gpus all \
   -p 8000:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
-  ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic \
+  ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic \
   --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   --host 0.0.0.0 \
   --port 8000
@@ -262,7 +262,7 @@ Once tests pass:
 
 ## Quick Reference
 
-**Docker Image:** `ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic`
+**Docker Image:** `ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic`
 
 **New Parameter:** `use_deterministic_hash: true`
 

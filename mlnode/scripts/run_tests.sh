@@ -3,7 +3,7 @@
 
 set -e
 
-IMAGE="ghcr.io/ekaterynakuznetsova/vllm:v0.9.2-deterministic"
+IMAGE="ghcr.io/ekaterynakuznetsova/vllm:v0.9.1-deterministic"
 MODEL="meta-llama/Llama-3.2-1B-Instruct"
 
 echo "🚀 Starting vLLM Test"
