@@ -469,6 +469,88 @@ func TestNodeShouldBeOperationalTest(t *testing.T) {
 	require.False(t, ShouldBeOperational(adminState, 12, types.InferencePhase))
 }
 
+func TestGetMlNodeUrl(t *testing.T) {
+	tests := []struct {
+		name     string
+		elements MlNodePathElements
+		expected string
+	}{
+		{
+			name: "with BaseURL and Version",
+			elements: MlNodePathElements{
+				BaseURL: "https://api.example.com",
+				Version: "v2",
+				Segment: "/endpoint",
+			},
+			expected: "https://api.example.com/v2/endpoint",
+		},
+		{
+			name: "with BaseURL without Version",
+			elements: MlNodePathElements{
+				BaseURL: "https://api.example.com",
+				Version: "",
+				Segment: "/endpoint",
+			},
+			expected: "https://api.example.com/endpoint",
+		},
+		{
+			name: "without BaseURL with Version",
+			elements: MlNodePathElements{
+				Host:    "example.com",
+				Port:    8080,
+				Version: "v2",
+				Segment: "/endpoint",
+			},
+			expected: "http://example.com:8080/v2/endpoint",
+		},
+		{
+			name: "without BaseURL without Version",
+			elements: MlNodePathElements{
+				Host:    "example.com",
+				Port:    8080,
+				Version: "",
+				Segment: "/endpoint",
+			},
+			expected: "http://example.com:8080/endpoint",
+		},
+		{
+			name: "BaseURL with trailing slash",
+			elements: MlNodePathElements{
+				BaseURL: "https://api.example.com/",
+				Version: "v2",
+				Segment: "/endpoint",
+			},
+			expected: "https://api.example.com/v2/endpoint",
+		},
+		{
+			name: "empty Segment",
+			elements: MlNodePathElements{
+				Host:    "example.com",
+				Port:    8080,
+				Version: "v2",
+				Segment: "",
+			},
+			expected: "http://example.com:8080/v2",
+		},
+		{
+			name: "BaseURL with empty segment",
+			elements: MlNodePathElements{
+				BaseURL: "https://api.example.com",
+				Version: "v2",
+				Segment: "",
+			},
+			expected: "https://api.example.com/v2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := GetMlNodeUrl(tt.elements)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
 func TestVersionedUrls(t *testing.T) {
 	node := Node{
 		Host:             "example.com",
