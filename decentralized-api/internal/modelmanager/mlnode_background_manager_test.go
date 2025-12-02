@@ -553,6 +553,168 @@ func TestCheckNodeModels(t *testing.T) {
 
 // Test URL formatting
 func TestURLFormatting(t *testing.T) {
+	// Test cases for BaseURL with version
+	tests := []struct {
+		name     string
+		node     apiconfig.InferenceNodeConfig
+		version  string
+		isPoC    bool
+		expected string
+	}{
+		{
+			name: "PoC with BaseURL and Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "/api",
+				BaseURL:    "https://api.example.com",
+			},
+			version:  "v2",
+			isPoC:    true,
+			expected: "https://api.example.com/v2/api",
+		},
+		{
+			name: "PoC with BaseURL without Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "/api",
+				BaseURL:    "https://api.example.com",
+			},
+			version:  "",
+			isPoC:    true,
+			expected: "https://api.example.com/api",
+		},
+		{
+			name: "PoC without BaseURL with Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "/api",
+			},
+			version:  "v2",
+			isPoC:    true,
+			expected: "http://localhost:8080/v2/api",
+		},
+		{
+			name: "PoC without BaseURL without Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "/api",
+			},
+			version:  "",
+			isPoC:    true,
+			expected: "http://localhost:8080/api",
+		},
+		{
+			name: "Inference with BaseURL and Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:             "localhost",
+				InferencePort:    8081,
+				InferenceSegment: "/inference",
+				BaseURL:          "https://api.example.com",
+			},
+			version:  "v2",
+			isPoC:    false,
+			expected: "https://api.example.com/v2/inference",
+		},
+		{
+			name: "Inference with BaseURL without Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:             "localhost",
+				InferencePort:    8081,
+				InferenceSegment: "/inference",
+				BaseURL:          "https://api.example.com",
+			},
+			version:  "",
+			isPoC:    false,
+			expected: "https://api.example.com/inference",
+		},
+		{
+			name: "Inference without BaseURL with Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:             "localhost",
+				InferencePort:    8081,
+				InferenceSegment: "/inference",
+			},
+			version:  "v2",
+			isPoC:    false,
+			expected: "http://localhost:8081/v2/inference",
+		},
+		{
+			name: "Inference without BaseURL without Version",
+			node: apiconfig.InferenceNodeConfig{
+				Host:             "localhost",
+				InferencePort:    8081,
+				InferenceSegment: "/inference",
+			},
+			version:  "",
+			isPoC:    false,
+			expected: "http://localhost:8081/inference",
+		},
+		{
+			name: "PoC with BaseURL with trailing slash",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "/api",
+				BaseURL:    "https://api.example.com/",
+			},
+			version:  "v2",
+			isPoC:    true,
+			expected: "https://api.example.com/v2/api",
+		},
+		{
+			name: "PoC with empty segment",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "",
+			},
+			version:  "v2",
+			isPoC:    true,
+			expected: "http://localhost:8080/v2",
+		},
+		{
+			name: "Version_with_whitespace",
+			node: apiconfig.InferenceNodeConfig{
+				Host:             "localhost",
+				InferencePort:    8081,
+				InferenceSegment: "/inference",
+			},
+			version:  " v2 ",
+			isPoC:    false,
+			expected: "http://localhost:8081/v2/inference",
+		},
+		{
+			name: "Version_with_whitespace_PoC",
+			node: apiconfig.InferenceNodeConfig{
+				Host:       "localhost",
+				PoCPort:    8080,
+				PoCSegment: "/api",
+			},
+			version:  " v2 ",
+			isPoC:    true,
+			expected: "http://localhost:8080/v2/api",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var url string
+			if tt.isPoC {
+				url = getPoCUrlVersioned(tt.node, tt.version)
+			} else {
+				url = getInferenceUrlVersioned(tt.node, tt.version)
+			}
+			if url != tt.expected {
+				t.Errorf("expected %s, got %s", tt.expected, url)
+			}
+		})
+	}
+
+	// Legacy tests with simple node
 	node := apiconfig.InferenceNodeConfig{
 		Host:             "localhost",
 		PoCPort:          8080,
@@ -608,6 +770,82 @@ func TestURLFormatting(t *testing.T) {
 			t.Errorf("expected %s, got %s", expected, url)
 		}
 	})
+}
+
+// Test getBaseUrlWithVersion
+func TestGetBaseUrlWithVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		node     apiconfig.InferenceNodeConfig
+		version  string
+		expected string
+	}{
+		{
+			name: "Base URL with version",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "https://api.example.com",
+			},
+			version:  "v1",
+			expected: "https://api.example.com/v1",
+		},
+		{
+			name: "Base URL without version",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "https://api.example.com",
+			},
+			version:  "",
+			expected: "https://api.example.com",
+		},
+		{
+			name: "Base URL with trailing slash and version",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "https://api.example.com/",
+			},
+			version:  "v1",
+			expected: "https://api.example.com/v1",
+		},
+		{
+			name: "Base URL with trailing slash and no version",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "https://api.example.com/",
+			},
+			version:  "",
+			expected: "https://api.example.com",
+		},
+		{
+			name: "Empty base URL with version",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "",
+			},
+			version:  "v1",
+			expected: "/v1",
+		},
+		{
+			name: "Empty base URL without version",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "",
+			},
+			version:  "",
+			expected: "",
+		},
+		{
+			name: "Version with whitespace",
+			node: apiconfig.InferenceNodeConfig{
+				BaseURL: "https://api.example.com",
+			},
+			version:  " v1 ",
+			expected: "https://api.example.com/v1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getBaseUrlWithVersion(tt.node, tt.version)
+			if result != tt.expected {
+				t.Errorf("getBaseUrlWithVersion() = %q; expected %q", result, tt.expected)
+			}
+		})
+	}
 }
 
 // Test GPU transformation

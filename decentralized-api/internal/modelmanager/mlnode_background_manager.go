@@ -128,7 +128,8 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 	version := m.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(node, version)
 	inferenceUrl := getInferenceUrlWithVersion(node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, node.BaseURL)
+	baseUrl := getBaseUrlWithVersion(node, version)
+	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, baseUrl)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -261,6 +262,10 @@ func formatBaseURLWithVersion(baseURL string, version string, segment string) st
 	return fmt.Sprintf("%s/%s%s", base, version, segment)
 }
 
+func getBaseUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
+	return broker.BaseUrlWithVersion(node.BaseURL, version)
+}
+
 // checkAndUpdateGPUs fetches GPU info from all nodes and updates hardware
 func (m *MLNodeBackgroundManager) checkAndUpdateGPUs(ctx context.Context) {
 	nodes := m.configManager.GetNodes()
@@ -322,7 +327,8 @@ func (m *MLNodeBackgroundManager) fetchNodeGPUHardware(ctx context.Context, node
 	version := m.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(*node, version)
 	inferenceUrl := getInferenceUrlWithVersion(*node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, node.BaseURL)
+	baseUrl := getBaseUrlWithVersion(*node, version)
+	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, baseUrl)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

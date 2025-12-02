@@ -244,6 +244,74 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	t.Fatalf("Node did not reach INFERENCE status in time")
 }
 
+func TestBaseUrlWithVersion(t *testing.T) {
+	// Test cases for BaseUrlWithVersion function
+	tests := []struct {
+		name     string
+		baseURL  string
+		version  string
+		expected string
+	}{
+		{
+			name:     "Base URL with version",
+			baseURL:  "http://example.com",
+			version:  "v1",
+			expected: "http://example.com/v1",
+		},
+		{
+			name:     "Base URL without version",
+			baseURL:  "http://example.com",
+			version:  "",
+			expected: "http://example.com",
+		},
+		{
+			name:     "Base URL with trailing slash and version",
+			baseURL:  "http://example.com/",
+			version:  "v1",
+			expected: "http://example.com/v1",
+		},
+		{
+			name:     "Base URL with trailing slash and no version",
+			baseURL:  "http://example.com/",
+			version:  "",
+			expected: "http://example.com",
+		},
+		{
+			name:     "Empty base URL with version",
+			baseURL:  "",
+			version:  "v1",
+			expected: "/v1",
+		},
+		{
+			name:     "Empty base URL without version",
+			baseURL:  "",
+			version:  "",
+			expected: "",
+		},
+		{
+			name:     "Version with whitespace",
+			baseURL:  "http://example.com",
+			version:  " v1 ",
+			expected: "http://example.com/v1",
+		},
+		{
+			name:     "Version_with_whitespace",
+			baseURL:  "https://api.example.com",
+			version:  " v2 ",
+			expected: "https://api.example.com/v2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BaseUrlWithVersion(tt.baseURL, tt.version)
+			if result != tt.expected {
+				t.Errorf("BaseUrlWithVersion(%q, %q) = %q; expected %q", tt.baseURL, tt.version, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestNodeRemoval(t *testing.T) {
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
@@ -540,6 +608,25 @@ func TestGetMlNodeUrl(t *testing.T) {
 				Segment: "",
 			},
 			expected: "https://api.example.com/v2",
+		},
+		{
+			name: "version_with_whitespace",
+			elements: MlNodePathElements{
+				BaseURL: "https://api.example.com",
+				Version: " v2 ",
+				Segment: "/endpoint",
+			},
+			expected: "https://api.example.com/v2/endpoint",
+		},
+		{
+			name: "version_with_whitespace_without_baseurl",
+			elements: MlNodePathElements{
+				Host:    "example.com",
+				Port:    8080,
+				Version: " v2 ",
+				Segment: "/endpoint",
+			},
+			expected: "http://example.com:8080/v2/endpoint",
 		},
 	}
 

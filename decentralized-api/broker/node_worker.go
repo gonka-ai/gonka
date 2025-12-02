@@ -133,8 +133,9 @@ func (w *NodeWorker) CheckClientVersionAlive(version string, factory mlnodeclien
 	node := w.node.Node
 	pocUrl := node.PoCUrlWithVersion(version)
 	inferenceUrl := node.InferenceUrlWithVersion(version)
+	baseUrl := node.BaseUrlWithVersion(version)
 
-	versionClient := factory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, node.BaseURL)
+	versionClient := factory.CreateClient(pocUrl, inferenceUrl, node.AuthToken, baseUrl)
 	_, err := versionClient.NodeState(context.Background())
 
 	w.versionsMu.Lock()
