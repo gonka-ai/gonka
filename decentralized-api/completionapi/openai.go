@@ -16,6 +16,7 @@ type Choice struct {
 	Delta    *Delta   `json:"delta"`
 	Logprobs struct {
 		Content []Logprob `json:"content"`
+		RunSeed string    `json:"run_seed,omitempty"`
 	} `json:"logprobs"`
 	FinishReason string `json:"finish_reason"`
 	StopReason   string `json:"stop_reason"`

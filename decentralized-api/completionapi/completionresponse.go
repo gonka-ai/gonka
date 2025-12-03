@@ -81,7 +81,8 @@ type EnforcedToken struct {
 }
 
 type EnforcedTokens struct {
-	Tokens []EnforcedToken `json:"tokens"`
+	Tokens  []EnforcedToken `json:"tokens"`
+	RunSeed string          `json:"run_seed,omitempty"`
 }
 
 func (r *JsonCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
@@ -102,6 +103,7 @@ func (r *JsonCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
 	}
 
 	var enforcedTokens EnforcedTokens
+	enforcedTokens.RunSeed = r.Resp.Choices[0].Logprobs.RunSeed
 	for _, c := range r.Resp.Choices[0].Logprobs.Content {
 		if c.TopLogprobs == nil {
 			continue
@@ -146,6 +148,10 @@ func (r *StreamedCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error)
 		}
 
 		for _, choice := range c.Choices {
+			if enforcedTokens.RunSeed == "" {
+				enforcedTokens.RunSeed = choice.Logprobs.RunSeed
+			}
+
 			if choice.Logprobs.Content == nil {
 				continue
 			}

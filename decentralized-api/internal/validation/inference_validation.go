@@ -2,6 +2,7 @@ package validation
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
@@ -9,14 +10,17 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -560,6 +564,57 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 	logging.Info("Successfully validated inference", types.Validation, "id", inf.InferenceId)
 }
 
+func seedFromString(seedStr string) (int64, error) {
+	hash := sha256.Sum256([]byte(seedStr))
+	hexStr := hex.EncodeToString(hash[:8])
+	seed, err := strconv.ParseInt(hexStr, 16, 64)
+	if err != nil {
+		return 0, err
+	}
+	return seed, nil
+}
+
+func checkSequenceFromArtifact(
+	enforcedTokens completionapi.EnforcedTokens,
+	runSeed string,
+	originalLogits []completionapi.Logprob,
+) error {
+	if runSeed == "" {
+		return nil
+	}
+
+	seed, err := seedFromString(runSeed)
+	if err != nil {
+		return fmt.Errorf("failed to parse run_seed: %w", err)
+	}
+
+	rng := rand.New(rand.NewSource(seed))
+
+	if len(enforcedTokens.Tokens) != len(originalLogits) {
+		return fmt.Errorf("length mismatch: enforced_tokens=%d, logits=%d",
+			len(enforcedTokens.Tokens), len(originalLogits))
+	}
+
+	for i := 0; i < len(enforcedTokens.Tokens); i++ {
+		enforcedToken := enforcedTokens.Tokens[i]
+		actualToken := originalLogits[i].Token
+
+		if len(enforcedToken.TopTokens) == 0 {
+			return fmt.Errorf("position %d: empty top_tokens", i)
+		}
+
+		sampledIdx := rng.Intn(len(enforcedToken.TopTokens))
+		sampledToken := enforcedToken.TopTokens[sampledIdx]
+
+		if sampledToken != actualToken {
+			return fmt.Errorf("position %d: expected token '%s' (sampled from top_tokens), got '%s'",
+				i, sampledToken, actualToken)
+		}
+	}
+
+	return nil
+}
+
 func (s *InferenceValidator) validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
@@ -632,6 +687,9 @@ func (s *InferenceValidator) validate(inference types.Inference, inferenceNode *
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
+	if err := checkSequenceFromArtifact(enforcedTokens, enforcedTokens.RunSeed, originalLogits); err != nil {
+		return &InvalidInferenceResult{inference.InferenceId, "Sequence check failed", err}, nil
+	}
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
