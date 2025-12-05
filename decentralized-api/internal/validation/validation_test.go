@@ -13,6 +13,9 @@ const (
 
 	inferenceQuantJsonPath = "testdata/inference_response_int4.json"
 	validationFP8tJsonPath = "testdata/validation_response_fp8.json"
+
+	sequenceCheckValid1Path = "testdata/sequence_check_valid.json"
+	sequenceCheckValid2Path = "testdata/sequence_check_valid2.json"
 )
 
 func loadResponse(path string) (*completionapi.Response, error) {
@@ -67,7 +70,7 @@ func TestValidationQuant(t *testing.T) {
 	t.Logf("Validation result: %v", val)
 }
 
-func TestSequenceCheckValid(t *testing.T) {
+func TestSequenceCheckValidTokensInTopK(t *testing.T) {
 	runSeed := "test_seed_12345"
 
 	enforcedTokens := completionapi.EnforcedTokens{
@@ -84,8 +87,30 @@ func TestSequenceCheckValid(t *testing.T) {
 	}
 
 	err := checkSequenceFromArtifact(enforcedTokens, runSeed, logits)
+	if err != nil {
+		t.Fatalf("Sequence check should pass when all tokens are in top_k: %v", err)
+	}
+}
+
+func TestSequenceCheckInvalidTokenNotInTopK(t *testing.T) {
+	runSeed := "test_seed_12345"
+
+	enforcedTokens := completionapi.EnforcedTokens{
+		RunSeed: runSeed,
+		Tokens: []completionapi.EnforcedToken{
+			{Token: "Hello", TopTokens: []string{"Hello", "Hi", "Hey"}},
+			{Token: "world", TopTokens: []string{"world", "universe", "earth"}},
+		},
+	}
+
+	logits := []completionapi.Logprob{
+		{Token: "Hello"},
+		{Token: "INVALID"},
+	}
+
+	err := checkSequenceFromArtifact(enforcedTokens, runSeed, logits)
 	if err == nil {
-		t.Fatal("Expected sequence check to detect mismatch between RNG sampling and actual tokens")
+		t.Fatal("Expected sequence check to fail when token not in top_k")
 	}
 }
 
@@ -125,5 +150,133 @@ func TestSequenceCheckLengthMismatch(t *testing.T) {
 	err := checkSequenceFromArtifact(enforcedTokens, runSeed, logits)
 	if err == nil {
 		t.Fatal("Expected error for length mismatch")
+	}
+}
+
+func TestSequenceCheckRealData1(t *testing.T) {
+	response, err := loadResponse(sequenceCheckValid1Path)
+	if err != nil {
+		t.Fatalf("Failed to load test response: %v", err)
+	}
+
+	if len(response.Choices) == 0 {
+		t.Fatal("No choices in response")
+	}
+
+	choice := response.Choices[0]
+	runSeed := choice.Logprobs.RunSeed
+
+	if runSeed == "" {
+		t.Skip("No run_seed in test data, skipping sequence check test")
+	}
+
+	var enforcedTokens completionapi.EnforcedTokens
+	enforcedTokens.RunSeed = runSeed
+
+	for _, logprob := range choice.Logprobs.Content {
+		var topTokens []string
+		for _, topLogprob := range logprob.TopLogprobs {
+			topTokens = append(topTokens, topLogprob.Token)
+		}
+		enforcedTokens.Tokens = append(enforcedTokens.Tokens, completionapi.EnforcedToken{
+			Token:     logprob.Token,
+			TopTokens: topTokens,
+		})
+	}
+
+	err = checkSequenceFromArtifact(enforcedTokens, runSeed, choice.Logprobs.Content)
+	if err != nil {
+		t.Errorf("Sequence check failed for valid data: %v", err)
+		t.Logf("run_seed: %s", runSeed)
+		t.Logf("Token count: %d", len(choice.Logprobs.Content))
+		if len(choice.Logprobs.Content) > 0 {
+			t.Logf("First token: %s, top_tokens: %v",
+				choice.Logprobs.Content[0].Token,
+				enforcedTokens.Tokens[0].TopTokens)
+		}
+	} else {
+		t.Logf("Sequence check passed for %d tokens", len(choice.Logprobs.Content))
+	}
+}
+
+func TestSequenceCheckRealData2(t *testing.T) {
+	response, err := loadResponse(sequenceCheckValid2Path)
+	if err != nil {
+		t.Fatalf("Failed to load test response: %v", err)
+	}
+
+	if len(response.Choices) == 0 {
+		t.Fatal("No choices in response")
+	}
+
+	choice := response.Choices[0]
+	runSeed := choice.Logprobs.RunSeed
+
+	if runSeed == "" {
+		t.Skip("No run_seed in test data, skipping sequence check test")
+	}
+
+	var enforcedTokens completionapi.EnforcedTokens
+	enforcedTokens.RunSeed = runSeed
+
+	for _, logprob := range choice.Logprobs.Content {
+		var topTokens []string
+		for _, topLogprob := range logprob.TopLogprobs {
+			topTokens = append(topTokens, topLogprob.Token)
+		}
+		enforcedTokens.Tokens = append(enforcedTokens.Tokens, completionapi.EnforcedToken{
+			Token:     logprob.Token,
+			TopTokens: topTokens,
+		})
+	}
+
+	err = checkSequenceFromArtifact(enforcedTokens, runSeed, choice.Logprobs.Content)
+	if err != nil {
+		t.Errorf("Sequence check failed for valid data: %v", err)
+		t.Logf("run_seed: %s", runSeed)
+		t.Logf("Token count: %d", len(choice.Logprobs.Content))
+	} else {
+		t.Logf("Sequence check passed for %d tokens", len(choice.Logprobs.Content))
+	}
+}
+
+func TestSequenceCheckTamperedToken(t *testing.T) {
+	response, err := loadResponse(sequenceCheckValid1Path)
+	if err != nil {
+		t.Fatalf("Failed to load test response: %v", err)
+	}
+
+	if len(response.Choices) == 0 || len(response.Choices[0].Logprobs.Content) < 2 {
+		t.Fatal("Insufficient data in response")
+	}
+
+	choice := response.Choices[0]
+	runSeed := choice.Logprobs.RunSeed
+
+	if runSeed == "" {
+		t.Skip("No run_seed in test data, skipping test")
+	}
+
+	var enforcedTokens completionapi.EnforcedTokens
+	enforcedTokens.RunSeed = runSeed
+
+	for _, logprob := range choice.Logprobs.Content {
+		var topTokens []string
+		for _, topLogprob := range logprob.TopLogprobs {
+			topTokens = append(topTokens, topLogprob.Token)
+		}
+		enforcedTokens.Tokens = append(enforcedTokens.Tokens, completionapi.EnforcedToken{
+			Token:     logprob.Token,
+			TopTokens: topTokens,
+		})
+	}
+
+	tamperedLogits := make([]completionapi.Logprob, len(choice.Logprobs.Content))
+	copy(tamperedLogits, choice.Logprobs.Content)
+	tamperedLogits[1].Token = "TAMPERED_TOKEN_12345"
+
+	err = checkSequenceFromArtifact(enforcedTokens, runSeed, tamperedLogits)
+	if err == nil {
+		t.Error("Expected sequence check to fail with tampered token, but it passed")
 	}
 }
