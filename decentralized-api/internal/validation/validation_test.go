@@ -280,3 +280,45 @@ func TestSequenceCheckTamperedToken(t *testing.T) {
 		t.Error("Expected sequence check to fail with tampered token, but it passed")
 	}
 }
+
+func TestSequenceCheckWrongSeed(t *testing.T) {
+	response1, err := loadResponse(sequenceCheckValid1Path)
+	if err != nil {
+		t.Fatalf("Failed to load first test response: %v", err)
+	}
+
+	response2, err := loadResponse(sequenceCheckValid2Path)
+	if err != nil {
+		t.Fatalf("Failed to load second test response: %v", err)
+	}
+
+	if len(response1.Choices) == 0 || len(response2.Choices) == 0 {
+		t.Fatal("Missing choices in responses")
+	}
+
+	choice1 := response1.Choices[0]
+	choice2 := response2.Choices[0]
+
+	if choice1.Logprobs.RunSeed == "" || choice2.Logprobs.RunSeed == "" {
+		t.Skip("No run_seed in test data, skipping test")
+	}
+
+	var enforcedTokens completionapi.EnforcedTokens
+	enforcedTokens.RunSeed = choice1.Logprobs.RunSeed
+
+	for _, logprob := range choice1.Logprobs.Content {
+		var topTokens []string
+		for _, topLogprob := range logprob.TopLogprobs {
+			topTokens = append(topTokens, topLogprob.Token)
+		}
+		enforcedTokens.Tokens = append(enforcedTokens.Tokens, completionapi.EnforcedToken{
+			Token:     logprob.Token,
+			TopTokens: topTokens,
+		})
+	}
+
+	err = checkSequenceFromArtifact(enforcedTokens, choice2.Logprobs.RunSeed, choice1.Logprobs.Content)
+	if err != nil {
+		t.Logf("Sequence check correctly rejected mismatched run_seed")
+	}
+}
