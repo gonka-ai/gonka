@@ -2,6 +2,7 @@ package validation
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
@@ -31,10 +32,11 @@ import (
 )
 
 type InferenceValidator struct {
-	recorder      cosmosclient.CosmosMessageClient
-	nodeBroker    *broker.Broker
-	configManager *apiconfig.ConfigManager
-	phaseTracker  *chainphase.ChainPhaseTracker
+	recorder        cosmosclient.CosmosMessageClient
+	nodeBroker      *broker.Broker
+	configManager   *apiconfig.ConfigManager
+	phaseTracker    *chainphase.ChainPhaseTracker
+	validatorClient *ValidatorClient
 }
 
 func NewInferenceValidator(
@@ -42,11 +44,19 @@ func NewInferenceValidator(
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
 	phaseTracker *chainphase.ChainPhaseTracker) *InferenceValidator {
+
+	var validatorClient *ValidatorClient
+	validatorConfig := configManager.GetConfig().Validator
+	if validatorConfig.VllmUrl != "" {
+		validatorClient = NewValidatorClient(validatorConfig.VllmUrl)
+	}
+
 	return &InferenceValidator{
-		nodeBroker:    nodeBroker,
-		configManager: configManager,
-		recorder:      recorder,
-		phaseTracker:  phaseTracker,
+		nodeBroker:      nodeBroker,
+		configManager:   configManager,
+		recorder:        recorder,
+		phaseTracker:    phaseTracker,
+		validatorClient: validatorClient,
 	}
 }
 
@@ -593,6 +603,161 @@ func checkSequenceFromArtifact(
 	return nil
 }
 
+func (s *InferenceValidator) performDistributionCheck(
+	ctx context.Context,
+	inference types.Inference,
+	inferenceNode *broker.Node,
+	requestMap map[string]interface{},
+	originalLogits []completionapi.Logprob,
+) (ValidationResult, error) {
+	if s.validatorClient == nil {
+		logging.Warn("Validator client not configured, skipping distribution check", types.Validation, "id", inference.InferenceId)
+		return nil, errors.New("validator client not configured")
+	}
+
+	logging.Info("Starting distribution check with vLLM setup", types.Validation, "id", inference.InferenceId, "model", inference.Model)
+
+	var additionalArgs []string
+	if inferenceNode != nil {
+		if modelArgs, ok := inferenceNode.Models[inference.Model]; ok {
+			additionalArgs = modelArgs.Args
+			logging.Debug("Using model args from broker node", types.Validation, "model", inference.Model, "args", additionalArgs)
+		} else {
+			logging.Warn("Model not found in broker node models", types.Validation, "model", inference.Model)
+		}
+	}
+
+	if len(additionalArgs) == 0 {
+		additionalArgs = []string{"--dtype", "auto"}
+		logging.Debug("Using default args", types.Validation, "args", additionalArgs)
+	}
+
+	modelConfig := SetModelRequest{
+		Model:          inference.Model,
+		Dtype:          "auto",
+		AdditionalArgs: additionalArgs,
+	}
+
+	statusResp, err := s.validatorClient.PerformInferenceWithSetup(ctx, modelConfig, requestMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to perform inference with vLLM setup: %w", err)
+	}
+
+	logging.Debug("Validator response received", types.Validation, "result", statusResp.Result)
+
+	validatorLogits, err := extractLogitsFromValidatorResult(statusResp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract logits from validator result: %w", err)
+	}
+
+	baseResult := BaseValidationResult{
+		InferenceId:   inference.InferenceId,
+		ResponseBytes: []byte{},
+	}
+
+	return compareDistributions(originalLogits, validatorLogits, baseResult), nil
+}
+
+func extractLogitsFromValidatorResult(result map[string]interface{}) ([]completionapi.Logprob, error) {
+	choices, ok := result["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		logging.Error("No choices in validator result", types.Validation, "result", result)
+		return nil, errors.New("no choices in validator result")
+	}
+
+	firstChoice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		logging.Error("Invalid choice format", types.Validation, "choice", choices[0])
+		return nil, errors.New("invalid choice format")
+	}
+
+	logging.Debug("First choice from validator", types.Validation, "choice", firstChoice)
+
+	logprobsData, ok := firstChoice["logprobs"].(map[string]interface{})
+	if !ok {
+		var keys []string
+		for k := range firstChoice {
+			keys = append(keys, k)
+		}
+		logging.Error("No logprobs in choice", types.Validation, "choice_keys", keys, "choice", firstChoice)
+		return nil, errors.New("no logprobs in choice")
+	}
+
+	contentData, ok := logprobsData["content"].([]interface{})
+	if !ok {
+		return nil, errors.New("no content in logprobs")
+	}
+
+	var logits []completionapi.Logprob
+	for _, item := range contentData {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		token, _ := itemMap["token"].(string)
+		logprob, _ := itemMap["logprob"].(float64)
+
+		topLogprobsData, ok := itemMap["top_logprobs"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		var topLogprobs []completionapi.TopLogprobs
+		for _, topItem := range topLogprobsData {
+			topMap, ok := topItem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			topToken, _ := topMap["token"].(string)
+			topLogprob, _ := topMap["logprob"].(float64)
+
+			topLogprobs = append(topLogprobs, completionapi.TopLogprobs{
+				Token:   topToken,
+				Logprob: topLogprob,
+			})
+		}
+
+		logits = append(logits, completionapi.Logprob{
+			Token:       token,
+			Logprob:     logprob,
+			TopLogprobs: topLogprobs,
+		})
+	}
+
+	return logits, nil
+}
+
+func compareDistributions(
+	originalLogits []completionapi.Logprob,
+	validatorLogits []completionapi.Logprob,
+	baseResult BaseValidationResult,
+) ValidationResult {
+	if len(originalLogits) != len(validatorLogits) {
+		logging.Warn("Different length of logits in distribution check", types.Validation,
+			"lengthOriginal", len(originalLogits), "lengthValidator", len(validatorLogits))
+		return &DifferentLengthValidationResult{baseResult}
+	}
+
+	distance, err := customDistance(originalLogits, validatorLogits)
+	if err != nil {
+		logging.Error("Error calculating distance in distribution check", types.Validation, "error", err)
+		return &DifferentLengthValidationResult{baseResult}
+	}
+
+	similarity := 1 - distance
+	if similarity < 0 {
+		logging.Error("Similarity value is negative in distribution check", types.Validation, "similarity", similarity)
+		similarity = 0
+	}
+
+	return &SimilarityValidationResult{
+		BaseValidationResult: baseResult,
+		Value:                similarity,
+	}
+}
+
 func (s *InferenceValidator) validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
@@ -665,10 +830,107 @@ func (s *InferenceValidator) validate(inference types.Inference, inferenceNode *
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
+	logitsComparisonResult := compareLogits(originalLogits, validationLogits, baseResult)
+	if !logitsComparisonResult.IsSuccessful() {
+		return logitsComparisonResult, nil
+	}
+
 	if err := checkSequenceFromArtifact(enforcedTokens, enforcedTokens.RunSeed, originalLogits); err != nil {
 		return &InvalidInferenceResult{inference.InferenceId, "Sequence check failed", err}, nil
 	}
-	return compareLogits(originalLogits, validationLogits, baseResult), nil
+
+	return s.performDistributionCheckIfConfigured(inference, inferenceNode, requestMap, originalLogits)
+}
+
+func (s *InferenceValidator) extractInferenceData(inference *types.Inference) (map[string]interface{}, completionapi.CompletionResponse, completionapi.EnforcedTokens, ValidationResult, error) {
+	var requestMap map[string]interface{}
+	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
+		return nil, nil, completionapi.EnforcedTokens{}, &InvalidInferenceResult{inference.InferenceId, "Failed to unmarshal inference.PromptPayload.", err}, nil
+	}
+
+	originalResponse, err := unmarshalResponse(inference)
+	if err != nil {
+		return nil, nil, completionapi.EnforcedTokens{}, &InvalidInferenceResult{inference.InferenceId, "Failed to unmarshal inference.ResponsePayload.", err}, nil
+	}
+
+	enforcedTokens, err := originalResponse.GetEnforcedTokens()
+	if err != nil {
+		return nil, nil, completionapi.EnforcedTokens{}, &InvalidInferenceResult{inference.InferenceId, "Failed to get enforced tokens.", err}, nil
+	}
+
+	return requestMap, originalResponse, enforcedTokens, nil, nil
+}
+
+func (s *InferenceValidator) performNodeInference(
+	inference types.Inference,
+	inferenceNode *broker.Node,
+	requestMap map[string]interface{},
+	enforcedTokens completionapi.EnforcedTokens,
+) (completionapi.CompletionResponse, error) {
+	requestMap["enforced_tokens"] = enforcedTokens
+	requestMap["stream"] = false
+	requestMap["skip_special_tokens"] = false
+	delete(requestMap, "stream_options")
+
+	requestBody, err := json.Marshal(requestMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "v1/chat/completions")
+	if err != nil {
+		logging.Error("Failed to join url", types.Validation, "url", inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "error", err)
+		return nil, err
+	}
+
+	resp, err := http.Post(completionsUrl, "application/json", bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to node: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
+	responseValidation, err := completionapi.NewCompletionResponseFromBytes(respBodyBytes)
+	if err != nil {
+		logging.Error("Failed to unmarshal responseValidation", types.Validation, "id", inference.InferenceId, "error", err)
+		return nil, err
+	}
+
+	return responseValidation, nil
+}
+
+func (s *InferenceValidator) performDistributionCheckIfConfigured(
+	inference types.Inference,
+	inferenceNode *broker.Node,
+	requestMap map[string]interface{},
+	originalLogits []completionapi.Logprob,
+) (ValidationResult, error) {
+	if s.validatorClient == nil {
+		logging.Debug("Validator client not configured, skipping distribution check", types.Validation, "id", inference.InferenceId)
+		baseResult := BaseValidationResult{
+			InferenceId:   inference.InferenceId,
+			ResponseBytes: []byte{},
+		}
+		return &SimilarityValidationResult{BaseValidationResult: baseResult, Value: 1.0}, nil
+	}
+
+	logging.Info("Performing distribution check", types.Validation, "id", inference.InferenceId)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	distributionResult, err := s.performDistributionCheck(ctx, inference, inferenceNode, requestMap, originalLogits)
+	if err != nil {
+		logging.Error("Distribution check failed", types.Validation, "id", inference.InferenceId, "error", err)
+		return nil, err
+	}
+
+	logging.Info("Distribution check completed", types.Validation, "id", inference.InferenceId, "successful", distributionResult.IsSuccessful())
+	return distributionResult, nil
 }
 
 func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {

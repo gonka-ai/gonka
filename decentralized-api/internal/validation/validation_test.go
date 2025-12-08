@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"decentralized-api/completionapi"
 	"encoding/json"
 	"os"
@@ -14,8 +15,9 @@ const (
 	inferenceQuantJsonPath = "testdata/inference_response_int4.json"
 	validationFP8tJsonPath = "testdata/validation_response_fp8.json"
 
-	sequenceCheckValid1Path = "testdata/sequence_check_valid.json"
-	sequenceCheckValid2Path = "testdata/sequence_check_valid2.json"
+	sequenceCheckValid1Path    = "testdata/sequence_check_valid.json"
+	sequenceCheckValid2Path    = "testdata/sequence_check_valid2.json"
+	DistributionCheckValidPath = "testdata/distribution_check_valid.json"
 )
 
 func loadResponse(path string) (*completionapi.Response, error) {
@@ -320,5 +322,149 @@ func TestSequenceCheckWrongSeed(t *testing.T) {
 	err = checkSequenceFromArtifact(enforcedTokens, choice2.Logprobs.RunSeed, choice1.Logprobs.Content)
 	if err != nil {
 		t.Logf("Sequence check correctly rejected mismatched run_seed")
+	}
+}
+
+func TestDistributionCheckWithVLLM(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping distribution check test in short mode")
+	}
+
+	vllmURL := "http://localhost:8080"
+	validatorClient := NewValidatorClient(vllmURL)
+
+	response, err := loadResponse(DistributionCheckValidPath)
+	if err != nil {
+		t.Fatalf("Failed to load test response: %v", err)
+	}
+	if len(response.Choices) == 0 {
+		t.Fatal("No choices in response")
+	}
+	choice1 := response.Choices[0]
+
+	model := response.Model
+	if model == "" {
+		t.Fatal("No model in response")
+	}
+
+	requestMap := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": "Who won the world series in 2020? Generate a funny and original text.",
+			},
+		},
+		"max_tokens":   80,
+		"temperature":  0.5,
+		"seed":         40,
+		"run_seed":     choice1.Logprobs.RunSeed,
+		"stream":       false,
+		"logprobs":     1,
+		"top_logprobs": 3,
+	}
+	// TODO: input run_seed as parameter to vllm
+
+	t.Logf("Testing distribution check with model: %s", model)
+	t.Logf("vLLM URL: %s", vllmURL)
+
+	modelConfig := SetModelRequest{
+		Model:          model,
+		Dtype:          "auto",
+		AdditionalArgs: []string{"--max-model-len", "2048", "--gpu-memory-utilization", "0.5", "--chat-template \"<|im_start|>{{ role }}\\n{{ content }}<|im_end|>\""},
+	}
+
+	ctx := context.Background()
+
+	t.Log("Running first inference...")
+	statusResp1, err := validatorClient.PerformInferenceWithSetup(ctx, modelConfig, requestMap)
+	if err != nil {
+		t.Fatalf("Failed to perform first inference with vLLM setup: %v", err)
+	}
+
+	t.Logf("First inference completed with status: %s", statusResp1.Status)
+
+	logits1, err := extractLogitsFromValidatorResult(statusResp1.Result)
+	t.Logf("DEBUG: logits1=%+v, err=%v", statusResp1.Result, err)
+	if err != nil {
+		t.Fatalf("Failed to extract logits from first result: %v", err)
+	}
+
+	t.Logf("Extracted %d tokens from first inference", len(logits1))
+	if len(logits1) > 0 {
+		t.Logf("First token: %s (logprob: %.4f, top_logprobs: %d)",
+			logits1[0].Token, logits1[0].Logprob, len(logits1[0].TopLogprobs))
+	}
+
+	t.Log("Running second inference with same parameters...")
+	statusResp2, err := validatorClient.PerformInferenceWithSetup(ctx, modelConfig, requestMap)
+	if err != nil {
+		t.Fatalf("Failed to perform second inference with vLLM setup: %v", err)
+	}
+
+	t.Logf("Second inference completed with status: %s", statusResp2.Status)
+
+	logits2, err := extractLogitsFromValidatorResult(statusResp2.Result)
+	if err != nil {
+		t.Fatalf("Failed to extract logits from second result: %v", err)
+	}
+
+	t.Logf("Extracted %d tokens from second inference", len(logits2))
+
+	fileLogits := response.Choices[0].Logprobs.Content
+	t.Logf("Extracted %d tokens from file response", len(fileLogits))
+
+	baseResult := BaseValidationResult{
+		InferenceId:   "test-distribution-check",
+		ResponseBytes: []byte{},
+	}
+
+	t.Log("\n=== Comparing vLLM inference 1 vs inference 2 ===")
+	result := compareDistributions(logits1, logits2, baseResult)
+	t.Logf("Distribution comparison result: %T", result)
+
+	if similarityResult, ok := result.(*SimilarityValidationResult); ok {
+		t.Logf("Similarity score (vLLM 1 vs 2): %.6f", similarityResult.Value)
+		t.Logf("Is successful (>0.99): %v", similarityResult.IsSuccessful())
+
+		if !similarityResult.IsSuccessful() {
+			t.Fatalf("vLLM inference 1 vs 2 comparison failed: similarity %.6f is below threshold", similarityResult.Value)
+		}
+	} else {
+		t.Fatalf("Expected SimilarityValidationResult, got %T", result)
+	}
+
+	t.Log("\n=== Comparing vLLM inference 1 vs file response ===")
+	resultVsFile1 := compareDistributions(logits1, fileLogits, baseResult)
+	if similarityResult, ok := resultVsFile1.(*SimilarityValidationResult); ok {
+		t.Logf("Similarity score (vLLM 1 vs file): %.6f", similarityResult.Value)
+		if !similarityResult.IsSuccessful() {
+			t.Fatalf("vLLM inference 1 vs file comparison failed: similarity %.6f is below threshold", similarityResult.Value)
+		}
+	} else {
+		t.Fatalf("Expected SimilarityValidationResult for vLLM 1 vs file, got %T", resultVsFile1)
+	}
+
+	t.Log("\n=== Comparing vLLM inference 2 vs file response ===")
+	resultVsFile2 := compareDistributions(logits2, fileLogits, baseResult)
+	if similarityResult, ok := resultVsFile2.(*SimilarityValidationResult); ok {
+		t.Logf("Similarity score (vLLM 2 vs file): %.6f", similarityResult.Value)
+		if !similarityResult.IsSuccessful() {
+			t.Fatalf("vLLM inference 2 vs file comparison failed: similarity %.6f is below threshold", similarityResult.Value)
+		}
+	} else {
+		t.Fatalf("Expected SimilarityValidationResult for vLLM 2 vs file, got %T", resultVsFile2)
+	}
+
+	if len(logits1) > 0 && len(logits2) > 0 {
+		t.Log("\nFirst 3 tokens comparison:")
+		for i := 0; i < 3 && i < len(logits1) && i < len(logits2); i++ {
+			t.Logf("  Position %d:", i)
+			t.Logf("    vLLM 1: %s (%.4f)", logits1[i].Token, logits1[i].Logprob)
+			t.Logf("    vLLM 2: %s (%.4f)", logits2[i].Token, logits2[i].Logprob)
+			if i < len(fileLogits) {
+				t.Logf("    File:   %s (%.4f)", fileLogits[i].Token, fileLogits[i].Logprob)
+			}
+		}
 	}
 }

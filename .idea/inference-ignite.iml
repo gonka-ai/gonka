@@ -8,10 +8,15 @@
   <component name="Go" enabled="true" />
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/mlnode/packages/api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/mlnode/packages/common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/mlnode/packages/pow/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/mlnode/packages/train/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/mlnode/packages/validator/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.9 (inference-ignite)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.13 virtualenv at ~/.cache/pypoetry/virtualenvs/mlnode-validator-IVkE9HPf-py3.13" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="Python 3.10 (inference-ignite) interpreter library" level="application" />
   </component>
