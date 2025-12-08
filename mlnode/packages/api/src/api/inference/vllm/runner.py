@@ -192,20 +192,12 @@ class VLLMRunner(IVLLMRunner):
 
         self.processes = []
         self._cleanup_gpu()
-        time.sleep(2)
         logger.info("vLLM processes stopped and GPU memory cleaned.")
 
     def _cleanup_gpu(self):
         logger.debug("Cleaning GPU memory...")
-        try:
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            gc.collect()
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            logger.debug("GPU memory cleaned")
-        except Exception as e:
-            logger.warning(f"Error during GPU cleanup: {e}")
+        torch.cuda.empty_cache()
+        gc.collect()
 
     def _wait_for_server(self) -> bool:
         start_time = time.time()
