@@ -363,7 +363,6 @@ func TestDistributionCheckWithVLLM(t *testing.T) {
 		"logprobs":     1,
 		"top_logprobs": 3,
 	}
-	// TODO: input run_seed as parameter to vllm
 
 	t.Logf("Testing distribution check with model: %s", model)
 	t.Logf("vLLM URL: %s", vllmURL)

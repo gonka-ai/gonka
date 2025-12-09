@@ -283,7 +283,7 @@ func (vc *ValidatorClient) SubmitInference(ctx context.Context, requestMap map[s
 
 	logging.Debug("Submitting inference to validator", types.Validation, "request", requestMap, "body", string(reqBody))
 
-	submitURL := fmt.Sprintf("%s/api/v1/chat/completions", vc.baseURL)
+	submitURL := fmt.Sprintf("%s/v1/chat/completions", vc.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", submitURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
