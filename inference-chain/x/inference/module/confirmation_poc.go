@@ -414,6 +414,11 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	am.LogInfo("updateConfirmationWeights: Confirmation weights", types.PoC,
 		"confirmationWeights", confirmationWeights)
 
+	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex)
+	if err != nil {
+		am.LogError("updateConfirmationWeights: Failed to get not preserved weights", types.PoC, "error", err)
+	}
+
 	// Update ValidationWeights: confirmation_weight = min(current, calculated)
 	updated := false
 	for i, vw := range epochGroupData.ValidationWeights {
@@ -432,6 +437,17 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 					"participant", vw.MemberAddress,
 					"currentConfirmationWeight", vw.ConfirmationWeight,
 					"calculatedWeight", calculatedWeight)
+			}
+		} else {
+			pocWeight := notPreservedWeights[vw.MemberAddress]
+			if pocWeight > 0 && vw.ConfirmationWeight > 0 {
+				previousWeight := vw.ConfirmationWeight
+				epochGroupData.ValidationWeights[i].ConfirmationWeight = 0
+				updated = true
+				am.LogInfo("updateConfirmationWeights: PoC miner did not submit batches, setting confirmation weight to 0", types.PoC,
+					"participant", vw.MemberAddress,
+					"previousConfirmationWeight", previousWeight,
+					"pocMiningWeight", pocWeight)
 			}
 		}
 	}
