@@ -1,0 +1,54 @@
+services:
+  testnet-node:
+    container_name: testnet-sync-node
+    image: ghcr.io/product-science/inferenced:latest
+    command: ["sh", "/root/init-testnet-join.sh"]
+    volumes:
+      - ./prod-local/testnet-sync:/root/.inference
+      - ./init-testnet-join.sh:/root/init-testnet-join.sh:ro
+    environment:
+      - KEY_NAME=testnet-sync
+      - CHAIN_ID=gonka-mainnet
+      - KEYRING_BACKEND=test
+    ports:
+      - "26657:26657"   # RPC
+      - "26656:26656"   # P2P
+      - "9090:9090"     # gRPC ✅ YOUR GOAL!
+      - "9091:9091"     # gRPC-web
+      - "1317:1317"     # REST API
+    networks:
+      - testnet-network
+    restart: unless-stopped
+
+  testnet-api:
+    container_name: testnet-sync-api
+    image: ghcr.io/product-science/api:latest
+    depends_on:
+      - testnet-node
+    volumes:
+      - ./prod-local/testnet-sync:/root/.inference
+      - ./node_payload_testnet.json:/root/node_config.json
+    environment:
+      - KEY_NAME=testnet-sync
+      - NODE_HOST=testnet-sync-node
+      - KEYRING_BACKEND=test
+      - DAPI_CHAIN_NODE__URL=http://testnet-sync-node:26657
+      - DAPI_API__PUBLIC_SERVER_PORT=9000
+      - DAPI_API__ML_SERVER_PORT=9100
+      - DAPI_API__ADMIN_SERVER_PORT=9200
+      - DAPI_API__ML_GRPC_SERVER_PORT=9300
+      - NODE_CONFIG_PATH=/root/node_config.json
+      - DAPI_API__TEST_MODE=true
+    ports:
+      - "9000:9000"   # Public API
+      - "9100:9100"   # ML API
+      - "9200:9200"   # Admin API
+      - "9300:9300"   # ML gRPC
+    networks:
+      - testnet-network
+    restart: unless-stopped
+
+networks:
+  testnet-network:
+    name: testnet-network
+

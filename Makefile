@@ -156,3 +156,13 @@ build-for-upgrade:
 build-for-upgrade-tests:
 	@make -C inference-chain build-for-upgrade TESTS=1
 	@make -C decentralized-api build-for-upgrade TESTS=1
+
+download-genesis: 
+	cd ~/softly/gonka/local-test-net && mkdir -p prod-local/testnet-sync/config 
+	cd ~/softly/gonka/local-test-net && curl -s http://185.216.21.98:26657/genesis | jq -r '.result.genesis' > prod-local/testnet-sync/config/genesis.json && echo "Genesis file downloaded: $(wc -l < prod-local/testnet-sync/config/genesis.json) lines"
+
+run-with-docker:
+	docker compose -f docker-compose-testnet-sync.yml up -d 
+
+get-log:
+	docker logs -f testnet-sync-node
