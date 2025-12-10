@@ -66,7 +66,7 @@ def run_inference_request(vllm_url: str, model: str, prompt: str) -> Dict[str, A
         "seed": 42,
         "stream": False,
         "logprobs": True,
-        "top_logprobs": 3
+        "top_logprobs": 3,
     }
     
     response = requests.post(url, json=payload)

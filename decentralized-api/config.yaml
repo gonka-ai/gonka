@@ -16,3 +16,5 @@ chain_node:
   keyring_backend: "test"
   keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root
   is_genesis: false
+validator:
+  vllm_url: "http://localhost:8080"

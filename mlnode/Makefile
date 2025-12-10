@@ -21,11 +21,13 @@ down-all:
 	docker compose -f $(PROJECT_ROOT)/packages/api/docker-compose.yml down
 	docker compose -f $(PROJECT_ROOT)/packages/pow/docker-compose.yml down
 	docker compose -f $(PROJECT_ROOT)/packages/train/docker-compose.yml down
+	docker compose -f $(PROJECT_ROOT)/packages/validator/docker-compose.yml down
 
 setup-envs:
 	@$(MAKE) -C packages/api setup-envs
 	@$(MAKE) -C packages/pow setup-envs
 	@$(MAKE) -C packages/train setup-envs
+	@$(MAKE) -C packages/validator setup-envs
 
 	@echo "PROJECT_ROOT=$(PROJECT_ROOT)" >.env
 	@echo "CACHE_DIR=<CACHE_DIR>" >> .env
@@ -52,6 +54,8 @@ locks:
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	cd packages/api \
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
+	cd packages/validator \
+		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	cd packages/benchmarks \
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	rm -rf poetry.lock && \
@@ -64,28 +68,33 @@ integration-tests: down-all
 	@$(MAKE) -C packages/api integration-tests
 	@$(MAKE) -C packages/pow integration-tests
 	@$(MAKE) -C packages/train integration-tests
+	@$(MAKE) -C packages/validator integration-tests
 
 unit-tests:
 	@echo "Running unit tests"
 	@$(MAKE) -C packages/api unit-tests
 	@$(MAKE) -C packages/pow unit-tests
 	@$(MAKE) -C packages/train unit-tests
+	@$(MAKE) -C packages/validator unit-tests
 
 unit-tests-local:
 	@$(MAKE) -C packages/api unit-tests-local
 	@$(MAKE) -C packages/pow unit-tests-local
 	@$(MAKE) -C packages/train unit-tests-local
+	@$(MAKE) -C packages/validator unit-tests-local
 
 unit-tests-gpu: down-all
 	@echo "Running GPU unit tests"
 	@$(MAKE) -C packages/api unit-tests-gpu
 	@$(MAKE) -C packages/pow unit-tests-gpu
 	@$(MAKE) -C packages/train unit-tests-gpu
+	@$(MAKE) -C packages/validator unit-tests-gpu
 
 unit-tests-gpu-local:
 	@$(MAKE) -C packages/api unit-tests-gpu-local
 	@$(MAKE) -C packages/pow unit-tests-gpu-local
 	@$(MAKE) -C packages/train unit-tests-gpu-local
+	@$(MAKE) -C packages/validator unit-tests-gpu-local
 
 tests: unit-tests integration-tests unit-tests-gpu
 
@@ -131,3 +140,4 @@ generate-docs:
 	@$(MAKE) -C packages/api generate-docs
 	@$(MAKE) -C packages/pow generate-docs
 	@$(MAKE) -C packages/train generate-docs
+	@$(MAKE) -C packages/validator generate-docs

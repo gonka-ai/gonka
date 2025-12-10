@@ -192,7 +192,7 @@ class VLLMRunner(IVLLMRunner):
 
         self.processes = []
         self._cleanup_gpu()
-        logger.info("vLLM processes stopped.")
+        logger.info("vLLM processes stopped and GPU memory cleaned.")
 
     def _cleanup_gpu(self):
         logger.debug("Cleaning GPU memory...")

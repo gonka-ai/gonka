@@ -22,6 +22,7 @@ type Config struct {
 	LastUsedVersion     string                `koanf:"last_used_version" json:"last_used_version"`
 	ValidationParams    ValidationParamsCache `koanf:"validation_params" json:"validation_params"`
 	BandwidthParams     BandwidthParamsCache  `koanf:"bandwidth_params" json:"bandwidth_params"`
+	Validator           ValidatorConfig       `koanf:"validator" json:"validator"`
 }
 
 type NatsServerConfig struct {
@@ -160,4 +161,8 @@ type BandwidthParamsCache struct {
 	EstimatedLimitsPerBlockKb uint64  `koanf:"estimated_limits_per_block_kb" json:"estimated_limits_per_block_kb"`
 	KbPerInputToken           float64 `koanf:"kb_per_input_token" json:"kb_per_input_token"`
 	KbPerOutputToken          float64 `koanf:"kb_per_output_token" json:"kb_per_output_token"`
+}
+
+type ValidatorConfig struct {
+	VllmUrl string `koanf:"vllm_url" json:"vllm_url"`
 }
