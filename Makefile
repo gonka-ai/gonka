@@ -157,12 +157,19 @@ build-for-upgrade-tests:
 	@make -C inference-chain build-for-upgrade TESTS=1
 	@make -C decentralized-api build-for-upgrade TESTS=1
 
-download-genesis: 
-	cd ~/softly/gonka/local-test-net && mkdir -p prod-local/testnet-sync/config 
-	cd ~/softly/gonka/local-test-net && curl -s http://185.216.21.98:26657/genesis | jq -r '.result.genesis' > prod-local/testnet-sync/config/genesis.json && echo "Genesis file downloaded: $(wc -l < prod-local/testnet-sync/config/genesis.json) lines"
+download-genesis: ## Download genesis file from testnet (cross-platform)
+	@cd local-test-net && mkdir -p prod-local/testnet-sync/config
+	@cd local-test-net && curl -s http://185.216.21.98:26657/genesis | jq -r '.result.genesis' > prod-local/testnet-sync/config/genesis.json || \
+		(echo "Error: Failed to download genesis file" && exit 1)
+	@if [ -s local-test-net/prod-local/testnet-sync/config/genesis.json ]; then \
+		echo "Genesis file downloaded: $$(wc -l < local-test-net/prod-local/testnet-sync/config/genesis.json) lines"; \
+	else \
+		echo "Error: Genesis file is empty"; \
+		exit 1; \
+	fi
 
-run-with-docker:
-	docker compose -f docker-compose-testnet-sync.yml up -d 
+run-with-docker: 
+	@cd local-test-net && docker compose -f docker-compose-testnet-sync.yml up -d
 
-get-log:
-	docker logs -f testnet-sync-node
+get-log: 
+	@docker logs -f testnet-sync-node
