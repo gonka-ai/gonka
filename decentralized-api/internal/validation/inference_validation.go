@@ -638,6 +638,12 @@ func (s *InferenceValidator) performDistributionCheck(
 		AdditionalArgs: additionalArgs,
 	}
 
+	defer func() {
+		if err := s.validatorClient.StopVLLM(ctx); err != nil {
+			logging.Warn("Failed to stop vLLM after distribution check", types.Validation, "error", err)
+		}
+	}()
+
 	statusResp, err := s.validatorClient.PerformInferenceWithSetup(ctx, modelConfig, requestMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform inference with vLLM setup: %w", err)

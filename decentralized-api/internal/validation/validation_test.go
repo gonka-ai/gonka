@@ -383,6 +383,10 @@ func TestDistributionCheckWithVLLM(t *testing.T) {
 
 	t.Logf("First inference completed with status: %s", statusResp1.Status)
 
+	if err := validatorClient.StopVLLM(ctx); err != nil {
+		t.Logf("Warning: Failed to stop vLLM after first inference: %v", err)
+	}
+
 	logits1, err := extractLogitsFromValidatorResult(statusResp1.Result)
 	t.Logf("DEBUG: logits1=%+v, err=%v", statusResp1.Result, err)
 	if err != nil {
@@ -402,6 +406,10 @@ func TestDistributionCheckWithVLLM(t *testing.T) {
 	}
 
 	t.Logf("Second inference completed with status: %s", statusResp2.Status)
+
+	if err := validatorClient.StopVLLM(ctx); err != nil {
+		t.Logf("Warning: Failed to stop vLLM after second inference: %v", err)
+	}
 
 	logits2, err := extractLogitsFromValidatorResult(statusResp2.Result)
 	if err != nil {
