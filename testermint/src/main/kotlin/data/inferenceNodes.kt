@@ -14,6 +14,8 @@ data class InferenceNode(
     val nodeNum: Long? = null,
     val hardware: List<Hardware>? = null,
     val version: String? = null,
+    val baseUrl: String? = null,
+    val authToken: String? = null,
 ) {
     val pocHost: String
         get() = "$host:$pocPort"

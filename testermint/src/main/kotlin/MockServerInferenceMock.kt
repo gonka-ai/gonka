@@ -102,6 +102,27 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         }
     }
 
+    fun setExpectedAuthorizationHeader(expectedHeader: String, hostName: String? = null) {
+        data class SetAuthHeaderRequest(
+            val expected_header: String,
+            val host_name: String? = null
+        )
+
+        val request = SetAuthHeaderRequest(expectedHeader, hostName)
+        try {
+            val (_, response, _) = Fuel.post("$baseUrl/api/v1/auth/token")
+                .jsonBody(cosmosJson.toJson(request))
+                .responseString()
+            if (response.statusCode != 200) {
+                Logger.error("Failed to set expected Authorization header: ${response.statusCode} ${response.responseMessage}")
+            } else {
+                Logger.debug("Set expected Authorization header: $expectedHeader for host=$hostName")
+            }
+        } catch (e: Exception) {
+            Logger.error("Failed to set expected Authorization header: ${e.message}")
+        }
+    }
+
 
     /**
      * Sets the response for the inference endpoint using an OpenAIResponse object.

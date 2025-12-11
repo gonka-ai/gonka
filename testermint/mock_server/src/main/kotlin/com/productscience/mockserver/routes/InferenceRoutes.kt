@@ -14,13 +14,15 @@ import com.productscience.mockserver.model.setModelState
 import com.productscience.mockserver.service.ResponseService
 import com.productscience.mockserver.service.SSEService
 import com.productscience.mockserver.service.HostName
+import com.productscience.mockserver.service.AuthTokenService
+import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
 
 /**
  * Configures routes for inference-related endpoints.
  */
-fun Route.inferenceRoutes(responseService: ResponseService, sseService: SSEService = SSEService()) {
+fun Route.inferenceRoutes(responseService: ResponseService, authTokenService: AuthTokenService, sseService: SSEService = SSEService()) {
     // POST /api/v1/inference/up - Transitions to INFERENCE state
     post("/api/v1/inference/up") {
         val logger = LoggerFactory.getLogger("InferenceRoutes")
@@ -63,18 +65,18 @@ fun Route.inferenceRoutes(responseService: ResponseService, sseService: SSEServi
 
     // Handle the exact path /v1/chat/completions
     post("/v1/chat/completions") {
-        handleChatCompletions(call, responseService, sseService)
+        handleChatCompletions(call, responseService, authTokenService, sseService)
     }
     // Handle all versioned chat completions endpoints
     post("/{...segments}/v1/chat/completions") {
-        handleChatCompletions(call, responseService, sseService)
+        handleChatCompletions(call, responseService, authTokenService, sseService)
     }
 }
 
 /**
  * Handles chat completions requests.
  */
-private suspend fun handleChatCompletions(call: ApplicationCall, responseService: ResponseService, sseService: SSEService) {
+private suspend fun handleChatCompletions(call: ApplicationCall, responseService: ResponseService, authTokenService: AuthTokenService, sseService: SSEService) {
     val logger = LoggerFactory.getLogger("InferenceRoutes")
     val objectMapper = ObjectMapper()
         .registerKotlinModule()
@@ -85,6 +87,29 @@ private suspend fun handleChatCompletions(call: ApplicationCall, responseService
 //        call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Service not in INFERENCE state"))
 //        return
 //    }
+
+    // Enforce Authorization header if configured for this host
+    val hostName = HostName(call.getHost())
+    val expectedAuth = authTokenService.getExpectedHeader(hostName)
+    val authHeader = call.request.headers[HttpHeaders.Authorization]
+    if (expectedAuth != null) {
+        val requireOnly = expectedAuth == "*"
+        val valid = if (requireOnly) {
+            authHeader != null && authHeader.isNotBlank()
+        } else {
+            authHeader == expectedAuth
+        }
+        if (!valid) {
+            logger.warn("Unauthorized request for host {}. Expected Authorization: {} but got: {}", hostName.name, expectedAuth, authHeader)
+            call.response.header("Content-Type", "application/json")
+            call.respondText(
+                """{"error":"unauthorized","message":"Authorization header missing or invalid"}""",
+                ContentType.Application.Json,
+                HttpStatusCode.Unauthorized
+            )
+            return
+        }
+    }
 
     // Get the request body
     val requestBody = call.receiveText()
@@ -112,7 +137,6 @@ private suspend fun handleChatCompletions(call: ApplicationCall, responseService
     val path = call.request.path()
 
     // Get the response configuration from the ResponseService (per-host)
-    val hostName = HostName(call.getHost())
     val responseConfig = responseService.getInferenceResponseConfig(path, model, hostName)
     logger.info("Retrieved response config for path $path: ${responseConfig != null}")
 

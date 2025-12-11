@@ -34,9 +34,6 @@ sealed class ResponseConfig {
 value class ScenarioName(val name: String)
 
 @JvmInline
-value class HostName(val name: String)
-
-@JvmInline
 value class Endpoint(val path: String)
 
 @JvmInline
