@@ -152,6 +152,15 @@ func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) 
 			Result: "No rewards for this block height",
 		}
 	}
+	if ctx.BlockHeight()-settleAmount.LastClaimAttempt < 30 {
+		k.LogInfo("Claim rate limited", types.Claims, "address", msg.Creator, "lastAttempt", settleAmount.LastClaimAttempt)
+		return nil, &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Claim rate limited",
+		}
+	}
+	settleAmount.LastClaimAttempt = ctx.BlockHeight()
+	k.SetSettleAmount(ctx, settleAmount)
 	if settleAmount.GetTotalCoins() == 0 {
 		k.LogInfo("SettleAmount had zero coins", types.Claims, "address", msg.Creator)
 		return nil, &types.MsgClaimRewardsResponse{

@@ -51,7 +51,7 @@ func (r *JsonCompletionResponse) GetHash() (string, error) {
 	if len(r.Bytes) == 0 {
 		return "", errors.New("CompletionResponse: can't compute hash, empty bytes")
 	}
-	return utils.GenerateSHA256Hash(string(r.Bytes)), nil
+	return utils.GenerateSHA256HashBytes(r.Bytes), nil
 }
 
 func (r *JsonCompletionResponse) GetEnforcedStr() (string, error) {
@@ -232,7 +232,7 @@ func (r *StreamedCompletionResponse) GetHash() (string, error) {
 	if len(bodyBytes) == 0 {
 		return "", errors.New("StreamedCompletionResponse: can't compute hash, empty bytes")
 	}
-	return utils.GenerateSHA256Hash(string(bodyBytes)), nil
+	return utils.GenerateSHA256HashBytes(bodyBytes), nil
 }
 
 func (r *StreamedCompletionResponse) GetEnforcedStr() (string, error) {
@@ -321,7 +321,7 @@ func NewCompletionResponseFromLines(lines []string) (CompletionResponse, error) 
 	}, nil
 }
 
-func NewCompletionResponseFromLinesFromResponsePayload(payload string) (CompletionResponse, error) {
+func NewCompletionResponseFromLinesFromResponsePayload(payload []byte) (CompletionResponse, error) {
 	var genericMap map[string]interface{}
 	bytes := []byte(payload)
 	if err := json.Unmarshal(bytes, &genericMap); err != nil {

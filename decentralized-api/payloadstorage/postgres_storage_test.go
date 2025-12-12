@@ -73,14 +73,16 @@ func TestPostgresStorage_StoreAndRetrieve(t *testing.T) {
 	defer storage.Close()
 
 	// Test store
-	err = storage.Store(ctx, "inf-001", 100, `{"prompt": "hello"}`, `{"response": "world"}`)
+	storedPrompt := []byte(`{"prompt": "hello"}`)
+	storedResponse := []byte(`{"response": "world"}`)
+	err = storage.Store(ctx, "inf-001", 100, storedPrompt, storedResponse)
 	require.NoError(t, err)
 
 	// Test retrieve
 	prompt, response, err := storage.Retrieve(ctx, "inf-001", 100)
 	require.NoError(t, err)
-	assert.Equal(t, `{"prompt": "hello"}`, prompt)
-	assert.Equal(t, `{"response": "world"}`, response)
+	assert.Equal(t, storedPrompt, prompt)
+	assert.Equal(t, storedResponse, response)
 
 	// Test not found
 	_, _, err = storage.Retrieve(ctx, "nonexistent", 100)
@@ -100,7 +102,7 @@ func TestPostgresStorage_PartitionAutoCreation(t *testing.T) {
 	// Store in multiple epochs - partitions should be created automatically
 	epochs := []uint64{100, 101, 102}
 	for _, epoch := range epochs {
-		err := storage.Store(ctx, "inf-001", epoch, `{"epoch": "`+string(rune(epoch))+`"}`, `{"resp": "ok"}`)
+		err := storage.Store(ctx, "inf-001", epoch, []byte(`{"epoch": "`+string(rune(epoch))+`"}`), []byte(`{"resp": "ok"}`))
 		require.NoError(t, err, "Failed to store in epoch %d", epoch)
 	}
 
@@ -122,7 +124,7 @@ func TestPostgresStorage_PruneEpoch(t *testing.T) {
 	defer storage.Close()
 
 	// Store data in epoch 100
-	err = storage.Store(ctx, "inf-001", 100, `{"prompt": "test"}`, `{"response": "test"}`)
+	err = storage.Store(ctx, "inf-001", 100, []byte(`{"prompt": "test"}`), []byte(`{"response": "test"}`))
 	require.NoError(t, err)
 
 	// Verify it exists
@@ -160,12 +162,14 @@ func TestPostgresStorage_SchemaAutoCreation(t *testing.T) {
 	defer storage2.Close()
 
 	// Should be able to store and retrieve
-	err = storage2.Store(ctx, "inf-001", 100, `{"test": "data"}`, `{"response": "ok"}`)
+	storedPrompt := []byte(`{"test": "data"}`)
+	storedResponse := []byte(`{"response": "ok"}`)
+	err = storage2.Store(ctx, "inf-001", 100, storedPrompt, storedResponse)
 	require.NoError(t, err)
 
 	prompt, _, err := storage2.Retrieve(ctx, "inf-001", 100)
 	require.NoError(t, err)
-	assert.Equal(t, `{"test": "data"}`, prompt)
+	assert.Equal(t, storedPrompt, prompt)
 }
 
 func TestPostgresStorage_IdempotentStore(t *testing.T) {
@@ -179,17 +183,18 @@ func TestPostgresStorage_IdempotentStore(t *testing.T) {
 	defer storage.Close()
 
 	// First store
-	err = storage.Store(ctx, "inf-001", 100, `{"first": "value"}`, `{"response": "first"}`)
+	storedFirstValue := []byte(`{"first": "value"}`)
+	err = storage.Store(ctx, "inf-001", 100, storedFirstValue, []byte(`{"response": "first"}`))
 	require.NoError(t, err)
 
 	// Second store with same ID should not error (ON CONFLICT DO NOTHING)
-	err = storage.Store(ctx, "inf-001", 100, `{"second": "value"}`, `{"response": "second"}`)
+	err = storage.Store(ctx, "inf-001", 100, []byte(`{"second": "value"}`), []byte(`{"response": "second"}`))
 	require.NoError(t, err)
 
 	// Should still have first value
 	prompt, _, err := storage.Retrieve(ctx, "inf-001", 100)
 	require.NoError(t, err)
-	assert.Equal(t, `{"first": "value"}`, prompt)
+	assert.Equal(t, storedFirstValue, prompt)
 }
 
 func TestHybridStorage_FallbackOnPGError(t *testing.T) {
@@ -200,7 +205,9 @@ func TestHybridStorage_FallbackOnPGError(t *testing.T) {
 	fileStorage := NewFileStorage(tempDir)
 
 	// Store something in file storage
-	err := fileStorage.Store(ctx, "inf-001", 100, `{"file": "data"}`, `{"file": "response"}`)
+	storedPrompt := []byte(`{"file": "data"}`)
+	storedResponse := []byte(`{"file": "response"}`)
+	err := fileStorage.Store(ctx, "inf-001", 100, storedPrompt, storedResponse)
 	require.NoError(t, err)
 
 	// Now create hybrid with a broken PG connection
@@ -221,8 +228,8 @@ func TestHybridStorage_FallbackOnPGError(t *testing.T) {
 	// Data not in PG, but is in file - should find it
 	prompt, response, err := hybrid.Retrieve(ctx, "inf-001", 100)
 	require.NoError(t, err)
-	assert.Equal(t, `{"file": "data"}`, prompt)
-	assert.Equal(t, `{"file": "response"}`, response)
+	assert.Equal(t, storedPrompt, prompt)
+	assert.Equal(t, storedResponse, response)
 }
 
 func TestHybridStorage_PGPrimary(t *testing.T) {
@@ -241,14 +248,16 @@ func TestHybridStorage_PGPrimary(t *testing.T) {
 	hybrid := NewHybridStorage(pgStorage, fileStorage)
 
 	// Store via hybrid (should go to PG)
-	err = hybrid.Store(ctx, "inf-001", 100, `{"pg": "data"}`, `{"pg": "response"}`)
+	storedPrompt := []byte(`{"pg": "data"}`)
+	storedResponse := []byte(`{"pg": "response"}`)
+	err = hybrid.Store(ctx, "inf-001", 100, storedPrompt, storedResponse)
 	require.NoError(t, err)
 
 	// Retrieve should find it in PG
 	prompt, response, err := hybrid.Retrieve(ctx, "inf-001", 100)
 	require.NoError(t, err)
-	assert.Equal(t, `{"pg": "data"}`, prompt)
-	assert.Equal(t, `{"pg": "response"}`, response)
+	assert.Equal(t, storedPrompt, prompt)
+	assert.Equal(t, storedResponse, response)
 
 	// File storage should NOT have it
 	_, _, err = fileStorage.Retrieve(ctx, "inf-001", 100)

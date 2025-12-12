@@ -9,8 +9,8 @@ import (
 const defaultMaxCacheSize = 1000
 
 type cachedEntry struct {
-	promptPayload   string
-	responsePayload string
+	promptPayload   []byte
+	responsePayload []byte
 	expiresAt       time.Time
 }
 
@@ -40,11 +40,11 @@ func NewCachedStorageWithSize(storage PayloadStorage, ttl time.Duration, maxSize
 	return c
 }
 
-func (c *CachedStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload string) error {
+func (c *CachedStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload []byte) error {
 	return c.storage.Store(ctx, inferenceId, epochId, promptPayload, responsePayload)
 }
 
-func (c *CachedStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) (string, string, error) {
+func (c *CachedStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) ([]byte, []byte, error) {
 	c.mu.RLock()
 	if cached, ok := c.entries[inferenceId]; ok && time.Now().Before(cached.expiresAt) {
 		c.mu.RUnlock()
@@ -54,7 +54,7 @@ func (c *CachedStorage) Retrieve(ctx context.Context, inferenceId string, epochI
 
 	prompt, response, err := c.storage.Retrieve(ctx, inferenceId, epochId)
 	if err != nil {
-		return "", "", err
+		return nil, nil, err
 	}
 
 	c.mu.Lock()

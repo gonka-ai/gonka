@@ -22,7 +22,7 @@ func NewHybridStorage(pg *PostgresStorage, file *FileStorage) *HybridStorage {
 	return &HybridStorage{pg: pg, file: file}
 }
 
-func (h *HybridStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload string) error {
+func (h *HybridStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload []byte) error {
 	err := h.pg.Store(ctx, inferenceId, epochId, promptPayload, responsePayload)
 	if err != nil {
 		logging.Warn("PostgreSQL store failed, falling back to file", types.PayloadStorage,
@@ -32,7 +32,7 @@ func (h *HybridStorage) Store(ctx context.Context, inferenceId string, epochId u
 	return nil
 }
 
-func (h *HybridStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) (string, string, error) {
+func (h *HybridStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) ([]byte, []byte, error) {
 	prompt, response, err := h.pg.Retrieve(ctx, inferenceId, epochId)
 	if err == nil {
 		return prompt, response, nil
@@ -52,9 +52,9 @@ func (h *HybridStorage) Retrieve(ctx context.Context, inferenceId string, epochI
 
 	// Both failed - return original PG error if it wasn't "not found"
 	if errors.Is(err, ErrNotFound) {
-		return "", "", ErrNotFound
+		return nil, nil, ErrNotFound
 	}
-	return "", "", err
+	return nil, nil, err
 }
 
 func (h *HybridStorage) PruneEpoch(ctx context.Context, epochId uint64) error {

@@ -54,7 +54,7 @@ func (s *Server) storePayload(c echo.Context) error {
 	}
 
 	// Store payloads
-	if err := s.payloadStorage.Store(c.Request().Context(), inferenceId, epochId, req.PromptPayload, req.ResponsePayload); err != nil {
+	if err := s.payloadStorage.Store(c.Request().Context(), inferenceId, epochId, []byte(req.PromptPayload), []byte(req.ResponsePayload)); err != nil {
 		slog.Error("Failed to store payload", "inferenceId", inferenceId, "epochId", epochId, "error", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store payload: " + err.Error()})
 	}

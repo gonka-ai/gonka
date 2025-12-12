@@ -1,6 +1,7 @@
 package payloadstorage
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -12,8 +13,8 @@ func TestFileStorage_StoreRetrieve(t *testing.T) {
 	storage := NewFileStorage(dir)
 	ctx := context.Background()
 
-	prompt := `{"model":"test","seed":123,"messages":[{"role":"user","content":"hello"}]}`
-	response := `{"id":"inf-1","choices":[{"message":{"content":"hi"}}]}`
+	prompt := []byte(`{"model":"test","seed":123,"messages":[{"role":"user","content":"hello"}]}`)
+	response := []byte(`{"id":"inf-1","choices":[{"message":{"content":"hi"}}]}`)
 
 	if err := storage.Store(ctx, "inf-1", 5, prompt, response); err != nil {
 		t.Fatalf("Store failed: %v", err)
@@ -23,10 +24,11 @@ func TestFileStorage_StoreRetrieve(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Retrieve failed: %v", err)
 	}
-	if gotPrompt != prompt {
+
+	if !bytes.Equal(gotPrompt, prompt) {
 		t.Errorf("prompt mismatch: got %q, want %q", gotPrompt, prompt)
 	}
-	if gotResponse != response {
+	if !bytes.Equal(gotResponse, response) {
 		t.Errorf("response mismatch: got %q, want %q", gotResponse, response)
 	}
 }
@@ -48,7 +50,7 @@ func TestFileStorage_RetrieveWrongEpoch(t *testing.T) {
 	ctx := context.Background()
 
 	// Store in epoch 5
-	if err := storage.Store(ctx, "inf-1", 5, "prompt", "response"); err != nil {
+	if err := storage.Store(ctx, "inf-1", 5, []byte("prompt"), []byte("response")); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
 
@@ -70,13 +72,13 @@ func TestFileStorage_PruneEpoch(t *testing.T) {
 	storage := NewFileStorage(dir)
 	ctx := context.Background()
 
-	if err := storage.Store(ctx, "inf-1", 10, "prompt1", "response1"); err != nil {
+	if err := storage.Store(ctx, "inf-1", 10, []byte("prompt1"), []byte("response1")); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
-	if err := storage.Store(ctx, "inf-2", 10, "prompt2", "response2"); err != nil {
+	if err := storage.Store(ctx, "inf-2", 10, []byte("prompt2"), []byte("response2")); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
-	if err := storage.Store(ctx, "inf-3", 11, "prompt3", "response3"); err != nil {
+	if err := storage.Store(ctx, "inf-3", 11, []byte("prompt3"), []byte("response3")); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
 
@@ -100,7 +102,7 @@ func TestFileStorage_AtomicWrite(t *testing.T) {
 	storage := NewFileStorage(dir)
 	ctx := context.Background()
 
-	if err := storage.Store(ctx, "inf-1", 1, "prompt", "response"); err != nil {
+	if err := storage.Store(ctx, "inf-1", 1, []byte("prompt"), []byte("response")); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
 
@@ -118,7 +120,7 @@ func TestFileStorage_AtomicWrite(t *testing.T) {
 }
 
 func TestComputePromptHash_Reproducible(t *testing.T) {
-	payload := `{"seed":123,"model":"test","messages":[{"role":"user","content":"hello"}]}`
+	payload := []byte(`{"seed":123,"model":"test","messages":[{"role":"user","content":"hello"}]}`)
 
 	hash1, err := ComputePromptHash(payload)
 	if err != nil {
@@ -134,8 +136,8 @@ func TestComputePromptHash_Reproducible(t *testing.T) {
 }
 
 func TestComputePromptHash_KeyOrderIndependent(t *testing.T) {
-	payload1 := `{"model":"test","seed":123}`
-	payload2 := `{"seed":123,"model":"test"}`
+	payload1 := []byte(`{"model":"test","seed":123}`)
+	payload2 := []byte(`{"seed":123,"model":"test"}`)
 
 	hash1, err := ComputePromptHash(payload1)
 	if err != nil {
@@ -151,7 +153,7 @@ func TestComputePromptHash_KeyOrderIndependent(t *testing.T) {
 }
 
 func TestComputeResponseHash_Reproducible(t *testing.T) {
-	payload := `{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello world"}}]}`
+	payload := []byte(`{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello world"}}]}`)
 
 	hash1, err := ComputeResponseHash(payload)
 	if err != nil {
@@ -168,8 +170,8 @@ func TestComputeResponseHash_Reproducible(t *testing.T) {
 
 func TestComputeResponseHash_HashesFullPayload(t *testing.T) {
 	// Different payloads should produce different hashes (even if content is same)
-	payload1 := `{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"}}]}`
-	payload2 := `{"id":"inf-2","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"}}]}`
+	payload1 := []byte(`{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"}}]}`)
+	payload2 := []byte(`{"id":"inf-2","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"}}]}`)
 
 	hash1, err := ComputeResponseHash(payload1)
 	if err != nil {
@@ -187,8 +189,8 @@ func TestComputeResponseHash_HashesFullPayload(t *testing.T) {
 func TestComputeResponseHash_IncludesLogprobs(t *testing.T) {
 	// Same content but different logprobs must produce different hashes
 	// This prevents the attack where executor serves fake logprobs with valid content
-	payloadWithLogprobs := `{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.5,"top_logprobs":[{"token":"Hello","logprob":-0.5}]}]}}]}`
-	payloadWithFakeLogprobs := `{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.1,"top_logprobs":[{"token":"Hello","logprob":-0.1}]}]}}]}`
+	payloadWithLogprobs := []byte(`{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.5,"top_logprobs":[{"token":"Hello","logprob":-0.5}]}]}}]}`)
+	payloadWithFakeLogprobs := []byte(`{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.1,"top_logprobs":[{"token":"Hello","logprob":-0.1}]}]}}]}`)
 
 	hash1, err := ComputeResponseHash(payloadWithLogprobs)
 	if err != nil {
@@ -208,8 +210,8 @@ func TestFullCycle_HashIntegrity(t *testing.T) {
 	storage := NewFileStorage(dir)
 	ctx := context.Background()
 
-	prompt := `{"model":"test","seed":42,"messages":[{"role":"user","content":"What is 2+2?"}]}`
-	response := `{"id":"inf-123","choices":[{"index":0,"message":{"role":"assistant","content":"The answer is 4."}}]}`
+	prompt := []byte(`{"model":"test","seed":42,"messages":[{"role":"user","content":"What is 2+2?"}]}`)
+	response := []byte(`{"id":"inf-123","choices":[{"index":0,"message":{"role":"assistant","content":"The answer is 4."}}]}`)
 
 	// Compute hashes before storage
 	promptHashBefore, err := ComputePromptHash(prompt)
@@ -280,8 +282,8 @@ func TestFileStorage_FilesystemUnsafeInferenceIds(t *testing.T) {
 			storage := NewFileStorage(dir)
 			ctx := context.Background()
 
-			prompt := `{"model":"test","messages":[{"role":"user","content":"hello"}]}`
-			response := `{"choices":[{"message":{"content":"hi"}}]}`
+			prompt := []byte(`{"model":"test","messages":[{"role":"user","content":"hello"}]}`)
+			response := []byte(`{"choices":[{"message":{"content":"hi"}}]}`)
 
 			if err := storage.Store(ctx, tt.inferenceId, 5, prompt, response); err != nil {
 				t.Fatalf("Store failed for inferenceId %q: %v", tt.inferenceId, err)
@@ -291,13 +293,12 @@ func TestFileStorage_FilesystemUnsafeInferenceIds(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Retrieve failed for inferenceId %q: %v", tt.inferenceId, err)
 			}
-			if gotPrompt != prompt {
+			if !bytes.Equal(gotPrompt, prompt) {
 				t.Errorf("prompt mismatch: got %q, want %q", gotPrompt, prompt)
 			}
-			if gotResponse != response {
+			if !bytes.Equal(gotResponse, response) {
 				t.Errorf("response mismatch: got %q, want %q", gotResponse, response)
 			}
 		})
 	}
 }
-

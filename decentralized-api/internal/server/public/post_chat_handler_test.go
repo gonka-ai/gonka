@@ -12,7 +12,7 @@ import (
 )
 
 type mockPayloadStorage struct {
-	stored         map[string]struct{ prompt, response string }
+	stored         map[string]struct{ prompt, response []byte }
 	storeErr       error
 	retrieveErr    error
 	retrieveCalled bool
@@ -20,26 +20,26 @@ type mockPayloadStorage struct {
 
 func newMockPayloadStorage() *mockPayloadStorage {
 	return &mockPayloadStorage{
-		stored: make(map[string]struct{ prompt, response string }),
+		stored: make(map[string]struct{ prompt, response []byte }),
 	}
 }
 
-func (m *mockPayloadStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload string) error {
+func (m *mockPayloadStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload []byte) error {
 	if m.storeErr != nil {
 		return m.storeErr
 	}
-	m.stored[inferenceId] = struct{ prompt, response string }{promptPayload, responsePayload}
+	m.stored[inferenceId] = struct{ prompt, response []byte }{promptPayload, responsePayload}
 	return nil
 }
 
-func (m *mockPayloadStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) (string, string, error) {
+func (m *mockPayloadStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) ([]byte, []byte, error) {
 	m.retrieveCalled = true
 	if m.retrieveErr != nil {
-		return "", "", m.retrieveErr
+		return nil, nil, m.retrieveErr
 	}
 	data, ok := m.stored[inferenceId]
 	if !ok {
-		return "", "", payloadstorage.ErrNotFound
+		return nil, nil, payloadstorage.ErrNotFound
 	}
 	return data.prompt, data.response, nil
 }
@@ -74,8 +74,8 @@ func TestStorePayloadsToStorage_Success(t *testing.T) {
 		phaseTracker:   tracker,
 	}
 
-	promptPayload := `{"model":"test","seed":123,"messages":[{"role":"user","content":"hello"}]}`
-	responsePayload := `{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}]}`
+	promptPayload := []byte(`{"model":"test","seed":123,"messages":[{"role":"user","content":"hello"}]}`)
+	responsePayload := []byte(`{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}]}`)
 
 	s.storePayloadsToStorage(context.Background(), "inf-1", promptPayload, responsePayload)
 
@@ -92,7 +92,7 @@ func TestStorePayloadsToStorage_NilStorage(t *testing.T) {
 	}
 
 	// Should not panic with nil storage
-	s.storePayloadsToStorage(context.Background(), "inf-1", "prompt", "response")
+	s.storePayloadsToStorage(context.Background(), "inf-1", []byte("prompt"), []byte("response"))
 }
 
 func TestStorePayloadsToStorage_NilPhaseTracker(t *testing.T) {
@@ -103,7 +103,7 @@ func TestStorePayloadsToStorage_NilPhaseTracker(t *testing.T) {
 	}
 
 	// Should not panic with nil phase tracker
-	s.storePayloadsToStorage(context.Background(), "inf-1", "prompt", "response")
+	s.storePayloadsToStorage(context.Background(), "inf-1", []byte("prompt"), []byte("response"))
 	require.Len(t, storage.stored, 0)
 }
 
@@ -116,8 +116,8 @@ func TestStorePayloadsToStorage_Retrieval(t *testing.T) {
 		phaseTracker:   tracker,
 	}
 
-	promptPayload := `{"model":"test","seed":123}`
-	responsePayload := `{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}]}`
+	promptPayload := []byte(`{"model":"test","seed":123}`)
+	responsePayload := []byte(`{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}]}`)
 
 	s.storePayloadsToStorage(context.Background(), "inf-1", promptPayload, responsePayload)
 
@@ -138,8 +138,8 @@ func TestFileStorageIntegration(t *testing.T) {
 		phaseTracker:   tracker,
 	}
 
-	promptPayload := `{"model":"test","seed":42,"messages":[{"role":"user","content":"test"}]}`
-	responsePayload := `{"id":"inf-123","choices":[{"index":0,"message":{"role":"assistant","content":"response"}}]}`
+	promptPayload := []byte(`{"model":"test","seed":42,"messages":[{"role":"user","content":"test"}]}`)
+	responsePayload := []byte(`{"id":"inf-123","choices":[{"index":0,"message":{"role":"assistant","content":"response"}}]}`)
 
 	s.storePayloadsToStorage(context.Background(), "inf-123", promptPayload, responsePayload)
 
@@ -148,4 +148,3 @@ func TestFileStorageIntegration(t *testing.T) {
 	require.Equal(t, promptPayload, storedPrompt)
 	require.Equal(t, responsePayload, storedResponse)
 }
-

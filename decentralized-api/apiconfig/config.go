@@ -168,4 +168,5 @@ type BandwidthParamsCache struct {
 	EstimatedLimitsPerBlockKb uint64  `koanf:"estimated_limits_per_block_kb" json:"estimated_limits_per_block_kb"`
 	KbPerInputToken           float64 `koanf:"kb_per_input_token" json:"kb_per_input_token"`
 	KbPerOutputToken          float64 `koanf:"kb_per_output_token" json:"kb_per_output_token"`
+	MaxInferencesPerBlock     uint64  `koanf:"max_inferences_per_block" json:"max_inferences_per_block"`
 }

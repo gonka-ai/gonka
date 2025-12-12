@@ -162,59 +162,32 @@ func (s *InferenceValidator) getCurrentSupportedModels() (map[string]bool, error
 	return supportedModels, nil
 }
 
-// DetectMissedValidations identifies which validations were missed for a specific epoch
-// Returns a list of inference objects that the current participant should have validated but didn't
-func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int64) ([]types.Inference, error) {
-	logging.Info("Starting missed validation detection", types.ValidationRecovery, "epochIndex", epochIndex, "seed", seed)
-
-	queryClient := s.recorder.NewInferenceQueryClient()
-	address := s.recorder.GetAddress()
-
-	// Get all inferences (automatically pruned to recent 2-3 epochs) with pagination
-	var allInferences []types.Inference
-	var nextKey []byte
-
-	for {
-		req := &types.QueryAllInferenceRequest{
-			Pagination: &query.PageRequest{
-				Key:   nextKey,
-				Limit: 1000, // Use larger page size for efficiency
-			},
-		}
-
-		resp, err := queryClient.InferenceAll(s.recorder.GetContext(), req)
-		if err != nil {
-			logging.Error("Failed to query inferences page", types.ValidationRecovery, "error", err)
-			return nil, fmt.Errorf("failed to query inferences: %w", err)
-		}
-
-		allInferences = append(allInferences, resp.Inference...)
-
-		// Check if there are more pages
-		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
-			break
-		}
-		nextKey = resp.Pagination.NextKey
-	}
-
-	logging.Debug("Retrieved all inferences", types.ValidationRecovery, "totalCount", len(allInferences))
-
+// processInferencePageForMissedValidations processes a single page of inferences and returns missed validations from that page.
+// This is the batch processing function that filters by epoch, queries validation parameters, and checks validation status.
+func (s *InferenceValidator) processInferencePageForMissedValidations(
+	inferencePage []types.Inference,
+	epochIndex uint64,
+	seed int64,
+	validatorPower uint64,
+	address string,
+	alreadyValidated map[string]bool,
+	supportedModels map[string]bool,
+	validationParams *types.ValidationParams,
+	queryClient types.QueryClient,
+) ([]types.Inference, error) {
 	// Filter inferences by epoch
 	var epochInferences []types.Inference
-	for _, inf := range allInferences {
+	for _, inf := range inferencePage {
 		if inf.EpochId == epochIndex {
 			epochInferences = append(epochInferences, inf)
 		}
 	}
 
 	if len(epochInferences) == 0 {
-		logging.Info("No inferences found for epoch", types.ValidationRecovery, "epochIndex", epochIndex)
-		return []types.Inference{}, nil
+		return nil, nil
 	}
 
-	logging.Info("Found inferences for epoch", types.ValidationRecovery, "epochIndex", epochIndex, "count", len(epochInferences))
-
-	// Create a map for quick lookup of inferences by ID
+	// Create a map for quick lookup and collect inference IDs
 	inferenceMap := make(map[string]types.Inference)
 	inferenceIds := make([]string, len(epochInferences))
 	for i, inf := range epochInferences {
@@ -222,10 +195,9 @@ func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int
 		inferenceMap[inf.InferenceId] = inf
 	}
 
-	// Process inference IDs in batches to avoid "request body too large" errors
-	const batchSize = 1000 // Reasonable batch size to stay under request limits
+	// Query validation parameters for this batch
+	const batchSize = 1000
 	var allValidationDetails []*types.InferenceValidationDetails
-	var validatorPower uint64
 
 	for i := 0; i < len(inferenceIds); i += batchSize {
 		end := i + batchSize
@@ -234,41 +206,56 @@ func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int
 		}
 
 		batch := inferenceIds[i:end]
-		logging.Debug("Processing validation parameters batch", types.ValidationRecovery,
-			"batchNumber", (i/batchSize)+1,
-			"batchSize", len(batch),
-			"totalBatches", (len(inferenceIds)+batchSize-1)/batchSize)
-
 		batchResp, err := queryClient.GetInferenceValidationParameters(s.recorder.GetContext(), &types.QueryGetInferenceValidationParametersRequest{
 			Ids:       batch,
 			Requester: address,
 		})
 		if err != nil {
 			logging.Error("Failed to get validation parameters for batch", types.ValidationRecovery,
-				"batchNumber", (i/batchSize)+1,
 				"batchSize", len(batch),
 				"error", err)
-			return nil, fmt.Errorf("failed to get validation parameters for batch %d: %w", (i/batchSize)+1, err)
+			return nil, fmt.Errorf("failed to get validation parameters: %w", err)
 		}
 
 		allValidationDetails = append(allValidationDetails, batchResp.Details...)
+	}
 
-		// Capture ValidatorPower from the first batch (it should be the same across all batches)
-		if i == 0 {
-			validatorPower = batchResp.ValidatorPower
+	// Check each inference to see if it should have been validated but wasn't
+	var missedValidations []types.Inference
+	for _, inferenceDetails := range allValidationDetails {
+		if !supportedModels[inferenceDetails.Model] {
+			continue
+		}
+
+		// Check if this participant should validate this inference
+		shouldValidate, _ := s.shouldValidateInference(
+			inferenceDetails,
+			seed,
+			validatorPower,
+			address,
+			validationParams)
+
+		// If should validate but didn't, add to missed list
+		if shouldValidate && !alreadyValidated[inferenceDetails.InferenceId] {
+			if inference, exists := inferenceMap[inferenceDetails.InferenceId]; exists {
+				missedValidations = append(missedValidations, inference)
+				logging.Debug("Found missed validation in page", types.ValidationRecovery, "inferenceId", inferenceDetails.InferenceId)
+			}
 		}
 	}
 
-	// Create a combined response structure
-	validationParamsResp := &types.QueryGetInferenceValidationParametersResponse{
-		Details:        allValidationDetails,
-		ValidatorPower: validatorPower,
-	}
+	return missedValidations, nil
+}
 
-	logging.Info("Completed batched validation parameter queries", types.ValidationRecovery,
-		"totalInferences", len(inferenceIds),
-		"totalBatches", (len(inferenceIds)+batchSize-1)/batchSize,
-		"retrievedDetails", len(allValidationDetails))
+// DetectMissedValidations identifies which validations were missed for a specific epoch
+// Returns a list of inference objects that the current participant should have validated but didn't
+func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int64) ([]types.Inference, error) {
+	logging.Info("Starting missed validation detection", types.ValidationRecovery, "epochIndex", epochIndex, "seed", seed)
+
+	queryClient := s.recorder.NewInferenceQueryClient()
+	address := s.recorder.GetAddress()
+
+	// Pre-fetch static data needed for all pages
 
 	// Get validation params
 	params, err := queryClient.Params(s.recorder.GetContext(), &types.QueryParamsRequest{})
@@ -296,47 +283,100 @@ func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int
 			logging.Warn("Failed to get epoch group validations", types.ValidationRecovery, "error", err, "participant", address, "epochIndex", epochIndex)
 		}
 	}
+
 	supportedModels, err := s.getNodeModelsAtEpoch(epochIndex, address)
 	if err != nil {
 		logging.Error("Failed to get supported models at epoch", types.ValidationRecovery, "error", err)
 		return nil, fmt.Errorf("failed to get supported models at epoch: %w", err)
 	}
 
-	// Check each inference to see if it should have been validated but wasn't
+	// Get validator power from the first batch that has epoch-matching inferences
+	var validatorPower uint64
+	var validatorPowerFetched bool
+
+	// Process inferences page by page without accumulating all in memory
 	var missedValidations []types.Inference
-	for _, inferenceDetails := range validationParamsResp.Details {
-		if !supportedModels[inferenceDetails.Model] {
-			logging.Debug("Skipping inference - model not supported by any node", types.ValidationRecovery, "inferenceId", inferenceDetails.InferenceId, "model", inferenceDetails.Model)
-			continue
+	var nextKey []byte
+	const pageSize = 1000
+	pageNumber := 0
+
+	for {
+		pageNumber++
+		req := &types.QueryAllInferenceRequest{
+			Pagination: &query.PageRequest{
+				Key:   nextKey,
+				Limit: pageSize,
+			},
 		}
-		// Check if this participant should validate this inference
-		shouldValidate, message := s.shouldValidateInference(
-			inferenceDetails,
-			seed,
-			validationParamsResp.ValidatorPower,
-			address,
-			params.Params.ValidationParams)
 
-		logging.Debug("Validation check result", types.ValidationRecovery,
-			"inferenceId", inferenceDetails.InferenceId,
-			"shouldValidate", shouldValidate,
-			"message", message,
-			"alreadyValidated", alreadyValidated[inferenceDetails.InferenceId])
+		resp, err := queryClient.InferenceAll(s.recorder.GetContext(), req)
+		if err != nil {
+			logging.Error("Failed to query inferences page", types.ValidationRecovery, "error", err, "pageNumber", pageNumber)
+			return nil, fmt.Errorf("failed to query inferences: %w", err)
+		}
 
-		// If should validate but didn't, add to missed list
-		if shouldValidate && !alreadyValidated[inferenceDetails.InferenceId] {
-			if inference, exists := inferenceMap[inferenceDetails.InferenceId]; exists {
-				missedValidations = append(missedValidations, inference)
-				logging.Info("Found missed validation", types.ValidationRecovery, "inferenceId", inferenceDetails.InferenceId)
-			} else {
-				logging.Warn("Inference not found in map", types.ValidationRecovery, "inferenceId", inferenceDetails.InferenceId)
+		logging.Debug("Processing inference page", types.ValidationRecovery,
+			"pageNumber", pageNumber,
+			"pageSize", len(resp.Inference),
+			"hasMorePages", resp.Pagination != nil && len(resp.Pagination.NextKey) > 0)
+
+		// Filter this page by epoch to check if we need to fetch validator power
+		if !validatorPowerFetched {
+			for _, inf := range resp.Inference {
+				if inf.EpochId == epochIndex {
+					// Found at least one epoch-matching inference, fetch validator power
+					powerResp, err := queryClient.GetInferenceValidationParameters(s.recorder.GetContext(), &types.QueryGetInferenceValidationParametersRequest{
+						Ids:       []string{inf.InferenceId},
+						Requester: address,
+					})
+					if err != nil {
+						logging.Error("Failed to get validator power", types.ValidationRecovery, "error", err)
+						return nil, fmt.Errorf("failed to get validator power: %w", err)
+					}
+					validatorPower = powerResp.ValidatorPower
+					validatorPowerFetched = true
+					logging.Debug("Fetched validator power", types.ValidationRecovery, "validatorPower", validatorPower)
+					break
+				}
 			}
 		}
+
+		// Process this page using the batch processor (only if we have validator power)
+		if validatorPowerFetched {
+			pageMissed, err := s.processInferencePageForMissedValidations(
+				resp.Inference,
+				epochIndex,
+				seed,
+				validatorPower,
+				address,
+				alreadyValidated,
+				supportedModels,
+				params.Params.ValidationParams,
+				queryClient,
+			)
+			if err != nil {
+				logging.Error("Failed to process inference page", types.ValidationRecovery, "error", err, "pageNumber", pageNumber)
+				return nil, fmt.Errorf("failed to process inference page %d: %w", pageNumber, err)
+			}
+
+			if len(pageMissed) > 0 {
+				missedValidations = append(missedValidations, pageMissed...)
+				logging.Debug("Found missed validations in page", types.ValidationRecovery,
+					"pageNumber", pageNumber,
+					"missedCount", len(pageMissed))
+			}
+		}
+
+		// Check if there are more pages
+		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
+			break
+		}
+		nextKey = resp.Pagination.NextKey
 	}
 
 	logging.Info("Missed validation detection complete", types.ValidationRecovery,
 		"epochIndex", epochIndex,
-		"totalInferences", len(epochInferences),
+		"pagesProcessed", pageNumber,
 		"missedValidations", len(missedValidations))
 
 	return missedValidations, nil
@@ -628,7 +668,7 @@ func (s *InferenceValidator) isAlreadyValidated(inferenceId string, epochId uint
 // For post-upgrade inferences, returns ErrPayloadUnavailable for caller to handle invalidation.
 // Returns ErrHashMismatch immediately (no retry) when executor serves wrong payload with valid signature.
 // Returns ErrEpochStale if inference epoch becomes too old during retries.
-func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) (string, string, error) {
+func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]byte, []byte, error) {
 	const maxRetries = 10
 	const retryInterval = 2 * time.Minute // 10 * 2 min = 20 min total
 
@@ -643,7 +683,7 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) (str
 		if s.isEpochStale(inf.EpochId) {
 			logging.Info("Epoch stale, stopping payload retrieval", types.Validation,
 				"inferenceId", inf.InferenceId, "inferenceEpoch", inf.EpochId)
-			return "", "", ErrEpochStale
+			return nil, nil, ErrEpochStale
 		}
 
 		promptPayload, responsePayload, err := RetrievePayloadsFromExecutor(
@@ -659,7 +699,7 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) (str
 		if errors.Is(err, ErrHashMismatch) {
 			logging.Error("Hash mismatch detected, will invalidate immediately", types.Validation,
 				"inferenceId", inf.InferenceId, "attempt", attempt)
-			return "", "", ErrHashMismatch
+			return nil, nil, ErrHashMismatch
 		}
 
 		lastErr = err
@@ -685,7 +725,7 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) (str
 	// Post-upgrade inference: no on-chain fallback available
 	logging.Warn("Retries exhausted for post-upgrade inference, will invalidate", types.Validation,
 		"inferenceId", inf.InferenceId, "lastError", lastErr)
-	return "", "", ErrPayloadUnavailable
+	return nil, nil, ErrPayloadUnavailable
 }
 
 // checkAndInvalidateUnavailable checks if inference is already invalidated by consensus,
@@ -776,7 +816,7 @@ func (s *InferenceValidator) submitHashMismatchInvalidation(inf types.Inference,
 }
 
 // validateWithPayloads validates inference using provided payloads.
-func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inferenceNode *broker.Node, promptPayload, responsePayload string) (ValidationResult, error) {
+func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inferenceNode *broker.Node, promptPayload, responsePayload []byte) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {
@@ -785,7 +825,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 	}
 
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal([]byte(promptPayload), &requestMap); err != nil {
+	if err := json.Unmarshal(promptPayload, &requestMap); err != nil {
 		return &InvalidInferenceResult{inference.InferenceId, "Failed to unmarshal promptPayload.", err}, nil
 	}
 
@@ -852,11 +892,11 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 }
 
 func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {
-	return unmarshalResponsePayload(inference.ResponsePayload)
+	return unmarshalResponsePayload([]byte(inference.ResponsePayload))
 }
 
 // unmarshalResponsePayload parses response payload string into CompletionResponse.
-func unmarshalResponsePayload(responsePayload string) (completionapi.CompletionResponse, error) {
+func unmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
 	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
 
 	if err != nil {

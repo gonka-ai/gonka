@@ -230,6 +230,9 @@ message BandwidthLimitsParams {
 
   // The least amount of concurrent invalidations
   uint32 minimum_concurrent_invalidations = 7;
+
+  // max_inferences_per_block is the chain-wide limit on inference requests per block
+  uint64 max_inferences_per_block = 8;
 }
 
 // ConfirmationPoCParams defines the parameters for confirmation PoC feature.

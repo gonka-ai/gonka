@@ -5,6 +5,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/utils"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -19,8 +20,8 @@ import (
 // PayloadResponse is returned by getInferencePayloads
 type PayloadResponse struct {
 	InferenceId       string `json:"inference_id"`
-	PromptPayload     string `json:"prompt_payload"`
-	ResponsePayload   string `json:"response_payload"`
+	PromptPayload     []byte `json:"prompt_payload"`
+	ResponsePayload   []byte `json:"response_payload"`
 	ExecutorSignature string `json:"executor_signature"`
 }
 
@@ -104,7 +105,7 @@ func (s *Server) getInferencePayloads(ctx echo.Context) error {
 
 	promptPayload, responsePayload, actualEpochId, err := s.retrievePayloadsWithAdjacentEpochs(ctx.Request().Context(), inferenceId, epochId)
 	if err != nil {
-		if err == payloadstorage.ErrNotFound {
+		if errors.Is(err, payloadstorage.ErrNotFound) {
 			logging.Info("Payload not found in storage (checked adjacent epochs)", types.Validation,
 				"inferenceId", inferenceId, "epochId", epochId)
 			return echo.NewHTTPError(http.StatusNotFound, "payload not found")
@@ -190,14 +191,14 @@ func validatePayloadRequestSignature(inferenceId string, timestamp int64, valida
 // This handles the rare epoch boundary race condition where storage uses
 // phaseTracker's epoch but retrieval uses inference's EpochId from chain.
 // Returns the payloads and the actual epochId where they were found.
-func (s *Server) retrievePayloadsWithAdjacentEpochs(ctx context.Context, inferenceId string, epochId uint64) (string, string, uint64, error) {
+func (s *Server) retrievePayloadsWithAdjacentEpochs(ctx context.Context, inferenceId string, epochId uint64) ([]byte, []byte, uint64, error) {
 	// Try primary epochId first
 	prompt, response, err := s.payloadStorage.Retrieve(ctx, inferenceId, epochId)
 	if err == nil {
 		return prompt, response, epochId, nil
 	}
-	if err != payloadstorage.ErrNotFound {
-		return "", "", 0, err
+	if !errors.Is(err, payloadstorage.ErrNotFound) {
+		return nil, nil, 0, err
 	}
 
 	// Try adjacent epochs (epoch boundary race condition)
@@ -213,20 +214,20 @@ func (s *Server) retrievePayloadsWithAdjacentEpochs(ctx context.Context, inferen
 			return prompt, response, adjEpoch, nil
 		}
 		if err != payloadstorage.ErrNotFound {
-			return "", "", 0, err
+			return nil, nil, 0, err
 		}
 	}
 
-	return "", "", 0, payloadstorage.ErrNotFound
+	return nil, nil, 0, payloadstorage.ErrNotFound
 }
 
 // signPayloadResponse signs the payload response with executor's key
 // Uses timestamp=0 since the signature is for non-repudiation, not replay protection
 // (replay protection is handled at request level with validator's timestamp)
-func (s *Server) signPayloadResponse(inferenceId, promptPayload, responsePayload string) (string, error) {
+func (s *Server) signPayloadResponse(inferenceId string, promptPayload, responsePayload []byte) (string, error) {
 	// Sign inferenceId + prompt hash + response hash
-	promptHash := utils.GenerateSHA256Hash(promptPayload)
-	responseHash := utils.GenerateSHA256Hash(responsePayload)
+	promptHash := utils.GenerateSHA256HashBytes(promptPayload)
+	responseHash := utils.GenerateSHA256HashBytes(responsePayload)
 	payload := inferenceId + promptHash + responseHash
 
 	components := calculations.SignatureComponents{

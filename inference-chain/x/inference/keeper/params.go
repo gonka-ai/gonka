@@ -74,6 +74,7 @@ func (k Keeper) GetBandwidthLimitsParams(ctx context.Context) (*types.BandwidthL
 				Value:    64, // 0.64 = 64 × 10^(-2)
 				Exponent: -2,
 			},
+			MaxInferencesPerBlock: 1000, // Default 1000 inferences per block chain-wide
 		}, nil
 	}
 	return params.BandwidthLimitsParams, nil

@@ -14,8 +14,8 @@ import (
 )
 
 type storedPayload struct {
-	PromptPayload   string `json:"prompt_payload"`
-	ResponsePayload string `json:"response_payload"`
+	PromptPayload   []byte `json:"prompt_payload"`
+	ResponsePayload []byte `json:"response_payload"`
 }
 
 // Directory structure: {baseDir}/{epochId}/{inferenceId}.json
@@ -45,7 +45,7 @@ func filenameToInferenceId(filename string) (string, error) {
 }
 
 // Atomic write: temp file + rename
-func (f *FileStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload string) error {
+func (f *FileStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload []byte) error {
 	logging.Debug("Storing payload", types.PayloadStorage, "inferenceId", inferenceId, "epochId", epochId, "baseDir", f.baseDir)
 	epochDir := filepath.Join(f.baseDir, strconv.FormatUint(epochId, 10))
 	if err := os.MkdirAll(epochDir, 0755); err != nil {
@@ -78,21 +78,22 @@ func (f *FileStorage) Store(ctx context.Context, inferenceId string, epochId uin
 	return nil
 }
 
-func (f *FileStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) (string, string, error) {
+func (f *FileStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) ([]byte, []byte, error) {
 	filename := inferenceIdToFilename(inferenceId)
 	filePath := filepath.Join(f.baseDir, strconv.FormatUint(epochId, 10), filename+".json")
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			logging.Info("Payload not found", types.PayloadStorage, "inferenceId", inferenceId, "epochId", epochId, "filePath", filePath)
-			return "", "", ErrNotFound
+			return nil, nil, ErrNotFound
 		}
-		return "", "", fmt.Errorf("read file: %w", err)
+		return nil, nil, fmt.Errorf("read file: %w", err)
 	}
 
 	var payload storedPayload
+	// the json.Unmarshal deals with bytes correctly (base64 encoding)
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return "", "", fmt.Errorf("unmarshal payload: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal payload: %w", err)
 	}
 	return payload.PromptPayload, payload.ResponsePayload, nil
 }

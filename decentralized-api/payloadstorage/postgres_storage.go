@@ -18,8 +18,8 @@ const createTableSQL = `
 CREATE TABLE IF NOT EXISTS inferences (
     epoch_id BIGINT NOT NULL,
     inference_id TEXT NOT NULL,
-    prompt_payload TEXT,
-    response_payload TEXT,
+    prompt_payload BYTEA,
+    response_payload BYTEA,
     prompt_hash TEXT,
     response_hash TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -93,7 +93,7 @@ func (s *PostgresStorage) ensurePartition(ctx context.Context, epochId uint64) e
 	return nil
 }
 
-func (s *PostgresStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload string) error {
+func (s *PostgresStorage) Store(ctx context.Context, inferenceId string, epochId uint64, promptPayload, responsePayload []byte) error {
 	if err := s.ensurePartition(ctx, epochId); err != nil {
 		return err
 	}
@@ -125,20 +125,20 @@ func (s *PostgresStorage) Store(ctx context.Context, inferenceId string, epochId
 	return nil
 }
 
-func (s *PostgresStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) (string, string, error) {
+func (s *PostgresStorage) Retrieve(ctx context.Context, inferenceId string, epochId uint64) ([]byte, []byte, error) {
 	query := `
 		SELECT prompt_payload, response_payload 
 		FROM inferences 
 		WHERE epoch_id = $1 AND inference_id = $2
 	`
 
-	var prompt, response string
+	var prompt, response []byte
 	err := s.pool.QueryRow(ctx, query, epochId, inferenceId).Scan(&prompt, &response)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", ErrNotFound
+			return nil, nil, ErrNotFound
 		}
-		return "", "", fmt.Errorf("query payload: %w", err)
+		return nil, nil, fmt.Errorf("query payload: %w", err)
 	}
 
 	return prompt, response, nil

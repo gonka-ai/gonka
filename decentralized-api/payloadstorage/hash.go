@@ -6,7 +6,7 @@ import (
 )
 
 // Matches getPromptHash in post_chat_handler.go
-func ComputePromptHash(promptPayload string) (string, error) {
+func ComputePromptHash(promptPayload []byte) (string, error) {
 	canonical, err := utils.CanonicalizeJSON([]byte(promptPayload))
 	if err != nil {
 		return "", err
@@ -15,11 +15,10 @@ func ComputePromptHash(promptPayload string) (string, error) {
 }
 
 // Hashes message content only, not full JSON
-func ComputeResponseHash(responsePayload string) (string, error) {
+func ComputeResponseHash(responsePayload []byte) (string, error) {
 	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
 	if err != nil {
 		return "", err
 	}
 	return resp.GetHash()
 }
-

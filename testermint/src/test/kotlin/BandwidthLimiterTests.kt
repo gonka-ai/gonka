@@ -171,5 +171,93 @@ class BandwidthLimiterTests : TestermintTest() {
 
         logSection("=== Bandwidth Limiter Test Completed Successfully ===")
     }
+
+    @Test
+    fun `inference count limiter rejects excess requests`() {
+        val inferenceCountSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::bandwidthLimitsParams] = spec<BandwidthLimitsParams> {
+                        this[BandwidthLimitsParams::estimatedLimitsPerBlockKb] = 100_000L // High KB limit
+                        this[BandwidthLimitsParams::maxInferencesPerBlock] = 5L // Low inference limit
+                    }
+                }
+            }
+        }
+
+        val inferenceCountConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(inferenceCountSpec) ?: inferenceCountSpec
+        )
+
+        val (cluster, genesis) = initCluster(reboot = true, config = inferenceCountConfig)
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
+        genesis.waitForNextInferenceWindow()
+
+        logSection("=== Testing Inference Count Limiter (5 per block) ===")
+
+        val testRequest = inferenceRequestObject.copy(
+            messages = listOf(ChatMessage("user", "Inference count test.")),
+            maxTokens = 10 // Small request to avoid bandwidth limit
+        )
+
+        logSection("1. Testing with single request (should succeed)")
+        try {
+            genesis.makeInferenceRequest(testRequest.toJson())
+            logSection("Single request succeeded")
+        } catch (e: Exception) {
+            logSection("Single request failed: ${e.message}")
+        }
+
+        logSection("2. Testing inference count limiting with parallel requests")
+        var successCount = 0
+        var rejectionCount = 0
+        var otherErrorCount = 0
+
+        val requests = (1..20).map { index ->
+            Thread {
+                try {
+                    val uniqueRequest = testRequest.copy(
+                        messages = listOf(ChatMessage("user", "Inference count test {$index}"))
+                    )
+                    genesis.makeInferenceRequest(uniqueRequest.toJson())
+                    synchronized(this) {
+                        successCount++
+                        logSection("Request $index: SUCCESS")
+                    }
+                } catch (e: FuelError) {
+                    val errorMessage = e.response.data.toString(Charsets.UTF_8)
+                    synchronized(this) {
+                        if (errorMessage.contains("Transfer Agent capacity reached") ||
+                            e.response.statusCode == 429) {
+                            rejectionCount++
+                            logSection("Request $index: REJECTED - $errorMessage")
+                        } else {
+                            otherErrorCount++
+                            logSection("Request $index: OTHER ERROR - $errorMessage")
+                        }
+                    }
+                } catch (e: Exception) {
+                    synchronized(this) {
+                        otherErrorCount++
+                        logSection("Request $index: EXCEPTION - ${e.message}")
+                    }
+                }
+            }
+        }
+
+        requests.forEach { it.start() }
+        requests.forEach { it.join() }
+
+        logSection("Results: $successCount successes, $rejectionCount rejections, $otherErrorCount other errors")
+
+        // With 5 inferences per block limit and 20 parallel requests, should reject many
+        assertThat(rejectionCount)
+            .describedAs("Inference count limiter should reject requests exceeding 5 per block")
+            .isGreaterThan(5)
+
+        logSection("Inference count limiter correctly rejected $rejectionCount out of 20 requests")
+
+        logSection("=== Inference Count Limiter Test Completed Successfully ===")
+    }
 }
 

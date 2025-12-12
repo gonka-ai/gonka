@@ -35,8 +35,8 @@ var payloadRetrievalClient = apiutils.NewHttpClient(30 * time.Second)
 // PayloadResponse matches the executor endpoint response
 type PayloadResponse struct {
 	InferenceId       string `json:"inference_id"`
-	PromptPayload     string `json:"prompt_payload"`
-	ResponsePayload   string `json:"response_payload"`
+	PromptPayload     []byte `json:"prompt_payload"`
+	ResponsePayload   []byte `json:"response_payload"`
 	ExecutorSignature string `json:"executor_signature"`
 }
 
@@ -48,28 +48,28 @@ func RetrievePayloadsFromExecutor(
 	executorAddress string,
 	epochId uint64,
 	recorder cosmosclient.CosmosMessageClient,
-) (promptPayload, responsePayload string, err error) {
+) (promptPayload, responsePayload []byte, err error) {
 	queryClient := recorder.NewInferenceQueryClient()
 	participantResp, err := queryClient.Participant(ctx, &types.QueryGetParticipantRequest{
 		Index: executorAddress,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get executor participant: %w", err)
+		return nil, nil, fmt.Errorf("failed to get executor participant: %w", err)
 	}
 
 	executorUrl := participantResp.Participant.InferenceUrl
 	if executorUrl == "" {
-		return "", "", fmt.Errorf("executor has no inference URL")
+		return nil, nil, fmt.Errorf("executor has no inference URL")
 	}
 
 	// Build URL with inference_id as query parameter
 	baseUrl, err := url.JoinPath(executorUrl, "v1/inference/payloads")
 	if err != nil {
-		return "", "", fmt.Errorf("failed to build base URL: %w", err)
+		return nil, nil, fmt.Errorf("failed to build base URL: %w", err)
 	}
 	parsedUrl, err := url.Parse(baseUrl)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to parse base URL: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse base URL: %w", err)
 	}
 	query := parsedUrl.Query()
 	query.Set("inference_id", inferenceId)
@@ -81,12 +81,12 @@ func RetrievePayloadsFromExecutor(
 
 	signature, err := signPayloadRequest(inferenceId, timestamp, validatorAddress, recorder)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to sign request: %w", err)
+		return nil, nil, fmt.Errorf("failed to sign request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestUrl, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set(apiutils.XValidatorAddressHeader, validatorAddress)
@@ -96,21 +96,21 @@ func RetrievePayloadsFromExecutor(
 
 	resp, err := payloadRetrievalClient.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("request failed: %w", err)
+		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return "", "", fmt.Errorf("payload not found on executor")
+		return nil, nil, fmt.Errorf("payload not found on executor")
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("executor returned status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var payloadResp PayloadResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payloadResp); err != nil {
-		return "", "", fmt.Errorf("failed to decode response: %w", err)
+		return nil, nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Verify executor signature - invalid signature triggers retry (could be network issue)
@@ -119,7 +119,7 @@ func RetrievePayloadsFromExecutor(
 		MessageTypeUrl: "/inference.inference.MsgStartInference",
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get executor grantees: %w", err)
+		return nil, nil, fmt.Errorf("failed to get executor grantees: %w", err)
 	}
 	executorPubkeys := make([]string, 0, len(grantees.Grantees)+1)
 	for _, g := range grantees.Grantees {
@@ -130,7 +130,7 @@ func RetrievePayloadsFromExecutor(
 		Address: executorAddress,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get executor pubkey: %w", err)
+		return nil, nil, fmt.Errorf("failed to get executor pubkey: %w", err)
 	}
 	executorPubkeys = append(executorPubkeys, executorParticipant.Pubkey)
 
@@ -144,7 +144,7 @@ func RetrievePayloadsFromExecutor(
 	); err != nil {
 		// Signature invalid - could be network issue, corrupted data, etc.
 		// Return error to trigger retry
-		return "", "", fmt.Errorf("executor signature verification failed: %w", err)
+		return nil, nil, fmt.Errorf("executor signature verification failed: %w", err)
 	}
 
 	logging.Debug("Executor signature verified successfully", types.Validation,
@@ -153,7 +153,7 @@ func RetrievePayloadsFromExecutor(
 	// Verify hashes match on-chain commitment - hash mismatch = immediate invalidation (no retry)
 	inference, err := queryClient.Inference(ctx, &types.QueryGetInferenceRequest{Index: inferenceId})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get inference from chain: %w", err)
+		return nil, nil, fmt.Errorf("failed to get inference from chain: %w", err)
 	}
 
 	// Check prompt hash
@@ -165,7 +165,7 @@ func RetrievePayloadsFromExecutor(
 			// TODO: Phase 7 - use executor's signed proof for fast invalidation
 			logging.Error("Failed to compute prompt hash, executor served malformed payload", types.Validation,
 				"inferenceId", inferenceId, "error", err)
-			return "", "", ErrHashMismatch
+			return nil, nil, ErrHashMismatch
 		}
 		if actualPromptHash != inference.Inference.PromptHash {
 			// Hash mismatch - executor signed wrong payload - immediate invalidation
@@ -174,7 +174,7 @@ func RetrievePayloadsFromExecutor(
 				"inferenceId", inferenceId,
 				"expectedHash", inference.Inference.PromptHash,
 				"actualHash", actualPromptHash)
-			return "", "", ErrHashMismatch
+			return nil, nil, ErrHashMismatch
 		}
 	}
 
@@ -187,7 +187,7 @@ func RetrievePayloadsFromExecutor(
 			// TODO: Phase 7 - use executor's signed proof for fast invalidation
 			logging.Error("Failed to compute response hash, executor served malformed payload", types.Validation,
 				"inferenceId", inferenceId, "error", err)
-			return "", "", ErrHashMismatch
+			return nil, nil, ErrHashMismatch
 		}
 		if actualResponseHash != inference.Inference.ResponseHash {
 			// Hash mismatch - executor signed wrong payload - immediate invalidation
@@ -196,7 +196,7 @@ func RetrievePayloadsFromExecutor(
 				"inferenceId", inferenceId,
 				"expectedHash", inference.Inference.ResponseHash,
 				"actualHash", actualResponseHash)
-			return "", "", ErrHashMismatch
+			return nil, nil, ErrHashMismatch
 		}
 	}
 
@@ -213,17 +213,18 @@ func retrievePayloadsFromChain(
 	ctx context.Context,
 	inferenceId string,
 	recorder cosmosclient.CosmosMessageClient,
-) (promptPayload, responsePayload string, err error) {
+) (promptPayload, responsePayload []byte, err error) {
 	logging.Warn("Using DEPRECATED chain payload retrieval", types.Validation,
 		"inferenceId", inferenceId)
 
 	queryClient := recorder.NewInferenceQueryClient()
 	response, err := queryClient.Inference(ctx, &types.QueryGetInferenceRequest{Index: inferenceId})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to query inference: %w", err)
+		return nil, nil, fmt.Errorf("failed to query inference: %w", err)
 	}
 
-	return response.Inference.PromptPayload, response.Inference.ResponsePayload, nil
+	// Before off-chain, we simply used the unsafe conversion
+	return []byte(response.Inference.PromptPayload), []byte(response.Inference.ResponsePayload), nil
 }
 
 // signPayloadRequest signs the payload retrieval request with validator's key
@@ -259,8 +260,8 @@ func signPayloadRequest(
 // Executor signs: inferenceId + promptHash + responseHash (with timestamp=0)
 func verifyExecutorPayloadSignature(
 	inferenceId string,
-	promptPayload string,
-	responsePayload string,
+	promptPayload []byte,
+	responsePayload []byte,
 	signature string,
 	executorAddress string,
 	executorPubkeys []string,
@@ -269,8 +270,8 @@ func verifyExecutorPayloadSignature(
 		return fmt.Errorf("executor signature is empty")
 	}
 
-	promptHash := apiutils.GenerateSHA256Hash(promptPayload)
-	responseHash := apiutils.GenerateSHA256Hash(responsePayload)
+	promptHash := apiutils.GenerateSHA256HashBytes(promptPayload)
+	responseHash := apiutils.GenerateSHA256HashBytes(responsePayload)
 	payload := inferenceId + promptHash + responseHash
 
 	components := calculations.SignatureComponents{

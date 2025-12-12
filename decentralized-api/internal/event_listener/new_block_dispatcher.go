@@ -194,12 +194,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					EstimatedLimitsPerBlockKb: params.Params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
 					KbPerInputToken:           params.Params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
 					KbPerOutputToken:          params.Params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
+					MaxInferencesPerBlock:     params.Params.BandwidthLimitsParams.MaxInferencesPerBlock,
 				}
 
 				logging.Debug("Updated bandwidth parameters from chain", types.Config,
 					"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
 					"kbPerInputToken", bandwidthParams.KbPerInputToken,
-					"kbPerOutputToken", bandwidthParams.KbPerOutputToken)
+					"kbPerOutputToken", bandwidthParams.KbPerOutputToken,
+					"maxInferencesPerBlock", bandwidthParams.MaxInferencesPerBlock)
 
 				err = d.configManager.SetBandwidthParams(bandwidthParams)
 				if err != nil {
