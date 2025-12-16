@@ -1,5 +1,95 @@
 package admin
 
-type OnboardingStateManager struct{}
+import (
+	"decentralized-api/chainphase"
+)
 
-func NewOnboardingStateManager() *OnboardingStateManager { return &OnboardingStateManager{} }
+type MLNodeOnboardingState string
+
+const (
+	MLNodeState_WAITING_FOR_POC MLNodeOnboardingState = "WAITING_FOR_POC"
+	MLNodeState_TESTING         MLNodeOnboardingState = "TESTING"
+	MLNodeState_TEST_FAILED     MLNodeOnboardingState = "TEST_FAILED"
+)
+
+type ParticipantState string
+
+const (
+	ParticipantState_INACTIVE_WAITING     ParticipantState = "INACTIVE_WAITING"
+	ParticipantState_ACTIVE_PARTICIPATING ParticipantState = "ACTIVE_PARTICIPATING"
+)
+
+type OnboardingStateManager struct {
+	timing            *TimingCalculator
+	blockTimeSeconds  float64
+	alertLeadSeconds  int64
+	safeOfflineMinSec int64
+}
+
+func NewOnboardingStateManager() *OnboardingStateManager {
+	return &OnboardingStateManager{
+		timing:            NewTimingCalculator(),
+		blockTimeSeconds:  6.0,
+		alertLeadSeconds:  600,
+		safeOfflineMinSec: 600,
+	}
+}
+
+func (m *OnboardingStateManager) MLNodeStatus(es *chainphase.EpochState, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
+	if testFailed {
+		return MLNodeState_TEST_FAILED, "Validation testing failed", true
+	}
+	if isTesting {
+		return MLNodeState_TESTING, "Running pre-PoC validation testing", true
+	}
+	c := m.timing.Countdown(es, m.blockTimeSeconds, m.alertLeadSeconds)
+	if c.ShouldBeOnline {
+		return MLNodeState_WAITING_FOR_POC, "PoC starting soon (in " + formatShortDuration(c.NextPoCSeconds) + ") - MLnode must be online now", true
+	}
+	return MLNodeState_WAITING_FOR_POC, "Waiting for next PoC cycle (starts in " + formatShortDuration(c.NextPoCSeconds) + ") - you can safely turn off the server and restart it 10 minutes before PoC", false
+}
+
+func (m *OnboardingStateManager) ParticipantStatus(isActive bool) ParticipantState {
+	if isActive {
+		return ParticipantState_ACTIVE_PARTICIPATING
+	}
+	return ParticipantState_INACTIVE_WAITING
+}
+
+func formatShortDuration(seconds int64) string {
+	if seconds <= 0 {
+		return "0s"
+	}
+	h := seconds / 3600
+	m := (seconds % 3600) / 60
+	s := seconds % 60
+	if h > 0 && m > 0 {
+		return itoa(h) + "h " + itoa(m) + "m"
+	}
+	if h > 0 {
+		return itoa(h) + "h"
+	}
+	if m > 0 && s > 0 {
+		return itoa(m) + "m " + itoa(s) + "s"
+	}
+	if m > 0 {
+		return itoa(m) + "m"
+	}
+	return itoa(s) + "s"
+}
+
+func itoa(v int64) string {
+	return fmtInt(v)
+}
+
+func fmtInt(v int64) string {
+	var buf [20]byte
+	i := len(buf)
+	n := v
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
