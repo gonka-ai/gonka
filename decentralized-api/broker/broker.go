@@ -440,6 +440,8 @@ func (b *Broker) executeCommand(command Command) {
 		command.Execute(b)
 	case UpdateNodeResultCommand:
 		command.Execute(b)
+	case SetNodeFailureReasonCommand:
+		command.Execute(b)
 	default:
 		logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 	}
@@ -459,6 +461,8 @@ func (b *Broker) QueueMessage(command Command) error {
 
 	switch command.(type) {
 	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, StartTrainingCommand, LockNodesForTrainingCommand, SyncNodesCommand:
+		b.highPriorityCommands <- command
+	case SetNodeFailureReasonCommand:
 		b.highPriorityCommands <- command
 	default:
 		b.lowPriorityCommands <- command

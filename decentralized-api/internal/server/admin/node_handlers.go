@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/logging"
@@ -217,7 +218,72 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to save node configuration: %v", err))
 	}
 
+	// Auto-test trigger: run pre-PoC validation if timing allows (>1h until next PoC)
+	// Fetch timing info from broker
+	getCmd := broker.NewGetNodesCommand()
+	if err := s.nodeBroker.QueueMessage(getCmd); err == nil {
+		responses := <-getCmd.Response
+		var secs int64
+		for _, resp := range responses {
+			if resp.Node.Id == newNode.Id && resp.State.Timing != nil {
+				secs = resp.State.Timing.SecondsUntilNextPoC
+				break
+			}
+		}
+		if s.tester.ShouldAutoTest(secs) {
+			s.statusReporter.LogTesting("Auto-testing MLnode configuration")
+			result := s.tester.RunNodeTest(context.Background(), *node)
+			if result != nil {
+				if result.Status == TestFailed {
+					cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, result.Error)
+					_ = s.nodeBroker.QueueMessage(cmd)
+				} else {
+					// Clear any previous failure reason on success
+					cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, "")
+					_ = s.nodeBroker.QueueMessage(cmd)
+				}
+				s.latestTestResults[newNode.Id] = result
+			}
+		}
+	}
+
 	return *node, nil
+}
+
+// postNodeTest triggers a manual MLnode validation test for a specific node
+func (s *Server) postNodeTest(ctx echo.Context) error {
+	nodeId := ctx.Param("id")
+	if nodeId == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "node id is required")
+	}
+
+	// Find node config by id
+	var cfgNode *apiconfig.InferenceNodeConfig
+	nodes := s.configManager.GetNodes()
+	for i := range nodes {
+		if nodes[i].Id == nodeId {
+			cfgNode = &nodes[i]
+			break
+		}
+	}
+	if cfgNode == nil {
+		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("node not found: %s", nodeId))
+	}
+
+	// Run test immediately (manual trigger ignores timing window)
+	result := s.tester.RunNodeTest(context.Background(), *cfgNode)
+	if result != nil {
+		if result.Status == TestFailed {
+			cmd := broker.NewSetNodeFailureReasonCommand(nodeId, result.Error)
+			_ = s.nodeBroker.QueueMessage(cmd)
+		} else {
+			cmd := broker.NewSetNodeFailureReasonCommand(nodeId, "")
+			_ = s.nodeBroker.QueueMessage(cmd)
+		}
+		s.latestTestResults[nodeId] = result
+	}
+
+	return ctx.JSON(http.StatusOK, result)
 }
 
 // enableNode handles POST /admin/v1/nodes/:id/enable

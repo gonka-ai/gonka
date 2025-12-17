@@ -1,9 +1,11 @@
 package admin
 
 import (
-	"net/http"
+    "context"
+    "net/http"
 
-	"github.com/labstack/echo/v4"
+    "decentralized-api/broker"
+    "github.com/labstack/echo/v4"
 )
 
 func (s *Server) getUpgradeStatus(c echo.Context) error {
@@ -30,6 +32,32 @@ func (s *Server) postVersionStatus(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Version field is required")
 	}
 
-	reports := s.nodeBroker.CheckVersionHealth(req.Version)
-	return c.JSON(http.StatusOK, reports)
+    reports := s.nodeBroker.CheckVersionHealth(req.Version)
+
+    // Auto-test trigger on version status check when timing allows
+    getCmd := broker.NewGetNodesCommand()
+    if err := s.nodeBroker.QueueMessage(getCmd); err == nil {
+        responses := <-getCmd.Response
+        for _, resp := range responses {
+            var secs int64
+            if resp.State.Timing != nil {
+                secs = resp.State.Timing.SecondsUntilNextPoC
+            }
+            if s.tester.ShouldAutoTest(secs) {
+                result := s.tester.RunNodeTest(context.Background(), resp.Node)
+                if result != nil {
+                    if result.Status == TestFailed {
+                        cmd := broker.NewSetNodeFailureReasonCommand(resp.Node.Id, result.Error)
+                        _ = s.nodeBroker.QueueMessage(cmd)
+                    } else {
+                        cmd := broker.NewSetNodeFailureReasonCommand(resp.Node.Id, "")
+                        _ = s.nodeBroker.QueueMessage(cmd)
+                    }
+                    s.latestTestResults[resp.Node.Id] = result
+                }
+            }
+        }
+    }
+
+    return c.JSON(http.StatusOK, reports)
 }

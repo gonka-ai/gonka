@@ -33,6 +33,11 @@ type Server struct {
 	cdc            *codec.ProtoCodec
 	blockQueue     *pserver.BridgeQueue
 	payloadStorage payloadstorage.PayloadStorage
+
+	onboarding        *OnboardingStateManager
+	statusReporter    *StatusReporter
+	tester            *MLnodeTestingOrchestrator
+	latestTestResults map[string]*TestResult
 }
 
 func NewServer(
@@ -47,14 +52,18 @@ func NewServer(
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		validator:      validator,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:                 e,
+		nodeBroker:        nodeBroker,
+		configManager:     configManager,
+		recorder:          recorder,
+		validator:         validator,
+		cdc:               cdc,
+		blockQueue:        blockQueue,
+		payloadStorage:    payloadStorage,
+		onboarding:        NewOnboardingStateManager(),
+		statusReporter:    NewStatusReporter(),
+		tester:            NewMLnodeTestingOrchestrator(configManager),
+		latestTestResults: map[string]*TestResult{},
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -66,6 +75,8 @@ func NewServer(
 	g.PUT("nodes/:id", s.createNewNode)
 	g.GET("nodes/upgrade-status", s.getUpgradeStatus)
 	g.POST("nodes/version-status", s.postVersionStatus)
+	// Manual MLnode validation test
+	g.POST("nodes/:id/test", s.postNodeTest)
 	g.GET("nodes", s.getNodes)
 	g.DELETE("nodes/:id", s.deleteNode)
 	g.POST("nodes/:id/enable", s.enableNode)
