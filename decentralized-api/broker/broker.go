@@ -208,6 +208,13 @@ type NodeState struct {
 	// Epoch-specific data, populated from the chain
 	EpochModels  map[string]types.Model      `json:"epoch_models"`
 	EpochMLNodes map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
+
+	Timing *TimingInfo `json:"timing,omitempty"`
+
+	UserMessage           string `json:"user_message,omitempty"`
+	Guidance              string `json:"guidance,omitempty"`
+	ParticipantState      string `json:"participant_state,omitempty"`
+	MLNodeOnboardingState string `json:"mlnode_state,omitempty"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -301,6 +308,13 @@ func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase
 type NodeResponse struct {
 	Node  Node      `json:"node"`
 	State NodeState `json:"state"`
+}
+
+type TimingInfo struct {
+	CurrentPhase        string `json:"current_phase"`
+	BlocksUntilNextPoC  int64  `json:"blocks_until_next_poc"`
+	SecondsUntilNextPoC int64  `json:"seconds_until_next_poc"`
+	ShouldBeOnline      bool   `json:"should_be_online"`
 }
 
 func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory, configManager *apiconfig.ConfigManager) *Broker {

@@ -17,6 +17,39 @@ func (s *Server) getNodes(ctx echo.Context) error {
 		logging.Error("Error getting nodes", types.Nodes, "error", err)
 		return err
 	}
+	osm := NewOnboardingStateManager()
+	sr := NewStatusReporter()
+
+	for i := range nodes {
+		state := &nodes[i].State
+		participantActive := len(state.EpochMLNodes) > 0
+		pstate := osm.ParticipantStatus(participantActive)
+		state.ParticipantState = string(pstate)
+
+		var secs int64
+		if state.Timing != nil {
+			secs = state.Timing.SecondsUntilNextPoC
+			sr.LogTimingGuidance(secs)
+		}
+
+		isTesting := false
+		testFailed := state.FailureReason != ""
+		mlnodeState, _, _ := osm.MLNodeStatusSimple(secs, isTesting, testFailed)
+		mlnodeMsg := sr.BuildMLNodeMessage(mlnodeState, secs, "")
+
+		state.MLNodeOnboardingState = string(mlnodeState)
+		state.UserMessage = mlnodeMsg
+
+		if sr.ShouldSuppressNoModelMessage(participantActive) {
+			state.Guidance = sr.BuildParticipantMessage(pstate)
+		} else {
+			guidance := sr.BuildNoModelGuidance(secs)
+			if guidance != "" {
+				state.Guidance = guidance
+			}
+		}
+	}
+
 	return ctx.JSON(http.StatusOK, nodes)
 }
 

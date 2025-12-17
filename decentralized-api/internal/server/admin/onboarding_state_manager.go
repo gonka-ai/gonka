@@ -56,6 +56,19 @@ func (m *OnboardingStateManager) ParticipantStatus(isActive bool) ParticipantSta
 	return ParticipantState_INACTIVE_WAITING
 }
 
+func (m *OnboardingStateManager) MLNodeStatusSimple(secondsUntilNextPoC int64, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
+	if testFailed {
+		return MLNodeState_TEST_FAILED, "Validation testing failed", true
+	}
+	if isTesting {
+		return MLNodeState_TESTING, "Running pre-PoC validation testing", true
+	}
+	if secondsUntilNextPoC <= m.alertLeadSeconds {
+		return MLNodeState_WAITING_FOR_POC, "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) + ") - MLnode must be online now", true
+	}
+	return MLNodeState_WAITING_FOR_POC, "Waiting for next PoC cycle (starts in " + formatShortDuration(secondsUntilNextPoC) + ") - you can safely turn off the server and restart it 10 minutes before PoC", false
+}
+
 func formatShortDuration(seconds int64) string {
 	if seconds <= 0 {
 		return "0s"
