@@ -48,7 +48,7 @@ func (r *StatusReporter) BuildNoModelGuidance(secondsUntilNextPoC int64) string 
 	if secondsUntilNextPoC > 3600 {
 		return "MLnode will be tested automatically when there is more than 1 hour until next PoC"
 	}
-	return ""
+	return "" //todofhq...
 }
 
 func (r *StatusReporter) LogOnboardingTransition(prev MLNodeOnboardingState, next MLNodeOnboardingState) {
@@ -65,42 +65,4 @@ func (r *StatusReporter) LogParticipantStatusChange(prev ParticipantState, next 
 
 func (r *StatusReporter) LogTimingGuidance(secondsUntilNextPoC int64) {
 	logging.Info("Timing guidance", types.Nodes, "seconds_until_next_poc", secondsUntilNextPoC)
-}
-
-func formatShortDuration(seconds int64) string {
-	if seconds <= 0 {
-		return "0s"
-	}
-	h := seconds / 3600
-	m := (seconds % 3600) / 60
-	s := seconds % 60
-	if h > 0 && m > 0 {
-		return itoa(h) + "h " + itoa(m) + "m"
-	}
-	if h > 0 {
-		return itoa(h) + "h"
-	}
-	if m > 0 && s > 0 {
-		return itoa(m) + "m " + itoa(s) + "s"
-	}
-	if m > 0 {
-		return itoa(m) + "m"
-	}
-	return itoa(s) + "s"
-}
-
-func itoa(v int64) string {
-	return fmtInt(v)
-}
-
-func fmtInt(v int64) string {
-	var buf [20]byte
-	i := len(buf)
-	n := v
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
