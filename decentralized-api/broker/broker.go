@@ -107,22 +107,23 @@ func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) 
 }
 
 type Broker struct {
-	highPriorityCommands chan Command
-	lowPriorityCommands  chan Command
-	nodes                map[string]*NodeWithState
-	mu                   sync.RWMutex
-	curMaxNodesNum       atomic.Uint64
-	chainBridge          BrokerChainBridge
-	nodeWorkGroup        *NodeWorkGroup
-	phaseTracker         *chainphase.ChainPhaseTracker
-	participantInfo      participant.CurrenParticipantInfo
-	callbackUrl          string
-	mlNodeClientFactory  mlnodeclient.ClientFactory
-	reconcileTrigger     chan struct{}
-	lastEpochIndex       uint64
-	lastEpochPhase       types.EpochPhase
-	statusQueryTrigger   chan statusQuerySignal
-	configManager        *apiconfig.ConfigManager
+	highPriorityCommands  chan Command
+	lowPriorityCommands   chan Command
+	nodes                 map[string]*NodeWithState
+	mu                    sync.RWMutex
+	curMaxNodesNum        atomic.Uint64
+	chainBridge           BrokerChainBridge
+	nodeWorkGroup         *NodeWorkGroup
+	phaseTracker          *chainphase.ChainPhaseTracker
+	participantInfo       participant.CurrenParticipantInfo
+	callbackUrl           string
+	mlNodeClientFactory   mlnodeclient.ClientFactory
+	reconcileTrigger      chan struct{}
+	lastEpochIndex        uint64
+	lastEpochPhase        types.EpochPhase
+	lastParticipantWeight int64
+	statusQueryTrigger    chan statusQuerySignal
+	configManager         *apiconfig.ConfigManager
 }
 
 // GetParticipantAddress returns the current participant's address if available.
@@ -215,6 +216,7 @@ type NodeState struct {
 	Guidance              string `json:"guidance,omitempty"`
 	ParticipantState      string `json:"participant_state,omitempty"`
 	MLNodeOnboardingState string `json:"mlnode_state,omitempty"`
+	ParticipantWeight     int64  `json:"participant_weight,omitempty"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -341,6 +343,18 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	// go nodeReconciliationWorker(broker)
 	go nodeStatusQueryWorker(broker)
 	go broker.reconcilerLoop()
+
+	// Startup: try to populate epoch data once chain is synced to expose participant status early
+	go func() {
+		for i := 0; i < 10; i++ {
+			es := broker.phaseTracker.GetCurrentEpochState()
+			if es != nil && es.IsSynced {
+				_ = broker.UpdateNodeWithEpochData(es)
+				return
+			}
+			time.Sleep(1 * time.Second)
+		}
+	}()
 	return broker
 }
 
@@ -1464,6 +1478,9 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	parentEpochData := parentGroupResp.GetEpochGroupData()
 
+	// Calculate current participant weight by scanning validation weights across subgroups
+	currentWeight := int64(0)
+
 	b.clearNodeEpochData()
 
 	// 2. Track which nodes are found in epoch data
@@ -1491,6 +1508,12 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		for _, weightInfo := range subgroup.ValidationWeights {
 			// Check if the participant is the one this broker is managing
 			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+				// Track participant weight (use ConfirmationWeight if present, else Weight)
+				w := weightInfo.ConfirmationWeight
+				if w == 0 {
+					w = weightInfo.Weight
+				}
+				currentWeight += w
 				// 5. Iterate through the ML nodes for this participant in the epoch data
 				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
 				// Mark these nodes as found in epoch
@@ -1500,6 +1523,19 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 			}
 		}
 	}
+
+	// If participant weight changed, log and update cached weight
+	if currentWeight != b.lastParticipantWeight {
+		logging.Info("Participant weight changed", types.Participants, "old", b.lastParticipantWeight, "new", currentWeight, "epoch", epochState.LatestEpoch.EpochIndex)
+		b.lastParticipantWeight = currentWeight
+	}
+
+	// Store participant weight on each node state for visibility in admin APIs
+	b.mu.Lock()
+	for _, node := range b.nodes {
+		node.State.ParticipantWeight = currentWeight
+	}
+	b.mu.Unlock()
 
 	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
 	b.mu.RLock()
