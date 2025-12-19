@@ -16,7 +16,7 @@ import (
 // Test Summary Generation
 
 func TestGenerateSummary_AllPass(t *testing.T) {
-	s, _, _ := setupTestServer(t)
+    s, _, _, _ := setupTestServer(t)
 
 	report := &SetupReport{
 		Checks: []Check{
@@ -38,7 +38,7 @@ func TestGenerateSummary_AllPass(t *testing.T) {
 }
 
 func TestGenerateSummary_WithFailures(t *testing.T) {
-	s, _, _ := setupTestServer(t)
+    s, _, _, _ := setupTestServer(t)
 
 	report := &SetupReport{
 		Checks: []Check{
@@ -62,7 +62,7 @@ func TestGenerateSummary_WithFailures(t *testing.T) {
 }
 
 func TestGenerateSummary_WithUnavailable(t *testing.T) {
-	s, _, _ := setupTestServer(t)
+    s, _, _, _ := setupTestServer(t)
 
 	report := &SetupReport{
 		Checks: []Check{
@@ -84,7 +84,7 @@ func TestGenerateSummary_WithUnavailable(t *testing.T) {
 }
 
 func TestGenerateSummary_MLNodeWithNoGPUs(t *testing.T) {
-	s, _, _ := setupTestServer(t)
+    s, _, _, _ := setupTestServer(t)
 
 	report := &SetupReport{
 		Checks: []Check{
@@ -112,7 +112,7 @@ func TestGenerateSummary_MLNodeWithNoGPUs(t *testing.T) {
 }
 
 func TestGenerateSummary_MLNodeWithUnavailableGPU(t *testing.T) {
-	s, _, _ := setupTestServer(t)
+    s, _, _, _ := setupTestServer(t)
 
 	report := &SetupReport{
 		Checks: []Check{

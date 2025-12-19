@@ -60,10 +60,9 @@ func (m *mockInferenceQueryClient) EpochGroupData(ctx context.Context, in *types
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
-func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodeclient.MockClientFactory) {
+func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodeclient.MockClientFactory, *chainphase.ChainPhaseTracker) {
 	// Disable model enforcement in tests
 	os.Setenv("ENFORCED_MODEL_ID", "disabled")
-
 	// 1. Config Manager
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
 	assert.NoError(t, err)
@@ -108,6 +107,18 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 		EpochIndex: 100,
 		ModelId:    "",
 	}).Return(parentGroupResp, nil)
+	// Also mock for next epoch (index 101)
+	parentGroupRespNext := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 200,
+			EpochIndex:          101,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}
+	mockQueryClient.On("EpochGroupData", mock.Anything, &types.QueryGetEpochGroupDataRequest{
+		EpochIndex: 101,
+		ModelId:    "",
+	}).Return(parentGroupRespNext, nil)
 
 	// Mock epoch group data for specific model
 	modelEpochData := &types.QueryGetEpochGroupDataResponse{
@@ -115,12 +126,44 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 			PocStartBlockHeight: 100,
 			EpochIndex:          100,
 			ModelSnapshot:       &types.Model{Id: "test-model"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "test-participant",
+					ConfirmationWeight: 123,
+					Weight:             123,
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-1"},
+					},
+				},
+			},
 		},
 	}
 	mockQueryClient.On("EpochGroupData", mock.Anything, &types.QueryGetEpochGroupDataRequest{
 		EpochIndex: 100,
 		ModelId:    "test-model",
 	}).Return(modelEpochData, nil)
+	// Mock for next epoch (index 101)
+	modelEpochDataNext := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 200,
+			EpochIndex:          101,
+			ModelSnapshot:       &types.Model{Id: "test-model"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "test-participant",
+					ConfirmationWeight: 123,
+					Weight:             123,
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-1"},
+					},
+				},
+			},
+		},
+	}
+	mockQueryClient.On("EpochGroupData", mock.Anything, &types.QueryGetEpochGroupDataRequest{
+		EpochIndex: 101,
+		ModelId:    "test-model",
+	}).Return(modelEpochDataNext, nil)
 
 	// 3. PhaseTracker
 	phaseTracker := &chainphase.ChainPhaseTracker{}
@@ -138,11 +181,11 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 	// 5. Server
 	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil, nil)
 
-	return s, configManager, mockClientFactory
+	return s, configManager, mockClientFactory, phaseTracker
 }
 
 func TestGetUpgradeStatus(t *testing.T) {
-	s, configManager, _ := setupTestServer(t)
+	s, configManager, _, _ := setupTestServer(t)
 
 	t.Run("no upgrade plan", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/admin/v1/nodes/upgrade-status", nil)
@@ -168,7 +211,7 @@ func TestGetUpgradeStatus(t *testing.T) {
 }
 
 func TestPostVersionStatus(t *testing.T) {
-	s, configManager, mockClientFactory := setupTestServer(t)
+	s, configManager, mockClientFactory, _ := setupTestServer(t)
 
 	nodeConfig := apiconfig.InferenceNodeConfig{
 		Id:               "node-1",
@@ -225,4 +268,95 @@ func TestPostVersionStatus(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
+}
+
+func TestAdminGetNodesIncludesOnboardingFields(t *testing.T) {
+	s, configManager, _, phaseTracker := setupTestServer(t)
+
+	nodeConfig := apiconfig.InferenceNodeConfig{
+		Id:               "node-1",
+		Host:             "localhost",
+		InferencePort:    8080,
+		InferenceSegment: "/api/v1",
+		PoCPort:          8081,
+		PoCSegment:       "/api/v1",
+		MaxConcurrent:    3,
+		Models: map[string]apiconfig.ModelConfig{
+			"test-model": {Args: []string{}},
+		},
+	}
+
+	nodes := configManager.GetNodes()
+	nodes = append(nodes, nodeConfig)
+	err := configManager.SetNodes(nodes)
+	assert.NoError(t, err)
+
+	respChan := s.nodeBroker.LoadNodeToBroker(&nodeConfig)
+	select {
+	case response := <-respChan:
+		if response.Error != nil || response.Node == nil {
+			t.Fatal("failed to register node - node validation failed")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for node to register")
+	}
+
+	// Ensure epoch data is applied after node registration
+	es := phaseTracker.GetCurrentEpochState()
+	assert.NotNil(t, es)
+	err = s.nodeBroker.UpdateNodeWithEpochData(es)
+	assert.NoError(t, err)
+
+	// Advance to next epoch to force an epoch change and ensure weight propagation
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 200, Hash: "hash-200"},
+		&types.Epoch{Index: 101, PocStartBlockHeight: 200},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+	es = phaseTracker.GetCurrentEpochState()
+	assert.NotNil(t, es)
+	err = s.nodeBroker.UpdateNodeWithEpochData(es)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/nodes", nil)
+	rec := httptest.NewRecorder()
+	s.e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var responses []map[string]interface{}
+	dec := json.NewDecoder(bytes.NewReader(rec.Body.Bytes()))
+	err = dec.Decode(&responses)
+	assert.NoError(t, err)
+
+	// Find node-1 and assert fields
+	var found map[string]interface{}
+	for i := range responses {
+		nodeObj, _ := responses[i]["node"].(map[string]interface{})
+		if nodeObj != nil && nodeObj["id"] == "node-1" {
+			found = responses[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("node-1 not found in admin response")
+	}
+
+	stateObj, _ := found["state"].(map[string]interface{})
+	if stateObj == nil {
+		t.Fatal("state missing for node-1")
+	}
+	// participant_state should be set and indicate active participation
+	assert.Equal(t, "ACTIVE_PARTICIPATING", stateObj["participant_state"])
+	// mlnode_state should be present (waiting for PoC given our timing)
+	assert.Equal(t, "WAITING_FOR_POC", stateObj["mlnode_state"])
+	// participant_weight should reflect mocked weight
+	assert.Equal(t, float64(123), stateObj["participant_weight"]) // JSON numbers decode to float64
+	// timing should be present with a positive countdown
+	timingObj, _ := stateObj["timing"].(map[string]interface{})
+	if assert.NotNil(t, timingObj) {
+		secs, _ := timingObj["seconds_until_next_poc"].(float64)
+		assert.GreaterOrEqual(t, int64(secs), int64(0))
+	}
 }
