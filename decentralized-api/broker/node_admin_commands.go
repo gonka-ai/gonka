@@ -172,49 +172,7 @@ func (c RegisterNode) Execute(b *Broker) {
 	c.Response <- NodeCommandResponse{Node: &c.Node, Error: nil}
 
 	// Auto-test: if more than 1 hour until next PoC, perform basic validation
-	go func(node Node) {
-		epochState := b.phaseTracker.GetCurrentEpochState()
-		if epochState == nil || !epochState.IsSynced {
-			return
-		}
-		blocks := epochState.LatestEpoch.NextPoCStart() - epochState.CurrentBlock.Height
-		if blocks < 0 {
-			blocks = 0
-		}
-		seconds := int64(float64(blocks) * 6.0)
-		if seconds <= 3600 {
-			return
-		}
-
-		version := b.configManager.GetCurrentNodeVersion()
-		client := b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		// Load each configured model
-		for modelId, cfg := range node.Models {
-			if err := client.InferenceUp(ctx, modelId, cfg.Args); err != nil {
-				logging.Error("RegisterNode. Auto-test model load failed", types.Nodes, "node_id", node.Id, "model", modelId, "error", err)
-				_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
-				return
-			}
-		}
-
-		ok, err := client.InferenceHealth(ctx)
-		if err != nil || !ok {
-			reason := "health_not_ok"
-			if err != nil {
-				reason = err.Error()
-			}
-			logging.Error("RegisterNode. Auto-test health check failed", types.Nodes, "node_id", node.Id, "error", reason)
-			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, reason))
-			return
-		}
-
-		// Clear failure reason on success
-		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))
-	}(node)
+	go b.autoTestNodeIfTimeAllows(node, "RegisterNode")
 }
 
 // UpdateNode updates an existing node's configuration while preserving runtime state
@@ -312,6 +270,9 @@ func (c UpdateNode) Execute(b *Broker) {
 
 	logging.Info("UpdateNode. Updated node configuration", types.Nodes, "node_id", c.Node.Id)
 	c.Response <- NodeCommandResponse{Node: &c.Node, Error: nil}
+
+	// Auto-test: if more than 1 hour until next PoC, perform basic validation after config changes
+	go b.autoTestNodeIfTimeAllows(updated, "UpdateNode")
 }
 
 type RemoveNode struct {
@@ -415,4 +376,50 @@ func (c UpdateNodeHardwareCommand) Execute(b *Broker) {
 	node.Node.Hardware = c.Hardware
 	logging.Info("Updated node hardware", types.Nodes, "node_id", c.NodeId, "hardware_count", len(c.Hardware))
 	c.Response <- nil
+}
+
+// autoTestNodeIfTimeAllows performs a basic validation test for a node when
+// there is more than 1 hour remaining until the next PoC. It loads each
+// configured model and checks inference health, updating the node failure
+// reason accordingly. The caller string is used for logging context.
+func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
+	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState == nil || !epochState.IsSynced {
+		return
+	}
+	blocks := epochState.LatestEpoch.NextPoCStart() - epochState.CurrentBlock.Height
+	if blocks < 0 {
+		blocks = 0
+	}
+	seconds := int64(float64(blocks) * 6.0)
+	if seconds <= 3600 {
+		return
+	}
+
+	version := b.configManager.GetCurrentNodeVersion()
+	client := b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for modelId, cfg := range node.Models {
+		if err := client.InferenceUp(ctx, modelId, cfg.Args); err != nil {
+			logging.Error(caller+". Auto-test model load failed", types.Nodes, "node_id", node.Id, "model", modelId, "error", err)
+			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
+			return
+		}
+	}
+
+	ok, err := client.InferenceHealth(ctx)
+	if err != nil || !ok {
+		reason := "health_not_ok"
+		if err != nil {
+			reason = err.Error()
+		}
+		logging.Error(caller+". Auto-test health check failed", types.Nodes, "node_id", node.Id, "error", reason)
+		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, reason))
+		return
+	}
+
+	_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))
 }
