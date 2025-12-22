@@ -48,6 +48,13 @@ func (s *Server) getNodes(ctx echo.Context) error {
 		state.MLNodeOnboardingState = string(mlnodeState)
 		state.UserMessage = userMsg
 		state.Guidance = sr.BuildParticipantMessage(pstate)
+
+		logging.Info("Admin getNodes state", types.Nodes,
+			"node_id", nodes[i].Node.Id,
+			"participant_state", state.ParticipantState,
+			"mlnode_state", state.MLNodeOnboardingState,
+			"user_message", state.UserMessage,
+			"guidance", state.Guidance)
 	}
 
 	return ctx.JSON(http.StatusOK, nodes)
