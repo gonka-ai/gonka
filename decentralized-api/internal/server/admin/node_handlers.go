@@ -35,20 +35,19 @@ func (s *Server) getNodes(ctx echo.Context) error {
 
 		isTesting := false
 		testFailed := state.FailureReason != ""
+		if !participantActive {
+			isTesting = false
+			testFailed = false
+		}
 		mlnodeState, _, _ := osm.MLNodeStatusSimple(secs, isTesting, testFailed)
-		mlnodeMsg := sr.BuildMLNodeMessage(mlnodeState, secs, "")
+		var userMsg string
+		if participantActive {
+			userMsg = sr.BuildMLNodeMessage(mlnodeState, secs, "")
+		}
 
 		state.MLNodeOnboardingState = string(mlnodeState)
-		state.UserMessage = mlnodeMsg
-
-		if sr.ShouldSuppressNoModelMessage(participantActive) {
-			state.Guidance = sr.BuildParticipantMessage(pstate)
-		} else {
-			guidance := sr.BuildNoModelGuidance(secs)
-			if guidance != "" {
-				state.Guidance = guidance
-			}
-		}
+		state.UserMessage = userMsg
+		state.Guidance = sr.BuildParticipantMessage(pstate)
 	}
 
 	return ctx.JSON(http.StatusOK, nodes)

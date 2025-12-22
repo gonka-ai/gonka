@@ -40,15 +40,11 @@ func (r *StatusReporter) BuildParticipantMessage(pstate ParticipantState) string
 	}
 }
 
-func (r *StatusReporter) ShouldSuppressNoModelMessage(participantActive bool) bool {
-	return !participantActive
-}
-
 func (r *StatusReporter) BuildNoModelGuidance(secondsUntilNextPoC int64) string {
 	if secondsUntilNextPoC > 3600 {
 		return "MLnode will be tested automatically when there is more than 1 hour until next PoC"
 	}
-	return "" //todofhq...
+	return ""
 }
 
 func (r *StatusReporter) LogOnboardingTransition(prev MLNodeOnboardingState, next MLNodeOnboardingState) {
