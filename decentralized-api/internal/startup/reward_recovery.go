@@ -5,8 +5,10 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/poc"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"sync/atomic"
 	"time"
 
 	"github.com/productscience/inference/api/inference/inference"
@@ -14,7 +16,7 @@ import (
 )
 
 const waitTimeBlocksFromLaunch = 60
-const waitBetweenAttempts = 100
+const waitBetweenAttempts = 1000
 
 func NewRewardRecoveryChecker(
 	phaseTracker *chainphase.ChainPhaseTracker,
@@ -35,6 +37,7 @@ func NewRewardRecoveryChecker(
 type RewardRecoveryChecker struct {
 	launchBlockHeight       int64
 	lastRecoveryBlockHeight int64
+	autoRecoveryRunning     atomic.Bool
 	phaseTracker            *chainphase.ChainPhaseTracker
 	recorder                *cosmosclient.InferenceCosmosClient
 	validator               *validation.InferenceValidator
@@ -73,6 +76,13 @@ func (c *RewardRecoveryChecker) RecoverIfNeeded(
 		return
 	}
 
+	if currentBlockHeight < (latestEpoch.ClaimMoney() + waitBetweenAttempts) {
+		logging.Debug("[AutoRewardRecovery] Waiting for claim money", types.Claims,
+			"currentBlockHeight", currentBlockHeight,
+			"claimMoney", latestEpoch.ClaimMoney())
+		return
+	}
+
 	if latestEpoch.GetCurrentPhase(currentBlockHeight) != types.InferencePhase {
 		logging.Debug("[AutoRewardRecovery] Not in inference phase", types.Claims,
 			"currentBlockHeight", currentBlockHeight,
@@ -81,6 +91,13 @@ func (c *RewardRecoveryChecker) RecoverIfNeeded(
 	}
 
 	c.lastRecoveryBlockHeight = currentBlockHeight
+
+	// Prevent overlapping auto-recoveries
+	if !c.autoRecoveryRunning.CompareAndSwap(false, true) {
+		logging.Debug("[AutoRewardRecovery] Skipping, previous recovery still running", types.Claims)
+		return
+	}
+
 	go func() {
 		c.AutoRewardRecovery()
 	}()
@@ -88,6 +105,8 @@ func (c *RewardRecoveryChecker) RecoverIfNeeded(
 
 // AutoRewardRecovery checks for unclaimed settle amounts and attempts to recover rewards on startup
 func (c *RewardRecoveryChecker) AutoRewardRecovery() {
+	defer c.autoRecoveryRunning.Store(false)
+
 	logging.Info("[AutoRewardRecovery] Starting automatic reward recovery check", types.Claims)
 
 	// Get participant address
@@ -105,6 +124,7 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 	settleAmountResp, err := queryClient.SettleAmount(ctx, &types.QueryGetSettleAmountRequest{
 		Participant: address,
 	})
+
 	if err != nil {
 		// This is expected if no settle amount exists
 		logging.Debug("[AutoRewardRecovery] No settle amount found for participant", types.Claims, "address", address, "error", err)
@@ -131,47 +151,45 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 		return
 	}
 
-	// Get the previous seed for this epoch
+	epochIndex := settleAmount.EpochIndex
 	previousSeed := c.configManager.GetPreviousSeed()
 
-	// Check if the settle amount epoch matches our stored epoch
-	if previousSeed.EpochIndex != settleAmount.EpochIndex {
-		logging.Warn("[AutoRewardRecovery] Settle amount epoch doesn't match stored previous seed epoch", types.Claims,
-			"settleAmountEpoch", settleAmount.EpochIndex,
-			"storedSeedEpoch", previousSeed.EpochIndex,
-			"address", address)
-
-		// We could still try with the settle amount epoch, but it's risky
-		// For now, let's be conservative and skip
-		return
-	}
-
-	// Check if we have a valid seed
-	if previousSeed.Seed == 0 {
-		logging.Warn("[AutoRewardRecovery] No valid seed available for reward recovery", types.Claims,
-			"epochIndex", settleAmount.EpochIndex,
-			"address", address)
-		return
+	var seedValue int64
+	if previousSeed.EpochIndex != epochIndex || previousSeed.Seed == 0 {
+		generatedSeed, err := poc.CreateSeedForEpoch(c.recorder, epochIndex)
+		if err != nil {
+			logging.Error("[AutoRewardRecovery] Failed to generate seed", types.Claims,
+				"epochIndex", epochIndex, "error", err)
+			return
+		}
+		seedValue = generatedSeed
+		logging.Info("[AutoRewardRecovery] Generated seed for epoch", types.Claims,
+			"epochIndex", epochIndex, "seed", seedValue,
+			"reason", map[bool]string{true: "epoch mismatch", false: "seed was zero"}[previousSeed.EpochIndex != epochIndex])
+	} else {
+		seedValue = previousSeed.Seed
+		logging.Info("[AutoRewardRecovery] Using stored seed", types.Claims,
+			"epochIndex", epochIndex, "seed", seedValue)
 	}
 
 	logging.Info("[AutoRewardRecovery] Attempting automatic reward recovery", types.Claims,
-		"epochIndex", settleAmount.EpochIndex,
-		"seed", previousSeed.Seed,
+		"epochIndex", epochIndex,
+		"seed", seedValue,
 		"totalAmount", totalAmount,
 		"address", address)
 
 	// Perform validation recovery using the same logic as the admin endpoint
-	missedInferences, err := c.validator.DetectMissedValidations(previousSeed.EpochIndex, previousSeed.Seed)
+	missedInferences, err := c.validator.DetectMissedValidations(epochIndex, seedValue)
 	if err != nil {
 		logging.Error("[AutoRewardRecovery] Failed to detect missed validations during startup", types.Claims,
-			"epochIndex", settleAmount.EpochIndex,
+			"epochIndex", epochIndex,
 			"error", err)
 		return
 	}
 
 	missedCount := len(missedInferences)
 	logging.Info("[AutoRewardRecovery] Startup recovery detected missed validations", types.Claims,
-		"epochIndex", settleAmount.EpochIndex,
+		"epochIndex", epochIndex,
 		"missedCount", missedCount,
 		"address", address)
 
@@ -180,14 +198,14 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 		recoveredCount, err := c.validator.ExecuteRecoveryValidations(missedInferences)
 		if err != nil {
 			logging.Error("[AutoRewardRecovery] Failed to execute recovery validations during startup", types.Claims,
-				"epochIndex", settleAmount.EpochIndex,
+				"epochIndex", epochIndex,
 				"missedCount", missedCount,
 				"error", err)
 			return
 		}
 
 		logging.Info("[AutoRewardRecovery] Startup recovery validations completed", types.Claims,
-			"epochIndex", settleAmount.EpochIndex,
+			"epochIndex", epochIndex,
 			"recoveredCount", recoveredCount,
 			"missedCount", missedCount,
 			"address", address)
@@ -195,7 +213,7 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 		// Wait for validations to be recorded on-chain
 		if recoveredCount > 0 {
 			logging.Info("[AutoRewardRecovery] Waiting for startup recovery validations to be recorded on-chain", types.Claims,
-				"epochIndex", settleAmount.EpochIndex,
+				"epochIndex", epochIndex,
 				"recoveredCount", recoveredCount)
 			c.validator.WaitForValidationsToBeRecorded()
 		}
@@ -203,25 +221,26 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 
 	// Attempt to claim rewards
 	err = c.recorder.ClaimRewards(&inference.MsgClaimRewards{
-		Seed:       previousSeed.Seed,
-		EpochIndex: previousSeed.EpochIndex,
+		Seed:       seedValue,
+		EpochIndex: epochIndex,
 	})
 	if err != nil {
 		logging.Error("[AutoRewardRecovery] Failed to claim rewards during startup recovery", types.Claims,
-			"epochIndex", settleAmount.EpochIndex,
+			"epochIndex", epochIndex,
 			"error", err)
 		return
 	}
 
-	// Mark as claimed to prevent duplicate attempts
-	err = c.configManager.MarkPreviousSeedClaimed()
-	if err != nil {
-		logging.Error("[AutoRewardRecovery] Failed to mark seed as claimed after successful recovery", types.Claims,
-			"epochIndex", settleAmount.EpochIndex,
-			"error", err)
+	if epochIndex == previousSeed.EpochIndex {
+		err = c.configManager.MarkPreviousSeedClaimed()
+		if err != nil {
+			logging.Error("[AutoRewardRecovery] Failed to mark seed as claimed after successful recovery", types.Claims,
+				"epochIndex", epochIndex,
+				"error", err)
+		}
 	}
 
 	logging.Info("[AutoRewardRecovery] Automatic reward recovery completed successfully", types.Claims,
-		"epochIndex", settleAmount.EpochIndex,
+		"epochIndex", epochIndex,
 		"address", address)
 }

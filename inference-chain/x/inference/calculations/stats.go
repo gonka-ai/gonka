@@ -2,125 +2,85 @@ package calculations
 
 import (
 	"errors"
-	"sort"
+
+	"github.com/shopspring/decimal"
 )
 
-// Threshold represents a critical value for a given sample size.
-type Threshold struct {
-	Total          int
-	CriticalMisses int
+var (
+	zero  = decimal.NewFromInt(0)
+	alpha = decimal.NewFromFloat(0.05)
+)
+
+// BinomialPValue computes P(X >= k) for X ~ Binomial(n, p0), one-sided "greater" test.
+func BinomialPValue(k, n int, p0 decimal.Decimal, prec int32) (decimal.Decimal, error) {
+	if k < 0 || n < 0 || k > n {
+		return zero, errors.New("invalid input: requires 0 <= k <= n")
+	}
+	if p0.LessThanOrEqual(zero) || p0.GreaterThanOrEqual(one) {
+		return zero, errors.New("p0 must be in (0, 1)")
+	}
+
+	if k == 0 {
+		return one, nil
+	}
+
+	q0 := one.Sub(p0)
+	prob := binomialPMF(k, n, p0, q0, prec)
+	sum := prob
+
+	ratio := p0.Div(q0)
+	for i := k; i < n; i++ {
+		factor := decimal.NewFromInt(int64(n - i)).Div(decimal.NewFromInt(int64(i + 1)))
+		prob = prob.Mul(factor).Mul(ratio)
+		sum = sum.Add(prob)
+	}
+
+	return sum.Round(prec), nil
 }
 
-// The values here correspond to p0=0.10 and alpha=0.05.
-var criticalValueTable = []Threshold{
-	{2, 2},
-	{3, 2},
-	{4, 2},
-	{5, 3},
-	{10, 4},
-	{20, 5},
-	{30, 7},
-	{40, 8},
-	{50, 10},
-	{60, 11},
-	{70, 12},
-	{80, 14},
-	{90, 15},
-	{100, 16},
-	{110, 17},
-	{120, 19},
-	{130, 20},
-	{140, 21},
-	{150, 22},
-	{160, 23},
-	{170, 25},
-	{180, 26},
-	{190, 27},
-	{200, 28},
-	{210, 29},
-	{220, 31},
-	{230, 32},
-	{240, 33},
-	{250, 34},
-	{260, 35},
-	{270, 36},
-	{280, 37},
-	{290, 39},
-	{300, 40},
-	{310, 41},
-	{320, 42},
-	{330, 43},
-	{340, 44},
-	{350, 45},
-	{360, 47},
-	{370, 48},
-	{380, 49},
-	{390, 50},
-	{400, 51},
-	{410, 52},
-	{420, 53},
-	{430, 54},
-	{440, 56},
-	{450, 57},
-	{460, 58},
-	{470, 59},
-	{480, 60},
-	{490, 61},
-	{500, 62},
-	{510, 63},
-	{520, 64},
-	{530, 66},
-	{540, 67},
-	{550, 68},
-	{560, 69},
-	{570, 70},
-	{580, 71},
-	{590, 72},
-	{600, 73},
-	{610, 74},
-	{620, 76},
-	{630, 77},
-	{640, 78},
-	{650, 79},
-	{660, 80},
-	{670, 81},
-	{680, 82},
-	{690, 83},
-	{700, 84},
-	{710, 85},
-	{720, 86},
-	{730, 88},
-	{740, 89},
-	{750, 90},
-	{760, 91},
-	{770, 92},
-	{780, 93},
-	{790, 94},
-	{800, 95},
-	{810, 96},
-	{820, 97},
-	{830, 98},
-	{840, 100},
-	{850, 101},
-	{860, 102},
-	{870, 103},
-	{880, 104},
-	{890, 105},
-	{900, 106},
-	{910, 107},
-	{920, 108},
-	{930, 109},
-	{940, 110},
-	{950, 111},
-	{960, 113},
-	{970, 114},
-	{980, 115},
-	{990, 116},
+// binomialPMF computes P(X = k) = C(n,k) * p^k * (1-p)^(n-k).
+func binomialPMF(k, n int, p, q decimal.Decimal, prec int32) decimal.Decimal {
+	if k == 0 {
+		return pow(q, n, prec)
+	}
+	if k == n {
+		return pow(p, n, prec)
+	}
+
+	coeff := one
+	for i := 0; i < k; i++ {
+		coeff = coeff.Mul(decimal.NewFromInt(int64(n - i))).Div(decimal.NewFromInt(int64(i + 1)))
+	}
+
+	pPowK := pow(p, k, prec)
+	qPowNK := pow(q, n-k, prec)
+	return coeff.Mul(pPowK).Mul(qPowNK)
 }
 
-// MissedStatTest performs a deterministic, on-chain safe check using a pre-computed lookup table.
-// It returns 'true' if the number of misses is acceptable (test passes).
-func MissedStatTest(nMissed, nTotal int) (bool, error) {
+// pow computes base^exp for non-negative integer exponents.
+func pow(base decimal.Decimal, exp int, prec int32) decimal.Decimal {
+	if exp == 0 {
+		return one
+	}
+	if exp == 1 {
+		return base
+	}
+
+	result := one
+	b := base
+	for exp > 0 {
+		if exp&1 == 1 {
+			result = result.Mul(b)
+		}
+		b = b.Mul(b)
+		exp >>= 1
+	}
+	return result.Round(prec)
+}
+
+// MissedStatTest returns true if miss rate is acceptable (p-value >= alpha).
+// Uses pre-computed tables for supported p0 values (0.05, 0.10, 0.20, 0.30, 0.40, 0.50).
+func MissedStatTest(nMissed, nTotal int, p0 decimal.Decimal) (bool, error) {
 	if nTotal == 0 {
 		return true, nil
 	}
@@ -128,26 +88,15 @@ func MissedStatTest(nMissed, nTotal int) (bool, error) {
 		return false, errors.New("invalid input: requires 0 <= nMissed <= nTotal and nTotal > 0")
 	}
 
-	if nTotal > 990 {
-		return nMissed*10 <= nTotal, nil
+	permille := decimalToPermille(p0)
+	if permille > 0 {
+		return MissedStatTestLookupWithP0(nMissed, nTotal, permille)
 	}
 
-	// Find the critical number of misses for the given nTotal using a binary search.
-	idx := sort.Search(len(criticalValueTable), func(i int) bool {
-		return criticalValueTable[i].Total > nTotal
-	})
-
-	// idx is the index of the first element with Total > nTotal.
-	// We need the "floor" value, which is the element at idx - 1.
-	if idx == 0 {
-		// nTotal is smaller than the first entry in the table
-		return true, nil
+	const precision int32 = 16
+	pValue, err := BinomialPValue(nMissed, nTotal, p0, precision)
+	if err != nil {
+		return false, err
 	}
-
-	// The relevant threshold is the one for the largest total that is still <= nTotal.
-	criticalValue := criticalValueTable[idx-1].CriticalMisses
-
-	// The test passes if the observed number of misses is LESS THAN OR EQUAL TO the critical value.
-	// If nMissed is greater than the critical value, the test fails.
-	return nMissed <= criticalValue, nil
+	return pValue.GreaterThanOrEqual(alpha), nil
 }

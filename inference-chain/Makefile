@@ -42,10 +42,11 @@ _build-macos:
 	@echo "Cleaning up..."
 	@rm -rf /tmp/wasmvm-static
 
-_build-linux:
+_build-linux: download-linux-deps
 	@echo "Building with static wasmvm linking for Linux..."
 	@CGO_ENABLED=1 CC=gcc \
-		go build -ldflags "$(ldflags) -extldflags '-static'" -tags "muslc" -o ./build/inferenced ./cmd/inferenced/main.go
+		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
+		go build -ldflags "$(ldflags)" -tags "muslc" -o ./build/inferenced ./cmd/inferenced/main.go
 
 build:
 	@if [ "$(shell uname)" = "Darwin" ]; then \
@@ -53,6 +54,15 @@ build:
 	else \
 		$(MAKE) _build-linux; \
 	fi
+
+download-linux-deps:
+	@echo "--> Downloading static wasmvm library for Linux (x86_64)..."
+	@mkdir -p build/deps
+	@if [ ! -f build/deps/libwasmvm_muslc.x86_64.a ]; then \
+		curl -L -o build/deps/libwasmvm_muslc.x86_64.a $(WASMVM_STATIC_LINUX_X64_URL); \
+	fi
+	@ln -sf libwasmvm_muslc.x86_64.a build/deps/libwasmvm_muslc.a
+	@echo "Dependencies downloaded to ./build/deps/"
 
 define DOCKER_BUILD
 	@echo "--> building inferenced docker image"
@@ -67,6 +77,7 @@ define DOCKER_BUILD
 	@rm -rf .docker-context && mkdir -p .docker-context/inference-chain
 	@cp -r * .docker-context/inference-chain/ 2>/dev/null || true
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
+	@rm -rf .docker-context/inference-chain/.docker-context
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
 	@DOCKER_BUILDKIT=1 \
 	docker build \
@@ -94,6 +105,7 @@ define DOCKER_BUILD_UPGRADE
 	@rm -rf .docker-context && mkdir -p .docker-context/inference-chain
 	@cp -r * .docker-context/inference-chain/ 2>/dev/null || true
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
+	@rm -rf .docker-context/inference-chain/.docker-context
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
 	@DOCKER_BUILDKIT=1 \
 	docker build \
@@ -188,7 +200,7 @@ build-windows-docker:
 	@docker run --rm --platform linux/amd64 \
 		-v "$(PWD)":/workspace \
 		-w /workspace \
-		golang:1.23-bullseye \
+		golang:1.24-bullseye \
 		bash -c '\
 			echo "Installing mingw-w64..." && \
 			apt-get update -qq && apt-get install -y -qq gcc-mingw-w64 && \
@@ -203,7 +215,7 @@ build-linux-docker:
 	@docker run --rm --platform linux/amd64 \
 		-v "$(PWD)":/workspace \
 		-w /workspace \
-		golang:1.23-alpine \
+		golang:1.24-alpine \
 		sh -c '\
 			echo "Installing dependencies..." && \
 			apk add --no-cache gcc musl-dev curl && \
@@ -220,7 +232,7 @@ build-linux-docker:
 	@docker run --rm --platform linux/arm64 \
 		-v "$(PWD)":/workspace \
 		-w /workspace \
-		golang:1.23-alpine \
+		golang:1.24-alpine \
 		sh -c '\
 			echo "Installing dependencies..." && \
 			apk add --no-cache gcc musl-dev curl && \

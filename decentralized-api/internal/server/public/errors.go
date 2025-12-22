@@ -1,8 +1,9 @@
 package public
 
 import (
-	"github.com/labstack/echo/v4"
 	"net/http"
+
+	"github.com/labstack/echo/v4"
 )
 
 var (
@@ -16,4 +17,5 @@ var (
 	ErrInvalidTrainingJobId = echo.NewHTTPError(http.StatusBadRequest, "Invalid training job id")
 	ErrEpochIsNotReached    = echo.NewHTTPError(http.StatusBadRequest, "Epoch is not reached")
 	ErrInferenceNotFound    = echo.NewHTTPError(http.StatusNotFound, "Inference not found")
+	ErrNoModelSpecified     = echo.NewHTTPError(http.StatusBadRequest, "No model specified")
 )

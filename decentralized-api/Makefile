@@ -14,6 +14,8 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 
 BUILD_FLAGS ?= -ldflags '$(ldflags)'
 
+WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a
+
 define DOCKER_BUILD
 	@echo "--> building decentralized-api docker image"
 	@echo "    	platform: $(PLATFORM)"
@@ -60,13 +62,14 @@ install:
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go install $(BUILD_FLAGS) -mod=readonly
 
-build:
+build: download-linux-deps
 	@echo "--> ensure dependencies have not been modified"
 	@go mod verify
 	@echo "--> building decentralized-api"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@CGO_ENABLED=1 CC=gcc \
-		go build $(BUILD_FLAGS) -o ./build/dapi
+		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
+		go build $(BUILD_FLAGS) -tags muslc -o ./build/dapi
 
 build-docker:
 	rm -rf build/
@@ -117,6 +120,15 @@ build-for-upgrade:
 	# Disabled ARM builds as requested
 build-for-upgrade-arm:
 	@echo "ARM builds disabled"
+
+download-linux-deps:
+	@echo "--> Downloading static wasmvm library for Linux (x86_64)..."
+	@mkdir -p build/deps
+	@if [ ! -f build/deps/libwasmvm_muslc.x86_64.a ]; then \
+		curl -L -o build/deps/libwasmvm_muslc.x86_64.a $(WASMVM_STATIC_LINUX_X64_URL); \
+	fi
+	@ln -sf libwasmvm_muslc.x86_64.a build/deps/libwasmvm_muslc.a
+	@echo "API dependencies downloaded to ./build/deps/"
 
 #################################################
 # CROSS-COMPILATION SECTION

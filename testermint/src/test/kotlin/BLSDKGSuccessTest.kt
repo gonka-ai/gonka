@@ -308,7 +308,7 @@ class BLSDKGSuccessTest : TestermintTest() {
             }
             
             // Wait for next block and try again
-            pair.node.waitForNextBlock()
+            pair.node.waitForNextBlock(2)
             attempts++
             
             if (attempts % 10 == 0) {

@@ -1,10 +1,12 @@
 package com.productscience.mockserver.routes
 
+import com.productscience.mockserver.getHost
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.http.*
 import com.productscience.mockserver.model.ModelState
+import com.productscience.mockserver.model.getModelState
 import org.slf4j.LoggerFactory
 
 /**
@@ -30,7 +32,7 @@ fun Route.stateRoutes() {
  * Handles state requests.
  */
 private suspend fun handleStateRequest(call: ApplicationCall, logger: org.slf4j.Logger) {
-    val currentState = ModelState.getCurrentState()
+    val currentState = getModelState(call.getHost())
     call.respond(
         HttpStatusCode.OK,
         mapOf("state" to currentState.name)

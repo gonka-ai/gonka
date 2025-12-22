@@ -222,6 +222,8 @@ data class BandwidthLimitsParams(
     val invalidationsLimitCurve: Long,
     @SerializedName("minimum_concurrent_invalidations")
     val minimumConcurrentInvalidations: Long,
+    @SerializedName("max_inferences_per_block")
+    val maxInferencesPerBlock: Long? = null,
 )
 
 data class ConfirmationPoCParams(

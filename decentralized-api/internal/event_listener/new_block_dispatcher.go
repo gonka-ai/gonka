@@ -2,6 +2,8 @@ package event_listener
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -194,12 +196,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					EstimatedLimitsPerBlockKb: params.Params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
 					KbPerInputToken:           params.Params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
 					KbPerOutputToken:          params.Params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
+					MaxInferencesPerBlock:     params.Params.BandwidthLimitsParams.MaxInferencesPerBlock,
 				}
 
 				logging.Debug("Updated bandwidth parameters from chain", types.Config,
 					"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
 					"kbPerInputToken", bandwidthParams.KbPerInputToken,
-					"kbPerOutputToken", bandwidthParams.KbPerOutputToken)
+					"kbPerOutputToken", bandwidthParams.KbPerOutputToken,
+					"maxInferencesPerBlock", bandwidthParams.MaxInferencesPerBlock)
 
 				err = d.configManager.SetBandwidthParams(bandwidthParams)
 				if err != nil {
@@ -357,7 +361,22 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		}()
 	}
 
-	if epochContext.IsClaimMoneyStage(blockHeight) {
+	// Compute a deterministic number in [1, 500] based on participant address
+	randomDelay := 0
+	participantAddress := d.nodeBroker.GetParticipantAddress()
+	if blockHeight > 500 && participantAddress != "" {
+		hash := sha256.Sum256([]byte(participantAddress))
+		randomDelay = int(binary.BigEndian.Uint64(hash[:8])%500) + 1
+
+		// Cap the delay to not exceed half of the gap until the next PoC start
+		claimHeight := epochContext.ClaimMoney()
+		nextPoCStart := epochContext.NextPoCStart()
+		if nextPoCStart-claimHeight < 1000 {
+			randomDelay = 0
+		}
+	}
+
+	if epochContext.IsClaimMoneyStage(blockHeight - int64(randomDelay)) {
 		logging.Info("DapiStage:IsClaimMoneyStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 
 		// Calculate previous epoch index

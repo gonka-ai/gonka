@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.5
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.6-post2
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.5
+    image: ghcr.io/product-science/inferenced:0.2.6-post2
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -45,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.5
+    image: ghcr.io/product-science/api:0.2.6-post2
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -66,6 +66,12 @@ services:
       - DAPI_API__PUBLIC_SERVER_PORT=9000
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
+      # PostgreSQL payload storage (optional, uses file storage if not set)
+      - PGHOST=${POSTGRES_HOST:-}
+      - PGPORT=${POSTGRES_PORT:-5432}
+      - PGDATABASE=${POSTGRES_DB:-payloads}
+      - PGUSER=${POSTGRES_USER:-payloads}
+      - PGPASSWORD=${POSTGRES_PASSWORD:-}
     ports:
       - "9100:9100"
       - "127.0.0.1:9200:9200"
@@ -73,7 +79,7 @@ services:
   
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.5
+    image: ghcr.io/product-science/bridge:0.2.5-post5@sha256:8d2f217115c65b27fcb6fe1497471c30891534f18685bd3007d168aa7f1a9371
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -81,7 +87,7 @@ services:
       - JWT_SECRET_PATH=/data/jwt/jwt.hex
       - BRIDGE_POSTBLOCK=http://api:9200/admin/v1/bridge/block
       - BRIDGE_GETADDRESSES=http://api:9000/v1/bridge/addresses
-      - BEACON_STATE_URL=https://beaconstate.ethstaker.cc/
+      - BEACON_STATE_URL=https://beaconstate.info/
       - PERSISTENT_DB_DIR=/persistent-db
     volumes:
       - .inference-eth/geth:/data/geth
@@ -94,7 +100,7 @@ services:
   
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.5
+    image: ghcr.io/product-science/proxy:0.2.6-post2
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -134,7 +140,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.5
+    image: ghcr.io/product-science/proxy-ssl:0.2.6-post2
     profiles:
       - ssl
     environment:

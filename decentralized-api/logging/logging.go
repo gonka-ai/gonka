@@ -2,10 +2,11 @@ package logging
 
 import (
 	"context"
-	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"os"
 	"reflect"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func setNoopLogger() {

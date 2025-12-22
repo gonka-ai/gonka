@@ -17,58 +17,39 @@ import com.productscience.runParallelInferencesWithResults
 class InferenceRetryTests : TestermintTest() {
     @Test
     fun `configure two nodes where one returns 500 on inference`() {
-        val config = inferenceConfig.copy(
-            additionalDockerFilesByKeyName = mapOf(
-                GENESIS_KEY_NAME to listOf("docker-compose-local-mock-node-2.yml")
-            ),
-            nodeConfigFileByKeyName = mapOf(
-                GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
-            ),
-        )
-        val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodes = false)
+        val (_, genesis) = initCluster(reboot = true)
+        genesis.addNodes(1)
+        genesis.waitForNextEpoch()
 
         // Ensure both nodes are present
         val nodes = genesis.api.getNodes()
         assertThat(nodes).hasSize(2)
-
-        // Drive the chain to points where state shows INFERENCE for both
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-
+        val (healthyNode, unhealthyNode) = nodes
         // Both nodes should be healthy and show INFERENCE state after validators are set
         genesis.api.getNodes().forEach { node ->
             assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
             assertThat(node.state.intendedStatus).isEqualTo("INFERENCE")
         }
 
-        // Configure PoC participation on both mocks (weight > 0)
-        val mocks = getGenesisMocks(config)
-        assertThat(mocks.size).isGreaterThanOrEqualTo(2)
-        val mockHealthy = mocks[0]
-        val mockErroring = mocks[1]
-
         // Set normal inference response on the healthy node
-        mockHealthy.setInferenceResponse(
+        genesis.mock?.setInferenceResponse(
             openAIResponse = defaultInferenceResponseObject,
             delay = Duration.ofMillis(0),
             streamDelay = Duration.ofMillis(0),
             segment = "",
-            model = null
+            model = null,
+            hostName = healthyNode.node.inferenceHost
         )
-        mockHealthy.setPocResponse(weight = 10, scenarioName = "default")
 
-        val mlNodeVersionResponse = genesis.node.getMlNodeVersion()
-        val mlNodeVersion = mlNodeVersionResponse.mlnodeVersion.currentVersion
-        // Set erroring behavior on the second node (HTTP 500)
-        mockErroring.setInferenceErrorResponse(
+        genesis.mock?.setInferenceErrorResponse(
             statusCode = 500,
             errorMessage = "Internal Server Error",
             errorType = "server_error",
             delay = Duration.ofMillis(0),
             streamDelay = Duration.ofMillis(0),
-            segment = "/${mlNodeVersion}",
-            model = null
+            model = null,
+            hostName = unhealthyNode.node.inferenceHost
         )
-        mockErroring.setPocResponse(weight = 10, scenarioName = "default")
 
         // Send multiple inference requests; all should succeed even if one node errors,
         // due to retry/failover to the healthy node.

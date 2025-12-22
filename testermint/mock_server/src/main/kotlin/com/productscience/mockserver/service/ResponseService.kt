@@ -2,11 +2,13 @@ package com.productscience.mockserver.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import com.productscience.mockserver.model.OpenAIResponse
 import com.productscience.mockserver.model.ErrorResponse
-import io.ktor.http.*
+import com.productscience.mockserver.model.OpenAIResponse
+import com.productscience.mockserver.model.latestNonce
+import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.collections.set
 
 /**
  * Data class to represent either a successful response or an error response configuration.
@@ -28,6 +30,18 @@ sealed class ResponseConfig {
     ) : ResponseConfig()
 }
 
+@JvmInline
+value class ScenarioName(val name: String)
+
+@JvmInline
+value class HostName(val name: String)
+
+@JvmInline
+value class Endpoint(val path: String)
+
+@JvmInline
+value class ModelName(val name: String)
+
 /**
  * Service for managing and modifying responses for various endpoints.
  */
@@ -35,26 +49,28 @@ class ResponseService {
     private val objectMapper = ObjectMapper()
         .registerKotlinModule()
         .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE)
+    private val logger = LoggerFactory.getLogger(ResponseService::class.java)
 
-    // Store for inference responses by endpoint path and model
-    private val inferenceResponses = ConcurrentHashMap<String, ResponseConfig>()
+    // Store for inference responses keyed strongly just like PoC: (Endpoint, ModelName?, HostName)
+    private val inferenceResponses = ConcurrentHashMap<Triple<Endpoint, ModelName?, HostName?>, ResponseConfig>()
 
     // Store for POC responses
-    private val pocResponses = ConcurrentHashMap<String, Long>()
+    private val pocResponses = ConcurrentHashMap<Pair<HostName?, ScenarioName>, Long>()
 
     // Store for the last inference request
     private val lastInferenceRequest = AtomicReference<String?>(null)
 
-    /**
-     * Creates a key for storing responses, combining endpoint and model.
-     */
-    private fun createResponseKey(endpoint: String, model: String?): String {
-        return if (model != null) "$endpoint::$model" else endpoint
+    // No string keys anymore; use strongly typed value classes for the key parts.
+
+    fun clearOverrides() {
+        inferenceResponses.clear()
+        pocResponses.clear()
+        lastInferenceRequest.set(null)
     }
 
     /**
      * Sets the response for the inference endpoint.
-     * 
+     *
      * @param response The response body as a string
      * @param delay The delay in milliseconds before responding
      * @param streamDelay The delay in milliseconds between SSE events when streaming
@@ -62,37 +78,22 @@ class ResponseService {
      * @param model Optional model name to filter requests by
      * @return The endpoint path where the response is set
      */
-    fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): String {
-        val cleanedSegment = segment.trim('/').takeIf { it.isNotEmpty() }
-        val segment1 = if (cleanedSegment != null) "/$cleanedSegment" else ""
-        val endpoint = "$segment1/v1/chat/completions"
-        val key = createResponseKey(endpoint, model)
-        inferenceResponses[key] = ResponseConfig.Success(response, delay, streamDelay)
-        println("DEBUG: Stored response for endpoint='$endpoint', model='$model', key='$key'")
-        println("DEBUG: Response preview: ${response.take(50)}...")
-        println("DEBUG: Current keys in store: ${inferenceResponses.keys}")
-        return endpoint
-    }
-
-    /**
-     * Sets the response for the inference endpoint using an OpenAIResponse object.
-     * 
-     * @param openAIResponse The OpenAIResponse object
-     * @param delay The delay in milliseconds before responding
-     * @param streamDelay The delay in milliseconds between SSE events when streaming
-     * @param segment Optional URL segment to prepend to the endpoint path
-     * @param model Optional model name to filter requests by
-     * @return The endpoint path where the response is set
-     */
     fun setInferenceResponse(
-        openAIResponse: OpenAIResponse,
+        response: String,
         delay: Int = 0,
         streamDelay: Long = 0,
         segment: String = "",
-        model: String? = null
+        model: ModelName? = null,
+        host: HostName? = null
     ): String {
-        val response = objectMapper.writeValueAsString(openAIResponse)
-        return setInferenceResponse(response, delay, streamDelay, segment, model)
+        val cleanedSegment = segment.trim('/').takeIf { it.isNotEmpty() }
+        val segment1 = if (cleanedSegment != null) "/$cleanedSegment" else ""
+        val endpoint = "$segment1/v1/chat/completions"
+        val key = Triple(Endpoint(endpoint), model, host)
+        inferenceResponses[key] = ResponseConfig.Success(response, delay, streamDelay)
+        logger.debug("Stored response for host='${host?.name}', endpoint='$endpoint', model='$model'")
+        logger.debug("Response preview: ${response.take(50)}...")
+        return endpoint
     }
 
     /**
@@ -112,82 +113,81 @@ class ResponseService {
         errorType: String? = null,
         delay: Int = 0,
         streamDelay: Long = 0,
-        segment: String = ""
+        segment: String = "",
+        host: HostName? = null
     ): String {
         val cleanedSegment = segment.trim('/').takeIf { it.isNotEmpty() }
         val segment1 = if (cleanedSegment != null) "/$cleanedSegment" else ""
         val endpoint = "$segment1/v1/chat/completions"
         val errorResponse = ErrorResponse(statusCode, errorMessage, errorType)
-        println("DEBUG: Storing error response for endpoint='$endpoint' with statusCode=$statusCode")
-        inferenceResponses[endpoint] = ResponseConfig.Error(errorResponse, delay, streamDelay)
+        logger.debug("Stored error response for host='${host?.name}', endpoint='$endpoint'")
+        // Store as generic (no model) error for this endpoint+host
+        val key = Triple(Endpoint(endpoint), null, host)
+        inferenceResponses[key] = ResponseConfig.Error(errorResponse, delay, streamDelay)
         return endpoint
     }
 
+    // Backward-compatible overload (defaults to localhost)
+    fun setInferenceErrorResponse(
+        statusCode: Int,
+        errorMessage: String? = null,
+        errorType: String? = null,
+        delay: Int = 0,
+        streamDelay: Long = 0,
+        segment: String = ""
+    ): String = setInferenceErrorResponse(
+        statusCode,
+        errorMessage,
+        errorType,
+        delay,
+        streamDelay,
+        segment,
+        HostName("localhost")
+    )
+
     /**
      * Gets the response configuration for the inference endpoint.
-     * 
-     * @param endpoint The endpoint path
-     * @param model Optional model name to filter responses by
-     * @return ResponseConfig object, or null if not found
-     */
-    fun getInferenceResponseConfig(endpoint: String, model: String? = null): ResponseConfig? {
-        // First try to get model-specific response
-        println("DEBUG: Getting inference response for endpoint='$endpoint', model='$model'")
-        if (model != null) {
-            val modelSpecificKey = createResponseKey(endpoint, model)
-            println("DEBUG: Checking for model-specific response with key='$modelSpecificKey'")
-            inferenceResponses.forEach {
-                println("DEBUG: Available key: ${it.key}, Model: ${it.key.split("::").getOrNull(1)}")
-            }
-            val modelSpecificResponse = inferenceResponses[modelSpecificKey]
-            if (modelSpecificResponse != null) {
-                println("DEBUG: Found model-specific response for key='$modelSpecificKey'")
-                return modelSpecificResponse
-            }
-        }
-
-        // Fall back to generic response for the endpoint
-        print("DEBUG: Checking for generic response for endpoint='$endpoint'")
-        return inferenceResponses[endpoint]
-    }
-
-    /**
-     * Gets the response for the inference endpoint (backward compatibility).
      *
      * @param endpoint The endpoint path
      * @param model Optional model name to filter responses by
-     * @return Triple of response body, delay, and stream delay, or null if not found or if it's an error response
+     * @param host Optional host to filter responses by
+     * @return ResponseConfig object, or null if not found
      */
-    fun getInferenceResponse(endpoint: String, model: String? = null): Triple<String, Int, Long>? {
-        return when (val config = getInferenceResponseConfig(endpoint, model)) {
-            is ResponseConfig.Success -> Triple(config.responseBody, config.delay, config.streamDelay)
-            else -> null
-        }
+    fun getInferenceResponseConfig(endpoint: String, model: String? = null, host: HostName?): ResponseConfig? {
+        logger.debug("Getting inference response for host='${host?.name}', endpoint='$endpoint', model='$model'")
+        val endpointKey = Endpoint(endpoint)
+        return inferenceResponses[Triple(endpointKey, model?.let { ModelName(it) }, host)] ?:
+          inferenceResponses[Triple(endpointKey, null, host)] ?:
+          inferenceResponses[Triple(endpointKey, model?.let { ModelName(it) }, null)] ?:
+          inferenceResponses[Triple(endpointKey, null, null)]
     }
 
     /**
      * Sets the POC response with the specified weight.
-     * 
+     *
      * @param weight The number of nonces to generate
      * @param scenarioName The name of the scenario
      */
-    fun setPocResponse(weight: Long, scenarioName: String = "ModelState") {
-        pocResponses[scenarioName] = weight
+    fun setPocResponse(weight: Long, host: HostName?, scenarioName: ScenarioName = ScenarioName("ModelState")) {
+        logger.info("Setting POC response weight for host: $host, scenario: $scenarioName, weight: $weight")
+        pocResponses[host to scenarioName] = weight
     }
 
     /**
      * Gets the POC response weight for the specified scenario.
-     * 
+     *
      * @param scenarioName The name of the scenario
      * @return The weight, or null if not found
      */
-    fun getPocResponseWeight(scenarioName: String = "ModelState"): Long? {
-        return pocResponses[scenarioName]
+    fun getPocResponseWeight(hostName: HostName, scenarioName: ScenarioName = ScenarioName("ModelState")): Long? {
+        val weight = pocResponses[hostName to scenarioName] ?: pocResponses[null to scenarioName]
+        logger.info("Found POC response weight for host: $hostName, scenario: $scenarioName, weight: $weight")
+        return weight
     }
 
     /**
      * Generates a POC response body with the specified weight.
-     * 
+     *
      * @param weight The number of nonces to generate
      * @param publicKey The public key from the request
      * @param blockHash The block hash from the request
@@ -203,9 +203,9 @@ class ResponseService {
     ): String {
         // Generate 'weight' number of nonces
         // nodeNumber makes sure nonces are unique in a multi-node setup
-        val start = (nodeNumber - 1) * weight + 1
-        val end = nodeNumber * weight
-        val nonces = (start..end).toList()
+        val start = latestNonce.getAndAdd(weight)
+        val end = start + weight
+        val nonces = (start until end).toList()
         // Generate distribution values evenly spaced from 0.0 to 1.0
         val dist = (1..weight).map { it.toDouble() / weight }
 
@@ -223,49 +223,8 @@ class ResponseService {
     }
 
     /**
-     * Generates a POC validation response body with the specified weight.
-     * 
-     * @param weight The number of nonces to generate
-     * @param publicKey The public key from the request
-     * @param blockHash The block hash from the request
-     * @param blockHeight The block height from the request
-     * @param rTarget The r_target from the request
-     * @param fraudThreshold The fraud_threshold from the request
-     * @return The generated POC validation response body as a string
-     */
-    fun generatePocValidationResponseBody(
-        weight: Long,
-        publicKey: String,
-        blockHash: String,
-        blockHeight: Int,
-        rTarget: Double,
-        fraudThreshold: Double
-    ): String {
-        // Generate 'weight' number of nonces
-        val nonces = (1..weight).toList()
-        // Generate distribution values evenly spaced from 0.0 to 1.0
-        val dist = nonces.map { it.toDouble() / weight }
-
-        return """
-            {
-              "public_key": "$publicKey",
-              "block_hash": "$blockHash",
-              "block_height": $blockHeight,
-              "nonces": $nonces,
-              "dist": $dist,
-              "received_dist": $dist,
-              "r_target": $rTarget,
-              "fraud_threshold": $fraudThreshold,
-              "n_invalid": 0,
-              "probability_honest": 0.99,
-              "fraud_detected": false
-            }
-        """.trimIndent()
-    }
-
-    /**
      * Sets the last inference request.
-     * 
+     *
      * @param request The request body as a string
      */
     fun setLastInferenceRequest(request: String) {
@@ -274,7 +233,7 @@ class ResponseService {
 
     /**
      * Gets the last inference request.
-     * 
+     *
      * @return The last inference request as a string, or null if no request has been made
      */
     fun getLastInferenceRequest(): String? {

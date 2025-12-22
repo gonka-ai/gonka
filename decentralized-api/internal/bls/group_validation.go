@@ -55,9 +55,15 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 
 	previousEpochID := newEpochID - 1
 
-	// Check if we participated in the previous epoch
-	previousEpochResult := bm.GetVerificationResult(previousEpochID)
-	if previousEpochResult == nil || !previousEpochResult.IsParticipant {
+	previousEpochResult, err := bm.GetOrRecoverVerificationResult(previousEpochID)
+	if err != nil {
+		logging.Warn(validatorLogTag+"Failed to get previous epoch result, skipping validation", inferenceTypes.BLS,
+			"newEpochID", newEpochID,
+			"previousEpochID", previousEpochID,
+			"error", err)
+		return nil
+	}
+	if !previousEpochResult.IsParticipant {
 		logging.Debug(validatorLogTag+"Not a participant in previous epoch, skipping validation", inferenceTypes.BLS,
 			"newEpochID", newEpochID,
 			"previousEpochID", previousEpochID)

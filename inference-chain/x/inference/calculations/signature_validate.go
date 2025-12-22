@@ -140,18 +140,18 @@ func validateSignatureWithGrantees(
 	pubKeys []string,
 	signature string,
 ) error {
-	errors := []error{}
+	errors := map[string]error{}
 	for _, pubKey := range pubKeys {
 		err := validateSignature(bytes, pubKey, signature)
 		if err == nil {
 			return nil
 		}
-		slog.Warn("Invalid signature", "pubKey", pubKey, "error", err)
-		errors = append(errors, err)
+		slog.Debug("Invalid signature", "pubKey", pubKey, "error", err)
+		errors[pubKey] = err
 	}
 	slog.Warn("Invalid signature", "errors", errors)
 	if len(errors) > 0 {
-		return errors[0]
+		return errors[pubKeys[0]]
 	}
 	return nil
 }

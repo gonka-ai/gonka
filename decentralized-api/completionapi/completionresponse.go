@@ -48,12 +48,10 @@ func (r *JsonCompletionResponse) GetBodyBytes() ([]byte, error) {
 }
 
 func (r *JsonCompletionResponse) GetHash() (string, error) {
-	var builder strings.Builder
-	for _, choice := range r.Resp.Choices {
-		builder.WriteString(choice.Message.Content)
+	if len(r.Bytes) == 0 {
+		return "", errors.New("CompletionResponse: can't compute hash, empty bytes")
 	}
-
-	return computeHash(builder.String())
+	return utils.GenerateSHA256HashBytes(r.Bytes), nil
 }
 
 func (r *JsonCompletionResponse) GetEnforcedStr() (string, error) {
@@ -174,15 +172,6 @@ func (r *StreamedCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error)
 	return enforcedTokens, nil
 }
 
-func computeHash(content string) (string, error) {
-	if content == "" {
-		return "", errors.New("CompletionResponse: can't compute hash, empty content")
-	}
-
-	hash := utils.GenerateSHA256Hash(content)
-	return hash, nil
-}
-
 type StreamedCompletionResponse struct {
 	Lines []string
 	Resp  StreamedResponse
@@ -236,17 +225,14 @@ func (r *StreamedCompletionResponse) GetBodyBytes() ([]byte, error) {
 }
 
 func (r *StreamedCompletionResponse) GetHash() (string, error) {
-	var builder strings.Builder
-	for _, choice := range r.Resp.Data {
-		for _, c := range choice.Choices {
-			delta := c.Delta.Content
-			if delta != nil {
-				builder.WriteString(*delta)
-			}
-		}
+	bodyBytes, err := r.GetBodyBytes()
+	if err != nil {
+		return "", err
 	}
-
-	return computeHash(builder.String())
+	if len(bodyBytes) == 0 {
+		return "", errors.New("StreamedCompletionResponse: can't compute hash, empty bytes")
+	}
+	return utils.GenerateSHA256HashBytes(bodyBytes), nil
 }
 
 func (r *StreamedCompletionResponse) GetEnforcedStr() (string, error) {
@@ -335,7 +321,7 @@ func NewCompletionResponseFromLines(lines []string) (CompletionResponse, error) 
 	}, nil
 }
 
-func NewCompletionResponseFromLinesFromResponsePayload(payload string) (CompletionResponse, error) {
+func NewCompletionResponseFromLinesFromResponsePayload(payload []byte) (CompletionResponse, error) {
 	var genericMap map[string]interface{}
 	bytes := []byte(payload)
 	if err := json.Unmarshal(bytes, &genericMap); err != nil {

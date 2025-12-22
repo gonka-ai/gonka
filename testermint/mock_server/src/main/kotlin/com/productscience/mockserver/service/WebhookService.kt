@@ -58,7 +58,7 @@ class WebhookService(private val responseService: ResponseService) {
                     setBody(body)
                 }
             } catch (e: Exception) {
-                println("Error sending webhook: ${e.message}")
+                logger.error("Error sending webhook: ${e.message}", e)
             }
         }
     }
@@ -66,7 +66,7 @@ class WebhookService(private val responseService: ResponseService) {
     /**
      * Processes a webhook for the generate POC endpoint.
      */
-    fun processGeneratePocWebhook(requestBody: String) {
+    fun processGeneratePocWebhook(requestBody: String, hostName: HostName) {
         try {
             val jsonNode = mapper.readTree(requestBody)
             val url = jsonNode.get("url")?.asText()
@@ -81,7 +81,8 @@ class WebhookService(private val responseService: ResponseService) {
                 val webhookUrl = "$url/generated"
 
                 // Get the weight from the ResponseService, default to 10 if not set
-                val weight = responseService.getPocResponseWeight() ?: 10L
+                val weight = responseService.getPocResponseWeight(hostName) ?: 10L
+
                 logger.info("Using weight for POC generation: $weight")
 
                 // Use ResponseService to generate the webhook body

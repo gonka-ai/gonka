@@ -82,7 +82,7 @@ data class ApplicationAPI(
     fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         val encodedInferenceId = URLEncoder.encode(inferenceId, "UTF-8")
-        val response = Fuel.get("$url/v1/chat/completions/$encodedInferenceId")
+        val response = Fuel.get("$url/v1/chat/completions?id=$encodedInferenceId")
             .responseObject<InferencePayload>(gsonDeserializer(cosmosJson))
         logResponse(response)
         response.third.get()
@@ -339,6 +339,36 @@ data class ApplicationAPI(
     fun getBLSEpochWithUncompressed(epochId: Long): Map<String, Any> = wrapLog("GetBLSEpochWithUncompressed", false) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         get(url, "v1/bls/epochs/$epochId")
+    }
+
+    /**
+     * Stores payloads directly to the executor's PayloadStorage via admin endpoint.
+     * Used by InferenceTestHelper to support offchain payload validation tests.
+     *
+     * @param inferenceId The inference ID (will be URL-encoded)
+     * @param promptPayload The prompt payload to store
+     * @param responsePayload The response payload to store
+     * @param epochId The epoch ID for storage organization
+     * @return StorePayloadResponse with status
+     */
+    fun storePayload(
+        inferenceId: String,
+        promptPayload: String,
+        responsePayload: String,
+        epochId: Long
+    ): StorePayloadResponse = wrapLog("StorePayload", true) {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val encodedInferenceId = URLEncoder.encode(inferenceId, "UTF-8")
+        val request = StorePayloadRequest(
+            promptPayload = promptPayload,
+            responsePayload = responsePayload,
+            epochId = epochId
+        )
+        val response = Fuel.post("$url/admin/v1/payloads?inference_id=$encodedInferenceId")
+            .jsonBody(request, cosmosJson)
+            .responseObject<StorePayloadResponse>(gsonDeserializer(cosmosJson))
+        logResponse(response)
+        response.third.get()
     }
 
     inline fun <reified Out : Any> get(url: String, path: String): Out {

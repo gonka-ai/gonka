@@ -224,7 +224,7 @@ func TestBitcoinRewardIntegration_DistributionLogic(t *testing.T) {
 
 		// Test GetBitcoinSettleAmounts function
 		logger := log.NewTestLogger(t)
-		settleResults, bitcoinResult, err := keeper.GetBitcoinSettleAmounts(participants, epochGroupData, params.BitcoinRewardParams, settleParams, nil, logger)
+		settleResults, bitcoinResult, err := keeper.GetBitcoinSettleAmounts(participants, epochGroupData, params.BitcoinRewardParams, params.ValidationParams, settleParams, nil, logger)
 		require.NoError(t, err, "Bitcoin settle amounts calculation should succeed")
 		require.Len(t, settleResults, 2, "Should have settle results for both participants")
 

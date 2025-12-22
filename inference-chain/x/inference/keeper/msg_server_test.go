@@ -1,7 +1,6 @@
 package keeper_test
 
 import (
-	"context"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -13,7 +12,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func setupMsgServer(t testing.TB) (keeper.Keeper, types.MsgServer, context.Context) {
+func setupMsgServer(t testing.TB) (keeper.Keeper, types.MsgServer, sdk.Context) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	return k, setupMsgServerWithKeeper(k), ctx
 }

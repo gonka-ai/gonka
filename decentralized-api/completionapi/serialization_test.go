@@ -655,9 +655,8 @@ func TestStreamedResponseSerialization(t *testing.T) {
 	require.IsType(t, &StreamedCompletionResponse{}, resp)
 
 	bytes, err := resp.GetBodyBytes()
-	bytesString := string(bytes)
 
-	resp2, err := NewCompletionResponseFromLinesFromResponsePayload(bytesString)
+	resp2, err := NewCompletionResponseFromLinesFromResponsePayload(bytes)
 	require.NoError(t, err)
 	require.IsType(t, &StreamedCompletionResponse{}, resp2)
 

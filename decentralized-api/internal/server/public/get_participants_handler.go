@@ -121,7 +121,7 @@ func (s *Server) getParticipants(ctx context.Context, epoch uint64) (*ActivePart
 		logging.Error("Failed to unmarshal active participant", types.Participants, "error", err)
 		return nil, err
 	}
-	logging.Info("Active participants retrieved", types.Participants,
+	logging.Debug("Active participants retrieved", types.Participants,
 		"epoch", epoch,
 		"activeParticipants", activeParticipants)
 
@@ -326,10 +326,6 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 		return nil, err
 	}
 
-	logging.Info("[PARTICIPANTS-DEBUG] Raw active participants query result", types.Participants,
-		"epoch", epoch,
-		"value_bytes", len(result.Response.Value))
-
 	if len(result.Response.Value) == 0 {
 		logging.Error("Active participants query returned empty value", types.Participants, "epoch", epoch)
 		return nil, echo.NewHTTPError(http.StatusNotFound, "No active participants found for the specified epoch. "+
@@ -341,11 +337,6 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 		logging.Error("Failed to unmarshal active participant. Req 1", types.Participants, "error", err)
 		return nil, err
 	}
-
-	logging.Info("[PARTICIPANTS-DEBUG] Unmarshalled ActiveParticipants", types.Participants,
-		"epoch", epoch,
-		"created_at_block_height", activeParticipants.CreatedAtBlockHeight,
-		"effective_block_height", activeParticipants.EffectiveBlockHeight)
 
 	// We disable the second query with proof for now, because:
 	// 1. Data migration happened, and we can't validate pre-migration records recursively;

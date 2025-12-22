@@ -130,14 +130,6 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             configWithName
         )
 
-        // Create mock objects for all discovered mock servers
-        val mockObjects = allMockContainers.map { container ->
-            MockServerInferenceMock(
-                baseUrl = "http://localhost:${container.getMappedPort(8080)!!}", 
-                name = container.names.first()
-            )
-        }
-
         LocalInferencePair(
             node = ApplicationCLI(configWithName, nodeLogs, executor, listOf()),
             api = ApplicationAPI(apiUrls, configWithName, dapiLogs, apiExecutor),
@@ -148,7 +140,6 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             },
             name = name,
             config = configWithName,
-            mocks = mockObjects
         )
     }
 }
@@ -231,7 +222,6 @@ data class LocalInferencePair(
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
-    val mocks: List<IInferenceMock> = emptyList(), // All mocks including primary
 ) : HasConfig {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
@@ -245,20 +235,14 @@ data class LocalInferencePair(
         api.addInferenceParticipant(self)
     }
 
-    /**
-     * Sets PoC response on all mock servers for this participant.
-     * This is useful for participants with multiple MLNodes (mock servers).
-     */
-    fun setPocResponseOnAllMocks(weight: Long, scenarioName: String = "ModelState") {
-        mocks.forEach { it.setPocResponse(weight, scenarioName) }
-    }
-
-    /**
-     * Sets PoC validation response on all mock servers for this participant.
-     * This is useful for participants with multiple MLNodes (mock servers).
-     */
-    fun setPocValidationResponseOnAllMocks(weight: Long, scenarioName: String = "ModelState") {
-        mocks.forEach { it.setPocValidationResponse(weight, scenarioName) }
+    fun setPocWeight(weight: Long, node: InferenceNode? = null) {
+        if (node == null) {
+            this.api.getNodes().forEach {
+                this.mock?.setPocResponse(weight, it.node.pocHost)
+            }
+        } else {
+            this.mock?.setPocResponse(weight, node.pocHost)
+        }
     }
 
     fun getEpochLength(): Long {
@@ -314,7 +298,8 @@ data class LocalInferencePair(
         timestamp: Long = Instant.now().toEpochNanos(),
         taAddress: String = node.getColdAddress(),
     ): OpenAIResponse {
-        val signature = node.signPayload(request, account, timestamp = timestamp, endpointAccount = taAddress)
+        // Phase 3: Use signRequest to auto-hash the request
+        val signature = node.signRequest(request, account, timestamp = timestamp, endpointAccount = taAddress)
         val address = node.getColdAddress()
         return api.makeInferenceRequest(request, address, signature, timestamp)
     }
@@ -351,19 +336,13 @@ data class LocalInferencePair(
 
         val address = node.getColdAddress()
         val timestamp = Instant.now().toEpochNanos()
-        val signature = node.signPayload(requestWithStream, account, timestamp = timestamp, endpointAccount = address)
+        // Phase 3: Use signRequest to auto-hash the request
+        val signature = node.signRequest(requestWithStream, account, timestamp = timestamp, endpointAccount = address)
         return api.createInferenceStreamConnection(requestWithStream, address, signature, timestamp)
     }
 
     fun getCurrentBlockHeight(): Long {
         return node.getStatus().syncInfo.latestBlockHeight
-    }
-
-    fun changePoc(newPoc: Long, setNewValidatorsOffset: Int = 2) {
-        this.mock?.setPocResponse(newPoc)
-        this.waitForStage(EpochStage.START_OF_POC)
-        // CometBFT validators have a 1 block delay
-        this.waitForStage(EpochStage.SET_NEW_VALIDATORS, setNewValidatorsOffset)
     }
 
     data class WaitForStageResult(
@@ -432,7 +411,7 @@ data class LocalInferencePair(
             if (condition(this)) {
                 return
             }
-            this.node.waitForNextBlock()
+            this.node.waitForNextBlock(2)
             currentBlock = this.getCurrentBlockHeight()
             mostRecentEpochData = this.api.getLatestEpoch()
         }
@@ -513,6 +492,17 @@ data class LocalInferencePair(
 
             Thread.sleep(sleepTimeMillis)
         }
+    }
+
+    fun addNodes(nodesToAdd: Int): List<InferenceNode> {
+        val nodes = (1..nodesToAdd).map { i ->
+            validNode.copy(
+                id = "multinode$i",
+                host = hostName(i, this)
+            )
+        }
+
+        return this.api.addNodes(nodes)
     }
 
 
@@ -718,7 +708,7 @@ data class LocalInferencePair(
             while (tries < blocks &&
                 (if (finished) inference?.actualCost == null else inference == null)
             ) {
-                this.node.waitForNextBlock()
+                this.node.waitForNextBlock(2)
                 inference = this.api.getInferenceOrNull(inferenceId)
                 tries++
             }
@@ -754,3 +744,5 @@ data class ApplicationConfig(
 fun Instant.toEpochNanos(): Long {
     return this.epochSecond * 1_000_000_000 + this.nano.toLong()
 }
+
+private fun hostName(i: Int, participant: LocalInferencePair) = "ml-${String.format("%04d", i)}.${participant.name.trimStart('/')}.test"

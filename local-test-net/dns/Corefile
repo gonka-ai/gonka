@@ -1,0 +1,27 @@
+.:53 {
+    log
+    errors
+
+    # Mind the trailing dots for FQDNs!
+
+    # Rewrite ml-XXX.genesis.test → genesis-mock-server
+    rewrite name regex "^ml-[0-9]+\.genesis\.test\.?$" "genesis-mock-server."
+
+    # Rewrite ml-XXX.join1.test → join1-mock-server
+    rewrite name regex "^ml-[0-9]+\.join1\.test\.?$" "join1-mock-server."
+
+    # Rewrite ml-XXX.join2.test → join2-mock-server
+    rewrite name regex "^ml-[0-9]+\.join2\.test\.?$" "join2-mock-server."
+
+    # Rewrite ml-XXX.join3.test → join3-mock-server
+    rewrite name regex "^ml-[0-9]+\.join3\.test\.?$" "join3-mock-server."
+
+    # Rewrite ml-XXX.join4.test → join4-mock-server
+    rewrite name regex "^ml-[0-9]+\.join4\.test\.?$" "join4-mock-server."
+
+    # Rewrite ml-XXX.join5.test → join5-mock-server
+    rewrite name regex "^ml-[0-9]+\.join5\.test\.?$" "join5-mock-server."
+
+    # Anything else: ask Docker DNS (which lives at 127.0.0.11 inside containers)
+    forward . 127.0.0.11
+}

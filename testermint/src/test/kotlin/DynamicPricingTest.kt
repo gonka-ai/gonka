@@ -174,19 +174,22 @@ class DynamicPricingTest : TestermintTest() {
         logSection("Submit raw StartInference")
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
-        val signature = genesis.node.signPayload(
+        // Phase 3: Dev signs hash of original_prompt
+        val signature = genesis.node.signRequest(
             inferenceRequest,
             accountAddress = null,
             timestamp = timestamp,
             endpointAccount = genesisAddress
         )
+        // Phase 3: TA signs hash manually for raw transaction
+        val requestHash = sha256(inferenceRequest)
         val taSignature =
-            genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress + genesisAddress, null)
+            genesis.node.signPayload(requestHash + timestamp.toString() + genesisAddress + genesisAddress, null)
         val message = MsgStartInference(
             creator = genesisAddress,
             inferenceId = signature,
-            promptHash = "not_verified",
-            promptPayload = inferenceRequest,
+            promptHash = requestHash,
+            // promptPayload removed - Phase 6: payloads stored offchain
             model = defaultModel,
             requestedBy = genesisAddress,
             assignedTo = genesisAddress,
@@ -194,7 +197,8 @@ class DynamicPricingTest : TestermintTest() {
             maxTokens = 500,
             promptTokenCount = 10,
             requestTimestamp = timestamp,
-            transferSignature = taSignature
+            transferSignature = taSignature,
+            originalPromptHash = requestHash
         )
 
         val response = genesis.submitMessage(message)
@@ -207,11 +211,14 @@ class DynamicPricingTest : TestermintTest() {
         logSection("Testing FinishInference with no StartInference")
 
         val finishTimestamp = Instant.now().toEpochNanos()
+        // Phase 3: Dev signs original_prompt_hash, TA/Executor sign prompt_hash
+        val originalPromptHash = sha256(inferenceRequest)
+        val promptHash = originalPromptHash // Same when no seed modification
         val finishSignature =
-            genesis.node.signPayload(inferenceRequest + finishTimestamp.toString() + genesisAddress, null)
+            genesis.node.signPayload(originalPromptHash + finishTimestamp.toString() + genesisAddress, null)
         val finishTaSignature =
             genesis.node.signPayload(
-                inferenceRequest + finishTimestamp.toString() + genesisAddress + genesisAddress,
+                promptHash + finishTimestamp.toString() + genesisAddress + genesisAddress,
                 null
             )
         val finishMessage = MsgFinishInference(
@@ -221,14 +228,16 @@ class DynamicPricingTest : TestermintTest() {
             requestTimestamp = finishTimestamp,
             transferSignature = finishTaSignature,
             responseHash = "fjdsf",
-            responsePayload = "AI is cool",
+            // responsePayload removed - Phase 6: payloads stored offchain
             completionTokenCount = 100,
             executedBy = genesisAddress,
             executorSignature = finishTaSignature,
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
-            originalPrompt = inferenceRequest,
+            // originalPrompt removed - Phase 6: payloads stored offchain
             model = defaultModel,
+            promptHash = promptHash,
+            originalPromptHash = originalPromptHash
         )
         val finishResponse = genesis.submitMessage(finishMessage)
         assertThat(finishResponse).isSuccess()

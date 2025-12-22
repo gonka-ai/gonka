@@ -41,6 +41,7 @@ type BrokerChainBridge interface {
 	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
+	GetParams() (*types.QueryParamsResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -100,6 +101,11 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, mo
 	return queryClient.EpochGroupData(b.client.GetContext(), req)
 }
 
+func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
+}
+
 type Broker struct {
 	highPriorityCommands chan Command
 	lowPriorityCommands  chan Command
@@ -117,6 +123,14 @@ type Broker struct {
 	lastEpochPhase       types.EpochPhase
 	statusQueryTrigger   chan statusQuerySignal
 	configManager        *apiconfig.ConfigManager
+}
+
+// GetParticipantAddress returns the current participant's address if available.
+func (b *Broker) GetParticipantAddress() string {
+	if b == nil || b.participantInfo == nil {
+		return ""
+	}
+	return b.participantInfo.GetAddress()
 }
 
 const (
@@ -790,6 +804,7 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 type pocParams struct {
 	startPoCBlockHeight int64
 	startPoCBlockHash   string
+	modelParams         *types.PoCModelParams
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1097,6 +1112,7 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 					PubKey:      b.participantInfo.GetPubKey(),
 					CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
 					TotalNodes:  totalNodes,
+					ModelParams: pocGenParams.modelParams,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1109,6 +1125,7 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 					PubKey:      b.participantInfo.GetPubKey(),
 					CallbackUrl: GetPocValidateCallbackUrl(b.callbackUrl),
 					TotalNodes:  totalNodes,
+					ModelParams: pocGenParams.modelParams,
 				}
 			}
 			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1143,9 +1160,19 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		logging.Error("Failed to query PoC start block hash", types.Nodes, "height", epochPoCStartHeight, "error", err)
 		return nil, err
 	}
+
+	paramsResp, err := b.chainBridge.GetParams()
+	var modelParams *types.PoCModelParams
+	if err != nil {
+		logging.Warn("Failed to query chain params, will use default model params", types.Nodes, "error", err)
+	} else if paramsResp.Params.PocParams != nil {
+		modelParams = paramsResp.Params.PocParams.ModelParams
+	}
+
 	return &pocParams{
 		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
+		modelParams:         modelParams,
 	}, nil
 }
 
@@ -1328,7 +1355,10 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	b.clearNodeEpochData()
 
-	// 2. Iterate through each model subgroup
+	// 2. Track which nodes are found in epoch data
+	nodesInEpoch := make(map[string]bool)
+
+	// 3. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
 		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
 		if err != nil {
@@ -1346,13 +1376,33 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 			continue
 		}
 
-		// 3. Iterate through participants in the subgroup
+		// 4. Iterate through participants in the subgroup
 		for _, weightInfo := range subgroup.ValidationWeights {
 			// Check if the participant is the one this broker is managing
 			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
-				// 4. Iterate through the ML nodes for this participant in the epoch data
+				// 5. Iterate through the ML nodes for this participant in the epoch data
 				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
+				// Mark these nodes as found in epoch
+				for _, mlNodeInfo := range weightInfo.MlNodes {
+					nodesInEpoch[mlNodeInfo.NodeId] = true
+				}
 			}
+		}
+	}
+
+	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
+	b.mu.RLock()
+	nodeIds := make([]string, 0, len(b.nodes))
+	for nodeId := range b.nodes {
+		if !nodesInEpoch[nodeId] {
+			nodeIds = append(nodeIds, nodeId)
+		}
+	}
+	b.mu.RUnlock()
+
+	for _, nodeId := range nodeIds {
+		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
+			logging.Warn("Failed to populate governance models for node not in epoch", types.Nodes, "node_id", nodeId, "error", err)
 		}
 	}
 
@@ -1381,6 +1431,125 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
 		}
 	}
+}
+
+// PopulateSingleNodeEpochData populates epoch data for a specific node.
+// If the node is found in current epoch data, it uses that data.
+// If not found (new node not yet assigned), it populates with governance model snapshots.
+func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
+	if b.phaseTracker == nil {
+		logging.Warn("Cannot populate node epoch data: phase tracker not initialized", types.Nodes, "node_id", nodeId)
+		return fmt.Errorf("phase tracker not initialized")
+	}
+	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState == nil || epochState.IsNilOrNotSynced() {
+		logging.Warn("Cannot populate node epoch data: epoch state not synced", types.Nodes, "node_id", nodeId)
+		return fmt.Errorf("epoch state not synced")
+	}
+
+	// Get the parent epoch group to find all subgroup models
+	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(epochState.LatestEpoch.EpochIndex, "")
+	if err != nil {
+		logging.Error("Failed to get parent epoch group for node", types.Nodes, "node_id", nodeId, "error", err)
+		return err
+	}
+	if parentGroupResp == nil || len(parentGroupResp.EpochGroupData.SubGroupModels) == 0 {
+		logging.Warn("Parent epoch group data is empty, will use governance models", types.Nodes, "node_id", nodeId)
+		return b.populateNodeWithGovernanceModels(nodeId)
+	}
+
+	parentEpochData := parentGroupResp.GetEpochGroupData()
+	foundInEpoch := false
+
+	// Iterate through each model subgroup to find this node
+	for _, modelId := range parentEpochData.SubGroupModels {
+		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
+		if err != nil {
+			logging.Error("Failed to get subgroup epoch data for node", types.Nodes, "node_id", nodeId, "model_id", modelId, "error", err)
+			continue
+		}
+		if subgroupResp == nil || subgroupResp.EpochGroupData.ModelSnapshot == nil {
+			continue
+		}
+
+		subgroup := subgroupResp.EpochGroupData
+
+		// Iterate through participants in the subgroup
+		for _, weightInfo := range subgroup.ValidationWeights {
+			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+				// Find ML nodes matching this specific node ID
+				for _, mlNodeInfo := range weightInfo.MlNodes {
+					if mlNodeInfo.NodeId == nodeId {
+						b.mu.Lock()
+						if node, ok := b.nodes[nodeId]; ok {
+							node.State.EpochModels[modelId] = *subgroup.ModelSnapshot
+							node.State.EpochMLNodes[modelId] = *mlNodeInfo
+							logging.Info("Populated epoch data for node from epoch group", types.Nodes, "node_id", nodeId, "model_id", modelId)
+							foundInEpoch = true
+						}
+						b.mu.Unlock()
+					}
+				}
+			}
+		}
+	}
+
+	// If node not found in epoch data, populate with governance models
+	if !foundInEpoch {
+		logging.Info("Node not found in current epoch data, populating with governance models", types.Nodes, "node_id", nodeId)
+		return b.populateNodeWithGovernanceModels(nodeId)
+	}
+
+	return nil
+}
+
+// populateNodeWithGovernanceModels populates a node's EpochModels with governance model snapshots
+// for all models the node registered with. This is used for new nodes not yet in epoch data.
+func (b *Broker) populateNodeWithGovernanceModels(nodeId string) error {
+	b.mu.RLock()
+	node, exists := b.nodes[nodeId]
+	if !exists {
+		b.mu.RUnlock()
+		return fmt.Errorf("node not found: %s", nodeId)
+	}
+	nodeModelIds := make([]string, 0, len(node.Node.Models))
+	for modelId := range node.Node.Models {
+		nodeModelIds = append(nodeModelIds, modelId)
+	}
+	b.mu.RUnlock()
+
+	// Get governance models
+	govModels, err := b.chainBridge.GetGovernanceModels()
+	if err != nil {
+		logging.Error("Failed to get governance models for node", types.Nodes, "node_id", nodeId, "error", err)
+		return err
+	}
+
+	// Create a map of governance models for quick lookup
+	govModelMap := make(map[string]types.Model)
+	for _, model := range govModels.Model {
+		govModelMap[model.Id] = model
+	}
+
+	// Populate EpochModels with governance model snapshots
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	node, exists = b.nodes[nodeId]
+	if !exists {
+		return fmt.Errorf("node not found: %s", nodeId)
+	}
+
+	for _, modelId := range nodeModelIds {
+		if govModel, ok := govModelMap[modelId]; ok {
+			node.State.EpochModels[modelId] = govModel
+			logging.Info("Populated node with governance model", types.Nodes, "node_id", nodeId, "model_id", modelId)
+		} else {
+			logging.Warn("Model not found in governance models", types.Nodes, "node_id", nodeId, "model_id", modelId)
+		}
+	}
+
+	return nil
 }
 
 // MergeModelArgs combines model arguments from the epoch snapshot with locally

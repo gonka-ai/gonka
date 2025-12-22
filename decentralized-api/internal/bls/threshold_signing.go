@@ -58,14 +58,12 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 		"epoch_id", epochId,
 		"deadline", deadline)
 
-	// Get verification result for this epoch from cache
-	result := bm.cache.Get(epochId)
-	if result == nil {
-		logging.Warn(thresholdSigningLogTag+"No verification result found for epoch", inferenceTypes.BLS, "epoch_id", epochId)
-		return fmt.Errorf("no verification result found for epoch %d", epochId)
+	result, err := bm.GetOrRecoverVerificationResult(epochId)
+	if err != nil {
+		logging.Warn(thresholdSigningLogTag+"Failed to get verification result", inferenceTypes.BLS, "epoch_id", epochId, "error", err)
+		return fmt.Errorf("failed to get verification result: %w", err)
 	}
 
-	// Check if we are a participant in this epoch
 	if !result.IsParticipant {
 		logging.Debug(thresholdSigningLogTag+"Not a participant in this epoch, skipping", inferenceTypes.BLS, "epoch_id", epochId)
 		return nil

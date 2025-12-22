@@ -156,6 +156,11 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
+	// Populate epoch data for the newly registered node
+	if err := b.PopulateSingleNodeEpochData(c.Node.Id); err != nil {
+		logging.Warn("RegisterNode. Failed to populate epoch data", types.Nodes, "node_id", c.Node.Id, "error", err)
+	}
+
 	// Trigger a status check for the newly added node.
 	b.TriggerStatusQuery(true)
 

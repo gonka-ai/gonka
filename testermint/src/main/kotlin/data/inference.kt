@@ -27,6 +27,9 @@ data class InferencePayload(
     val transferSignature: String? = null,
     val executionSignature: String? = null,
     val perTokenPrice: Long? = null,
+    val originalPromptHash: String? = null,  // Phase 3: for dev signature verification
+    @com.google.gson.annotations.SerializedName("epoch_id")
+    val epochId: Long = 0,  // Phase 4: for offchain payload storage
 ) {
     companion object {
         fun empty() = InferencePayload(
@@ -52,6 +55,7 @@ data class InferencePayload(
             assignedTo = null,
             validatedBy = listOf(),
             perTokenPrice = null,
+            epochId = 0,
         )
 
     }
@@ -94,7 +98,7 @@ data class MsgStartInference(
     val creator: String = "",
     val inferenceId: String,
     val promptHash: String,
-    val promptPayload: String,
+    val promptPayload: String = "",  // Deprecated - kept for backward compatibility
     val model: String = "",
     val requestedBy: String = "",
     val assignedTo: String = "",
@@ -103,7 +107,8 @@ data class MsgStartInference(
     val promptTokenCount: Long = 0,
     val requestTimestamp: Long = 0,
     val transferSignature: String = "",
-    val originalPrompt: String = promptPayload,
+    val originalPrompt: String = "",  // Deprecated - kept for backward compatibility
+    val originalPromptHash: String = "",  // Phase 3: for dev signature verification
 ) : TxMessage
 
 data class MsgFinishInference(
@@ -111,7 +116,7 @@ data class MsgFinishInference(
     val creator: String = "",
     val inferenceId: String = "",
     val responseHash: String = "",
-    val responsePayload: String = "",
+    val responsePayload: String = "",  // Deprecated - kept for backward compatibility
     val promptTokenCount: Long = 0,
     val completionTokenCount: Long = 0,
     val executedBy: String = "",
@@ -120,8 +125,10 @@ data class MsgFinishInference(
     val transferSignature: String = "",
     val executorSignature: String = "",
     val requestedBy: String = "",
-    val originalPrompt: String = "",
+    val originalPrompt: String = "",  // Deprecated - kept for backward compatibility
     val model: String = "",
+    val promptHash: String = "",          // Phase 3: for TA/executor signature verification
+    val originalPromptHash: String = "",  // Phase 3: for dev signature verification
 ) : TxMessage
 
 data class MsgValidation(
@@ -141,3 +148,21 @@ data class MsgClaimRewards(
     val seed: Long = 0,
     val epochIndex: Long = 0
 ) : TxMessage
+
+// Admin endpoint request/response for storing payloads directly
+data class StorePayloadRequest(
+    @com.google.gson.annotations.SerializedName("prompt_payload")
+    val promptPayload: String,
+    @com.google.gson.annotations.SerializedName("response_payload")
+    val responsePayload: String,
+    @com.google.gson.annotations.SerializedName("epoch_id")
+    val epochId: Long
+)
+
+data class StorePayloadResponse(
+    val status: String,
+    @com.google.gson.annotations.SerializedName("inference_id")
+    val inferenceId: String,
+    @com.google.gson.annotations.SerializedName("epoch_id")
+    val epochId: Long
+)

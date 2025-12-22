@@ -65,3 +65,63 @@ func TestPack_Unpack_Msg(t *testing.T) {
 	assert.Equal(t, rawTx.CompletionTokenCount, result.CompletionTokenCount)
 	assert.Equal(t, rawTx.ExecutedBy, result.ExecutedBy)
 }
+
+func TestPack_Unpack_Batch(t *testing.T) {
+	const (
+		network     = "cosmos"
+		accountName = "cosmosaccount"
+		mnemonic    = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+		passphrase  = "testpass"
+	)
+
+	rpc := mocks.NewRPCClient(t)
+	client := testutil.NewMockClient(t, rpc, network, accountName, mnemonic, passphrase)
+	cdc := client.Context().Codec
+
+	msgs := []*inference.MsgStartInference{
+		{Creator: "addr1", InferenceId: uuid.New().String(), Model: "model-a"},
+		{Creator: "addr2", InferenceId: uuid.New().String(), Model: "model-b"},
+		{Creator: "addr3", InferenceId: uuid.New().String(), Model: "model-c"},
+	}
+
+	rawBatch := make([][]byte, len(msgs))
+	for i, msg := range msgs {
+		bz, err := cdc.MarshalInterfaceJSON(msg)
+		assert.NoError(t, err)
+		rawBatch[i] = bz
+	}
+
+	timeout := getTimestamp(time.Now().UnixNano(), time.Second)
+	b, err := json.Marshal(&txToSend{
+		TxInfo: txInfo{
+			Id:       "batch-id",
+			RawBatch: rawBatch,
+			Timeout:  timeout,
+		},
+		Sent:     false,
+		Attempts: 0,
+	})
+	assert.NoError(t, err)
+
+	var tx txToSend
+	err = json.Unmarshal(b, &tx)
+	assert.NoError(t, err)
+
+	assert.True(t, tx.TxInfo.IsBatch())
+	assert.Len(t, tx.TxInfo.RawBatch, 3)
+
+	for i, rawMsg := range tx.TxInfo.RawBatch {
+		var unpackedAny codectypes.Any
+		err = cdc.UnmarshalJSON(rawMsg, &unpackedAny)
+		assert.NoError(t, err)
+
+		var unmarshalledMsg sdk.Msg
+		err = cdc.UnpackAny(&unpackedAny, &unmarshalledMsg)
+		assert.NoError(t, err)
+
+		result := unmarshalledMsg.(*types.MsgStartInference)
+		assert.Equal(t, msgs[i].Creator, result.Creator)
+		assert.Equal(t, msgs[i].InferenceId, result.InferenceId)
+		assert.Equal(t, msgs[i].Model, result.Model)
+	}
+}

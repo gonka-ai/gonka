@@ -39,6 +39,7 @@ class MultiModelTests : TestermintTest() {
 
         logSection("Setting nodes for new model")
         secondModelPairs.forEach {
+
             val newNode = validNode.copy(
                 host = "${it.name.trim('/')}-mock-server", models = mapOf(
                     newModelName to ModelConfig(
@@ -49,7 +50,8 @@ class MultiModelTests : TestermintTest() {
             it.api.setNodesTo(newNode)
             it.mock?.setInferenceResponse(
                 defaultInferenceResponseObject.withResponse("Hawaii doesn't exist."),
-                model = newModelName
+                model = newModelName,
+                hostName = newNode.inferenceHost
             )
         }
         genesis.node.waitForNextBlock(3)
@@ -73,7 +75,7 @@ class MultiModelTests : TestermintTest() {
         var newState: InferencePayload
         do {
             logSection("Trying to get invalid inference. Tries left: $tries")
-            genesis.waitForNextInferenceWindow(5)
+            genesis.waitForNextInferenceWindow(20)
             newState = getInferenceValidationState(genesis, oddPair, newModelName)
         } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
         logSection("Verifying invalidation")

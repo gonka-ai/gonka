@@ -15,7 +15,7 @@ class PruningTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
         logSection("Making Inference")
         val inferenceResult = genesis.makeInferenceRequest(inferenceRequest)
-        genesis.node.waitForNextBlock()
+        genesis.node.waitForNextBlock(2)
         val inferenceState1 = genesis.node.getInference(inferenceResult.id)
         assertNotNull(inferenceState1, "Inference not in chain")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)

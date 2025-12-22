@@ -134,6 +134,14 @@ func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, mod
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 }
@@ -265,6 +273,11 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 					},
 				},
 			},
+		},
+	}, nil)
+	mockChainBridge.On("GetParams").Return(&types.QueryParamsResponse{
+		Params: types.Params{
+			PocParams: types.DefaultPocParams(),
 		},
 	}, nil)
 

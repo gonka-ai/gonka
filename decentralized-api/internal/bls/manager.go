@@ -5,10 +5,14 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
+	"fmt"
+	"sync"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/productscience/inference/x/bls/types"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -18,12 +22,9 @@ const (
 // BlsManager handles all BLS operations including DKG dealing, verification, and group key validation
 type BlsManager struct {
 	cosmosClient cosmosclient.InferenceCosmosClient
-	ctx          context.Context // Context for chain queries
-
-	// Verification state management
-	cache *VerificationCache // Cache for multiple epochs
-
-	// Configuration
+	ctx          context.Context
+	cache        *VerificationCache
+	recoverySF   singleflight.Group
 	maxCacheSize uint64
 }
 
@@ -42,26 +43,26 @@ type VerificationResult struct {
 
 // VerificationCache manages verification results for multiple epochs
 type VerificationCache struct {
-	results map[uint64]*VerificationResult // epochID -> VerificationResult
+	sync.RWMutex
+	results map[uint64]*VerificationResult
 }
 
-// NewVerificationCache creates a new verification cache
 func NewVerificationCache() *VerificationCache {
 	return &VerificationCache{
 		results: make(map[uint64]*VerificationResult),
 	}
 }
 
-// Store adds a verification result to the cache and cleans up old entries
 func (vc *VerificationCache) Store(result *VerificationResult) {
 	if result == nil {
 		return
 	}
 
-	// Store the new result
+	vc.Lock()
+	defer vc.Unlock()
+
 	vc.results[result.EpochID] = result
 
-	// Clean up old entries (keep only current and previous epoch)
 	if result.EpochID >= 2 {
 		epochToRemove := result.EpochID - 2
 		if _, exists := vc.results[epochToRemove]; exists {
@@ -77,13 +78,16 @@ func (vc *VerificationCache) Store(result *VerificationResult) {
 		"cachedEpochs", len(vc.results))
 }
 
-// Get retrieves a verification result for a specific epoch
 func (vc *VerificationCache) Get(epochID uint64) *VerificationResult {
+	vc.RLock()
+	defer vc.RUnlock()
 	return vc.results[epochID]
 }
 
-// GetCurrent returns the verification result for the highest epoch ID
 func (vc *VerificationCache) GetCurrent() *VerificationResult {
+	vc.RLock()
+	defer vc.RUnlock()
+
 	var current *VerificationResult
 	var maxEpochID uint64 = 0
 
@@ -97,8 +101,10 @@ func (vc *VerificationCache) GetCurrent() *VerificationResult {
 	return current
 }
 
-// GetCachedEpochs returns a list of all cached epoch IDs
 func (vc *VerificationCache) GetCachedEpochs() []uint64 {
+	vc.RLock()
+	defer vc.RUnlock()
+
 	epochs := make([]uint64, 0, len(vc.results))
 	for epochID := range vc.results {
 		epochs = append(epochs, epochID)
@@ -142,6 +148,46 @@ func (v *BlsManager) GetCurrentVerificationResult() *VerificationResult {
 // GetCachedEpochs returns all cached epoch IDs
 func (v *BlsManager) GetCachedEpochs() []uint64 {
 	return v.cache.GetCachedEpochs()
+}
+
+// GetOrRecoverVerificationResult returns cached result or recovers from chain
+func (bm *BlsManager) GetOrRecoverVerificationResult(epochID uint64) (*VerificationResult, error) {
+	if result := bm.cache.Get(epochID); result != nil {
+		return result, nil
+	}
+
+	key := fmt.Sprintf("recover-%d", epochID)
+	_, err, _ := bm.recoverySF.Do(key, func() (interface{}, error) {
+		if result := bm.cache.Get(epochID); result != nil {
+			return result, nil
+		}
+
+		ctx, cancel := context.WithTimeout(bm.ctx, 60*time.Second)
+		defer cancel()
+
+		blsQueryClient := bm.cosmosClient.NewBLSQueryClient()
+		res, err := blsQueryClient.EpochBLSData(ctx, &types.QueryEpochBLSDataRequest{
+			EpochId: epochID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to query epoch data: %w", err)
+		}
+
+		completed, err := bm.setupAndPerformVerification(epochID, &res.EpochData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recover: %w", err)
+		}
+		if !completed {
+			return nil, fmt.Errorf("not a participant in epoch %d", epochID)
+		}
+
+		return bm.cache.Get(epochID), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return bm.cache.Get(epochID), nil
 }
 
 // storeVerificationResult stores a verification result in the cache

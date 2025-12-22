@@ -14,7 +14,6 @@ func CanonicalizeJSON(jsonBytes []byte) (string, error) {
 	if err := json.Unmarshal(jsonBytes, &jsonObj); err != nil {
 		return "", err
 	}
-	// add a random seed if it doesn't exist in jsonObj
 
 	buf := &bytes.Buffer{}
 	encoder := json.NewEncoder(buf)
@@ -65,6 +64,11 @@ func encodeCanonical(encoder *json.Encoder, jsonObj interface{}) error {
 	}
 
 	return nil
+}
+
+func GenerateSHA256HashBytes(bytes []byte) string {
+	hash := sha256.Sum256(bytes)
+	return hex.EncodeToString(hash[:])
 }
 
 func GenerateSHA256Hash(text string) string {

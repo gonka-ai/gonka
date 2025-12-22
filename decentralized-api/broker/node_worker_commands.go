@@ -51,6 +51,7 @@ type StartPoCNodeCommand struct {
 	PubKey      string
 	CallbackUrl string
 	TotalNodes  int
+	ModelParams *types.PoCModelParams
 }
 
 func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
@@ -94,7 +95,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	// Start PoC
 	dto := mlnodeclient.BuildInitDto(
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
-		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
+		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl, c.ModelParams,
 	)
 	if err := worker.GetClient().InitGenerate(ctx, dto); err != nil {
 		logging.Error("[StartPoCNodeCommand] Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
@@ -116,6 +117,7 @@ type InitValidateNodeCommand struct {
 	PubKey      string
 	CallbackUrl string
 	TotalNodes  int
+	ModelParams *types.PoCModelParams
 }
 
 func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
@@ -158,7 +160,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 
 	dto := mlnodeclient.BuildInitDto(
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
-		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
+		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl, c.ModelParams,
 	)
 
 	if err := worker.GetClient().InitValidate(ctx, dto); err != nil {

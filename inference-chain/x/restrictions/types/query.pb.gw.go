@@ -364,13 +364,13 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 }
 
 var (
-	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "params"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "params"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TransferRestrictionStatus_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "status"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TransferRestrictionStatus_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "status"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TransferExemptions_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "exemptions"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TransferExemptions_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "exemptions"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ExemptionUsage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "exemption_usage"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ExemptionUsage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "restrictions", "exemption_usage"}, "", runtime.AssumeColonVerbOpt(true)))
 )
 
 var (

@@ -41,6 +41,10 @@ class Sender(Process):
         self.generated_not_sent: List[ProofBatch] = []
         self.validated_not_sent: List[ValidatedBatch] = []
         self.stop_event = Event()
+        
+        # Counters for validation statistics
+        self.total_validated_batches = 0
+        self.total_fraud_detected = 0
 
     def _send_generated(self):
         if not self.generated_not_sent:
@@ -104,6 +108,15 @@ class Sender(Process):
             for in_val in in_validation
             if in_val.is_ready()
         ]
+        
+        for validated_batch in in_validation_ready:
+            self.total_validated_batches += 1
+            if validated_batch.fraud_detected:
+                self.total_fraud_detected += 1
+            
+            logger.info(f"{validated_batch}")
+            logger.info(f"Stats: {self.total_validated_batches} validated, {self.total_fraud_detected} fraud")
+        
         return in_validation_ready
 
     def _get_in_validation(self) -> List[InValidation]:
@@ -118,19 +131,22 @@ class Sender(Process):
     def run(self):
         logger.info("Sender started")
         while not self.stop_event.is_set():
-            if self.phase.value == Phase.GENERATE:
-                generated = self._get_generated()
-                if len(generated) > 0:
-                    self.generated_not_sent.append(generated)
-                self._send_generated()
+            try:
+                if self.phase.value == Phase.GENERATE:
+                    generated = self._get_generated()
+                    if len(generated) > 0:
+                        self.generated_not_sent.append(generated)
+                    self._send_generated()
 
-            elif self.phase.value == Phase.VALIDATE:
-                self.validated_not_sent.extend(self._get_validated())
-                self.in_validation = [
-                    b for b in self.in_validation
-                    if not b.is_ready()
-                ]
-                self._send_validated()
+                elif self.phase.value == Phase.VALIDATE:
+                    self.validated_not_sent.extend(self._get_validated())
+                    self.in_validation = [
+                        b for b in self.in_validation
+                        if not b.is_ready()
+                    ]
+                    self._send_validated()
+            except Exception as e:
+                logger.error(f"Error in sender loop: {e}", exc_info=True)
 
             time.sleep(5)
         logger.info("Sender stopped")

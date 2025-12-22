@@ -8,7 +8,7 @@ export ADMIN_SERVER_PORT=9002
 export ML_GRPC_SERVER_PORT=9003
 export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
-rm -r "prod-local" || true
+docker run --rm -v "$(pwd):/workdir" -w /workdir alpine:3.19 rm -rf prod-local 2>/dev/null || true
 export PUBLIC_URL="http://${KEY_NAME}-api:9000"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export IS_GENESIS=true

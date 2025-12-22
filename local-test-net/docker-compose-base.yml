@@ -66,3 +66,8 @@ services:
 networks:
   chain-public:
     name: chain-public
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.25.0.0/16

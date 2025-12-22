@@ -22,9 +22,9 @@ message Inference {
   string index = 1;
   string inference_id = 2;
   string prompt_hash = 3;
-  string prompt_payload = 4;
+  string prompt_payload = 4 [deprecated = true];    // Phase 3: will be removed in Phase 6
   string response_hash = 5;
-  string response_payload = 6;
+  string response_payload = 6 [deprecated = true];  // Phase 3: will be removed in Phase 6
   uint64 prompt_token_count = 7;
   uint64 completion_token_count = 8;
   string requested_by = 9;
@@ -49,7 +49,8 @@ message Inference {
   int64 request_timestamp = 28;
   string transfer_signature = 29;
   string execution_signature = 30;
-  string original_prompt = 31;
+  string original_prompt = 31 [deprecated = true];  // Phase 3: will be removed in Phase 6
   uint64 per_token_price = 32; // Locked-in per-token price when inference started (for dynamic pricing)
+  string original_prompt_hash = 33;                 // Phase 3: for dev signature verification
 }
 

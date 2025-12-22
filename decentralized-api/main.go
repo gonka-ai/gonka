@@ -15,6 +15,7 @@ import (
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/payloadstorage"
 	"net"
 
 	"github.com/productscience/inference/api/inference/inference"
@@ -168,7 +169,16 @@ func main() {
 	// Bridge external block queue
 	blockQueue := pserver.NewBlockQueue(recorder)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker)
+	// Shared payload storage for both public and admin servers
+	// Uses PostgreSQL if PGHOST is set and accessible, otherwise file-based
+	// ManagedStorage provides read caching + automatic epoch pruning (retains last 3 epochs)
+	payloadStore := payloadstorage.NewManagedStorage(
+		payloadstorage.NewPayloadStorage(ctx, "/root/.dapi/data/inference"),
+		3,             // retain current + 2 previous epochs
+		3*time.Minute, // cache TTL
+	)
+
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
@@ -178,7 +188,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue, payloadStore)
 	adminServer.Start(addr)
 
 	mlGrpcServerPort := config.GetApiConfig().MlGrpcServerPort

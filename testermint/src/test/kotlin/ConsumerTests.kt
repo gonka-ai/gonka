@@ -43,7 +43,7 @@ class ConsumerTests : TestermintTest() {
                 )
             } catch(e: com.github.kittinunf.fuel.core.FuelError) {
                 failure = e
-                genesis.node.waitForNextBlock()
+                genesis.node.waitForNextBlock(2)
                 val timeouts = genesis.node.getInferenceTimeouts()
                 val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
                 assertThat(newTimeouts).hasSize(1)

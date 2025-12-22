@@ -1,11 +1,24 @@
 package com.productscience
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.github.kittinunf.fuel.Fuel
 import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.github.tomakehurst.wiremock.stubbing.StubMapping
 import com.productscience.data.OpenAIResponse
 import org.tinylog.kotlin.Logger
 import java.time.Duration
+
+
+data class SetInferenceResponseRequest(
+    val response: String,
+    val delay: Int,
+    @JsonProperty("stream_delay")
+    val streamDelay: Int,
+    val segment: String,
+    val model: String? = null,
+    @JsonProperty("host_name")
+    val hostName: String? = null
+)
 
 /**
  * Implementation of IInferenceMock that works with the Ktor-based mock server.
@@ -58,30 +71,37 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         delay: Duration,
         streamDelay: Duration,
         segment: String,
-        model: String?
+        model: String?,
+        hostName: String?
     ): StubMapping? {
-        val requestBody = """
-            {
-                "response": ${cosmosJson.toJson(response)},
-                "delay": ${delay.toMillis()},
-                "stream_delay": ${streamDelay.toMillis()},
-                "segment": ${cosmosJson.toJson(segment)},
-                "model": ${if (model != null) cosmosJson.toJson(model) else "null"}
-            }
-        """.trimIndent()
+        val request = SetInferenceResponseRequest(response, delay.toMillis().toInt(), streamDelay.toMillis().toInt(), segment, model, hostName)
 
-        try {
-            val (_, response, _) = Fuel.post("$baseUrl/api/v1/responses/inference")
-                .jsonBody(requestBody)
-                .responseString()
-
+        val reqData = Fuel.post("$baseUrl/api/v1/responses/inference")
+            .jsonBody(cosmosJson.toJson(request))
+            .responseString()
+        if (reqData.second.statusCode != 200) {
+            logResponse(reqData, throwError = true)
+        } else {
             Logger.debug("Set inference response: $response")
-        } catch (e: Exception) {
-            Logger.error("Failed to set inference response: ${e.message}")
         }
 
         return null // StubMapping is not used in this implementation
     }
+
+    override fun resetMocks() {
+        try {
+            val (_, response, _) = Fuel.post("$baseUrl/api/v1/responses/reset")
+                .responseString()
+            if (response.statusCode != 200) {
+                Logger.error("Failed to reset inference mocks: ${response.statusCode} ${response.responseMessage}")
+            } else {
+                Logger.debug("Reset inference mocks: $response")
+            }
+        } catch (e: Exception) {
+            Logger.error("Failed to reset inference mocks: ${e.message}")
+        }
+    }
+
 
     /**
      * Sets the response for the inference endpoint using an OpenAIResponse object.
@@ -98,8 +118,16 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         delay: Duration,
         streamDelay: Duration,
         segment: String,
-        model: String?
-    ): StubMapping? = this.setInferenceResponse(openAiJson.toJson(openAIResponse.copy(model = model ?: openAIResponse.model)), delay, streamDelay, segment, model)
+        model: String?,
+        hostName: String?
+    ): StubMapping? = this.setInferenceResponse(
+        openAiJson.toJson(openAIResponse.copy(model = model ?: openAIResponse.model)),
+        delay,
+        streamDelay,
+        segment,
+        model,
+        hostName
+    )
 
     /**
      * Sets an error response for the inference endpoint.
@@ -120,22 +148,25 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         delay: Duration,
         streamDelay: Duration,
         segment: String,
-        model: String?
+        model: String?,
+        hostName: String?
     ): StubMapping? {
-        val requestBody = """
-            {
-                "status_code": $statusCode,
-                "error_message": ${if (errorMessage != null) cosmosJson.toJson(errorMessage) else "null"},
-                "error_type": ${if (errorType != null) cosmosJson.toJson(errorType) else "null"},
-                "delay": ${delay.toMillis()},
-                "stream_delay": ${streamDelay.toMillis()},
-                "segment": ${cosmosJson.toJson(segment)}
-            }
-        """.trimIndent()
+        data class ErrorResponse(
+            val status_code: Int,
+            val error_message: String?,
+            val error_type: String?,
+            val delay: Long,
+            val stream_delay: Long,
+            val segment: String,
+            val host_name: String? = null,
+        )
+
+        val request =
+            ErrorResponse(statusCode, errorMessage, errorType, delay.toMillis(), streamDelay.toMillis(), segment, hostName)
 
         try {
             val (_, response, _) = Fuel.post("$baseUrl/api/v1/responses/inference/error")
-                .jsonBody(requestBody)
+                .jsonBody(cosmosJson.toJson(request))
                 .responseString()
 
             Logger.debug("Set inference error response: $response")
@@ -152,20 +183,23 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
      * @param weight The number of nonces to generate
      * @param scenarioName The name of the scenario
      */
-    override fun setPocResponse(weight: Long, scenarioName: String) {
-        val requestBody = """
-            {
-                "weight": $weight,
-                "scenarioName": ${cosmosJson.toJson(scenarioName)}
-            }
-        """.trimIndent()
+    override fun setPocResponse(weight: Long, hostName: String?, scenarioName: String) {
+        data class SetPocResponseRequest(
+            val weight: Long,
+            val scenarioName: String,
+            val hostName: String?
+        )
 
+        val request = SetPocResponseRequest(weight, scenarioName, hostName)
         try {
             val (_, response, _) = Fuel.post("$baseUrl/api/v1/responses/poc")
-                .jsonBody(requestBody)
+                .jsonBody(cosmosJson.toJson(request))
                 .responseString()
-
-            Logger.debug("Set POC response: $response")
+            if (response.statusCode != 200) {
+                Logger.error("Failed to set POC response: ${response.statusCode} ${response.responseMessage}")
+            } else {
+                Logger.debug("Set POC response: $response")
+            }
         } catch (e: Exception) {
             Logger.error("Failed to set POC response: ${e.message}")
         }
@@ -184,7 +218,7 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         // so we can just call setPocResponse
         setPocResponse(weight, scenarioName)
     }
-    
+
     override fun hasRequestsToVersionedEndpoint(segment: String): Boolean {
         // For MockServerInferenceMock, we can't easily verify WireMock-style request patterns
         // Since this is primarily used in tests with the original WireMock-based InferenceMock,

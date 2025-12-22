@@ -43,11 +43,8 @@ func (msg *MsgStartInference) ValidateBasic() error {
 	if strings.TrimSpace(msg.PromptHash) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "prompt_hash is required")
 	}
-	if strings.TrimSpace(msg.PromptPayload) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "prompt_payload is required")
-	}
-	if strings.TrimSpace(msg.OriginalPrompt) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "original_prompt is required")
+	if strings.TrimSpace(msg.OriginalPromptHash) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "original_prompt_hash is required")
 	}
 	// request_timestamp must be > 0
 	if msg.RequestTimestamp <= 0 {

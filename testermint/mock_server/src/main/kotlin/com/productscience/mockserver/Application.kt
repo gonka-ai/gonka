@@ -10,18 +10,18 @@ import com.productscience.mockserver.routes.stopRoutes
 import com.productscience.mockserver.routes.tokenizationRoutes
 import com.productscience.mockserver.routes.trainRoutes
 import com.productscience.mockserver.service.ResponseService
+import com.productscience.mockserver.service.HostHeaderService
 import com.productscience.mockserver.service.TokenizationService
 import com.productscience.mockserver.service.WebhookService
 import io.ktor.serialization.jackson.jackson
-import io.ktor.server.application.Application
-import io.ktor.server.application.call
-import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.callloging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import io.ktor.http.HttpHeaders
+import io.ktor.server.application.*
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -33,6 +33,7 @@ import org.slf4j.event.Level
 val WebhookServiceKey = AttributeKey<WebhookService>("WebhookService")
 val ResponseServiceKey = AttributeKey<ResponseService>("ResponseService")
 val TokenizationServiceKey = AttributeKey<TokenizationService>("TokenizationService")
+val HostHeaderServiceKey = AttributeKey<HostHeaderService>("HostHeaderService")
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -43,6 +44,7 @@ fun Application.module() {
     configureLogging()
     configureSerialization()
     configureServices()
+    install(HostHeaderRecorder)
     configureRouting()
 }
 
@@ -64,11 +66,23 @@ fun Application.configureServices() {
     val responseService = ResponseService()
     val webhookService = WebhookService(responseService)
     val tokenizationService = TokenizationService()
+    val hostHeaderService = HostHeaderService()
 
     // Register the services in the application's attributes
     attributes.put(WebhookServiceKey, webhookService)
     attributes.put(ResponseServiceKey, responseService)
     attributes.put(TokenizationServiceKey, tokenizationService)
+    attributes.put(HostHeaderServiceKey, hostHeaderService)
+}
+
+val HostHeaderRecorder = createApplicationPlugin(name = "HostHeaderRecorder") {
+    val logger = LoggerFactory.getLogger("HostHeaderRecorder")
+    onCall { call ->
+        val service = call.application.attributes[HostHeaderServiceKey]
+        val host = call.request.headers[HttpHeaders.Host]
+        service.record(host)
+        logger.debug("Recorded Host header: {}", host)
+    }
 }
 
 fun Application.configureRouting() {
@@ -107,3 +121,5 @@ fun Application.configureSerialization() {
         jackson()
     }
 }
+
+fun ApplicationCall.getHost(): String = this.request.headers[HttpHeaders.Host] ?: "localhost"

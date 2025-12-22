@@ -16,6 +16,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+const claimDebounceBlocks = 30
+
 func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
@@ -163,7 +165,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	).Return(nil).AnyTimes()
 
 	// Call ClaimRewards
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,
 		Seed:       1,
@@ -206,10 +208,10 @@ func TestMsgServer_ClaimRewards_NoRewards(t *testing.T) {
 			},
 		},
 	}
-	k.SetEpochGroupData(sdk.UnwrapSDKContext(ctx), currentEpochData)
+	k.SetEpochGroupData(ctx, currentEpochData)
 
 	// Call ClaimRewards without setting up any rewards
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: 100,
 		Seed:       1,
@@ -256,7 +258,7 @@ func TestMsgServer_ClaimRewards_WrongHeight(t *testing.T) {
 	k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
 
 	// Call ClaimRewards with a different height
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: 100, // Different from what's stored
 		Seed:       1,
@@ -303,7 +305,7 @@ func TestMsgServer_ClaimRewards_ZeroRewards(t *testing.T) {
 	k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
 
 	// Call ClaimRewards
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: 100,
 		Seed:       1,
@@ -468,7 +470,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	// With 10 inferences and critical value of 4, missing all 10 will exceed the threshold
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,
 		Seed:       12345,
@@ -509,7 +511,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	).Return(nil)
 
 	// Call ClaimRewards again - this should succeed now
-	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err = ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks*2+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,
 		Seed:       12345,
@@ -683,7 +685,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
 	// With 10 inferences, missing 4+ validations exceeds the critical value (4)
-	resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,
 		Seed:       12345,
@@ -715,7 +717,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k.SetSettleAmount(sdkCtx, settleAmount)
 
 	// Call ClaimRewards with the new seed
-	_, _ = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	_, _ = ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,
 		Seed:       54321,
@@ -852,7 +854,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k.SetEpochGroupValidations(sdkCtx, validations2)
 
 	// Call ClaimRewards for second epoch - this should succeed now
-	resp, err = ms.ClaimRewards(ctx, &types.MsgClaimRewards{
+	resp, err = ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex2,
 		Seed:       12345,
@@ -1019,14 +1021,14 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 
 	if validatorIsAvailableDuringPoC {
 		// Validator was available, but did not validate the inference, but now receives rewards due to statistical validation
-		resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed)})
+		resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed)})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.Equal(t, uint64(1500), resp.Amount)
 		require.Equal(t, "Rewards claimed successfully", resp.Result)
 	} else {
 		// Validator wasn't available, expect them to receive their reward even if they didn't validate all inferences
-		resp, err := ms.ClaimRewards(ctx, &types.MsgClaimRewards{Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed)})
+		resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed)})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.Equal(t, uint64(1500), resp.Amount)

@@ -31,7 +31,25 @@ func (k Keeper) EpochPerformanceSummaryAll(ctx context.Context, req *types.Query
 	return &types.QueryAllEpochPerformanceSummaryResponse{EpochPerformanceSummary: epochPerformanceSummarys, Pagination: pageRes}, nil
 }
 
-func (k Keeper) EpochPerformanceSummary(ctx context.Context, req *types.QueryGetEpochPerformanceSummaryRequest) (*types.QueryGetEpochPerformanceSummaryResponse, error) {
+// EpochPerformanceSummary returns all summaries for a given epoch index.
+func (k Keeper) EpochPerformanceSummary(ctx context.Context, req *types.QueryEpochPerformanceSummaryByEpochRequest) (*types.QueryEpochPerformanceSummaryByEpochResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+
+	all := k.GetAllEpochPerformanceSummary(ctx)
+	var filtered []types.EpochPerformanceSummary
+	for _, s := range all {
+		if s.EpochIndex == req.EpochIndex {
+			filtered = append(filtered, s)
+		}
+	}
+
+	return &types.QueryEpochPerformanceSummaryByEpochResponse{EpochPerformanceSummary: filtered}, nil
+}
+
+// EpochPerformanceSummaryByParticipant returns a single summary for a given epoch index and participant.
+func (k Keeper) EpochPerformanceSummaryByParticipant(ctx context.Context, req *types.QueryEpochPerformanceSummaryByParticipantRequest) (*types.QueryEpochPerformanceSummaryByParticipantResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
@@ -45,5 +63,5 @@ func (k Keeper) EpochPerformanceSummary(ctx context.Context, req *types.QueryGet
 		return nil, status.Error(codes.NotFound, "not found")
 	}
 
-	return &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: val}, nil
+	return &types.QueryEpochPerformanceSummaryByParticipantResponse{EpochPerformanceSummary: val}, nil
 }

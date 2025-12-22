@@ -24,6 +24,7 @@ func GetBitcoinSettleAmounts(
 	participants []types.Participant,
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
+	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string][]*types.MLNodeInfo,
 	logger log.Logger,
@@ -48,7 +49,7 @@ func GetBitcoinSettleAmounts(
 	// 3. Complete distribution with remainder handling
 	// 4. Invalid participant handling
 	// 5. Error management
-	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, participantMLNodes, logger)
+	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, validationParams, participantMLNodes, logger)
 	if err != nil {
 		logger.Error("Error calculating participant bitcoin rewards", "error", err)
 		return settleResults, bitcoinResult, err
@@ -408,6 +409,7 @@ func CalculateParticipantBitcoinRewards(
 	participants []types.Participant,
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
+	validationParams *types.ValidationParams,
 	participantMLNodes map[string][]*types.MLNodeInfo,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
@@ -500,7 +502,11 @@ func CalculateParticipantBitcoinRewards(
 
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
-	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, logger)
+	p0 := types.DecimalFromFloat(0.10)
+	if validationParams != nil && validationParams.BinomTestP0 != nil {
+		p0 = validationParams.BinomTestP0
+	}
+	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
 	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
 
 	// Recalculate total weight after downtime punishment

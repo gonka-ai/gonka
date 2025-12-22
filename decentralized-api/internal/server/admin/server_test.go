@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
 	"encoding/json"
@@ -51,6 +52,14 @@ func (m *mockInferenceQueryClient) ModelsAll(ctx context.Context, in *types.Quer
 	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
 }
 
+func (m *mockInferenceQueryClient) EpochGroupData(ctx context.Context, in *types.QueryGetEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryGetEpochGroupDataResponse, error) {
+	args := m.Called(ctx, in)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
+}
+
 func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodeclient.MockClientFactory) {
 	// 1. Config Manager
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
@@ -84,11 +93,47 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 	mockParticipant.On("GetAddress").Return("test-participant")
 	mockCosmos.On("GetContext").Return(context.Background())
 
-	// 3. Broker
-	nodeBroker := broker.NewBroker(bridge, nil, mockParticipant, "", mockClientFactory, configManager)
+	// Mock epoch group data for parent group (empty modelId)
+	parentGroupResp := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			EpochIndex:          100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}
+	mockQueryClient.On("EpochGroupData", mock.Anything, &types.QueryGetEpochGroupDataRequest{
+		EpochIndex: 100,
+		ModelId:    "",
+	}).Return(parentGroupResp, nil)
 
-	// 4. Server
-	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil)
+	// Mock epoch group data for specific model
+	modelEpochData := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			EpochIndex:          100,
+			ModelSnapshot:       &types.Model{Id: "test-model"},
+		},
+	}
+	mockQueryClient.On("EpochGroupData", mock.Anything, &types.QueryGetEpochGroupDataRequest{
+		EpochIndex: 100,
+		ModelId:    "test-model",
+	}).Return(modelEpochData, nil)
+
+	// 3. PhaseTracker
+	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+
+	// 4. Broker
+	nodeBroker := broker.NewBroker(bridge, phaseTracker, mockParticipant, "", mockClientFactory, configManager)
+
+	// 5. Server
+	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil, nil)
 
 	return s, configManager, mockClientFactory
 }

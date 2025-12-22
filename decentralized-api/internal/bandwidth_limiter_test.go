@@ -35,10 +35,27 @@ func newTestBandwidthLimiter(limitsPerBlockKB uint64, requestLifespanBlocks int6
 			EstimatedLimitsPerBlockKb: limitsPerBlockKB,
 			KbPerInputToken:           kbPerInputToken,
 			KbPerOutputToken:          kbPerOutputToken,
+			MaxInferencesPerBlock:     1000, // Default
 		},
 	}
 
 	// Create without recorder and phase tracker for simple testing
+	return NewBandwidthLimiterFromConfig(configManager, nil, nil)
+}
+
+// newTestBandwidthLimiterWithInferenceLimit creates a limiter with a custom inference limit
+func newTestBandwidthLimiterWithInferenceLimit(limitsPerBlockKB uint64, requestLifespanBlocks int64, maxInferences uint64) *BandwidthLimiter {
+	configManager := &mockConfigManager{
+		validationParams: apiconfig.ValidationParamsCache{
+			ExpirationBlocks: requestLifespanBlocks,
+		},
+		bandwidthParams: apiconfig.BandwidthParamsCache{
+			EstimatedLimitsPerBlockKb: limitsPerBlockKB,
+			KbPerInputToken:           0.0023,
+			KbPerOutputToken:          0.64,
+			MaxInferencesPerBlock:     maxInferences,
+		},
+	}
 	return NewBandwidthLimiterFromConfig(configManager, nil, nil)
 }
 
@@ -72,9 +89,9 @@ func TestBandwidthLimiter_RecordAndRelease(t *testing.T) {
 	// Range [5:15] = 11 blocks, so average existing = 950/11 = 86.36 KB per block
 	// New request ~67 KB = 6.1 KB per block, total = 86.36 + 6.1 = 92.46 KB per block (under 100 KB limit)
 	// So we need a larger request to exceed the limit
-	can, _ := limiter.CanAcceptRequest(5, 2000, 200) // ~130 KB request = 11.8 KB per block, total = 98.16 KB (still under)
+	// ~130 KB request = 11.8 KB per block, total = 98.16 KB (still under)
 	// Let's try an even bigger request
-	can, _ = limiter.CanAcceptRequest(5, 5000, 500) // ~332 KB request = 30.2 KB per block, total = 116.56 KB (over 100 KB limit)
+	can, _ := limiter.CanAcceptRequest(5, 5000, 500) // ~332 KB request = 30.2 KB per block, total = 116.56 KB (over 100 KB limit)
 	require.False(t, can, "Should not accept a new request that would exceed average limit")
 
 	// Release the first request
@@ -261,4 +278,103 @@ func (m *MockConfigManager) GetValidationParams() apiconfig.ValidationParamsCach
 
 func (m *MockConfigManager) GetBandwidthParams() apiconfig.BandwidthParamsCache {
 	return m.bandwidthParams
+}
+
+func TestBandwidthLimiter_InferenceCountLimit(t *testing.T) {
+	// Create limiter with 10 inferences per block limit and 5 block lifespan
+	// High KB limit so we only test inference count
+	limiter := newTestBandwidthLimiterWithInferenceLimit(100000, 5, 10)
+
+	// First request should be accepted
+	can, kb := limiter.CanAcceptRequest(1, 100, 10)
+	require.True(t, can, "Should accept first request")
+
+	// Fill up to the limit (window is 6 blocks, limit is 10 per block = 60 total)
+	for i := 0; i < 59; i++ {
+		limiter.RecordRequest(1, kb)
+	}
+
+	// At 59 inferences, should still accept one more
+	can, _ = limiter.CanAcceptRequest(1, 100, 10)
+	require.True(t, can, "Should accept when at limit")
+
+	// Record one more to hit 60
+	limiter.RecordRequest(1, kb)
+
+	// Now at 60 inferences: avg = 60/6 = 10.0, exceeds limit
+	can, _ = limiter.CanAcceptRequest(1, 100, 10)
+	require.False(t, can, "Should reject when over limit")
+}
+
+func TestBandwidthLimiter_InferenceRecordAndRelease(t *testing.T) {
+	limiter := newTestBandwidthLimiterWithInferenceLimit(100000, 5, 10)
+
+	// Fill up to the limit
+	for i := 0; i < 60; i++ {
+		limiter.RecordRequest(1, 1)
+	}
+
+	// Should be rejected now
+	can, _ := limiter.CanAcceptRequest(1, 100, 10)
+	require.False(t, can, "Should reject when over limit")
+
+	// Release one
+	limiter.ReleaseRequest(1, 1)
+
+	// Now should be accepted
+	can, _ = limiter.CanAcceptRequest(1, 100, 10)
+	require.True(t, can, "Should accept after releasing")
+}
+
+func TestBandwidthLimiter_InferenceDisabled(t *testing.T) {
+	// Create limiter with inference limit disabled (0)
+	limiter := newTestBandwidthLimiterWithInferenceLimit(100000, 5, 0)
+	require.Equal(t, uint64(0), limiter.maxInferencesPerBlock, "Limiter should have inference limiting disabled when maxInferences=0")
+
+	// Record many requests
+	for i := 0; i < 1000; i++ {
+		limiter.RecordRequest(1, 1)
+	}
+
+	// Should still accept when inference limit is disabled
+	can, _ := limiter.CanAcceptRequest(1, 100, 10)
+	require.True(t, can, "Should accept when inference limit is disabled")
+}
+
+func TestBandwidthParameterLoadingWithInferenceLimit(t *testing.T) {
+	// Test that bandwidth parameters including inference limit are correctly loaded
+
+	bandwidthParams := &types.BandwidthLimitsParams{
+		EstimatedLimitsPerBlockKb: 1024,
+		KbPerInputToken: &types.Decimal{
+			Value:    23,
+			Exponent: -4,
+		},
+		KbPerOutputToken: &types.Decimal{
+			Value:    64,
+			Exponent: -2,
+		},
+		MaxInferencesPerBlock: 500,
+	}
+
+	// Simulate parameter loading
+	bandwidthConfig := apiconfig.BandwidthParamsCache{
+		EstimatedLimitsPerBlockKb: bandwidthParams.EstimatedLimitsPerBlockKb,
+		KbPerInputToken:           bandwidthParams.KbPerInputToken.ToFloat(),
+		KbPerOutputToken:          bandwidthParams.KbPerOutputToken.ToFloat(),
+		MaxInferencesPerBlock:     bandwidthParams.MaxInferencesPerBlock,
+	}
+
+	require.Equal(t, uint64(500), bandwidthConfig.MaxInferencesPerBlock, "MaxInferencesPerBlock should be loaded correctly")
+
+	// Create limiter and verify it uses the inference limit
+	configManager := &mockConfigManager{
+		validationParams: apiconfig.ValidationParamsCache{
+			ExpirationBlocks: 10,
+		},
+		bandwidthParams: bandwidthConfig,
+	}
+	limiter := NewBandwidthLimiterFromConfig(configManager, nil, nil)
+	require.NotNil(t, limiter, "BandwidthLimiter should be created successfully")
+	require.Equal(t, uint64(500), limiter.maxInferencesPerBlock, "Limiter should use configured inference limit")
 }

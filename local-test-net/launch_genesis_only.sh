@@ -26,6 +26,5 @@ docker compose -p genesis \
 -f docker-compose.genesis.yml \
 -f docker-compose.explorer.yml \
 -f docker-compose.proxy.yml \
--f docker-compose.contracts.yml \
 -f docker-compose.bridge.yml \
 up -d

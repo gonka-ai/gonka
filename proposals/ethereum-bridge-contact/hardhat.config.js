@@ -1,8 +1,15 @@
-require("@nomicfoundation/hardhat-toolbox");
-require("dotenv").config();
+import hardhatEthers from "@nomicfoundation/hardhat-ethers";
+import hardhatLedger from "@nomicfoundation/hardhat-ledger";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Ledger address (set via LEDGER_ADDRESS env var or hardcode here)
+const LEDGER_ADDRESS = process.env.LEDGER_ADDRESS || "0xc0eF863B1c566F82da3cD2Dd083c6716963452bF";
 
 /** @type import('hardhat/config').HardhatUserConfig */
-module.exports = {
+export default {
+  plugins: [hardhatEthers, hardhatLedger],
   solidity: {
     version: "0.8.19",
     settings: {
@@ -13,27 +20,47 @@ module.exports = {
     },
   },
   networks: {
-    // Local development network
+    // Local development network (use --fork for mainnet forking)
     hardhat: {
+      type: "edr-simulated",
+      chainId: 31337,
+    },
+    
+    // Localhost (for running against 'npx hardhat node')
+    localhost: {
+      type: "http",
+      url: "http://127.0.0.1:8545",
       chainId: 31337,
     },
     
     // Ethereum mainnet
     mainnet: {
+      type: "http",
       url: process.env.MAINNET_RPC_URL || "https://eth-mainnet.alchemyapi.io/v2/YOUR-API-KEY",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      ledgerAccounts: [LEDGER_ADDRESS],
       chainId: 1,
     },
     
     // Ethereum Sepolia testnet
     sepolia: {
+      type: "http",
       url: process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/YOUR-API-KEY",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 11155111,
     },
     
+    // Fusaka testnet (has BLS precompile support via EIP-2537)
+    fusaka: {
+      type: "http",
+      url: process.env.FUSAKA_RPC_URL || "https://rpc.fusaka.ethpandaops.io",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 1711,  // Fusaka chain ID
+    },
+    
     // Arbitrum One
     arbitrum: {
+      type: "http",
       url: process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 42161,
@@ -41,6 +68,7 @@ module.exports = {
     
     // Polygon
     polygon: {
+      type: "http",
       url: process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 137,
@@ -48,6 +76,7 @@ module.exports = {
     
     // Base
     base: {
+      type: "http",
       url: process.env.BASE_RPC_URL || "https://mainnet.base.org",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 8453,
@@ -74,86 +103,3 @@ module.exports = {
     enabled: true,
   },
 };
-
-// Tasks for common operations
-task("deploy-bridge", "Deploy the BridgeContract")
-  .addOptionalParam("verify", "Verify contract on Etherscan", false, types.boolean)
-  .setAction(async (taskArgs, hre) => {
-    const { main } = require("./deploy.js");
-    const bridge = await main();
-    
-    if (taskArgs.verify && hre.network.name !== "hardhat") {
-      console.log("Waiting for block confirmations...");
-      await bridge.deployTransaction.wait(6);
-      
-      console.log("Verifying contract...");
-      await hre.run("verify:verify", {
-        address: bridge.address,
-        constructorArguments: [],
-      });
-    }
-    
-    return bridge;
-  });
-
-task("setup-genesis", "Setup genesis epoch for deployed bridge")
-  .addParam("bridge", "Bridge contract address")
-  .addParam("groupkey", "96-byte hex group public key")
-  .setAction(async (taskArgs, hre) => {
-    const { submitGenesisEpoch, enableNormalOperation } = require("./deploy.js");
-    
-    console.log("Setting up genesis epoch...");
-    await submitGenesisEpoch(taskArgs.bridge, taskArgs.groupkey);
-    
-    console.log("Enabling normal operation...");
-    await enableNormalOperation(taskArgs.bridge);
-    
-    console.log("Bridge setup complete!");
-  });
-
-task("bridge-status", "Check bridge contract status")
-  .addParam("bridge", "Bridge contract address")
-  .setAction(async (taskArgs, hre) => {
-    const BridgeContract = await hre.ethers.getContractFactory("BridgeContract");
-    const bridge = BridgeContract.attach(taskArgs.bridge);
-    
-    const state = await bridge.getCurrentState();
-    const epochInfo = await bridge.getLatestEpochInfo();
-    const isTimeout = await bridge.isTimeoutReached();
-    
-    console.log("Bridge Status:");
-    console.log("- Address:", bridge.address);
-    console.log("- State:", state === 0 ? "ADMIN_CONTROL" : "NORMAL_OPERATION");
-    console.log("- Latest Epoch:", epochInfo.epochId.toString());
-    console.log("- Last Update:", new Date(epochInfo.timestamp.toNumber() * 1000).toISOString());
-    console.log("- Timeout Reached:", isTimeout);
-    console.log("- Owner:", await bridge.owner());
-  });
-
-task("test-withdrawal", "Test a withdrawal (placeholder signature)")
-  .addParam("bridge", "Bridge contract address")
-  .addParam("epoch", "Epoch ID")
-  .addParam("request", "Request ID (string)")
-  .addParam("recipient", "Recipient address")
-  .addParam("token", "Token contract address")
-  .addParam("amount", "Amount to withdraw (in wei)")
-  .setAction(async (taskArgs, hre) => {
-    const { testWithdrawal, createWithdrawalCommand } = require("./deploy.js");
-    
-    const withdrawalCommand = createWithdrawalCommand(
-      parseInt(taskArgs.epoch),
-      hre.ethers.utils.formatBytes32String(taskArgs.request),
-      taskArgs.recipient,
-      taskArgs.token,
-      hre.ethers.BigNumber.from(taskArgs.amount)
-    );
-    
-    console.log("Testing withdrawal with placeholder signature...");
-    console.log("Note: This will fail signature verification unless using actual BLS signature");
-    
-    try {
-      await testWithdrawal(taskArgs.bridge, withdrawalCommand);
-    } catch (error) {
-      console.log("Expected failure due to placeholder signature:", error.message);
-    }
-  });

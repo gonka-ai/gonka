@@ -6,6 +6,7 @@ import com.productscience.data.*
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
+import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
 
@@ -536,6 +537,18 @@ data class ApplicationCLI(
                 Logger.info("Signature created, signature={}", it)
             }
         }
+    }
+
+    // Phase 3: Helper to sign inference requests - auto-hashes the request before signing
+    fun signRequest(
+        request: String,
+        accountAddress: String? = null,
+        timestamp: Long? = null,
+        endpointAccount: String? = null
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val requestHash = digest.digest(request.toByteArray()).joinToString("") { "%02x".format(it) }
+        return signPayload(requestHash, accountAddress, timestamp, endpointAccount)
     }
 
     fun getTxStatus(txHash: String): TxResponse = wrapLog("getTxStatus", false) {

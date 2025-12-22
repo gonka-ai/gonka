@@ -297,7 +297,6 @@ func TestProcessStartInference(t *testing.T) {
 			startMessage: &types.MsgStartInference{
 				InferenceId:      "test-id",
 				PromptHash:       "hash",
-				PromptPayload:    "payload",
 				PromptTokenCount: 10,
 				RequestedBy:      "requester",
 				Model:            "model",
@@ -321,7 +320,6 @@ func TestProcessStartInference(t *testing.T) {
 			startMessage: &types.MsgStartInference{
 				InferenceId:      "test-id",
 				PromptHash:       "hash",
-				PromptPayload:    "payload",
 				PromptTokenCount: 10,
 				RequestedBy:      "requester",
 				Model:            "model",
@@ -358,7 +356,7 @@ func TestProcessStartInference(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, inference.Status)
 			assert.Equal(t, tt.startMessage.InferenceId, inference.InferenceId)
 			assert.Equal(t, tt.startMessage.PromptHash, inference.PromptHash)
-			assert.Equal(t, tt.startMessage.PromptPayload, inference.PromptPayload)
+			// Phase 6: PromptPayload no longer stored on-chain
 			// PromptTokenCount is not set in ProcessStartInference anymore - only used for escrow calculation
 			// Real token count is set in ProcessFinishInference
 			assert.Equal(t, tt.startMessage.RequestedBy, inference.RequestedBy)
@@ -389,7 +387,6 @@ func TestProcessFinishInference(t *testing.T) {
 			finishMessage: &types.MsgFinishInference{
 				InferenceId:          "test-id",
 				ResponseHash:         "hash",
-				ResponsePayload:      "payload",
 				PromptTokenCount:     10,
 				CompletionTokenCount: 20,
 				ExecutedBy:           "executor",
@@ -411,7 +408,6 @@ func TestProcessFinishInference(t *testing.T) {
 			finishMessage: &types.MsgFinishInference{
 				InferenceId:          "test-id",
 				ResponseHash:         "hash",
-				ResponsePayload:      "payload",
 				PromptTokenCount:     10,
 				CompletionTokenCount: 20,
 				ExecutedBy:           "executor",
@@ -433,7 +429,6 @@ func TestProcessFinishInference(t *testing.T) {
 			finishMessage: &types.MsgFinishInference{
 				InferenceId:          "test-id",
 				ResponseHash:         "hash",
-				ResponsePayload:      "payload",
 				PromptTokenCount:     0,
 				CompletionTokenCount: 20,
 				ExecutedBy:           "executor",
@@ -460,7 +455,7 @@ func TestProcessFinishInference(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, inference.Status)
 			assert.Equal(t, tt.finishMessage.InferenceId, inference.InferenceId)
 			assert.Equal(t, tt.finishMessage.ResponseHash, inference.ResponseHash)
-			assert.Equal(t, tt.finishMessage.ResponsePayload, inference.ResponsePayload)
+			// Phase 6: ResponsePayload no longer stored on-chain
 
 			// Check if PromptTokenCount is preserved when finishMessage has zero
 			if tt.finishMessage.PromptTokenCount == 0 && tt.currentInference.PromptTokenCount > 0 {

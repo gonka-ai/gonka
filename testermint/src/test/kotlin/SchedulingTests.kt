@@ -14,15 +14,9 @@ import kotlin.test.Test
 class SchedulingTests : TestermintTest() {
     @Test
     fun basicSchedulingTest() {
-        val config = inferenceConfig.copy(
-            additionalDockerFilesByKeyName= mapOf(
-                GENESIS_KEY_NAME to listOf("docker-compose-local-mock-node-2.yml")
-            ),
-            nodeConfigFileByKeyName = mapOf(
-                GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
-            ),
-        )
-        val (cluster, genesis) = initCluster(config = config, reboot = true, resetMlNodes = false)
+        val (cluster, genesis) = initCluster(reboot = true, resetMlNodes = false)
+        genesis.addNodes(1)
+        genesis.waitForNextEpoch()
         val genesisParticipantKey = genesis.node.getValidatorInfo()
 
         // Wait for all participants to join and validators to be applied

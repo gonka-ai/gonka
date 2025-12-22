@@ -121,11 +121,12 @@ func (rsm *RandomSeedManagerImpl) CreateNewSeed(epochIndex uint64) (*apiconfig.S
 	}, nil
 }
 
-func (rsm *RandomSeedManagerImpl) createSeedForEpoch(epoch uint64) (int64, error) {
+// CreateSeedForEpoch generates a deterministic seed for a given epoch.
+func CreateSeedForEpoch(signer cosmosclient.CosmosMessageClient, epoch uint64) (int64, error) {
 	initialSeedBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(initialSeedBytes, epoch)
 
-	signed, err := rsm.transactionRecorder.SignBytes(initialSeedBytes)
+	signed, err := signer.SignBytes(initialSeedBytes)
 	if err != nil {
 		logging.Error("Failed to sign bytes", types.Claims, "error", err)
 		return 0, err
@@ -138,4 +139,8 @@ func (rsm *RandomSeedManagerImpl) createSeedForEpoch(epoch uint64) (int64, error
 	}
 
 	return newSeed, nil
+}
+
+func (rsm *RandomSeedManagerImpl) createSeedForEpoch(epoch uint64) (int64, error) {
+	return CreateSeedForEpoch(rsm.transactionRecorder, epoch)
 }

@@ -36,6 +36,9 @@ func betweenFullAndHalf(recentRequestCount decimal.Decimal, validationParams val
 }
 
 func CalculateMinimumValidationAverage(recentRequestCount int64, validationParams *types.ValidationParams) decimal.Decimal {
+	if recentRequestCount > validationParams.FullValidationTrafficCutoff {
+		return validationParams.MinValidationAverage.ToDecimal()
+	}
 	return calculateMinimumValidationAverage(decimal.NewFromInt(recentRequestCount), validationParamsDecimal{
 		FullValidationTrafficCutoff: decimal.NewFromInt(validationParams.FullValidationTrafficCutoff),
 		MinValidationAverage:        validationParams.MinValidationAverage.ToDecimal(),

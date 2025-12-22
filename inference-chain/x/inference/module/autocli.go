@@ -203,8 +203,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "EpochPerformanceSummary",
-					Use:            "show-epoch-performance-summary [id]",
-					Short:          "Shows a epoch_performance_summary",
+					Use:            "show-epoch-performance-summary [epoch-index]",
+					Short:          "Shows all epoch_performance_summary records for a given epoch",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}},
+				},
+				{
+					RpcMethod:      "EpochPerformanceSummaryByParticipant",
+					Use:            "show-epoch-performance-summary-by-participant [epoch-index] [participant-id]",
+					Short:          "Shows a epoch_performance_summary record for a specific participant and epoch",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}, {ProtoField: "participantId"}},
 				},
 				{

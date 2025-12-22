@@ -2,6 +2,7 @@ package admin
 
 import (
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
 	"net/http"
 	"strconv"
@@ -12,8 +13,9 @@ import (
 )
 
 type ClaimRewardRecoverRequest struct {
-	Seed       *int64 `json:"seed,omitempty"` // Optional: if not provided, uses stored seed
-	ForceClaim bool   `json:"force_claim"`    // Force claim even if already claimed
+	Seed       *int64 `json:"seed,omitempty"`        // Optional: if not provided, uses stored seed
+	ForceClaim bool   `json:"force_claim"`           // Force claim even if already claimed
+	EpochIndex uint64 `json:"epoch_index,omitempty"` // Epoch index to claim rewards for
 }
 
 type ClaimRewardRecoverResponse struct {
@@ -32,27 +34,48 @@ func (s *Server) postClaimRewardRecover(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 
-	// Always use the previous epoch (only epoch we can recover)
-	previousSeed := s.configManager.GetPreviousSeed()
-	epochIndex := previousSeed.EpochIndex
-
-	// Determine the seed to use
+	var epochIndex uint64
 	var seedValue int64
-	if req.Seed != nil {
-		// Custom seed provided
-		seedValue = *req.Seed
+	var isUsingPreviousSeed bool
+
+	previousSeed := s.configManager.GetPreviousSeed()
+
+	if req.EpochIndex != 0 {
+		epochIndex = req.EpochIndex
+		if req.Seed != nil {
+			seedValue = *req.Seed
+		} else {
+			generatedSeed, err := poc.CreateSeedForEpoch(s.recorder, epochIndex)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError,
+					"Failed to generate seed for epoch "+strconv.FormatUint(epochIndex, 10)+": "+err.Error())
+			}
+			seedValue = generatedSeed
+			logging.Info("Generated seed for custom epoch", types.Validation,
+				"epochIndex", epochIndex, "seed", seedValue)
+		}
+		isUsingPreviousSeed = false
 	} else {
-		// Use stored seed
-		seedValue = previousSeed.Seed
+		epochIndex = previousSeed.EpochIndex
+		if req.Seed != nil {
+			seedValue = *req.Seed
+		} else {
+			seedValue = previousSeed.Seed
+			if seedValue == 0 {
+				generatedSeed, err := poc.CreateSeedForEpoch(s.recorder, epochIndex)
+				if err != nil {
+					return echo.NewHTTPError(http.StatusInternalServerError,
+						"Failed to generate seed for epoch "+strconv.FormatUint(epochIndex, 10)+": "+err.Error())
+				}
+				seedValue = generatedSeed
+				logging.Info("Generated seed for previous epoch", types.Validation,
+					"epochIndex", epochIndex, "seed", seedValue)
+			}
+		}
+		isUsingPreviousSeed = true
 	}
 
-	// Check if seed is valid
-	if seedValue == 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "No valid seed available for previous epoch "+strconv.FormatUint(epochIndex, 10))
-	}
-
-	// Check if already claimed
-	alreadyClaimed := s.configManager.IsPreviousSeedClaimed()
+	alreadyClaimed := isUsingPreviousSeed && s.configManager.IsPreviousSeedClaimed()
 	if alreadyClaimed && !req.ForceClaim {
 		return ctx.JSON(http.StatusOK, ClaimRewardRecoverResponse{
 			Success:           false,
@@ -112,10 +135,11 @@ func (s *Server) postClaimRewardRecover(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to claim rewards: "+err.Error())
 		}
 
-		// Mark as claimed
-		err = s.configManager.MarkPreviousSeedClaimed()
-		if err != nil {
-			logging.Error("Failed to mark seed as claimed", types.Claims, "error", err)
+		if isUsingPreviousSeed {
+			err = s.configManager.MarkPreviousSeedClaimed()
+			if err != nil {
+				logging.Error("Failed to mark seed as claimed", types.Claims, "error", err)
+			}
 		}
 
 		claimExecuted = true

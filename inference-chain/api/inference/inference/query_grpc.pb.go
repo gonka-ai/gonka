@@ -47,6 +47,7 @@ const (
 	Query_InferenceValidationDetailsAll_FullMethodName             = "/inference.inference.Query/InferenceValidationDetailsAll"
 	Query_GetInferenceValidationParameters_FullMethodName          = "/inference.inference.Query/GetInferenceValidationParameters"
 	Query_EpochPerformanceSummary_FullMethodName                   = "/inference.inference.Query/EpochPerformanceSummary"
+	Query_EpochPerformanceSummaryByParticipant_FullMethodName      = "/inference.inference.Query/EpochPerformanceSummaryByParticipant"
 	Query_EpochPerformanceSummaryAll_FullMethodName                = "/inference.inference.Query/EpochPerformanceSummaryAll"
 	Query_TrainingTask_FullMethodName                              = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                             = "/inference.inference.Query/HardwareNodes"
@@ -144,7 +145,10 @@ type QueryClient interface {
 	// Queries a list of GetInferenceValidationParameters items.
 	GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error)
 	// Queries a list of EpochPerformanceSummary items.
-	EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error)
+	// Returns all EpochPerformanceSummary records for a specific epoch index.
+	EpochPerformanceSummary(ctx context.Context, in *QueryEpochPerformanceSummaryByEpochRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByEpochResponse, error)
+	// Returns a single EpochPerformanceSummary record for a specific epoch index and participant.
+	EpochPerformanceSummaryByParticipant(ctx context.Context, in *QueryEpochPerformanceSummaryByParticipantRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByParticipantResponse, error)
 	EpochPerformanceSummaryAll(ctx context.Context, in *QueryAllEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryAllEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
@@ -471,9 +475,18 @@ func (c *queryClient) GetInferenceValidationParameters(ctx context.Context, in *
 	return out, nil
 }
 
-func (c *queryClient) EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error) {
-	out := new(QueryGetEpochPerformanceSummaryResponse)
+func (c *queryClient) EpochPerformanceSummary(ctx context.Context, in *QueryEpochPerformanceSummaryByEpochRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByEpochResponse, error) {
+	out := new(QueryEpochPerformanceSummaryByEpochResponse)
 	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummary_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochPerformanceSummaryByParticipant(ctx context.Context, in *QueryEpochPerformanceSummaryByParticipantRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByParticipantResponse, error) {
+	out := new(QueryEpochPerformanceSummaryByParticipantResponse)
+	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummaryByParticipant_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -919,7 +932,10 @@ type QueryServer interface {
 	// Queries a list of GetInferenceValidationParameters items.
 	GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error)
 	// Queries a list of EpochPerformanceSummary items.
-	EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error)
+	// Returns all EpochPerformanceSummary records for a specific epoch index.
+	EpochPerformanceSummary(context.Context, *QueryEpochPerformanceSummaryByEpochRequest) (*QueryEpochPerformanceSummaryByEpochResponse, error)
+	// Returns a single EpochPerformanceSummary record for a specific epoch index and participant.
+	EpochPerformanceSummaryByParticipant(context.Context, *QueryEpochPerformanceSummaryByParticipantRequest) (*QueryEpochPerformanceSummaryByParticipantResponse, error)
 	EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
@@ -1081,8 +1097,11 @@ func (UnimplementedQueryServer) InferenceValidationDetailsAll(context.Context, *
 func (UnimplementedQueryServer) GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetInferenceValidationParameters not implemented")
 }
-func (UnimplementedQueryServer) EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error) {
+func (UnimplementedQueryServer) EpochPerformanceSummary(context.Context, *QueryEpochPerformanceSummaryByEpochRequest) (*QueryEpochPerformanceSummaryByEpochResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummary not implemented")
+}
+func (UnimplementedQueryServer) EpochPerformanceSummaryByParticipant(context.Context, *QueryEpochPerformanceSummaryByParticipantRequest) (*QueryEpochPerformanceSummaryByParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryByParticipant not implemented")
 }
 func (UnimplementedQueryServer) EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryAll not implemented")
@@ -1713,7 +1732,7 @@ func _Query_GetInferenceValidationParameters_Handler(srv interface{}, ctx contex
 }
 
 func _Query_EpochPerformanceSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetEpochPerformanceSummaryRequest)
+	in := new(QueryEpochPerformanceSummaryByEpochRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1725,7 +1744,25 @@ func _Query_EpochPerformanceSummary_Handler(srv interface{}, ctx context.Context
 		FullMethod: Query_EpochPerformanceSummary_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).EpochPerformanceSummary(ctx, req.(*QueryGetEpochPerformanceSummaryRequest))
+		return srv.(QueryServer).EpochPerformanceSummary(ctx, req.(*QueryEpochPerformanceSummaryByEpochRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochPerformanceSummaryByParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryEpochPerformanceSummaryByParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochPerformanceSummaryByParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochPerformanceSummaryByParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochPerformanceSummaryByParticipant(ctx, req.(*QueryEpochPerformanceSummaryByParticipantRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2622,6 +2659,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochPerformanceSummary",
 			Handler:    _Query_EpochPerformanceSummary_Handler,
+		},
+		{
+			MethodName: "EpochPerformanceSummaryByParticipant",
+			Handler:    _Query_EpochPerformanceSummaryByParticipant_Handler,
 		},
 		{
 			MethodName: "EpochPerformanceSummaryAll",

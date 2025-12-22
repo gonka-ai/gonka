@@ -23,12 +23,16 @@ import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
 const val LOCAL_TEST_NET_DIR = "local-test-net"
+val DNS_COMPOSE_FILES = listOf(
+    "$LOCAL_TEST_NET_DIR/docker-compose.dns.yml",
+    "$LOCAL_TEST_NET_DIR/docker-compose.dns-overrides.yml",
+)
 val BASE_COMPOSE_FILES = listOf(
     "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
     "${LOCAL_TEST_NET_DIR}/docker-compose.proxy.yml"
 )
-val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml"
-val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.join.yml"
+val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml" + DNS_COMPOSE_FILES
+val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.join.yml" + DNS_COMPOSE_FILES
 
 data class GenesisUrls(val keyName: String) {
     val apiUrl = "http://$keyName-api:9000"
@@ -182,7 +186,7 @@ data class DockerGroup(
                 validatorKey,
                 this.genesisGroup?.apiUrl ?: "http://genesis-api:9000"
             )
-            node.waitForNextBlock()
+            node.waitForNextBlock(2)
             node.grantMlOpsPermissionsToWarmAccount()
             val startRemainingArgs = baseArgs + listOf("api", "mock-server", "proxy")
             this.coldAccountPubkey = node.getColdPubKey()
@@ -273,26 +277,32 @@ data class DockerGroup(
         if (isGenesis) {
             val prodLocal = baseDir.resolve("prod-local")
             try {
-                prodLocal.deleteRecursively()
-            } catch (e: FileSystemException) {
-                val rootCauses = mutableSetOf<Throwable>()
-                fun extractRootCause(throwable: Throwable) {
-                    throwable.cause?.let { cause ->
-                        if (!rootCauses.contains(cause)) {
-                            rootCauses.add(cause)
-                            extractRootCause(cause)
-                        }
-                    }
-                    throwable.suppressed.forEach { suppressed ->
-                        if (!rootCauses.contains(suppressed)) {
-                            rootCauses.add(suppressed)
-                            extractRootCause(suppressed)
-                        }
-                    }
+                // Use Docker to clean up root-owned files on Linux
+                val cleanupProcess = ProcessBuilder(
+                    "docker", "run", "--rm",
+                    "-v", "${baseDir.toAbsolutePath()}:/workdir",
+                    "-w", "/workdir",
+                    "alpine:3.19",
+                    "rm", "-rf", "prod-local"
+                )
+                    .directory(baseDir.toFile())
+                    .start()
+                
+                val exitCode = cleanupProcess.waitFor()
+                if (exitCode != 0) {
+                    val errorOutput = cleanupProcess.errorStream.bufferedReader().readText()
+                    Logger.warn("Docker cleanup failed with exit code {}: {}", exitCode, errorOutput)
+                    // Fallback to regular deletion
+                    prodLocal.deleteRecursively()
+                } else {
+                    Logger.info("Successfully cleaned prod-local directory using Docker", "")
                 }
-                extractRootCause(e)
-                rootCauses.forEach { cause ->
-                    Logger.error("Root cause error deleting directory: {} ({})", cause.message, cause.javaClass.name)
+            } catch (e: Exception) {
+                Logger.error("Error during cleanup: {}, attempting fallback", e.message)
+                try {
+                    prodLocal.deleteRecursively()
+                } catch (fallbackException: FileSystemException) {
+                    Logger.error("Fallback cleanup also failed: {}", fallbackException.message)
                 }
             }
         }

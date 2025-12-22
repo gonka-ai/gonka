@@ -140,6 +140,17 @@ func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
 	return cm.currentConfig.Nats
 }
 
+func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
+	cfg := cm.currentConfig.TxBatching
+	if cfg.FlushSize == 0 {
+		cfg.FlushSize = 50
+	}
+	if cfg.FlushTimeoutSeconds == 0 {
+		cfg.FlushTimeoutSeconds = 5
+	}
+	return cfg
+}
+
 func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
 	nodes := make([]InferenceNodeConfig, len(cm.currentConfig.Nodes))
 	copy(nodes, cm.currentConfig.Nodes)

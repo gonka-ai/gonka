@@ -188,7 +188,13 @@ service Query {
   }
 
   // Queries a list of EpochPerformanceSummary items.
-  rpc EpochPerformanceSummary    (QueryGetEpochPerformanceSummaryRequest) returns (QueryGetEpochPerformanceSummaryResponse) {
+  // Returns all EpochPerformanceSummary records for a specific epoch index.
+  rpc EpochPerformanceSummary    (QueryEpochPerformanceSummaryByEpochRequest) returns (QueryEpochPerformanceSummaryByEpochResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epoch_index}";
+
+  }
+  // Returns a single EpochPerformanceSummary record for a specific epoch index and participant.
+  rpc EpochPerformanceSummaryByParticipant (QueryEpochPerformanceSummaryByParticipantRequest) returns (QueryEpochPerformanceSummaryByParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epoch_index}/{participantId}";
 
   }
@@ -678,12 +684,20 @@ message QueryGetInferenceValidationParametersResponse {
            ValidationParams           parameters      = 4;
 }
 
-message QueryGetEpochPerformanceSummaryRequest {
+message QueryEpochPerformanceSummaryByEpochRequest {
+  uint64 epoch_index = 1;
+}
+
+message QueryEpochPerformanceSummaryByEpochResponse {
+  repeated EpochPerformanceSummary epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryEpochPerformanceSummaryByParticipantRequest {
   uint64 epoch_index   = 1;
   string participantId = 2;
 }
 
-message QueryGetEpochPerformanceSummaryResponse {
+message QueryEpochPerformanceSummaryByParticipantResponse {
   EpochPerformanceSummary epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
 }
 
@@ -750,6 +764,8 @@ message QueryGetAllParticipantCurrentStatsResponse {
 message ParticipantCurrentStats {
   string participant_id = 1;
   uint64 weight         = 2;
+  uint64 effective_weight = 4;
+  uint64 capped_weight    = 5;
   int32  reputation     = 3;
 }
 

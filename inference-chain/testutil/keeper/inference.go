@@ -12,6 +12,7 @@ import (
 	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/slog"
 
+	"cosmossdk.io/core/header"
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
 	"cosmossdk.io/store/metrics"
@@ -222,7 +223,11 @@ func InferenceKeeperWithMock(
 		upgradeKeeper,
 	)
 
-	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger()).WithBlockTime(time.Now())
+	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger()).
+		WithBlockTime(time.Now()).
+		WithHeaderInfo(header.Info{
+			Hash: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+		})
 
 	// Initialize params
 	if err := k.SetParams(ctx, types.DefaultParams()); err != nil {

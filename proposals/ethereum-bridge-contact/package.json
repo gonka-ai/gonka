@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Ethereum smart contract for cross-chain bridge using BLS threshold signatures",
   "main": "BridgeContract.sol",
+  "type": "module",
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
@@ -29,12 +30,20 @@
   "author": "Bridge Development Team",
   "license": "MIT",
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^3.0.0",
+    "@nomicfoundation/hardhat-ethers": "^4.0.3",
+    "@nomicfoundation/hardhat-ledger": "^3.0.1",
     "@openzeppelin/contracts": "^4.9.0",
-    "hardhat": "^2.17.0",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.4.5",
+    "ethers": "^6.15.0",
+    "hardhat": "^3.0.15"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@chainsafe/bls": "^8.2.0",
+    "@chainsafe/blst": "^1.1.0",
+    "@ledgerhq/hw-app-eth": "^6.47.1",
+    "@ledgerhq/hw-transport-node-hid": "^6.29.14",
+    "@noble/curves": "^2.0.1"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/your-org/bridge-contracts.git"

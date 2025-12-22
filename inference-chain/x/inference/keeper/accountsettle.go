@@ -92,26 +92,26 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) (*SettleParameters, er
 	}, nil
 }
 
-func CheckAndPunishForDowntimeForParticipants(participants []types.Participant, rewards map[string]uint64, logger log.Logger) {
+func CheckAndPunishForDowntimeForParticipants(participants []types.Participant, rewards map[string]uint64, p0 *types.Decimal, logger log.Logger) {
 	for _, participant := range participants {
-		rewards[participant.Address] = CheckAndPunishForDowntimeForParticipant(participant, rewards[participant.Address], logger)
+		rewards[participant.Address] = CheckAndPunishForDowntimeForParticipant(participant, rewards[participant.Address], p0, logger)
 	}
 }
 
-func CheckAndPunishForDowntimeForParticipant(participant types.Participant, reward uint64, logger log.Logger) uint64 {
+func CheckAndPunishForDowntimeForParticipant(participant types.Participant, reward uint64, p0 *types.Decimal, logger log.Logger) uint64 {
 	totalRequests := participant.CurrentEpochStats.InferenceCount + participant.CurrentEpochStats.MissedRequests
 	missedRequests := participant.CurrentEpochStats.MissedRequests
 	logger.Info("Checking downtime for participant", "participant", participant.Address, "totalRequests", totalRequests, "missedRequests", missedRequests, "reward", reward)
-	finalReward := CheckAndPunishForDowntime(totalRequests, missedRequests, reward)
+	finalReward := CheckAndPunishForDowntime(totalRequests, missedRequests, reward, p0)
 	logger.Info("Final reward after downtime check", "participant", participant.Address, "finalReward", finalReward)
 	return finalReward
 }
 
-func CheckAndPunishForDowntime(total, missed, reward uint64) uint64 {
+func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) uint64 {
 	if total == 0 {
 		return reward
 	}
-	passed, err := calculations.MissedStatTest(int(missed), int(total))
+	passed, err := calculations.MissedStatTest(int(missed), int(total), p0.ToDecimal())
 	if err != nil {
 		return reward
 	}
@@ -207,7 +207,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 		var bitcoinResult BitcoinResult
 		var err error
-		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, settleParameters, participantMLNodes, k.Logger())
+		amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, params.ValidationParams, settleParameters, participantMLNodes, k.Logger())
 		if err != nil {
 			k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
 		}

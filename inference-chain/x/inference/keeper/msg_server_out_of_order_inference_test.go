@@ -44,15 +44,30 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	payload := "promptPayload"
 	requestTimestamp := ctx.BlockTime().UnixNano()
 
-	components := calculations.SignatureComponents{
-		Payload:         payload,
+	// Phase 3/6: Compute hashes for signatures
+	originalPromptHash := sha256Hash(payload)
+	promptHash := sha256Hash(payload) // In real flow, would be sha256(canonical request)
+
+	// Phase 3: Dev signs original_prompt_hash
+	devComponents := calculations.SignatureComponents{
+		Payload:         originalPromptHash,
+		Timestamp:       requestTimestamp,
+		TransferAddress: mockTransferAgent.address,
+		ExecutorAddress: "", // Dev doesn't include executor
+	}
+	inferenceId, err := calculations.Sign(mockRequester, devComponents, calculations.Developer)
+	require.NoError(t, err)
+
+	// Phase 3: TA and Executor sign prompt_hash
+	taComponents := calculations.SignatureComponents{
+		Payload:         promptHash,
 		Timestamp:       requestTimestamp,
 		TransferAddress: mockTransferAgent.address,
 		ExecutorAddress: mockExecutor.address,
 	}
-	inferenceId, err := calculations.Sign(mockRequester, components, calculations.Developer)
-	taSignature, err := calculations.Sign(mockTransferAgent, components, calculations.TransferAgent)
-	eaSignature, err := calculations.Sign(mockExecutor, components, calculations.ExecutorAgent)
+	taSignature, err := calculations.Sign(mockTransferAgent, taComponents, calculations.TransferAgent)
+	require.NoError(t, err)
+	eaSignature, err := calculations.Sign(mockExecutor, taComponents, calculations.ExecutorAgent)
 	require.NoError(t, err)
 
 	// First, try to finish an inference that hasn't been started yet
@@ -70,6 +85,9 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 		ExecutorSignature:    eaSignature,
 		RequestedBy:          mockRequester.address,
 		OriginalPrompt:       payload,
+		PromptHash:           promptHash,
+		OriginalPromptHash:   originalPromptHash,
+		Model:                "model1",
 	})
 	require.NoError(t, err) // Now this should succeed
 
@@ -78,7 +96,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_FINISHED, savedInference.Status)
 	require.Equal(t, "responseHash", savedInference.ResponseHash)
-	require.Equal(t, "responsePayload", savedInference.ResponsePayload)
+	require.Equal(t, "", savedInference.ResponsePayload) // Phase 6: Stored offchain
 	require.Equal(t, uint64(10), savedInference.PromptTokenCount)
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)
@@ -88,16 +106,17 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 
 	// Now start the inference
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
-		InferenceId:       inferenceId,
-		PromptHash:        "promptHash",
-		PromptPayload:     payload,
-		RequestedBy:       testutil.Requester,
-		Creator:           testutil.Creator,
-		Model:             "model1",
-		OriginalPrompt:    payload,
-		RequestTimestamp:  requestTimestamp,
-		TransferSignature: taSignature,
-		AssignedTo:        testutil.Executor,
+		InferenceId:        inferenceId,
+		PromptHash:         promptHash,
+		PromptPayload:      payload,
+		RequestedBy:        testutil.Requester,
+		Creator:            testutil.Creator,
+		Model:              "model1",
+		OriginalPrompt:     payload,
+		OriginalPromptHash: originalPromptHash,
+		RequestTimestamp:   requestTimestamp,
+		TransferSignature:  taSignature,
+		AssignedTo:         testutil.Executor,
 	})
 	require.NoError(t, err)
 
@@ -106,14 +125,14 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	savedInference, found = k.GetInference(ctx, inferenceId)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_FINISHED, savedInference.Status)
-	require.Equal(t, "promptHash", savedInference.PromptHash)
-	require.Equal(t, "promptPayload", savedInference.PromptPayload)
+	require.Equal(t, promptHash, savedInference.PromptHash)
+	require.Equal(t, "", savedInference.PromptPayload) // Phase 6: Stored offchain
 	require.Equal(t, testutil.Requester, savedInference.RequestedBy)
 	require.Equal(t, "model1", savedInference.Model)
 
 	// The finish information should still be there
 	require.Equal(t, "responseHash", savedInference.ResponseHash)
-	require.Equal(t, "responsePayload", savedInference.ResponsePayload)
+	require.Equal(t, "", savedInference.ResponsePayload) // Phase 6: Stored offchain
 	require.Equal(t, uint64(10), savedInference.PromptTokenCount)
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)

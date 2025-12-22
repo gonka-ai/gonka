@@ -9,7 +9,7 @@ data class AccountWrapper(
 data class Account(
     @SerializedName("@type")
     val type: String,
-    val value: Any  // Can be AccountValue or VestingAccountValue
+    val value: AccountValue
 )
 
 data class AccountValue(
@@ -18,16 +18,8 @@ data class AccountValue(
     val accountNumber: Long,
     val sequence: Long,
     val name: String?,
-    val permissions: List<String>?
-)
-
-// Vesting account data structures for Cosmos SDK vesting accounts
-data class VestingAccountValue(
-    val address: String,
-    val publicKey: String?,
-    val accountNumber: Long,
-    val sequence: Long,
-    val baseVestingAccount: BaseVestingAccount?
+    val permissions: List<String>?,
+    val baseVestingAccount: BaseVestingAccount?,
 )
 
 data class BaseVestingAccount(

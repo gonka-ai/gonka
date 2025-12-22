@@ -32,7 +32,8 @@ class TokenomicsTests : TestermintTest() {
         val (_, genesis) = initCluster(config = noCappingConfig, reboot = true)
         logSection("Setting PoC weight to 100")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        genesis.changePoc(100)
+        genesis.setPocWeight(100)
+        genesis.waitForNextEpoch()
         logSection("Verifying top miner added")
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
@@ -74,7 +75,8 @@ class TokenomicsTests : TestermintTest() {
         val firstJoin = localCluster.joinPairs.first()
         val initialBalance = firstJoin.node.getSelfBalance("ngonka")
         logSection("Setting PoC weight to 100")
-        firstJoin.changePoc(100)
+        firstJoin.setPocWeight(100)
+        firstJoin.waitForNextEpoch()
         val blockUntilReward = genesis.node.getGenesisState().appState.inference.genesisOnlyParams.topRewardPeriod / 5
         val settlesUntilReward = blockUntilReward / genesis.getParams().epochParams.epochLength
         logSection("Making Inferences")

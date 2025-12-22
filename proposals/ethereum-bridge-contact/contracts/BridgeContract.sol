@@ -549,6 +549,13 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         return (name(), symbol(), decimals(), totalSupply());
     }
 
+    /**
+     * @dev Override default decimals (18) to match Nano/Gonka (9)
+     */
+    function decimals() public view virtual override returns (uint8) {
+        return 9;
+    }
+
     // =============================================================================
     // INTERNAL FUNCTIONS
     // =============================================================================

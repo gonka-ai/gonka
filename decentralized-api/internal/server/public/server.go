@@ -7,6 +7,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/payloadstorage"
 	"decentralized-api/training"
 	"net/http"
 
@@ -14,13 +15,17 @@ import (
 )
 
 type Server struct {
-	e                *echo.Echo
-	nodeBroker       *broker.Broker
-	configManager    *apiconfig.ConfigManager
-	recorder         cosmosclient.CosmosMessageClient
-	trainingExecutor *training.Executor
-	blockQueue       *BridgeQueue
-	bandwidthLimiter *internal.BandwidthLimiter
+	e                   *echo.Echo
+	nodeBroker          *broker.Broker
+	configManager       *apiconfig.ConfigManager
+	recorder            cosmosclient.CosmosMessageClient
+	trainingExecutor    *training.Executor
+	blockQueue          *BridgeQueue
+	bandwidthLimiter    *internal.BandwidthLimiter
+	identityCache       *identityCache
+	payloadStorage      payloadstorage.PayloadStorage
+	phaseTracker        *chainphase.ChainPhaseTracker
+	epochGroupDataCache *internal.EpochGroupDataCache
 }
 
 // TODO: think about rate limits
@@ -30,7 +35,8 @@ func NewServer(
 	recorder cosmosclient.CosmosMessageClient,
 	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue,
-	phaseTracker *chainphase.ChainPhaseTracker) *Server {
+	phaseTracker *chainphase.ChainPhaseTracker,
+	payloadStorage payloadstorage.PayloadStorage) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
@@ -38,12 +44,16 @@ func NewServer(
 	configManagerRef = configManager
 
 	s := &Server{
-		e:                e,
-		nodeBroker:       nodeBroker,
-		configManager:    configManager,
-		recorder:         recorder,
-		trainingExecutor: trainingExecutor,
-		blockQueue:       blockQueue,
+		e:                   e,
+		nodeBroker:          nodeBroker,
+		configManager:       configManager,
+		recorder:            recorder,
+		trainingExecutor:    trainingExecutor,
+		blockQueue:          blockQueue,
+		identityCache:       newIdentityCache(),
+		payloadStorage:      payloadStorage,
+		phaseTracker:        phaseTracker,
+		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 	}
 
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
@@ -52,9 +62,11 @@ func NewServer(
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
+	g.GET("identity", s.getIdentity)
 
 	g.POST("chat/completions", s.postChat)
-	g.GET("chat/completions/:id", s.getChatById)
+	g.GET("chat/completions", s.getChatById)
+	g.GET("inference/payloads", s.getInferencePayloads)
 
 	g.GET("participants/:address", s.getInferenceParticipantByAddress)
 	g.GET("participants", s.getAllParticipants)

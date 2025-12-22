@@ -10,6 +10,7 @@ import (
 	"net/url"
 
 	"github.com/productscience/inference/testenv"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -17,7 +18,7 @@ const (
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
 
-	DefaultRTarget        = 1.4013564660458173
+	DefaultRTarget        = 1.398077
 	DefaultBatchSize      = 100
 	DefaultFraudThreshold = 1e-7
 )
@@ -35,22 +36,62 @@ type InitDto struct {
 	URL            string  `json:"url"`
 }
 
-func getNetworkParams() *Params {
+// getDefaultParams returns the default PoC model params based on environment.
+// TODO: use genesis-overrides for TestNet instead of hardcoded values
+func getDefaultParams() *Params {
 	if testenv.IsTestNet() {
 		return &TestNetParams
 	}
 	return &MainNetParams
 }
 
-func BuildInitDto(blockHeight int64, pubKey string, totalNodes int64, nodeNum uint64, blockHash, callbackUrl string) InitDto {
+// convertChainParams converts chain PoCModelParams to the local Params struct.
+func convertChainParams(chainParams *types.PoCModelParams) *Params {
+	if chainParams == nil {
+		return nil
+	}
+	return &Params{
+		Dim:              int(chainParams.Dim),
+		NLayers:          int(chainParams.NLayers),
+		NHeads:           int(chainParams.NHeads),
+		NKVHeads:         int(chainParams.NKvHeads),
+		VocabSize:        int(chainParams.VocabSize),
+		FFNDimMultiplier: chainParams.FfnDimMultiplier.ToFloat(),
+		MultipleOf:       int(chainParams.MultipleOf),
+		NormEps:          chainParams.NormEps.ToFloat(),
+		RopeTheta:        int(chainParams.RopeTheta),
+		UseScaledRope:    chainParams.UseScaledRope,
+		SeqLen:           int(chainParams.SeqLen),
+	}
+}
+
+// getRTarget extracts RTarget from chain params or returns default.
+func getRTarget(chainParams *types.PoCModelParams) float64 {
+	if chainParams != nil && chainParams.RTarget != nil {
+		return chainParams.RTarget.ToFloat()
+	}
+	return DefaultRTarget
+}
+
+func BuildInitDto(blockHeight int64, pubKey string, totalNodes int64, nodeNum uint64, blockHash, callbackUrl string, chainModelParams *types.PoCModelParams) InitDto {
+	var params *Params
+	if testenv.IsTestNet() {
+		// TODO: use genesis-overrides for TestNet instead of hardcoded values
+		params = &TestNetParams
+	} else if chainModelParams != nil {
+		params = convertChainParams(chainModelParams)
+	} else {
+		params = &MainNetParams // fallback
+	}
+
 	return InitDto{
 		BlockHeight:    blockHeight,
 		BlockHash:      blockHash,
 		PublicKey:      pubKey,
 		BatchSize:      DefaultBatchSize,
-		RTarget:        DefaultRTarget,
+		RTarget:        getRTarget(chainModelParams),
 		FraudThreshold: DefaultFraudThreshold,
-		Params:         getNetworkParams(),
+		Params:         params,
 		URL:            callbackUrl,
 		TotalNodes:     totalNodes,
 		NodeNum:        nodeNum,

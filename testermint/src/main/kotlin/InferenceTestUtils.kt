@@ -53,7 +53,7 @@ fun runParallelInferencesWithResults(
     // Wait for all requests to complete and collect their results
     val requestCollectionStart = System.currentTimeMillis()
     
-    val results = requests.map { it.await() }
+    val results = requests.awaitAll()
     val requestCollectionEnd = System.currentTimeMillis()
     val requestPhaseTotal = requestCollectionEnd - requestStartTime
     

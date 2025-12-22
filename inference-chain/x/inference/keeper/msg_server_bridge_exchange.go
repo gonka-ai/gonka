@@ -132,14 +132,19 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 
 		// Check if validator already validated
 		for _, validator := range existingTx.Validators {
-			if validator == msg.Validator {
+			existingAddr, err := sdk.AccAddressFromBech32(validator)
+			if err != nil {
+				continue
+			}
+			if existingAddr.Equals(addr) {
 				k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
 				return nil, fmt.Errorf("validator has already validated this transaction")
 			}
 		}
 
 		// Add validator and their power to totals
-		existingTx.Validators = append(existingTx.Validators, msg.Validator)
+		// Store normalized (canonical lowercase) address to ensure consistency
+		existingTx.Validators = append(existingTx.Validators, addr.String())
 		existingTx.TotalValidationPower += validatorPower
 
 		// Use total epoch power from epoch group data
@@ -253,7 +258,8 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	proposedTx.Id = "" // Will be set by SetBridgeTransaction
 	proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
 	proposedTx.EpochIndex = currentEpochGroup.GroupData.EpochIndex
-	proposedTx.Validators = []string{msg.Validator}
+	// Store normalized (canonical lowercase) address to ensure consistency
+	proposedTx.Validators = []string{addr.String()}
 	proposedTx.TotalValidationPower = validatorPower
 
 	k.SetBridgeTransaction(ctx, proposedTx)

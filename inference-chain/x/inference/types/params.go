@@ -134,6 +134,7 @@ func DefaultValidationParams() *ValidationParams {
 		DowntimeHThreshold:             DecimalFromFloat(4),
 		DowntimeReputationPreserve:     DecimalFromFloat(0.0),
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
+		BinomTestP0:                    DecimalFromFloat(0.10),
 	}
 }
 
@@ -141,7 +142,26 @@ func DefaultPocParams() *PocParams {
 	return &PocParams{
 		DefaultDifficulty:            5,
 		ValidationSampleSize:         200,
-		PocDataPruningEpochThreshold: 1, // Number of epochs after which PoC data can be pruned
+		PocDataPruningEpochThreshold: 1,
+		WeightScaleFactor:            DecimalFromFloat(1.0),
+		ModelParams:                  DefaultPoCModelParams(),
+	}
+}
+
+func DefaultPoCModelParams() *PoCModelParams {
+	return &PoCModelParams{
+		Dim:              1792,
+		NLayers:          64,
+		NHeads:           64,
+		NKvHeads:         64,
+		VocabSize:        8196,
+		FfnDimMultiplier: DecimalFromFloat(10.0),
+		MultipleOf:       4 * 2048,
+		NormEps:          DecimalFromFloat(1e-5),
+		RopeTheta:        10000,
+		UseScaledRope:    false,
+		SeqLen:           256,
+		RTarget:          DecimalFromFloat(1.398077),
 	}
 }
 
@@ -383,6 +403,9 @@ func (p *ValidationParams) Validate() error {
 	}
 	if p.DowntimeReputationPreserve == nil {
 		return fmt.Errorf("downtime reputation preserve cannot be nil")
+	}
+	if p.BinomTestP0 == nil {
+		return fmt.Errorf("binom test p0 cannot be nil")
 	}
 	// Validate timestamp parameters
 	if p.TimestampExpiration <= 0 {
@@ -818,4 +841,15 @@ func DecimalFromDecimal(d decimal.Decimal) *Decimal {
 func DecimalFromFloat32(f float32) *Decimal {
 	d := decimal.NewFromFloat32(f)
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
+}
+
+func (p *PocParams) GetWeightScaleFactorDec() math.LegacyDec {
+	if p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
+		return math.LegacyOneDec()
+	}
+	dec, err := p.WeightScaleFactor.ToLegacyDec()
+	if err != nil {
+		return math.LegacyOneDec()
+	}
+	return dec
 }

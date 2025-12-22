@@ -13,14 +13,15 @@ import (
 
 func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
-	_, err := ms.StartInference(ctx, &types.MsgStartInference{
+	response, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
 		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.NotEmpty(t, response.ErrorMessage)
 }
 
 func TestMsgServer_StartInference(t *testing.T) {
