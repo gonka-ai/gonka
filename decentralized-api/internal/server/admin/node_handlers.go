@@ -276,7 +276,7 @@ func (s *Server) postNodeTest(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("node not found: %s", nodeId))
 	}
 
-	// Run test immediately (manual trigger ignores timing window)
+	logging.Info("Admin manual test start", types.Nodes, "node_id", nodeId)
 	result := s.tester.RunNodeTest(context.Background(), *cfgNode)
 	if result != nil {
 		if result.Status == TestFailed {
@@ -286,6 +286,7 @@ func (s *Server) postNodeTest(ctx echo.Context) error {
 			cmd := broker.NewSetNodeFailureReasonCommand(nodeId, "")
 			_ = s.nodeBroker.QueueMessage(cmd)
 		}
+		logging.Info("Admin manual test result", types.Nodes, "node_id", nodeId, "status", string(result.Status), "error", result.Error)
 		s.latestTestResults[nodeId] = result
 	}
 

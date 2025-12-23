@@ -385,6 +385,7 @@ func (c UpdateNodeHardwareCommand) Execute(b *Broker) {
 func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || !epochState.IsSynced {
+		logging.Info(caller+". Auto-test skipped: epoch state unavailable", types.Nodes, "node_id", node.Id)
 		return
 	}
 	blocks := epochState.LatestEpoch.NextPoCStart() - epochState.CurrentBlock.Height
@@ -392,12 +393,15 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 		blocks = 0
 	}
 	seconds := int64(float64(blocks) * 6.0)
+	logging.Info(caller+". Auto-test timing evaluated", types.Nodes, "node_id", node.Id, "seconds_until_next_poc", seconds)
 	if seconds <= 3600 {
+		logging.Info(caller+". Auto-test skipped: insufficient time", types.Nodes, "node_id", node.Id, "seconds_until_next_poc", seconds)
 		return
 	}
 
 	version := b.configManager.GetCurrentNodeVersion()
 	client := b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
+	logging.Info(caller+". Auto-test starting", types.Nodes, "node_id", node.Id, "models", len(node.Models))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -422,4 +426,5 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	}
 
 	_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))
+	logging.Info(caller+". Auto-test passed", types.Nodes, "node_id", node.Id)
 }
