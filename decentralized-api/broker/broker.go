@@ -1770,3 +1770,33 @@ func (b *Broker) MergeModelArgs(epochArgs []string, localArgs []string) []string
 
 	return mergedArgs
 }
+
+func (b *Broker) IsParticipantActiveOnChain() (bool, error) {
+	resp, err := b.chainBridge.GetCurrentEpochGroupData()
+	if err != nil {
+		return false, err
+	}
+	if resp == nil {
+		return false, nil
+	}
+	epochIndex := resp.EpochGroupData.EpochIndex
+	subModels := resp.EpochGroupData.SubGroupModels
+	addr := b.participantInfo.GetAddress()
+	for _, mid := range subModels {
+		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(epochIndex, mid)
+		if err != nil {
+			continue
+		}
+		if subgroupResp == nil {
+			continue
+		}
+		for _, w := range subgroupResp.EpochGroupData.ValidationWeights {
+			if w.MemberAddress == addr {
+				if len(w.MlNodes) > 0 {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}

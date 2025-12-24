@@ -20,10 +20,17 @@ func (s *Server) getNodes(ctx echo.Context) error {
 	}
 	osm := NewOnboardingStateManager()
 	sr := NewStatusReporter()
+	chainActive := false
+	if s.nodeBroker != nil {
+		active, err := s.nodeBroker.IsParticipantActiveOnChain()
+		if err == nil {
+			chainActive = active
+		}
+	}
 
 	for i := range nodes {
 		state := &nodes[i].State
-		participantActive := len(state.EpochMLNodes) > 0
+		participantActive := chainActive || len(state.EpochMLNodes) > 0
 		pstate := osm.ParticipantStatus(participantActive)
 		state.ParticipantState = string(pstate)
 
@@ -39,7 +46,7 @@ func (s *Server) getNodes(ctx echo.Context) error {
 			isTesting = false
 			testFailed = false
 		}
-		mlnodeState, _, _ := osm.MLNodeStatusSimple(secs, isTesting, testFailed)
+		mlnodeState, _, _ := osm.MLNodeStatus(secs, isTesting, testFailed)
 		var userMsg string
 		if participantActive {
 			userMsg = sr.BuildMLNodeMessage(mlnodeState, secs, "")

@@ -1,9 +1,5 @@
 package admin
 
-import (
-	"decentralized-api/chainphase"
-)
-
 type MLNodeOnboardingState string
 
 const (
@@ -35,19 +31,19 @@ func NewOnboardingStateManager() *OnboardingStateManager {
 	}
 }
 
-func (m *OnboardingStateManager) MLNodeStatus(es *chainphase.EpochState, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
-	if testFailed {
-		return MLNodeState_TEST_FAILED, "Validation testing failed", true
-	}
-	if isTesting {
-		return MLNodeState_TESTING, "Running pre-PoC validation testing", true
-	}
-	c := m.timing.Countdown(es, m.blockTimeSeconds, m.alertLeadSeconds)
-	if c.ShouldBeOnline {
-		return MLNodeState_WAITING_FOR_POC, "PoC starting soon (in " + formatShortDuration(c.NextPoCSeconds) + ") - MLnode must be online now", true
-	}
-	return MLNodeState_WAITING_FOR_POC, "Waiting for next PoC cycle (starts in " + formatShortDuration(c.NextPoCSeconds) + ") - you can safely turn off the server and restart it 10 minutes before PoC", false
-}
+// func (m *OnboardingStateManager) MLNodeStatus(es *chainphase.EpochState, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
+// 	if testFailed {
+// 		return MLNodeState_TEST_FAILED, "Validation testing failed", true
+// 	}
+// 	if isTesting {
+// 		return MLNodeState_TESTING, "Running pre-PoC validation testing", true
+// 	}
+// 	c := m.timing.Countdown(es, m.blockTimeSeconds, m.alertLeadSeconds)
+// 	if c.ShouldBeOnline {
+// 		return MLNodeState_WAITING_FOR_POC, "PoC starting soon (in " + formatShortDuration(c.NextPoCSeconds) + ") - MLnode must be online now", true
+// 	}
+// 	return MLNodeState_WAITING_FOR_POC, "Waiting for next PoC cycle (starts in " + formatShortDuration(c.NextPoCSeconds) + ") - you can safely turn off the server and restart it 10 minutes before PoC", false
+// }
 
 func (m *OnboardingStateManager) ParticipantStatus(isActive bool) ParticipantState {
 	if isActive {
@@ -56,7 +52,7 @@ func (m *OnboardingStateManager) ParticipantStatus(isActive bool) ParticipantSta
 	return ParticipantState_INACTIVE_WAITING
 }
 
-func (m *OnboardingStateManager) MLNodeStatusSimple(secondsUntilNextPoC int64, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
+func (m *OnboardingStateManager) MLNodeStatus(secondsUntilNextPoC int64, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
 	if testFailed {
 		return MLNodeState_TEST_FAILED, "Validation testing failed", true
 	}
