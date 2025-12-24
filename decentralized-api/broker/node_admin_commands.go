@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
-	"decentralized-api/internal/server/admin"
 	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
@@ -436,7 +435,7 @@ func (c SetNodeMLNodeOnboardingStateCommand) Execute(b *Broker) {
 func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	// Helper function to handle test failures
 	setTestFailed := func(nodeId, errorReason string) {
-		cmd := NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(admin.MLNodeState_TEST_FAILED))
+		cmd := NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
 		_ = b.QueueMessage(cmd)
 		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(nodeId, errorReason))
 	}
@@ -516,7 +515,7 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	}
 
 	// On success, set node MLNodeOnboardingState to WAITING_FOR_POC
-	cmd := NewSetNodeMLNodeOnboardingStateCommand(node.Id, string(admin.MLNodeState_WAITING_FOR_POC))
+	cmd := NewSetNodeMLNodeOnboardingStateCommand(node.Id, string(apiconfig.MLNodeState_WAITING_FOR_POC))
 	_ = b.QueueMessage(cmd)
 	_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))
 	logging.Info(caller+". Auto-test passed", types.Nodes, "node_id", node.Id)

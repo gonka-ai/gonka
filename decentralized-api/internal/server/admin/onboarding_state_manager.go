@@ -1,18 +1,23 @@
 package admin
 
-type MLNodeOnboardingState string
+import "decentralized-api/apiconfig"
+
+// Import types and constants from apiconfig package
+// These are defined there to avoid import cycles
+
+type MLNodeOnboardingState = apiconfig.MLNodeOnboardingState
 
 const (
-	MLNodeState_WAITING_FOR_POC MLNodeOnboardingState = "WAITING_FOR_POC"
-	MLNodeState_TESTING         MLNodeOnboardingState = "TESTING"
-	MLNodeState_TEST_FAILED     MLNodeOnboardingState = "TEST_FAILED"
+	MLNodeState_WAITING_FOR_POC = apiconfig.MLNodeState_WAITING_FOR_POC
+	MLNodeState_TESTING         = apiconfig.MLNodeState_TESTING
+	MLNodeState_TEST_FAILED     = apiconfig.MLNodeState_TEST_FAILED
 )
 
-type ParticipantState string
+type ParticipantState = apiconfig.ParticipantState
 
 const (
-	ParticipantState_INACTIVE_WAITING     ParticipantState = "INACTIVE_WAITING"
-	ParticipantState_ACTIVE_PARTICIPATING ParticipantState = "ACTIVE_PARTICIPATING"
+	ParticipantState_INACTIVE_WAITING     = apiconfig.ParticipantState_INACTIVE_WAITING
+	ParticipantState_ACTIVE_PARTICIPATING = apiconfig.ParticipantState_ACTIVE_PARTICIPATING
 )
 
 type OnboardingStateManager struct {

@@ -60,7 +60,7 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	// Helper function to set node state to TEST_FAILED on failure
 	setTestFailed := func(nodeId string) {
 		if o.nodeBroker != nil {
-			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(MLNodeState_TEST_FAILED))
+			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
 			_ = o.nodeBroker.QueueMessage(cmd)
 		}
 	}
@@ -131,7 +131,7 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	// Helper function to set node state to WAITING_FOR_POC on success
 	setTestSuccess := func(nodeId string) {
 		if o.nodeBroker != nil {
-			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(MLNodeState_WAITING_FOR_POC))
+			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_WAITING_FOR_POC))
 			_ = o.nodeBroker.QueueMessage(cmd)
 		}
 	}
