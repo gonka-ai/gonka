@@ -1,10 +1,13 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -378,6 +381,13 @@ func (c UpdateNodeHardwareCommand) Execute(b *Broker) {
 	c.Response <- nil
 }
 
+func getFirstModelIdFromNode(node Node) string {
+	for modelId := range node.Models {
+		return modelId
+	}
+	return "" // Return empty if no models
+}
+
 // autoTestNodeIfTimeAllows performs a basic validation test for a node when
 // there is more than 1 hour remaining until the next PoC. It loads each
 // configured model and checks inference health, updating the node failure
@@ -423,6 +433,38 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 		logging.Error(caller+". Auto-test health check failed", types.Nodes, "node_id", node.Id, "error", reason)
 		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, reason))
 		return
+	}
+
+	// Perform test inference request to validate response
+	firstModelId := getFirstModelIdFromNode(node)
+	if firstModelId != "" {
+		testRequest := map[string]interface{}{
+			"model":      firstModelId,
+			"messages":   []map[string]string{{"role": "user", "content": "Hello, how are you?"}},
+			"max_tokens": 10,
+		}
+		requestBody, err := json.Marshal(testRequest)
+		if err != nil {
+			logging.Error(caller+". Auto-test failed to create test request", types.Nodes, "node_id", node.Id, "error", err)
+			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
+			return
+		}
+
+		completionsUrl := node.InferenceUrlWithVersion(version) + "/v1/chat/completions"
+		resp, err := http.Post(completionsUrl, "application/json", bytes.NewReader(requestBody))
+		if err != nil {
+			logging.Error(caller+". Auto-test failed during inference request", types.Nodes, "node_id", node.Id, "error", err)
+			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			reason := fmt.Sprintf("non_success_status_code: %d", resp.StatusCode)
+			logging.Error(caller+". Auto-test received non-success status code", types.Nodes, "node_id", node.Id, "status_code", resp.StatusCode, "error", reason)
+			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, reason))
+			return
+		}
 	}
 
 	_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))

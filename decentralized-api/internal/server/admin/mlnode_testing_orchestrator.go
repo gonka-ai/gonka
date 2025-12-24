@@ -1,10 +1,13 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -29,6 +32,13 @@ type TestResult struct {
 	FailingModel string
 	Error        string
 	Metrics      TestMetrics
+}
+
+func getFirstModelId(models map[string]apiconfig.ModelConfig) string {
+	for modelId := range models {
+		return modelId
+	}
+	return "" // Return empty if no models
 }
 
 type MLnodeTestingOrchestrator struct {
@@ -74,7 +84,33 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: "health_not_ok", Metrics: metrics}
 	}
 
-	metrics.RespMs = 0
+	// Perform test inference request to validate response and measure performance
+	startResp := time.Now()
+	testRequest := map[string]interface{}{
+		"model":      getFirstModelId(node.Models),
+		"messages":   []map[string]string{{"role": "user", "content": "Hello, how are you?"}},
+		"max_tokens": 10,
+	}
+	requestBody, err := json.Marshal(testRequest)
+	if err != nil {
+		logging.Error("MLnode test failed to create test request", types.Nodes, "node_id", node.Id, "error", err)
+		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
+	}
+
+	completionsUrl := inferenceUrl + "/v1/chat/completions"
+	resp, err := http.Post(completionsUrl, "application/json", bytes.NewReader(requestBody))
+	if err != nil {
+		logging.Error("MLnode test failed during inference request", types.Nodes, "node_id", node.Id, "error", err)
+		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logging.Error("MLnode test received non-success status code", types.Nodes, "node_id", node.Id, "status_code", resp.StatusCode)
+		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: "non_success_status_code", Metrics: metrics}
+	}
+
+	metrics.RespMs = time.Since(startResp).Milliseconds()
 
 	logging.Info("MLnode test succeeded", types.Nodes, "node_id", node.Id)
 	return &TestResult{NodeId: node.Id, Status: TestSuccess, Metrics: metrics}
