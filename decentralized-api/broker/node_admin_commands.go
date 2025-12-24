@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/internal/server/admin"
 	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
@@ -388,11 +389,58 @@ func getFirstModelIdFromNode(node Node) string {
 	return "" // Return empty if no models
 }
 
+// SetNodeMLNodeOnboardingStateCommand updates the MLNodeOnboardingState of a node
+type SetNodeMLNodeOnboardingStateCommand struct {
+	NodeId   string
+	NewState string
+	Response chan bool
+}
+
+func NewSetNodeMLNodeOnboardingStateCommand(nodeId string, newState string) SetNodeMLNodeOnboardingStateCommand {
+	return SetNodeMLNodeOnboardingStateCommand{
+		NodeId:   nodeId,
+		NewState: newState,
+		Response: make(chan bool, 2),
+	}
+}
+
+func (c SetNodeMLNodeOnboardingStateCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+func (c SetNodeMLNodeOnboardingStateCommand) Execute(b *Broker) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	node, exists := b.nodes[c.NodeId]
+	if !exists {
+		logging.Error("Cannot set MLNodeOnboardingState: node not found", types.Nodes, "node_id", c.NodeId)
+		c.Response <- false
+		return
+	}
+
+	logging.Info("Setting MLNodeOnboardingState for node", types.Nodes,
+		"node_id", c.NodeId,
+		"old_state", node.State.MLNodeOnboardingState,
+		"new_state", c.NewState)
+
+	node.State.MLNodeOnboardingState = c.NewState
+
+	c.Response <- true
+}
+
 // autoTestNodeIfTimeAllows performs a basic validation test for a node when
 // there is more than 1 hour remaining until the next PoC. It loads each
 // configured model and checks inference health, updating the node failure
 // reason accordingly. The caller string is used for logging context.
 func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
+	// Helper function to handle test failures
+	setTestFailed := func(nodeId, errorReason string) {
+		cmd := NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(admin.MLNodeState_TEST_FAILED))
+		_ = b.QueueMessage(cmd)
+		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(nodeId, errorReason))
+	}
+
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || !epochState.IsSynced {
 		logging.Info(caller+". Auto-test skipped: epoch state unavailable", types.Nodes, "node_id", node.Id)
@@ -419,7 +467,7 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	for modelId, cfg := range node.Models {
 		if err := client.InferenceUp(ctx, modelId, cfg.Args); err != nil {
 			logging.Error(caller+". Auto-test model load failed", types.Nodes, "node_id", node.Id, "model", modelId, "error", err)
-			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
+			setTestFailed(node.Id, err.Error())
 			return
 		}
 	}
@@ -431,7 +479,7 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 			reason = err.Error()
 		}
 		logging.Error(caller+". Auto-test health check failed", types.Nodes, "node_id", node.Id, "error", reason)
-		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, reason))
+		setTestFailed(node.Id, reason)
 		return
 	}
 
@@ -446,7 +494,7 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 		requestBody, err := json.Marshal(testRequest)
 		if err != nil {
 			logging.Error(caller+". Auto-test failed to create test request", types.Nodes, "node_id", node.Id, "error", err)
-			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
+			setTestFailed(node.Id, err.Error())
 			return
 		}
 
@@ -454,7 +502,7 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 		resp, err := http.Post(completionsUrl, "application/json", bytes.NewReader(requestBody))
 		if err != nil {
 			logging.Error(caller+". Auto-test failed during inference request", types.Nodes, "node_id", node.Id, "error", err)
-			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, err.Error()))
+			setTestFailed(node.Id, err.Error())
 			return
 		}
 		defer resp.Body.Close()
@@ -462,11 +510,14 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			reason := fmt.Sprintf("non_success_status_code: %d", resp.StatusCode)
 			logging.Error(caller+". Auto-test received non-success status code", types.Nodes, "node_id", node.Id, "status_code", resp.StatusCode, "error", reason)
-			_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, reason))
+			setTestFailed(node.Id, reason)
 			return
 		}
 	}
 
+	// On success, set node MLNodeOnboardingState to WAITING_FOR_POC
+	cmd := NewSetNodeMLNodeOnboardingStateCommand(node.Id, string(admin.MLNodeState_WAITING_FOR_POC))
+	_ = b.QueueMessage(cmd)
 	_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))
 	logging.Info(caller+". Auto-test passed", types.Nodes, "node_id", node.Id)
 }

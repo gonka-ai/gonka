@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/broker"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"encoding/json"
@@ -44,10 +45,11 @@ func getFirstModelId(models map[string]apiconfig.ModelConfig) string {
 type MLnodeTestingOrchestrator struct {
 	configManager    *apiconfig.ConfigManager
 	blockTimeSeconds float64
+	nodeBroker       *broker.Broker
 }
 
-func NewMLnodeTestingOrchestrator(cm *apiconfig.ConfigManager) *MLnodeTestingOrchestrator {
-	return &MLnodeTestingOrchestrator{configManager: cm, blockTimeSeconds: 6.0}
+func NewMLnodeTestingOrchestrator(cm *apiconfig.ConfigManager, nodeBroker *broker.Broker) *MLnodeTestingOrchestrator {
+	return &MLnodeTestingOrchestrator{configManager: cm, blockTimeSeconds: 6.0, nodeBroker: nodeBroker}
 }
 
 func (o *MLnodeTestingOrchestrator) ShouldAutoTest(secondsUntilNextPoC int64) bool {
@@ -55,6 +57,14 @@ func (o *MLnodeTestingOrchestrator) ShouldAutoTest(secondsUntilNextPoC int64) bo
 }
 
 func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apiconfig.InferenceNodeConfig) *TestResult {
+	// Helper function to set node state to TEST_FAILED on failure
+	setTestFailed := func(nodeId string) {
+		if o.nodeBroker != nil {
+			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(MLNodeState_TEST_FAILED))
+			_ = o.nodeBroker.QueueMessage(cmd)
+		}
+	}
+
 	version := o.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(node, version)
 	inferenceUrl := formatURL(node.Host, node.InferencePort, node.InferenceSegment)
@@ -68,6 +78,7 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 		metrics.LoadMs[modelId] = time.Since(start).Milliseconds()
 		if err != nil {
 			logging.Error("MLnode test failed during model loading", types.Nodes, "node_id", node.Id, "model", modelId, "error", err)
+			setTestFailed(node.Id)
 			return &TestResult{NodeId: node.Id, Status: TestFailed, FailingModel: modelId, Error: err.Error(), Metrics: metrics}
 		}
 	}
@@ -78,9 +89,11 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	if err != nil || !ok {
 		if err != nil {
 			logging.Error("MLnode health check failed", types.Nodes, "node_id", node.Id, "error", err)
+			setTestFailed(node.Id)
 			return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
 		}
 		logging.Error("MLnode health check not OK", types.Nodes, "node_id", node.Id)
+		setTestFailed(node.Id)
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: "health_not_ok", Metrics: metrics}
 	}
 
@@ -94,6 +107,7 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	requestBody, err := json.Marshal(testRequest)
 	if err != nil {
 		logging.Error("MLnode test failed to create test request", types.Nodes, "node_id", node.Id, "error", err)
+		setTestFailed(node.Id)
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
 	}
 
@@ -101,16 +115,29 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	resp, err := http.Post(completionsUrl, "application/json", bytes.NewReader(requestBody))
 	if err != nil {
 		logging.Error("MLnode test failed during inference request", types.Nodes, "node_id", node.Id, "error", err)
+		setTestFailed(node.Id)
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logging.Error("MLnode test received non-success status code", types.Nodes, "node_id", node.Id, "status_code", resp.StatusCode)
+		setTestFailed(node.Id)
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: "non_success_status_code", Metrics: metrics}
 	}
 
 	metrics.RespMs = time.Since(startResp).Milliseconds()
+
+	// Helper function to set node state to WAITING_FOR_POC on success
+	setTestSuccess := func(nodeId string) {
+		if o.nodeBroker != nil {
+			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(MLNodeState_WAITING_FOR_POC))
+			_ = o.nodeBroker.QueueMessage(cmd)
+		}
+	}
+
+	// On success, set node MLNodeOnboardingState to WAITING_FOR_POC
+	setTestSuccess(node.Id)
 
 	logging.Info("MLnode test succeeded", types.Nodes, "node_id", node.Id)
 	return &TestResult{NodeId: node.Id, Status: TestSuccess, Metrics: metrics}

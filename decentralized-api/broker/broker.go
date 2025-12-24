@@ -456,6 +456,8 @@ func (b *Broker) executeCommand(command Command) {
 		command.Execute(b)
 	case SetNodeFailureReasonCommand:
 		command.Execute(b)
+	case SetNodeMLNodeOnboardingStateCommand:
+		command.Execute(b)
 	default:
 		logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 	}

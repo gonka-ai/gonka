@@ -62,7 +62,7 @@ func NewServer(
 		payloadStorage:    payloadStorage,
 		onboarding:        NewOnboardingStateManager(),
 		statusReporter:    NewStatusReporter(),
-		tester:            NewMLnodeTestingOrchestrator(configManager),
+		tester:            NewMLnodeTestingOrchestrator(configManager, nodeBroker),
 		latestTestResults: map[string]*TestResult{},
 	}
 
