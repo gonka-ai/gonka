@@ -272,6 +272,9 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 		return
 	}
 
+	prevStatus := node.State.CurrentStatus
+	prevFailure := node.State.FailureReason
+
 	// Update state
 	logging.Info("Finalizing state transition for node", types.Nodes,
 		"node_id", c.NodeId,
@@ -290,12 +293,19 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	} else {
 		// Clear failure reason on success
 		node.State.FailureReason = ""
+		if prevFailure != "" {
+			logging.Info("Node status recovered", types.Nodes, "node_id", c.NodeId, "blockHeight", blockHeight)
+		}
 	}
 
 	// Reset POC fields when moving away from POC status
 	if c.Result.FinalStatus != types.HardwareNodeStatus_POC {
 		node.State.PocIntendedStatus = PocStatusIdle
 		node.State.PocCurrentStatus = PocStatusIdle
+	}
+
+	if prevStatus == types.HardwareNodeStatus_POC && c.Result.FinalStatus == types.HardwareNodeStatus_INFERENCE {
+		logging.Info("Onboarding transition POC->INFERENCE", types.Nodes, "node_id", c.NodeId, "blockHeight", blockHeight)
 	}
 
 	c.Response <- true

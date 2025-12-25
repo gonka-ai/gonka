@@ -32,6 +32,10 @@ func (s *Server) getNodes(ctx echo.Context) error {
 		state := &nodes[i].State
 		participantActive := chainActive || len(state.EpochMLNodes) > 0
 		pstate := osm.ParticipantStatus(participantActive)
+		prevParticipant := ParticipantState(state.ParticipantState)
+		if prevParticipant != pstate {
+			sr.LogParticipantStatusChange(prevParticipant, pstate)
+		}
 		state.ParticipantState = string(pstate)
 
 		var secs int64
@@ -52,6 +56,10 @@ func (s *Server) getNodes(ctx echo.Context) error {
 			userMsg = sr.BuildMLNodeMessage(mlnodeState, secs, "")
 		}
 
+		prevOnboarding := MLNodeOnboardingState(state.MLNodeOnboardingState)
+		if prevOnboarding != mlnodeState {
+			sr.LogOnboardingTransition(prevOnboarding, mlnodeState)
+		}
 		state.MLNodeOnboardingState = string(mlnodeState)
 		state.UserMessage = userMsg
 		state.Guidance = sr.BuildParticipantMessage(pstate)
