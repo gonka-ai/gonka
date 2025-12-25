@@ -11,6 +11,7 @@ type MLNodeClient interface {
 	// Node state operations
 	Stop(ctx context.Context) error
 	NodeState(ctx context.Context) (*StateResponse, error)
+	SetNodeState(ctx context.Context, state MLNodeState, errorReason string) error
 
 	// PoC v2 operations (off-chain artifacts, no Stop required)
 	InitGenerateV2(ctx context.Context, req PoCInitGenerateRequestV2) (*PoCInitGenerateResponseV2, error)

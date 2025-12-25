@@ -57,18 +57,24 @@ func (o *MLnodeTestingOrchestrator) ShouldAutoTest(secondsUntilNextPoC int64) bo
 }
 
 func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apiconfig.InferenceNodeConfig) *TestResult {
-	// Helper function to set node state to TEST_FAILED on failure
-	setTestFailed := func(nodeId string) {
-		if o.nodeBroker != nil {
-			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
-			_ = o.nodeBroker.QueueMessage(cmd)
-		}
-	}
-
 	version := o.configManager.GetCurrentNodeVersion()
 	pocUrl := getPoCUrlWithVersion(node, version)
 	inferenceUrl := formatURL(node.Host, node.InferencePort, node.InferenceSegment)
 	client := mlnodeclient.NewNodeClient(pocUrl, inferenceUrl)
+
+	// Helper function to set node state to TEST_FAILED on failure
+	setTestFailed := func(nodeId string, reason string) {
+		if o.nodeBroker != nil {
+			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
+			_ = o.nodeBroker.QueueMessage(cmd)
+			_ = o.nodeBroker.QueueMessage(broker.NewSetNodeFailureReasonCommand(nodeId, reason))
+		}
+
+		// Notify MLnode about the failure
+		notifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = client.SetNodeState(notifyCtx, mlnodeclient.MlNodeState_TEST_FAILED, reason)
+	}
 
 	metrics := TestMetrics{LoadMs: map[string]int64{}}
 
@@ -78,7 +84,7 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 		metrics.LoadMs[modelId] = time.Since(start).Milliseconds()
 		if err != nil {
 			logging.Error("MLnode test failed during model loading", types.Nodes, "node_id", node.Id, "model", modelId, "error", err)
-			setTestFailed(node.Id)
+			setTestFailed(node.Id, err.Error())
 			return &TestResult{NodeId: node.Id, Status: TestFailed, FailingModel: modelId, Error: err.Error(), Metrics: metrics}
 		}
 	}
@@ -89,11 +95,11 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	if err != nil || !ok {
 		if err != nil {
 			logging.Error("MLnode health check failed", types.Nodes, "node_id", node.Id, "error", err)
-			setTestFailed(node.Id)
+			setTestFailed(node.Id, err.Error())
 			return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
 		}
 		logging.Error("MLnode health check not OK", types.Nodes, "node_id", node.Id)
-		setTestFailed(node.Id)
+		setTestFailed(node.Id, "health_not_ok")
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: "health_not_ok", Metrics: metrics}
 	}
 
@@ -107,7 +113,7 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	requestBody, err := json.Marshal(testRequest)
 	if err != nil {
 		logging.Error("MLnode test failed to create test request", types.Nodes, "node_id", node.Id, "error", err)
-		setTestFailed(node.Id)
+		setTestFailed(node.Id, err.Error())
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
 	}
 
@@ -115,14 +121,14 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	resp, err := http.Post(completionsUrl, "application/json", bytes.NewReader(requestBody))
 	if err != nil {
 		logging.Error("MLnode test failed during inference request", types.Nodes, "node_id", node.Id, "error", err)
-		setTestFailed(node.Id)
+		setTestFailed(node.Id, err.Error())
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: err.Error(), Metrics: metrics}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logging.Error("MLnode test received non-success status code", types.Nodes, "node_id", node.Id, "status_code", resp.StatusCode)
-		setTestFailed(node.Id)
+		setTestFailed(node.Id, "non_success_status_code")
 		return &TestResult{NodeId: node.Id, Status: TestFailed, Error: "non_success_status_code", Metrics: metrics}
 	}
 

@@ -60,6 +60,14 @@ func (m *mockInferenceQueryClient) EpochGroupData(ctx context.Context, in *types
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
+func (m *mockInferenceQueryClient) CurrentEpochGroupData(ctx context.Context, in *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called(ctx, in)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
 func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodeclient.MockClientFactory, *chainphase.ChainPhaseTracker) {
 	// Disable model enforcement in tests
 	os.Setenv("ENFORCED_MODEL_ID", "disabled")
@@ -94,6 +102,16 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 
 	mockParticipant.On("GetAddress").Return("test-participant")
 	mockCosmos.On("GetContext").Return(context.Background())
+
+	// Mock CurrentEpochGroupData
+	currentEpochResp := &types.QueryCurrentEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			EpochIndex:          100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}
+	mockQueryClient.On("CurrentEpochGroupData", mock.Anything, mock.Anything).Return(currentEpochResp, nil)
 
 	// Mock epoch group data for parent group (empty modelId)
 	parentGroupResp := &types.QueryGetEpochGroupDataResponse{

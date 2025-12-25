@@ -210,7 +210,34 @@ const (
 	MlNodeState_INFERENCE MLNodeState = "INFERENCE"
 	MlNodeState_TRAIN     MLNodeState = "TRAIN"
 	MlNodeState_STOPPED   MLNodeState = "STOPPED"
+	MlNodeState_TEST_FAILED MLNodeState = "TEST_FAILED"
 )
+
+type SetStateRequest struct {
+	State MLNodeState `json:"state"`
+	Error string      `json:"error,omitempty"`
+}
+
+func (api *Client) SetNodeState(ctx context.Context, state MLNodeState, errorReason string) error {
+	requestURL, err := url.JoinPath(api.pocUrl, nodeStatePath)
+	if err != nil {
+		return err
+	}
+
+	body := SetStateRequest{
+		State: state,
+		Error: errorReason,
+	}
+
+	logging.Info("Sending state update to MLnode", types.Nodes, "url", requestURL, "state", state, "error", errorReason)
+
+	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestURL, body)
+	if err != nil {
+		logging.Error("Failed to set MLnode state", types.Nodes, "error", err)
+		return err
+	}
+	return nil
+}
 
 type StateResponse struct {
 	State MLNodeState `json:"state"`

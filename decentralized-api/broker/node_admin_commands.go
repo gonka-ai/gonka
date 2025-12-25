@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
+	"decentralized-api/mlnodeclient"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -433,13 +434,6 @@ func (c SetNodeMLNodeOnboardingStateCommand) Execute(b *Broker) {
 // configured model and checks inference health, updating the node failure
 // reason accordingly. The caller string is used for logging context.
 func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
-	// Helper function to handle test failures
-	setTestFailed := func(nodeId, errorReason string) {
-		cmd := NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
-		_ = b.QueueMessage(cmd)
-		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(nodeId, errorReason))
-	}
-
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || !epochState.IsSynced {
 		logging.Info(caller+". Auto-test skipped: epoch state unavailable", types.Nodes, "node_id", node.Id)
@@ -459,6 +453,18 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	version := b.configManager.GetCurrentNodeVersion()
 	client := b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
 	logging.Info(caller+". Auto-test starting", types.Nodes, "node_id", node.Id, "models", len(node.Models))
+
+	// Helper function to handle test failures
+	setTestFailed := func(nodeId, errorReason string) {
+		cmd := NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
+		_ = b.QueueMessage(cmd)
+		_ = b.QueueMessage(NewSetNodeFailureReasonCommand(nodeId, errorReason))
+
+		// Notify MLnode about the failure
+		notifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = client.SetNodeState(notifyCtx, mlnodeclient.MlNodeState_TEST_FAILED, errorReason)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
