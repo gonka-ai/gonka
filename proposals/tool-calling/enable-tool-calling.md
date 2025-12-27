@@ -1,4 +1,4 @@
-# Enable Tool / Function Calling for Qwen/QwQ-32B
+# Enable Tool / Function Calling for Qwen/QwQ-32B and Qwen/Qwen3-32B-FP8
 
 ## Summary
 
