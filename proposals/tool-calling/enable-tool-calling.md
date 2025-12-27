@@ -98,7 +98,7 @@ This proposal does **not** mandate a specific implementation approach and intent
 
 This proposal is considered successful if:
 
-- IDE clients can reliably enable agent / apply modes when selecting `Qwen/Qwen3-32B-FP8` and`Qwen/QwQ-32B`
+- IDE clients can reliably enable agent / apply modes when selecting `Qwen/Qwen3-32B-FP8` and `Qwen/QwQ-32B`
 - Tool-calling requests follow OpenAI-compatible schemas without workarounds
 - Chat-only usage remains unchanged
 - The network gains support for IDE-driven agent workloads
