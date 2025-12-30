@@ -1,9 +1,12 @@
 import numpy as np
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, recall_score
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
+import json
+import os
 
 from validation.utils import distance2
 from validation import stats
@@ -174,19 +177,251 @@ def plot_classification_results(distances, classifications, lower_bound, upper_b
     plt.show()
 
 
-def plot_length_vs_distance_comparison(name, honest_items, honest_distances, fraud_items, fraud_distances):
-    """Create combined length vs distance plot for comparison"""
-    # Calculate lengths for honest and fraud items
-    honest_lengths = [len(item.inference_result.text) for item in honest_items]
-    fraud_lengths = [len(item.inference_result.text) for item in fraud_items]
+def plot_length_vs_distance_comparison(name, honest_items_dict, honest_distances_dict, fraud_items_dict, fraud_distances_dict, bounds=None, save_to=None):
+    honest_keys = list(honest_items_dict.keys())
+    fraud_keys = list(fraud_items_dict.keys())
 
-    # Combined overlay plot only
+    if set(honest_keys) != set(honest_distances_dict.keys()):
+        raise ValueError("honest_items_dict and honest_distances_dict must have the same keys")
+    if set(fraud_keys) != set(fraud_distances_dict.keys()):
+        raise ValueError("fraud_items_dict and fraud_distances_dict must have the same keys")
+
+    for k in honest_keys:
+        if len(honest_items_dict[k]) != len(honest_distances_dict[k]):
+            raise ValueError(f"Honest group '{k}' items and distances lengths differ")
+    for k in fraud_keys:
+        if len(fraud_items_dict[k]) != len(fraud_distances_dict[k]):
+            raise ValueError(f"Fraud group '{k}' items and distances lengths differ")
+
+    honest_lengths_dict = {k: [len(item.inference_result.text) for item in honest_items_dict[k]] for k in honest_keys}
+    fraud_lengths_dict = {k: [len(item.inference_result.text) for item in fraud_items_dict[k]] for k in fraud_keys}
+
     plt.figure(figsize=(10, 6))
-    plt.scatter(honest_lengths, honest_distances, alpha=0.5, color='blue', label='Honest Items', s=10)
-    plt.scatter(fraud_lengths, fraud_distances, alpha=0.5, color='red', label='Fraud Items', s=10)
+
+    marker_size = 36
+
+    honest_palette = ['#0B3D91', '#87CEFA', '#20B2AA']
+    honest_group_colors_seq = [honest_palette[i % len(honest_palette)] for i in range(max(1, len(honest_keys)))]
+    fraud_group_colors_seq = [plt.cm.Reds(v) for v in np.linspace(0.8, 0.4, max(1, len(fraud_keys)))]
+    honest_color_by_key = {k: honest_group_colors_seq[i] for i, k in enumerate(honest_keys)}
+    fraud_color_by_key = {k: fraud_group_colors_seq[i] for i, k in enumerate(fraud_keys)}
+
+    def _norm_lang(lang):
+        return str(lang) if lang is not None else 'unk'
+
+    languages_groups = {"honest": {}, "fraud": {}}
+    for k in honest_keys:
+        languages_groups["honest"][k] = [_norm_lang(getattr(item, 'language', None)) for item in honest_items_dict[k]]
+    for k in fraud_keys:
+        languages_groups["fraud"][k] = [_norm_lang(getattr(item, 'language', None)) for item in fraud_items_dict[k]]
+    seen_langs = set()
+    unique_languages = []
+    for k in honest_keys:
+        for lang in languages_groups["honest"][k]:
+            if lang not in seen_langs:
+                seen_langs.add(lang)
+                unique_languages.append(lang)
+    for k in fraud_keys:
+        for lang in languages_groups["fraud"][k]:
+            if lang not in seen_langs:
+                seen_langs.add(lang)
+                unique_languages.append(lang)
+
+    fixed_marker_map = {
+        'sp': '^',
+        'en': 'o',
+        'ch': 's',
+        'ar': 'D',
+        'hi': 'P',
+    }
+    fallback_markers = ['v', '*', 'X', 'h', '<', '>', '1', '2', '3', '4']
+    unknown_langs = sorted([lang for lang in unique_languages if lang not in fixed_marker_map and lang is not None])
+    unknown_marker_map = {lang: fallback_markers[i % len(fallback_markers)] for i, lang in enumerate(unknown_langs)}
+    if 'unk' not in unknown_marker_map and 'unk' not in fixed_marker_map and 'unk' in unique_languages:
+        unknown_marker_map['unk'] = fallback_markers[len(unknown_marker_map) % len(fallback_markers)]
+    marker_map = {**fixed_marker_map, **unknown_marker_map}
+    for group_name in ("honest", "fraud"):
+        if group_name == "honest":
+            keys = honest_keys
+            lengths_dict = honest_lengths_dict
+            distances_dict = honest_distances_dict
+        else:
+            keys = fraud_keys
+            lengths_dict = fraud_lengths_dict
+            distances_dict = fraud_distances_dict
+
+        for k in keys:
+            xs = lengths_dict[k]
+            ys = distances_dict[k]
+            if not xs:
+                continue
+            group_color = honest_color_by_key[k] if group_name == "honest" else fraud_color_by_key[k]
+            group_langs = languages_groups[group_name][k]
+            for lang in unique_languages:
+                idxs = [i for i, l in enumerate(group_langs) if l == lang]
+                if not idxs:
+                    continue
+                plt.scatter(
+                    [xs[i] for i in idxs],
+                    [ys[i] for i in idxs],
+                    c=group_color,
+                    marker=marker_map[lang],
+                    alpha=0.6,
+                    s=marker_size,
+                    label=None,
+                )
+    if bounds is not None:
+        if not (isinstance(bounds, (list, tuple)) and len(bounds) == 2):
+            raise ValueError("bounds must be a tuple/list of two floats: (lower, upper)")
+        lower, upper = bounds
+        plt.axhline(lower, color='blue', linestyle='--', label='_nolegend_')
+        plt.axhline(upper, color='purple', linestyle='--', label='_nolegend_')
+    group_handles = []
+    for k in honest_keys:
+        group_handles.append(
+            Line2D([0], [0], marker='o', color=honest_color_by_key[k], linestyle='None', markersize=8, label=f"Honest - {k}")
+        )
+    for k in fraud_keys:
+        group_handles.append(
+            Line2D([0], [0], marker='o', color=fraud_color_by_key[k], linestyle='None', markersize=8, label=f"Fraud - {k}")
+        )
+    legend1 = plt.legend(handles=group_handles, title='Groups', loc='upper left')
+    plt.gca().add_artist(legend1)
+    language_name_map = {'sp': 'Spanish', 'en': 'English', 'ch': 'Chinese', 'ar': 'Arabic', 'hi': 'Hindi', 'unk': 'Unknown'}
+    lang_handles = [
+        Line2D([0], [0], marker=marker_map[lang], color='black', linestyle='None', markersize=8,
+               label=language_name_map.get(lang, str(lang)))
+        for lang in (['sp', 'en', 'ch', 'ar', 'hi', 'unk'] if any(l in marker_map for l in ['sp','en','ch','ar','hi','unk']) else unique_languages)
+        if lang in marker_map
+    ]
+    legend2 = plt.legend(handles=lang_handles, title='Languages', loc='upper right')
+    if bounds is not None:
+        plt.gca().add_artist(legend2)
+        lower, upper = bounds
+        bounds_handles = [
+            Line2D([0], [0], color='blue', linestyle='--', linewidth=2, label=f'Lower: {lower:.6f}'),
+            Line2D([0], [0], color='purple', linestyle='--', linewidth=2, label=f'Upper: {upper:.6f}')
+        ]
+        plt.legend(handles=bounds_handles, title='Bounds', loc='lower right')
+
     plt.title(f'{name} - Length vs Distance Comparison')
     plt.xlabel('Length (characters)')
     plt.ylabel('Distance')
-    plt.legend()
     plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    if save_to is not None:
+        safe_name = name.strip().replace(' ', '_').replace('/', '_').replace('\\', '_')
+        if not safe_name:
+            safe_name = "comparison"
+        filename = f"{safe_name}_length_vs_distance.png"
+        filepath = os.path.join(save_to, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Saved comparison plot to: {filepath}")
+    
     plt.show()
+
+
+def generate_name_from_config(jsonl_path, model_short_name):
+    if jsonl_path.endswith('.jsonl'):
+        config_path = jsonl_path.replace('.jsonl', '_config.json')
+    else:
+        config_path = jsonl_path + '_config.json'
+    
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    
+    model_inference = config['model_inference']['model']
+    model_validation = config['model_validation']['model']
+    is_honest = (model_inference == model_validation)
+    honesty_label = 'honest' if is_honest else 'fraud'
+    
+    gpu_inference = config['server_inference']['gpu']
+    gpu_validation = config['server_validation']['gpu']
+    
+    name = f"{honesty_label}_{model_short_name}_{gpu_inference}vs{gpu_validation}"
+    
+    return name
+
+
+def plot_violin_comparison(distributions_dict, title="Distance Distributions", ylabel="Distance", figsize=(10, 6), show=True, ylim=None):
+    if not isinstance(distributions_dict, dict) or not distributions_dict:
+        print("Nothing to plot: empty or invalid input.")
+        return
+
+    group_names = []
+    group_values = []
+
+    for name, values in distributions_dict.items():
+        arr = np.asarray(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            continue
+        group_names.append(name)
+        group_values.append(arr)
+
+    if not group_values:
+        print("Nothing to plot: all groups are empty after cleaning.")
+        return
+
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    parts = ax.violinplot(group_values, positions=range(len(group_names)), 
+                          showmeans=False, showmedians=True, showextrema=True)
+    for pc in parts['bodies']:
+        pc.set_facecolor('#8dd3c7')
+        pc.set_alpha(0.7)
+        pc.set_edgecolor('black')
+        pc.set_linewidth(1)
+    
+    for partname in ('cbars', 'cmins', 'cmaxes', 'cmedians'):
+        if partname in parts:
+            vp = parts[partname]
+            vp.set_edgecolor('black')
+            vp.set_linewidth(1)
+    ax.set_title(title)
+    ax.set_xlabel("Group")
+    ax.set_ylabel(ylabel)
+    ax.set_xticks(range(len(group_names)))
+    ax.set_xticklabels(group_names, rotation=45, ha='right')
+    
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    print("Mean and std per group:")
+    means = {}
+    stds = {}
+    counts = {}
+    for name, arr in zip(group_names, group_values):
+        counts[name] = int(arr.size)
+        means[name] = float(np.mean(arr)) if arr.size > 0 else float("nan")
+        stds[name] = float(np.std(arr, ddof=1)) if arr.size > 1 else float("nan")
+    for name in sorted(group_names, key=lambda k: means[k]):
+        m = means[name]
+        s = stds[name]
+        n = counts[name]
+        m_str = f"{m:.6f}" if np.isfinite(m) else "nan"
+        s_str = f"{s:.6f}" if np.isfinite(s) else "nan"
+        print(f"  {name}: n={n}, mean={m_str}, std={s_str}")
+
+    if len(group_names) >= 2:
+        max_mean_key = max(group_names, key=lambda k: means[k])
+        min_mean_key = min(group_names, key=lambda k: means[k])
+        if np.isfinite(means[max_mean_key]) and np.isfinite(means[min_mean_key]):
+            delta_mean = means[max_mean_key] - means[min_mean_key]
+            print(f"Delta mean: {delta_mean:.6f} ({min_mean_key} -> {max_mean_key})")
+
+        finite_stds = {k: v for k, v in stds.items() if np.isfinite(v)}
+        if len(finite_stds) >= 2:
+            max_std_key = max(finite_stds, key=lambda k: finite_stds[k])
+            min_std_key = min(finite_stds, key=lambda k: finite_stds[k])
+            print(
+                f"Std range: {finite_stds[min_std_key]:.6f} ({min_std_key}) .. "
+                f"{finite_stds[max_std_key]:.6f} ({max_std_key})"
+            )
