@@ -570,6 +570,14 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 		timestampAdvanceNs = 10 * int64(time.Second)
 	}
 
+	// Extra seconds for case when local chain state is behind the remote chain state
+	// Similar to FinishInference which uses 60*60 (1 hour) for extra time
+	// But we keep 20 minutes for serving inference
+	extraSeconds := int64(40 * 60) // 40 minutes
+	extraTimeNs := extraSeconds * int64(time.Second)
+	timestampExpirationNs += extraTimeNs
+	timestampAdvanceNs += extraTimeNs
+
 	requestOffset := lastHeightTime - request.Timestamp
 	logging.Info("Request offset for executor", types.Inferences,
 		"offset", time.Duration(requestOffset).String(),
