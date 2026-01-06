@@ -50,22 +50,27 @@ class Sender(Process):
         if not self.generated_not_sent:
             return
 
-        failed_batches = []
+        try:
+            merged_batch = ProofBatch.merge(self.generated_not_sent)
+        except AssertionError as e:
+            logger.error(f"Failed to merge batches: {e}. Batches have different block_hash/block_height/public_key")
+            # Clear the list to prevent infinite retry loop, this should not happen in normal operation as all batches come from the same epoch
+            self.generated_not_sent = []
+            return
 
-        for batch in self.generated_not_sent:
-            try:
-                logger.info(f"Sending generated batch to {self.url}")
-                response = requests.post(
-                    f"{self.url}/generated",
-                    json=batch.__dict__,
-                )
-                response.raise_for_status()
-                logger.info("Successfully sent generated batch")
-            except RequestException as e:
-                failed_batches.append(batch)
-                logger.error(f"Error sending generated batch to {self.url}: {e}")
-
-        self.generated_not_sent = failed_batches
+        try:
+            logger.info(f"Sending merged generated batch to {self.url} (merged {len(self.generated_not_sent)} batches, {len(merged_batch.nonces)} nonces)")
+            response = requests.post(
+                f"{self.url}/generated",
+                json=merged_batch.__dict__,
+            )
+            response.raise_for_status()
+            logger.info(f"Successfully sent merged generated batch ({len(merged_batch.nonces)} nonces)")
+            # Clear the list on success
+            self.generated_not_sent = []
+        except RequestException as e:
+            # Keep all batches for retry
+            logger.error(f"Error sending merged generated batch to {self.url}: {e}")
 
     def _send_validated(self):
         if not self.validated_not_sent:
