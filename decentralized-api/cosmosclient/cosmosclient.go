@@ -44,6 +44,7 @@ type InferenceCosmosClient struct {
 	manager         tx_manager.TxManager
 	batchConsumer   *tx_manager.BatchConsumer
 	batchingEnabled bool
+	queryPool *ConnectionPool
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -76,6 +77,24 @@ func expandPath(path string) (string, error) {
 		path = filepath.Join(usr.HomeDir, path[2:])
 	}
 	return filepath.Abs(path)
+}
+
+func createBaseCosmosClient(ctx context.Context, addressPrefix string, nodeURL string, keyringDir string) (*cosmosclient.Client, error) {
+	c, err := cosmosclient.New(
+		ctx,
+		cosmosclient.WithAddressPrefix(addressPrefix),
+		cosmosclient.WithKeyringServiceName("inferenced"),
+		cosmosclient.WithNodeAddress(nodeURL),
+		cosmosclient.WithKeyringDir(keyringDir),
+		cosmosclient.WithGasPrices("0ngonka"),
+		cosmosclient.WithFees("0ngonka"),
+		cosmosclient.WithGas("auto"),
+		cosmosclient.WithGasAdjustment(5),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 // 'file' keyring backend to automatically provide interactive prompts for signing
@@ -112,28 +131,18 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 
 	log.Printf("Initializing cosmos Client."+
 		"NodeUrl = %s. KeyringBackend = %s. KeyringDir = %s", nodeConfig.Url, nodeConfig.KeyringBackend, keyringDir)
-	cosmoclient, err := cosmosclient.New(
-		ctx,
-		cosmosclient.WithAddressPrefix(addressPrefix),
-		cosmosclient.WithKeyringServiceName("inferenced"),
-		cosmosclient.WithNodeAddress(nodeConfig.Url),
-		cosmosclient.WithKeyringDir(keyringDir),
-		cosmosclient.WithGasPrices("0ngonka"),
-		cosmosclient.WithFees("0ngonka"),
-		cosmosclient.WithGas("auto"),
-		cosmosclient.WithGasAdjustment(5),
-	)
+	cosmoclient, err := createBaseCosmosClient(ctx, addressPrefix, nodeConfig.Url, keyringDir)
 	if err != nil {
 		log.Printf("Error creating cosmos client: %s", err)
 		return nil, err
 	}
-	err = updateKeyringIfNeeded(&cosmoclient, keyringDir, config)
+	err = updateKeyringIfNeeded(cosmoclient, keyringDir, config)
 	if err != nil {
 		log.Printf("Error updating keyring: %s", err)
 		return nil, err
 	}
 
-	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, &cosmoclient)
+	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, cosmoclient)
 	if err != nil {
 		log.Printf("Error creating api account: %s", err)
 		return nil, err
@@ -169,6 +178,14 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		Address:    accAddress,
 		apiAccount: apiAccount,
 		manager:    mn,
+	}
+
+	if nodeConfig.ConnectionPoolSize > 0 {
+		if pool, err := NewConnectionPool(ctx, addressPrefix, config, nodeConfig.ConnectionPoolSize); err == nil {
+			client.queryPool = pool
+		} else {
+			logging.Warn("Connection pool creation failed", types.System, "error", err)
+		}
 	}
 
 	batchingCfg := config.GetTxBatchingConfig()
@@ -240,6 +257,12 @@ type CosmosMessageClient interface {
 
 func (icc *InferenceCosmosClient) GetApiAccount() apiconfig.ApiAccount {
 	return icc.manager.GetApiAccount()
+}
+
+func (icc *InferenceCosmosClient) Close() {
+	if icc.queryPool != nil {
+		icc.queryPool.Close()
+	}
 }
 
 func (icc *InferenceCosmosClient) GetClientContext() sdkclient.Context {
@@ -479,14 +502,29 @@ func (icc *InferenceCosmosClient) GetPartialUpgrades() (*types.QueryAllPartialUp
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
+	if icc.queryPool != nil {
+		if c, err := icc.queryPool.Get(); err == nil {
+			return upgradetypes.NewQueryClient(c.Context())
+		}
+	}
 	return upgradetypes.NewQueryClient(icc.manager.GetClientContext())
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
+	if icc.queryPool != nil {
+		if c, err := icc.queryPool.Get(); err == nil {
+			return types.NewQueryClient(c.Context())
+		}
+	}
 	return types.NewQueryClient(icc.manager.GetClientContext())
 }
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
+	if icc.queryPool != nil {
+		if c, err := icc.queryPool.Get(); err == nil {
+			return cmtservice.NewServiceClient(c.Context())
+		}
+	}
 	return cmtservice.NewServiceClient(icc.manager.GetClientContext())
 }
 
@@ -538,9 +576,19 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 }
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
+	if icc.queryPool != nil {
+		if c, err := icc.queryPool.Get(); err == nil {
+			return blstypes.NewQueryClient(c.Context())
+		}
+	}
 	return blstypes.NewQueryClient(icc.manager.GetClientContext())
 }
 
 func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
+	if icc.queryPool != nil {
+		if c, err := icc.queryPool.Get(); err == nil {
+			return restrictionstypes.NewQueryClient(c.Context())
+		}
+	}
 	return restrictionstypes.NewQueryClient(icc.manager.GetClientContext())
 }

@@ -221,6 +221,11 @@ func main() {
 	logging.Info("Flushing config to the DB on app exit", types.Config)
 	_ = config.FlushNow(ctxFlush)
 
+	// Close cosmos client gracefully
+	if recorder != nil {
+		recorder.Close()
+	}
+
 	// Close DB gracefully
 	if db := config.SqlDb().GetDb(); db != nil {
 		_ = db.Close()
