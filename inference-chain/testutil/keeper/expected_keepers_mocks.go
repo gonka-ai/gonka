@@ -185,6 +185,18 @@ func (mr *MockBankKeeperMockRecorder) SpendableCoins(arg0, arg1 any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SpendableCoins", reflect.TypeOf((*MockBankKeeper)(nil).SpendableCoins), arg0, arg1)
 }
 
+// IterateAllBalances mocks base method.
+func (m *MockBankKeeper) IterateAllBalances(ctx context.Context, cb func(address types0.AccAddress, coin types0.Coin) (stop bool)) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "IterateAllBalances", ctx, cb)
+}
+
+// IterateAllBalances indicates an expected call of IterateAllBalances.
+func (mr *MockBankKeeperMockRecorder) IterateAllBalances(ctx, cb any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IterateAllBalances", reflect.TypeOf((*MockBankKeeper)(nil).IterateAllBalances), ctx, cb)
+}
+
 // MockGroupMessageKeeper is a mock of GroupMessageKeeper interface.
 type MockGroupMessageKeeper struct {
 	ctrl     *gomock.Controller
