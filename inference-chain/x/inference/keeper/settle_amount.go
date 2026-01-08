@@ -4,6 +4,7 @@ import (
 	"context"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -60,27 +61,32 @@ func (k Keeper) GetAllSettleAmount(ctx context.Context) (list []types.SettleAmou
 	return vals
 }
 
-// burnSettleAmount burns coins from a settle amount (internal helper)
-func (k Keeper) burnSettleAmount(ctx context.Context, settleAmount types.SettleAmount, reason string) error {
+// transferUnclaimedSettleAmountToGovernance transfers coins from an unclaimed settle amount to governance (internal helper).
+func (k Keeper) transferUnclaimedSettleAmountToGovernance(ctx context.Context, settleAmount types.SettleAmount, reason string) error {
 	totalCoins := settleAmount.GetTotalCoins()
 	if totalCoins > 0 {
-		err := k.BurnModuleCoins(ctx, int64(totalCoins), reason+":"+settleAmount.Participant)
+		coins, err := types.GetCoins(int64(totalCoins))
 		if err != nil {
-			k.LogError("Error burning settle amount coins", types.Settle, "error", err, "participant", settleAmount.Participant, "amount", totalCoins)
+			return err
+		}
+		memo := reason + ":" + settleAmount.Participant
+		err = k.BankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, govtypes.ModuleName, coins, memo)
+		if err != nil {
+			k.LogError("Error transferring unclaimed settle amount coins to governance", types.Settle, "error", err, "participant", settleAmount.Participant, "amount", totalCoins)
 			return err
 		}
 		k.SafeLogSubAccountTransaction(ctx, types.ModuleName, settleAmount.Participant, types.SettleSubAccount, totalCoins, reason)
-		k.LogInfo("Burned settle amount", types.Settle, "participant", settleAmount.Participant, "amount", totalCoins, "reason", reason)
+		k.LogInfo("Transferred unclaimed settle amount to governance", types.Settle, "participant", settleAmount.Participant, "amount", totalCoins, "reason", reason)
 	}
 	return nil
 }
 
-// SetSettleAmountWithBurn sets a settle amount, burning any existing unclaimed amount first
-func (k Keeper) SetSettleAmountWithBurn(ctx context.Context, settleAmount types.SettleAmount) error {
-	// Burn existing settle amount if it exists
+// SetSettleAmountWithGovernanceTransfer sets a settle amount, transferring any existing unclaimed amount to governance first.
+func (k Keeper) SetSettleAmountWithGovernanceTransfer(ctx context.Context, settleAmount types.SettleAmount) error {
+	// Transfer existing settle amount if it exists
 	existingSettle, found := k.GetSettleAmount(ctx, settleAmount.Participant)
 	if found {
-		err := k.burnSettleAmount(ctx, existingSettle, "expired claim")
+		err := k.transferUnclaimedSettleAmountToGovernance(ctx, existingSettle, "expired claim")
 		if err != nil {
 			return err
 		}
@@ -93,12 +99,12 @@ func (k Keeper) SetSettleAmountWithBurn(ctx context.Context, settleAmount types.
 	return nil
 }
 
-// BurnOldSettleAmounts burns and removes all settle amounts older than the specified epoch
-func (k Keeper) BurnOldSettleAmounts(ctx context.Context, beforeEpochIndex uint64) error {
+// TransferOldSettleAmountsToGovernance transfers and removes all settle amounts older than the specified epoch.
+func (k Keeper) TransferOldSettleAmountsToGovernance(ctx context.Context, beforeEpochIndex uint64) error {
 	allSettleAmounts := k.GetAllSettleAmount(ctx)
 	for _, settleAmount := range allSettleAmounts {
 		if settleAmount.EpochIndex < beforeEpochIndex {
-			err := k.burnSettleAmount(ctx, settleAmount, "expired")
+			err := k.transferUnclaimedSettleAmountToGovernance(ctx, settleAmount, "expired")
 			if err != nil {
 				return err
 			}

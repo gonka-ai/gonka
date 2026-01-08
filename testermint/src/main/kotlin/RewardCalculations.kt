@@ -77,13 +77,11 @@ fun calculateCumulativeEpochRewards(
             totalDistributed += participantReward
         }
         
-        // Distribute any remainder due to integer division truncation (same as bitcoin_rewards.go)
+        // Any remainder due to integer division truncation is NOT redistributed to participants.
+        // On-chain, it is transferred to the governance module account.
         val remainder = epochReward - totalDistributed
         if (remainder > 0 && participants.isNotEmpty()) {
-            // Assign remainder to first participant (matches blockchain logic)
-            val firstParticipant = participants.first()
-            epochRewards[firstParticipant.id] = (epochRewards[firstParticipant.id] ?: 0L) + remainder
-            Logger.info("Epoch $epoch - Distributed remainder $remainder to first participant: ${firstParticipant.id}")
+            Logger.info("Epoch $epoch - Undistributed remainder $remainder goes to governance (not participants)")
         }
         
         // Add epoch rewards to cumulative totals
@@ -136,13 +134,11 @@ fun calculateBitcoinEpochRewards(
         Logger.info("Bitcoin Epoch Settlement - Participant: ${participant.id}, PoC Weight: $participantPocWeight, Reward: $participantReward")
     }
     
-    // Distribute any remainder due to integer division truncation (same as bitcoin_rewards.go)
+    // Any remainder due to integer division truncation is NOT redistributed to participants.
+    // On-chain, it is transferred to the governance module account.
     val remainder = currentEpochReward - totalDistributed
     if (remainder > 0 && participants.isNotEmpty()) {
-        // Assign remainder to first participant (matches blockchain logic)
-        val firstParticipant = participants.first()
-        rewards[firstParticipant.id] = (rewards[firstParticipant.id] ?: 0L) + remainder
-        Logger.info("Bitcoin Epoch Settlement - Distributed remainder $remainder to first participant: ${firstParticipant.id}")
+        Logger.info("Bitcoin Epoch Settlement - Undistributed remainder $remainder goes to governance (not participants)")
     }
     
     Logger.info("Bitcoin Epoch Settlement - Epochs Since Genesis: $epochsSinceGenesis, Current Epoch Reward: $currentEpochReward, Total Participants: ${participants.size}")

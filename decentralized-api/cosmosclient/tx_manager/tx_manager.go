@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
@@ -45,12 +45,17 @@ const (
 
 	defaultSenderNackDelay   = time.Second * 7
 	defaultObserverNackDelay = time.Second * 5
+
+	hashHeader = "TX_HASH"
+	idHeader   = "TX_ID"
+
+	maxBlockTimeDrift = 120 * time.Second
 )
 
 type TxManager interface {
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error)
 	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
-	SendBatchAsyncWithRetry(msgs []sdk.Msg) error
+	SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlock ...int64) error
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
 	BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error)
 	GetClientContext() client.Context
@@ -62,12 +67,11 @@ type TxManager interface {
 }
 
 type blockTimeTracker struct {
-	latestBlockTime   atomic.Value
-	latestBlockHeight int64
-	lastUpdatedAt     time.Time
-	maxBlockTimeout   time.Duration
-	chainHalt         bool
-	mtx               sync.Mutex
+	latestBlockTime time.Time
+	lastUpdatedAt   time.Time
+	maxBlockTimeout time.Duration
+	pauseSending    bool
+	mtx             sync.Mutex
 }
 
 type manager struct {
@@ -81,6 +85,7 @@ type manager struct {
 	natsConnection   *nats.Conn
 	natsJetStream    nats.JetStreamContext
 	blockTimeTracker *blockTimeTracker
+	getHeightFunc    func() int64
 }
 
 func StartTxManager(
@@ -89,7 +94,8 @@ func StartTxManager(
 	account *apiconfig.ApiAccount,
 	defaultTimeout time.Duration,
 	natsConnection *nats.Conn,
-	address string) (*manager, error) {
+	address string,
+	getHeight func() int64) (*manager, error) {
 	js, err := natsConnection.JetStream()
 	if err != nil {
 		return nil, err
@@ -105,9 +111,6 @@ func StartTxManager(
 	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 
-	ts := atomic.Value{}
-	ts.Store(time.Time{})
-
 	m := &manager{
 		ctx:              ctx,
 		client:           client,
@@ -117,8 +120,8 @@ func StartTxManager(
 		defaultTimeout:   defaultTimeout,
 		natsConnection:   natsConnection,
 		natsJetStream:    js,
+		getHeightFunc:    getHeight,
 		blockTimeTracker: &blockTimeTracker{
-			latestBlockTime: ts,
 			maxBlockTimeout: 10 * time.Second,
 		},
 	}
@@ -135,19 +138,26 @@ func StartTxManager(
 
 const maxAttempts = 100
 
+func getJitteredDelay(base time.Duration) time.Duration {
+	jitterFactor := 0.7 + rand.Float64()*0.6
+	return time.Duration(float64(base) * jitterFactor)
+}
+
 type txToSend struct {
-	TxInfo   txInfo
-	Sent     bool
-	Attempts int
+	TxInfo      txInfo
+	Sent        bool
+	Attempts    int
+	RequeueTime time.Time `json:",omitempty"`
 }
 
 type txInfo struct {
-	Id       string
-	RawTx    []byte
-	RawBatch [][]byte
-	TxHash   string
-	Timeout  time.Time
-	Attempts int
+	Id            string
+	RawTx         []byte
+	RawBatch      [][]byte
+	TxHash        string
+	Timeout       time.Time
+	Attempts      int
+	DeadlineBlock int64 `json:",omitempty"` // Block after which tx is stale
 }
 
 func (t *txInfo) IsBatch() bool {
@@ -162,14 +172,22 @@ func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
 	return m.client.Status(ctx)
 }
 
-func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
+func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt ...int64) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncWithRetry: sending tx", types.Messages, "tx_id", id)
 
-	if halt, err := m.updateChainHalt(); err != nil || halt {
-		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime.Load().(time.Time))
+	var deadlineBlock int64
+	if len(deadlineBlockOpt) > 0 && deadlineBlockOpt[0] > 0 {
+		deadlineBlock = deadlineBlockOpt[0]
+	} else {
+		msgType := sdk.MsgTypeURL(rawTx)
+		deadlineBlock = m.getLatestBlockHeight() + getMaxBlocksForType(msgType)
+	}
 
-		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false); err != nil {
+	if halt, err := m.updateChainHalt(); err != nil || halt {
+		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
+
+		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, deadlineBlock); err != nil {
 			logging.Error("failed to put in queue", types.Messages, "tx_id", id, "resend_err", err)
 			return nil, ErrTxFailedToBroadcastAndPutOnRetry
 		}
@@ -178,29 +196,65 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse,
 
 	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
 	if broadcastErr != nil {
-		if isTxErrorCritical(broadcastErr) {
-			logging.Error("SendTransactionAsyncWithRetry: critical error sending tx", types.Messages, "tx_id", id, "err", broadcastErr)
-			return nil, broadcastErr
+		// Check if broadcast error is retryable
+		if isRetryableBroadcastError(broadcastErr) {
+			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
+				logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+			}
+			return nil, ErrTxFailedToBroadcastAndPutOnRetry
 		}
+		// Non-retryable broadcast error - fail immediately
+		logging.Error("SendTransactionAsyncWithRetry: non-retryable broadcast error", types.Messages, "tx_id", id, "err", broadcastErr)
+		return nil, broadcastErr
+	}
 
-		err := m.putOnRetry(id, "", timeout, rawTx, 1, false)
-		if err != nil {
-			logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+	// Classify the response to determine action
+	action := classifyBroadcastResponse(resp)
+	switch action {
+	case TxActionFail:
+		logging.Warn("Non-retryable business error, failing immediately", types.Messages,
+			"tx_id", id, "code", resp.Code, "codespace", resp.Codespace, "rawLog", resp.RawLog)
+		return nil, NewTransactionErrorFromResponse(resp)
+	case TxActionRetry:
+		logging.Warn("Retryable response error, queuing for retry", types.Messages,
+			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
+		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
+			logging.Error("tx failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
 		}
 		return nil, ErrTxFailedToBroadcastAndPutOnRetry
+	case TxActionObserve:
+		// Success or tx-in-mempool - queue for observation
+		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, deadlineBlock); err != nil {
+			logging.Error("tx broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
+		}
+		return resp, nil
 	}
-	if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true); err != nil {
-		logging.Error("tx broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
-	}
-	return resp, nil
+
+	// Should never reach here, but fail safe
+	logging.Error("Unexpected classification result", types.Messages, "tx_id", id)
+	return nil, ErrTxFailedToBroadcastAndPutOnRetry
 }
 
-func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg) error {
+func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...int64) error {
 	if len(msgs) == 0 {
 		return nil
 	}
+
+	var deadlineBlock int64
+	if len(deadlineBlockOpt) > 0 && deadlineBlockOpt[0] > 0 {
+		deadlineBlock = deadlineBlockOpt[0]
+	} else {
+		var minBlocks int64 = defaultMaxBlocks
+		for _, msg := range msgs {
+			if blocks := getMaxBlocksForType(sdk.MsgTypeURL(msg)); blocks < minBlocks {
+				minBlocks = blocks
+			}
+		}
+		deadlineBlock = m.getLatestBlockHeight() + minBlocks
+	}
+
 	if len(msgs) == 1 {
-		_, err := m.SendTransactionAsyncWithRetry(msgs[0])
+		_, err := m.SendTransactionAsyncWithRetry(msgs[0], deadlineBlock)
 		return err
 	}
 
@@ -208,9 +262,9 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg) error {
 	logging.Debug("SendBatchAsyncWithRetry: sending batch", types.Messages, "tx_id", id, "count", len(msgs))
 
 	if halt, err := m.updateChainHalt(); err != nil || halt {
-		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime.Load().(time.Time))
+		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
 
-		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, deadlineBlock); err != nil {
 			logging.Error("failed to put batch in queue", types.Messages, "tx_id", id, "resend_err", err)
 			return ErrTxFailedToBroadcastAndPutOnRetry
 		}
@@ -219,22 +273,43 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg) error {
 
 	resp, timeout, broadcastErr := m.BroadcastMessages(id, msgs...)
 	if broadcastErr != nil {
-		if isTxErrorCritical(broadcastErr) {
-			logging.Error("SendBatchAsyncWithRetry: critical error sending batch", types.Messages, "tx_id", id, "err", broadcastErr)
-			return broadcastErr
+		// Check if broadcast error is retryable
+		if isRetryableBroadcastError(broadcastErr) {
+			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
+				logging.Error("batch failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+			}
+			return ErrTxFailedToBroadcastAndPutOnRetry
 		}
+		// Non-retryable broadcast error - fail immediately
+		logging.Error("SendBatchAsyncWithRetry: non-retryable broadcast error", types.Messages, "tx_id", id, "err", broadcastErr)
+		return broadcastErr
+	}
 
-		err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false)
-		if err != nil {
-			logging.Error("batch failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+	// Classify the response to determine action
+	action := classifyBroadcastResponse(resp)
+	switch action {
+	case TxActionFail:
+		logging.Warn("Non-retryable business error in batch, failing immediately", types.Messages,
+			"tx_id", id, "code", resp.Code, "codespace", resp.Codespace, "rawLog", resp.RawLog)
+		return NewTransactionErrorFromResponse(resp)
+	case TxActionRetry:
+		logging.Warn("Retryable response error in batch, queuing for retry", types.Messages,
+			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
+		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
+			logging.Error("batch failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
 		}
 		return ErrTxFailedToBroadcastAndPutOnRetry
+	case TxActionObserve:
+		// Success or tx-in-mempool - queue for observation
+		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, deadlineBlock); err != nil {
+			logging.Error("batch broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
+		}
+		return nil
 	}
 
-	if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true); err != nil {
-		logging.Error("batch broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
-	}
-	return nil
+	// Should never reach here, but fail safe
+	logging.Error("Unexpected classification result for batch", types.Messages, "tx_id", id)
+	return ErrTxFailedToBroadcastAndPutOnRetry
 }
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
@@ -279,12 +354,15 @@ func (m *manager) putOnRetry(
 	timeout time.Time,
 	rawTx sdk.Msg,
 	attempts int,
-	sent bool) error {
+	sent bool,
+	deadlineBlock int64,
+) error {
 	logging.Debug("putOnRetry: tx with params", types.Messages,
 		"tx_id", id,
 		"tx_hash", txHash,
 		"timeout", timeout.String(),
 		"sent", sent,
+		"deadlineBlock", deadlineBlock,
 	)
 
 	if attempts >= maxAttempts {
@@ -303,10 +381,11 @@ func (m *manager) putOnRetry(
 
 	b, err := json.Marshal(&txToSend{
 		TxInfo: txInfo{
-			Id:      id,
-			RawTx:   bz,
-			TxHash:  txHash,
-			Timeout: timeout,
+			Id:            id,
+			RawTx:         bz,
+			TxHash:        txHash,
+			Timeout:       timeout,
+			DeadlineBlock: deadlineBlock,
 		},
 		Sent:     sent,
 		Attempts: attempts,
@@ -314,7 +393,10 @@ func (m *manager) putOnRetry(
 	if err != nil {
 		return err
 	}
-	_, err = m.natsJetStream.Publish(server.TxsToSendStream, b)
+	msg := &nats.Msg{Subject: server.TxsToSendStream, Data: b, Header: nats.Header{}}
+	msg.Header.Set(idHeader, id)
+	msg.Header.Set(hashHeader, txHash)
+	_, err = m.natsJetStream.PublishMsg(msg)
 	return err
 }
 
@@ -324,14 +406,16 @@ func (m *manager) putBatchOnRetry(
 	txHash string,
 	timeout time.Time,
 	attempts int,
-	sent bool) error {
-
+	sent bool,
+	deadlineBlock int64,
+) error {
 	logging.Debug("putBatchOnRetry: batch with params", types.Messages,
 		"tx_id", id,
 		"tx_hash", txHash,
 		"timeout", timeout.String(),
 		"sent", sent,
 		"count", len(msgs),
+		"deadlineBlock", deadlineBlock,
 	)
 
 	if attempts >= maxAttempts {
@@ -354,10 +438,11 @@ func (m *manager) putBatchOnRetry(
 
 	b, err := json.Marshal(&txToSend{
 		TxInfo: txInfo{
-			Id:       id,
-			RawBatch: rawBatch,
-			TxHash:   txHash,
-			Timeout:  timeout,
+			Id:            id,
+			RawBatch:      rawBatch,
+			TxHash:        txHash,
+			Timeout:       timeout,
+			DeadlineBlock: deadlineBlock,
 		},
 		Sent:     sent,
 		Attempts: attempts,
@@ -365,7 +450,10 @@ func (m *manager) putBatchOnRetry(
 	if err != nil {
 		return err
 	}
-	_, err = m.natsJetStream.Publish(server.TxsToSendStream, b)
+	msg := &nats.Msg{Subject: server.TxsToSendStream, Data: b, Header: nats.Header{}}
+	msg.Header.Set(idHeader, id)
+	msg.Header.Set(hashHeader, txHash)
+	_, err = m.natsJetStream.PublishMsg(msg)
 	return err
 }
 
@@ -380,7 +468,28 @@ func (m *manager) putInfoToObserve(info txInfo) error {
 	if err != nil {
 		return err
 	}
-	_, err = m.natsJetStream.Publish(server.TxsToObserveStream, b)
+	msg := &nats.Msg{Subject: server.TxsToObserveStream, Data: b, Header: nats.Header{}}
+	msg.Header.Set(idHeader, info.Id)
+	msg.Header.Set(hashHeader, info.TxHash)
+	_, err = m.natsJetStream.PublishMsg(msg)
+	return err
+}
+
+func (m *manager) requeue(tx *txToSend) error {
+	tx.Attempts++
+	tx.RequeueTime = time.Now()
+	if tx.Attempts >= maxAttempts {
+		logging.Warn("tx max attempts reached", types.Messages, "id", tx.TxInfo.Id)
+		return nil
+	}
+	b, err := json.Marshal(tx)
+	if err != nil {
+		return err
+	}
+	msg := &nats.Msg{Subject: server.TxsToSendStream, Data: b, Header: nats.Header{}}
+	msg.Header.Set(idHeader, tx.TxInfo.Id)
+	msg.Header.Set(hashHeader, tx.TxInfo.TxHash)
+	_, err = m.natsJetStream.PublishMsg(msg)
 	return err
 }
 
@@ -388,20 +497,51 @@ func (m *manager) sendTxs() error {
 	logging.Info("Tx manager: sending txs: run in background", types.Messages)
 
 	_, err := m.natsJetStream.Subscribe(server.TxsToSendStream, func(msg *nats.Msg) {
-		if halt, err := m.updateChainHalt(); err != nil || halt {
-			logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime.Load().(time.Time))
-			time.Sleep(3 * time.Second)
+		if halt, _ := m.updateChainHalt(); halt {
+			logging.Warn("node paused, delaying tx", types.Messages,
+				"latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
+			msg.NakWithDelay(getJitteredDelay(defaultSenderNackDelay))
 			return
 		}
 
+		txId := msg.Header.Get(idHeader)
+		txHash := msg.Header.Get(hashHeader)
+		logging.Debug("sendTxs processing", types.Messages, "id", txId, "hash", txHash)
+
 		var tx txToSend
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
-			logging.Error("error unmarshaling tx_to_send", types.Messages, "err", err)
+			logging.Error("error unmarshaling tx_to_send", types.Messages, "err", err, "id", txId, "hash", txHash)
 			msg.Term() // malformed, drop it
 			return
 		}
 
-		logging.Debug("SendTxs: got tx", types.Messages, "id", tx.TxInfo.Id)
+		logging.Debug("SendTxs: got tx", types.Messages, "id", tx.TxInfo.Id, "attempts", tx.Attempts)
+
+		if tx.Attempts >= maxAttempts {
+			logging.Warn("tx max attempts reached", types.Messages, "id", tx.TxInfo.Id)
+			msg.Term()
+			return
+		}
+
+		if !tx.RequeueTime.IsZero() {
+			elapsed := time.Since(tx.RequeueTime)
+			jitteredDelay := getJitteredDelay(defaultSenderNackDelay)
+			if elapsed < jitteredDelay {
+				msg.NakWithDelay(jitteredDelay - elapsed)
+				return
+			}
+		}
+
+		currentHeight := m.getLatestBlockHeight()
+		if tx.TxInfo.DeadlineBlock > 0 && currentHeight > tx.TxInfo.DeadlineBlock {
+			logging.Warn("tx expired by block deadline, dropping", types.Messages,
+				"id", tx.TxInfo.Id,
+				"hash", tx.TxInfo.TxHash,
+				"deadline", tx.TxInfo.DeadlineBlock,
+				"currentHeight", currentHeight)
+			msg.Term()
+			return
+		}
 
 		var resp *sdk.TxResponse
 		var timeout time.Time
@@ -435,27 +575,52 @@ func (m *manager) sendTxs() error {
 
 		if !tx.Sent {
 			if broadcastErr != nil {
-				if isTxErrorCritical(broadcastErr) {
-					logging.Error("got critical error sending tx", types.Messages, "id", tx.TxInfo.Id)
-					msg.Term() // invalid tx, drop it
+				// Check if broadcast error is retryable
+				if isRetryableBroadcastError(broadcastErr) {
+					logging.Warn("retryable broadcast error, requeuing", types.Messages, "id", tx.TxInfo.Id, "err", broadcastErr)
+					if err := m.requeue(&tx); err != nil {
+						logging.Error("requeue failed, dropping tx", types.Messages, "id", tx.TxInfo.Id, "err", err)
+					}
+					msg.Ack()
 					return
 				}
-				msg.NakWithDelay(defaultSenderNackDelay)
+				// Non-retryable broadcast error - drop permanently
+				logging.Error("non-retryable broadcast error in sendTxs, dropping", types.Messages, "id", tx.TxInfo.Id, "err", broadcastErr)
+				msg.Term()
 				return
 			}
-			tx.TxInfo.Timeout = timeout
-			tx.TxInfo.TxHash = resp.TxHash
-			tx.Sent = true
+
+			// Classify the response to determine action
+			action := classifyBroadcastResponse(resp)
+			switch action {
+			case TxActionFail:
+				logging.Warn("Non-retryable business error in sendTxs, dropping", types.Messages,
+					"id", tx.TxInfo.Id, "code", resp.Code, "codespace", resp.Codespace, "rawLog", resp.RawLog)
+				msg.Term()
+				return
+			case TxActionRetry:
+				logging.Warn("Retryable response error, requeuing", types.Messages,
+					"id", tx.TxInfo.Id, "code", resp.Code, "rawLog", resp.RawLog)
+				if err := m.requeue(&tx); err != nil {
+					logging.Error("requeue failed, dropping tx", types.Messages, "id", tx.TxInfo.Id, "err", err)
+				}
+				msg.Ack()
+				return
+			case TxActionObserve:
+				// Success or tx-in-mempool - continue to observer
+				tx.TxInfo.Timeout = timeout
+				tx.TxInfo.TxHash = resp.TxHash
+				tx.Sent = true
+			}
 		}
 
 		logging.Debug("tx broadcast, put to observe", types.Messages, "id", tx.TxInfo.Id, "tx_hash", tx.TxInfo.TxHash, "timeout", tx.TxInfo.Timeout.String())
 
 		if err := m.putInfoToObserve(tx.TxInfo); err != nil {
-			logging.Error("error pushing to observe queue", types.Messages, "id", tx.TxInfo.Id, "err", err)
-			msg.NakWithDelay(defaultSenderNackDelay)
-		} else {
-			msg.Ack()
+			logging.Error("error pushing to observe queue, tx broadcast but untracked",
+				types.Messages, "id", tx.TxInfo.Id, "txHash", tx.TxInfo.TxHash, "err", err)
 		}
+		msg.Ack()
 	}, nats.Durable(txSenderConsumer), nats.ManualAck())
 	return err
 }
@@ -463,13 +628,26 @@ func (m *manager) sendTxs() error {
 func (m *manager) observeTxs() error {
 	logging.Info("Tx manager: observeTxs txs: run in background", types.Messages)
 	_, err := m.natsJetStream.Subscribe(server.TxsToObserveStream, func(msg *nats.Msg) {
-		if halt, err := m.updateChainHalt(); err != nil || halt {
-			logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime.Load().(time.Time))
+		if halt, _ := m.updateChainHalt(); halt {
+			logging.Warn("node paused, delaying observe", types.Messages,
+				"latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
+			msg.NakWithDelay(defaultObserverNackDelay)
+			return
 		}
 
 		var tx txInfo
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
 			logging.Error("error unmarshaling tx_to_observe", types.Messages, "err", err)
+			msg.Term()
+			return
+		}
+
+		currentHeight := m.getLatestBlockHeight()
+		if tx.DeadlineBlock > 0 && currentHeight > tx.DeadlineBlock {
+			logging.Warn("tx expired by block deadline in observer, dropping", types.Messages,
+				"id", tx.Id,
+				"deadline", tx.DeadlineBlock,
+				"currentHeight", currentHeight)
 			msg.Term()
 			return
 		}
@@ -495,9 +673,9 @@ func (m *manager) observeTxs() error {
 			tx.Attempts++
 			var retryErr error
 			if tx.IsBatch() {
-				retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false)
+				retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.DeadlineBlock)
 			} else {
-				retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false)
+				retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.DeadlineBlock)
 			}
 
 			if retryErr != nil {
@@ -523,15 +701,15 @@ func (m *manager) observeTxs() error {
 		}
 
 		if errors.Is(err, ErrTxNotFound) {
-			if m.blockTimeTracker.latestBlockTime.Load().(time.Time).After(tx.Timeout) {
+			if m.blockTimeTracker.latestBlockTime.After(tx.Timeout) {
 				logging.Debug("tx expired", types.Messages, "tx_id", tx.Id, "tx_hash", tx.TxHash, "tx_timestamp", tx.Timeout, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
 				tx.Attempts++
 
 				var retryErr error
 				if tx.IsBatch() {
-					retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false)
+					retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.DeadlineBlock)
 				} else {
-					retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false)
+					retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.DeadlineBlock)
 				}
 
 				if retryErr != nil {
@@ -543,6 +721,7 @@ func (m *manager) observeTxs() error {
 			}
 		}
 
+		// Likely: The tx is not (yet) found, and the tx hasn't expired
 		msg.NakWithDelay(defaultObserverNackDelay)
 	}, nats.Durable(txObserverConsumer), nats.ManualAck())
 	return err
@@ -744,13 +923,13 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 }
 
 func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, time.Time, error) {
-	blockTs := m.blockTimeTracker.latestBlockTime.Load().(time.Time)
+	blockTs := m.blockTimeTracker.latestBlockTime
 	if blockTs.IsZero() {
 		_, err := m.updateChainHalt()
 		if err != nil {
 			return nil, time.Time{}, err
 		}
-		blockTs = m.blockTimeTracker.latestBlockTime.Load().(time.Time)
+		blockTs = m.blockTimeTracker.latestBlockTime
 	}
 
 	timestamp := getTimestamp(blockTs.UnixNano(), m.defaultTimeout)
@@ -776,11 +955,37 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	return txBytes, timestamp, nil
 }
 
+func (m *manager) getLatestBlockHeight() int64 {
+	return m.getHeightFunc()
+}
+
+func (m *manager) isNodeBehind(syncInfo ctypes.SyncInfo) bool {
+	if syncInfo.CatchingUp {
+		logging.Warn("node is catching up", types.Messages,
+			"height", syncInfo.LatestBlockHeight)
+		return true
+	}
+
+	drift := time.Since(syncInfo.LatestBlockTime)
+	if drift > maxBlockTimeDrift {
+		logging.Warn("node block time is stale", types.Messages,
+			"latestBlockTime", syncInfo.LatestBlockTime,
+			"drift", drift)
+		return true
+	}
+
+	return false
+}
+
 func (m *manager) updateChainHalt() (bool, error) {
+	m.blockTimeTracker.mtx.Lock()
 	now := time.Now()
 	if now.Sub(m.blockTimeTracker.lastUpdatedAt) < time.Second*3 {
-		return m.blockTimeTracker.chainHalt, nil
+		result := m.blockTimeTracker.pauseSending
+		m.blockTimeTracker.mtx.Unlock()
+		return result, nil
 	}
+	m.blockTimeTracker.mtx.Unlock()
 
 	status, err := m.client.Status(m.ctx)
 	if err != nil {
@@ -791,20 +996,30 @@ func (m *manager) updateChainHalt() (bool, error) {
 	m.blockTimeTracker.mtx.Lock()
 	defer m.blockTimeTracker.mtx.Unlock()
 
-	if status.SyncInfo.LatestBlockTime.Equal(m.blockTimeTracker.latestBlockTime.Load().(time.Time)) &&
-		status.SyncInfo.LatestBlockHeight == m.blockTimeTracker.latestBlockHeight &&
+	// Priority 1: Chain halt detection (chain stopped producing blocks)
+	if status.SyncInfo.LatestBlockTime.Equal(m.blockTimeTracker.latestBlockTime) &&
 		!m.blockTimeTracker.lastUpdatedAt.IsZero() && now.Sub(m.blockTimeTracker.lastUpdatedAt) > m.blockTimeTracker.maxBlockTimeout {
-		// same block, and we sow it more than N seconds ago -> chain halt
-		m.blockTimeTracker.chainHalt = true
+		m.blockTimeTracker.pauseSending = true
+		m.blockTimeTracker.lastUpdatedAt = now
+		return true, nil
 	}
 
-	if status.SyncInfo.LatestBlockTime.After(m.blockTimeTracker.latestBlockTime.Load().(time.Time)) &&
-		status.SyncInfo.LatestBlockHeight > m.blockTimeTracker.latestBlockHeight {
-		m.blockTimeTracker.latestBlockHeight = status.SyncInfo.LatestBlockHeight
-		m.blockTimeTracker.latestBlockTime.Store(status.SyncInfo.LatestBlockTime)
-		m.blockTimeTracker.chainHalt = false
+	// Priority 2: Node behind (catching up or stale block time)
+	if m.isNodeBehind(status.SyncInfo) {
+		m.blockTimeTracker.latestBlockTime = status.SyncInfo.LatestBlockTime
+		m.blockTimeTracker.pauseSending = true
+		m.blockTimeTracker.lastUpdatedAt = now
+		return true, nil
+	}
+
+	// Recovery: passed both checks, safe to send
+	m.blockTimeTracker.pauseSending = false
+
+	// Update block time for halt detection
+	if status.SyncInfo.LatestBlockTime.After(m.blockTimeTracker.latestBlockTime) {
+		m.blockTimeTracker.latestBlockTime = status.SyncInfo.LatestBlockTime
 	}
 
 	m.blockTimeTracker.lastUpdatedAt = now
-	return m.blockTimeTracker.chainHalt, nil
+	return m.blockTimeTracker.pauseSending, nil
 }

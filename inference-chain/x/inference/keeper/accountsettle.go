@@ -7,6 +7,7 @@ import (
 
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 
@@ -191,6 +192,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	}
 	var amounts []*SettleResult
 	var rewardAmount int64
+	var governanceRewardAmount int64
 	settleParameters, err := k.GetSettleParameters(ctx)
 	if err != nil {
 		k.LogError("Error getting settle parameters", types.Settle, "error", err)
@@ -217,6 +219,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		}
 		k.LogInfo("Bitcoin reward amount", types.Settle, "amount", bitcoinResult.Amount)
 		rewardAmount = bitcoinResult.Amount
+		governanceRewardAmount = bitcoinResult.GovernanceAmount
 	} else {
 		// Use current WorkCoins-based variable reward system with its own parameters
 		k.LogInfo("Using current WorkCoins-based reward system", types.Settle)
@@ -247,6 +250,21 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		return err
 	}
 	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
+
+	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
+	// are transferred to governance instead of being redistributed to other participants.
+	if params.BitcoinRewardParams.UseBitcoinRewards && governanceRewardAmount > 0 {
+		coins, err := types.GetCoins(governanceRewardAmount)
+		if err != nil {
+			return err
+		}
+		memo := fmt.Sprintf("bitcoin_reward_to_governance:epoch=%d", currentEpochIndex)
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+			k.LogError("Error transferring undistributed bitcoin rewards to governance", types.Settle, "error", err, "amount", governanceRewardAmount)
+			return err
+		}
+		k.LogInfo("Transferred undistributed bitcoin rewards to governance", types.Settle, "amount", governanceRewardAmount)
+	}
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
 
@@ -302,15 +320,15 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 		amount.Settle.EpochIndex = currentEpochIndex
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
-		k.SetSettleAmountWithBurn(ctx, *amount.Settle)
+		k.SetSettleAmountWithGovernanceTransfer(ctx, *amount.Settle)
 	}
 
 	if previousEpochIndex == 0 {
 		return nil
 	}
 
-	k.LogInfo("Burning old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
-	err = k.BurnOldSettleAmounts(ctx, previousEpochIndex)
+	k.LogInfo("Transferring old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
+	err = k.TransferOldSettleAmountsToGovernance(ctx, previousEpochIndex)
 	if err != nil {
 		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
 	}

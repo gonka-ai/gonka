@@ -2,6 +2,7 @@ package validation
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
@@ -14,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"sort"
@@ -334,8 +336,12 @@ func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int
 						logging.Error("Failed to get validator power", types.ValidationRecovery, "error", err)
 						return nil, fmt.Errorf("failed to get validator power: %w", err)
 					}
-					validatorPower = powerResp.ValidatorPower
-					validatorPowerFetched = true
+					for _, power := range powerResp.ValidatorPowers {
+						if power.EpochIndex == epochIndex {
+							validatorPower = power.Power
+							validatorPowerFetched = true
+						}
+					}
 					logging.Debug("Fetched validator power", types.ValidationRecovery, "validatorPower", validatorPower)
 					break
 				}
@@ -387,6 +393,12 @@ func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int
 // This function uses the inference data already obtained and executes validations in parallel goroutines
 // It waits for all validations to complete before returning
 func (s *InferenceValidator) ExecuteRecoveryValidations(missedInferences []types.Inference) (int, error) {
+	// TODO: allow to send validation for previous epoch and then rollback changes
+	// Chain requires validator to be active in CURRENT epoch
+	if !s.isActiveInCurrentEpoch() {
+		logging.Info("Skipping validation recovery: not active participant in current epoch", types.ValidationRecovery)
+		return 0, nil
+	}
 
 	availableModels, err := s.getCurrentSupportedModels()
 	if err != nil {
@@ -493,11 +505,20 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 			logging.Debug("Skipping inference by not supported model", types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "model", inferenceWithExecutor.Model)
 			continue
 		}
+		var validatorPower uint64
+		for _, power := range r.ValidatorPowers {
+			// Note that we assign and break if it matches.
+			// If we don't get a power at all, we're better off trying SOMETHING
+			validatorPower = power.Power
+			if power.EpochIndex == inferenceWithExecutor.EpochId {
+				break
+			}
+		}
 		// Use the extracted validation decision logic
 		shouldValidate, message := s.shouldValidateInference(
 			inferenceWithExecutor,
 			currentSeed,
-			r.ValidatorPower,
+			validatorPower,
 			address,
 			params.Params.ValidationParams)
 
@@ -645,6 +666,21 @@ func (s *InferenceValidator) isEpochStale(inferenceEpochId uint64) bool {
 	return epochState.LatestEpoch.EpochIndex >= inferenceEpochId+2
 }
 
+func (s *InferenceValidator) isActiveInCurrentEpoch() bool {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	resp, err := queryClient.CurrentEpochGroupData(context.Background(), &types.QueryCurrentEpochGroupDataRequest{})
+	if err != nil {
+		return false
+	}
+	address := s.recorder.GetAddress()
+	for _, vw := range resp.EpochGroupData.ValidationWeights {
+		if vw.MemberAddress == address {
+			return true
+		}
+	}
+	return false
+}
+
 // isAlreadyValidated checks if this validator already submitted validation for the inference.
 // Used to avoid duplicate work when multiple sources trigger validation for same inference.
 func (s *InferenceValidator) isAlreadyValidated(inferenceId string, epochId uint64, recorder cosmosclient.InferenceCosmosClient) bool {
@@ -710,9 +746,10 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 			"maxRetries", maxRetries,
 			"error", err)
 
-		// Wait between retries (skip sleep on final attempt since we're done)
+		// Wait between retries with random jitter (skip sleep on final attempt since we're done)
 		if attempt < maxRetries {
-			time.Sleep(retryInterval)
+			jitter := time.Duration(1+rand.Intn(120)) * time.Second
+			time.Sleep(retryInterval + jitter)
 		}
 	}
 
@@ -865,10 +902,28 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	// If the validator's inference node rejects the payload (400/422), treat validation as passed.
+	// This can happen when the original inference could not be executed due to upstream payload rejection,
+	// and validators on older versions may still attempt re-execution.
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+		logging.Warn("Validator inference node rejected payload; treating validation as passed", types.Validation,
+			"inferenceId", inference.InferenceId,
+			"status", resp.StatusCode,
+			"body", string(respBodyBytes))
+		return &SimilarityValidationResult{
+			BaseValidationResult: BaseValidationResult{
+				InferenceId:   inference.InferenceId,
+				ResponseBytes: []byte{},
+			},
+			Value: 1.0,
+		}, nil
 	}
 
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))

@@ -57,6 +57,57 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
+// emptyButParseableResponsePayload returns a deterministic "empty" response payload that:
+// - is valid JSON parseable by older validators
+// - yields no logits (so validator re-execution cannot meaningfully compare)
+// - produces a stable response hash (hash is over these exact bytes)
+//
+// IMPORTANT: This payload is committed via `ResponseHash` on-chain and served to validators.
+func emptyButParseableResponsePayload(inferenceId, model string, promptTokens uint64) *completionapi.JsonCompletionResponse {
+	choice := completionapi.Choice{
+		Index:        0,
+		Message:      &completionapi.Message{Role: "assistant", Content: ""},
+		FinishReason: "error",
+		StopReason:   "",
+	}
+	// Provide a minimal synthetic logprob entry so older validators won't end up with:
+	// - EnforcedTokens.Tokens == nil (marshals to {"tokens":null})
+	// - or an error due to missing enforced tokens
+	//
+	// This must have TopLogprobs != nil AND len(TopLogprobs) > 0 to pass GetEnforcedTokens().
+	choice.Logprobs.Content = []completionapi.Logprob{
+		{
+			Token:   "<EMPTY>",
+			Logprob: 0,
+			Bytes:   []int{},
+			TopLogprobs: []completionapi.TopLogprobs{
+				{Token: "<EMPTY>", Logprob: 0, Bytes: []int{}},
+			},
+		},
+	}
+
+	resp := completionapi.Response{
+		ID:      inferenceId,
+		Object:  "chat.completion",
+		Created: 0,
+		Model:   model,
+		Choices: []completionapi.Choice{choice},
+		Usage: completionapi.Usage{
+			// Must be non-zero so `completionapi.JsonCompletionResponse.GetUsage()` won't error.
+			// We set it to the best-effort prompt token count so MsgFinishInference can still charge.
+			PromptTokens:     promptTokens,
+			CompletionTokens: 0,
+		},
+	}
+
+	b, err := json.Marshal(resp)
+	if err != nil {
+		// If marshaling fails, return error instead of generating a fallback response
+		return nil
+	}
+	return &completionapi.JsonCompletionResponse{Bytes: b, Resp: resp}
+}
+
 // checkAndRecordAuthKey checks if an AuthKey has been used before and records it if not
 // Returns true if the key has been used before in the specified context, false otherwise
 func checkAndRecordAuthKey(authKey string, currentBlockHeight int64, context AuthKeyContext) bool {
@@ -163,6 +214,12 @@ func (s *Server) postChat(ctx echo.Context) error {
 		return ErrNoModelSpecified
 	}
 
+	// Developer access gating: before a configured cutoff height, only allowlisted developers may use the public API
+	// for both transfer-agent and executor request paths.
+	if err := s.enforceDeveloperAccessGate(ctx.Request().Context(), chatRequest.RequesterAddress); err != nil {
+		return err
+	}
+
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
 		logging.Info("Executor request", types.Inferences, "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed)
 		return s.handleExecutorRequest(ctx, chatRequest, ctx.Response().Writer)
@@ -170,6 +227,35 @@ func (s *Server) postChat(ctx echo.Context) error {
 		logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
 		return s.handleTransferRequest(ctx, chatRequest)
 	}
+}
+
+func (s *Server) enforceDeveloperAccessGate(ctx context.Context, requesterAddress string) error {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	paramsResp, err := queryClient.Params(ctx, &types.QueryParamsRequest{})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch chain params")
+	}
+	p := paramsResp.Params.DeveloperAccessParams
+	if p == nil || p.UntilBlockHeight == 0 {
+		return nil
+	}
+
+	status, err := s.recorder.Status(ctx)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch chain status")
+	}
+	currentHeight := status.SyncInfo.LatestBlockHeight
+	if currentHeight >= p.UntilBlockHeight {
+		return nil
+	}
+
+	for _, a := range p.AllowedDeveloperAddresses {
+		if a == requesterAddress {
+			return nil
+		}
+	}
+
+	return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("inference requests are restricted until block height %d", p.UntilBlockHeight))
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
@@ -415,17 +501,15 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return err
 	}
 
-	if request.PromptHash != "" {
-		computedHash, _, err := getModifiedPromptHash(modifiedRequestBody.NewBody)
-		if err != nil {
-			logging.Error("Failed to compute prompt hash", types.Inferences, "error", err)
-			return echo.NewHTTPError(http.StatusBadRequest, "Failed to compute prompt hash")
-		}
-		if computedHash != request.PromptHash {
-			logging.Error("Prompt hash mismatch", types.Inferences,
-				"expected", request.PromptHash, "computed", computedHash)
-			return echo.NewHTTPError(http.StatusBadRequest, "Prompt hash mismatch")
-		}
+	computedPromptHash, promptPayload, err := getModifiedPromptHash(modifiedRequestBody.NewBody)
+	if err != nil {
+		logging.Error("Failed to compute prompt hash", types.Inferences, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, "Failed to compute prompt hash")
+	}
+	if request.PromptHash != "" && computedPromptHash != request.PromptHash {
+		logging.Error("Prompt hash mismatch", types.Inferences,
+			"expected", request.PromptHash, "computed", computedPromptHash)
+		return echo.NewHTTPError(http.StatusBadRequest, "Prompt hash mismatch")
 	}
 
 	logging.Info("Attempting to lock node for inference", types.Inferences,
@@ -460,6 +544,24 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := getInferenceErrorMessage(resp)
 		logging.Warn("Inference node response with an error", types.Inferences, "code", resp.StatusCode, "msg", msg)
+		// If vLLM rejects the payload (400/422), still record a FinishInference with an empty response
+		// so the inference lifecycle is closed on-chain.
+		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+			logging.Warn("Recording FinishInference with empty response due to inference node payload error", types.Inferences,
+				"inferenceId", inferenceId, "code", resp.StatusCode)
+			// Provide a parseable synthetic response payload so older validators can still unmarshal it.
+			promptTokens := uint64(1)
+			synthetic := emptyButParseableResponsePayload(inferenceId, request.OpenAiRequest.Model, promptTokens)
+			if synthetic == nil {
+				logging.Error("Failed to create synthetic response payload", types.Inferences, "inferenceId", inferenceId)
+				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create synthetic response payload")
+			}
+			if txErr := s.sendInferenceTransaction(request.InferenceId, synthetic, request.Body, s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
+				logging.Error("Failed to record FinishInference after inference node payload error", types.Inferences,
+					"inferenceId", inferenceId, "error", txErr)
+			}
+			return echo.NewHTTPError(resp.StatusCode, msg)
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, msg)
 	}
 
@@ -472,12 +574,6 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	if err != nil || completionResponse == nil {
 		logging.Error("Failed to parse response data into CompletionResponse", types.Inferences, "error", err)
-		return err
-	}
-
-	_, promptPayload, err := getModifiedPromptHash(modifiedRequestBody.NewBody)
-	if err != nil {
-		logging.Error("Failed to get prompt hash", types.Inferences, "error", err)
 		return err
 	}
 

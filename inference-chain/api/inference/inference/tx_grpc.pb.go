@@ -56,6 +56,8 @@ const (
 	Msg_AddUserToTrainingAllowList_FullMethodName       = "/inference.inference.Msg/AddUserToTrainingAllowList"
 	Msg_RemoveUserFromTrainingAllowList_FullMethodName  = "/inference.inference.Msg/RemoveUserFromTrainingAllowList"
 	Msg_SetTrainingAllowList_FullMethodName             = "/inference.inference.Msg/SetTrainingAllowList"
+	Msg_AddParticipantsToAllowList_FullMethodName       = "/inference.inference.Msg/AddParticipantsToAllowList"
+	Msg_RemoveParticipantsFromAllowList_FullMethodName  = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
 )
 
 // MsgClient is the client API for Msg service.
@@ -101,6 +103,8 @@ type MsgClient interface {
 	AddUserToTrainingAllowList(ctx context.Context, in *MsgAddUserToTrainingAllowList, opts ...grpc.CallOption) (*MsgAddUserToTrainingAllowListResponse, error)
 	RemoveUserFromTrainingAllowList(ctx context.Context, in *MsgRemoveUserFromTrainingAllowList, opts ...grpc.CallOption) (*MsgRemoveUserFromTrainingAllowListResponse, error)
 	SetTrainingAllowList(ctx context.Context, in *MsgSetTrainingAllowList, opts ...grpc.CallOption) (*MsgSetTrainingAllowListResponse, error)
+	AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error)
+	RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error)
 }
 
 type msgClient struct {
@@ -444,6 +448,24 @@ func (c *msgClient) SetTrainingAllowList(ctx context.Context, in *MsgSetTraining
 	return out, nil
 }
 
+func (c *msgClient) AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error) {
+	out := new(MsgAddParticipantsToAllowListResponse)
+	err := c.cc.Invoke(ctx, Msg_AddParticipantsToAllowList_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error) {
+	out := new(MsgRemoveParticipantsFromAllowListResponse)
+	err := c.cc.Invoke(ctx, Msg_RemoveParticipantsFromAllowList_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -487,6 +509,8 @@ type MsgServer interface {
 	AddUserToTrainingAllowList(context.Context, *MsgAddUserToTrainingAllowList) (*MsgAddUserToTrainingAllowListResponse, error)
 	RemoveUserFromTrainingAllowList(context.Context, *MsgRemoveUserFromTrainingAllowList) (*MsgRemoveUserFromTrainingAllowListResponse, error)
 	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
+	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
+	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -604,6 +628,12 @@ func (UnimplementedMsgServer) RemoveUserFromTrainingAllowList(context.Context, *
 }
 func (UnimplementedMsgServer) SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetTrainingAllowList not implemented")
+}
+func (UnimplementedMsgServer) AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddParticipantsToAllowList not implemented")
+}
+func (UnimplementedMsgServer) RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveParticipantsFromAllowList not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1284,6 +1314,42 @@ func _Msg_SetTrainingAllowList_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_AddParticipantsToAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAddParticipantsToAllowList)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AddParticipantsToAllowList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AddParticipantsToAllowList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AddParticipantsToAllowList(ctx, req.(*MsgAddParticipantsToAllowList))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RemoveParticipantsFromAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRemoveParticipantsFromAllowList)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RemoveParticipantsFromAllowList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RemoveParticipantsFromAllowList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RemoveParticipantsFromAllowList(ctx, req.(*MsgRemoveParticipantsFromAllowList))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1438,6 +1504,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetTrainingAllowList",
 			Handler:    _Msg_SetTrainingAllowList_Handler,
+		},
+		{
+			MethodName: "AddParticipantsToAllowList",
+			Handler:    _Msg_AddParticipantsToAllowList_Handler,
+		},
+		{
+			MethodName: "RemoveParticipantsFromAllowList",
+			Handler:    _Msg_RemoveParticipantsFromAllowList_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

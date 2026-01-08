@@ -14,6 +14,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/validation"
@@ -66,6 +67,7 @@ type OnNewBlockDispatcher struct {
 	randomSeedManager    poc.RandomSeedManager
 	configManager        *apiconfig.ConfigManager
 	validator            *validation.InferenceValidator
+	epochGroupDataCache  *internal.EpochGroupDataCache
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -139,8 +141,9 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 	}
 
 	randomSeedManager := poc.NewRandomSeedManager(cosmosClient, configManager)
+	epochGroupDataCache := internal.NewEpochGroupDataCache(cosmosClient)
 
-	return NewOnNewBlockDispatcher(
+	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
 		nodePocOrchestrator,
 		queryClient,
@@ -152,6 +155,8 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		configManager,
 		validator,
 	)
+	dispatcher.epochGroupDataCache = epochGroupDataCache
+	return dispatcher
 }
 
 // ProcessNewBlock is the main entry point for processing new block events
@@ -410,6 +415,13 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 
 	// Confirmation PoC transitions (during inference phase)
 	if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
+		// Skip confirmation PoC if not an active participant
+		selfAddress := d.nodeBroker.GetParticipantAddress()
+		if isActive, _ := d.epochGroupDataCache.IsActiveParticipant(context.Background(), epochState.LatestEpoch.EpochIndex, selfAddress); !isActive {
+			logging.Debug("Skipping confirmation PoC - not active participant", types.PoC, "address", selfAddress)
+			return
+		}
+
 		event := epochState.ActiveConfirmationPoCEvent
 		epochParams := &epochState.LatestEpoch.EpochParams
 

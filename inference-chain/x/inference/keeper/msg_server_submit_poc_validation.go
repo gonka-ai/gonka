@@ -14,6 +14,12 @@ const PocFailureTag = "[PoC Failure]"
 func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubmitPocValidation) (*types.MsgSubmitPocValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// Participant access gating: blocklisted accounts cannot participate in PoC (as validator or validated participant).
+	if k.IsPoCParticipantBlocked(ctx, msg.Creator) {
+		k.LogError(PocFailureTag+"[SubmitPocValidation] validator participant is blocked from PoC", types.PoC, "validatorParticipant", msg.Creator)
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	}
+
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
 

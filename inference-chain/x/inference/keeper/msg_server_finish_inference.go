@@ -15,6 +15,13 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
+	// Developer access gating: until cutoff height only allowlisted developers may run inference flows.
+	// We gate by the original requester (developer), not the executor/TA.
+	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
+		k.LogError("FinishInference: developer is not allowlisted at this height", types.Inferences, "developer", msg.RequestedBy, "blockHeight", ctx.BlockHeight())
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
+	}
+
 	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
 	if !found {
 		k.LogError("FinishInference: executor not found", types.Inferences, "executed_by", msg.ExecutedBy)

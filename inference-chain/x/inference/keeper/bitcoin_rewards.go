@@ -16,6 +16,10 @@ type BitcoinResult struct {
 	Amount       int64  // Total epoch reward amount minted
 	EpochNumber  uint64 // Current epoch number for tracking
 	DecayApplied bool   // Whether decay was applied this epoch
+	// GovernanceAmount is the portion of Amount that is NOT distributed to participants
+	// (e.g. due to downtime punishment or integer division truncation) and should be
+	// transferred to the governance module account by the caller.
+	GovernanceAmount int64
 }
 
 // GetBitcoinSettleAmounts is the main entry point for Bitcoin-style reward calculation.
@@ -59,6 +63,7 @@ func GetBitcoinSettleAmounts(
 	if settleParams.TotalSubsidyPaid >= settleParams.TotalSubsidySupply {
 		// Supply cap already reached - stop all minting
 		bitcoinResult.Amount = 0
+		bitcoinResult.GovernanceAmount = 0
 		// Zero out all participant reward amounts since no rewards can be minted
 		for _, amount := range settleResults {
 			if amount.Settle != nil {
@@ -84,23 +89,30 @@ func GetBitcoinSettleAmounts(
 				}
 			}
 
-			// Distribute any remainder due to integer division truncation
-			// This ensures the exact available supply amount is distributed
+			// Any remainder due to integer division truncation (or downtime punishments already
+			// baked into settleResults) should go to governance.
 			remainder := uint64(bitcoinResult.Amount) - totalDistributed
-			if remainder > 0 && len(settleResults) > 0 {
-				// Assign undistributed coins to first participant with valid rewards
-				for i, result := range settleResults {
-					if result.Error == nil && result.Settle != nil && result.Settle.RewardCoins > 0 {
-						settleResults[i].Settle.RewardCoins += remainder
-						break
-					}
-				}
+			if uint64(bitcoinResult.Amount) < totalDistributed {
+				remainder = 0
 			}
+
+			bitcoinResult.GovernanceAmount = saturatingAddUint64Max(bitcoinResult.GovernanceAmount, remainder)
 		}
 	}
 	// If under cap, no adjustment needed - use full amount
 
 	return settleResults, bitcoinResult, err
+}
+
+func saturatingAddUint64Max(a int64, b uint64) int64 {
+	if a >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+	headroom := uint64(math.MaxInt64 - a) // safe because a >= 0
+	if b >= headroom {
+		return math.MaxInt64
+	}
+	return a + int64(b) // safe because b < headroom <= MaxInt64
 }
 
 // CalculateFixedEpochReward implements the exponential decay reward calculation
@@ -499,6 +511,7 @@ func CalculateParticipantBitcoinRewards(
 	for _, weight := range participantWeights {
 		totalPoCWeight += weight
 	}
+	totalPoCWeightBeforeDowntime := totalPoCWeight
 
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
@@ -508,14 +521,8 @@ func CalculateParticipantBitcoinRewards(
 	}
 	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
 	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
-
-	// Recalculate total weight after downtime punishment
-	// This ensures fair distribution based on actual eligible weights
-	totalPoCWeight = uint64(0)
-	for _, weight := range participantWeights {
-		totalPoCWeight += weight
-	}
-	logger.Info("Bitcoin Rewards: total weight after downtime punishment", "totalPoCWeight", totalPoCWeight)
+	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeight after downtime punishment.
+	// Any "missed" share becomes undistributed and should be transferred to governance.
 
 	// 5. Create settle results for each participant
 	settleResults := make([]*SettleResult, 0, len(participants))
@@ -542,14 +549,14 @@ func CalculateParticipantBitcoinRewards(
 
 		// Calculate RewardCoins (NEW Bitcoin-style distribution by PoC weight)
 		rewardCoins := uint64(0)
-		if participant.Status == types.ParticipantStatus_ACTIVE && totalPoCWeight > 0 {
+		if participant.Status == types.ParticipantStatus_ACTIVE && totalPoCWeightBeforeDowntime > 0 {
 			participantWeight := participantWeights[participant.Address]
 			if participantWeight > 0 {
 				// Use big.Int to prevent overflow with large numbers
 				// Proportional distribution: (participant_weight / total_weight) × fixed_epoch_reward
 				participantBig := new(big.Int).SetUint64(participantWeight)
 				rewardBig := new(big.Int).SetUint64(fixedEpochReward)
-				totalWeightBig := new(big.Int).SetUint64(totalPoCWeight)
+				totalWeightBig := new(big.Int).SetUint64(totalPoCWeightBeforeDowntime)
 
 				// Calculate: (participantWeight * fixedEpochReward) / totalPoCWeight
 				result := new(big.Int).Mul(participantBig, rewardBig)
@@ -574,25 +581,22 @@ func CalculateParticipantBitcoinRewards(
 		})
 	}
 
-	// 6. Distribute any remainder due to integer division truncation
-	// This ensures the complete fixed epoch reward is always distributed
+	// 6. Any remainder (downtime punishment and/or integer division truncation) is undistributed
+	// and should be transferred to governance.
 	remainder := fixedEpochReward - totalDistributed
-	if remainder > 0 && len(settleResults) > 0 {
-		// Simple approach: assign undistributed coins to first participant
-		// This ensures complete distribution while keeping logic minimal
-		for i, result := range settleResults {
-			if result.Error == nil && result.Settle.RewardCoins > 0 {
-				settleResults[i].Settle.RewardCoins += remainder
-				break
-			}
-		}
+	if fixedEpochReward < totalDistributed {
+		remainder = 0
+	}
+	if remainder > math.MaxInt64 {
+		remainder = math.MaxInt64
 	}
 
 	// 7. Create BitcoinResult (similar to SubsidyResult)
 	bitcoinResult := BitcoinResult{
-		Amount:       int64(fixedEpochReward),
-		EpochNumber:  currentEpoch,
-		DecayApplied: epochsSinceGenesis > 0, // Decay applied if past genesis epoch
+		Amount:           int64(fixedEpochReward),
+		EpochNumber:      currentEpoch,
+		DecayApplied:     epochsSinceGenesis > 0, // Decay applied if past genesis epoch
+		GovernanceAmount: int64(remainder),
 	}
 
 	return settleResults, bitcoinResult, nil

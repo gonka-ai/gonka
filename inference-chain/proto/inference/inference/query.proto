@@ -419,6 +419,12 @@ service Query {
 
   }
 
+  // Queries the participant allowlist.
+  rpc ParticipantAllowList (QueryParticipantAllowListRequest) returns (QueryParticipantAllowListResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participant_allow_list";
+
+  }
+
   // Queries the list of excluded participants for an epoch (0 = current epoch).
   rpc ExcludedParticipants (QueryExcludedParticipantsRequest) returns (QueryExcludedParticipantsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/excluded_participants/{epoch_index}";
@@ -678,12 +684,15 @@ message QueryGetInferenceValidationParametersRequest {
 }
 
 message QueryGetInferenceValidationParametersResponse {
-           uint64                     validator_power = 1;
-           uint64                     current_height  = 2;
-  repeated InferenceValidationDetails details         = 3;
-           ValidationParams           parameters      = 4;
+  repeated ValidatorPower             validator_powers = 1;
+           uint64                     current_height   = 2;
+  repeated InferenceValidationDetails details          = 3;
+           ValidationParams           parameters       = 4;
 }
-
+message ValidatorPower {
+  uint64 power          = 1;
+  uint64 epoch_index    = 2;
+}
 message QueryEpochPerformanceSummaryByEpochRequest {
   uint64 epoch_index = 1;
 }
@@ -1070,6 +1079,11 @@ message QueryTrainingAllowListResponse {
   repeated string addresses = 1;
 }
 
+message QueryParticipantAllowListRequest {}
+
+message QueryParticipantAllowListResponse {
+  repeated string addresses = 1;
+}
 
 message QueryGetMLNodeVersionRequest {}
 

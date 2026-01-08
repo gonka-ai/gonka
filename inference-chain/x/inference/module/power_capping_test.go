@@ -16,21 +16,19 @@ func TestApplyPowerCapping_Basic(t *testing.T) {
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true,                         // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30), // 30% limit
-		GenesisGuardianAddresses:                []string{},
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true,                         // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30), // 30% limit
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -62,21 +60,19 @@ func TestApplyPowerCapping_NoCappingNeeded(t *testing.T) {
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{},
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -104,21 +100,19 @@ func TestApplyPowerCapping_SingleParticipant(t *testing.T) {
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{},
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -150,21 +144,19 @@ func TestApplyPowerCapping_SortingAlgorithm(t *testing.T) {
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{},
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -216,21 +208,19 @@ func TestApplyPowerCapping_ParameterNotSet(t *testing.T) {
 	// Set up parameters WITHOUT MaxIndividualPowerPercentage
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true,
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		TopRewardAmount:           120_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		TopRewards:                3,
+		SupplyDenom:               "gonka",
+		TopRewardPeriod:           365 * 24 * 60 * 60,
+		TopRewardPayouts:          12,
+		TopRewardPayoutsPerMiner:  4,
+		TopRewardMaxDuration:      4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
 		// MaxIndividualPowerPercentage: NOT SET - should disable capping
-		GenesisGuardianAddresses: []string{},
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -259,21 +249,19 @@ func TestApplyPowerCapping_PowerConservation(t *testing.T) {
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{},
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -300,11 +288,9 @@ func TestApplyPowerCapping_ZeroPercentage_NoLimitApplied(t *testing.T) {
 
 	// Set genesis parameters with MaxIndividualPowerPercentage = 0 (no limit)
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.0), // Zero means no limit
-		GenesisGuardianAddresses:                []string{},
-		GenesisGuardianEnabled:                  true,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.0), // Zero means no limit
+		GenesisGuardianEnabled:       true,
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,

@@ -189,11 +189,10 @@ type ValidatedBatch struct {
 	FraudDetected     bool      `json:"fraud_detected"`
 }
 
-// This sample doesn't have to be cryptographically secure as it's only used for sampling nonces to validate.
-// If it can't be reproduced on another machine, it's also not causing any harm as it's not validated on-chain.
 func (pb ProofBatch) SampleNoncesToValidate(
 	validatorPublicKey string,
 	nNonces int64,
+	samplingBlockHash string,
 ) ProofBatch {
 	totalNonces := int64(len(pb.Nonces))
 	if nNonces >= totalNonces {
@@ -202,7 +201,7 @@ func (pb ProofBatch) SampleNoncesToValidate(
 
 	nonceIndexes := deterministicSampleIndices(
 		validatorPublicKey,
-		pb.BlockHash,
+		samplingBlockHash,
 		pb.BlockHeight,
 		nNonces,
 		totalNonces,

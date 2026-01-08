@@ -282,12 +282,12 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		totalBase := expectedP1Base + expectedP2Base + expectedP3Base
 		remainder := expectedEpochReward - totalBase
 
-		// Verify participant1: uses capped weight + any remainder
+		// Verify participant1: uses capped weight (remainder goes to governance)
 		p1Result := results[0]
 		require.NoError(t, p1Result.Error)
 		require.Equal(t, "participant1", p1Result.Settle.Participant)
 		require.Equal(t, uint64(500), p1Result.Settle.WorkCoins) // Preserved user fees
-		require.Equal(t, expectedP1Base+remainder, p1Result.Settle.RewardCoins)
+		require.Equal(t, expectedP1Base, p1Result.Settle.RewardCoins)
 
 		// Verify participant2: reward based on capped weight (should be less than 50% of total reward)
 		p2Result := results[1]
@@ -305,9 +305,10 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.Equal(t, uint64(750), p3Result.Settle.WorkCoins) // Preserved user fees
 		require.Equal(t, expectedP3Base, p3Result.Settle.RewardCoins)
 
-		// Verify total rewards distributed matches epoch reward exactly
+		// Verify epoch reward is conserved (participants + governance)
 		totalDistributed := p1Result.Settle.RewardCoins + p2Result.Settle.RewardCoins + p3Result.Settle.RewardCoins
-		require.Equal(t, expectedEpochReward, totalDistributed, "Complete epoch reward must be distributed")
+		require.Equal(t, expectedEpochReward, totalDistributed+uint64(bitcoinResult.GovernanceAmount), "Epoch reward must be conserved (participants + governance)")
+		require.Equal(t, remainder, uint64(bitcoinResult.GovernanceAmount), "Remainder should go to governance")
 	})
 
 	t.Run("Invalid participants get no rewards", func(t *testing.T) {
@@ -528,7 +529,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.Equal(t, uint64(285000000000000), p1Result.Settle.RewardCoins) // Full epoch reward
 	})
 
-	t.Run("Complete epoch reward distribution with remainder", func(t *testing.T) {
+	t.Run("Remainder goes to governance (no redistribution)", func(t *testing.T) {
 		// Test scenario where integer division creates remainder
 		// Use an epoch reward that doesn't divide evenly by participant weights
 		oddRewardParams := &types.BitcoinRewardParams{
@@ -621,12 +622,11 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		// Verify BitcoinResult shows correct epoch reward
 		require.Equal(t, int64(100), bitcoinResult.Amount)
 
-		// Calculate what each participant should get: 100/3 = 33 remainder 1
-		// With simple distribution: first participant gets 33 + 1 = 34, others get 33
+		// Calculate what each participant should get: 100/3 = 33 remainder 1 (remainder goes to governance)
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins + results[2].Settle.RewardCoins
 
-		// CRITICAL: Total distributed must equal the fixed epoch reward exactly
-		require.Equal(t, uint64(100), totalDistributed, "Complete epoch reward must be distributed")
+		require.Equal(t, uint64(99), totalDistributed, "Remainder should not be redistributed")
+		require.Equal(t, int64(1), bitcoinResult.GovernanceAmount, "Remainder should go to governance")
 
 		// Verify individual distributions
 		for i, result := range results {
@@ -637,8 +637,8 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 			require.Equal(t, expectedWorkCoins, result.Settle.WorkCoins, "WorkCoins must be preserved for participant %d", i+1)
 		}
 
-		// Verify remainder distribution: first participant gets base + remainder, others get base
-		require.Equal(t, uint64(34), results[0].Settle.RewardCoins, "First participant should get 33 + 1 remainder = 34")
+		// Verify individual distributions (no remainder redistribution)
+		require.Equal(t, uint64(33), results[0].Settle.RewardCoins, "First participant should get base share only")
 		require.Equal(t, uint64(33), results[1].Settle.RewardCoins, "Second participant should get 33")
 		require.Equal(t, uint64(33), results[2].Settle.RewardCoins, "Third participant should get 33")
 	})
@@ -745,7 +745,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 		require.Contains(t, err.Error(), "settleParams cannot be nil")
 	})
 
-	t.Run("Supply cap enforcement with remainder distribution", func(t *testing.T) {
+	t.Run("Supply cap enforcement with remainder to governance", func(t *testing.T) {
 		// Test scenario where we're approaching supply cap and need proportional reduction
 		supplyCappedParams := &SettleParameters{
 			TotalSubsidyPaid:   600000000000000000 - 100000, // Very close to cap (100K remaining)
@@ -760,14 +760,14 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 		// Verify the amount was reduced to fit within cap
 		require.Equal(t, int64(100000), bitcoinResult.Amount, "Should mint only remaining supply")
 
-		// Verify total distributed rewards exactly match the available amount
+		// Verify available amount is conserved (participants + governance)
 		var totalDistributed uint64 = 0
 		for _, result := range results {
 			if result.Error == nil && result.Settle != nil {
 				totalDistributed += result.Settle.RewardCoins
 			}
 		}
-		require.Equal(t, uint64(100000), totalDistributed, "Total distributed should exactly match available supply")
+		require.Equal(t, uint64(100000), totalDistributed+uint64(bitcoinResult.GovernanceAmount), "Available supply must be conserved (participants + governance)")
 
 		// Verify participants still received proportional rewards (reduced but fair)
 		require.Greater(t, results[0].Settle.RewardCoins, uint64(0), "Participant 1 should get some rewards")
@@ -1018,7 +1018,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, numParticipants, len(results))
 
-		// Verify total distribution equals epoch reward
+		// Verify epoch reward is conserved (participants + governance)
 		totalDistributed := uint64(0)
 		for _, result := range results {
 			require.NoError(t, result.Error)
@@ -1027,7 +1027,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 			totalDistributed += result.Settle.RewardCoins
 		}
 
-		require.Equal(t, uint64(bitcoinResult.Amount), totalDistributed, "Complete reward distribution with many participants")
+		require.Equal(t, uint64(bitcoinResult.Amount), totalDistributed+uint64(bitcoinResult.GovernanceAmount), "Epoch reward must be conserved (participants + governance)")
 	})
 
 	t.Run("Large PoC weights", func(t *testing.T) {
@@ -1115,9 +1115,9 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		require.InDelta(t, expectedP1, results[0].Settle.RewardCoins, 1, "Large weight equal distribution")
 		require.InDelta(t, expectedP2, results[1].Settle.RewardCoins, 1, "Large weight equal distribution")
 
-		// Verify complete distribution
+		// Verify epoch reward is conserved (participants + governance)
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins
-		require.Equal(t, totalReward, totalDistributed, "Complete distribution with large weights")
+		require.Equal(t, totalReward, totalDistributed+uint64(bitcoinResult.GovernanceAmount), "Epoch reward must be conserved (participants + governance)")
 	})
 }
 
@@ -1195,14 +1195,15 @@ func TestMathematicalPrecision(t *testing.T) {
 		expectedBase := uint64(32)
 		expectedRemainder := uint64(1)
 
-		// First participant should get base + remainder (with equal weights, remainder goes to first)
-		require.Equal(t, expectedBase+expectedRemainder, results[0].Settle.RewardCoins, "First participant gets base + remainder")
+		// Remainder should go to governance (no redistribution)
+		require.Equal(t, expectedBase, results[0].Settle.RewardCoins, "First participant gets base only")
 		require.Equal(t, expectedBase, results[1].Settle.RewardCoins, "Second participant gets base only")
 		require.Equal(t, expectedBase, results[2].Settle.RewardCoins, "Third participant gets base only")
 
-		// Verify total equals epoch reward exactly
+		// Verify epoch reward is conserved (participants + governance)
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins + results[2].Settle.RewardCoins
-		require.Equal(t, uint64(97), totalDistributed, "Exact distribution of prime reward")
+		require.Equal(t, uint64(97), totalDistributed+uint64(bitcoinResult.GovernanceAmount), "Prime reward must be conserved (participants + governance)")
+		require.Equal(t, expectedRemainder, uint64(bitcoinResult.GovernanceAmount), "Remainder should go to governance")
 		require.Equal(t, int64(97), bitcoinResult.Amount, "BitcoinResult shows correct amount")
 	})
 

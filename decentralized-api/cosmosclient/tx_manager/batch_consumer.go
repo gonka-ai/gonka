@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	batchStartConsumer  = "batch-start-consumer"
-	batchFinishConsumer = "batch-finish-consumer"
-	batchAckWait        = time.Minute // must exceed FlushTimeout to prevent redelivery
+	batchStartConsumer         = "batch-start-consumer"
+	batchFinishConsumer        = "batch-finish-consumer"
+	batchPocBatchConsumer      = "batch-poc-batch-consumer"
+	batchPocValidationConsumer = "batch-poc-validation-consumer"
+	batchAckWait               = time.Minute // must exceed FlushTimeout to prevent redelivery
 )
 
 type BatchConfig struct {
@@ -34,13 +36,20 @@ type BatchConsumer struct {
 	txManager TxManager
 	config    BatchConfig
 
-	startBatch  []pendingMsg
-	finishBatch []pendingMsg
-	startMu     sync.Mutex
-	finishMu    sync.Mutex
+	startBatch         []pendingMsg
+	finishBatch        []pendingMsg
+	pocBatchBatch      []pendingMsg
+	pocValidationBatch []pendingMsg
 
-	startCreatedAt  time.Time
-	finishCreatedAt time.Time
+	startMu         sync.Mutex
+	finishMu        sync.Mutex
+	pocBatchMu      sync.Mutex
+	pocValidationMu sync.Mutex
+
+	startCreatedAt         time.Time
+	finishCreatedAt        time.Time
+	pocBatchCreatedAt      time.Time
+	pocValidationCreatedAt time.Time
 }
 
 func NewBatchConsumer(
@@ -50,12 +59,14 @@ func NewBatchConsumer(
 	config BatchConfig,
 ) *BatchConsumer {
 	return &BatchConsumer{
-		js:          js,
-		codec:       cdc,
-		txManager:   txManager,
-		config:      config,
-		startBatch:  make([]pendingMsg, 0, config.FlushSize),
-		finishBatch: make([]pendingMsg, 0, config.FlushSize),
+		js:                 js,
+		codec:              cdc,
+		txManager:          txManager,
+		config:             config,
+		startBatch:         make([]pendingMsg, 0, config.FlushSize),
+		finishBatch:        make([]pendingMsg, 0, config.FlushSize),
+		pocBatchBatch:      make([]pendingMsg, 0, config.FlushSize),
+		pocValidationBatch: make([]pendingMsg, 0, config.FlushSize),
 	}
 }
 
@@ -64,6 +75,12 @@ func (c *BatchConsumer) Start() error {
 		return err
 	}
 	if err := c.subscribeStream(server.TxsBatchFinishStream, batchFinishConsumer, c.handleFinishMsg); err != nil {
+		return err
+	}
+	if err := c.subscribeStream(server.TxsBatchPocBatchStream, batchPocBatchConsumer, c.handlePocBatchMsg); err != nil {
+		return err
+	}
+	if err := c.subscribeStream(server.TxsBatchPocValidationStream, batchPocValidationConsumer, c.handlePocValidationMsg); err != nil {
 		return err
 	}
 
@@ -133,6 +150,56 @@ func (c *BatchConsumer) handleFinishMsg(msg *nats.Msg) {
 	}
 }
 
+func (c *BatchConsumer) handlePocBatchMsg(msg *nats.Msg) {
+	if err := msg.InProgress(); err != nil {
+		logging.Error("Failed to mark poc batch msg in progress", types.Messages, "error", err)
+	}
+	sdkMsg, err := c.unmarshalMsg(msg.Data)
+	if err != nil {
+		logging.Error("Failed to unmarshal poc batch msg", types.Messages, "error", err)
+		msg.Term()
+		return
+	}
+
+	var shouldFlush bool
+	c.pocBatchMu.Lock()
+	if len(c.pocBatchBatch) == 0 {
+		c.pocBatchCreatedAt = time.Now()
+	}
+	c.pocBatchBatch = append(c.pocBatchBatch, pendingMsg{msg: sdkMsg, natsMsg: msg})
+	shouldFlush = len(c.pocBatchBatch) >= c.config.FlushSize
+	c.pocBatchMu.Unlock()
+
+	if shouldFlush {
+		c.flushPocBatch()
+	}
+}
+
+func (c *BatchConsumer) handlePocValidationMsg(msg *nats.Msg) {
+	if err := msg.InProgress(); err != nil {
+		logging.Error("Failed to mark poc validation msg in progress", types.Messages, "error", err)
+	}
+	sdkMsg, err := c.unmarshalMsg(msg.Data)
+	if err != nil {
+		logging.Error("Failed to unmarshal poc validation msg", types.Messages, "error", err)
+		msg.Term()
+		return
+	}
+
+	var shouldFlush bool
+	c.pocValidationMu.Lock()
+	if len(c.pocValidationBatch) == 0 {
+		c.pocValidationCreatedAt = time.Now()
+	}
+	c.pocValidationBatch = append(c.pocValidationBatch, pendingMsg{msg: sdkMsg, natsMsg: msg})
+	shouldFlush = len(c.pocValidationBatch) >= c.config.FlushSize
+	c.pocValidationMu.Unlock()
+
+	if shouldFlush {
+		c.flushPocValidation()
+	}
+}
+
 func (c *BatchConsumer) flushLoop() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -141,6 +208,8 @@ func (c *BatchConsumer) flushLoop() {
 		c.extendAckDeadlines()
 		c.checkAndFlushStart()
 		c.checkAndFlushFinish()
+		c.checkAndFlushPocBatch()
+		c.checkAndFlushPocValidation()
 	}
 }
 
@@ -156,6 +225,18 @@ func (c *BatchConsumer) extendAckDeadlines() {
 		_ = p.natsMsg.InProgress()
 	}
 	c.finishMu.Unlock()
+
+	c.pocBatchMu.Lock()
+	for _, p := range c.pocBatchBatch {
+		_ = p.natsMsg.InProgress()
+	}
+	c.pocBatchMu.Unlock()
+
+	c.pocValidationMu.Lock()
+	for _, p := range c.pocValidationBatch {
+		_ = p.natsMsg.InProgress()
+	}
+	c.pocValidationMu.Unlock()
 }
 
 func (c *BatchConsumer) checkAndFlushStart() {
@@ -175,6 +256,26 @@ func (c *BatchConsumer) checkAndFlushFinish() {
 
 	if shouldFlush {
 		c.flushFinish()
+	}
+}
+
+func (c *BatchConsumer) checkAndFlushPocBatch() {
+	c.pocBatchMu.Lock()
+	shouldFlush := len(c.pocBatchBatch) > 0 && time.Since(c.pocBatchCreatedAt) >= c.config.FlushTimeout
+	c.pocBatchMu.Unlock()
+
+	if shouldFlush {
+		c.flushPocBatch()
+	}
+}
+
+func (c *BatchConsumer) checkAndFlushPocValidation() {
+	c.pocValidationMu.Lock()
+	shouldFlush := len(c.pocValidationBatch) > 0 && time.Since(c.pocValidationCreatedAt) >= c.config.FlushTimeout
+	c.pocValidationMu.Unlock()
+
+	if shouldFlush {
+		c.flushPocValidation()
 	}
 }
 
@@ -204,6 +305,34 @@ func (c *BatchConsumer) flushFinish() {
 	c.finishMu.Unlock()
 
 	c.broadcastBatch("finish", batch)
+}
+
+func (c *BatchConsumer) flushPocBatch() {
+	c.pocBatchMu.Lock()
+	batch := c.pocBatchBatch
+	if len(batch) == 0 {
+		c.pocBatchMu.Unlock()
+		return
+	}
+	c.pocBatchBatch = make([]pendingMsg, 0, c.config.FlushSize)
+	c.pocBatchCreatedAt = time.Time{} // reset timer
+	c.pocBatchMu.Unlock()
+
+	c.broadcastBatch("poc_batch", batch)
+}
+
+func (c *BatchConsumer) flushPocValidation() {
+	c.pocValidationMu.Lock()
+	batch := c.pocValidationBatch
+	if len(batch) == 0 {
+		c.pocValidationMu.Unlock()
+		return
+	}
+	c.pocValidationBatch = make([]pendingMsg, 0, c.config.FlushSize)
+	c.pocValidationCreatedAt = time.Time{} // reset timer
+	c.pocValidationMu.Unlock()
+
+	c.broadcastBatch("poc_validation", batch)
 }
 
 func (c *BatchConsumer) broadcastBatch(batchType string, batch []pendingMsg) {
@@ -237,6 +366,14 @@ func (c *BatchConsumer) PublishStartInference(msg sdk.Msg) error {
 
 func (c *BatchConsumer) PublishFinishInference(msg sdk.Msg) error {
 	return c.publishMsg(server.TxsBatchFinishStream, msg)
+}
+
+func (c *BatchConsumer) PublishPocBatch(msg sdk.Msg) error {
+	return c.publishMsg(server.TxsBatchPocBatchStream, msg)
+}
+
+func (c *BatchConsumer) PublishPocValidation(msg sdk.Msg) error {
+	return c.publishMsg(server.TxsBatchPocValidationStream, msg)
 }
 
 func (c *BatchConsumer) publishMsg(stream string, msg sdk.Msg) error {

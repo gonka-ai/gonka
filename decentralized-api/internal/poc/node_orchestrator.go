@@ -177,6 +177,12 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(pocStageStartBlockHeig
 		samplesPerBatch = POC_VALIDATE_SAMPLES_PER_BATCH
 	}
 
+	samplingBlockHash := epochState.CurrentBlock.Hash
+	if samplingBlockHash == "" {
+		logging.Warn("Current block hash unavailable, falling back to PoC start hash", types.PoC)
+		samplingBlockHash = blockHash
+	}
+
 	attemptCounter := 0
 	successfulValidations := 0
 	failedValidations := 0
@@ -214,7 +220,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(pocStageStartBlockHeig
 			}
 		}
 
-		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, samplesPerBatch)
+		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, samplesPerBatch, samplingBlockHash)
 
 		validationSucceeded := false
 		for attempt := range POC_VALIDATE_BATCH_RETRIES {

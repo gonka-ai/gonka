@@ -27,7 +27,13 @@ func ShouldApplyGenesisGuardianEnhancement(ctx context.Context, k keeper.Keeper,
 	}
 
 	// Enhancement only applies if network is below maturity threshold
-	if k.IsNetworkMature(ctx, totalNetworkPower) {
+	var height int64
+	if direct, ok := ctx.(sdk.Context); ok {
+		height = direct.BlockHeight()
+	} else {
+		height = sdk.UnwrapSDKContext(ctx).BlockHeight()
+	}
+	if k.InNetworkMature(ctx, height, totalNetworkPower) {
 		return false
 	}
 
@@ -299,7 +305,11 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 
 	// Guardians: equal split of f
 	guardianShare := f.Div(decimal.NewFromInt(int64(len(guardianIndices))))
-	guardianPercent := mathsdk.LegacyMustNewDecFromStr(guardianShare.Mul(decimal.NewFromInt(100)).String())
+	guardianPercent, err := decimalToLegacyDec(guardianShare.Mul(decimal.NewFromInt(100)))
+	if err != nil {
+		// Skip reservation on conversion error
+		return nil
+	}
 	for _, idx := range guardianIndices {
 		acc := activeParticipants[idx].Index
 		adjusted[acc] = guardianPercent
@@ -320,9 +330,21 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 			}
 			share := decimal.NewFromInt(ap.Weight).Div(decimal.NewFromInt(nonGuardianWeight))
 			percent := share.Mul(remainderFraction).Mul(decimal.NewFromInt(100))
-			adjusted[ap.Index] = mathsdk.LegacyMustNewDecFromStr(percent.String())
+			legacyPercent, err := decimalToLegacyDec(percent)
+			if err != nil {
+				// Skip reservation on conversion error
+				return nil
+			}
+			adjusted[ap.Index] = legacyPercent
 		}
 	}
 
 	return adjusted
+}
+
+// decimalToLegacyDec converts shopspring/decimal to cosmossdk LegacyDec safely.
+// Truncates to 18 decimal places (LegacyDec max precision) to avoid panics.
+func decimalToLegacyDec(d decimal.Decimal) (mathsdk.LegacyDec, error) {
+	// StringFixed(18) truncates to exactly 18 decimal places
+	return mathsdk.LegacyNewDecFromStr(d.StringFixed(18))
 }

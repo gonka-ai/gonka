@@ -20,6 +20,9 @@ message Params {
   DynamicPricingParams dynamic_pricing_params = 7;
   BandwidthLimitsParams bandwidth_limits_params = 8;
   ConfirmationPoCParams confirmation_poc_params = 9;
+  GenesisGuardianParams genesis_guardian_params = 10;
+  DeveloperAccessParams developer_access_params = 11;
+  ParticipantAccessParams participant_access_params = 12;
 }
 
 message GenesisOnlyParams {
@@ -251,4 +254,48 @@ message ConfirmationPoCParams {
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
   int64 upgrade_protection_window = 4;
+}
+
+message GenesisGuardianParams {
+  option (gogoproto.equal) = true;
+  // network_maturity_threshold is the minimum total network power required for the network to be considered "mature".
+  int64 network_maturity_threshold = 1;
+  // network_maturity_min_height is the minimum block height required for the network to be considered "mature".
+  int64 network_maturity_min_height = 2;
+  // guardian_addresses are the validator operator addresses treated as genesis guardians.
+  repeated string guardian_addresses = 3;
+}
+
+message DeveloperAccessParams {
+  option (gogoproto.equal) = true;
+  // until_block_height limits inference requests to allowed_developer_addresses while current_height < until_block_height.
+  // Set to 0 to disable gating.
+  int64 until_block_height = 1;
+  // allowed_developer_addresses are the bech32 account addresses allowed to request inferences before until_block_height.
+  repeated string allowed_developer_addresses = 2;
+}
+
+// ParticipantAccessParams controls participant access via blocklist and allowlist mechanisms.
+//
+// Blocklist vs Allowlist interaction:
+// - Blocklist (blocked_participant_addresses): tx-level rejection; checked on every PoC tx submission.
+// - Allowlist (use_participant_allowlist + KVStore set): epoch-level filtering; checked during epoch formation.
+// - When both are active, blocklist wins: a blocklisted address is rejected at tx time regardless of allowlist.
+//
+// The allowlist is stored in KVStore (not in params) and managed via MsgAddParticipantsToAllowList/MsgRemoveParticipantsFromAllowList.
+// Max recommended addresses per Add/Remove message: 500 (to stay within tx size limits).
+message ParticipantAccessParams {
+  option (gogoproto.equal) = true;
+  // new_participant_registration_start_height blocks creation of NEW participants while current_height < new_participant_registration_start_height.
+  // (i.e. registration opens at new_participant_registration_start_height). Set to 0 to disable.
+  int64 new_participant_registration_start_height = 1;
+  // blocked_participant_addresses are bech32 account addresses that are not allowed to participate in PoC
+  // (submit PoC batches or validations). Checked at tx submission time.
+  repeated string blocked_participant_addresses = 2;
+  // use_participant_allowlist enables epoch-formation filtering by allowlist. Default false.
+  // When true, only addresses in the KVStore allowlist are included in epoch formation.
+  bool use_participant_allowlist = 3;
+  // participant_allowlist_until_block_height: allowlist is enforced while current_height < this value.
+  // Set to 0 to disable cutoff (allowlist stays active as long as use_participant_allowlist=true).
+  int64 participant_allowlist_until_block_height = 4;
 }

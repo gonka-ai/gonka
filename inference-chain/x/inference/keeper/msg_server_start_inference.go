@@ -16,6 +16,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
+	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
+	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
+	}
+
 	transferAgent, found := k.GetParticipant(ctx, msg.Creator)
 	if !found {
 		k.LogError("Creator not found", types.Inferences, "creator", msg.Creator, "msg", "StartInference")

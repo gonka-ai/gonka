@@ -67,6 +67,10 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       # This step uses Gradle tasks to scan for test classes that will actually run tests after filtering
       # The tasks properly handle both class-level and method-level tags:
       # 1. Classes with @Tag("exclude") or @Tag("unstable") at the class level are completely excluded
@@ -143,6 +147,11 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '19'
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: Make Docker Images
         env:
@@ -236,6 +245,11 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '19'
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: Download Upgrade Build Files
         if: ${{ inputs.enable_upgrades }}

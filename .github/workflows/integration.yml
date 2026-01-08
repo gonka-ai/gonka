@@ -8,6 +8,7 @@ on:
         required: false
         type: boolean
         default: true
+
   push:
     branches:
       - main
@@ -16,16 +17,31 @@ on:
       - 'decentralized-api/**'
       - 'local-test-net/**'
       - 'testermint/**'
+
   issue_comment:
     types: [created]
 
 jobs:
   integration-tests:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/run-integration'))
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/run-integration') &&
+        (
+          github.event.comment.author_association == 'OWNER' ||
+          github.event.comment.author_association == 'MEMBER'
+        )
+      )
+
     uses: ./.github/workflows/test-workflow.yml
+
     permissions:
       contents: read
       checks: write
+
     with:
       test_name: "Integration Tests"
       test_command: "run-tests"

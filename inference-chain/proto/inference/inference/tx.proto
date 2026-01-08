@@ -58,6 +58,8 @@ service Msg {
   rpc AddUserToTrainingAllowList       (MsgAddUserToTrainingAllowList) returns (MsgAddUserToTrainingAllowListResponse);
   rpc RemoveUserFromTrainingAllowList  (MsgRemoveUserFromTrainingAllowList) returns (MsgRemoveUserFromTrainingAllowListResponse);
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
+  rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
+  rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -412,7 +414,25 @@ message MsgSetTrainingAllowList {
 
 message MsgSetTrainingAllowListResponse {}
 
+// MsgAddParticipantsToAllowList adds addresses to the participant epoch-formation allowlist.
+// Recommended max 500 addresses per message to stay within tx size limits.
+message MsgAddParticipantsToAllowList {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  repeated string addresses = 2;
+}
 
+message MsgAddParticipantsToAllowListResponse {}
+
+// MsgRemoveParticipantsFromAllowList removes addresses from the participant epoch-formation allowlist.
+// Recommended max 500 addresses per message to stay within tx size limits.
+message MsgRemoveParticipantsFromAllowList {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  repeated string addresses = 2;
+}
+
+message MsgRemoveParticipantsFromAllowListResponse {}
 
 message MsgRegisterBridgeAddresses {
   option (cosmos.msg.v1.signer) = "authority";

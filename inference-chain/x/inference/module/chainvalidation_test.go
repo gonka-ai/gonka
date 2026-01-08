@@ -655,3 +655,106 @@ func initMockGroupMembers(mocks *keepertest.InferenceMocks, validator []*types.V
 		Return(response, nil).
 		AnyTimes()
 }
+
+func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+
+	validatorAccAddress2, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress2)
+	require.NoError(t, err)
+
+	validators := []stakingtypes.Validator{
+		{
+			OperatorAddress: validatorOperatorAddress2,
+			ConsensusPubkey: &codectypes.Any{},
+			Tokens:          math.NewInt(200),
+		},
+	}
+
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesisWithValidators(ctx, validators)
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	members := []*group.GroupMember{
+		{
+			Member: &group.Member{
+				Address:  validatorAccAddress2,
+				Weight:   "200",
+				Metadata: "metadata",
+			},
+		},
+	}
+	mocks.GroupKeeper.EXPECT().
+		GroupMembers(gomock.Any(), gomock.Any()).
+		Return(&group.QueryGroupMembersResponse{Members: members}, nil).
+		AnyTimes()
+
+	am := inference.NewAppModule(nil, k, nil, nil, nil, nil)
+
+	participantA := testutil.Executor
+	participantB := testutil.Executor2
+
+	// Set up batches for both participants
+	k.SetPocBatch(ctx, types.PoCBatch{
+		ParticipantAddress:       participantA,
+		PocStageStartBlockHeight: 100,
+		Nonces:                   []int64{1, 2, 3},
+	})
+	k.SetPocBatch(ctx, types.PoCBatch{
+		ParticipantAddress:       participantB,
+		PocStageStartBlockHeight: 100,
+		Nonces:                   []int64{4, 5, 6},
+	})
+
+	// Set up validations for both
+	k.SetPoCValidation(ctx, types.PoCValidation{
+		ParticipantAddress:          participantA,
+		ValidatorParticipantAddress: validatorAccAddress2,
+		PocStageStartBlockHeight:    100,
+		FraudDetected:               false,
+	})
+	k.SetPoCValidation(ctx, types.PoCValidation{
+		ParticipantAddress:          participantB,
+		ValidatorParticipantAddress: validatorAccAddress2,
+		PocStageStartBlockHeight:    100,
+		FraudDetected:               false,
+	})
+
+	// Set up participants
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:        participantA,
+		Address:      participantA,
+		ValidatorKey: "validatorKeyA",
+		InferenceUrl: "http://a.example.com/",
+	}))
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:        participantB,
+		Address:      participantB,
+		ValidatorKey: "validatorKeyB",
+		InferenceUrl: "http://b.example.com/",
+	}))
+
+	// Set up seeds for both
+	k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantA, EpochIndex: 1, Signature: "sigA"})
+	k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantB, EpochIndex: 1, Signature: "sigB"})
+
+	// Enable allowlist and add only participantA
+	params := k.GetParams(ctx)
+	params.ParticipantAccessParams.UseParticipantAllowlist = true
+	require.NoError(t, k.SetParams(ctx, params))
+
+	addrA, err := sdk.AccAddressFromBech32(participantA)
+	require.NoError(t, err)
+	require.NoError(t, k.ParticipantAllowListSet.Set(ctx, addrA))
+
+	upcomingEpoch := types.Epoch{
+		Index:               1,
+		PocStartBlockHeight: 100,
+	}
+
+	result := am.ComputeNewWeights(ctx, upcomingEpoch)
+
+	// Only participantA should be in the result
+	require.Len(t, result, 1)
+	require.Equal(t, participantA, result[0].Index)
+}

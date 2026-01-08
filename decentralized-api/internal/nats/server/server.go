@@ -12,10 +12,12 @@ import (
 )
 
 const (
-	TxsToSendStream      = "txs_to_send"
-	TxsToObserveStream   = "txs_to_observe"
-	TxsBatchStartStream  = "txs_batch_start"
-	TxsBatchFinishStream = "txs_batch_finish"
+	TxsToSendStream             = "txs_to_send"
+	TxsToObserveStream          = "txs_to_observe"
+	TxsBatchStartStream         = "txs_batch_start"
+	TxsBatchFinishStream        = "txs_batch_finish"
+	TxsBatchPocBatchStream      = "txs_batch_poc_batch"
+	TxsBatchPocValidationStream = "txs_batch_poc_validation"
 
 	storageDir    = "/root/.dapi/.nats"
 	defaultMaxAge = 24 * 60 * 60 // 24 hours
@@ -79,7 +81,14 @@ func (s *server) Start() error {
 		}
 	}
 
-	return s.createJetStreamTopics([]string{TxsToSendStream, TxsToObserveStream, TxsBatchStartStream, TxsBatchFinishStream})
+	return s.createJetStreamTopics([]string{
+		TxsToSendStream,
+		TxsToObserveStream,
+		TxsBatchStartStream,
+		TxsBatchFinishStream,
+		TxsBatchPocBatchStream,
+		TxsBatchPocValidationStream,
+	})
 }
 
 func (s *server) createJetStreamTopics(topicNames []string) error {

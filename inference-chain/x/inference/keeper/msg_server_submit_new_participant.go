@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -27,6 +28,14 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 			return nil, err
 		}
 		return &types.MsgSubmitNewParticipantResponse{}, nil
+	}
+
+	// Participant access gating: optionally freeze creation of NEW participants after a cutoff height.
+	if k.IsNewParticipantRegistrationClosed(ctx, ctx.BlockHeight()) {
+		k.LogError("SubmitNewParticipant: new participant registration is closed", types.Participants,
+			"creator", msg.GetCreator(),
+			"blockHeight", ctx.BlockHeight())
+		return nil, sdkerrors.Wrap(types.ErrNewParticipantRegistrationClosed, msg.GetCreator())
 	}
 
 	// If participant does not exist yet, create a new one

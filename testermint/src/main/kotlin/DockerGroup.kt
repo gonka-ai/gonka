@@ -239,6 +239,7 @@ data class DockerGroup(
             put("DAPI_API__ML_SERVER_PORT", "9100")
             put("DAPI_API__ADMIN_SERVER_PORT", "9200")
             put("DAPI_CHAIN_NODE__IS_GENESIS", isGenesis.toString().lowercase())
+            put("DAPI_TX_BATCHING__FLUSH_TIMEOUT_SECONDS", "1")
             put("NODE_CONFIG_PATH", "/root/node_config.json")
             put("NODE_CONFIG", nodeConfigFile)
             put("PUBLIC_URL", publicUrl)

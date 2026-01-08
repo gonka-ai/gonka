@@ -24,6 +24,28 @@ func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 	require.NotEmpty(t, response.ErrorMessage)
 }
 
+func TestMsgServer_StartInference_DeveloperNotAllowlisted(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	// Enable gating at current height + 100, with an allowlist that does NOT include testutil.Requester.
+	p := k.GetParams(ctx)
+	p.DeveloperAccessParams = &types.DeveloperAccessParams{
+		UntilBlockHeight:          ctx.BlockHeight() + 100,
+		AllowedDeveloperAddresses: []string{"gonka1notallowlistedxxxxxxxxxxxxxxxxxxxxxx"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
+	response, err := ms.StartInference(ctx, &types.MsgStartInference{
+		InferenceId:   "inferenceId",
+		PromptHash:    "promptHash",
+		PromptPayload: "promptPayload",
+		RequestedBy:   testutil.Requester,
+		Creator:       testutil.Creator,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, response.ErrorMessage)
+}
+
 func TestMsgServer_StartInference(t *testing.T) {
 	const (
 		epochId = 1

@@ -50,19 +50,20 @@ type (
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 		// Epoch collections
-		Epochs                         collections.Map[uint64, types.Epoch]
-		EffectiveEpochIndex            collections.Item[uint64]
-		EpochGroupValidationsMap       collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
-		SettleAmounts                  collections.Map[sdk.AccAddress, types.SettleAmount]
-		TopMiners                      collections.Map[sdk.AccAddress, types.TopMiner]
-		PartialUpgrades                collections.Map[uint64, types.PartialUpgrade]
-		EpochPerformanceSummaries      collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
-		TrainingExecAllowListSet       collections.KeySet[sdk.AccAddress]
-		TrainingStartAllowListSet      collections.KeySet[sdk.AccAddress]
-		PruningState                   collections.Item[types.PruningState]
-		InferencesToPrune              collections.Map[collections.Pair[int64, string], collections.NoValue]
-		ActiveInvalidations            collections.KeySet[collections.Pair[sdk.AccAddress, string]]
-		ExcludedParticipantsMap        collections.Map[collections.Pair[uint64, sdk.AccAddress], types.ExcludedParticipant]
+		Epochs                    collections.Map[uint64, types.Epoch]
+		EffectiveEpochIndex       collections.Item[uint64]
+		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
+		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
+		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
+		EpochPerformanceSummaries collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
+		TrainingExecAllowListSet  collections.KeySet[sdk.AccAddress]
+		TrainingStartAllowListSet collections.KeySet[sdk.AccAddress]
+		ParticipantAllowListSet   collections.KeySet[sdk.AccAddress]
+		PruningState              collections.Item[types.PruningState]
+		InferencesToPrune         collections.Map[collections.Pair[int64, string], collections.NoValue]
+		ActiveInvalidations       collections.KeySet[collections.Pair[sdk.AccAddress, string]]
+		ExcludedParticipantsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.ExcludedParticipant]
 		// Confirmation PoC collections
 		ConfirmationPoCEvents          collections.Map[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent]
 		ActiveConfirmationPoCEventItem collections.Item[types.ConfirmationPoCEvent]
@@ -268,6 +269,12 @@ func NewKeeper(
 			sb,
 			types.TrainingStartAllowListPrefix,
 			"training_start_allow_list",
+			sdk.AccAddressKey,
+		),
+		ParticipantAllowListSet: collections.NewKeySet(
+			sb,
+			types.ParticipantAllowListPrefix,
+			"participant_allow_list",
 			sdk.AccAddressKey,
 		),
 		PruningState: collections.NewItem(

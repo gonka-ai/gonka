@@ -89,6 +89,7 @@ const (
 	Query_GranteesByMessageType_FullMethodName                     = "/inference.inference.Query/GranteesByMessageType"
 	Query_MLNodeVersion_FullMethodName                             = "/inference.inference.Query/MLNodeVersion"
 	Query_TrainingAllowList_FullMethodName                         = "/inference.inference.Query/TrainingAllowList"
+	Query_ParticipantAllowList_FullMethodName                      = "/inference.inference.Query/ParticipantAllowList"
 	Query_ExcludedParticipants_FullMethodName                      = "/inference.inference.Query/ExcludedParticipants"
 	Query_ActiveConfirmationPoCEvent_FullMethodName                = "/inference.inference.Query/ActiveConfirmationPoCEvent"
 )
@@ -218,6 +219,8 @@ type QueryClient interface {
 	MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*QueryGetMLNodeVersionResponse, error)
 	// Queries a list of TrainingAllowList items.
 	TrainingAllowList(ctx context.Context, in *QueryTrainingAllowListRequest, opts ...grpc.CallOption) (*QueryTrainingAllowListResponse, error)
+	// Queries the participant allowlist.
+	ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
 	ExcludedParticipants(ctx context.Context, in *QueryExcludedParticipantsRequest, opts ...grpc.CallOption) (*QueryExcludedParticipantsResponse, error)
 	// Queries the currently active confirmation PoC event.
@@ -862,6 +865,15 @@ func (c *queryClient) TrainingAllowList(ctx context.Context, in *QueryTrainingAl
 	return out, nil
 }
 
+func (c *queryClient) ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error) {
+	out := new(QueryParticipantAllowListResponse)
+	err := c.cc.Invoke(ctx, Query_ParticipantAllowList_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ExcludedParticipants(ctx context.Context, in *QueryExcludedParticipantsRequest, opts ...grpc.CallOption) (*QueryExcludedParticipantsResponse, error) {
 	out := new(QueryExcludedParticipantsResponse)
 	err := c.cc.Invoke(ctx, Query_ExcludedParticipants_FullMethodName, in, out, opts...)
@@ -1005,6 +1017,8 @@ type QueryServer interface {
 	MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error)
 	// Queries a list of TrainingAllowList items.
 	TrainingAllowList(context.Context, *QueryTrainingAllowListRequest) (*QueryTrainingAllowListResponse, error)
+	// Queries the participant allowlist.
+	ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
 	ExcludedParticipants(context.Context, *QueryExcludedParticipantsRequest) (*QueryExcludedParticipantsResponse, error)
 	// Queries the currently active confirmation PoC event.
@@ -1225,6 +1239,9 @@ func (UnimplementedQueryServer) MLNodeVersion(context.Context, *QueryGetMLNodeVe
 }
 func (UnimplementedQueryServer) TrainingAllowList(context.Context, *QueryTrainingAllowListRequest) (*QueryTrainingAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingAllowList not implemented")
+}
+func (UnimplementedQueryServer) ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAllowList not implemented")
 }
 func (UnimplementedQueryServer) ExcludedParticipants(context.Context, *QueryExcludedParticipantsRequest) (*QueryExcludedParticipantsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExcludedParticipants not implemented")
@@ -2505,6 +2522,24 @@ func _Query_TrainingAllowList_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_ParticipantAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryParticipantAllowListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ParticipantAllowList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ParticipantAllowList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ParticipantAllowList(ctx, req.(*QueryParticipantAllowListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ExcludedParticipants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryExcludedParticipantsRequest)
 	if err := dec(in); err != nil {
@@ -2827,6 +2862,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TrainingAllowList",
 			Handler:    _Query_TrainingAllowList_Handler,
+		},
+		{
+			MethodName: "ParticipantAllowList",
+			Handler:    _Query_ParticipantAllowList_Handler,
 		},
 		{
 			MethodName: "ExcludedParticipants",

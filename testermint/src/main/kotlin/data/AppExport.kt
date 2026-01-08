@@ -205,6 +205,8 @@ data class ValidationParams(
     val downtimeReputationPreserve: Decimal?,
     @SerializedName("quick_failure_threshold")
     val quickFailureThreshold: Decimal?,
+    @SerializedName("binom_test_p0")
+    val binomTestP0: Decimal?,
 )
 
 data class BandwidthLimitsParams(
@@ -242,6 +244,36 @@ data class PocParams(
     val validationSampleSize: Int,
     @SerializedName("poc_data_pruning_epoch_threshold")
     val pocDataPruningEpochThreshold: Long,
+    @SerializedName("weight_scale_factor")
+    val weightScaleFactor: Decimal? = null,
+    @SerializedName("model_params")
+    val modelParams: PoCModelParams? = null,
+)
+
+data class PoCModelParams(
+    val dim: Int,
+    @SerializedName("n_layers")
+    val nLayers: Int,
+    @SerializedName("n_heads")
+    val nHeads: Int,
+    @SerializedName("n_kv_heads")
+    val nKvHeads: Int,
+    @SerializedName("vocab_size")
+    val vocabSize: Int,
+    @SerializedName("ffn_dim_multiplier")
+    val ffnDimMultiplier: Decimal,
+    @SerializedName("multiple_of")
+    val multipleOf: Int,
+    @SerializedName("norm_eps")
+    val normEps: Decimal,
+    @SerializedName("rope_theta")
+    val ropeTheta: Int,
+    @SerializedName("use_scaled_rope")
+    val useScaledRope: Boolean,
+    @SerializedName("seq_len")
+    val seqLen: Int,
+    @SerializedName("r_target")
+    val rTarget: Decimal,
 )
 
 data class GovState(
