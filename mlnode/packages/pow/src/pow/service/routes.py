@@ -1,10 +1,19 @@
 from fastapi import APIRouter, Body, Request, HTTPException
 
 from pow.service.manager import PowInitRequestUrl, PowManager
+from pow.service.auth import verify_signature, SIGNER_PUBKEY
 from pow.compute.compute import ProofBatch
 from common.logger import create_logger
 
 logger = create_logger(__name__)
+
+async def check_signature(request: Request):
+    if not SIGNER_PUBKEY:
+        return
+    body = await request.body()
+    signature = request.headers.get("X-Signature", "")
+    if not verify_signature(body, signature):
+        raise HTTPException(status_code=403, detail="Invalid signature")
 
 API_PREFIX = "/api/v1"
 
@@ -20,12 +29,10 @@ async def init(
     request: Request,
     init_request: PowInitRequestUrl
 ):
+    await check_signature(request)
     manager: PowManager = request.app.state.pow_manager
     await manager.switch_to_pow_async(init_request)
-    return {
-        "status": "OK",
-        "pow_status": manager.get_pow_status()
-    }
+    return {"status": "OK", "pow_status": manager.get_pow_status()}
 
 
 @router.post(
@@ -36,23 +43,16 @@ async def init_generate(
     request: Request,
     init_request: PowInitRequestUrl
 ):
+    await check_signature(request)
     if init_request.node_id == -1 or init_request.node_count == -1:
-        raise HTTPException(
-            status_code=400,
-            detail="Node ID and node count must be set"
-        )
+        raise HTTPException(status_code=400, detail="Node ID and node count must be set")
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         await manager.switch_to_pow_async(init_request)
-
     if manager.init_request != init_request:
         await manager.switch_to_pow_async(init_request)
-
     manager.pow_controller.start_generate()
-    return {
-        "status": "OK",
-        "pow_status": manager.get_pow_status()
-    }
+    return {"status": "OK", "pow_status": manager.get_pow_status()}
 
 
 @router.post(
@@ -63,18 +63,14 @@ async def init_validate(
     request: Request,
     init_request: PowInitRequestUrl
 ):
+    await check_signature(request)
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         await manager.switch_to_pow_async(init_request)
-
     if manager.init_request != init_request:
         await manager.switch_to_pow_async(init_request)
-
     manager.pow_controller.start_validate()
-    return {
-        "status": "OK",
-        "pow_status": manager.get_pow_status()
-    }
+    return {"status": "OK", "pow_status": manager.get_pow_status()}
 
 
 @router.post(
@@ -126,13 +122,10 @@ async def validate(
     request: Request,
     proof_batch: ProofBatch = Body(...)
 ):
+    await check_signature(request)
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
-        raise HTTPException(
-            status_code=400,
-            detail="PoW is not running"
-        )
-
+        raise HTTPException(status_code=400, detail="PoW is not running")
     manager.pow_controller.to_validate(proof_batch)
     manager.pow_sender.in_validation_queue.put(proof_batch)
 

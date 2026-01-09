@@ -1,12 +1,16 @@
 package mlnodeclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
-	"decentralized-api/utils"
+	"decentralized-api/logging"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/url"
 
 	"github.com/productscience/inference/testenv"
@@ -250,44 +254,53 @@ func deterministicSampleIndices(
 	return indices
 }
 
-func (api *Client) InitGenerate(context context.Context, dto InitDto) error {
+func (api *Client) sendSignedPost(ctx context.Context, requestUrl string, payload any) error {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if SignFn != nil {
+		hash := sha256.Sum256(jsonData)
+		sig, err := SignFn(hash[:])
+		if err != nil {
+			return fmt.Errorf("failed to sign request: %w", err)
+		}
+		req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(sig))
+	} else {
+		logging.Warn("SignFn not configured, sending request without signature", types.PoC)
+	}
+	resp, err := api.client.Do(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	return err
+}
+
+func (api *Client) InitGenerate(ctx context.Context, dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
 	if err != nil {
 		return err
 	}
-
-	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return api.sendSignedPost(ctx, requestUrl, dto)
 }
 
-func (api *Client) InitValidate(context context.Context, dto InitDto) error {
+func (api *Client) InitValidate(ctx context.Context, dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitValidatePath)
 	if err != nil {
 		return err
 	}
-
-	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return api.sendSignedPost(ctx, requestUrl, dto)
 }
 
-func (api *Client) ValidateBatch(context context.Context, batch ProofBatch) error {
+func (api *Client) ValidateBatch(ctx context.Context, batch ProofBatch) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, ValidateBatchPath)
 	if err != nil {
 		return err
 	}
-
-	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, batch)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return api.sendSignedPost(ctx, requestUrl, batch)
 }

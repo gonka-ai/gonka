@@ -8,6 +8,7 @@ services:
     environment:
       - HF_HOME=/root/.cache
       - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - SIGNER_PUBKEY=${SIGNER_PUBKEY:-${ACCOUNT_PUBKEY}}
     deploy:
       resources:
         reservations:

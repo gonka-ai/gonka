@@ -79,6 +79,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	mlnodeclient.SignFn = recorder.SignBytes
+	apiAccount := recorder.GetApiAccount()
+	if !apiAccount.IsSignerTheMainAccount() {
+		logging.Warn("SignerAccount differs from ACCOUNT_PUBKEY. Ensure SIGNER_PUBKEY is set on MLnodes.", types.System)
+	}
 
 	// Version sync is handled later in the event processing loop when blockchain is fully ready
 	// This prevents EOF errors during startup from breaking the entire application
