@@ -6,10 +6,12 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"errors"
-	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const logTagExecutor = "[training-task-executor] "
@@ -17,6 +19,7 @@ const logTagExecutor = "[training-task-executor] "
 type Executor struct {
 	broker       *broker.Broker
 	cosmosClient cosmosclient.CosmosMessageClient
+	mu           sync.Mutex
 	tasks        map[uint64]struct{}
 	ctx          context.Context
 }
@@ -34,7 +37,7 @@ func NewExecutor(ctx context.Context, nodeBroker *broker.Broker, cosmosClient co
 	return e
 }
 
-func (e Executor) PreassignTask(taskId uint64, nodeIds []string) error {
+func (e *Executor) PreassignTask(taskId uint64, nodeIds []string) error {
 	command := broker.NewLockNodesForTrainingCommand(nodeIds)
 	err := e.broker.QueueMessage(command)
 	if err != nil {
@@ -44,7 +47,9 @@ func (e Executor) PreassignTask(taskId uint64, nodeIds []string) error {
 	success := <-command.Response
 
 	if success {
+		e.mu.Lock()
 		e.tasks[taskId] = struct{}{}
+		e.mu.Unlock()
 		return nil
 	} else {
 		return errors.New("failed to lock nodes")
@@ -129,7 +134,9 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 
 	success := <-command.Response
 	if success {
+		e.mu.Lock()
 		e.tasks[taskId] = struct{}{}
+		e.mu.Unlock()
 		logging.Info(logTagExecutor+"Training started", types.Training, "taskId", taskId)
 		slog.Info(logTagExecutor+"Training started", "taskId", taskId)
 	} else {
@@ -234,6 +241,7 @@ func (e *Executor) checkInProgressTasksOnChain() {
 	}
 
 	// 3. For each task, check if it's already in the map
+	e.mu.Lock()
 	for _, t := range tasks {
 		if _, ok := e.tasks[t.Id]; !ok {
 			logging.Info(logTagExecutor+"Task not found in the set", types.Training, "taskId", t.Id)
@@ -243,6 +251,7 @@ func (e *Executor) checkInProgressTasksOnChain() {
 			logging.Info(logTagExecutor+"Task found in the set", types.Training, "taskId", t.Id)
 		}
 	}
+	e.mu.Unlock()
 
 	// TODO: So here's the question:
 	//  If task is absent in the map do we trigger it
