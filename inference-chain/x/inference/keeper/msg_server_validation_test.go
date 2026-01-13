@@ -70,10 +70,10 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
 	mocks := inferenceHelper.Mocks
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 1,
 	}, nil)
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 2,
 	}, nil)
 	ms := inferenceHelper.MessageServer
@@ -87,14 +87,14 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	log.Print(inference)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
-	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
+	mocks.GroupKeeper.EXPECT().Vote(gomock.Any(), gomock.Eq(&group.MsgVote{
 		ProposalId: 1,
 		Voter:      testutil.Requester,
 		Option:     group.VOTE_OPTION_YES,
 		Metadata:   "Invalidate inference " + expected.InferenceId,
 		Exec:       group.Exec_EXEC_TRY,
 	}))
-	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
+	mocks.GroupKeeper.EXPECT().Vote(gomock.Any(), gomock.Eq(&group.MsgVote{
 		ProposalId: 2,
 		Voter:      testutil.Requester,
 		Option:     group.VOTE_OPTION_NO,

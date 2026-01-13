@@ -27,6 +27,9 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 
 	actions := keeper.GetTopMinerActions(minerSet)
 	minerFound := false
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
 	for _, action := range actions {
 		am.LogInfo("top miner action", types.Tokenomics, "address", action.MinerAddress(), "action", action.TopMinerActionName(), "object", action)
 		switch typedAction := action.(type) {
@@ -34,35 +37,38 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 			continue
 		case keeper.AddMiner:
 			minerFound = true
-			err := am.keeper.SetTopMiner(ctx, typedAction.Miner)
+			err := am.keeper.SetTopMiner(cacheCtx, typedAction.Miner)
 			if err != nil {
 				return err
 			}
 		case keeper.UpdateMiner:
 			minerFound = true
-			err := am.keeper.SetTopMiner(ctx, typedAction.Miner)
+			err := am.keeper.SetTopMiner(cacheCtx, typedAction.Miner)
 			if err != nil {
 				return err
 			}
 		case keeper.UpdateAndPayMiner:
-			err := am.keeper.SetTopMiner(ctx, typedAction.Miner)
+			err := am.keeper.SetTopMiner(cacheCtx, typedAction.Miner)
 			if err != nil {
 				return err
 			}
-			params, err := am.keeper.GetParamsSafe(ctx)
+			params, err := am.keeper.GetParamsSafe(cacheCtx)
 			if err != nil {
 				return err
 			}
 			topMinerVestingPeriod := &params.TokenomicsParams.TopMinerVestingPeriod
-			err = am.keeper.PayParticipantFromModule(ctx, typedAction.Miner.Address, typedAction.Payout, types.TopRewardPoolAccName, "top_miner", topMinerVestingPeriod)
+			err = am.keeper.PayParticipantFromModule(cacheCtx, typedAction.Miner.Address, typedAction.Payout, types.TopRewardPoolAccName, "top_miner", topMinerVestingPeriod)
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	if payoutSettings.FirstQualifiedTime == 0 && minerFound {
-		am.updateTopMinerFirstQualified(ctx, time)
+		am.updateTopMinerFirstQualified(cacheCtx, time)
 	}
+
+	writeFn()
 	return nil
 }
 

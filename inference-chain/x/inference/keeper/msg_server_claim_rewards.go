@@ -46,16 +46,17 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
-	// TODO: Optimization: Payout claim should be done in one transaction
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
+
+	cacheCtx, writeFn := ctx.CacheContext()
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
-	params := ms.GetParams(ctx)
+	params := ms.GetParams(cacheCtx)
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
-			ms.handleUnderfundedWork(ctx, err, settleAmount)
+			ms.handleUnderfundedWork(cacheCtx, err, settleAmount)
 			return &types.MsgClaimRewardsResponse{
 				Amount: 0,
 				Result: "Insufficient funds for paying participant for work! Unpaid settlement",
@@ -67,28 +68,28 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 			Result: "Error paying participant from escrow",
 		}, err
 	}
-	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
+	ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
 
 	// Pay rewards from module
 	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(ctx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromModule(cacheCtx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
-			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
+			ms.LogError("Insufficient funds for paying rewards", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
 			ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
 		}
-		ms.finishSettle(ctx, settleAmount)
 		return &types.MsgClaimRewardsResponse{
-			Amount: settleAmount.GetWorkCoins(),
-			Result: "Work paid, but rewards failed.",
+			Amount: 0,
+			Result: "Rewards payment failed, claim not processed",
 		}, err
 	}
 
-	ms.finishSettle(ctx, settleAmount)
-	// impossible, but check anyhow
 	if settleAmount.GetTotalCoins() < 0 {
 		return nil, types.ErrNegativeRewardAmount
 	}
+
+	ms.finishSettle(cacheCtx, settleAmount)
+	writeFn()
 	return &types.MsgClaimRewardsResponse{
 		Amount: uint64(settleAmount.GetTotalCoins()),
 		Result: "Rewards claimed successfully",

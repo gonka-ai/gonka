@@ -3,10 +3,13 @@ package keeper
 import (
 	"context"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevalidateInference) (*types.MsgRevalidateInferenceResponse, error) {
+func (k msgServer) RevalidateInference(goCtx context.Context, msg *types.MsgRevalidateInference) (*types.MsgRevalidateInferenceResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
 	inference, executor, err := k.validateDecisionMessage(ctx, msg)
 	if err != nil {
 		return nil, err
@@ -21,16 +24,19 @@ func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevali
 	executor.ConsecutiveInvalidInferences = 0
 	executor.CurrentEpochStats.ValidatedInferences++
 
-	err = k.SetParticipant(ctx, *executor)
+	cacheCtx, writeFn := ctx.CacheContext()
+
+	err = k.SetParticipant(cacheCtx, *executor)
 	if err != nil {
 		return nil, err
 	}
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "authority", inference.ProposalDetails.PolicyAddress)
-	err = k.SetInference(ctx, *inference)
+	err = k.SetInference(cacheCtx, *inference)
 	if err != nil {
 		return nil, err
 	}
 
+	writeFn()
 	return &types.MsgRevalidateInferenceResponse{}, nil
 }

@@ -190,17 +190,21 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		PocSeedBlockHash:      "", // Will be set when transitioning to GENERATION phase
 	}
 
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
 	// Store the event
-	err = am.keeper.SetConfirmationPoCEvent(ctx, event)
+	err = am.keeper.SetConfirmationPoCEvent(cacheCtx, event)
 	if err != nil {
 		return fmt.Errorf("failed to store confirmation PoC event: %w", err)
 	}
 
 	// Set as active event
-	err = am.keeper.SetActiveConfirmationPoCEvent(ctx, event)
+	err = am.keeper.SetActiveConfirmationPoCEvent(cacheCtx, event)
 	if err != nil {
 		return fmt.Errorf("failed to set active confirmation PoC event: %w", err)
 	}
+
+	writeFn()
 
 	am.LogInfo("Created confirmation PoC event", types.PoC,
 		"epochIndex", event.EpochIndex,
@@ -322,17 +326,21 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 
 	// Update the event if phase changed
 	if updated {
+		cacheCtx, writeFn := sdkCtx.CacheContext()
+
 		// Update stored event
-		err = am.keeper.SetConfirmationPoCEvent(ctx, event)
+		err = am.keeper.SetConfirmationPoCEvent(cacheCtx, event)
 		if err != nil {
 			return fmt.Errorf("failed to update confirmation PoC event: %w", err)
 		}
 
 		// Update active event (keep during COMPLETED transition period)
-		err = am.keeper.SetActiveConfirmationPoCEvent(ctx, event)
+		err = am.keeper.SetActiveConfirmationPoCEvent(cacheCtx, event)
 		if err != nil {
 			return fmt.Errorf("failed to update active confirmation PoC event: %w", err)
 		}
+
+		writeFn()
 	}
 
 	return nil
@@ -452,8 +460,11 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 		}
 	}
 
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
 	if updated {
-		am.keeper.SetEpochGroupData(ctx, epochGroupData)
+		am.keeper.SetEpochGroupData(cacheCtx, epochGroupData)
 		am.LogInfo("updateConfirmationWeights: Saved updated EpochGroupData", types.PoC,
 			"epochIndex", event.EpochIndex)
 	} else {
@@ -462,8 +473,12 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	}
 
 	// Check for slashing violations
-	am.checkConfirmationSlashing(ctx, &epochGroupData)
+	err = am.checkConfirmationSlashing(cacheCtx, &epochGroupData)
+	if err != nil {
+		return err
+	}
 
+	writeFn()
 	return nil
 }
 
@@ -477,6 +492,7 @@ func (am AppModule) checkConfirmationSlashing(
 	if err != nil {
 		return fmt.Errorf("failed to get not preserved total weight by participant: %w", err)
 	}
+
 	for _, vw := range epochGroupData.ValidationWeights {
 		address := vw.MemberAddress
 		notPreservedTotalWeightValue, found := notPreservedTotalWeight[address]
@@ -497,8 +513,13 @@ func (am AppModule) checkConfirmationSlashing(
 		} else {
 			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(decimal.NewFromInt(confirmationWeight).Div(decimal.NewFromInt(notPreservedTotalWeightValue)))
 		}
-		am.keeper.SetParticipant(ctx, participant)
+		err = am.keeper.SetParticipant(ctx, participant)
+		if err != nil {
+			am.LogError("checkConfirmationSlashing: Failed to set participant", types.PoC, "address", address, "error", err)
+			return fmt.Errorf("failed to set participant %s: %w", address, err)
+		}
 	}
+
 	return nil
 }
 

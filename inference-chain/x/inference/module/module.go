@@ -192,7 +192,8 @@ func (am AppModule) expireInferences(ctx context.Context, timeouts []types.Infer
 }
 
 func (am AppModule) handleExpiredInference(ctx context.Context, inference types.Inference) {
-	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	executor, found := am.keeper.GetParticipant(sdkCtx, inference.AssignedTo)
 	if !found {
 		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
 		return
@@ -200,19 +201,25 @@ func (am AppModule) handleExpiredInference(ctx context.Context, inference types.
 	am.LogInfo("Inference expired, not finished. Issuing refund", types.Inferences, "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
-	err := am.keeper.IssueRefund(ctx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
-	if err != nil {
-		am.LogError("Error issuing refund", types.Inferences, "error", err)
-	}
-	err = am.keeper.SetInference(ctx, inference)
+	executor.CurrentEpochStats.MissedRequests++
+
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+	err := am.keeper.SetInference(cacheCtx, inference)
 	if err != nil {
 		am.LogError("Error updating inference", types.Inferences, "error", err)
+		return
 	}
-	executor.CurrentEpochStats.MissedRequests++
-	err = am.keeper.SetParticipant(ctx, executor)
+	err = am.keeper.IssueRefund(cacheCtx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
+	if err != nil {
+		am.LogError("Error issuing refund", types.Inferences, "error", err)
+		return
+	}
+	err = am.keeper.SetParticipant(cacheCtx, executor)
 	if err != nil {
 		am.LogError("Error updating participant for expired inference", types.Participants, "error", err)
+		return
 	}
+	writeFn()
 }
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
@@ -317,23 +324,28 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
 		upcomingEpoch := createNewEpoch(*currentEpoch, blockHeight)
-		err = am.keeper.SetEpoch(ctx, upcomingEpoch)
+
+		cacheCtx, writeFn := sdkCtx.CacheContext()
+
+		err = am.keeper.SetEpoch(cacheCtx, upcomingEpoch)
 		if err != nil {
 			am.LogError("Unable to set upcoming epoch", types.EpochGroup, "error", err.Error())
 			return err
 		}
 
 		am.LogInfo("StartStage:PocStart", types.Stages, "blockHeight", blockHeight)
-		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight), upcomingEpoch.Index)
+		newGroup, err := am.keeper.CreateEpochGroup(cacheCtx, uint64(blockHeight), upcomingEpoch.Index)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
-		err = newGroup.CreateGroup(ctx)
+		err = newGroup.CreateGroup(cacheCtx)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+
+		writeFn()
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
@@ -638,11 +650,14 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 
 	previousGroupData.LastBlockHeight = blockHeight - 1
 
-	am.keeper.SetEpochGroupData(ctx, newGroupData)
-	am.keeper.SetEpochGroupData(ctx, previousGroupData)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
+	am.keeper.SetEpochGroupData(cacheCtx, newGroupData)
+	am.keeper.SetEpochGroupData(cacheCtx, previousGroupData)
 
 	// Set all current ActiveParticipants as ParticipantStatus_ACTIVE
-	activeParticipants, found := am.keeper.GetActiveParticipants(ctx, newEpochIndex)
+	activeParticipants, found := am.keeper.GetActiveParticipants(cacheCtx, newEpochIndex)
 	if !found {
 		am.LogError("Unable to get active participants", types.EpochGroup, "epochIndex", newEpochIndex)
 		return
@@ -651,17 +666,19 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	for i, participant := range activeParticipants.Participants {
 		ids[i] = participant.Index
 	}
-	participants := am.keeper.GetParticipants(ctx, ids)
+	participants := am.keeper.GetParticipants(cacheCtx, ids)
 
 	am.LogInfo("Setting participants to active", types.EpochGroup, "len(participants)", len(participants))
 	for _, participant := range participants {
 		participant.Status = types.ParticipantStatus_ACTIVE
-		err := am.keeper.SetParticipant(ctx, participant)
+		err := am.keeper.SetParticipant(cacheCtx, participant)
 		if err != nil {
 			am.LogError("Unable to set participant to active", types.EpochGroup, "participantIndex", participant.Index, "error", err.Error())
 			continue
 		}
 	}
+
+	writeFn()
 
 	// At this point, clear all active invalidations in case of any hanging invalidations
 	err := am.keeper.ActiveInvalidations.Clear(ctx, nil)

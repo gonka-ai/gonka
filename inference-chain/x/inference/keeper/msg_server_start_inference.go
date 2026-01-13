@@ -179,35 +179,39 @@ func (k msgServer) processInferencePayments(
 	inference *types.Inference,
 	payments *calculations.Payments,
 ) (*types.Inference, error) {
+	cacheCtx, writeFn := ctx.CacheContext()
+
 	if payments.EscrowAmount > 0 {
-		escrowAmount, err := k.PutPaymentInEscrow(ctx, inference, payments.EscrowAmount)
+		escrowAmount, err := k.PutPaymentInEscrow(cacheCtx, inference, payments.EscrowAmount)
 		if err != nil {
 			return nil, err
 		}
 		inference.EscrowAmount = escrowAmount
 	}
 	if payments.EscrowAmount < 0 {
-		err := k.IssueRefund(ctx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
+		err := k.IssueRefund(cacheCtx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
 		if err != nil {
 			k.LogError("Unable to Issue Refund for started inference", types.Payments, err)
+			return nil, err
 		}
 	}
 	if payments.ExecutorPayment > 0 {
 		executedBy := inference.ExecutedBy
-		executor, found := k.GetParticipant(ctx, executedBy)
+		executor, found := k.GetParticipant(cacheCtx, executedBy)
 		if !found {
 			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, executedBy)
 		}
 		executor.CoinBalance += payments.ExecutorPayment
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
-		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
-		err := k.SetParticipant(ctx, executor)
+		k.SafeLogSubAccountTransaction(cacheCtx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
+		err := k.SetParticipant(cacheCtx, executor)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return inference, nil
 
+	writeFn()
+	return inference, nil
 }
 
 // getDevSignatureComponents returns components for dev signature verification

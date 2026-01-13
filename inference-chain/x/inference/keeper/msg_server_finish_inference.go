@@ -212,13 +212,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	executor, found := k.GetParticipant(ctx, executedBy)
 	if !found {
 		k.LogError("handleInferenceCompleted: executor not found", types.Inferences, "executed_by", executedBy)
-	} else {
-		executor.CurrentEpochStats.InferenceCount++
-		executor.LastInferenceTime = existingInference.EndBlockTimestamp
-		if err := k.SetParticipant(ctx, executor); err != nil {
-			return err
-		}
-
+		return types.ErrParticipantNotFound.Wrapf("executor not found: %s", executedBy)
 	}
 
 	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
@@ -229,6 +223,20 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	currentEpochGroup, err := k.GetEpochGroupForEpoch(ctx, *effectiveEpoch)
 	if err != nil {
 		k.LogError("Unable to get current Epoch Group", types.EpochGroup, "err", err)
+		return err
+	}
+
+	modelEpochGroup, err := currentEpochGroup.GetSubGroup(ctx, existingInference.Model)
+	if err != nil {
+		k.LogError("Unable to get model Epoch Group", types.EpochGroup, "err", err)
+		return err
+	}
+
+	cacheCtx, writeFn := ctx.CacheContext()
+
+	executor.CurrentEpochStats.InferenceCount++
+	executor.LastInferenceTime = existingInference.EndBlockTimestamp
+	if err := k.SetParticipant(cacheCtx, executor); err != nil {
 		return err
 	}
 
@@ -244,12 +252,6 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 			executorReputation = weight.Reputation
 			break
 		}
-	}
-
-	modelEpochGroup, err := currentEpochGroup.GetSubGroup(ctx, existingInference.Model)
-	if err != nil {
-		k.LogError("Unable to get model Epoch Group", types.EpochGroup, "err", err)
-		return err
 	}
 
 	inferenceDetails := types.InferenceValidationDetails{
@@ -284,11 +286,13 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"executor_reputation", inferenceDetails.ExecutorReputation,
 		"traffic_basis", inferenceDetails.TrafficBasis,
 	)
-	k.SetInferenceValidationDetails(ctx, inferenceDetails)
-	err = k.SetInference(ctx, *existingInference)
+	k.SetInferenceValidationDetails(cacheCtx, inferenceDetails)
+	err = k.SetInference(cacheCtx, *existingInference)
 	if err != nil {
 		return err
 	}
-	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
+	k.SetEpochGroupData(cacheCtx, *currentEpochGroup.GroupData)
+
+	writeFn()
 	return nil
 }

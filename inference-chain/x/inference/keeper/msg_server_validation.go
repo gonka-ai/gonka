@@ -105,18 +105,25 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	k.LogInfo("Validating inner loop", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
 	if msg.Revalidation {
 		return epochGroup.Revalidate(passed, inference, msg, ctx)
-	} else if passed {
+	}
+
+	cacheCtx, writeFn := ctx.CacheContext()
+
+	if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
-		shouldShare, information := k.inferenceIsBeforeClaimsSet(ctx, inference, epochGroup)
+		shouldShare, information := k.inferenceIsBeforeClaimsSet(cacheCtx, inference, epochGroup)
 		k.LogInfo("Validation sharing decision", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "shouldShare", shouldShare, "information", information)
 		if shouldShare {
-			k.shareWorkWithValidators(ctx, inference, msg, &executor)
+			err := k.shareWorkWithValidators(cacheCtx, inference, msg, &executor)
+			if err != nil {
+				return nil, err
+			}
 			inference.ValidatedBy = append(inference.ValidatedBy, msg.Creator)
 		}
 		executor.ConsecutiveInvalidInferences = 0
 		executor.CurrentEpochStats.ValidatedInferences++
 	} else {
-		if k.MaximumInvalidationsReached(ctx, sdk.MustAccAddressFromBech32(creator.Address), groupData) {
+		if k.MaximumInvalidationsReached(cacheCtx, sdk.MustAccAddressFromBech32(creator.Address), groupData) {
 			k.LogWarn("Maximum invalidations reached.", types.Validation,
 				"creator", msg.Creator,
 				"model", inference.Model,
@@ -125,31 +132,34 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			return &types.MsgValidationResponse{}, nil
 		}
 		inference.Status = types.InferenceStatus_VOTING
-		proposalDetails, err := epochGroup.StartValidationVote(ctx, &inference, msg.Creator)
+		proposalDetails, err := epochGroup.StartValidationVote(cacheCtx, &inference, msg.Creator)
 		if err != nil {
 			return nil, err
 		}
-		err = k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(msg.Creator), inference.InferenceId))
+		err = k.ActiveInvalidations.Set(cacheCtx, collections.Join(sdk.MustAccAddressFromBech32(msg.Creator), inference.InferenceId))
 		if err != nil {
 			k.LogError("Failed to set active invalidation", types.Validation, "error", err)
+			return nil, err
 		}
 
 		inference.ProposalDetails = proposalDetails
 		needsRevalidation = true
 	}
 
-	err = k.SetParticipant(ctx, executor)
+	err = k.SetParticipant(cacheCtx, executor)
 	if err != nil {
 		k.LogError("Failed to set executor", types.Validation, "executor", executor.Address, "error", err)
 		return nil, err
 	}
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
-	err = k.SetInference(ctx, inference)
+	err = k.SetInference(cacheCtx, inference)
 	if err != nil {
 		k.LogError("Failed to set inference", types.Validation, "inferenceId", inference.InferenceId, "error", err)
 		return nil, err
 	}
+
+	writeFn()
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
@@ -245,7 +255,7 @@ func (k msgServer) inferenceIsBeforeClaimsSet(ctx context.Context, inference typ
 	}
 }
 
-func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Inference, msg *types.MsgValidation, executor *types.Participant) {
+func (k msgServer) shareWorkWithValidators(ctx context.Context, inference types.Inference, msg *types.MsgValidation, executor *types.Participant) error {
 	originalWorkers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
 	adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.ActualCost)
 	k.validateAdjustments(adjustments, msg)
@@ -265,7 +275,7 @@ func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Infe
 			worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
 			if !found {
 				k.LogError("Participant not found for redistribution", types.Validation, "participantId", adjustment.ParticipantId)
-				continue
+				return types.ErrParticipantNotFound
 			}
 			worker.CoinBalance += adjustment.WorkAdjustment
 			k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
@@ -275,10 +285,12 @@ func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Infe
 			}
 			err := k.SetParticipant(ctx, worker)
 			if err != nil {
-				k.LogError("Unable to update participant to share work", types.Validation, "worker", worker.Address)
+				k.LogError("Unable to update participant to share work", types.Validation, "worker", worker.Address, "error", err)
+				return err
 			}
 		}
 	}
+	return nil
 }
 
 func (k msgServer) validateAdjustments(adjustments []calculations.Adjustment, msg *types.MsgValidation) {

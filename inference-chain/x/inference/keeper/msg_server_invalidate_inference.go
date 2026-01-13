@@ -30,8 +30,12 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 
 	shouldRefund, reason := k.inferenceIsBeforeClaimsSet(ctx, *inference, epochGroup)
 	k.LogInfo("Inference refund decision", types.Validation, "inferenceId", inference.InferenceId, "executor", executor.Address, "shouldRefund", shouldRefund, "reason", reason)
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
 	if shouldRefund {
-		err := k.refundInvalidatedInference(executor, inference, ctx)
+		err := k.refundInvalidatedInference(executor, inference, cacheCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -39,16 +43,17 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 
 	k.LogInfo("Inference invalidated", types.Inferences, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
 
-	err = k.SetParticipant(ctx, *executor)
+	err = k.SetParticipant(cacheCtx, *executor)
 	if err != nil {
 		return nil, err
 	}
 
-	err = k.SetInference(ctx, *inference)
+	err = k.SetInference(cacheCtx, *inference)
 	if err != nil {
 		return nil, err
 	}
 
+	writeFn()
 	return &types.MsgInvalidateInferenceResponse{}, nil
 }
 
@@ -65,6 +70,7 @@ func (k msgServer) refundInvalidatedInference(executor *types.Participant, infer
 	err := k.IssueRefund(ctx, inference.ActualCost, payer.Address, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
+		return err
 	}
 	return nil
 }

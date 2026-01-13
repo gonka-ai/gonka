@@ -268,6 +268,8 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
 
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
 	for i, participant := range allParticipants {
 		// amount should have the same order as participants
 		amount := amounts[i]
@@ -275,7 +277,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		if participant.Status == types.ParticipantStatus_ACTIVE {
 			participant.EpochsCompleted += 1
 		}
-		k.SafeLogSubAccountTransaction(ctx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
+		k.SafeLogSubAccountTransaction(cacheCtx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
 		participant.CoinBalance = 0
 		participant.CurrentEpochStats.EarnedCoins = 0
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
@@ -290,12 +292,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
 			Claimed:               false,
 		}
-		err = k.SetEpochPerformanceSummary(ctx, epochPerformance)
+		err = k.SetEpochPerformanceSummary(cacheCtx, epochPerformance)
 		if err != nil {
 			return err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
-		err := k.SetParticipant(ctx, participant)
+		err := k.SetParticipant(cacheCtx, participant)
 		if err != nil {
 			return err
 		}
@@ -320,8 +322,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 		amount.Settle.EpochIndex = currentEpochIndex
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
-		k.SetSettleAmountWithGovernanceTransfer(ctx, *amount.Settle)
+		k.SetSettleAmountWithGovernanceTransfer(cacheCtx, *amount.Settle)
 	}
+
+	writeFn()
 
 	if previousEpochIndex == 0 {
 		return nil

@@ -167,11 +167,12 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		if existingTx.TotalValidationPower >= requiredPower {
 			// Only process completion once to avoid duplicate mints
 			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
-				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
-				k.SetBridgeTransaction(ctx, existingTx)
+				cacheCtx, writeFn := ctx.CacheContext()
 
-				// Handle token minting for completed transaction
-				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
+				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
+
+				// Handle token minting for completed transaction BEFORE persisting
+				if err := k.handleCompletedBridgeTransaction(cacheCtx, existingTx); err != nil {
 					k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
 						types.Messages,
 						"error", err,
@@ -180,6 +181,9 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 						"receiptIndex", msg.ReceiptIndex)
 					return nil, err
 				}
+
+				k.SetBridgeTransaction(cacheCtx, existingTx)
+				writeFn()
 
 				k.LogInfo("Bridge exchange: transaction reached majority validation",
 					types.Messages,
