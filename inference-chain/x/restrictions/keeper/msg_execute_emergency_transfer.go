@@ -17,7 +17,10 @@ func (k msgServer) ExecuteEmergencyTransfer(goCtx context.Context, req *types.Ms
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Get current parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, errorsmod.Wrap(err, "failed to get parameters")
+	}
 
 	// Find the exemption template
 	var exemption *types.EmergencyTransferExemption

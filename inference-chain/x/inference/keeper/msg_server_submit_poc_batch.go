@@ -51,7 +51,11 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 		}
 
 		// Verify we're in the batch submission window (generation + exchange period)
-		epochParams := k.GetParams(ctx).EpochParams
+		params, err := k.GetParams(ctx)
+		if err != nil {
+			return nil, err
+		}
+		epochParams := params.EpochParams
 		if !activeEvent.IsInBatchSubmissionWindow(currentBlockHeight, epochParams) {
 			k.LogError(PocFailureTag+"[SubmitPocBatch] Confirmation PoC: outside batch submission window", types.PoC,
 				"participant", msg.Creator,
@@ -72,7 +76,9 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 			NodeId:                   msg.NodeId,
 		}
 
-		k.SetPocBatch(ctx, storedBatch)
+		if err := k.SetPocBatch(ctx, storedBatch); err != nil {
+			return nil, err
+		}
 		k.LogInfo("[SubmitPocBatch] Confirmation PoC batch stored", types.PoC,
 			"participant", msg.Creator,
 			"triggerHeight", activeEvent.TriggerHeight,
@@ -82,7 +88,11 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 	}
 
 	// Regular PoC logic
-	epochParams := k.Keeper.GetParams(goCtx).EpochParams
+	params, err := k.Keeper.GetParams(goCtx)
+	if err != nil {
+		return nil, err
+	}
+	epochParams := params.EpochParams
 	upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 	if !found {
 		k.LogError(PocFailureTag+"[SubmitPocBatch] Failed to get upcoming epoch", types.PoC,
@@ -126,7 +136,9 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 		NodeId:                   msg.NodeId,
 	}
 
-	k.SetPocBatch(ctx, storedBatch)
+	if err := k.SetPocBatch(ctx, storedBatch); err != nil {
+		return nil, err
+	}
 
 	return &types.MsgSubmitPocBatchResponse{}, nil
 }

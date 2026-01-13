@@ -70,7 +70,7 @@ func (sp *SettleParameters) getNextCutoff() int64 {
 }
 
 func (k *Keeper) GetSettleParameters(ctx context.Context) (*SettleParameters, error) {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	}
 
 	// Check governance flag to determine which reward system to use
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		k.LogError("Error getting params", types.Settle, "error", err)
 		return err
@@ -399,7 +399,7 @@ func getSettleAmount(participant types.Participant, rewardInfo []DistributedCoin
 }
 
 func (k Keeper) ReduceSubsidyPercentage(ctx context.Context) error {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}

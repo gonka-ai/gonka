@@ -127,7 +127,8 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 			k, ctx := setupTestKeeperWithDynamicPricing(t)
 
 			// Set dynamic pricing parameters
-			params := k.GetParams(ctx)
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
 			params.DynamicPricingParams = &types.DynamicPricingParams{
 				StabilityZoneLowerBound:   types.DecimalFromFloat(tt.stabilityLowerBound),
 				StabilityZoneUpperBound:   types.DecimalFromFloat(tt.stabilityUpperBound),
@@ -292,7 +293,8 @@ func TestStabilityZoneBoundaries(t *testing.T) {
 			goCtx := sdk.UnwrapSDKContext(ctx)
 
 			// Set parameters
-			params := k.GetParams(ctx)
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
 			params.DynamicPricingParams = &types.DynamicPricingParams{
 				StabilityZoneLowerBound: types.DecimalFromFloat(0.40),
 				StabilityZoneUpperBound: types.DecimalFromFloat(0.60),
@@ -305,7 +307,7 @@ func TestStabilityZoneBoundaries(t *testing.T) {
 
 			// Set initial price (larger price to make small percentage changes visible)
 			initialPrice := uint64(10000)
-			err := k.SetModelCurrentPrice(goCtx, "test-model", initialPrice)
+			err = k.SetModelCurrentPrice(goCtx, "test-model", initialPrice)
 			require.NoError(t, err)
 
 			// Calculate price
@@ -334,7 +336,8 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 	model3 := "Claude-3.5-Sonnet"
 
 	// Configure dynamic pricing parameters for testing
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	params.DynamicPricingParams.StabilityZoneLowerBound = types.DecimalFromFloat(0.40)
 	params.DynamicPricingParams.StabilityZoneUpperBound = types.DecimalFromFloat(0.60)
 	params.DynamicPricingParams.PriceElasticity = types.DecimalFromFloat(0.05)
@@ -345,7 +348,7 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 	k.SetParams(ctx, params)
 
 	// Cache model capacities (simulate epoch activation)
-	err := k.CacheModelCapacity(goCtx, model1, 1000) // 1000 tokens/sec capacity
+	err = k.CacheModelCapacity(goCtx, model1, 1000) // 1000 tokens/sec capacity
 	require.NoError(t, err)
 	err = k.CacheModelCapacity(goCtx, model2, 2000) // 2000 tokens/sec capacity
 	require.NoError(t, err)
@@ -501,7 +504,8 @@ func TestDynamicPricingWithRealStats(t *testing.T) {
 	goCtx := sdk.WrapSDKContext(ctx)
 
 	// Setup: Configure dynamic pricing parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	params.DynamicPricingParams.StabilityZoneLowerBound = types.DecimalFromFloat(0.40)
 	params.DynamicPricingParams.StabilityZoneUpperBound = types.DecimalFromFloat(0.60)
 	params.DynamicPricingParams.PriceElasticity = types.DecimalFromFloat(0.05)
@@ -517,7 +521,7 @@ func TestDynamicPricingWithRealStats(t *testing.T) {
 	// Setup: Cache model capacity
 	modelId := "Qwen2.5-7B-Instruct"
 	modelCapacity := int64(1000) // 1000 tokens/second capacity
-	err := k.CacheModelCapacity(goCtx, modelId, modelCapacity)
+	err = k.CacheModelCapacity(goCtx, modelId, modelCapacity)
 	require.NoError(t, err)
 
 	// Setup: Set initial price

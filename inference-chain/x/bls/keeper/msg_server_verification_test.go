@@ -44,8 +44,8 @@ func TestSubmitVerificationVector_Success(t *testing.T) {
 	require.NotNil(t, resp)
 
 	// Verify epoch data was updated
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 
 	// Verify successful submission
 	submission := storedData.VerificationSubmissions[0] // Alice is at index 0
@@ -290,8 +290,8 @@ func TestSubmitVerificationVector_MultipleParticipants(t *testing.T) {
 	}
 
 	// Verify all submissions were stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Len(t, storedData.VerificationSubmissions, 3)
 
 	// Verify each submission is stored at the correct participant index

@@ -536,9 +536,6 @@ func CalculateParticipantBitcoinRewards(
 
 		// Handle error cases
 		var settleError error
-		if participant.CoinBalance < 0 {
-			settleError = types.ErrNegativeCoinBalance
-		}
 
 		// Calculate WorkCoins (UNCHANGED from current system - direct user fees)
 		workCoins := uint64(0)
@@ -573,6 +570,15 @@ func CalculateParticipantBitcoinRewards(
 			}
 		}
 		settleAmount.RewardCoins = rewardCoins
+		if participant.CoinBalance < 0 {
+			debt := uint64(-participant.CoinBalance)
+			if settleAmount.RewardCoins >= debt {
+				settleAmount.RewardCoins -= debt
+			} else {
+				settleAmount.RewardCoins = 0
+				settleError = types.ErrNegativeCoinBalance
+			}
+		}
 
 		// Create SettleResult
 		settleResults = append(settleResults, &SettleResult{

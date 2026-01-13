@@ -16,7 +16,10 @@ import (
 // Called from BeginBlocker to ensure prices are calculated once per block
 func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 	// Get current parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get params: %w", err)
+	}
 	if params.DynamicPricingParams == nil {
 		return fmt.Errorf("dynamic pricing parameters not found")
 	}
@@ -132,7 +135,10 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 // Returns the new per-token price for a specific model based on utilization
 func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string, utilization float64) (uint64, uint64, error) {
 	// Get current parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get params: %w", err)
+	}
 	if params.DynamicPricingParams == nil {
 		return 0, 0, fmt.Errorf("dynamic pricing parameters not found")
 	}

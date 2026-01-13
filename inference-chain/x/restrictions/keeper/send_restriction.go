@@ -46,7 +46,10 @@ func (k Keeper) SendRestrictionFn(ctx context.Context, from, to sdk.AccAddress, 
 
 	// 5. RESTRICTED - Direct User Transfers
 	// This is a user-to-user transfer, which is restricted
-	params := k.GetParams(sdkCtx)
+	params, err := k.GetParams(sdkCtx)
+	if err != nil {
+		return to, errorsmod.Wrap(err, "failed to get transfer restriction parameters")
+	}
 	remainingBlocks := params.RestrictionEndBlock - uint64(sdkCtx.BlockHeight())
 
 	return to, errorsmod.Wrapf(
@@ -60,7 +63,11 @@ func (k Keeper) SendRestrictionFn(ctx context.Context, from, to sdk.AccAddress, 
 
 // IsRestrictionActive checks if transfer restrictions are currently active
 func (k Keeper) IsRestrictionActive(ctx sdk.Context) bool {
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		// If we can't get parameters, fail-safe to keeping restrictions active
+		return true
+	}
 	currentHeight := uint64(ctx.BlockHeight())
 	return currentHeight < params.RestrictionEndBlock
 }
@@ -90,7 +97,11 @@ func (k Keeper) IsModuleAccount(ctx sdk.Context, addr sdk.AccAddress) bool {
 
 // MatchesEmergencyExemption checks if a transfer matches any active emergency exemption
 func (k Keeper) MatchesEmergencyExemption(ctx sdk.Context, from, to sdk.AccAddress, amt sdk.Coins) bool {
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.logger.Error("Failed to get params for emergency exemption check", "error", err)
+		return false
+	}
 	currentHeight := uint64(ctx.BlockHeight())
 
 	// Check each exemption

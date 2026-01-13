@@ -47,7 +47,11 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 		}
 
 		// Verify we're in the validation window
-		epochParams := k.GetParams(ctx).EpochParams
+		params, err := k.GetParams(ctx)
+		if err != nil {
+			return nil, err
+		}
+		epochParams := params.EpochParams
 		if !activeEvent.IsInValidationWindow(currentBlockHeight, epochParams) {
 			k.LogError(PocFailureTag+"[SubmitPocValidation] Confirmation PoC: outside validation window", types.PoC,
 				"participant", msg.ParticipantAddress,
@@ -61,7 +65,9 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 		// Store validation using trigger_height as key
 		validation := toPoCValidation(msg, currentBlockHeight)
 		validation.PocStageStartBlockHeight = activeEvent.TriggerHeight // Use trigger_height as key
-		k.SetPoCValidation(ctx, *validation)
+		if err := k.SetPoCValidation(ctx, *validation); err != nil {
+			return nil, err
+		}
 		k.LogInfo("[SubmitPocValidation] Confirmation PoC validation stored", types.PoC,
 			"participant", msg.ParticipantAddress,
 			"validatorParticipant", msg.Creator,
@@ -71,7 +77,11 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 	}
 
 	// Regular PoC logic
-	epochParams := k.Keeper.GetParams(ctx).EpochParams
+	p, err := k.Keeper.GetParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	epochParams := p.EpochParams
 	upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 	if !found {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] Failed to get upcoming epoch", types.PoC,
@@ -110,7 +120,9 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 	}
 
 	validation := toPoCValidation(msg, currentBlockHeight)
-	k.SetPoCValidation(ctx, *validation)
+	if err := k.SetPoCValidation(ctx, *validation); err != nil {
+		return nil, err
+	}
 
 	return &types.MsgSubmitPocValidationResponse{}, nil
 }

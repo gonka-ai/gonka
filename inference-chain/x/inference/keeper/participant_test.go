@@ -114,7 +114,7 @@ func TestUpdateParticipantStatus_TransitionToInvalid(t *testing.T) {
 	// Setup epoch
 	epochIndex := uint64(1)
 	k.SetEpoch(sdkCtx, &types.Epoch{Index: epochIndex, PocStartBlockHeight: 100})
-	k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochIndex)
 	eg, err := k.CreateEpochGroup(ctx, epochIndex, epochIndex)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestInvalidParticipant_ReputationReduced(t *testing.T) {
 	// Setup epoch
 	epochIndex := uint64(1)
 	k.SetEpoch(sdkCtx, &types.Epoch{Index: epochIndex, PocStartBlockHeight: 100})
-	k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochIndex)
 	eg, err := k.CreateEpochGroup(ctx, epochIndex, epochIndex)
 	require.NoError(t, err)
@@ -311,7 +311,7 @@ func TestParticipantStatusFlow_ActiveToInvalid(t *testing.T) {
 	// Setup epoch
 	epochIndex := uint64(1)
 	k.SetEpoch(sdkCtx, &types.Epoch{Index: epochIndex, PocStartBlockHeight: 100})
-	k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochIndex)
 	eg, err := k.CreateEpochGroup(ctx, epochIndex, epochIndex)
 	require.NoError(t, err)

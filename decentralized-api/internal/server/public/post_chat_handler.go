@@ -683,7 +683,8 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 		logging.Warn("Request timestamp is in the future", types.Inferences,
 			"inferenceId", request.InferenceId,
 			"offset", time.Duration(requestOffset).String())
-		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
+		// For now, we do NOT return an error here. This is solely harmful to EA with the current
+		// scheme, and is happening during chain-slow periods regularly
 	}
 
 	if checkAndRecordAuthKey(request.AuthKey, currentBlockHeight, ExecutorContext) {

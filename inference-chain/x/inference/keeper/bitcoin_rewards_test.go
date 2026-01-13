@@ -370,11 +370,39 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 
 	})
 
-	t.Run("Negative coin balance error", func(t *testing.T) {
+	t.Run("Negative coin balance subtracted", func(t *testing.T) {
+		expectedReward := uint64(271908110525520)
+		negativeBalance := int64(-100)
 		negativeParticipants := []types.Participant{
 			{
 				Address:     "participant1",
-				CoinBalance: -100, // Negative balance
+				CoinBalance: negativeBalance, // Negative balance
+				Status:      types.ParticipantStatus_ACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+					MissedRequests: 0,
+				},
+			},
+		}
+
+		logger := createTestLogger(t)
+		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, nil, logger)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(results))
+
+		p1Result := results[0]
+		require.Equal(t, expectedReward-uint64(-negativeBalance), p1Result.Settle.RewardCoins)
+		require.NoError(t, p1Result.Error)
+	})
+
+	t.Run("Negative coin balance error", func(t *testing.T) {
+		expectedReward := int64(271908110525520)
+		// Negative balance bigger than reward, return error
+		negativeBalance := -(expectedReward + 100)
+		negativeParticipants := []types.Participant{
+			{
+				Address:     "participant1",
+				CoinBalance: negativeBalance, // Negative balance
 				Status:      types.ParticipantStatus_ACTIVE,
 				CurrentEpochStats: &types.CurrentEpochStats{
 					InferenceCount: 100,

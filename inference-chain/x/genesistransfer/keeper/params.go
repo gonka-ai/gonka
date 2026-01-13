@@ -10,19 +10,22 @@ import (
 )
 
 // GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
-		return types.DefaultParams()
+		return types.DefaultParams(), nil
 	}
 
-	k.cdc.MustUnmarshal(bz, &params)
+	err = k.cdc.Unmarshal(bz, &params)
+	if err != nil {
+		return params, err
+	}
 	// Ensure AllowedAccounts is never nil after unmarshaling
 	if params.AllowedAccounts == nil {
 		params.AllowedAccounts = []string{}
 	}
-	return params
+	return params, nil
 }
 
 // SetParams set the params
@@ -51,12 +54,18 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 
 // GetAllowedAccounts returns the list of allowed accounts for transfer
 func (k Keeper) GetAllowedAccounts(ctx context.Context) []string {
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return []string{}
+	}
 	return params.AllowedAccounts
 }
 
 // GetRestrictToList returns whether transfers are restricted to the allowed accounts list
 func (k Keeper) GetRestrictToList(ctx context.Context) bool {
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return false
+	}
 	return params.RestrictToList
 }
