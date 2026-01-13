@@ -50,13 +50,7 @@ func TestNoRedirectClient(t *testing.T) {
 	req.Header.Set(utils.AuthorizationHeader, "Bearer key")
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := NewNoRedirectClient().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
