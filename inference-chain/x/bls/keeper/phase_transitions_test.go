@@ -41,8 +41,8 @@ func TestTransitionToVerifyingPhase_SufficientParticipation(t *testing.T) {
 	require.Greater(t, epochBLSData.VerifyingPhaseDeadlineBlock, epochBLSData.DealingPhaseDeadlineBlock)
 
 	// Verify epoch data was stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_VERIFYING, storedData.DkgPhase)
 }
 
@@ -70,8 +70,8 @@ func TestTransitionToVerifyingPhase_InsufficientParticipation(t *testing.T) {
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, epochBLSData.DkgPhase)
 
 	// Verify epoch data was stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 }
 
@@ -114,7 +114,7 @@ func TestProcessDKGPhaseTransitionForEpoch_NotFound(t *testing.T) {
 	// Try to process transition for non-existent epoch
 	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, uint64(999))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "EpochBLSData not found")
+	require.Contains(t, err.Error(), "epoch BLS data not found")
 }
 
 func TestProcessDKGPhaseTransitionForEpoch_CompletedEpoch(t *testing.T) {
@@ -131,8 +131,8 @@ func TestProcessDKGPhaseTransitionForEpoch_CompletedEpoch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify phase didn't change
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 }
 
@@ -150,8 +150,8 @@ func TestProcessDKGPhaseTransitionForEpoch_SignedEpoch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify phase didn't change
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_SIGNED, storedData.DkgPhase)
 }
 
@@ -199,8 +199,8 @@ func TestProcessDKGPhaseTransitions_ActiveEpoch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify phase didn't change
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, storedData.DkgPhase)
 	activeEpoch, found := k.GetActiveEpochID(ctx)
 	require.True(t, found)
@@ -225,8 +225,8 @@ func TestActiveEpochClearedOnFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify DKG failed and active epoch was cleared
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 	activeEpoch, found := k.GetActiveEpochID(ctx)
 	require.False(t, found)
@@ -342,8 +342,8 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	require.Equal(t, 96, len(epochBLSData.GroupPublicKey)) // Compressed G2 point (96 bytes)
 
 	// Verify epoch data was stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 	require.NotNil(t, storedData.GroupPublicKey)
 	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
@@ -377,8 +377,8 @@ func TestCompleteDKG_InsufficientVerification(t *testing.T) {
 	require.Nil(t, epochBLSData.GroupPublicKey)
 
 	// Verify epoch data was stored
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 
 	// Verify active epoch was cleared
@@ -507,8 +507,8 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify DKG completed
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 	require.NotNil(t, storedData.GroupPublicKey)
 	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
@@ -541,8 +541,8 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify DKG failed
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, storedData.DkgPhase)
 	require.Nil(t, storedData.GroupPublicKey)
 

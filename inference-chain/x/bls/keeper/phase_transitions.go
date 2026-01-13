@@ -24,9 +24,9 @@ func (k Keeper) ProcessDKGPhaseTransitions(ctx sdk.Context) error {
 
 // ProcessDKGPhaseTransitionForEpoch checks a specific epoch's DKG and transitions it if needed
 func (k Keeper) ProcessDKGPhaseTransitionForEpoch(ctx sdk.Context, epochID uint64) error {
-	epochBLSData, found := k.GetEpochBLSData(ctx, epochID)
-	if !found {
-		return fmt.Errorf("EpochBLSData not found for epoch %d", epochID)
+	epochBLSData, err := k.GetEpochBLSData(ctx, epochID)
+	if err != nil {
+		return fmt.Errorf("failed to get EpochBLSData for epoch %d: %w", epochID, err)
 	}
 
 	// Skip completed or failed DKGs
@@ -74,14 +74,19 @@ func (k Keeper) TransitionToVerifyingPhase(ctx sdk.Context, epochBLSData *types.
 	// Check if we have sufficient participation (more than half the slots)
 	if slotsWithDealerParts > epochBLSData.ITotalSlots/2 {
 		// Sufficient participation - transition to VERIFYING
-		params := k.GetParams(ctx)
+		params, err := k.GetParams(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get params: %w", err)
+		}
 		currentBlockHeight := ctx.BlockHeight()
 
 		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
 		epochBLSData.VerifyingPhaseDeadlineBlock = currentBlockHeight + params.VerificationPhaseDurationBlocks
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Emit event for verifying phase started
 		if err := ctx.EventManager().EmitTypedEvent(&types.EventVerifyingPhaseStarted{
@@ -101,7 +106,9 @@ func (k Keeper) TransitionToVerifyingPhase(ctx sdk.Context, epochBLSData *types.
 		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_FAILED
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Clear active epoch since DKG process is complete (failed)
 		k.ClearActiveEpochID(ctx)
@@ -186,7 +193,9 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 		epochBLSData.ValidDealers = validDealers
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Clear active epoch since DKG process is complete (successfully)
 		k.ClearActiveEpochID(ctx)
@@ -221,7 +230,9 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_FAILED
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Clear active epoch since DKG process is complete (failed)
 		k.ClearActiveEpochID(ctx)

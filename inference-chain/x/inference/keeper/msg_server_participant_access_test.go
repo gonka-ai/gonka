@@ -13,13 +13,14 @@ func TestParticipantAccess_SubmitNewParticipant_NewRegistrationClosed(t *testing
 	k, ms, ctx := setupMsgServer(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(100)
 
-	params := k.GetParams(sdkCtx)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
 	params.ParticipantAccessParams = &types.ParticipantAccessParams{
 		NewParticipantRegistrationStartHeight: 150, // closed until 150 (opens at 150)
 	}
 	require.NoError(t, k.SetParams(sdkCtx, params))
 
-	_, err := ms.SubmitNewParticipant(sdkCtx, &types.MsgSubmitNewParticipant{
+	_, err = ms.SubmitNewParticipant(sdkCtx, &types.MsgSubmitNewParticipant{
 		Creator: testutil.Executor,
 		Url:     "url",
 	})
@@ -31,13 +32,14 @@ func TestParticipantAccess_SubmitPocBatch_BlockedParticipant(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(100)
 
-	params := k.GetParams(sdkCtx)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
 	params.ParticipantAccessParams = &types.ParticipantAccessParams{
 		BlockedParticipantAddresses: []string{testutil.Executor},
 	}
 	require.NoError(t, k.SetParams(sdkCtx, params))
 
-	_, err := ms.SubmitPocBatch(sdkCtx, &types.MsgSubmitPocBatch{
+	_, err = ms.SubmitPocBatch(sdkCtx, &types.MsgSubmitPocBatch{
 		Creator:                  testutil.Executor,
 		PocStageStartBlockHeight: 1,
 		BatchId:                  "batch",
@@ -53,13 +55,14 @@ func TestParticipantAccess_SubmitPocValidation_BlockedValidatorOrParticipant(t *
 	k, ms, ctx := setupMsgServer(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(100)
 
-	params := k.GetParams(sdkCtx)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
 	params.ParticipantAccessParams = &types.ParticipantAccessParams{
 		BlockedParticipantAddresses: []string{testutil.Creator}, // validator in this msg
 	}
 	require.NoError(t, k.SetParams(sdkCtx, params))
 
-	_, err := ms.SubmitPocValidation(sdkCtx, &types.MsgSubmitPocValidation{
+	_, err = ms.SubmitPocValidation(sdkCtx, &types.MsgSubmitPocValidation{
 		Creator:                  testutil.Creator,
 		ParticipantAddress:       testutil.Executor,
 		PocStageStartBlockHeight: 1,

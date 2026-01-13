@@ -673,9 +673,11 @@ func (m *MockCollateralKeeper) EXPECT() *MockCollateralKeeperMockRecorder {
 }
 
 // AdvanceEpoch mocks base method.
-func (m *MockCollateralKeeper) AdvanceEpoch(ctx context.Context, completedEpoch uint64) {
+func (m *MockCollateralKeeper) AdvanceEpoch(ctx context.Context, completedEpoch uint64) error {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AdvanceEpoch", ctx, completedEpoch)
+	ret := m.ctrl.Call(m, "AdvanceEpoch", ctx, completedEpoch)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
 // AdvanceEpoch indicates an expected call of AdvanceEpoch.

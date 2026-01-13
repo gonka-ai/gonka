@@ -32,19 +32,22 @@ func TestBitcoinRewardIntegration_GovernanceFlagSwitching(t *testing.T) {
 		require.NoError(t, k.SetParams(ctx, params))
 
 		// Verify parameters were set correctly
-		retrievedParams := k.GetParams(ctx)
+		retrievedParams, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		require.True(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards, "Bitcoin rewards should be enabled")
 		require.Equal(t, uint64(50000), retrievedParams.BitcoinRewardParams.InitialEpochReward, "Initial epoch reward should be set")
 	})
 
 	t.Run("Test Bitcoin rewards disabled (legacy system)", func(t *testing.T) {
 		// Disable Bitcoin rewards (use legacy system)
-		params := k.GetParams(ctx)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		params.BitcoinRewardParams.UseBitcoinRewards = false
 		require.NoError(t, k.SetParams(ctx, params))
 
 		// Verify parameters were set correctly
-		retrievedParams := k.GetParams(ctx)
+		retrievedParams, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		require.False(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards, "Bitcoin rewards should be disabled")
 	})
 }
@@ -68,7 +71,8 @@ func TestBitcoinRewardIntegration_ParameterValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Retrieve and verify parameters
-	retrievedParams := k.GetParams(ctx)
+	retrievedParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	require.True(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards)
 	require.Equal(t, uint64(285000000000000), retrievedParams.BitcoinRewardParams.InitialEpochReward)
 	decayRateLegacy, err := retrievedParams.BitcoinRewardParams.DecayRate.ToLegacyDec()
@@ -271,7 +275,8 @@ func TestBitcoinRewardIntegration_DefaultParameters(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, defaultParams))
 
 	// Verify default Bitcoin reward parameters
-	retrievedParams := k.GetParams(ctx)
+	retrievedParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	bitcoinParams := retrievedParams.BitcoinRewardParams
 
 	// Test the default values match our specifications

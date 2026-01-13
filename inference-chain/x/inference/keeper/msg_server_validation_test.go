@@ -220,7 +220,8 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	addMembersToGroupData(k, ctx)
 
 	// Make the maximum allowed invalidations very small and deterministic
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	if params.BandwidthLimitsParams == nil {
 		params.BandwidthLimitsParams = &types.BandwidthLimitsParams{}
 	}
@@ -230,7 +231,7 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	k.SetParams(ctx, params)
 
 	// Pre-populate one active invalidation for the validator so we hit the limit (>= 1)
-	err := k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), "prev-inference"))
+	err = k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), "prev-inference"))
 	require.NoError(t, err)
 
 	// Create and finish an inference

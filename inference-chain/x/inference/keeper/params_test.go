@@ -15,7 +15,9 @@ func TestGetParams(t *testing.T) {
 	params := types.DefaultParams()
 
 	require.NoError(t, k.SetParams(ctx, params))
-	require.EqualValues(t, params, k.GetParams(ctx))
+	outParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, params, outParams)
 }
 
 func TestTokenomicsParamsGovernance(t *testing.T) {
@@ -86,7 +88,8 @@ func TestTokenomicsParamsGovernance(t *testing.T) {
 			require.NoError(t, k.SetParams(ctx, updatedParams))
 
 			// Retrieve and verify the parameters
-			retrievedParams := k.GetParams(wctx)
+			retrievedParams, err := k.GetParams(wctx)
+			require.NoError(t, err)
 			require.Equal(t, tc.expectedWorkVesting, retrievedParams.TokenomicsParams.WorkVestingPeriod)
 			require.Equal(t, tc.expectedRewardVesting, retrievedParams.TokenomicsParams.RewardVestingPeriod)
 			require.Equal(t, tc.expectedTopMinerVesting, retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
@@ -246,7 +249,8 @@ func TestParamsValidateCallsTokenomicsValidation(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, params))
 
 	// Retrieve and verify the parameters
-	retrievedParams := k.GetParams(ctx)
+	retrievedParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.WorkVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.RewardVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
@@ -566,7 +570,8 @@ func TestBitcoinRewardParamsGovernance(t *testing.T) {
 			require.NoError(t, k.SetParams(ctx, updatedParams))
 
 			// Retrieve and verify the parameters
-			retrievedParams := k.GetParams(wctx)
+			retrievedParams, err := k.GetParams(wctx)
+			require.NoError(t, err)
 			require.Equal(t, tc.initialEpochReward, retrievedParams.BitcoinRewardParams.InitialEpochReward)
 			require.Equal(t, tc.decayRate, retrievedParams.BitcoinRewardParams.DecayRate.ToFloat())
 			require.Equal(t, tc.genesisEpoch, retrievedParams.BitcoinRewardParams.GenesisEpoch)

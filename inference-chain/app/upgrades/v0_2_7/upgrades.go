@@ -3295,7 +3295,7 @@ func CreateUpgradeHandler(
 }
 
 func setV0_2_7Params(ctx context.Context, k keeper.Keeper) error {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -16,9 +17,12 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	// Retrieve EpochBLSData for the requested epoch
-	epochBLSData, found := ms.GetEpochBLSData(sdkCtx, msg.EpochId)
-	if !found {
-		return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", msg.EpochId))
+	epochBLSData, err := ms.GetEpochBLSData(sdkCtx, msg.EpochId)
+	if err != nil {
+		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
+			return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", msg.EpochId))
+		}
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to get epoch %d BLS data: %v", msg.EpochId, err))
 	}
 
 	// Verify current DKG phase is VERIFYING
@@ -61,7 +65,9 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	}
 
 	// Store updated EpochBLSData
-	ms.SetEpochBLSData(sdkCtx, epochBLSData)
+	if err := ms.SetEpochBLSData(sdkCtx, epochBLSData); err != nil {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store updated epoch %d BLS data: %v", msg.EpochId, err))
+	}
 
 	// Emit EventVerificationVectorSubmitted
 	event := types.EventVerificationVectorSubmitted{

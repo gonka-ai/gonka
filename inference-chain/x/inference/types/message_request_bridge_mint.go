@@ -68,7 +68,8 @@ func (msg *MsgRequestBridgeMint) ValidateBasic() error {
 func (msg *MsgRequestBridgeMint) GetSigners() []sdk.AccAddress {
 	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
-		panic(err)
+		//nolint:forbidigo // GetSigners can't return error
+		return nil
 	}
 	return []sdk.AccAddress{creatorAddr}
 }

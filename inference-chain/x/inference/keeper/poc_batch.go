@@ -9,13 +9,17 @@ import (
 )
 
 // SetPocBatch stores a PoCBatch under triple key (epoch, participant addr, batch_id)
-func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
-	addr := sdk.MustAccAddressFromBech32(batch.ParticipantAddress)
+func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) error {
+	addr, err := sdk.AccAddressFromBech32(batch.ParticipantAddress)
+	if err != nil {
+		return err
+	}
 	pk := collections.Join3(batch.PocStageStartBlockHeight, addr, batch.BatchId)
 	k.LogInfo("PoC: Storing batch", types.PoC, "epoch", batch.PocStageStartBlockHeight, "participant", batch.ParticipantAddress, "batch_id", batch.BatchId)
 	if err := k.PoCBatches.Set(ctx, pk, batch); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // GetPoCBatchesByStage collects all PoCBatch grouped by participant for a specific epoch
@@ -50,14 +54,21 @@ func (k Keeper) GetPoCBatchesCountByStage(ctx context.Context, pocStageStartBloc
 	return count, nil
 }
 
-func (k Keeper) SetPoCValidation(ctx context.Context, validation types.PoCValidation) {
-	pAddr := sdk.MustAccAddressFromBech32(validation.ParticipantAddress)
-	vAddr := sdk.MustAccAddressFromBech32(validation.ValidatorParticipantAddress)
+func (k Keeper) SetPoCValidation(ctx context.Context, validation types.PoCValidation) error {
+	pAddr, err := sdk.AccAddressFromBech32(validation.ParticipantAddress)
+	if err != nil {
+		return err
+	}
+	vAddr, err := sdk.AccAddressFromBech32(validation.ValidatorParticipantAddress)
+	if err != nil {
+		return err
+	}
 	pk := collections.Join3(validation.PocStageStartBlockHeight, pAddr, vAddr)
 	k.LogInfo("PoC: Storing validation", types.PoC, "epoch", validation.PocStageStartBlockHeight, "participant", validation.ParticipantAddress, "validator", validation.ValidatorParticipantAddress)
 	if err := k.PoCValidations.Set(ctx, pk, validation); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func (k Keeper) GetPoCValidationByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCValidation, error) {

@@ -88,8 +88,8 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	require.NotNil(t, resp)
 
 	// Check that dealer part was stored
-	updatedEpochBLSData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	updatedEpochBLSData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 
 	// Dealer should be at index 0
 	dealerPart := updatedEpochBLSData.DealerParts[0]
@@ -114,7 +114,7 @@ func TestSubmitDealerPart_EpochNotFound(t *testing.T) {
 
 	_, err := ms.SubmitDealerPart(goCtx, msg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "epoch 999 not found")
+	assert.Contains(t, err.Error(), "epoch BLS data not found")
 }
 
 func TestSubmitDealerPart_WrongPhase(t *testing.T) {

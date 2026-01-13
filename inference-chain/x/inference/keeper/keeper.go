@@ -99,6 +99,7 @@ func NewKeeper(
 	upgradeKeeper types.UpgradeKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
+		//nolint:forbidigo // init code
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
@@ -380,6 +381,7 @@ func NewKeeper(
 	// Build the collections schema
 	schema, err := sb.Build()
 	if err != nil {
+		//nolint:forbidigo // init code
 		panic(err)
 	}
 	k.Schema = schema

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -43,10 +44,10 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	previousEpochId := msg.NewEpochId - 1
 
 	// Get the new epoch's BLS data to get the group public key being validated
-	newEpochBLSData, found := ms.GetEpochBLSData(ctx, msg.NewEpochId)
-	if !found {
-		ms.Keeper.LogError("New epoch not found", "new_epoch_id", msg.NewEpochId)
-		return nil, fmt.Errorf("new epoch %d not found", msg.NewEpochId)
+	newEpochBLSData, err := ms.GetEpochBLSData(ctx, msg.NewEpochId)
+	if err != nil {
+		ms.Keeper.LogError("Failed to get new epoch BLS data", "new_epoch_id", msg.NewEpochId, "error", err.Error())
+		return nil, fmt.Errorf("failed to get new epoch %d BLS data: %w", msg.NewEpochId, err)
 	}
 
 	// Ensure the new epoch has completed DKG
@@ -62,17 +63,21 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Get the previous epoch's BLS data for slot validation and signature verification
-	previousEpochBLSData, found := ms.GetEpochBLSData(ctx, previousEpochId)
-	if !found {
-		// Emit a searchable event and continue using current epoch data as fallback
-		ms.Keeper.LogWarn("Previous epoch not found - using current epoch for validation", "previous_epoch_id", previousEpochId, "new_epoch_id", msg.NewEpochId)
-		ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
-			NewEpochId: msg.NewEpochId,
-			Reason:     fmt.Sprintf("previous_epoch_missing_fallback:%d", previousEpochId),
-		})
+	previousEpochBLSData, err := ms.GetEpochBLSData(ctx, previousEpochId)
+	if err != nil {
+		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
+			// Emit a searchable event and continue using current epoch data as fallback
+			ms.Keeper.LogWarn("Previous epoch not found - using current epoch for validation", "previous_epoch_id", previousEpochId, "new_epoch_id", msg.NewEpochId)
+			ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
+				NewEpochId: msg.NewEpochId,
+				Reason:     fmt.Sprintf("previous_epoch_missing_fallback:%d", previousEpochId),
+			})
 
-		previousEpochBLSData = newEpochBLSData
-		previousEpochId = msg.NewEpochId
+			previousEpochBLSData = newEpochBLSData
+		} else {
+			ms.Keeper.LogError("Failed to get previous epoch BLS data", "previous_epoch_id", previousEpochId, "error", err.Error())
+			return nil, fmt.Errorf("failed to get previous epoch %d BLS data: %w", previousEpochId, err)
+		}
 	}
 
 	// Find the participant in the previous epoch
@@ -131,7 +136,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	} else {
 		// Existing validation state
 		validationState = &types.GroupKeyValidationState{}
-		ms.cdc.MustUnmarshal(bz, validationState)
+		err = ms.cdc.Unmarshal(bz, validationState)
+		if err != nil {
+			ms.Keeper.LogError("Failed to unmarshal validation state", "error", err.Error())
+			return nil, fmt.Errorf("failed to unmarshal validation state: %w", err)
+		}
 	}
 
 	// Reject duplicate slots (already covered)
@@ -242,7 +251,10 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		// Store the final signature in the new epoch's EpochBLSData and transition to SIGNED phase
 		newEpochBLSData.ValidationSignature = validationState.FinalSignature
 		newEpochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_SIGNED
-		ms.SetEpochBLSData(ctx, newEpochBLSData)
+		if err := ms.SetEpochBLSData(ctx, newEpochBLSData); err != nil {
+			ms.Keeper.LogError("Failed to save updated epoch BLS data", "new_epoch_id", msg.NewEpochId, "error", err.Error())
+			return nil, fmt.Errorf("failed to save updated epoch %d BLS data: %w", msg.NewEpochId, err)
+		}
 		ms.Keeper.LogInfo("Group key validation completed", "new_epoch_id", msg.NewEpochId, "slots_covered", validationState.SlotsCovered)
 
 		// Emit success event
@@ -256,7 +268,10 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Store updated validation state
-	bz = ms.cdc.MustMarshal(validationState)
+	bz, err = ms.cdc.Marshal(validationState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal validation state: %w", err)
+	}
 	err = store.Set([]byte(validationStateKey), bz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)

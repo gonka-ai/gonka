@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Testermint** is our custom end-to-end integration testing framework for the blockchain and decentralized API (DAPI) components of the project. It simulates realistic environments with multiple nodes, enabling deep testing of interactions that can’t be captured with isolated unit or component tests.
+**Testermint** is our custom end-to-end and integration testing framework for the blockchain and decentralized API (DAPI) components of the project. It simulates realistic environments with multiple nodes, enabling deep testing of interactions that can’t be captured with isolated unit or component tests.
 
 Testermint handles the orchestration of:
 
@@ -32,15 +32,18 @@ To address this, we built **Testermint**, a Kotlin-based test harness that:
 ### Running the Full Test Suite
 
 Before running tests, you’ll need to build the required Docker containers for both the Node (blockchain) and the API. This is done using the `make all` command.
+> For MacOS 26.1 Docker Desktop needs to have Docker VMM enabled: Docker Desktop -> Settings -> General -> Virtual Machine Options -> Docker VMM -> Apply & restart
 
 To execute the full Testermint integration test suite:
 
 ```bash
-./test-chain.sh
+cd local-test-net
+./stop-rebuild.sh
+cd ..
 make run-tests
 ```
 
-- `./test-chain.sh`: Builds the Docker images for both the chain Node and the DAPI for testing and launches local tests.
+- `./stop-rebuild.sh`: Stops any Testermint running container and re-builds the Docker images for both the chain Node and the DAPI for testing and launches local tests.
 - `make run-tests`: Compiles the Kotlin test suite, brings up the environment, and runs the integration tests.
 
 Test output is saved to the `testermint/logs` directory.
@@ -56,8 +59,8 @@ To write or debug tests interactively:
 3. From the root of the project, run:
 
    ```bash
-   ./local-test-net/stop.sh
-   make build-docker
+   cd local-test-net
+   ./stop-rebuild.sh
    ```
 
    This ensures the necessary Docker containers are built and ready.
@@ -189,7 +192,7 @@ Testermint logs are comprehensive and include:
 - API container output
 - Test execution logs
 
-> 🔥 Inference mock output is *not currently logged*.
+> Inference mock output is *not currently logged*.
 
 ### Log Location
 
