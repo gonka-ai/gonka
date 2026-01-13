@@ -208,6 +208,15 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", request.CurrentEpochId, err)
 	}
 
+	// Reject duplicate slot indices
+	seen := make(map[uint32]struct{})
+	for _, slot := range slotIndices {
+		if _, dup := seen[slot]; dup {
+			return fmt.Errorf("duplicate slot index: %d", slot)
+		}
+		seen[slot] = struct{}{}
+	}
+
 	// Validate submitter owns the claimed slot indices
 	if err := k.validateSlotOwnership(ctx, submitter, slotIndices, &epochBLSData); err != nil {
 		return fmt.Errorf("slot ownership validation failed: %w", err)
