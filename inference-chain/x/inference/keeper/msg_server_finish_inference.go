@@ -15,6 +15,13 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
+	if msg.PromptTokenCount > types.MaxAllowedTokens {
+		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
+	}
+	if msg.CompletionTokenCount > types.MaxAllowedTokens {
+		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "completion_token_count exceeds limit (%d > %d)", msg.CompletionTokenCount, types.MaxAllowedTokens), msg), nil
+	}
+
 	// Developer access gating: until cutoff height only allowlisted developers may run inference flows.
 	// We gate by the original requester (developer), not the executor/TA.
 	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
@@ -82,9 +89,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
 	}
 
-	inference, payments := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
+	inference, payments, err := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
+	if err != nil {
+		return failedFinish(ctx, err, msg), nil
+	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments)
+	finalInference, err := k.processInferencePayments(ctx, inference, payments, true)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}

@@ -3,6 +3,7 @@ package calculations
 import (
 	"testing"
 
+	errorsmod "cosmossdk.io/errors"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -147,7 +148,8 @@ func TestCalculateCost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CalculateCost(tt.inference)
+			result, err := CalculateCost(tt.inference)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -209,10 +211,32 @@ func TestCalculateEscrow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CalculateEscrow(tt.inference, tt.promptTokens)
+			result, err := CalculateEscrow(tt.inference, tt.promptTokens)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestCalculateCost_Overflow(t *testing.T) {
+	inference := &types.Inference{
+		PromptTokenCount:     ^uint64(0),
+		CompletionTokenCount: 0,
+		PerTokenPrice:        2,
+	}
+	_, err := CalculateCost(inference)
+	assert.Error(t, err)
+	assert.True(t, errorsmod.IsOf(err, types.ErrArithmeticOverflow))
+}
+
+func TestCalculateEscrow_TokenCountOverflow(t *testing.T) {
+	inference := &types.Inference{
+		MaxTokens:     ^uint64(0),
+		PerTokenPrice: 1,
+	}
+	_, err := CalculateEscrow(inference, 1)
+	assert.Error(t, err)
+	assert.True(t, errorsmod.IsOf(err, types.ErrTokenCountOutOfRange))
 }
 
 func TestSetEscrowForFinished(t *testing.T) {
@@ -255,7 +279,8 @@ func TestSetEscrowForFinished(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setEscrowForFinished(tt.inference, tt.escrowAmount, tt.payments)
+			err := setEscrowForFinished(tt.inference, tt.escrowAmount, tt.payments)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedActual, tt.inference.ActualCost)
 			assert.Equal(t, tt.expectedEscrow, tt.payments.EscrowAmount)
 			assert.Equal(t, tt.expectedPayment, tt.payments.ExecutorPayment)
@@ -443,12 +468,13 @@ func TestProcessFinishInference(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			inference, payments := ProcessFinishInference(
+			inference, payments, err := ProcessFinishInference(
 				tt.currentInference,
 				tt.finishMessage,
 				tt.blockContext,
 				mockLogger,
 			)
+			assert.NoError(t, err)
 
 			assert.NotNil(t, inference)
 			assert.NotNil(t, payments)

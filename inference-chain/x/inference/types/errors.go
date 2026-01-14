@@ -60,4 +60,7 @@ var (
 	ErrDeveloperNotAllowlisted               = sdkerrors.Register(ModuleName, 1154, "developer is not allowlisted to request inference at this height")
 	ErrParticipantBlocked                    = sdkerrors.Register(ModuleName, 1155, "participant is blocked from participating in PoC")
 	ErrNewParticipantRegistrationClosed      = sdkerrors.Register(ModuleName, 1156, "new participant registration is closed")
+	ErrArithmeticOverflow                    = sdkerrors.Register(ModuleName, 1157, "arithmetic overflow")
+	ErrInvalidEscrowAmount                   = sdkerrors.Register(ModuleName, 1158, "invalid escrow amount")
+	ErrTokenCountOutOfRange                  = sdkerrors.Register(ModuleName, 1159, "token count out of range")
 )
