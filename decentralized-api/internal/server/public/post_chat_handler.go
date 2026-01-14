@@ -555,7 +555,8 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 	}
 
 	currentBlockHeight := status.SyncInfo.LatestBlockHeight
-	lastHeightTime := status.SyncInfo.LatestBlockTime.UnixNano()
+	// We need to use local time, not the blockchain time, as we can be not in sync with the chain
+	currentTime := time.Now().UnixNano()
 
 	// Get validation parameters from config
 	validationParams := s.configManager.GetValidationParams()
@@ -570,18 +571,16 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 		timestampAdvanceNs = 10 * int64(time.Second)
 	}
 
-	// Extra seconds for case when local chain state is behind the remote chain state
-	// Similar to FinishInference which uses 60*60 (1 hour) for extra time
-	// But we keep 20 minutes for serving inference
-	extraSeconds := int64(40 * 60) // 40 minutes
-	extraTimeNs := extraSeconds * int64(time.Second)
-	timestampExpirationNs += extraTimeNs
-	timestampAdvanceNs += extraTimeNs
+	// As request could be already served by transfer agent and MsgStartInference was initiated
+	// we need extra seconds (here we give 10 seconds) for possible latency and other network gaps.
+	// We need to process requests that was started by TA, not rejecting them
+	timestampExpirationNs += 10
+	timestampAdvanceNs += 10
 
-	requestOffset := lastHeightTime - request.Timestamp
+	requestOffset := currentTime - request.Timestamp
 	logging.Info("Request offset for executor", types.Inferences,
 		"offset", time.Duration(requestOffset).String(),
-		"lastHeightTime", lastHeightTime,
+		"lastHeightTime", currentTime,
 		"requestTimestamp", request.Timestamp)
 
 	if requestOffset > timestampExpirationNs {
