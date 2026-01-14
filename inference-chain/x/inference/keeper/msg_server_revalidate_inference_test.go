@@ -36,9 +36,9 @@ func setupInferenceInVoting(t *testing.T) (*MockInferenceHelper, *types.Inferenc
 	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
 	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.80, // below threshold to trigger voting
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.0), // below threshold to trigger voting
 	})
 	require.NoError(t, err)
 

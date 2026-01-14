@@ -154,7 +154,10 @@ func TestValidationEarlyRejectDecorator_DoesNotRejectInferenceFromNextEpochInChe
 	})
 
 	decorator := NewValidationEarlyRejectDecorator(&k)
-	tx := testTx{msgs: []sdk.Msg{&inferencetypes.MsgValidation{Creator: validator, InferenceId: inferenceID, Value: 0.5}}}
+	tx := testTx{msgs: []sdk.Msg{&inferencetypes.MsgValidation{Creator: validator, InferenceId: inferenceID, ValueDecimal: &inferencetypes.Decimal{
+		Value:    5,
+		Exponent: -1,
+	}}}}
 
 	ctx = ctx.WithIsCheckTx(true)
 	_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
