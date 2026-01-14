@@ -275,6 +275,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return nil
 	}
 
+	// Clear cache only when synced to avoid thrashing during catch-up
+	cosmosclient.ClearCache()
+
 	// 3. Check for phase transitions and stage events
 	d.handlePhaseTransitions(*epochState)
 

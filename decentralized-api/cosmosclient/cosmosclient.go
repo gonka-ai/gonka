@@ -494,7 +494,7 @@ func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClie
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
-	return types.NewQueryClient(icc.manager.GetClientContext())
+	return types.NewQueryClient(NewCachingConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
