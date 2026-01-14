@@ -16,23 +16,12 @@ func (k Keeper) ParticipantsWithBalances(ctx context.Context, req *types.QueryPa
 	}
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-
-	balanceMap := make(map[string]sdk.Coins)
-	k.BankView.IterateAllBalances(ctx, func(addr sdk.AccAddress, coin sdk.Coin) bool {
-		addrStr := addr.String()
-		balanceMap[addrStr] = balanceMap[addrStr].Add(coin)
-		return false
-	})
-
 	participants, pageRes, err := query.CollectionPaginate(
 		ctx,
 		k.Participants,
 		req.Pagination,
-		func(_ sdk.AccAddress, p types.Participant) (types.ParticipantWithBalance, error) {
-			balances := balanceMap[p.Address]
-			if balances == nil {
-				balances = sdk.Coins{}
-			}
+		func(address sdk.AccAddress, p types.Participant) (types.ParticipantWithBalance, error) {
+			balances := k.BankView.GetAllBalances(ctx, address)
 			return types.ParticipantWithBalance{
 				Participant: p,
 				Balances:    balances,
@@ -49,4 +38,3 @@ func (k Keeper) ParticipantsWithBalances(ctx context.Context, req *types.QueryPa
 		BlockHeight:  sdkCtx.BlockHeight(),
 	}, nil
 }
-

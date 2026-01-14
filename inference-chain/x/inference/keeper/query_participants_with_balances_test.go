@@ -20,15 +20,16 @@ func TestParticipantsWithBalances(t *testing.T) {
 	k.Participants.Set(ctx, addr1, types.Participant{Address: addr1.String(), InferenceUrl: "http://node1"})
 	k.Participants.Set(ctx, addr2, types.Participant{Address: addr2.String(), InferenceUrl: "http://node2"})
 
-	mocks.BankViewKeeper.EXPECT().IterateAllBalances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ interface{}, cb func(sdk.AccAddress, sdk.Coin) bool) {
-			cb(addr1, sdk.NewInt64Coin("ngonka", 1000))
-			cb(addr2, sdk.NewInt64Coin("ngonka", 2000))
-		},
-	)
+	mocks.BankViewKeeper.EXPECT().GetAllBalances(gomock.Any(), addr1).Return(sdk.NewCoins(sdk.NewInt64Coin("ngonka", 1000)))
+	mocks.BankViewKeeper.EXPECT().GetAllBalances(gomock.Any(), addr2).Return(sdk.NewCoins(sdk.NewInt64Coin("ngonka", 2000)))
 
 	resp, err := k.ParticipantsWithBalances(ctx, &types.QueryParticipantsWithBalancesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Participants, 2)
+	require.Len(t, resp.Participants[0].Balances, 1)
+	require.Equal(t, int64(1000), resp.Participants[0].Balances[0].Amount.Int64())
+	require.Equal(t, "ngonka", resp.Participants[0].Balances[0].Denom)
+	require.Len(t, resp.Participants[1].Balances, 1)
+	require.Equal(t, int64(2000), resp.Participants[1].Balances[0].Amount.Int64())
+	require.Equal(t, "ngonka", resp.Participants[1].Balances[0].Denom)
 }
-
