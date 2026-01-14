@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
+	"decentralized-api/internal"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
@@ -222,7 +223,7 @@ func (s *Server) postChat(ctx echo.Context) error {
 
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
 		logging.Info("Executor request", types.Inferences, "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed)
-		return s.handleExecutorRequest(ctx, chatRequest, ctx.Response().Writer)
+		return s.handleExecutorRequest(ctx, chatRequest, ctx.Response().Writer, false)
 	} else {
 		logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
 		return s.handleTransferRequest(ctx, chatRequest)
@@ -348,7 +349,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		request.PromptHash = inferenceRequest.PromptHash
 
 		logging.Info("Execute request on same node, fill request with extra data", types.Inferences, "inferenceId", request.InferenceId, "seed", request.Seed)
-		return s.handleExecutorRequest(ctx, request, ctx.Response().Writer)
+		return s.handleExecutorRequest(ctx, request, ctx.Response().Writer, true)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
@@ -482,11 +483,14 @@ func (s *Server) extractPromptTextFromRequest(requestBytes []byte) (string, erro
 	return promptText, nil
 }
 
-func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w http.ResponseWriter) error {
+func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w http.ResponseWriter, taRequestValidated bool) error {
 	inferenceId := request.InferenceId
-	err := s.validateFullRequest(ctx, request)
-	if err != nil {
-		return err
+	// If TA is the same node, we trust ourselves and shouldn't revalidate the request
+	if !taRequestValidated {
+		err := s.validateFullRequest(ctx, request)
+		if err != nil {
+			return err
+		}
 	}
 
 	seed, err := strconv.Atoi(request.Seed)
@@ -586,7 +590,39 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	return nil
 }
 
-func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
+func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) bool {
+	// Request for EA always comes from a TA (granterAddress), that is required to be active validator in the current epoch
+	// First we check if the granterAddress is not active in the current epoch
+	// This will reduce the number of queries to the chain to filter non-participants.
+	epochGroupDataCache := internal.NewEpochGroupDataCache(s.recorder)
+	isActive, err := epochGroupDataCache.IsActiveParticipant(context.Background(), s.phaseTracker.GetCurrentEpochState().LatestEpoch.EpochIndex, address)
+	if err == nil && !isActive {
+		return false
+	}
+
+	// Even if the validator is active in cached epoch group data that is updated once per epoch,
+	// participant could be marked as Invalid (missed confirmation PoC or inferences),
+	// and their weight is set to 0 in the EpochGroupData.
+	// So we need to check the current epoch group data.
+	// https://github.com/gonka-ai/gonka/pull/514#discussion_r2662704635
+	queryClient := s.recorder.NewInferenceQueryClient()
+	resp, err := queryClient.CurrentEpochGroupData(context.Background(), &types.QueryCurrentEpochGroupDataRequest{})
+	if err != nil {
+		return false
+	}
+	for _, vw := range resp.EpochGroupData.ValidationWeights {
+		if vw.MemberAddress == address {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) getAllowedPubKeysForExecutorRequests(ctx echo.Context, granterAddress string) ([]string, error) {
+	if !s.isAddressActiveParticipantInCurrentEpoch(granterAddress) {
+		return nil, fmt.Errorf("granter is not active in the current epoch")
+	}
+
 	queryClient := s.recorder.NewInferenceQueryClient()
 	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
 		GranterAddress: granterAddress,
@@ -595,19 +631,14 @@ func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
 	}
-	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
+	granteesPubkeys := make([]string, len(grantees.Grantees))
 	for i, grantee := range grantees.Grantees {
 		granteesPubkeys[i] = grantee.PubKey
 	}
 
-	granterAccount, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: granterAddress})
-	if err != nil {
-		logging.Error("Failed to get granter account", types.Inferences, "address", granterAddress, "error", err)
-		return nil, err
-	}
-	granterPubKey := granterAccount.Pubkey
+	// We don't need to check if the granter is active,
+	// as the granter is TA and always should be current epoch participant (validator)
 
-	granteesPubkeys[len(granteesPubkeys)-1] = granterPubKey
 	return granteesPubkeys, nil
 }
 
@@ -619,7 +650,7 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		return err
 	}
 
-	transferPubkeys, err := s.getAllowedPubKeys(ctx, request.TransferAddress)
+	transferPubkeys, err := s.getAllowedPubKeysForExecutorRequests(ctx, request.TransferAddress)
 	if err != nil {
 		logging.Error("Failed to get grantees to sign inference", types.Inferences, "error", err)
 		return err
