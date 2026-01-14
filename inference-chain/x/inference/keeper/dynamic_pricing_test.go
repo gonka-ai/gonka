@@ -9,6 +9,7 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -148,7 +149,7 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 			}
 
 			// Calculate dynamic price
-			oldPrice, newPrice, err := k.CalculateModelDynamicPrice(sdk.UnwrapSDKContext(ctx), "test-model", tt.utilization)
+			oldPrice, newPrice, err := k.CalculateModelDynamicPrice(sdk.UnwrapSDKContext(ctx), "test-model", decimal.NewFromFloat(tt.utilization))
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -311,7 +312,7 @@ func TestStabilityZoneBoundaries(t *testing.T) {
 			require.NoError(t, err)
 
 			// Calculate price
-			oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, "test-model", tt.utilization)
+			oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, "test-model", decimal.NewFromFloat(tt.utilization))
 			assert.NoError(t, err)
 			assert.Equal(t, initialPrice, oldPrice)
 
@@ -367,7 +368,7 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 	// Test Scenario 1: Direct price calculation testing
 	t.Run("Price calculation algorithm works correctly", func(t *testing.T) {
 		// Test low utilization (20%) - should decrease price
-		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, model1, 0.20)
+		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, model1, decimal.NewFromFloat(0.20))
 		require.NoError(t, err)
 		assert.Equal(t, basePrice, oldPrice)
 		assert.Less(t, newPrice, basePrice, "Low utilization should decrease price")
@@ -378,7 +379,7 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 		t.Logf("Low utilization (20%%) decreased price from %d to %d", basePrice, newPrice)
 
 		// Test high utilization (80%) - should increase price
-		oldPrice, newPrice, err = k.CalculateModelDynamicPrice(goCtx, model2, 0.80)
+		oldPrice, newPrice, err = k.CalculateModelDynamicPrice(goCtx, model2, decimal.NewFromFloat(0.80))
 		require.NoError(t, err)
 		assert.Equal(t, basePrice, oldPrice)
 		assert.Greater(t, newPrice, basePrice, "High utilization should increase price")
@@ -389,7 +390,7 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 		t.Logf("High utilization (80%%) increased price from %d to %d", basePrice, newPrice)
 
 		// Test stability zone (50%) - should maintain price
-		oldPrice, newPrice, err = k.CalculateModelDynamicPrice(goCtx, model3, 0.50)
+		oldPrice, newPrice, err = k.CalculateModelDynamicPrice(goCtx, model3, decimal.NewFromFloat(0.50))
 		require.NoError(t, err)
 		assert.Equal(t, basePrice, oldPrice)
 		assert.Equal(t, basePrice, newPrice, "Stability zone should maintain price")
@@ -404,7 +405,7 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// Test extreme low utilization (1%) that would push below minimum
-		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, model1, 0.01)
+		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, model1, decimal.NewFromFloat(0.01))
 		require.NoError(t, err)
 		assert.Equal(t, lowPrice, oldPrice)
 
@@ -605,9 +606,9 @@ func TestDynamicPricingWithRealStats(t *testing.T) {
 			modelId, modelStats.TokensUsed, modelStats.InferenceCount)
 
 		// STEP 3: Calculate utilization from real stats
-		actualUtilization := float64(modelStats.TokensUsed) / float64(modelCapacity*windowDuration)
-		t.Logf("Calculated utilization: %.3f (%d tokens / (%d capacity × %d seconds))",
-			actualUtilization, modelStats.TokensUsed, modelCapacity, windowDuration)
+		actualUtilization := decimal.NewFromInt(modelStats.TokensUsed).Div(decimal.NewFromInt(modelCapacity * windowDuration))
+		t.Logf("Calculated utilization: %s (%d tokens / (%d capacity × %d seconds))",
+			actualUtilization.String(), modelStats.TokensUsed, modelCapacity, windowDuration)
 
 		// STEP 4: Test price adjustment with real utilization
 		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(goCtx, modelId, actualUtilization)
@@ -617,12 +618,14 @@ func TestDynamicPricingWithRealStats(t *testing.T) {
 		assert.Equal(t, basePrice, oldPrice)
 
 		// Since we designed for ~22% utilization (below 40% stability zone), price should decrease
-		if actualUtilization < 0.40 {
+		if actualUtilization.LessThan(decimal.NewFromFloat(0.40)) {
 			assert.Less(t, newPrice, basePrice, "Low utilization should decrease price")
+			utilizationPercent, _ := actualUtilization.Mul(decimal.NewFromInt(100)).Float64()
 			t.Logf("✓ Complete pipeline: %d inferences → %d tokens → %.1f%% utilization → price %d→%d",
-				len(inferences), modelStats.TokensUsed, actualUtilization*100, oldPrice, newPrice)
+				len(inferences), modelStats.TokensUsed, utilizationPercent, oldPrice, newPrice)
 		} else {
-			t.Logf("Note: Actual utilization %.1f%% was not in expected range, but pipeline worked", actualUtilization*100)
+			utilizationPercent, _ := actualUtilization.Mul(decimal.NewFromInt(100)).Float64()
+			t.Logf("Note: Actual utilization %.1f%% was not in expected range, but pipeline worked", utilizationPercent)
 		}
 	})
 

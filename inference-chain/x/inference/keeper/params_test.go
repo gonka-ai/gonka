@@ -633,7 +633,7 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 			name:                       "valid parameters with zero bonus factors",
 			useBitcoinRewards:          true,
 			initialEpochReward:         100000,
-			decayRate:                  -0.0001,
+			decayRate:                  -0.000475,
 			genesisEpoch:               100,
 			utilizationBonusFactor:     0.0,
 			fullCoverageBonusFactor:    1.0,
@@ -665,6 +665,18 @@ func TestBitcoinRewardParamsValidate(t *testing.T) {
 		},
 		{
 			name:                       "invalid decay rate (too extreme)",
+			useBitcoinRewards:          true,
+			initialEpochReward:         285000000000000,
+			decayRate:                  -0.02, // Too extreme (less than -0.01)
+			genesisEpoch:               0,
+			utilizationBonusFactor:     0.5,
+			fullCoverageBonusFactor:    1.2,
+			partialCoverageBonusFactor: 0.1,
+			expectedError:              true,
+			expectedErrMsg:             "decay rate too extreme",
+		},
+		{
+			name:                       "decar rate has no exponent in table",
 			useBitcoinRewards:          true,
 			initialEpochReward:         285000000000000,
 			decayRate:                  -0.02, // Too extreme (less than -0.01)
