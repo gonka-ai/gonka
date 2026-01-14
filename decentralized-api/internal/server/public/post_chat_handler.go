@@ -57,6 +57,14 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
+func NewNoRedirectClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // emptyButParseableResponsePayload returns a deterministic "empty" response payload that:
 // - is valid JSON parseable by older validators
 // - yields no logits (so validator re-execution cannot meaningfully compare)
@@ -368,7 +376,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewNoRedirectClient().Do(req)
 	if err != nil {
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
