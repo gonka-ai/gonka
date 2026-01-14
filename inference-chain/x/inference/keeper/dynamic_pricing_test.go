@@ -483,12 +483,14 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 		}
 
 		// Test cost calculation
-		actualCost := calculations.CalculateCost(inference)
+		actualCost, err := calculations.CalculateCost(inference)
+		require.NoError(t, err)
 		expectedCost := int64((10 + 20) * 1500) // 30 tokens * 1500 price
 		assert.Equal(t, expectedCost, actualCost, "Cost should use recorded per-token price")
 
 		// Test escrow calculation
-		escrowAmount := calculations.CalculateEscrow(inference, 25) // 25 prompt tokens
+		escrowAmount, err := calculations.CalculateEscrow(inference, 25) // 25 prompt tokens
+		require.NoError(t, err)
 		expectedEscrow := int64((100 + 25) * 1500)                  // (100 max + 25 prompt) * 1500 price
 		assert.Equal(t, expectedEscrow, escrowAmount, "Escrow should use recorded per-token price")
 
