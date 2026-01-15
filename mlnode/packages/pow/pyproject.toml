@@ -20,6 +20,7 @@ fire = ">=0.7.0"
 tqdm = ">=4.66.0"
 fastapi = ">=0.115.8"
 uvicorn = ">=0.34.0"
+ecdsa = "^0.19.1"
 accelerate = ">=0.26.0"
 mlnode-common = { path = "../common", develop = true }
 
@@ -28,6 +29,7 @@ pytest = "^8.3.3"
 pytest-timeout = "^2.3.1"
 ruff = "^0.6.9"
 wait-for-it = "^2.0.0"
+requests = "^2.32.5"
 
 [build-system]
 requires = ["poetry-core"]

@@ -1,19 +1,11 @@
-from fastapi import APIRouter, Body, Request, HTTPException
+from fastapi import APIRouter, Body, Request, HTTPException, Security
 
 from pow.service.manager import PowInitRequestUrl, PowManager
-from pow.service.auth import verify_signature, SIGNER_PUBKEY
+from pow.service.auth import verify_signature
 from pow.compute.compute import ProofBatch
 from common.logger import create_logger
 
 logger = create_logger(__name__)
-
-async def check_signature(request: Request):
-    if not SIGNER_PUBKEY:
-        return
-    body = await request.body()
-    signature = request.headers.get("X-Signature", "")
-    if not verify_signature(body, signature):
-        raise HTTPException(status_code=403, detail="Invalid signature")
 
 API_PREFIX = "/api/v1"
 
@@ -27,9 +19,9 @@ router = APIRouter(
 )
 async def init(
     request: Request,
-    init_request: PowInitRequestUrl
+    init_request: PowInitRequestUrl,
+    _auth=Security(verify_signature),
 ):
-    await check_signature(request)
     manager: PowManager = request.app.state.pow_manager
     await manager.switch_to_pow_async(init_request)
     return {"status": "OK", "pow_status": manager.get_pow_status()}
@@ -41,9 +33,9 @@ async def init(
 )
 async def init_generate(
     request: Request,
-    init_request: PowInitRequestUrl
+    init_request: PowInitRequestUrl,
+    _auth=Security(verify_signature),
 ):
-    await check_signature(request)
     if init_request.node_id == -1 or init_request.node_count == -1:
         raise HTTPException(status_code=400, detail="Node ID and node count must be set")
     manager: PowManager = request.app.state.pow_manager
@@ -61,9 +53,9 @@ async def init_generate(
 )
 async def init_validate(
     request: Request,
-    init_request: PowInitRequestUrl
+    init_request: PowInitRequestUrl,
+    _auth=Security(verify_signature),
 ):
-    await check_signature(request)
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         await manager.switch_to_pow_async(init_request)
@@ -77,7 +69,10 @@ async def init_validate(
     "/pow/phase/generate",
     status_code=200,
 )
-async def start_generate(request: Request):
+async def start_generate(
+    request: Request,
+    _auth=Security(verify_signature),
+):
     manager: PowManager = request.app.state.pow_manager
     if manager.init_request.node_id == -1 or manager.init_request.node_count == -1:
         raise HTTPException(
@@ -100,7 +95,10 @@ async def start_generate(request: Request):
     "/pow/phase/validate",
     status_code=200,
 )
-async def start_validate(request: Request):
+async def start_validate(
+    request: Request,
+    _auth=Security(verify_signature),
+):
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         raise HTTPException(
@@ -120,9 +118,9 @@ async def start_validate(request: Request):
 )
 async def validate(
     request: Request,
-    proof_batch: ProofBatch = Body(...)
+    proof_batch: ProofBatch = Body(...),
+    _auth=Security(verify_signature),
 ):
-    await check_signature(request)
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         raise HTTPException(status_code=400, detail="PoW is not running")
@@ -134,7 +132,10 @@ async def validate(
     "/pow/status",
     status_code=200,
 )
-async def status(request: Request):
+async def status(
+    request: Request,
+    _auth=Security(verify_signature),
+):
     manager: PowManager = request.app.state.pow_manager
     return manager.get_pow_status()
 
@@ -143,7 +144,10 @@ async def status(request: Request):
     "/pow/stop",
     status_code=200,
 )
-async def stop(request: Request):
+async def stop(
+    request: Request,
+    _auth=Security(verify_signature),
+):
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         return {

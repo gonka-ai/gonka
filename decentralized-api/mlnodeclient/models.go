@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-
-	"decentralized-api/utils"
 )
 
 const (
@@ -26,26 +24,21 @@ func (api *Client) CheckModelStatus(ctx context.Context, model Model) (*ModelSta
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := api.sendSignedPostWithResp(ctx, requestURL, model)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(modelStatusPath, resp.StatusCode)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var statusResp ModelStatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
 		return nil, err
 	}
-
 	return &statusResp, nil
 }
 
@@ -59,34 +52,27 @@ func (api *Client) DownloadModel(ctx context.Context, model Model) (*DownloadSta
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := api.sendSignedPostWithResp(ctx, requestURL, model)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(modelDownloadPath, resp.StatusCode)
 	}
-
 	if resp.StatusCode == http.StatusConflict {
 		return nil, fmt.Errorf("model is already downloading")
 	}
-
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("maximum concurrent downloads reached")
 	}
-
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var downloadResp DownloadStartResponse
 	if err := json.NewDecoder(resp.Body).Decode(&downloadResp); err != nil {
 		return nil, err
 	}
-
 	return &downloadResp, nil
 }
 
@@ -100,26 +86,21 @@ func (api *Client) DeleteModel(ctx context.Context, model Model) (*DeleteRespons
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendDeleteJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := api.sendSignedDelete(ctx, requestURL, model)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(modelDeletePath, resp.StatusCode)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var deleteResp DeleteResponse
 	if err := json.NewDecoder(resp.Body).Decode(&deleteResp); err != nil {
 		return nil, err
 	}
-
 	return &deleteResp, nil
 }
 
@@ -131,26 +112,21 @@ func (api *Client) ListModels(ctx context.Context) (*ModelListResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := api.sendSignedGet(ctx, requestURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(modelListPath, resp.StatusCode)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var listResp ModelListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 		return nil, err
 	}
-
 	return &listResp, nil
 }
 
@@ -162,25 +138,20 @@ func (api *Client) GetDiskSpace(ctx context.Context) (*DiskSpaceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := api.sendSignedGet(ctx, requestURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(modelSpacePath, resp.StatusCode)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var spaceInfo DiskSpaceInfo
 	if err := json.NewDecoder(resp.Body).Decode(&spaceInfo); err != nil {
 		return nil, err
 	}
-
 	return &spaceInfo, nil
 }

@@ -2,12 +2,14 @@ from fastapi import (
     APIRouter,
     Request,
     HTTPException,
+    Security,
 )
 
 from api.inference.manager import (
     InferenceManager,
     InferenceInitRequest,
 )
+from pow.service.auth import verify_signature
 
 from common.logger import create_logger
 
@@ -19,7 +21,8 @@ router = APIRouter()
 @router.post("/inference/up")
 async def inference_setup(
     request: Request,
-    init_request: InferenceInitRequest
+    init_request: InferenceInitRequest,
+    _auth=Security(verify_signature),
 ):
     """Start inference and wait for it to be ready. Returns error if already running or starting."""
     manager: InferenceManager = request.app.state.inference_manager
@@ -50,7 +53,8 @@ async def inference_setup(
 @router.post("/inference/up/async")
 async def inference_setup_async(
     request: Request,
-    init_request: InferenceInitRequest
+    init_request: InferenceInitRequest,
+    _auth=Security(verify_signature),
 ):
     """Start inference asynchronously in the background. Returns error if already running or starting."""
     manager: InferenceManager = request.app.state.inference_manager
@@ -82,7 +86,8 @@ async def inference_setup_async(
 
 @router.get("/inference/up/status")
 async def inference_startup_status(
-    request: Request
+    request: Request,
+    _auth=Security(verify_signature),
 ):
     """Check the status of async inference startup."""
     manager: InferenceManager = request.app.state.inference_manager
@@ -93,7 +98,8 @@ async def inference_startup_status(
 
 @router.post("/inference/down")
 async def inference_down(
-    request: Request
+    request: Request,
+    _auth=Security(verify_signature),
 ):
     manager: InferenceManager = request.app.state.inference_manager
     # Use async stop in async context to avoid blocking event loop

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -12,6 +11,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+
+	"decentralized-api/logging"
 
 	"github.com/productscience/inference/testenv"
 	"github.com/productscience/inference/x/inference/types"
@@ -254,31 +255,100 @@ func deterministicSampleIndices(
 	return indices
 }
 
-func (api *Client) sendSignedPost(ctx context.Context, requestUrl string, payload any) error {
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestUrl, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if SignFn != nil {
-		hash := sha256.Sum256(jsonData)
-		sig, err := SignFn(hash[:])
-		if err != nil {
-			return fmt.Errorf("failed to sign request: %w", err)
-		}
-		req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(sig))
-	} else {
+func signRequest(req *http.Request, body []byte) error {
+	if SignFn == nil {
 		logging.Warn("SignFn not configured, sending request without signature", types.PoC)
+		return nil
+	}
+	sig, err := SignFn(body)
+	if err != nil {
+		return fmt.Errorf("failed to sign request: %w", err)
+	}
+	req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(sig))
+	return nil
+}
+
+func marshalBody(payload any) ([]byte, error) {
+	if payload == nil {
+		return []byte{}, nil
+	}
+	return json.Marshal(payload)
+}
+
+func (api *Client) sendSignedPost(ctx context.Context, requestUrl string, payload any) error {
+	body, err := marshalBody(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestUrl, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := signRequest(req, body); err != nil {
+		return err
 	}
 	resp, err := api.client.Do(req)
-	if resp != nil {
-		resp.Body.Close()
+	if err != nil {
+		return err
 	}
-	return err
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("request forbidden (403): signature rejected")
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("request failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (api *Client) sendSignedGet(ctx context.Context, requestUrl string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := signRequest(req, []byte{}); err != nil {
+		return nil, err
+	}
+	return api.client.Do(req)
+}
+
+func (api *Client) sendSignedPostWithResp(ctx context.Context, requestUrl string, payload any) (*http.Response, error) {
+	body, err := marshalBody(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestUrl, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := signRequest(req, body); err != nil {
+		return nil, err
+	}
+	return api.client.Do(req)
+}
+
+func (api *Client) sendSignedDelete(ctx context.Context, requestUrl string, payload any) (*http.Response, error) {
+	body, err := marshalBody(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, requestUrl, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := signRequest(req, body); err != nil {
+		return nil, err
+	}
+	return api.client.Do(req)
 }
 
 func (api *Client) InitGenerate(ctx context.Context, dto InitDto) error {

@@ -1,6 +1,6 @@
 """REST API routes for model management."""
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Security, status
 from typing import Dict
 import os
 
@@ -14,6 +14,7 @@ from api.models.types import (
     ModelStatus,
 )
 from api.models.manager import ModelManager
+from pow.service.auth import verify_signature
 from common.logger import create_logger
 
 logger = create_logger(__name__)
@@ -83,7 +84,8 @@ def _is_offline_mode_enabled() -> bool:
 )
 async def check_model_status(
     model: Model,
-    request: Request
+    request: Request,
+    _auth=Security(verify_signature),
 ) -> ModelStatusResponse:
     """Check the status of a model in cache."""
     manager = get_model_manager(request)
@@ -155,7 +157,8 @@ async def check_model_status(
 )
 async def download_model(
     model: Model,
-    request: Request
+    request: Request,
+    _auth=Security(verify_signature),
 ) -> DownloadStartResponse:
     """Start downloading a model."""
     manager = get_model_manager(request)
@@ -253,7 +256,8 @@ async def download_model(
 )
 async def delete_model(
     model: Model,
-    request: Request
+    request: Request,
+    _auth=Security(verify_signature),
 ) -> DeleteResponse:
     """Delete a model from cache or cancel download."""
     manager = get_model_manager(request)
@@ -312,7 +316,10 @@ async def delete_model(
     ```
     """,
 )
-async def list_models(request: Request) -> ModelListResponse:
+async def list_models(
+    request: Request,
+    _auth=Security(verify_signature),
+) -> ModelListResponse:
     """List all cached models."""
     manager = get_model_manager(request)
     
@@ -350,7 +357,10 @@ async def list_models(request: Request) -> ModelListResponse:
     ```
     """,
 )
-async def get_disk_space(request: Request) -> DiskSpaceInfo:
+async def get_disk_space(
+    request: Request,
+    _auth=Security(verify_signature),
+) -> DiskSpaceInfo:
     """Get disk space information."""
     manager = get_model_manager(request)
     

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-
-	"decentralized-api/utils"
 )
 
 const (
@@ -23,26 +21,21 @@ func (api *Client) GetGPUDevices(ctx context.Context) (*GPUDevicesResponse, erro
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := api.sendSignedGet(ctx, requestURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(gpuDevicesPath, resp.StatusCode)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var devicesResp GPUDevicesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&devicesResp); err != nil {
 		return nil, err
 	}
-
 	return &devicesResp, nil
 }
 
@@ -54,25 +47,20 @@ func (api *Client) GetGPUDriver(ctx context.Context) (*DriverInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := api.sendSignedGet(ctx, requestURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, NewAPINotImplementedError(gpuDriverPath, resp.StatusCode)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var driverInfo DriverInfo
 	if err := json.NewDecoder(resp.Body).Decode(&driverInfo); err != nil {
 		return nil, err
 	}
-
 	return &driverInfo, nil
 }

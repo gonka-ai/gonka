@@ -3,7 +3,6 @@ package mlnodeclient
 import (
 	"context"
 	"decentralized-api/logging"
-	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -167,25 +166,25 @@ func (api *Client) StartTraining(ctx context.Context, taskId uint64, participant
 	}
 
 	logging.Info("Starting training with", types.Training, "trainEnv", trainEnv)
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, body)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return api.sendSignedPost(ctx, requestUrl, body)
 }
 
 func (api *Client) GetTrainingStatus(ctx context.Context) error {
-	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, trainStatusPath)
 	if err != nil {
 		return err
 	}
-
-	_, err = utils.SendGetRequest(ctx, &api.client, requestUrl)
+	resp, err := api.sendSignedGet(ctx, requestUrl)
 	if err != nil {
 		return err
 	}
-
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("request forbidden (403): signature rejected")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -194,13 +193,7 @@ func (api *Client) Stop(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return api.sendSignedPost(ctx, requestUrl, nil)
 }
 
 type MLNodeState string
@@ -221,22 +214,18 @@ func (api *Client) NodeState(ctx context.Context) (*StateResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := api.sendSignedGet(ctx, requestURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var stateResp StateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&stateResp); err != nil {
 		return nil, err
 	}
-
 	return &stateResp, nil
 }
 
@@ -262,22 +251,18 @@ func (api *Client) GetPowStatus(ctx context.Context) (*PowStatusResponse, error)
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := api.sendSignedGet(ctx, requestURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	var powResp PowStatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&powResp); err != nil {
 		return nil, err
 	}
-
 	return &powResp, nil
 }
 
@@ -286,17 +271,19 @@ func (api *Client) InferenceHealth(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	// /health is VLLM endpoint, no signature needed
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
 	return true, nil
 }
 
@@ -311,18 +298,15 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 	if err != nil {
 		return err
 	}
-
 	dto := inferenceUpDto{
 		Model: model,
 		Dtype: "float16",
 		Args:  args,
 	}
-
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
-
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
-	if err != nil {
+	if err := api.sendSignedPost(ctx, inferenceUpUrl, dto); err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return err
 	}
-	return err
+	return nil
 }

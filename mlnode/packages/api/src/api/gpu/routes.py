@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Security
 
 from api.gpu.types import GPUDevicesResponse, DriverInfo
+from pow.service.auth import verify_signature
 
 router = APIRouter()
 
 
 @router.get("/devices", response_model=GPUDevicesResponse)
-async def get_gpu_devices(request: Request) -> GPUDevicesResponse:
+async def get_gpu_devices(
+    request: Request,
+    _auth=Security(verify_signature),
+) -> GPUDevicesResponse:
     """
     List all CUDA devices with current metrics.
     
@@ -46,7 +50,10 @@ async def get_gpu_devices(request: Request) -> GPUDevicesResponse:
 
 
 @router.get("/driver", response_model=DriverInfo)
-async def get_driver_info(request: Request) -> DriverInfo:
+async def get_driver_info(
+    request: Request,
+    _auth=Security(verify_signature),
+) -> DriverInfo:
     """
     Get CUDA driver version information from NVML.
     

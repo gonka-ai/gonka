@@ -2,20 +2,30 @@ import os
 import base64
 import hashlib
 
+from fastapi import Request, HTTPException, Security
+from fastapi.security import APIKeyHeader
+from ecdsa import VerifyingKey, SECP256k1
+
 SIGNER_PUBKEY = os.environ.get("SIGNER_PUBKEY", "")
+signature_header = APIKeyHeader(name="X-Signature", auto_error=False)
 
-def verify_signature(body: bytes, signature_b64: str) -> bool:
+def _load_pubkey(pubkey_b64: str) -> VerifyingKey:
+    raw = base64.b64decode(pubkey_b64)
+    if len(raw) == 33:
+        return VerifyingKey.from_string(raw, curve=SECP256k1, valid_encodings=["compressed"])
+    return VerifyingKey.from_string(raw, curve=SECP256k1)
+
+async def verify_signature(
+    request: Request,
+    signature: str | None = Security(signature_header),
+):
     if not SIGNER_PUBKEY:
-        return True
-    if not signature_b64:
-        return False
+        return
+    if not signature:
+        raise HTTPException(status_code=403, detail="Missing signature")
     try:
-        from ecdsa import VerifyingKey, SECP256k1
-        pubkey_bytes = base64.b64decode(SIGNER_PUBKEY)
-        signature = base64.b64decode(signature_b64)
-        message_hash = hashlib.sha256(body).digest()
-        vk = VerifyingKey.from_string(pubkey_bytes, curve=SECP256k1)
-        return vk.verify(signature, message_hash, hashfunc=hashlib.sha256)
+        body = await request.body()
+        vk = _load_pubkey(SIGNER_PUBKEY)
+        vk.verify(base64.b64decode(signature), body, hashfunc=hashlib.sha256)
     except Exception:
-        return False
-
+        raise HTTPException(status_code=403, detail="Invalid signature")

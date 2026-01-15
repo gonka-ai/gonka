@@ -33,6 +33,7 @@ wandb = "^0.19.6"
 fastapi = "^0.115.8"
 bfcl = { path = "third_party/gorilla/berkeley-function-call-leaderboard", develop = false }
 mlnode-common = { path = "../common", develop = true }
+mlnode-pow = { path = "../pow", develop = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
