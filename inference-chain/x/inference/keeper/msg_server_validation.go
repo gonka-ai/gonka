@@ -172,10 +172,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 }
 
 func getValidationValue(msg *types.MsgValidation) decimal.Decimal {
-	if msg.Value == 0 && msg.ValueDecimal.Value == 0 {
-		return decimal.NewFromInt(0)
-	}
-	if msg.ValueDecimal.Value != 0 {
+	if msg.ValueDecimal != nil {
 		return msg.ValueDecimal.ToDecimal()
 	}
 	return decimal.NewFromFloat(msg.Value)
