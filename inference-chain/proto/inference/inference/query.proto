@@ -436,6 +436,11 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/active_confirmation_poc_event";
 
   }
+
+  rpc ParticipantsWithBalances (QueryParticipantsWithBalancesRequest) returns (QueryParticipantsWithBalancesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants_with_balances";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -1109,4 +1114,22 @@ message QueryActiveConfirmationPoCEventRequest {}
 message QueryActiveConfirmationPoCEventResponse {
   bool                 is_active = 1;
   ConfirmationPoCEvent event     = 2;
+}
+
+// ParticipantWithBalance contains participant data along with their bank balance.
+message ParticipantWithBalance {
+  Participant                       participant = 1 [(gogoproto.nullable) = false];
+  repeated cosmos.base.v1beta1.Coin balances    = 2 [(gogoproto.nullable) = false];
+}
+
+// QueryParticipantsWithBalancesRequest is request type for the Query/ParticipantsWithBalances RPC method.
+message QueryParticipantsWithBalancesRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryParticipantsWithBalancesResponse is response type for the Query/ParticipantsWithBalances RPC method.
+message QueryParticipantsWithBalancesResponse {
+  repeated ParticipantWithBalance               participants = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+           int64                                  block_height = 3;
 }
