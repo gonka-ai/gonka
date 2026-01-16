@@ -44,7 +44,7 @@ type InferenceCosmosClient struct {
 	manager         tx_manager.TxManager
 	batchConsumer   *tx_manager.BatchConsumer
 	batchingEnabled bool
-	queryPool *ConnectionPool
+	queryPool       *ConnectionPool
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -168,7 +168,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		}
 	}()
 
-	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
+	mn, err := tx_manager.StartTxManager(ctx, cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +266,15 @@ func (icc *InferenceCosmosClient) Close() {
 }
 
 func (icc *InferenceCosmosClient) GetClientContext() sdkclient.Context {
+	return icc.manager.GetClientContext()
+}
+
+func (icc *InferenceCosmosClient) getQueryContext() sdkclient.Context {
+	if icc.queryPool != nil {
+		if c, err := icc.queryPool.Get(); err == nil {
+			return c.Context()
+		}
+	}
 	return icc.manager.GetClientContext()
 }
 
@@ -502,30 +511,15 @@ func (icc *InferenceCosmosClient) GetPartialUpgrades() (*types.QueryAllPartialUp
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
-	if icc.queryPool != nil {
-		if c, err := icc.queryPool.Get(); err == nil {
-			return upgradetypes.NewQueryClient(c.Context())
-		}
-	}
-	return upgradetypes.NewQueryClient(icc.manager.GetClientContext())
+	return upgradetypes.NewQueryClient(icc.getQueryContext())
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
-	if icc.queryPool != nil {
-		if c, err := icc.queryPool.Get(); err == nil {
-			return types.NewQueryClient(c.Context())
-		}
-	}
-	return types.NewQueryClient(icc.manager.GetClientContext())
+	return types.NewQueryClient(icc.getQueryContext())
 }
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
-	if icc.queryPool != nil {
-		if c, err := icc.queryPool.Get(); err == nil {
-			return cmtservice.NewServiceClient(c.Context())
-		}
-	}
-	return cmtservice.NewServiceClient(icc.manager.GetClientContext())
+	return cmtservice.NewServiceClient(icc.getQueryContext())
 }
 
 func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error {
@@ -576,19 +570,9 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 }
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
-	if icc.queryPool != nil {
-		if c, err := icc.queryPool.Get(); err == nil {
-			return blstypes.NewQueryClient(c.Context())
-		}
-	}
-	return blstypes.NewQueryClient(icc.manager.GetClientContext())
+	return blstypes.NewQueryClient(icc.getQueryContext())
 }
 
 func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
-	if icc.queryPool != nil {
-		if c, err := icc.queryPool.Get(); err == nil {
-			return restrictionstypes.NewQueryClient(c.Context())
-		}
-	}
-	return restrictionstypes.NewQueryClient(icc.manager.GetClientContext())
+	return restrictionstypes.NewQueryClient(icc.getQueryContext())
 }

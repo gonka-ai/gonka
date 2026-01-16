@@ -119,30 +119,40 @@ func (p *ConnectionPool) check() {
 	}
 	wg.Wait()
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	newClients := make([]*cosmosclient.Client, n)
 	for i := 0; i < n; i++ {
 		if !pingResults[i] {
 			p.healthy[i].Store(false)
 			if newC, err := p.create(); err == nil {
-				oldClient := p.clients[i]
-				p.clients[i] = newC
-				p.healthy[i].Store(true)
-				if oldClient != nil {
-					oldClient.RPC.Stop()
-				}
-				logging.Debug("connection pool: replaced connection", types.System, "index", i)
+				newClients[i] = newC
 			} else {
-				logging.Warn("connection pool: failed to replace connection", types.System, "index", i, "error", err)
+				logging.Warn("connection pool: failed to create connection", types.System, "index", i, "error", err)
 			}
-		} else {
+		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i := 0; i < n; i++ {
+		if newClients[i] != nil {
+			oldClient := p.clients[i]
+			p.clients[i] = newClients[i]
+			p.healthy[i].Store(true)
+			if oldClient != nil && oldClient.RPC != nil {
+				oldClient.RPC.Stop()
+			}
+			logging.Debug("connection pool: replaced connection", types.System, "index", i)
+		} else if pingResults[i] {
 			p.healthy[i].Store(true)
 		}
 	}
 }
 
 func (p *ConnectionPool) ping(c *cosmosclient.Client) bool {
+	if c == nil || c.RPC == nil {
+		return false
+	}
 	ctx, cancel := context.WithTimeout(p.ctx, p.timeout)
 	defer cancel()
 	_, err := c.RPC.Status(ctx)
@@ -154,10 +164,10 @@ func (p *ConnectionPool) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i, c := range p.clients {
-		if c != nil {
+		if c != nil && c.RPC != nil {
 			c.RPC.Stop()
-			p.clients[i] = nil
 		}
+		p.clients[i] = nil
 		p.healthy[i].Store(false)
 	}
 }
