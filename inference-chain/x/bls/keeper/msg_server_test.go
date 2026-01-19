@@ -24,6 +24,21 @@ func TestMsgServer(t *testing.T) {
 	require.NotEmpty(t, k)
 }
 
+func TestFilterSlotsAndSignature(t *testing.T) {
+	sig := make([]byte, 3*48)
+	for i := 0; i < 3; i++ {
+		sig[i*48] = byte(i)
+	}
+
+	seen := map[uint32]struct{}{1: {}}
+	slots, filtered := keeper.FilterSlotsAndSignature([]uint32{0, 1, 2}, sig, seen)
+
+	require.Equal(t, []uint32{0, 2}, slots)
+	require.Equal(t, 2*48, len(filtered))
+	require.Equal(t, byte(0), filtered[0])
+	require.Equal(t, byte(2), filtered[48])
+}
+
 func TestSubmitGroupKeyValidationSignature_AlreadySigned(t *testing.T) {
 	k, ms, goCtx := setupMsgServer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)

@@ -29,6 +29,24 @@ func (k Keeper) LogDebug(msg string, keyVals ...interface{}) {
 	k.Logger().Debug(msg, append(keyVals, "subsystem", "BLS")...)
 }
 
+const SignatureSize = 48
+
+func FilterSlotsAndSignature(slots []uint32, signature []byte, seen map[uint32]struct{}) ([]uint32, []byte) {
+	filteredSlots := make([]uint32, 0, len(slots))
+	filteredSig := make([]byte, 0, len(signature))
+	for i, idx := range slots {
+		if _, ok := seen[idx]; ok {
+			continue
+		}
+		seen[idx] = struct{}{}
+		filteredSlots = append(filteredSlots, idx)
+		sigStart := i * SignatureSize
+		sigEnd := sigStart + SignatureSize
+		filteredSig = append(filteredSig, signature[sigStart:sigEnd]...)
+	}
+	return filteredSlots, filteredSig
+}
+
 // SubmitGroupKeyValidationSignature handles the submission of partial signatures for group key validation
 func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg *types.MsgSubmitGroupKeyValidationSignature) (*types.MsgSubmitGroupKeyValidationSignatureResponse, error) {
 	ms.Keeper.LogInfo("Processing group key validation signature", "new_epoch_id", msg.NewEpochId, "creator", msg.Creator)
@@ -141,21 +159,14 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 			seen[idx] = struct{}{}
 		}
 	}
-	filteredSlots := make([]uint32, 0, len(msg.SlotIndices))
-	for _, idx := range msg.SlotIndices {
-		if _, ok := seen[idx]; ok {
-			ms.Keeper.LogWarn("Ignoring duplicate slot submission", "slot_index", idx, "creator", msg.Creator)
-			continue
-		}
-		seen[idx] = struct{}{}
-		filteredSlots = append(filteredSlots, idx)
-	}
+
+	filteredSlots, filteredSig := FilterSlotsAndSignature(msg.SlotIndices, msg.PartialSignature, seen)
 	if len(filteredSlots) == 0 {
 		return nil, fmt.Errorf("no new slots in submission")
 	}
 
 	// Verify BLS partial signature against participant's computed individual public key
-	if !ms.verifyBLSPartialSignature(msg.PartialSignature, validationState.MessageHash, &previousEpochBLSData, filteredSlots) {
+	if !ms.verifyBLSPartialSignature(filteredSig, validationState.MessageHash, &previousEpochBLSData, filteredSlots) {
 		ms.Keeper.LogError("Invalid BLS signature verification", "creator", msg.Creator)
 		return nil, fmt.Errorf("invalid BLS signature verification failed for participant %s", msg.Creator)
 	}
@@ -165,7 +176,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	partialSignature := &types.PartialSignature{
 		ParticipantAddress: msg.Creator,
 		SlotIndices:        filteredSlots,
-		Signature:          msg.PartialSignature,
+		Signature:          filteredSig,
 	}
 	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
 
