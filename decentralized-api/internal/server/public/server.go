@@ -157,6 +157,13 @@ func NewServer(
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
 
+	// OpenRouter-compatible API
+	openrouter := e.Group("/openrouter/api/v1")
+	openrouter.Use(middleware.LoggingMiddleware)
+	openrouter.GET("/models", s.getModelsOpenRouter)
+	openrouter.POST("/chat/completions", s.postChatOpenRouter)
+	openrouter.POST("/completions", s.postCompletionsOpenRouter)
+
 	return s
 }
 
