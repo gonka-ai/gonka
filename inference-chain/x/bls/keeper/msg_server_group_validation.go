@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/bls/types"
 	"golang.org/x/crypto/sha3"
@@ -150,21 +148,35 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 			seen[idx] = struct{}{}
 		}
 	}
+
+	// The partial signature payload is a concatenation of 48-byte G1 signatures, one per slot index.
+	// Ensure the payload shape matches the submitted slot list so we can filter both in lockstep.
+	if len(msg.PartialSignature)%48 != 0 {
+		return nil, fmt.Errorf("invalid partial signature length: %d (must be multiple of 48)", len(msg.PartialSignature))
+	}
+	if len(msg.PartialSignature)/48 != len(msg.SlotIndices) {
+		return nil, fmt.Errorf("signature count mismatch: got %d signatures for %d slots", len(msg.PartialSignature)/48, len(msg.SlotIndices))
+	}
+
 	filteredSlots := make([]uint32, 0, len(msg.SlotIndices))
-	for _, idx := range msg.SlotIndices {
+	filteredSig := make([]byte, 0, len(msg.PartialSignature))
+	for i, idx := range msg.SlotIndices {
 		if _, ok := seen[idx]; ok {
 			ms.Keeper.LogWarn("Ignoring duplicate slot submission", "slot_index", idx, "creator", msg.Creator)
 			continue
 		}
 		seen[idx] = struct{}{}
 		filteredSlots = append(filteredSlots, idx)
+		start := i * 48
+		end := start + 48
+		filteredSig = append(filteredSig, msg.PartialSignature[start:end]...)
 	}
 	if len(filteredSlots) == 0 {
 		return nil, fmt.Errorf("no new slots in submission")
 	}
 
 	// Verify BLS partial signature against participant's computed individual public key
-	if !ms.verifyBLSPartialSignature(msg.PartialSignature, validationState.MessageHash, &previousEpochBLSData, filteredSlots) {
+	if !ms.verifyBLSPartialSignatureBlst(filteredSig, validationState.MessageHash, &previousEpochBLSData, filteredSlots) {
 		ms.Keeper.LogError("Invalid BLS signature verification", "creator", msg.Creator)
 		return nil, fmt.Errorf("invalid BLS signature verification failed for participant %s", msg.Creator)
 	}
@@ -174,7 +186,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	partialSignature := &types.PartialSignature{
 		ParticipantAddress: msg.Creator,
 		SlotIndices:        filteredSlots,
-		Signature:          msg.PartialSignature,
+		Signature:          filteredSig,
 	}
 	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
 
@@ -187,60 +199,18 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	if validationState.SlotsCovered >= requiredSlots {
 		ms.Keeper.LogInfo("Enough signatures collected, validating group key")
 		// Aggregate signatures and finalize validation
-		finalSignature, aggErr := ms.aggregateBLSPartialSignatures(validationState.PartialSignatures)
+		finalSignature, aggErr := ms.aggregateBLSPartialSignaturesBlst(validationState.PartialSignatures)
 		if aggErr != nil {
 			ms.Keeper.LogError("Failed to aggregate partial signatures", "error", aggErr.Error())
 			return nil, fmt.Errorf("failed to aggregate partial signatures: %w", aggErr)
 		}
 
 		// Verify aggregated final signature against previous epoch group public key
-		// e(finalSig, G2_gen) == e(H(message), prevGroupPubKey)
-		var finalSigAff bls12381.G1Affine
-		if err := finalSigAff.Unmarshal(finalSignature); err != nil {
-			ms.Keeper.LogError("Failed to unmarshal aggregated final signature", "error", err.Error())
-			return nil, fmt.Errorf("failed to unmarshal aggregated final signature: %w", err)
-		}
-
-		var prevGroupKey bls12381.G2Affine
-		if err := prevGroupKey.Unmarshal(previousEpochBLSData.GroupPublicKey); err != nil {
-			ms.Keeper.LogError("Failed to unmarshal previous epoch group key", "error", err.Error())
-			return nil, fmt.Errorf("failed to unmarshal previous epoch group key: %w", err)
-		}
-
-		messageG1, err := ms.Keeper.hashToG1(validationState.MessageHash)
-		if err != nil {
-			ms.Keeper.LogError("Failed to hash validation message to G1 for final verification", "error", err.Error())
-			return nil, fmt.Errorf("failed to hash validation message to G1: %w", err)
-		}
-
-		_, _, _, g2Gen := bls12381.Generators()
-		pair1, err := bls12381.Pair([]bls12381.G1Affine{finalSigAff}, []bls12381.G2Affine{g2Gen})
-		if err != nil {
-			ms.Keeper.LogError("Failed to compute pairing for final signature", "error", err.Error())
-			return nil, fmt.Errorf("failed to compute pairing for final signature: %w", err)
-		}
-		pair2, err := bls12381.Pair([]bls12381.G1Affine{messageG1}, []bls12381.G2Affine{prevGroupKey})
-		if err != nil {
-			ms.Keeper.LogError("Failed to compute pairing for previous group key", "error", err.Error())
-			return nil, fmt.Errorf("failed to compute pairing for previous group key: %w", err)
-		}
-		if !pair1.Equal(&pair2) {
-			// Log final signature uncompressed to help debugging
-			var sigUncompressed []byte
-			appendFp64 := func(e fp.Element) {
-				be48 := e.Bytes()
-				var limb [64]byte
-				copy(limb[64-48:], be48[:])
-				sigUncompressed = append(sigUncompressed, limb[:]...)
-			}
-			appendFp64(finalSigAff.X)
-			appendFp64(finalSigAff.Y)
-
+		if !ms.verifyFinalSignatureBlst(finalSignature, validationState.MessageHash, previousEpochBLSData.GroupPublicKey) {
 			ms.Keeper.LogError(
 				"Final aggregated signature verification failed",
 				"previous_epoch_id", previousEpochId,
 				"hash32_hex", fmt.Sprintf("%x", validationState.MessageHash),
-				"final_sig_uncompressed_128_hex", fmt.Sprintf("%x", sigUncompressed),
 			)
 			return nil, fmt.Errorf("final aggregated signature failed verification against previous epoch group key")
 		}
@@ -283,23 +253,17 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 // computeValidationMessageHash computes the message hash for group key validation.
 // Uses Ethereum-compatible abi.encodePacked(previous_epoch_id [8], chain_id [32], new_group_key_uncompressed [256]).
 func (ms msgServer) computeValidationMessageHash(ctx sdk.Context, groupPublicKey []byte, previousEpochId, newEpochId uint64) ([]byte, error) {
-	// Expect 96-byte compressed G2 key; decompress deterministically.
-	if len(groupPublicKey) != 96 {
-		return nil, fmt.Errorf("invalid group public key length: expected 96 bytes, got %d", len(groupPublicKey))
-	}
-	var g2 bls12381.G2Affine
-	if err := g2.Unmarshal(groupPublicKey); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal compressed G2 key: %w", err)
+	// Decompress and format group key using helper (blst optimized)
+	g2Uncompressed256, err := ms.Keeper.DecompressG2To256Blst(groupPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress group key: %w", err)
 	}
 
 	// Use GONKA_CHAIN_ID bytes32 (hash of chain-id string), consistent with bridge signing logic
 	gonkaIdHash := sha256.Sum256([]byte(ctx.ChainID()))
 	chainIdBytes := gonkaIdHash[:]
 
-	// Implement Ethereum-compatible abi.encodePacked with uncompressed G2 in 64-byte limbs:
-	// Order: X.c0, X.c1, Y.c0, Y.c1, each 64-byte big-endian (16 zero bytes + 48-byte fp).
 	var encodedData []byte
-	var g2Uncompressed256 []byte
 
 	// Add previous_epoch_id (uint64 -> 8 bytes big endian)
 	previousEpochBytes := make([]byte, 8)
@@ -309,23 +273,8 @@ func (ms msgServer) computeValidationMessageHash(ctx sdk.Context, groupPublicKey
 	// Add chain_id (32 bytes)
 	encodedData = append(encodedData, chainIdBytes...)
 
-	// Build 256-byte uncompressed encoding: 4 field elements, each 64 bytes
-	appendFp64 := func(e fp.Element) {
-		// 48-byte big-endian field element
-		be48 := e.Bytes()
-		// Left-pad to 64 bytes
-		var limb [64]byte
-		copy(limb[64-48:], be48[:])
-		encodedData = append(encodedData, limb[:]...)
-		g2Uncompressed256 = append(g2Uncompressed256, limb[:]...)
-	}
-
-	// Note: gnark-crypto stores E2 as (A0, A1). We need c0 then c1.
-	// g2.X.A0 = c0, g2.X.A1 = c1; same for Y.
-	appendFp64(g2.X.A0)
-	appendFp64(g2.X.A1)
-	appendFp64(g2.Y.A0)
-	appendFp64(g2.Y.A1)
+	// Add the 256-byte uncompressed G2 key
+	encodedData = append(encodedData, g2Uncompressed256...)
 
 	// Compute keccak256 hash (Ethereum-compatible)
 	hash := sha3.NewLegacyKeccak256()

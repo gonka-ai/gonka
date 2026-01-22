@@ -298,7 +298,7 @@ func (k Keeper) verifyPartialSignature(partialSignature []byte, messageHash []by
 	}
 
 	// Verify BLS partial signature against participant's computed individual public key
-	if !k.verifyBLSPartialSignature(partialSignature, messageHash, epochBLSData, slotIndices) {
+	if !k.verifyBLSPartialSignatureBlst(partialSignature, messageHash, epochBLSData, slotIndices) {
 		return fmt.Errorf("BLS signature verification failed")
 	}
 
@@ -355,7 +355,7 @@ func (k Keeper) aggregatePartialSignatures(partialSigs []types.PartialSignature,
 	}
 
 	// Use shared BLS aggregation function
-	return k.aggregateBLSPartialSignatures(partialSigs)
+	return k.aggregateBLSPartialSignaturesBlst(partialSigs)
 }
 
 // storeThresholdSigningRequest stores a threshold signing request
