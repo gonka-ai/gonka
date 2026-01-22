@@ -100,7 +100,7 @@ class BLSDKGSuccessTest : TestermintTest() {
         // Capture epoch ID once to avoid race conditions
         logSection("Waiting for DKG Phase")
         val epochId = getCurrentEpochId(genesis)
-        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
+        waitForDKGPhase(genesis, DKGPhase.SIGNED, epochId)
 
         logSection("Verifying BLS State from all nodes")
         // Query BLS state from all nodes
@@ -114,7 +114,7 @@ class BLSDKGSuccessTest : TestermintTest() {
         
         blsDataFromNodes.forEach { (nodeName, blsData) ->
             assertThat(blsData).isNotNull()
-            assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.COMPLETED)
+            assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.SIGNED)
             assertThat(blsData?.groupPublicKey).isEqualTo(referenceData?.groupPublicKey)
             assertThat(blsData?.iTotalSlots).isEqualTo(referenceData?.iTotalSlots)
             assertThat(blsData?.tSlotsDegree).isEqualTo(referenceData?.tSlotsDegree)

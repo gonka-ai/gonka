@@ -496,6 +496,110 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.NoError(t, p1Result.Error)
 	})
 
+	t.Run("Negative coin balance - token conservation", func(t *testing.T) {
+		// Debt deducted from reward should go to governance, not vanish
+		debt := int64(-100)
+		negativeParticipants := []types.Participant{
+			{
+				Address:     "participant1",
+				CoinBalance: debt, // Owes 100 tokens
+				Status:      types.ParticipantStatus_ACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+					MissedRequests: 0,
+				},
+			},
+		}
+
+		logger := createTestLogger(t)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, nil, logger)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(results))
+
+		p1Result := results[0]
+		require.NoError(t, p1Result.Error)
+
+		// participant + governance = total
+		totalParticipantRewards := p1Result.Settle.RewardCoins
+		governanceAmount := uint64(bitcoinResult.GovernanceAmount)
+		epochReward := uint64(bitcoinResult.Amount)
+
+		totalAccounted := totalParticipantRewards + governanceAmount
+		require.Equal(t, epochReward, totalAccounted,
+			"Token conservation violated: participant(%d) + governance(%d) = %d, expected %d",
+			totalParticipantRewards, governanceAmount, totalAccounted, epochReward)
+
+		// Governance gets the debt back (plus rounding)
+		require.GreaterOrEqual(t, governanceAmount, uint64(-debt),
+			"governance should get debt back: want >= %d, got %d", -debt, governanceAmount)
+	})
+
+	t.Run("Negative coin balance - multi-participant token conservation", func(t *testing.T) {
+		// Same check with multiple participants
+		multiParticipants := []types.Participant{
+			{
+				Address:     "participant1",
+				CoinBalance: -200, // Owes 200 tokens
+				Status:      types.ParticipantStatus_ACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+					MissedRequests: 0,
+				},
+			},
+			{
+				Address:     "participant2",
+				CoinBalance: 500, // Positive balance
+				Status:      types.ParticipantStatus_ACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+					MissedRequests: 0,
+				},
+			},
+		}
+
+		multiEpochData := &types.EpochGroupData{
+			EpochIndex: 100,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress:      "participant1",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node1", PocWeight: 1000, TimeslotAllocation: []bool{true}},
+					},
+				},
+				{
+					MemberAddress:      "participant2",
+					Weight:             1000,
+					Reputation:         100,
+					ConfirmationWeight: 1000,
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node2", PocWeight: 1000, TimeslotAllocation: []bool{true}},
+					},
+				},
+			},
+		}
+
+		logger := createTestLogger(t)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(multiParticipants, multiEpochData, bitcoinParams, nil, nil, logger)
+		require.NoError(t, err)
+		require.Equal(t, 2, len(results))
+
+		var totalParticipantRewards uint64
+		for _, r := range results {
+			totalParticipantRewards += r.Settle.RewardCoins
+		}
+
+		governanceAmount := uint64(bitcoinResult.GovernanceAmount)
+		epochReward := uint64(bitcoinResult.Amount)
+
+		totalAccounted := totalParticipantRewards + governanceAmount
+		require.Equal(t, epochReward, totalAccounted,
+			"Token conservation violated: participants(%d) + governance(%d) = %d, expected %d",
+			totalParticipantRewards, governanceAmount, totalAccounted, epochReward)
+	})
+
 	t.Run("Negative coin balance error", func(t *testing.T) {
 		expectedReward := int64(271908110525520)
 		// Negative balance bigger than reward, return error
