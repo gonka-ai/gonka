@@ -23,12 +23,16 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 	}
 
 	k.LogInfo("Adding new account directly", types.Participants, "address", msg.Address)
+	addr, err := sdk.AccAddressFromBech32(msg.Address)
+	if err != nil {
+		return nil, err
+	}
 	// First, add the account
-	if k.AccountKeeper.GetAccount(ctx, sdk.MustAccAddressFromBech32(msg.Address)) != nil {
+	if k.AccountKeeper.GetAccount(ctx, addr) != nil {
 		k.LogError("Account already exists", types.Participants, "address", msg.Address)
 		return nil, types.ErrAccountAlreadyExists
 	}
-	newAccount := k.AccountKeeper.NewAccountWithAddress(ctx, sdk.MustAccAddressFromBech32(msg.Address))
+	newAccount := k.AccountKeeper.NewAccountWithAddress(ctx, addr)
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(msg.PubKey)
 	if err != nil {
 		return nil, err

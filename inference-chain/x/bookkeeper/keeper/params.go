@@ -9,15 +9,15 @@ import (
 )
 
 // GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
-		return params
+		return params, nil
 	}
 
-	k.cdc.MustUnmarshal(bz, &params)
-	return params
+	err = k.cdc.Unmarshal(bz, &params)
+	return params, err
 }
 
 // SetParams set the params

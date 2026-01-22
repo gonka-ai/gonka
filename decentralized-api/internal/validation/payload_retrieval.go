@@ -30,7 +30,7 @@ var ErrHashMismatch = errors.New("hash mismatch: executor served wrong payload w
 var ErrEpochStale = errors.New("inference epoch too old, validation no longer useful")
 
 // HTTP client with timeout for payload retrieval
-var payloadRetrievalClient = apiutils.NewHttpClient(30 * time.Second)
+var payloadRetrievalClient = &http.Client{}
 
 // PayloadResponse matches the executor endpoint response
 type PayloadResponse struct {
@@ -79,7 +79,7 @@ func RetrievePayloadsFromExecutor(
 	timestamp := time.Now().UnixNano()
 	validatorAddress := recorder.GetAccountAddress()
 
-	signature, err := signPayloadRequest(inferenceId, timestamp, validatorAddress, recorder)
+	signature, err := signPayloadRequest(inferenceId, timestamp, validatorAddress, epochId, recorder)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to sign request: %w", err)
 	}
@@ -228,15 +228,18 @@ func retrievePayloadsFromChain(
 }
 
 // signPayloadRequest signs the payload retrieval request with validator's key
-// Validator signs: inferenceId + timestamp + validatorAddress
+// Validator signs: inferenceId + epochId + timestamp + validatorAddress
+// EpochId binding prevents replay attacks within epoch windows
 func signPayloadRequest(
 	inferenceId string,
 	timestamp int64,
 	validatorAddress string,
+	epochId uint64,
 	recorder cosmosclient.CosmosMessageClient,
 ) (string, error) {
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",

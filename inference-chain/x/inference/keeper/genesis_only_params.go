@@ -8,11 +8,15 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k Keeper) SetGenesisOnlyParams(ctx context.Context, params *types.GenesisOnlyParams) {
+func (k Keeper) SetGenesisOnlyParams(ctx context.Context, params *types.GenesisOnlyParams) error {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.GenesisOnlyDataKey))
-	b := k.cdc.MustMarshal(params)
+	b, err := k.cdc.Marshal(params)
+	if err != nil {
+		return err
+	}
 	store.Set([]byte{0}, b)
+	return nil
 }
 
 func (k Keeper) GetGenesisOnlyParams(ctx context.Context) (val types.GenesisOnlyParams, found bool) {
@@ -24,7 +28,10 @@ func (k Keeper) GetGenesisOnlyParams(ctx context.Context) (val types.GenesisOnly
 		return val, false
 	}
 
-	k.cdc.MustUnmarshal(b, &val)
+	err := k.cdc.Unmarshal(b, &val)
+	if err != nil {
+		return val, false
+	}
 	return val, true
 }
 

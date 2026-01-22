@@ -19,7 +19,7 @@ func (s *KeeperTestSuite) TestSlashing_DuplicateGuard_SameReasonSameEpoch() {
 	s.Require().NoError(err)
 
 	// Seed collateral
-	s.k.SetCollateral(s.ctx, participant, sdk.NewInt64Coin(inftypes.BaseCoin, 1000))
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, sdk.NewInt64Coin(inftypes.BaseCoin, 1000)))
 
 	// Expect only one burn, from the first slash
 	s.bankKeeper.EXPECT().
@@ -48,7 +48,7 @@ func (s *KeeperTestSuite) TestSlashing_DifferentReasonSameEpoch_Allowed() {
 	s.Require().NoError(err)
 
 	// Seed collateral
-	s.k.SetCollateral(s.ctx, participant, sdk.NewInt64Coin(inftypes.BaseCoin, 1000))
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, sdk.NewInt64Coin(inftypes.BaseCoin, 1000)))
 
 	// Expect two burns: one for each distinct reason
 	s.bankKeeper.EXPECT().

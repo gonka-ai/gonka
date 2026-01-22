@@ -27,7 +27,11 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 		oldParticipant = *participant
 	}
 
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("UpdateParticipantStatus: failed to get params", types.Validation, "error", err)
+		return err
+	}
 	originalStatus := participant.Status
 	newStatus, reason, newStats := calculations.ComputeStatus(
 		params.ValidationParams,

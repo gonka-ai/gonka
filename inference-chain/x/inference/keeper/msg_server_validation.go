@@ -73,14 +73,15 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			"error", err)
 		return nil, err
 	}
-	passValue := model.ValidationThreshold.ToFloat()
+	passValue := model.ValidationThreshold.ToDecimal()
+	messageValue := getValidationValue(msg)
 
-	passed := msg.Value > passValue
+	passed := messageValue.GreaterThan(passValue)
 	k.LogInfo(
 		"Validation details", types.Validation,
 		"passValue", passValue,
 		"passed", passed,
-		"msgValue", msg.Value,
+		"msgValue", messageValue,
 		"model", inference.Model,
 	)
 	needsRevalidation := false
@@ -116,7 +117,11 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		executor.ConsecutiveInvalidInferences = 0
 		executor.CurrentEpochStats.ValidatedInferences++
 	} else {
-		if k.MaximumInvalidationsReached(ctx, sdk.MustAccAddressFromBech32(creator.Address), groupData) {
+		creatorAddr, err := sdk.AccAddressFromBech32(creator.Address)
+		if err != nil {
+			return nil, err
+		}
+		if k.MaximumInvalidationsReached(ctx, creatorAddr, groupData) {
 			k.LogWarn("Maximum invalidations reached.", types.Validation,
 				"creator", msg.Creator,
 				"model", inference.Model,
@@ -129,7 +134,11 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		if err != nil {
 			return nil, err
 		}
-		err = k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(msg.Creator), inference.InferenceId))
+		msgCreatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
+		if err != nil {
+			return nil, err
+		}
+		err = k.ActiveInvalidations.Set(ctx, collections.Join(msgCreatorAddr, inference.InferenceId))
 		if err != nil {
 			k.LogError("Failed to set active invalidation", types.Validation, "error", err)
 		}
@@ -162,6 +171,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	return &types.MsgValidationResponse{}, nil
 }
 
+func getValidationValue(msg *types.MsgValidation) decimal.Decimal {
+	if msg.ValueDecimal != nil {
+		return msg.ValueDecimal.ToDecimal()
+	}
+	return decimal.NewFromFloat(msg.Value)
+}
+
 func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccAddress, data types.EpochGroupData) bool {
 	currentInvalidations, err := k.CountInvalidations(ctx, creator)
 	if err != nil {
@@ -173,7 +189,7 @@ func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccA
 		return false
 	}
 
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		k.LogError("Failed to get params", types.Validation, "error", err)
 		return false
