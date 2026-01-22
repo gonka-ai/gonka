@@ -63,4 +63,5 @@ var (
 	ErrArithmeticOverflow                    = sdkerrors.Register(ModuleName, 1157, "arithmetic overflow")
 	ErrInvalidEscrowAmount                   = sdkerrors.Register(ModuleName, 1158, "invalid escrow amount")
 	ErrTokenCountOutOfRange                  = sdkerrors.Register(ModuleName, 1159, "token count out of range")
+	ErrPocValidationAlreadyExists            = sdkerrors.Register(ModuleName, 1160, "PoC validation already exists for this participant from this validator")
 )

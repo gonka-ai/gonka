@@ -23,9 +23,9 @@ func (msg *MsgSubmitNewParticipant) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
-	// url optional; if provided, must be a valid http/https URL
+	// url optional; if provided, must be a valid http/https URL with SSRF protection
 	if strings.TrimSpace(msg.Url) != "" {
-		if err := utils.ValidateURL("url", msg.Url); err != nil {
+		if err := utils.ValidateURLWithSSRFProtection("url", msg.Url); err != nil {
 			return err
 		}
 	}
