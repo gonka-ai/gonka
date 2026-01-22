@@ -66,7 +66,29 @@ func (s *Server) getInferencePayloads(ctx echo.Context) error {
 		return err
 	}
 
-	// Verify validator is active participant at inference epoch
+	// First, query the inference to get its actual epoch ID for authorization
+	queryClient := s.recorder.NewInferenceQueryClient()
+	inferenceResp, err := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: inferenceId})
+	if err != nil {
+		logging.Error("Failed to query inference for epochId verification", types.Validation,
+			"inferenceId", inferenceId, "error", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to verify inference")
+	}
+
+	// Security: Use the inference's actual epoch ID for authorization, not the header value
+	// This prevents authorization bypass where attacker provides epoch where they are active
+	// but inference belongs to a different epoch
+	inferenceEpochId := inferenceResp.Inference.EpochId
+	if inferenceEpochId != epochId {
+		logging.Warn("EpochId mismatch: header epochId doesn't match inference's epoch", types.Validation,
+			"inferenceId", inferenceId,
+			"headerEpochId", epochId,
+			"inferenceEpochId", inferenceEpochId)
+		// Use inference's epoch for authorization check
+		epochId = inferenceEpochId
+	}
+
+	// Verify validator is active participant at the INFERENCE's epoch (not header epoch)
 	if err := s.verifyActiveParticipant(ctx, validatorAddress, epochId); err != nil {
 		logging.Warn("Validator not active at inference epoch", types.Validation,
 			"validatorAddress", validatorAddress, "epochId", epochId, "error", err)
@@ -81,26 +103,11 @@ func (s *Server) getInferencePayloads(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "validator not found")
 	}
 
-	// Verify signature (validator signs: inferenceId + timestamp + validatorAddress)
-	if err := validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, validatorPubkeys, signature); err != nil {
+	// Verify signature (validator signs: inferenceId + timestamp + validatorAddress + epochId)
+	if err := validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, epochId, validatorPubkeys, signature); err != nil {
 		logging.Warn("Invalid payload request signature", types.Validation,
 			"inferenceId", inferenceId, "validatorAddress", validatorAddress, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
-	}
-
-	queryClient := s.recorder.NewInferenceQueryClient()
-	inferenceResp, err := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: inferenceId})
-	if err != nil {
-		logging.Error("Failed to query inference for epochId verification", types.Validation,
-			"inferenceId", inferenceId, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to verify inference")
-	}
-	if inferenceResp.Inference.EpochId != epochId {
-		logging.Warn("EpochId mismatch: header epochId doesn't match inference's epoch", types.Validation,
-			"inferenceId", inferenceId,
-			"headerEpochId", epochId,
-			"inferenceEpochId", inferenceResp.Inference.EpochId)
-		epochId = inferenceResp.Inference.EpochId
 	}
 
 	promptPayload, responsePayload, actualEpochId, err := s.retrievePayloadsWithAdjacentEpochs(ctx.Request().Context(), inferenceId, epochId)
@@ -175,10 +182,12 @@ func (s *Server) verifyActiveParticipant(ctx echo.Context, address string, epoch
 }
 
 // validatePayloadRequestSignature verifies validator's signature on the request.
-// Validator signs: inferenceId + timestamp + validatorAddress
-func validatePayloadRequestSignature(inferenceId string, timestamp int64, validatorAddress string, pubkeys []string, signature string) error {
+// Validator signs: inferenceId + timestamp + validatorAddress + epochId
+// EpochId binding prevents replay attacks within epoch windows
+func validatePayloadRequestSignature(inferenceId string, timestamp int64, validatorAddress string, epochId uint64, pubkeys []string, signature string) error {
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",
