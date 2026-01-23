@@ -14,9 +14,9 @@ import (
 func ShouldValidate(
 	seed int64,
 	inferenceDetails *types.InferenceValidationDetails,
-	totalPower uint32,
-	validatorPower uint32,
-	executorPower uint32,
+	totalPower int64,
+	validatorPower int64,
+	executorPower int64,
 	validationParams *types.ValidationParams,
 	debug bool,
 ) (bool, string) {
@@ -28,7 +28,12 @@ func ShouldValidate(
 	// algebraic simplification/removal of temp variables
 	targetValidations := maxValidationAverage.Sub(rangeSize.Mul(executorReputation))
 	// 100% rep will be minValidationAverage, 0% rep will be maxValidationAverage
-	ourProbability := targetValidations.Mul(decimal.NewFromInt(int64(validatorPower))).Div(decimal.NewFromInt(int64(totalPower - executorPower)))
+
+	if totalPower == executorPower {
+		return false, "ShouldValidate:false (totalPower==executorPower, div-by-zero)"
+	}
+	
+	ourProbability := targetValidations.Mul(decimal.NewFromInt(validatorPower)).Div(decimal.NewFromInt(totalPower - executorPower))
 	if ourProbability.GreaterThan(one) {
 		ourProbability = one
 	}

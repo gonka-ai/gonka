@@ -447,7 +447,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		k.LogDebug("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
-		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPowerForModel.Weight), uint32(executorPower.Weight),
+		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, totalWeight, validatorPowerForModel.Weight, executorPower.Weight,
 			k.Keeper.GetParams(ctx).ValidationParams, false)
 		k.LogDebug(s, types.Claims, "inference", inference.InferenceId, "seed", msg.Seed, "model", modelId, "validator", msg.Creator)
 		if shouldValidate {
