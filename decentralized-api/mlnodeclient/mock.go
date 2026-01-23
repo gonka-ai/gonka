@@ -105,6 +105,95 @@ func (m *MockClient) WithTryLock(t *testing.T, f func()) {
 	f()
 }
 
+func (m *MockClient) GetInferenceUpCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InferenceUpCalled
+}
+
+func (m *MockClient) GetStopCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.StopCalled
+}
+
+func (m *MockClient) GetNodeStateCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.NodeStateCalled
+}
+
+func (m *MockClient) GetInferenceHealthCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InferenceHealthCalled
+}
+
+func (m *MockClient) Reset() {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+
+	m.CurrentState = MlNodeState_STOPPED
+	m.PowStatus = POW_STOPPED
+	m.InferenceIsHealthy = false
+	m.GPUDevices = []GPUDevice{}
+	m.DriverInfo = nil
+	m.CachedModels = make(map[string]ModelListItem)
+	m.DownloadingModels = make(map[string]*DownloadProgress)
+	m.DiskSpace = nil
+
+	m.StopError = nil
+	m.NodeStateError = nil
+	m.GetPowStatusError = nil
+	m.InitGenerateError = nil
+	m.InitValidateError = nil
+	m.ValiateBatchError = nil
+	m.InferenceHealthError = nil
+	m.InferenceUpError = nil
+	m.StartTrainingError = nil
+	m.GetGPUDevicesError = nil
+	m.GetGPUDriverError = nil
+	m.CheckModelStatusError = nil
+	m.DownloadModelError = nil
+	m.DeleteModelError = nil
+	m.ListModelsError = nil
+	m.GetDiskSpaceError = nil
+
+	m.StopCalled = 0
+	m.NodeStateCalled = 0
+	m.GetPowStatusCalled = 0
+	m.InitGenerateCalled = 0
+	m.InitValidateCalled = 0
+	m.ValidateBatchCalled = 0
+	m.InferenceHealthCalled = 0
+	m.InferenceUpCalled = 0
+	m.StartTrainingCalled = 0
+	m.GetGPUDevicesCalled = 0
+	m.GetGPUDriverCalled = 0
+	m.CheckModelStatusCalled = 0
+	m.DownloadModelCalled = 0
+	m.DeleteModelCalled = 0
+	m.ListModelsCalled = 0
+	m.GetDiskSpaceCalled = 0
+
+	m.LastInitDto = nil
+	m.LastInitValidateDto = nil
+	m.LastValidateBatch = ProofBatch{}
+	m.LastInferenceModel = ""
+	m.LastInferenceArgs = nil
+	m.LastTrainingParams = struct {
+		TaskId         uint64
+		Participant    string
+		NodeId         string
+		MasterNodeAddr string
+		Rank           int
+		WorldSize      int
+	}{}
+	m.LastModelStatusCheck = nil
+	m.LastModelDownload = nil
+	m.LastModelDelete = nil
+}
+
 func (m *MockClient) Stop(ctx context.Context) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()

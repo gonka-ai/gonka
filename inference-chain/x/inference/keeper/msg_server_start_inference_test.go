@@ -28,7 +28,8 @@ func TestMsgServer_StartInference_DeveloperNotAllowlisted(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
 	// Enable gating at current height + 100, with an allowlist that does NOT include testutil.Requester.
-	p := k.GetParams(ctx)
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	p.DeveloperAccessParams = &types.DeveloperAccessParams{
 		UntilBlockHeight:          ctx.BlockHeight() + 100,
 		AllowedDeveloperAddresses: []string{"gonka1notallowlistedxxxxxxxxxxxxxxxxxxxxxx"},

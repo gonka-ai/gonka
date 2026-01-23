@@ -14,6 +14,8 @@ func (k msgServer) RegisterWrappedTokenContract(goCtx context.Context, req *type
 		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), req.Authority)
 	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	k.SetWrappedTokenCodeID(ctx, req.CodeId)
+	if err := k.SetWrappedTokenCodeID(ctx, req.CodeId); err != nil {
+		return nil, err
+	}
 	return &types.MsgRegisterWrappedTokenContractResponse{}, nil
 }

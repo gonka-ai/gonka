@@ -57,6 +57,14 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
+func NewNoRedirectClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // emptyButParseableResponsePayload returns a deterministic "empty" response payload that:
 // - is valid JSON parseable by older validators
 // - yields no logits (so validator re-execution cannot meaningfully compare)
@@ -368,7 +376,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewNoRedirectClient().Do(req)
 	if err != nil {
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
@@ -683,7 +691,8 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 		logging.Warn("Request timestamp is in the future", types.Inferences,
 			"inferenceId", request.InferenceId,
 			"offset", time.Duration(requestOffset).String())
-		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
+		// For now, we do NOT return an error here. This is solely harmful to EA with the current
+		// scheme, and is happening during chain-slow periods regularly
 	}
 
 	if checkAndRecordAuthKey(request.AuthKey, currentBlockHeight, ExecutorContext) {

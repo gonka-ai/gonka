@@ -7,13 +7,17 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"errors"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
-	POC_VALIDATE_BATCH_RETRIES     = 5
-	POC_VALIDATE_SAMPLES_PER_BATCH = 200
+	POC_VALIDATE_BATCH_RETRIES         = 5
+	POC_VALIDATE_SAMPLES_PER_BATCH     = 200
+	POC_VALIDATE_GET_NODES_RETRIES     = 30
+	POC_VALIDATE_GET_NODES_RETRY_DELAY = 5 * time.Second
 )
 
 type NodePoCOrchestrator interface {
@@ -22,10 +26,16 @@ type NodePoCOrchestrator interface {
 
 type NodePoCOrchestratorImpl struct {
 	pubKey       string
-	nodeBroker   *broker.Broker
+	nodeBroker   NodeBroker
 	callbackUrl  string
 	chainBridge  OrchestratorChainBridge
 	phaseTracker *chainphase.ChainPhaseTracker
+}
+
+// NodeBroker defines the subset of broker methods the orchestrator relies on.
+type NodeBroker interface {
+	GetNodes() ([]broker.NodeResponse, error)
+	NewNodeClient(node *broker.Node) mlnodeclient.MLNodeClient
 }
 
 type OrchestratorChainBridge interface {
@@ -152,14 +162,11 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(pocStageStartBlockHeig
 		"numParticipants", len(participants),
 		"participants", participants)
 
-	nodes, err := o.nodeBroker.GetNodes()
+	nodes, err := o.getNodesForPocValidation(pocStageStartBlockHeight)
 	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get nodes", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get nodes for PoC validation", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err)
 		return
 	}
-	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "numNodes", len(nodes))
-	nodes = filterNodes(nodes)
-	logging.Info("ValidateReceivedBatches. Filtered nodes available for PoC validation.", types.PoC, "numNodes", len(nodes))
 
 	if len(nodes) == 0 {
 		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight)
@@ -263,6 +270,48 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(pocStageStartBlockHeig
 		"totalBatches", len(allParticipantsBatches.PocBatch),
 		"successfulValidations", successfulValidations,
 		"failedValidations", failedValidations)
+}
+
+func (o *NodePoCOrchestratorImpl) getNodesForPocValidation(pocStageStartBlockHeight int64) ([]broker.NodeResponse, error) {
+	return o.getNodesForPocValidationWithConfig(
+		pocStageStartBlockHeight,
+		POC_VALIDATE_GET_NODES_RETRIES,
+		POC_VALIDATE_GET_NODES_RETRY_DELAY,
+	)
+}
+
+// getNodesForPocValidationWithConfig allows tests to supply custom retry settings.
+func (o *NodePoCOrchestratorImpl) getNodesForPocValidationWithConfig(
+	pocStageStartBlockHeight int64,
+	retries int,
+	delay time.Duration,
+) ([]broker.NodeResponse, error) {
+	if retries <= 0 {
+		retries = 1
+	}
+
+	for attempt := 0; attempt < retries; attempt++ {
+		nodes, err := o.nodeBroker.GetNodes()
+		if err != nil {
+			logging.Error("ValidateReceivedBatches. Failed to get nodes", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "error", err, "attempt", attempt)
+			return nil, err
+		}
+		logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "numNodes", len(nodes), "attempt", attempt)
+		nodes = filterNodes(nodes)
+		logging.Info("ValidateReceivedBatches. Filtered nodes available for PoC validation.", types.PoC, "numNodes", len(nodes), "attempt", attempt)
+		if len(nodes) != 0 {
+			logging.Info("ValidateReceivedBatches. Returning filtered nodes.", types.PoC, "numNodes", len(nodes), "attempt", attempt)
+			return nodes, nil
+		}
+
+		if attempt == retries-1 {
+			break
+		}
+		time.Sleep(delay)
+	}
+
+	logging.Error("ValidateReceivedBatches. Failed to get nodes after all retry attempts", types.PoC, "pocStageStartBlockHeight", pocStageStartBlockHeight, "numAttempts", retries)
+	return nil, errors.New("no nodes available for PoC validation after retries")
 }
 
 func filterNodes(nodes []broker.NodeResponse) []broker.NodeResponse {

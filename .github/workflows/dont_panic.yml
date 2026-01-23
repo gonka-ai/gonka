@@ -1,0 +1,29 @@
+name: Check for panic or Must
+on:
+  push:
+    branches:
+      - main
+      - upgrade-v**
+  pull_request:
+    paths:
+      - "inference-chain/**"
+
+permissions:
+  contents: read
+  # Optional: allow read access to pull requests. Use with `only-new-issues` option.
+  # pull-requests: read
+
+jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.24.2
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.6
+          working-directory: inference-chain
