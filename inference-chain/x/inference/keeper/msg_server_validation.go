@@ -7,7 +7,6 @@ import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -86,9 +85,19 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	)
 	needsRevalidation := false
 
-	epochGroup, err := k.GetCurrentEpochGroup(ctx)
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("Failed to get current epoch", types.Validation, "error", err)
+		return nil, types.ErrEffectiveEpochNotFound
+	}
+
+	if inference.EpochId != currentEpochIndex {
+		k.LogInfo("Validation for different epoch", types.Validation, "inferenceEpoch", inference.EpochId, "currentEpochIndex", currentEpochIndex)
+	}
+
+	epochGroup, err := k.GetEpochGroup(ctx, inference.EpochId, "")
 	if err != nil {
-		k.LogError("Failed to get current epoch group", types.Validation, "error", err)
+		k.LogError("Failed to get epoch group", types.Validation, "error", err, "epochIndex", inference.EpochId)
 		return nil, err
 	}
 
@@ -108,7 +117,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return epochGroup.Revalidate(passed, inference, msg, ctx)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
-		shouldShare, information := k.inferenceIsBeforeClaimsSet(ctx, inference, epochGroup)
+		shouldShare, information := k.inferenceIsBeforeClaimsSet(ctx, inference, currentEpochIndex)
 		k.LogInfo("Validation sharing decision", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "shouldShare", shouldShare, "information", information)
 		if shouldShare {
 			k.shareWorkWithValidators(ctx, inference, msg, &executor)
@@ -116,7 +125,8 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		}
 		executor.ConsecutiveInvalidInferences = 0
 		executor.CurrentEpochStats.ValidatedInferences++
-	} else {
+	} else if currentEpochIndex == inference.EpochId {
+		// Only run invalidation voting if we're still in the same Epoch as the inference
 		creatorAddr, err := sdk.AccAddressFromBech32(creator.Address)
 		if err != nil {
 			return nil, err
@@ -145,6 +155,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 		inference.ProposalDetails = proposalDetails
 		needsRevalidation = true
+	} else if currentEpochIndex != inference.EpochId {
+		k.LogWarn("Ignoring invalidation submitted after epoch changeover", types.Validation, "inferenceId", inference.InferenceId, "inferenceEpoch", inference.EpochId, "currentEpoch", currentEpochIndex)
+		inference.Status = types.InferenceStatus_FINISHED
 	}
 
 	err = k.SetParticipant(ctx, executor)
@@ -238,10 +251,10 @@ func (k msgServer) CountInvalidations(ctx sdk.Context, address sdk.AccAddress) (
 	return count, nil
 }
 
-func (k msgServer) inferenceIsBeforeClaimsSet(ctx context.Context, inference types.Inference, group *epochgroup.EpochGroup) (bool, string) {
+func (k msgServer) inferenceIsBeforeClaimsSet(ctx context.Context, inference types.Inference, currentEpochIndex uint64) (bool, string) {
 	// Submitted after epoch changeover (onSetNewValidatorsStage)
-	if inference.EpochId < group.GroupData.EpochIndex {
-		return false, "Validation submitted in next epoch. InferenceEpoch: " + strconv.FormatUint(inference.EpochId, 10) + ", EpochGroupEpoch: " + strconv.FormatUint(group.GroupData.EpochIndex, 10)
+	if inference.EpochId < currentEpochIndex {
+		return false, "Validation submitted in next epoch. InferenceEpoch: " + strconv.FormatUint(inference.EpochId, 10) + ", EpochGroupEpoch: " + strconv.FormatUint(currentEpochIndex, 10)
 	}
 	upcomingEpoch, found := k.GetUpcomingEpoch(ctx)
 	// During regular inference time (majority case)

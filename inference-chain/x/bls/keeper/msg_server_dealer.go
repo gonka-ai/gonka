@@ -51,6 +51,11 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("expected encrypted shares for %d participants, got %d", len(epochBLSData.Participants), len(msg.EncryptedSharesForParticipants))
 	}
 
+	// Commitments must be non-empty (at least C_0) or later group public key computation can degenerate.
+	if len(msg.Commitments) == 0 {
+		return nil, fmt.Errorf("commitments must be non-empty")
+	}
+
 	// Create dealer part storage
 	participantShares := make([]*types.EncryptedSharesForParticipant, len(msg.EncryptedSharesForParticipants))
 	for i := range msg.EncryptedSharesForParticipants {

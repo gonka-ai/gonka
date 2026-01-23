@@ -315,6 +315,9 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	msg := &types.MsgSubmitDealerPart{
 		Creator: dealerAddr,
 		EpochId: epochID,
+		Commitments: [][]byte{
+			[]byte("commitment1"),
+		},
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{[]byte("share1")}},
 		},

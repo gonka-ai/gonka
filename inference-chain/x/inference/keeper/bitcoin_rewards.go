@@ -576,7 +576,11 @@ func CalculateParticipantBitcoinRewards(
 			debt := uint64(-participant.CoinBalance)
 			if settleAmount.RewardCoins >= debt {
 				settleAmount.RewardCoins -= debt
+				// Debt recovered from reward goes to governance remainder
+				totalDistributed -= debt
 			} else {
+				// Partial debt recovery - all reward coins go to debt
+				totalDistributed -= settleAmount.RewardCoins
 				settleAmount.RewardCoins = 0
 				settleError = types.ErrNegativeCoinBalance
 			}
