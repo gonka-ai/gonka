@@ -16,9 +16,12 @@ import (
 )
 
 var (
-	openRouterSupportedParameters = []string{
-		"temperature", "top_p", "top_k", "max_tokens",
-		"frequency_penalty", "presence_penalty", "stop", "seed", "stream",
+	openRouterSupportedSamplingParameters = []string{
+		"temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty", "stop", "seed",
+	}
+
+	openRouterSupportedFeatures = []string{
+		"logprobs",
 	}
 
 	openRouterDefaultPricing = &OpenRouterPricing{
@@ -54,24 +57,16 @@ func (s *Server) getModelsOpenRouter(ctx echo.Context) error {
 		if modelEpochData.EpochGroupData.ModelSnapshot != nil {
 			m := modelEpochData.EpochGroupData.ModelSnapshot
 			models = append(models, OpenRouterModel{
-				ID:            m.Id,
-				Name:          m.Id,
-				Created:       0,
-				ContextLength: m.ContextWindow,
-				Architecture: &OpenRouterArchitecture{
-					Modality:         "text->text",
-					InputModalities:  []string{"text"},
-					OutputModalities: []string{"text"},
-					Tokenizer:        "Unknown",
-				},
-				Pricing: openRouterDefaultPricing,
-				TopProvider: &OpenRouterTopProvider{
-					ContextLength:       m.ContextWindow,
-					MaxCompletionTokens: m.ContextWindow,
-					IsModerated:         false,
-				},
-				PerRequestLimits:    nil,
-				SupportedParameters: openRouterSupportedParameters,
+				ID:                          m.Id,
+				Name:                        m.Id,
+				Created:                     0,
+				InputModalities:             []string{"text"},
+				OutputModalities:            []string{"text"},
+				ContextLength:               m.ContextWindow,
+				MaxOutputLength:             m.ContextWindow,
+				Pricing:                     openRouterDefaultPricing,
+				SupportedSamplingParameters: openRouterSupportedSamplingParameters,
+				SupportedFeatures:           openRouterSupportedFeatures,
 			})
 		}
 	}
@@ -467,6 +462,7 @@ func transformChatChunkToCompletionChunk(chatChunkJSON string) (string, error) {
 		Object:  "text_completion",
 		Created: chatChunk.Created,
 		Model:   chatChunk.Model,
+		Usage:   chatChunk.Usage,
 	}
 
 	for _, c := range chatChunk.Choices {

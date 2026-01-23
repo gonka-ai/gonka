@@ -35,13 +35,6 @@ func (s StringOrArray) First() string {
 	return s[0]
 }
 
-type OpenRouterArchitecture struct {
-	Modality         string   `json:"modality"`
-	InputModalities  []string `json:"input_modalities"`
-	OutputModalities []string `json:"output_modalities"`
-	Tokenizer        string   `json:"tokenizer"`
-	InstructType     string   `json:"instruct_type,omitempty"`
-}
 
 type OpenRouterPricing struct {
 	Prompt          string `json:"prompt"`
@@ -59,18 +52,21 @@ type OpenRouterTopProvider struct {
 }
 
 type OpenRouterModel struct {
-	ID                  string                  `json:"id"`
-	Name                string                  `json:"name"`
-	Created             int64                   `json:"created"`
-	Description         string                  `json:"description,omitempty"`
-	ContextLength       uint64                  `json:"context_length"`
-	Architecture        *OpenRouterArchitecture `json:"architecture"`
-	Pricing             *OpenRouterPricing      `json:"pricing"`
-	TopProvider         *OpenRouterTopProvider  `json:"top_provider"`
-	PerRequestLimits    interface{}             `json:"per_request_limits"`
-	SupportedParameters []string                `json:"supported_parameters"`
-	CanonicalSlug       string                  `json:"canonical_slug,omitempty"`
-	DefaultParameters   map[string]interface{}  `json:"default_parameters,omitempty"`
+	ID                          string                 `json:"id"`
+	HuggingFaceID               string                 `json:"hugging_face_id,omitempty"`
+	Name                        string                 `json:"name"`
+	Created                     int64                  `json:"created"`
+	Description                 string                 `json:"description,omitempty"`
+	InputModalities             []string               `json:"input_modalities"`
+	OutputModalities            []string               `json:"output_modalities"`
+	Quantization                string                 `json:"quantization,omitempty"`
+	ContextLength               uint64                 `json:"context_length"`
+	MaxOutputLength             uint64                 `json:"max_output_length"`
+	Pricing                     *OpenRouterPricing     `json:"pricing"`
+	SupportedSamplingParameters []string               `json:"supported_sampling_parameters"`
+	SupportedFeatures           []string               `json:"supported_features"`
+	TopProvider                 *OpenRouterTopProvider `json:"top_provider,omitempty"`
+	PerRequestLimits            interface{}            `json:"per_request_limits,omitempty"`
 }
 
 type OpenRouterModelsResponse struct {
@@ -148,6 +144,11 @@ type ChatCompletionChunk struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 type CompletionChunk struct {
@@ -161,4 +162,9 @@ type CompletionChunk struct {
 		Logprobs     *int    `json:"logprobs"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }

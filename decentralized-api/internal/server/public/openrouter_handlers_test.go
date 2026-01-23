@@ -92,10 +92,12 @@ func TestOpenRouterModelsEndpoint_Minimal(t *testing.T) {
 	require.Equal(t, "test-model", model.ID)
 	require.Equal(t, "test-model", model.Name)
 	require.Equal(t, uint64(4096), model.ContextLength)
-	require.NotNil(t, model.Architecture)
+	require.Equal(t, uint64(4096), model.MaxOutputLength)
+	require.Equal(t, []string{"text"}, model.InputModalities)
+	require.Equal(t, []string{"text"}, model.OutputModalities)
 	require.NotNil(t, model.Pricing)
-	require.NotNil(t, model.TopProvider)
-	require.Equal(t, openRouterSupportedParameters, model.SupportedParameters)
+	require.Equal(t, openRouterSupportedSamplingParameters, model.SupportedSamplingParameters)
+	require.Equal(t, openRouterSupportedFeatures, model.SupportedFeatures)
 
 	mc.AssertExpectations(t)
 }
@@ -204,4 +206,32 @@ func TestTransformChatChunkToCompletionChunk(t *testing.T) {
 	require.Equal(t, "Hello", completionChunk.Choices[0].Text)
 	require.Equal(t, 0, completionChunk.Choices[0].Index)
 	require.Nil(t, completionChunk.Choices[0].FinishReason)
+}
+
+func TestTransformChatChunkToCompletionChunk_WithUsage(t *testing.T) {
+	chatChunk := `{
+		"id": "chatcmpl-123",
+		"object": "chat.completion.chunk",
+		"created": 1234567890,
+		"model": "test-model",
+		"choices": [],
+		"usage": {
+			"prompt_tokens": 10,
+			"completion_tokens": 20,
+			"total_tokens": 30
+		}
+	}`
+
+	result, err := transformChatChunkToCompletionChunk(chatChunk)
+	require.NoError(t, err)
+
+	var completionChunk CompletionChunk
+	err = json.Unmarshal([]byte(result), &completionChunk)
+	require.NoError(t, err)
+
+	require.Equal(t, "text_completion", completionChunk.Object)
+	require.NotNil(t, completionChunk.Usage)
+	require.Equal(t, 10, completionChunk.Usage.PromptTokens)
+	require.Equal(t, 20, completionChunk.Usage.CompletionTokens)
+	require.Equal(t, 30, completionChunk.Usage.TotalTokens)
 }
