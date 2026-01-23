@@ -297,3 +297,23 @@ func TestDeterministicFloat(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldValidateDivisionByZeroGuard(t *testing.T) {
+	inferenceDetails := &types.InferenceValidationDetails{
+		InferenceId:        fixedInferenceId,
+		TrafficBasis:       defaultTrafficCutoff,
+		ExecutorReputation: 50,
+	}
+	testParams := &types.ValidationParams{
+		MinValidationAverage:        types.DecimalFromFloat(0.1),
+		MaxValidationAverage:        types.DecimalFromFloat(1.0),
+		FullValidationTrafficCutoff: defaultTrafficCutoff,
+		MinValidationTrafficCutoff:  100,
+		MinValidationHalfway:        types.DecimalFromFloat(0.05),
+		EpochsToMax:                 defaultEpochsToMax,
+	}
+
+	shouldValidate, text := ShouldValidate(fiftyPercentSeed, inferenceDetails, 100, 50, 100, testParams, true)
+	require.False(t, shouldValidate)
+	require.NotEmpty(t, text)
+}
