@@ -37,6 +37,10 @@ const (
 	ExecutorContext AuthKeyContext = 2
 	// BothContexts indicates the AuthKey was used for both transfer and executor requests
 	BothContexts = TransferContext | ExecutorContext
+
+	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MB)
+	// This prevents memory exhaustion attacks from oversized requests
+	MaxRequestBodySize = 10 * 1024 * 1024
 )
 
 // Package-level variables for AuthKey reuse prevention
@@ -950,6 +954,9 @@ func readRequest(request *http.Request, transferAddress string) (*ChatRequest, e
 }
 
 func readRequestBody(r *http.Request) ([]byte, error) {
+	// Limit request body size to prevent memory exhaustion attacks
+	r.Body = http.MaxBytesReader(nil, r.Body, MaxRequestBodySize)
+
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r.Body); err != nil {
 		return nil, err
