@@ -29,11 +29,18 @@ func ShouldValidate(
 	targetValidations := maxValidationAverage.Sub(rangeSize.Mul(executorReputation))
 	// 100% rep will be minValidationAverage, 0% rep will be maxValidationAverage
 
-	if totalPower == executorPower {
+	denom := totalPower - executorPower
+	if denom == 0 {
 		return false, "ShouldValidate:false (totalPower==executorPower, div-by-zero)"
 	}
-	
-	ourProbability := targetValidations.Mul(decimal.NewFromInt(validatorPower)).Div(decimal.NewFromInt(totalPower - executorPower))
+	if denom < 0 {
+		return false, fmt.Sprintf(
+			"ShouldValidate:false (invalid power configuration, totalPower=%d, executorPower=%d, denom=%d)",
+			totalPower, executorPower, denom,
+		)
+	}
+
+	ourProbability := targetValidations.Mul(decimal.NewFromInt(validatorPower)).Div(decimal.NewFromInt(denom))
 	if ourProbability.GreaterThan(one) {
 		ourProbability = one
 	}
