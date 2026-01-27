@@ -466,11 +466,13 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			return nil, broker.NewApplicationActionError(err)
 		}
 
-		resp, postErr := s.httpClient.Post(
-			tokenizeUrl,
-			"application/json",
-			bytes.NewReader(jsonData),
-		)
+		req, reqErr := http.NewRequest(http.MethodPost, tokenizeUrl, bytes.NewReader(jsonData))
+		if reqErr != nil {
+			return nil, broker.NewApplicationActionError(reqErr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, postErr := s.httpClient.Do(req)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
@@ -552,11 +554,13 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		resp, postErr := s.httpClient.Post(
-			completionsUrl,
-			request.Request.Header.Get("Content-Type"),
-			bytes.NewReader(modifiedRequestBody.NewBody),
-		)
+		req, reqErr := http.NewRequest(http.MethodPost, completionsUrl, bytes.NewReader(modifiedRequestBody.NewBody))
+		if reqErr != nil {
+			return nil, broker.NewApplicationActionError(reqErr)
+		}
+		req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
+
+		resp, postErr := s.httpClient.Do(req)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}

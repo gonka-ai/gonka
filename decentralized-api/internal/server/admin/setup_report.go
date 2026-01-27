@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/utils"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -546,7 +547,7 @@ func (s *Server) checkMLNodes(ctx context.Context) []Check {
 		// Check health endpoint
 		healthUrl, _ := url.JoinPath(pocUrl, "/health")
 
-		client := &http.Client{Timeout: 5 * time.Second}
+		client := utils.NewHttpClient(5 * time.Second)
 		resp, err := client.Get(healthUrl)
 
 		healthy := false

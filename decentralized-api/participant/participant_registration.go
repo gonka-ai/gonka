@@ -7,6 +7,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/public_entities"
 	"decentralized-api/logging"
+	"decentralized-api/utils"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -157,8 +158,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 
 	logging.Info("Sending request to seed node", types.Participants, "url", requestUrl)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := utils.SharedHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send HTTP request: %w", err)
 	}

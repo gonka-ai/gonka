@@ -10,6 +10,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
+	httputils "decentralized-api/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -909,11 +910,13 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, err
 	}
 
-	resp, err := http.Post(
-		completionsUrl,
-		"application/json",
-		bytes.NewReader(requestBody),
-	)
+	req, err := http.NewRequest(http.MethodPost, completionsUrl, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httputils.SharedHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
