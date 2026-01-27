@@ -18,9 +18,9 @@ func TestShouldValidate(t *testing.T) {
 		name                 string
 		seed                 int64
 		inferenceDetails     *types.InferenceValidationDetails
-		totalPower           uint32
-		validatorPower       uint32
-		executorPower        uint32
+		totalPower           int64
+		validatorPower       int64
+		executorPower        int64
 		expectedResult       bool
 		expectedProbability  float64
 		minValidationAverage float64
@@ -226,6 +226,63 @@ func TestShouldValidate(t *testing.T) {
 		})
 	}
 
+}
+
+func TestShouldValidate_DivisionByZero(t *testing.T) {
+	testParams := &types.ValidationParams{
+		MinValidationAverage:        types.DecimalFromFloat(0.1),
+		MaxValidationAverage:        types.DecimalFromFloat(1.0),
+		FullValidationTrafficCutoff: defaultTrafficCutoff,
+		MinValidationTrafficCutoff:  100,
+		MinValidationHalfway:        types.DecimalFromFloat(0.05),
+		EpochsToMax:                 defaultEpochsToMax,
+	}
+
+	inferenceDetails := &types.InferenceValidationDetails{
+		InferenceId:        fixedInferenceId,
+		TrafficBasis:       defaultTrafficCutoff,
+		ExecutorReputation: 50,
+	}
+
+	// Test case where totalPower == executorPower (would cause division by zero)
+	result, message := ShouldValidate(12345, inferenceDetails, 100, 50, 100, testParams, false)
+	require.False(t, result, "Should return false when totalPower == executorPower")
+	require.Contains(t, message, "no other validator power")
+
+	// Test case where executorPower > totalPower (invalid state)
+	result, message = ShouldValidate(12345, inferenceDetails, 100, 50, 150, testParams, false)
+	require.False(t, result, "Should return false when executorPower > totalPower")
+	require.Contains(t, message, "no other validator power")
+}
+
+func TestShouldValidate_LargeWeights(t *testing.T) {
+	testParams := &types.ValidationParams{
+		MinValidationAverage:        types.DecimalFromFloat(0.1),
+		MaxValidationAverage:        types.DecimalFromFloat(1.0),
+		FullValidationTrafficCutoff: defaultTrafficCutoff,
+		MinValidationTrafficCutoff:  100,
+		MinValidationHalfway:        types.DecimalFromFloat(0.05),
+		EpochsToMax:                 defaultEpochsToMax,
+	}
+
+	inferenceDetails := &types.InferenceValidationDetails{
+		InferenceId:        fixedInferenceId,
+		TrafficBasis:       defaultTrafficCutoff,
+		ExecutorReputation: 50,
+	}
+
+	// Test with values larger than uint32 max (4,294,967,295)
+	// These would have been truncated with uint32
+	largeTotal := int64(10_000_000_000)     // 10 billion
+	largeValidator := int64(1_000_000_000)  // 1 billion
+	largeExecutor := int64(500_000_000)     // 500 million
+
+	// Should not panic and should return a valid result
+	result, message := ShouldValidate(12345, inferenceDetails, largeTotal, largeValidator, largeExecutor, testParams, true)
+	t.Logf("Large weights result: %v, message: %s", result, message)
+
+	// The function should complete without panic
+	require.NotEmpty(t, message, "Should return a message")
 }
 
 func TestShouldValidatePerformance(t *testing.T) {
