@@ -6,6 +6,7 @@ import (
 	"github.com/productscience/inference/testutil"
 	keeper2 "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,7 +125,7 @@ func TestGetPunishmentStats_MissedEverything(t *testing.T) {
 	// Should BE punished (100% miss rate)
 	require.True(t, stats.WasPunished, "participant with 100%% miss rate should be punished")
 	require.Equal(t, uint64(100), stats.TotalRequests)
-	require.Equal(t, float64(1.0), stats.MissedRatio)
+	require.True(t, decimal.NewFromInt(1).Equal(stats.MissedRatio))
 }
 
 func TestGetPunishmentStats_NotFound(t *testing.T) {

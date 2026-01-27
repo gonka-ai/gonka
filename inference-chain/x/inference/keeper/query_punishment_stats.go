@@ -5,6 +5,7 @@ import (
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -16,7 +17,7 @@ type PunishmentStats struct {
 	WasPunished    bool
 	MissedRequests uint64
 	TotalRequests  uint64
-	MissedRatio    float64
+	MissedRatio    decimal.Decimal
 	// RewardedCoins from EpochPerformanceSummary (0 if punished, >0 if not)
 	RewardedCoins uint64
 }
@@ -25,12 +26,17 @@ type PunishmentStats struct {
 // by re-running the same statistical test used during settlement.
 // This uses existing EpochPerformanceSummary data - no additional storage required.
 func (k Keeper) GetPunishmentStats(ctx context.Context, epochIndex uint64, participantId string) (*PunishmentStats, error) {
-	// Get the stored performance summary for this epoch/participant
 	summary, found := k.GetEpochPerformanceSummary(ctx, epochIndex, participantId)
 	if !found {
 		return nil, status.Error(codes.NotFound, "participant not found for epoch")
 	}
 
+	return k.ComputePunishmentStats(ctx, summary)
+}
+
+// ComputePunishmentStats computes punishment stats from a summary.
+// Exported so callers with existing summary data can avoid redundant lookups.
+func (k Keeper) ComputePunishmentStats(ctx context.Context, summary types.EpochPerformanceSummary) (*PunishmentStats, error) {
 	total := summary.InferenceCount + summary.MissedRequests
 
 	// Case 1: No work assigned - code returns full reward, not punishment
@@ -40,7 +46,7 @@ func (k Keeper) GetPunishmentStats(ctx context.Context, epochIndex uint64, parti
 			WasPunished:    false,
 			MissedRequests: 0,
 			TotalRequests:  0,
-			MissedRatio:    0,
+			MissedRatio:    decimal.Zero,
 			RewardedCoins:  summary.RewardedCoins,
 		}, nil
 	}
@@ -60,6 +66,9 @@ func (k Keeper) GetPunishmentStats(ctx context.Context, epochIndex uint64, parti
 		int(total),
 		p0.ToDecimal(),
 	)
+
+	missedRatio := decimal.NewFromInt(int64(summary.MissedRequests)).Div(decimal.NewFromInt(int64(total)))
+
 	if err != nil {
 		// Error in test = code returns full reward (not punishment)
 		// See accountsettle.go:57-58
@@ -67,7 +76,7 @@ func (k Keeper) GetPunishmentStats(ctx context.Context, epochIndex uint64, parti
 			WasPunished:    false,
 			MissedRequests: summary.MissedRequests,
 			TotalRequests:  total,
-			MissedRatio:    float64(summary.MissedRequests) / float64(total),
+			MissedRatio:    missedRatio,
 			RewardedCoins:  summary.RewardedCoins,
 		}, nil
 	}
@@ -78,22 +87,43 @@ func (k Keeper) GetPunishmentStats(ctx context.Context, epochIndex uint64, parti
 		WasPunished:    wasPunished,
 		MissedRequests: summary.MissedRequests,
 		TotalRequests:  total,
-		MissedRatio:    float64(summary.MissedRequests) / float64(total),
+		MissedRatio:    missedRatio,
 		RewardedCoins:  summary.RewardedCoins,
 	}, nil
 }
 
 // GetPunishmentStatsForEpoch returns punishment stats for all participants in an epoch.
+// Uses ActiveParticipants (immutable) + batch lookup for efficient querying.
+// Returns empty slice (not nil) when no results found.
 func (k Keeper) GetPunishmentStatsForEpoch(ctx context.Context, epochIndex uint64) ([]PunishmentStats, error) {
-	all := k.GetAllEpochPerformanceSummary(ctx)
+	// Get ActiveParticipants which is immutable for the epoch
+	activeParticipants, found := k.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return []PunishmentStats{}, nil
+	}
 
-	var results []PunishmentStats
-	for _, summary := range all {
-		if summary.EpochIndex != epochIndex {
-			continue
-		}
+	// Defensive nil check - see query_get_random_executor.go:123 for precedent
+	if activeParticipants.Participants == nil {
+		return []PunishmentStats{}, nil
+	}
 
-		stats, err := k.GetPunishmentStats(ctx, epochIndex, summary.ParticipantId)
+	// Extract participant IDs
+	participantIds := make([]string, 0, len(activeParticipants.Participants))
+	for _, ap := range activeParticipants.Participants {
+		participantIds = append(participantIds, ap.Index)
+	}
+
+	if len(participantIds) == 0 {
+		return []PunishmentStats{}, nil
+	}
+
+	// Batch lookup summaries for these participants
+	summaries := k.GetParticipantsEpochSummaries(ctx, participantIds, epochIndex)
+
+	// Compute punishment stats for each summary found
+	results := make([]PunishmentStats, 0, len(summaries))
+	for _, summary := range summaries {
+		stats, err := k.ComputePunishmentStats(ctx, summary)
 		if err != nil {
 			continue
 		}
