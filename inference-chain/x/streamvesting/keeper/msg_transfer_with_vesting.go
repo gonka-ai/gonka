@@ -15,6 +15,12 @@ import (
 const (
 	// DefaultVestingEpochs is the default number of epochs for vesting (180 epochs)
 	DefaultVestingEpochs = uint64(180)
+
+	// MaxVestingEpochs is the maximum allowed vesting epochs to prevent DoS
+	MaxVestingEpochs = uint64(3650) // ~10 years
+
+	// MaxCoinsInAmount is the maximum number of coin denominations in a single transfer
+	MaxCoinsInAmount = 10
 )
 
 func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTransferWithVesting) (*types.MsgTransferWithVestingResponse, error) {
@@ -39,6 +45,16 @@ func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTran
 
 	if !req.Amount.IsValid() {
 		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, "invalid coins")
+	}
+
+	// Validate number of coin denominations to prevent N*M complexity DoS
+	if len(req.Amount) > MaxCoinsInAmount {
+		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many coin denominations: %d, max allowed: %d", len(req.Amount), MaxCoinsInAmount)
+	}
+
+	// Validate vesting epochs upper limit to prevent DoS
+	if req.VestingEpochs > MaxVestingEpochs {
+		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "vesting epochs %d exceeds maximum allowed: %d", req.VestingEpochs, MaxVestingEpochs)
 	}
 
 	// Determine vesting epochs - use default if not specified or zero
@@ -69,8 +85,8 @@ func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTran
 	}
 
 	// Extend the schedule if necessary
-	requiredLength := int(vestingEpochs)
-	for len(schedule.EpochAmounts) < requiredLength {
+	requiredLength := int64(vestingEpochs)
+	for int64(len(schedule.EpochAmounts)) < requiredLength {
 		schedule.EpochAmounts = append(schedule.EpochAmounts, types.EpochCoins{
 			Coins: sdk.NewCoins(),
 		})
@@ -84,7 +100,7 @@ func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTran
 		remainder := coin.Amount.Mod(epochsInt)
 
 		// Add the base amount to each epoch
-		for i := 0; i < int(vestingEpochs); i++ {
+		for i := int64(0); i < int64(vestingEpochs); i++ {
 			epochCoin := sdk.NewCoin(coin.Denom, amountPerEpoch)
 
 			// Add remainder to the first epoch
