@@ -49,7 +49,6 @@ func (eg *EpochGroup) GetRandomMember(
 	}
 
 	filteredParticipants := filterFn(activeParticipants)
-	filteredParticipants = sanitizeMembers(filteredParticipants)
 	if len(filteredParticipants) == 0 {
 		return nil, status.Error(codes.Internal, "After filtering participants the length is 0")
 	}
