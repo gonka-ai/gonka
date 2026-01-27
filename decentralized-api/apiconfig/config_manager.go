@@ -81,7 +81,7 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 			log.Printf("Error writing config: %+v", err)
 			return nil, err
 		}
-		log.Printf("Saved static config after initial migration")
+		logging.Info("Saved static config after initial migration", types.Config)
 	}
 
 	// Hydrate in-memory dynamic state from DB once
