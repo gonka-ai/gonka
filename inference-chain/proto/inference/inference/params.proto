@@ -118,13 +118,26 @@ message PoCModelParams {
   Decimal r_target = 12;
 }
 
+// PoCStatTestParams defines statistical test parameters for PoC V2 validation.
+message PoCStatTestParams {
+  option (gogoproto.equal) = true;
+  Decimal dist_threshold = 1;      // L2 distance above which vectors are mismatched (default: 0.4)
+  Decimal p_mismatch = 2;          // Null hypothesis probability - expected honest mismatch rate (default: 0.1)
+  Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
+}
+
 message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
   uint64 poc_data_pruning_epoch_threshold = 3;
   Decimal weight_scale_factor = 4;
-  PoCModelParams model_params = 5;
+  PoCModelParams model_params = 5 [deprecated = true]; // V1 model architecture params, deprecated
+  string model_id = 6;  // Model identifier for PoC generation/validation
+  int64 seq_len = 7;    // Sequence length for PoC generation/validation
+  bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
+  bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
+  PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
 }
 
 message Decimal {

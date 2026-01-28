@@ -81,22 +81,21 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	// Create AppModule with the keeper
 	am := inference.NewAppModule(nil, k, nil, nil, nil, nil)
 
-	// Set up batches
-	batch := types.PoCBatch{
-		ParticipantAddress:       testutil.Executor2,
-		PocStageStartBlockHeight: 100,
-		Nonces:                   []int64{1, 2, 3},
-	}
-	_ = k.SetPocBatch(ctx, batch)
+	// Set up store commit (replaces V2 batches)
+	setStoreCommit(ctx, k, testutil.Executor2, 100, 1)
 
-	// Set up validations
-	validation := types.PoCValidation{
+	// Set up weight distribution (per-node weights)
+	setWeightDistribution(ctx, k, testutil.Executor2, 100, []nodeDistWeight{{"node-1", 1}})
+
+	// Set up V2 validations
+	validation := types.PoCValidationV2{
 		ParticipantAddress:          testutil.Executor2,
 		ValidatorParticipantAddress: validatorAccAddress2, // Set validation only for participant with large weight
 		PocStageStartBlockHeight:    100,
-		FraudDetected:               false,
+		ValidatedWeight:             100,
 	}
-	_ = k.SetPoCValidation(ctx, validation)
+	err = k.SetPocValidationV2(ctx, validation)
+	require.NoError(t, err)
 
 	// Set up participant
 	participant := types.Participant{
@@ -113,7 +112,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 		EpochIndex:  1,
 		Signature:   "signature1",
 	}
-	_ = k.SetRandomSeed(ctx, seed)
+	k.SetRandomSeed(ctx, seed)
 
 	// Create EpochGroupData with epochIndex <= 1
 	upcomingEpoch := types.Epoch{
@@ -140,7 +139,7 @@ func TestCollateralGracePeriod(t *testing.T) {
 	// Set current epoch to 5 (within grace period).
 	// AdjustWeightsByCollateral uses GetLatestEpoch, which is based on the "Effective" epoch.
 	// We must set the effective epoch first, then the upcoming epoch.
-	_ = k.SetEffectiveEpochIndex(ctx, 4)
+	k.SetEffectiveEpochIndex(ctx, 4)
 	currentEpoch := types.Epoch{Index: 5}
 	k.SetEpoch(ctx, &currentEpoch)
 
@@ -175,7 +174,7 @@ func TestNoCollateralPostGracePeriod(t *testing.T) {
 	k.SetParams(ctx, inferenceParams)
 
 	// Set current epoch to 5 (after grace period)
-	_ = k.SetEffectiveEpochIndex(ctx, 4)
+	k.SetEffectiveEpochIndex(ctx, 4)
 	currentEpoch := types.Epoch{Index: 5}
 	k.SetEpoch(ctx, &currentEpoch)
 
@@ -219,7 +218,7 @@ func TestPostGracePeriod_FullCollateral(t *testing.T) {
 	k.SetParams(ctx, inferenceParams)
 
 	// Set current epoch to 5 (after grace period)
-	_ = k.SetEffectiveEpochIndex(ctx, 4)
+	k.SetEffectiveEpochIndex(ctx, 4)
 	currentEpoch := types.Epoch{Index: 5}
 	k.SetEpoch(ctx, &currentEpoch)
 
@@ -266,7 +265,7 @@ func TestPostGracePeriod_PartialCollateral(t *testing.T) {
 	k.SetParams(ctx, inferenceParams)
 
 	// Set current epoch to 5 (after grace period)
-	_ = k.SetEffectiveEpochIndex(ctx, 4)
+	k.SetEffectiveEpochIndex(ctx, 4)
 	currentEpoch := types.Epoch{Index: 5}
 	k.SetEpoch(ctx, &currentEpoch)
 
@@ -362,22 +361,21 @@ func TestComputeNewWeights(t *testing.T) {
 
 				inference.InitGenesis(ctx, *k, mocks.StubGenesisState())
 
-				// Set up batches
-				batch := types.PoCBatch{
-					ParticipantAddress:       testutil.Executor2,
-					PocStageStartBlockHeight: 100,
-					Nonces:                   []int64{1, 2, 3},
-				}
-				_ = k.SetPocBatch(ctx, batch)
+				// Set up store commit (replaces V2 batches)
+				setStoreCommit(ctx, *k, testutil.Executor2, 100, 1)
 
-				// Set up validations
-				validation := types.PoCValidation{
+				// Set up weight distribution
+				setWeightDistribution(ctx, *k, testutil.Executor2, 100, []nodeDistWeight{{"node-1", 1}})
+
+				// Set up V2 validations
+				validation := types.PoCValidationV2{
 					ParticipantAddress:          testutil.Executor2,
 					ValidatorParticipantAddress: validatorAccAddress,
 					PocStageStartBlockHeight:    100,
-					FraudDetected:               false,
+					ValidatedWeight:             100,
 				}
-				_ = k.SetPoCValidation(ctx, validation)
+				err := k.SetPocValidationV2(ctx, validation)
+				require.NoError(t, err)
 
 				// Set up participant
 				participant := types.Participant{
@@ -393,67 +391,10 @@ func TestComputeNewWeights(t *testing.T) {
 					EpochIndex:  1,
 					Signature:   "signature1",
 				}
-				_ = k.SetRandomSeed(ctx, seed)
+				k.SetRandomSeed(ctx, seed)
 			},
 			expectedParticipants: 1,
 		},
-		//{
-		//	name:       "Subsequent epoch with active participants",
-		//	epochIndex: 2,
-		//	setupState: func(t *testing.T, k *keeper.Keeper, ctx sdk.Context, mocks *keepertest.InferenceMocks) {
-		//		// Set up previous epoch group data
-		//		previousEpochGroupData := types.EpochGroupData{
-		//			EpochGroupId:        1,
-		//			PocStartBlockHeight: 50,
-		//			EpochIndex:          1,
-		//			ValidationWeights: []*types.ValidationWeight{
-		//				{
-		//					MemberAddress: "validator1",
-		//					Weight:        10,
-		//				},
-		//			},
-		//		}
-		//		initMockGroupMembers(mocks, previousEpochGroupData.ValidationWeights)
-		//		k.SetEpochGroupData(ctx, previousEpochGroupData)
-		//
-		//		k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
-		//		_ = k.SetEffectiveEpochIndex(ctx, 1)
-		//
-		//		// Set up batches
-		//		batch := types.PoCBatch{
-		//			ParticipantAddress:       testutil.Executor,
-		//			PocStageStartBlockHeight: 100,
-		//			Nonces:                   []int64{1, 2, 3},
-		//		}
-		//		_ = k.SetPocBatch(ctx, batch)
-		//
-		//		// Set up validations
-		//		validation := types.PoCValidation{
-		//			ParticipantAddress:          testutil.Executor,
-		//			ValidatorParticipantAddress: "validator1",
-		//			PocStageStartBlockHeight:    100,
-		//			FraudDetected:               false,
-		//		}
-		//		_ = k.SetPoCValidation(ctx, validation)
-		//
-		//		// Set up participant
-		//		participant := types.Participant{
-		//			Index:        testutil.Executor,
-		//			ValidatorKey: "validatorKey1",
-		//			InferenceUrl: "inferenceUrl1",
-		//		}
-		//		k.SetParticipant(ctx, participant)
-		//
-		//		// Set up random seed
-		//		seed := types.RandomSeed{
-		//			Participant: testutil.Executor,
-		//			EpochIndex:  1,
-		//			Signature:   "signature1",
-		//		}
-		//		_ = k.SetRandomSeed(ctx, seed)
-		//	},
-		//	expectedParticipants: 1,
-		//},
 		{
 			name:       "Participant didn't receive enough validations (total voted weight < required) - should default to accepting",
 			epochIndex: 2,
@@ -478,24 +419,23 @@ func TestComputeNewWeights(t *testing.T) {
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
 				k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
-				_ = k.SetEffectiveEpochIndex(ctx, 1)
+				k.SetEffectiveEpochIndex(ctx, 1)
 
-				// Set up batches
-				batch := types.PoCBatch{
-					ParticipantAddress:       testutil.Executor2,
-					PocStageStartBlockHeight: 100,
-					Nonces:                   []int64{1, 2, 3},
-				}
-				_ = k.SetPocBatch(ctx, batch)
+				// Set up store commit (replaces V2 batches)
+				setStoreCommit(ctx, *k, testutil.Executor2, 100, 1)
 
-				// Set up validations with only one validator (not enough weight)
-				validation := types.PoCValidation{
+				// Set up weight distribution
+				setWeightDistribution(ctx, *k, testutil.Executor2, 100, []nodeDistWeight{{"node-1", 1}})
+
+				// Set up V2 validations with only one validator (not enough weight)
+				validation := types.PoCValidationV2{
 					ParticipantAddress:          testutil.Executor2,
 					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
-					FraudDetected:               false,
+					ValidatedWeight:             100,
 				}
-				_ = k.SetPoCValidation(ctx, validation)
+				err := k.SetPocValidationV2(ctx, validation)
+				require.NoError(t, err)
 
 				// Set up participant
 				participant := types.Participant{
@@ -511,7 +451,7 @@ func TestComputeNewWeights(t *testing.T) {
 					EpochIndex:  1,
 					Signature:   "signature1",
 				}
-				_ = k.SetRandomSeed(ctx, seed)
+				k.SetRandomSeed(ctx, seed)
 			},
 			expectedParticipants: 0,
 		},
@@ -540,32 +480,33 @@ func TestComputeNewWeights(t *testing.T) {
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
 				k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
-				_ = k.SetEffectiveEpochIndex(ctx, 1)
+				k.SetEffectiveEpochIndex(ctx, 1)
 
-				// Set up batches
-				batch := types.PoCBatch{
-					ParticipantAddress:       testutil.Executor2,
-					PocStageStartBlockHeight: 100,
-					Nonces:                   []int64{1, 2, 3},
-				}
-				_ = k.SetPocBatch(ctx, batch)
+				// Set up store commit (replaces V2 batches)
+				setStoreCommit(ctx, *k, testutil.Executor2, 100, 1)
 
-				// Set up validations with enough total weight but not enough valid weight
-				validation1 := types.PoCValidation{
+				// Set up weight distribution
+				setWeightDistribution(ctx, *k, testutil.Executor2, 100, []nodeDistWeight{{"node-1", 1}})
+
+				// Set up V2 validations with enough total weight but not enough valid weight
+				// In V2, we use ValidatedWeight. A weight of 0 indicates fraud/invalid
+				validation1 := types.PoCValidationV2{
 					ParticipantAddress:          testutil.Executor2,
 					ValidatorParticipantAddress: testutil.Validator,
 					PocStageStartBlockHeight:    100,
-					FraudDetected:               false, // Valid but low weight
+					ValidatedWeight:             100, // Valid but low weight
 				}
-				_ = k.SetPoCValidation(ctx, validation1)
+				err := k.SetPocValidationV2(ctx, validation1)
+				require.NoError(t, err)
 
-				validation2 := types.PoCValidation{
+				validation2 := types.PoCValidationV2{
 					ParticipantAddress:          testutil.Executor2,
 					ValidatorParticipantAddress: testutil.Validator2,
 					PocStageStartBlockHeight:    100,
-					FraudDetected:               true, // Invalid with high weight
+					ValidatedWeight:             0, // Invalid (fraud detected) with high weight
 				}
-				_ = k.SetPoCValidation(ctx, validation2)
+				err = k.SetPocValidationV2(ctx, validation2)
+				require.NoError(t, err)
 
 				// Set up participant
 				participant := types.Participant{
@@ -656,6 +597,43 @@ func initMockGroupMembers(mocks *keepertest.InferenceMocks, validator []*types.V
 		AnyTimes()
 }
 
+// Helper for setting up store commits in tests
+type nodeDistWeight struct {
+	nodeId string
+	weight uint32
+}
+
+func setStoreCommit(ctx sdk.Context, k keeper.Keeper, participant string, pocStartHeight int64, count uint32) {
+	commit := types.PoCV2StoreCommit{
+		ParticipantAddress:       participant,
+		PocStageStartBlockHeight: pocStartHeight,
+		Count:                    count,
+		RootHash:                 make([]byte, 32), // dummy root hash
+		CommitBlockHeight:        pocStartHeight,
+	}
+	if err := k.SetPoCV2StoreCommit(ctx, commit); err != nil {
+		panic(err) // Test helper - valid addresses expected
+	}
+}
+
+func setWeightDistribution(ctx sdk.Context, k keeper.Keeper, participant string, pocStartHeight int64, nodeWeights []nodeDistWeight) {
+	weights := make([]*types.MLNodeWeight, len(nodeWeights))
+	for i, nw := range nodeWeights {
+		weights[i] = &types.MLNodeWeight{
+			NodeId: nw.nodeId,
+			Weight: nw.weight,
+		}
+	}
+	distribution := types.MLNodeWeightDistribution{
+		ParticipantAddress:       participant,
+		PocStageStartBlockHeight: pocStartHeight,
+		Weights:                  weights,
+	}
+	if err := k.SetMLNodeWeightDistribution(ctx, distribution); err != nil {
+		panic(err) // Test helper - valid addresses expected
+	}
+}
+
 func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
 	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
@@ -694,31 +672,28 @@ func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
 	participantA := testutil.Executor
 	participantB := testutil.Executor2
 
-	// Set up batches for both participants
-	_ = k.SetPocBatch(ctx, types.PoCBatch{
-		ParticipantAddress:       participantA,
-		PocStageStartBlockHeight: 100,
-		Nonces:                   []int64{1, 2, 3},
-	})
-	_ = k.SetPocBatch(ctx, types.PoCBatch{
-		ParticipantAddress:       participantB,
-		PocStageStartBlockHeight: 100,
-		Nonces:                   []int64{4, 5, 6},
-	})
+	// Set up store commits for both participants (replaces V2 batches)
+	setStoreCommit(ctx, k, participantA, 100, 1)
+	setWeightDistribution(ctx, k, participantA, 100, []nodeDistWeight{{"node-a", 1}})
 
-	// Set up validations for both
-	_ = k.SetPoCValidation(ctx, types.PoCValidation{
+	setStoreCommit(ctx, k, participantB, 100, 1)
+	setWeightDistribution(ctx, k, participantB, 100, []nodeDistWeight{{"node-b", 1}})
+
+	// Set up V2 validations for both
+	err = k.SetPocValidationV2(ctx, types.PoCValidationV2{
 		ParticipantAddress:          participantA,
 		ValidatorParticipantAddress: validatorAccAddress2,
 		PocStageStartBlockHeight:    100,
-		FraudDetected:               false,
+		ValidatedWeight:             100,
 	})
-	_ = k.SetPoCValidation(ctx, types.PoCValidation{
+	require.NoError(t, err)
+	err = k.SetPocValidationV2(ctx, types.PoCValidationV2{
 		ParticipantAddress:          participantB,
 		ValidatorParticipantAddress: validatorAccAddress2,
 		PocStageStartBlockHeight:    100,
-		FraudDetected:               false,
+		ValidatedWeight:             100,
 	})
+	require.NoError(t, err)
 
 	// Set up participants
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
@@ -735,8 +710,8 @@ func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
 	}))
 
 	// Set up seeds for both
-	_ = k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantA, EpochIndex: 1, Signature: "sigA"})
-	_ = k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantB, EpochIndex: 1, Signature: "sigB"})
+	k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantA, EpochIndex: 1, Signature: "sigA"})
+	k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantB, EpochIndex: 1, Signature: "sigB"})
 
 	// Enable allowlist and add only participantA
 	params, err := k.GetParams(ctx)

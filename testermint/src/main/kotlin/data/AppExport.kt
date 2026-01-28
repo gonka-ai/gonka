@@ -248,6 +248,14 @@ data class PocParams(
     val weightScaleFactor: Decimal? = null,
     @SerializedName("model_params")
     val modelParams: PoCModelParams? = null,
+    @SerializedName("model_id")
+    val modelId: String? = null,
+    @SerializedName("seq_len")
+    val seqLen: Long? = null,
+    @SerializedName("poc_v2_enabled")
+    val pocV2Enabled: Boolean = true,  // V2 enabled by default
+    @SerializedName("confirmation_poc_v2_enabled")
+    val confirmationPocV2Enabled: Boolean = true,  // V2 for confirmation PoC, enables migration mode
 )
 
 data class PoCModelParams(

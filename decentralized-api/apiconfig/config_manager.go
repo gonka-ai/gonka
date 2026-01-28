@@ -148,6 +148,15 @@ func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
 	if cfg.FlushTimeoutSeconds == 0 {
 		cfg.FlushTimeoutSeconds = 5
 	}
+	if cfg.ValidationV2FlushSize == 0 {
+		cfg.ValidationV2FlushSize = 10
+	}
+	if cfg.ValidationV2FlushTimeoutSeconds == 0 {
+		cfg.ValidationV2FlushTimeoutSeconds = 30
+	}
+	if cfg.PocCommitIntervalSeconds == 0 {
+		cfg.PocCommitIntervalSeconds = 5
+	}
 	return cfg
 }
 

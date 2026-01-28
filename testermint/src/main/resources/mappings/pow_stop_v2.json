@@ -1,0 +1,18 @@
+{
+  "scenarioName": "ModelState",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/inference/pow/stop"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "status": "OK",
+      "results": [{"port": 5001, "status": "stopped"}],
+      "errors": null
+    }
+  }
+}

@@ -167,7 +167,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 10 }
+func (AppModule) ConsensusVersion() uint64 { return 11 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -428,7 +428,18 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
+	// Dispatch to V1 or V2 weight calculation based on poc_v2_enabled flag
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err.Error())
+		return
+	}
+	var activeParticipants []*types.ActiveParticipant
+	if params.PocParams.PocV2Enabled {
+		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
+	} else {
+		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
+	}
 	if activeParticipants == nil {
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return

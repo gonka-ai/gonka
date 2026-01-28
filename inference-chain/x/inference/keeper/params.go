@@ -30,12 +30,26 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 
 // SetParams set the params
 func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
+	oldParams, _ := k.GetParams(ctx)
+
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz, err := k.cdc.Marshal(&params)
 	if err != nil {
 		return err
 	}
 	store.Set(types.ParamsKey, bz)
+
+	// Auto-set grace epoch when poc_v2_enabled transitions false -> true
+	if params.PocParams != nil && params.PocParams.PocV2Enabled {
+		wasV2Disabled := oldParams.PocParams == nil || !oldParams.PocParams.PocV2Enabled
+		if wasV2Disabled {
+			if _, exists := k.GetPocV2EnabledEpoch(ctx); !exists {
+				if epoch, found := k.GetEffectiveEpochIndex(ctx); found {
+					_ = k.SetPocV2EnabledEpoch(ctx, epoch)
+				}
+			}
+		}
+	}
 
 	return nil
 }

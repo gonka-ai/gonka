@@ -56,7 +56,7 @@ func (app *App) setupUpgradeHandlers() {
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_5.UpgradeName, v0_2_5.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.BlsKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_6.UpgradeName, v0_2_6.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_7.UpgradeName, v0_2_7.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper))
-	app.UpgradeKeeper.SetUpgradeHandler(v0_2_8.UpgradeName, v0_2_8.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.BlsKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_8.UpgradeName, v0_2_8.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.BlsKeeper, app.DistrKeeper, app.AuthzKeeper))
 }
 
 func (app *App) registerMigrations() {
@@ -85,6 +85,10 @@ func (app *App) registerMigrations() {
 	})
 
 	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 9, func(ctx sdk.Context) error {
+		return nil
+	})
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 10, func(ctx sdk.Context) error {
 		return nil
 	})
 
