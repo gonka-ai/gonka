@@ -77,6 +77,7 @@ func NewConnectionPool(ctx context.Context, prefix string, config *apiconfig.Con
 		cancel()
 		return nil, ErrNoHealthyConnections
 	}
+	logging.Info("connection pool: initialized", types.System, "healthy", ok, "total", size)
 	go p.healthLoop()
 	return p, nil
 }
@@ -184,6 +185,7 @@ func (p *ConnectionPool) buildReplacements(pingResults []bool) ([]*cosmosclient.
 func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmosclient.Client, newCancels []context.CancelFunc) {
 	var toCancel []context.CancelFunc
 	var toStop []*cosmosclient.Client
+	var replaced, healthy, unhealthy int
 	p.mu.Lock()
 	for i := 0; i < len(p.clients); i++ {
 		if newClients[i] != nil {
@@ -198,14 +200,18 @@ func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmoscli
 			if oldClient != nil && oldClient.RPC != nil {
 				toStop = append(toStop, oldClient)
 			}
-			logging.Debug("connection pool: replaced connection", types.System, "index", i)
+			replaced++
 		} else if pingResults[i] {
 			p.healthy[i].Store(true)
+			healthy++
 		} else {
 			p.healthy[i].Store(false)
+			unhealthy++
 		}
 	}
 	p.mu.Unlock()
+	logging.Info("connection pool: health check result", types.System,
+		"replaced", replaced, "healthy", healthy, "unhealthy", unhealthy, "total", len(pingResults))
 	for _, cancel := range toCancel {
 		cancel()
 	}
@@ -216,11 +222,15 @@ func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmoscli
 
 func (p *ConnectionPool) ping(c *cosmosclient.Client) bool {
 	if c == nil || c.RPC == nil {
+		logging.Warn("connection pool: ping skipped - nil client or RPC", types.System)
 		return false
 	}
 	ctx, cancel := context.WithTimeout(p.ctx, p.timeout)
 	defer cancel()
 	_, err := c.RPC.Status(ctx)
+	if err != nil {
+		logging.Warn("connection pool: ping failed", types.System, "error", err)
+	}
 	return err == nil
 }
 

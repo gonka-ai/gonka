@@ -9,5 +9,5 @@ chain_node:
   signer_key_name: "alice"
   keyring_backend: "test"
   keyring_dir: "/root/.inference"
-  connection_pool_size: 0
+  connection_pool_size: 3
   is_genesis: false

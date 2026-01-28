@@ -15,5 +15,5 @@ chain_node:
   signer_key_name: "alice"
   keyring_backend: "test"
   keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root
-  connection_pool_size: 0
+  connection_pool_size: 3
   is_genesis: false
