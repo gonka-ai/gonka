@@ -395,8 +395,6 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	}
 
 	previousEpochData := NewEpochMLNodeData()
-	// Slashed participants: in previous epoch but got zero reward from settlement (downtime/confirmation punishment).
-	slashedParticipants := make(map[string]bool)
 
 	uniqueModels := make(map[string]bool)
 	for _, participant := range participants {
@@ -407,19 +405,20 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	ma.LogDebug("Collected unique models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "collect_unique_models", "num_unique_models", len(uniqueModels))
 
 	sortedModelIds := sortedKeys(uniqueModels)
-	previousEpochIndex := uint64(0)
 	if upcomingEpoch.Index > 0 {
-		previousEpochIndex = upcomingEpoch.Index - 1
+		previousEpochIndex := upcomingEpoch.Index - 1
 		for _, modelId := range sortedModelIds {
 			previousEpochGroupData, found := ma.keeper.GetEpochGroupData(ctx, previousEpochIndex, modelId)
 			if found {
 				for _, vw := range previousEpochGroupData.ValidationWeights {
 					// Use keeper settlement results: zero reward despite having weight => slashed (downtime/confirmation).
-					if vw.Weight > 0 {
-						settle, foundSettle := ma.keeper.GetSettleAmount(ctx, vw.MemberAddress)
-						if foundSettle && settle.EpochIndex == previousEpochIndex && settle.RewardCoins == 0 {
-							slashedParticipants[vw.MemberAddress] = true
-						}
+					// Settlement was performed before model assignment, so we need to check the settle amount here.
+					settle, foundSettle := ma.keeper.GetSettleAmount(ctx, vw.MemberAddress)
+					if !foundSettle || (settle.EpochIndex == previousEpochIndex && settle.RewardCoins == 0) {
+						// Skip participants if they didn't get reward for the previous epoch
+						// Only rewarded participants can be eligible for POC_SLOT=true allocation
+						// Participants that are not added to previousEpochData will be filtered by filterEligibleMLNodes
+						continue
 					}
 					dedupedNodes, dedupStats := dedupMLNodesById(vw.MlNodes)
 					ma.logMLNodeDedupStats(
@@ -436,13 +435,6 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 				}
 				ma.LogInfo("Loaded previous epoch data for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "load_prev_epoch_data", "model_id", modelId, "num_validation_weights", len(previousEpochGroupData.ValidationWeights))
 			}
-		}
-		if len(slashedParticipants) > 0 {
-			slashedAddrs := make([]string, 0, len(slashedParticipants))
-			for addr := range slashedParticipants {
-				slashedAddrs = append(slashedAddrs, addr)
-			}
-			ma.LogInfo("Slashed participants from previous epoch settlement", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "slashed_participants", "epoch_index", previousEpochIndex, "slashed", slashedAddrs)
 		}
 	}
 

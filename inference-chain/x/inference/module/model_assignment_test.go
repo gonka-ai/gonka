@@ -45,6 +45,10 @@ func (m *mockKeeperForModelAssigner) GetEpochGroupData(ctx context.Context, epoc
 	return types.EpochGroupData{}, false
 }
 
+func (m *mockKeeperForModelAssigner) GetSettleAmount(ctx context.Context, participant string) (val types.SettleAmount, found bool) {
+	return types.SettleAmount{}, false
+}
+
 func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Params, error) {
 	if m.params != nil {
 		return *m.params, nil
