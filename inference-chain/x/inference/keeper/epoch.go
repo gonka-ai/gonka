@@ -7,7 +7,11 @@ import (
 )
 
 func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error {
-	return k.EffectiveEpochIndex.Set(ctx, epoch)
+	if err := k.EffectiveEpochIndex.Set(ctx, epoch); err != nil {
+		return err
+	}
+	k.refreshEpochGroupCache(epoch)
+	return nil
 }
 
 func (k Keeper) GetEffectiveEpochIndex(ctx context.Context) (uint64, bool) {
