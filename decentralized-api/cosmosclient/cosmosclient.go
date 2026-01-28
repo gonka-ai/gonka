@@ -180,14 +180,6 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		manager:    mn,
 	}
 
-	if nodeConfig.ConnectionPoolSize > 0 {
-		if pool, err := NewConnectionPool(ctx, addressPrefix, config, nodeConfig.ConnectionPoolSize); err == nil {
-			client.queryPool = pool
-		} else {
-			logging.Warn("Connection pool creation failed", types.System, "error", err)
-		}
-	}
-
 	batchingCfg := config.GetTxBatchingConfig()
 	if !batchingCfg.Disabled {
 		batchConfig := tx_manager.BatchConfig{
@@ -208,6 +200,14 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		logging.Info("Transaction batching enabled", types.Messages,
 			"flushSize", batchingCfg.FlushSize,
 			"flushTimeoutSeconds", batchingCfg.FlushTimeoutSeconds)
+	}
+
+	if nodeConfig.ConnectionPoolSize > 0 {
+		if pool, err := NewConnectionPool(ctx, addressPrefix, config, nodeConfig.ConnectionPoolSize); err == nil {
+			client.queryPool = pool
+		} else {
+			logging.Warn("Connection pool creation failed", types.System, "error", err)
+		}
 	}
 
 	success = true

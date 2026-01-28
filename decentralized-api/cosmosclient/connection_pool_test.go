@@ -2,6 +2,7 @@ package cosmosclient
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,23 @@ func TestErrNoHealthyConnections(t *testing.T) {
 	}
 }
 
+func initTestPool(p *ConnectionPool) *ConnectionPool {
+	if p.rand == nil {
+		p.rand = rand.New(rand.NewSource(1))
+	}
+	if p.cancels == nil && len(p.clients) > 0 {
+		p.cancels = make([]context.CancelFunc, len(p.clients))
+	}
+	if p.sem == nil {
+		checks := capChecks(len(p.clients))
+		if checks == 0 {
+			checks = DefaultMaxConcurrentChecks
+		}
+		p.sem = make(chan struct{}, checks)
+	}
+	return p
+}
+
 func makeHealthySlice(vals ...bool) []atomic.Bool {
 	result := make([]atomic.Bool, len(vals))
 	for i, v := range vals {
@@ -26,38 +44,38 @@ func makeHealthySlice(vals ...bool) []atomic.Bool {
 }
 
 func TestConnectionPoolHealthyCount(t *testing.T) {
-	p := &ConnectionPool{healthy: makeHealthySlice(true, false, true)}
+	p := initTestPool(&ConnectionPool{healthy: makeHealthySlice(true, false, true)})
 	if p.HealthyCount() != 2 {
 		t.Errorf("expected 2 healthy, got %d", p.HealthyCount())
 	}
 }
 
 func TestConnectionPoolHealthyCountAllHealthy(t *testing.T) {
-	p := &ConnectionPool{healthy: makeHealthySlice(true, true, true, true)}
+	p := initTestPool(&ConnectionPool{healthy: makeHealthySlice(true, true, true, true)})
 	if p.HealthyCount() != 4 {
 		t.Errorf("expected 4 healthy, got %d", p.HealthyCount())
 	}
 }
 
 func TestConnectionPoolHealthyCountNoneHealthy(t *testing.T) {
-	p := &ConnectionPool{healthy: makeHealthySlice(false, false, false)}
+	p := initTestPool(&ConnectionPool{healthy: makeHealthySlice(false, false, false)})
 	if p.HealthyCount() != 0 {
 		t.Errorf("expected 0 healthy, got %d", p.HealthyCount())
 	}
 }
 
 func TestConnectionPoolHealthyCountEmpty(t *testing.T) {
-	p := &ConnectionPool{healthy: []atomic.Bool{}}
+	p := initTestPool(&ConnectionPool{healthy: []atomic.Bool{}})
 	if p.HealthyCount() != 0 {
 		t.Errorf("expected 0 healthy, got %d", p.HealthyCount())
 	}
 }
 
 func TestConnectionPoolGetNoHealthy(t *testing.T) {
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: make([]*igniteclient.Client, 3),
 		healthy: makeHealthySlice(false, false, false),
-	}
+	})
 	_, err := p.Get()
 	if err != ErrNoHealthyConnections {
 		t.Errorf("expected ErrNoHealthyConnections, got %v", err)
@@ -65,10 +83,10 @@ func TestConnectionPoolGetNoHealthy(t *testing.T) {
 }
 
 func TestConnectionPoolGetNilClients(t *testing.T) {
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: []*igniteclient.Client{nil, nil, nil},
 		healthy: makeHealthySlice(true, true, true),
-	}
+	})
 	_, err := p.Get()
 	if err != ErrNoHealthyConnections {
 		t.Errorf("expected ErrNoHealthyConnections, got %v", err)
@@ -83,12 +101,12 @@ func TestConnectionPoolRoundRobin(t *testing.T) {
 	c2 := &igniteclient.Client{}
 	c3 := &igniteclient.Client{}
 
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: []*igniteclient.Client{c1, c2, c3},
 		healthy: makeHealthySlice(true, true, true),
 		ctx:     ctx,
 		cancel:  cancel,
-	}
+	})
 
 	// Each call should cycle through clients
 	got1, _ := p.Get()
@@ -107,12 +125,12 @@ func TestConnectionPoolRoundRobin(t *testing.T) {
 
 func TestConnectionPoolClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: make([]*igniteclient.Client, 2),
 		healthy: makeHealthySlice(true, true),
 		ctx:     ctx,
 		cancel:  cancel,
-	}
+	})
 	p.Close()
 	select {
 	case <-p.ctx.Done():
@@ -130,12 +148,12 @@ func TestConnectionPoolConcurrentGet(t *testing.T) {
 		clients[i] = &igniteclient.Client{}
 	}
 
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: clients,
 		healthy: makeHealthySlice(true, true, true, true, true),
 		ctx:     ctx,
 		cancel:  cancel,
-	}
+	})
 
 	var wg sync.WaitGroup
 	errors := make(chan error, 100)
@@ -160,9 +178,9 @@ func TestConnectionPoolConcurrentGet(t *testing.T) {
 }
 
 func TestConnectionPoolConcurrentHealthyCount(t *testing.T) {
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		healthy: makeHealthySlice(true, false, true, true, false),
-	}
+	})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -184,12 +202,12 @@ func TestConnectionPoolSkipsUnhealthy(t *testing.T) {
 
 	c2 := &igniteclient.Client{}
 
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: []*igniteclient.Client{nil, c2, nil},
 		healthy: makeHealthySlice(false, true, false),
 		ctx:     ctx,
 		cancel:  cancel,
-	}
+	})
 
 	got, err := p.Get()
 	if err != nil {
@@ -204,14 +222,14 @@ func TestConnectionPoolIntervalAndTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients:  make([]*igniteclient.Client, 2),
 		healthy:  makeHealthySlice(true, true),
 		ctx:      ctx,
 		cancel:   cancel,
 		interval: 30 * time.Second,
 		timeout:  10 * time.Second,
-	}
+	})
 
 	if p.interval != 30*time.Second {
 		t.Errorf("expected interval 30s, got %v", p.interval)
@@ -223,13 +241,13 @@ func TestConnectionPoolIntervalAndTimeout(t *testing.T) {
 
 func TestConnectionPoolHealthLoopStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients:  make([]*igniteclient.Client, 1),
 		healthy:  makeHealthySlice(true),
 		ctx:      ctx,
 		cancel:   cancel,
 		interval: 1 * time.Hour,
-	}
+	})
 
 	done := make(chan struct{})
 	go func() {
@@ -253,12 +271,12 @@ func TestConnectionPoolGetWrapsAround(t *testing.T) {
 
 	c3 := &igniteclient.Client{}
 
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: []*igniteclient.Client{nil, nil, c3},
 		healthy: makeHealthySlice(false, false, true),
 		ctx:     ctx,
 		cancel:  cancel,
-	}
+	})
 
 	got, err := p.Get()
 	if err != nil {
@@ -278,12 +296,12 @@ func TestConnectionPoolMutexProtection(t *testing.T) {
 		clients[i] = &igniteclient.Client{}
 	}
 
-	p := &ConnectionPool{
+	p := initTestPool(&ConnectionPool{
 		clients: clients,
 		healthy: makeHealthySlice(true, true, true),
 		ctx:     ctx,
 		cancel:  cancel,
-	}
+	})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -313,5 +331,17 @@ func TestConnectionPoolDefaultConstants(t *testing.T) {
 	}
 	if DefaultPingTimeout != 5*time.Second {
 		t.Errorf("expected DefaultPingTimeout 5s, got %v", DefaultPingTimeout)
+	}
+}
+
+func TestConnectionPoolChecksCap(t *testing.T) {
+	if capChecks(3) != 3 {
+		t.Errorf("expected checks 3, got %d", capChecks(3))
+	}
+	if capChecks(DefaultMaxConcurrentChecks) != DefaultMaxConcurrentChecks {
+		t.Errorf("expected checks %d, got %d", DefaultMaxConcurrentChecks, capChecks(DefaultMaxConcurrentChecks))
+	}
+	if capChecks(DefaultMaxConcurrentChecks+1) != DefaultMaxConcurrentChecks {
+		t.Errorf("expected checks %d, got %d", DefaultMaxConcurrentChecks, capChecks(DefaultMaxConcurrentChecks+1))
 	}
 }
