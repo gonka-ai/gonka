@@ -108,7 +108,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, err
 	}
 
-	if groupData.ValidationWeight(msg.Creator) == nil {
+	participant := groupData.ValidationWeight(msg.Creator)
+	// Participants that have no confirmation weight are not eligible to validate
+	if participant == nil || participant.ConfirmationWeight == 0 {
 		k.LogError("Participant not found in epoch group data for the model", types.Validation, "participant", msg.Creator, "epochIndex", epochGroup.GroupData.EpochIndex, "model", inference.Model)
 		return nil, types.ErrParticipantNotFound
 	}
@@ -131,7 +133,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, err
 	}
 	totalWeight := inferenceDetails.TotalPower
-	validatorPower := validationWeight.Weight
+	validatorPower := participant.Weight
 	executorPower := inferenceDetails.ExecutorPower
 
 	shouldValidate, _ := calculations.ShouldValidate(participantSeed, &inferenceDetails, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
@@ -170,7 +172,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		if err != nil {
 			return nil, err
 		}
-		if k.MaximumInvalidationsReached(ctx, creatorAddr, groupData) {
+		if k.MaximumInvalidationsReached(ctx, creatorAddr, groupData, participant) {
 			k.LogWarn("Maximum invalidations reached.", types.Validation,
 				"creator", msg.Creator,
 				"model", inference.Model,
@@ -230,7 +232,8 @@ func getValidationValue(msg *types.MsgValidation) decimal.Decimal {
 	return decimal.NewFromFloat(msg.Value)
 }
 
-func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccAddress, data types.EpochGroupData) bool {
+func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccAddress, data types.EpochGroupData, participant *types.ValidationWeight) bool {
+	// TODO: caching: CountInvalidations should be cached
 	currentInvalidations, err := k.CountInvalidations(ctx, creator)
 	if err != nil {
 		k.LogError("Failed to get current invalidations", types.Validation, "error", err)
@@ -252,6 +255,7 @@ func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccA
 	windowDurationMillis := windowDurationSeconds * 1000                                   // Convert to milliseconds for time queries
 	timeWindowStartMillis := currentTimeMillis - windowDurationMillis                      // Start time in milliseconds
 
+	// TODO: caching: GetSummaryByModelAndTime possibly could be optimized with caches
 	recentInferencesMap := k.GetSummaryByModelAndTime(ctx, timeWindowStartMillis, currentTimeMillis)
 	inferencesForModel, found := recentInferencesMap[data.ModelId]
 	if !found {
@@ -259,10 +263,14 @@ func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccA
 		k.LogInfo("No inferences for model", types.Validation, "model", data.ModelId, "error", err)
 	}
 
-	participant := data.ValidationWeight(creator.String())
+	//If we already got the participant and shouldn't iterate through all participants again
 	if participant == nil {
-		k.LogError("No participant for model", types.Validation, "model", data.ModelId, "error", err)
-		return true
+		p := data.ValidationWeight(creator.String())
+		if p == nil {
+			k.LogError("No participant for model", types.Validation, "model", data.ModelId, "error", err)
+			return true
+		}
+		participant = p
 	}
 	participantWeightPercent := decimal.NewFromInt(participant.Weight).Div(decimal.NewFromInt(data.TotalWeight))
 	maxValidations := calculations.CalculateInvalidations(
