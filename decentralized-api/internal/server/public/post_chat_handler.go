@@ -601,8 +601,8 @@ func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) bool {
 	}
 
 	// Even if the validator is active in cached epoch group data that is updated once per epoch,
-	// participant could be marked as Invalid (missed confirmation PoC or inferences),
-	// and their weight is set to 0 in the EpochGroupData.
+	// participant could be marked as Invalid (missed confirmation PoC),
+	// and it's confirmation weight is set to 0 in the EpochGroupData.
 	// So we need to check the current epoch group data.
 	// https://github.com/gonka-ai/gonka/pull/514#discussion_r2662704635
 	queryClient := s.recorder.NewInferenceQueryClient()
@@ -612,10 +612,13 @@ func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) bool {
 	}
 	for _, vw := range resp.EpochGroupData.ValidationWeights {
 		if vw.MemberAddress == address {
-			return true
+			if vw.ConfirmationWeight > 0 {
+				return true
+			}
+			return false
 		}
 	}
-	return false
+	return false // participant is not active in the current epoch
 }
 
 func (s *Server) getAllowedPubKeysForExecutorRequests(ctx echo.Context, granterAddress string) ([]string, error) {
@@ -623,23 +626,7 @@ func (s *Server) getAllowedPubKeysForExecutorRequests(ctx echo.Context, granterA
 		return nil, fmt.Errorf("granter is not active in the current epoch")
 	}
 
-	queryClient := s.recorder.NewInferenceQueryClient()
-	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
-		GranterAddress: granterAddress,
-		MessageTypeUrl: "/inference.inference.MsgStartInference",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
-	}
-	granteesPubkeys := make([]string, len(grantees.Grantees))
-	for i, grantee := range grantees.Grantees {
-		granteesPubkeys[i] = grantee.PubKey
-	}
-
-	// We don't need to check if the granter is active,
-	// as the granter is TA and always should be current epoch participant (validator)
-
-	return granteesPubkeys, nil
+	return s.authzCache.GetPubKeys(ctx.Request().Context(), granterAddress, "/inference.inference.MsgStartInference")
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
