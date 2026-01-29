@@ -52,9 +52,12 @@ func (rsm *RandomSeedManagerImpl) GenerateSeedInfo(epochIndex uint64) {
 	}
 	logging.Debug("New Seed Signature", types.Claims, "seed", rsm.configManager.GetUpcomingSeed())
 
+	// Send participant's epoch seed (Seed field) so the chain stores it for GetParticipantEpochSeed / ShouldValidate.
+	upcoming := rsm.configManager.GetUpcomingSeed()
 	err = rsm.transactionRecorder.SubmitSeed(&inference.MsgSubmitSeed{
-		EpochIndex: rsm.configManager.GetUpcomingSeed().EpochIndex,
-		Signature:  rsm.configManager.GetUpcomingSeed().Signature,
+		EpochIndex: upcoming.EpochIndex,
+		Signature:  upcoming.Signature,
+		Seed:       upcoming.Seed,
 	})
 	if err != nil {
 		logging.Error("Failed to send SubmitSeed transaction", types.Claims, "error", err)

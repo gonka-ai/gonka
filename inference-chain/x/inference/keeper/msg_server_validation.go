@@ -113,6 +113,44 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantNotFound
 	}
 
+	// We check here if the sender is the designated validator for this inference
+	// So we need to get the inference validation details and participant seed to execute calculations.ShouldValidate
+	participantSeed, found := k.GetParticipantEpochSeed(ctx, inference.EpochId, msg.Creator)
+	if !found {
+		k.LogError("Sender random seed not found", types.Validation, "epochIndex", inference.EpochId, "participant", msg.Creator)
+		return nil, types.ErrRandomSeedNotFound
+	}
+	inferenceDetails, foundDetails := k.GetInferenceValidationDetails(ctx, inference.EpochId, inference.InferenceId)
+	if !foundDetails {
+		k.LogError("Inference validation details not found", types.Validation, "inferenceId", inference.InferenceId, "epochId", inference.EpochId)
+		return nil, types.ErrInferenceValidationDetailsNotFound
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Failed to get params", types.Validation, "error", err)
+		return nil, err
+	}
+	totalWeight := inferenceDetails.TotalPower
+	validatorPower := validationWeight.Weight
+	executorPower := inferenceDetails.ExecutorPower
+
+	shouldValidate, _ := calculations.ShouldValidate(participantSeed, &inferenceDetails, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
+		params.ValidationParams, false)
+	if !shouldValidate {
+		k.LogError("Sender should not validate this inference", types.Validation, "epochIndex", inference.EpochId, "participant", msg.Creator)
+		return nil, types.ErrNotDesignatedValidator
+	}
+
+	// We only add it to the epoch group validations if all upper checks pass
+	if !msg.Revalidation {
+		// It not only creates new validation entry but also checks and throws error for validation duplicates
+		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
+		if err != nil {
+			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
+			return nil, err
+		}
+	}
+
 	k.LogInfo("Validating inner loop", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
 	if msg.Revalidation {
 		return epochGroup.Revalidate(passed, inference, msg, ctx)

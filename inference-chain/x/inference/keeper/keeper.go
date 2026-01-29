@@ -28,6 +28,20 @@ type epochGroupCache struct {
 	m        map[epochGroupCacheKey]types.EpochGroupData
 }
 
+// randomSeedCacheKey keys the warm cache by (epochIndex, participant). Participant is Bech32 string so the key is comparable.
+type randomSeedCacheKey struct {
+	Epoch       uint64
+	Participant string
+}
+
+// randomSeedCache holds RandomSeed for current effective epoch only.
+type randomSeedCache struct {
+	mu      sync.RWMutex
+	inited  bool
+	current uint64
+	m       map[randomSeedCacheKey]types.RandomSeed
+}
+
 type (
 	Keeper struct {
 		cdc           codec.BinaryCodec
@@ -71,6 +85,8 @@ type (
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 		// EpochGroupData hot cache: current and previous effective epoch only; inited on first Get, refreshed on SetEffectiveEpochIndex.
 		epochGroupCache *epochGroupCache
+		// RandomSeed warm cache: current effective epoch only; inited on first Get, refreshed on SetEffectiveEpochIndex.
+		randomSeedCache *randomSeedCache
 		// Epoch collections
 		Epochs                    collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex       collections.Item[uint64]
@@ -259,6 +275,7 @@ func NewKeeper(
 			codec.CollValue[types.EpochGroupData](cdc),
 		),
 		epochGroupCache: &epochGroupCache{m: make(map[epochGroupCacheKey]types.EpochGroupData)},
+		randomSeedCache: &randomSeedCache{m: make(map[randomSeedCacheKey]types.RandomSeed)},
 		// Epoch collections wiring
 		Epochs: collections.NewMap(
 			sb,

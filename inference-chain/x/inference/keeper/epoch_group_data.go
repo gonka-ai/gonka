@@ -61,9 +61,10 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 	if !c.inited {
 		return
 	}
-	epochIdx := epochGroupData.EpochIndex
-	modelId := epochGroupData.ModelId
-	if epochIdx != c.current && epochIdx != c.previous {
+
+	if epochIdx != c.current {
+		// Non-current epochs are written through directly without caching.
+		k.EpochGroupDataMap.Set(ctx, collections.Join(epochIdx, modelId), epochGroupData)
 		return
 	}
 	key := epochGroupCacheKey{Epoch: epochIdx, ModelId: modelId}
@@ -92,7 +93,7 @@ func (k Keeper) GetEpochGroupData(
 	c.mu.RUnlock()
 	// Load from store
 	val, err := k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
-	
+
 	if err != nil {
 		return val, false
 	}

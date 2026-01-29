@@ -69,4 +69,8 @@ var (
 	ErrNotSupported                          = sdkerrors.Register(ModuleName, 1163, "operation not supported in current mode")
 	ErrInvalidAddress                        = sdkerrors.Register(ModuleName, 1164, "invalid address")
 	ErrTransferAgentNotAllowlisted           = sdkerrors.Register(ModuleName, 1165, "transfer agent not in allowlist")
+	ErrSeedSignatureInvalid                  = sdkerrors.Register(ModuleName, 1166, "seed signature invalid")
+	ErrRandomSeedNotFound                    = sdkerrors.Register(ModuleName, 1167, "sender random seed not found for epoch")
+	ErrNotDesignatedValidator                = sdkerrors.Register(ModuleName, 1168, "sender is not the designated validator for this inference")
+	ErrInferenceValidationDetailsNotFound    = sdkerrors.Register(ModuleName, 1169, "inference validation details not found")
 )

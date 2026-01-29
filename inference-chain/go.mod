@@ -6,6 +6,8 @@ replace (
 	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps15
 	// fix upstream GHSA-h395-qcrw-5vmq vulnerability.
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.7.0
+	// Lyft repo moved to envoyproxy; use v0.1.0 for transitive (grpc v1.20.0) to avoid "same version for two paths".
+	github.com/lyft/protoc-gen-validate => github.com/envoyproxy/protoc-gen-validate v0.1.0
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 )

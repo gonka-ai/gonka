@@ -26,6 +26,28 @@ start a full node:
 ./build/inferenced start
 ```
 
+### Regenerating proto files (Ignite CLI)
+
+After changing `.proto` files, regenerate Go code using [Ignite CLI](https://ignite.com/cli):
+
+**Important** Ignite 28.10.0 should be used!
+
+1. **Install Ignite CLI** (one-time):
+   ```shell
+   curl https://get.ignite.com/cli@v28.10.0 | bash
+   ```
+
+2. **From the inference-chain directory**:
+   ```shell
+   cd inference-chain
+   ignite generate proto-go
+   ```
+   Or use the Makefile: `make proto-gen` (same as `make proto-gen-ignite`).
+
+3. **From the repo root**: `make proto-gen` (runs Ignite in inference-chain).
+
+**Alternative (buf):** If you use buf instead of Ignite, run `make proto-gen-buf` from inference-chain. This requires `buf`, `protoc-gen-gocosmos`, and `protoc-gen-grpc-gateway` on your `PATH`.
+
 ### Configure
 Your blockchain in development can be configured with `config.yml`. To learn more, see the [Ignite CLI docs](https://docs.ignite.com).
 

@@ -1076,7 +1076,6 @@ github.com/linxGnu/grocksdb v1.8.14 h1:HTgyYalNwBSG/1qCQUIott44wU5b2Y9Kr3z7SK5Of
 github.com/linxGnu/grocksdb v1.8.14/go.mod h1:QYiYypR2d4v63Wj1adOOfzglnoII0gLj3PNh4fZkcFA=
 github.com/lufeee/execinquery v1.2.1 h1:hf0Ems4SHcUGBxpGN7Jz78z1ppVkP/837ZlETPCEtOM=
 github.com/lufeee/execinquery v1.2.1/go.mod h1:EC7DrEKView09ocscGHC+apXMIaorh4xqSxS/dy8SbM=
-github.com/lyft/protoc-gen-validate v0.0.13/go.mod h1:XbGvPuh87YZc5TdIa2/I4pLk0QoUACkjt2znoq26NVQ=
 github.com/macabu/inamedparam v0.1.3 h1:2tk/phHkMlEL/1GNe/Yf6kkR/hkcUdAEY3L0hjYV1Mk=
 github.com/macabu/inamedparam v0.1.3/go.mod h1:93FLICAIk/quk7eaPPQvbzihUdn/QkGDwIZEoLtpH6I=
 github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8SYxI99mE=
