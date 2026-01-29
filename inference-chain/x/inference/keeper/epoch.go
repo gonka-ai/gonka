@@ -10,7 +10,6 @@ func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error 
 	if err := k.EffectiveEpochIndex.Set(ctx, epoch); err != nil {
 		return err
 	}
-	k.refreshEpochGroupCache(epoch)
 	k.refreshRandomSeedCache(epoch)
 	return nil
 }

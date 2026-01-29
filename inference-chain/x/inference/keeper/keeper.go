@@ -20,12 +20,15 @@ type epochGroupCacheKey struct {
 }
 
 // epochGroupCache holds EpochGroupData for current and previous effective epoch only.
+// Cache is invalidated when current block height > cachedAtHeight (e.g. after sync or new block).
 type epochGroupCache struct {
-	mu       sync.RWMutex
-	inited   bool
-	current  uint64
-	previous uint64
-	m        map[epochGroupCacheKey]types.EpochGroupData
+	mu             sync.RWMutex
+	inited         bool
+	cachedAtHeight int64 // block height at which cache was last valid; invalidate if ctx.BlockHeight() > cachedAtHeight
+	current        uint64
+	previous       uint64
+	currentDirty   bool
+	m              map[epochGroupCacheKey]types.EpochGroupData
 }
 
 // randomSeedCacheKey keys the warm cache by (epochIndex, participant). Participant is Bech32 string so the key is comparable.

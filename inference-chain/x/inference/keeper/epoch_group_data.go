@@ -4,19 +4,38 @@ import (
 	"context"
 
 	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// ensureEpochGroupCacheInited lazily inits the hot cache from store (current/previous effective epoch).
+// ensureEpochGroupCacheInited lazily inits the hot cache and invalidates it when current block height > cachedAtHeight
+// (e.g. new block or chain sync), so we always read fresh from store after height advance.
 // Entries are not preloaded; they are filled on first GetEpochGroupData for each (epoch, modelId). Caller must hold no cache lock.
 func (k Keeper) ensureEpochGroupCacheInited(ctx context.Context) {
 	c := k.epochGroupCache
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.inited {
+		if height > c.cachedAtHeight {
+			// New block or sync: invalidate cache so we read from store (which has the replayed/synced data).
+			c.m = make(map[epochGroupCacheKey]types.EpochGroupData)
+			c.currentDirty = false
+			c.cachedAtHeight = height
+			eff, ok := k.GetEffectiveEpochIndex(ctx)
+			if ok {
+				c.current = eff
+				if eff > 0 {
+					c.previous = eff - 1
+				} else {
+					c.previous = 0
+				}
+			}
+		}
 		return
 	}
+
 	eff, ok := k.GetEffectiveEpochIndex(ctx)
 	if !ok {
 		return
@@ -27,29 +46,27 @@ func (k Keeper) ensureEpochGroupCacheInited(ctx context.Context) {
 	} else {
 		c.previous = 0
 	}
+	c.cachedAtHeight = height
 	c.m = make(map[epochGroupCacheKey]types.EpochGroupData)
 	c.inited = true
 }
 
-// refreshEpochGroupCache updates current/previous to the new effective epoch and drops only the old previous epoch from cache.
-// Cache for the old current epoch is kept (it becomes the new previous). Call after SetEffectiveEpochIndex.
-func (k Keeper) refreshEpochGroupCache(newEffective uint64) {
+// FlushCurrentEpochGroupCache persists all cached EpochGroupData entries for the current epoch to the store.
+// This should be called from EndBlock so that batched in-block updates are written once per block.
+func (k Keeper) FlushCurrentEpochGroupCache(ctx context.Context) {
 	c := k.epochGroupCache
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	oldPrevious := c.previous
-	c.current = newEffective
-	if newEffective > 0 {
-		c.previous = newEffective - 1
-	} else {
-		c.previous = 0
+	if !c.inited || !c.currentDirty {
+		return
 	}
-	for key := range c.m {
-		if key.Epoch == oldPrevious {
-			delete(c.m, key)
+	for key, val := range c.m {
+		if key.Epoch == c.current {
+			// Persist current-epoch entries to the underlying store.
+			_ = k.EpochGroupDataMap.Set(ctx, collections.Join(key.Epoch, key.ModelId), val)
 		}
 	}
-	c.inited = true
+	c.currentDirty = false
 }
 
 // SetEpochGroupData set a specific epochGroupData in the store from its index and updates the hot cache when the epoch is current or previous.
@@ -58,6 +75,10 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 	c := k.epochGroupCache
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	epochIdx := epochGroupData.EpochIndex
+	modelId := epochGroupData.ModelId
+
+	// If cache is not yet initialized (e.g. during genesis), write through immediately.
 	if !c.inited {
 		return
 	}

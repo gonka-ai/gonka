@@ -47,7 +47,7 @@ Previously, `addInferenceToEpochGroupValidations` was invoked **before** the mai
 - **Designated-validator check** (see Section 3)
 - For non-revalidation: only then is the inference added to epoch group validations
 
-So storage is only updated when the sender is allowed to validate and other preconditions hold. Spam messages no longer create persistent records that block legitimate validators.
+So storage is only updated when the sender is allowed to validate and other preconditions hold. Even if data wasn't stored as errors are thrown, this small tweak reduced possible load on the system.
 
 ---
 
