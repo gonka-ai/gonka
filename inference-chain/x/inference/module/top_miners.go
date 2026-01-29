@@ -10,8 +10,15 @@ import (
 
 func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types.ActiveParticipant, time int64) error {
 	existingTopMiners := am.keeper.GetAllTopMiner(ctx)
-	payoutSettings := am.GetTopMinerPayoutSettings(ctx)
-	qualificationThreshold := am.keeper.GetParams(ctx).TokenomicsParams.TopMinerPocQualification
+	payoutSettings, err := am.GetTopMinerPayoutSettings(ctx)
+	if err != nil {
+		return err
+	}
+	p, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	qualificationThreshold := p.TokenomicsParams.TopMinerPocQualification
 	participantList := am.qualifiedParticipantList(participants, qualificationThreshold)
 
 	var referenceTopMiners []*types.TopMiner
@@ -49,7 +56,7 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 			if err != nil {
 				return err
 			}
-			params, err := am.keeper.GetParamsSafe(ctx)
+			params, err := am.keeper.GetParams(ctx)
 			if err != nil {
 				return err
 			}
@@ -87,9 +94,12 @@ func (am AppModule) minerIsQualified(participant *types.ActiveParticipant, thres
 	return participant.Weight > threshold
 }
 
-func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) keeper.PayoutSettings {
+func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) (keeper.PayoutSettings, error) {
 	genesisOnlyParams, _ := am.keeper.GetGenesisOnlyParams(ctx)
-	params := am.keeper.GetParams(ctx)
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return keeper.PayoutSettings{}, err
+	}
 	tokenomicsData, _ := am.keeper.GetTokenomicsData(ctx)
 	fullCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(genesisOnlyParams.SupplyDenom, genesisOnlyParams.TopRewardAmount))
 	return keeper.PayoutSettings{
@@ -101,5 +111,5 @@ func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) keeper.Payout
 		AllowedFailureRate: *params.TokenomicsParams.TopRewardAllowedFailure,
 		MaximumTime:        genesisOnlyParams.TopRewardMaxDuration,
 		FirstQualifiedTime: tokenomicsData.TopRewardStart,
-	}
+	}, nil
 }

@@ -90,30 +90,48 @@ if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
   fi
 
   echo "Initiating renewal for order $ORDER_ID"
-  curl -sS -X POST "${PROXY_SSL_BASE_URL}/v1/certs/orders/${ORDER_ID}/renew" \
+  HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "${PROXY_SSL_BASE_URL}/v1/certs/orders/${ORDER_ID}/renew" \
     -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" >/dev/null 2>&1 || true
+    -H "Content-Type: application/json" || true)
 
-  echo "Waiting for renewed certificate bundle..."
-  # Poll for new bundle (up to 5 minutes)
-  for i in $(seq 1 60); do
-    BUNDLE=$(curl -sS -X GET "${PROXY_SSL_BASE_URL}/v1/certs/orders/${ORDER_ID}/bundle" \
-      -H "Authorization: Bearer $TOKEN" || true)
-    if [ -n "$BUNDLE" ]; then
-      # Basic sanity: ensure it looks like PEM
-      if echo "$BUNDLE" | grep -q "BEGIN CERTIFICATE"; then
-        echo "$BUNDLE" > /etc/nginx/ssl/cert.pem
-        chmod 644 /etc/nginx/ssl/cert.pem
-        echo "Installed renewed certificate for order $ORDER_ID"
-        # exit code 10 indicates renewed
-        exit 10
+  if [ "$HTTP_STATUS" = "404" ]; then
+    echo "WARNING: Order $ORDER_ID not found (404). Clearing stale order ID and falling back to new issuance."
+    rm "$ORDER_ID_FILE"
+    # Fall through to the default "issue" logic below
+  elif [ "$HTTP_STATUS" != "200" ]; then
+    echo "ERROR: Failed to initiate renewal. HTTP status: $HTTP_STATUS"
+    exit 1
+  else
+    echo "Renewal initiated. Waiting for renewed certificate bundle..."
+    # Poll for new bundle (up to 5 minutes)
+    for i in $(seq 1 60); do
+      BUNDLE=$(curl -sS -X GET "${PROXY_SSL_BASE_URL}/v1/certs/orders/${ORDER_ID}/bundle" \
+        -H "Authorization: Bearer $TOKEN" || true)
+      if [ -n "$BUNDLE" ]; then
+        # Basic sanity: ensure it looks like PEM
+        if echo "$BUNDLE" | grep -q "BEGIN CERTIFICATE"; then
+          echo "$BUNDLE" > /etc/nginx/ssl/cert.pem
+          chmod 644 /etc/nginx/ssl/cert.pem
+          echo "Installed renewed certificate for order $ORDER_ID"
+          # exit code 10 indicates renewed
+          exit 10
+        fi
       fi
-    fi
-    sleep 5
-  done
+      sleep 5
+    done
+    
+    echo "ERROR: Timed out waiting for renewed certificate bundle"
+    exit 1
+  fi
+fi
 
-  echo "ERROR: Timed out waiting for renewed certificate bundle"
-  exit 1
+# Only proceed to issue logic if we are not in pure renewal mode, or if we fell through due to 404
+if [ "$MODE" = "renew" ] && [ -f "$ORDER_ID_FILE" ]; then 
+   # If we are here, it means we attempted renewal and it wasn't a 404 (which deletes the file), 
+   # but we didn't exit 10 (success) or exit 1 (failure) above? 
+   # Actually the logic above exits on success or failure unless 404.
+   # If 404, file is deleted, so condition -f "$ORDER_ID_FILE" fails, so we continue to issue logic.
+   exit 1
 fi
 
 # Default mode: issue (initial one-shot)

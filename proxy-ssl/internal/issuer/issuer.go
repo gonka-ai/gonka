@@ -7,10 +7,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,12 +29,14 @@ type CertificateProvider interface {
 
 // Order represents a certificate order
 type Order struct {
-	ID        string    `json:"id"`
-	NodeID    string    `json:"node_id"`
-	FQDNs     []string  `json:"fqdns"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID          string    `json:"id"`
+	NodeID      string    `json:"node_id"`
+	FQDNs       []string  `json:"fqdns"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	LastUpdated time.Time `json:"last_updated"`
+	LastError   string    `json:"last_error,omitempty"`
 }
 
 // Issuer handles certificate issuance using ACME DNS-01
@@ -59,6 +63,12 @@ func New(cfg *config.Config, logger *slog.Logger) (*Issuer, error) {
 		orders:   make(map[string]*Order),
 	}
 
+	// Load existing orders from disk
+	if err := issuer.loadOrders(); err != nil {
+		logger.Error("Failed to load orders from disk", "error", err)
+		// We don't fail startup, just log error
+	}
+
 	return issuer, nil
 }
 
@@ -83,11 +93,12 @@ func (i *Issuer) CreateOrder(ctx context.Context, nodeID, csrBase64 string, fqdn
 
 	// Create order
 	order := &Order{
-		ID:        generateOrderID(),
-		NodeID:    nodeID,
-		FQDNs:     fqdns,
-		Status:    "pending",
-		CreatedAt: time.Now(),
+		ID:          generateOrderID(),
+		NodeID:      nodeID,
+		FQDNs:       fqdns,
+		Status:      "pending",
+		CreatedAt:   time.Now(),
+		LastUpdated: time.Now(),
 	}
 
 	// Store order
@@ -95,10 +106,31 @@ func (i *Issuer) CreateOrder(ctx context.Context, nodeID, csrBase64 string, fqdn
 	i.orders[order.ID] = order
 	i.mu.Unlock()
 
+	// Persist order
+	if err := i.saveOrder(order); err != nil {
+		i.logger.Error("Failed to persist order", "order_id", order.ID, "error", err)
+		// We continue anyway, but log the error
+	}
+
 	// Start certificate issuance in background
 	go i.issueCertificate(order.ID, csrBytes, fqdns)
 
 	return order, nil
+}
+
+// GetLatestOrder returns the most recently updated order
+func (i *Issuer) GetLatestOrder() *Order {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
+	var latest *Order
+	for _, order := range i.orders {
+		if latest == nil || order.LastUpdated.After(latest.LastUpdated) {
+			latest = order
+		}
+	}
+
+	return latest
 }
 
 // GetOrder retrieves an order by ID
@@ -169,7 +201,14 @@ func (i *Issuer) issueCertificate(orderID string, csrBytes []byte, fqdns []strin
 	i.mu.Lock()
 	order := i.orders[orderID]
 	order.Status = "processing"
+	order.LastUpdated = time.Now()
+	order.LastError = ""
 	i.mu.Unlock()
+
+	// Persist update
+	if err := i.saveOrder(order); err != nil {
+		i.logger.Error("Failed to persist order status", "order_id", orderID, "error", err)
+	}
 
 	i.logger.Info("Issuing certificate", "order_id", orderID, "provider", i.provider.GetName())
 
@@ -180,7 +219,10 @@ func (i *Issuer) issueCertificate(orderID string, csrBytes []byte, fqdns []strin
 
 		i.mu.Lock()
 		order.Status = "failed"
+		order.LastUpdated = time.Now()
+		order.LastError = err.Error()
 		i.mu.Unlock()
+		_ = i.saveOrder(order)
 		return
 	}
 
@@ -192,7 +234,10 @@ func (i *Issuer) issueCertificate(orderID string, csrBytes []byte, fqdns []strin
 
 		i.mu.Lock()
 		order.Status = "failed"
+		order.LastUpdated = time.Now()
+		order.LastError = err.Error()
 		i.mu.Unlock()
+		_ = i.saveOrder(order)
 		return
 	}
 
@@ -227,7 +272,14 @@ func (i *Issuer) issueCertificate(orderID string, csrBytes []byte, fqdns []strin
 	// Update order status
 	i.mu.Lock()
 	order.Status = "completed"
+	order.LastUpdated = time.Now()
+	order.LastError = ""
 	i.mu.Unlock()
+
+	// Persist completion
+	if err := i.saveOrder(order); err != nil {
+		i.logger.Error("Failed to persist order completion", "order_id", orderID, "error", err)
+	}
 
 	i.logger.Info("Certificate issued successfully", "order_id", orderID)
 }
@@ -247,7 +299,11 @@ func (i *Issuer) renewCertificate(orderID string) {
 	// Update order status
 	i.mu.Lock()
 	order.Status = "renewing"
+	order.LastUpdated = time.Now()
+	order.LastError = ""
 	i.mu.Unlock()
+
+	_ = i.saveOrder(order)
 
 	// Load stored private key
 	keyPath := filepath.Join(i.config.CertStoragePath, orderID+".key")
@@ -301,9 +357,72 @@ func (i *Issuer) renewCertificate(orderID string) {
 		order.ExpiresAt = time.Now().AddDate(0, 0, 90)
 	}
 	order.Status = "completed"
+	order.LastUpdated = time.Now()
+	order.LastError = ""
 	i.mu.Unlock()
 
+	_ = i.saveOrder(order)
+
 	i.logger.Info("Certificate renewal completed", "order_id", orderID)
+}
+
+// saveOrder persists the order to disk
+func (i *Issuer) saveOrder(order *Order) error {
+	data, err := json.MarshalIndent(order, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal order: %w", err)
+	}
+
+	filename := fmt.Sprintf("order_%s.json", order.ID)
+	path := filepath.Join(i.config.CertStoragePath, filename)
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write order file: %w", err)
+	}
+	return nil
+}
+
+// loadOrders loads all orders from disk
+func (i *Issuer) loadOrders() error {
+	// Ensure storage directory exists
+	if err := os.MkdirAll(i.config.CertStoragePath, 0755); err != nil {
+		return fmt.Errorf("failed to create storage directory: %w", err)
+	}
+
+	files, err := os.ReadDir(i.config.CertStoragePath)
+	if err != nil {
+		return fmt.Errorf("failed to list directory: %w", err)
+	}
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if !strings.HasPrefix(file.Name(), "order_") || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		path := filepath.Join(i.config.CertStoragePath, file.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			i.logger.Error("Failed to read order file", "path", path, "error", err)
+			continue
+		}
+
+		var order Order
+		if err := json.Unmarshal(data, &order); err != nil {
+			i.logger.Error("Failed to unmarshal order", "path", path, "error", err)
+			continue
+		}
+
+		i.orders[order.ID] = &order
+		i.logger.Debug("Loaded order", "id", order.ID, "status", order.Status)
+	}
+
+	return nil
 }
 
 // validateCSR validates that the CSR matches the requested FQDNs

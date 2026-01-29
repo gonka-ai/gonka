@@ -7,12 +7,8 @@ import (
 )
 
 // GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) types.Params {
-	params, err := k.params.Get(ctx)
-	if err != nil {
-		panic(err)
-	}
-	return params
+func (k Keeper) GetParams(ctx context.Context) (types.Params, error) {
+	return k.params.Get(ctx)
 }
 
 // SetParams set the params

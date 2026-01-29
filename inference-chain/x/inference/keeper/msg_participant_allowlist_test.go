@@ -98,7 +98,8 @@ func TestIsParticipantAllowed_AllowlistDisabled(t *testing.T) {
 	wctx := sdk.UnwrapSDKContext(ctx)
 
 	// default: allowlist disabled
-	params := k.GetParams(wctx)
+	params, err := k.GetParams(wctx)
+	require.NoError(t, err)
 	require.False(t, params.ParticipantAccessParams.UseParticipantAllowlist)
 
 	// any address should be allowed when disabled
@@ -114,7 +115,8 @@ func TestIsParticipantAllowed_AllowlistEnabled(t *testing.T) {
 	acc, _ := sdk.AccAddressFromBech32(addr)
 
 	// enable allowlist
-	params := k.GetParams(wctx)
+	params, err := k.GetParams(wctx)
+	require.NoError(t, err)
 	params.ParticipantAccessParams.UseParticipantAllowlist = true
 	require.NoError(t, k.SetParams(wctx, params))
 
@@ -135,7 +137,8 @@ func TestIsParticipantAllowed_UntilBlockHeight(t *testing.T) {
 	addr := "gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2"
 
 	// enable allowlist with cutoff at height 200
-	params := k.GetParams(wctx)
+	params, err := k.GetParams(wctx)
+	require.NoError(t, err)
 	params.ParticipantAccessParams.UseParticipantAllowlist = true
 	params.ParticipantAccessParams.ParticipantAllowlistUntilBlockHeight = 200
 	require.NoError(t, k.SetParams(wctx, params))
@@ -149,4 +152,3 @@ func TestIsParticipantAllowed_UntilBlockHeight(t *testing.T) {
 	// at height 300 (> 200): allowlist disabled -> allowed
 	require.True(t, k.IsParticipantAllowed(wctx, 300, addr))
 }
-

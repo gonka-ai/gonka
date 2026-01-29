@@ -397,7 +397,8 @@ func (suite *KeeperTestSuite) TestGetAllVestingSchedules() {
 	suite.Require().NoError(err)
 
 	// Get all schedules
-	schedules := suite.keeper.GetAllVestingSchedules(suite.ctx)
+	schedules, err := suite.keeper.GetAllVestingSchedules(suite.ctx)
+	suite.Require().NoError(err)
 	suite.Require().Len(schedules, 2)
 
 	// Verify both participants are present

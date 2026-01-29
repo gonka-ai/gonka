@@ -11,8 +11,8 @@ authors = [
 packages = [{include = "validation", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-torch = "^2.4.1"
+python = ">=3.10,<3.14"
+torch = "^2.8.0"
 tqdm = ">=4.66.0"
 pydantic = "^2.9.2"
 scipy = ">=1.15.1"

@@ -31,7 +31,9 @@ func (k msgServer) ApproveBridgeTokenForTrading(goCtx context.Context, msg *type
 	}
 
 	// Store the approved token
-	k.SetBridgeTradeApprovedToken(ctx, approvedToken)
+	if err := k.SetBridgeTradeApprovedToken(ctx, approvedToken); err != nil {
+		return nil, err
+	}
 
 	k.LogInfo("Approve bridge token for trading: Token approved successfully",
 		types.Messages,

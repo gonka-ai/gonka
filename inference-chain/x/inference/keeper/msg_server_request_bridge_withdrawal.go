@@ -135,6 +135,7 @@ func (k msgServer) validateContractCaller(ctx sdk.Context, contractAddress strin
 // Helper function to get wasm keeper
 func (k msgServer) getWasmKeeper() wasmkeeper.Keeper {
 	if k.Keeper.getWasmKeeper == nil {
+		//nolint:forbidigo // init code
 		panic("wasm keeper not available")
 	}
 	return k.Keeper.getWasmKeeper()

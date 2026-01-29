@@ -54,7 +54,8 @@ func (m *MsgExecuteEmergencyTransfer) ValidateBasic() error {
 func (m *MsgExecuteEmergencyTransfer) GetSigners() []sdk.AccAddress {
 	from, err := sdk.AccAddressFromBech32(m.FromAddress)
 	if err != nil {
-		panic(err)
+		// This should not happen if ValidateBasic is called first
+		return nil
 	}
 	return []sdk.AccAddress{from}
 }

@@ -22,6 +22,14 @@
     # Rewrite ml-XXX.join5.test → join5-mock-server
     rewrite name regex "^ml-[0-9]+\.join5\.test\.?$" "join5-mock-server."
 
+    # API aliases: api.{name}.test → {name}-api (for URL change tests)
+    rewrite name regex "^api\.genesis\.test\.?$" "genesis-api."
+    rewrite name regex "^api\.join1\.test\.?$" "join1-api."
+    rewrite name regex "^api\.join2\.test\.?$" "join2-api."
+    rewrite name regex "^api\.join3\.test\.?$" "join3-api."
+    rewrite name regex "^api\.join4\.test\.?$" "join4-api."
+    rewrite name regex "^api\.join5\.test\.?$" "join5-api."
+
     # Anything else: ask Docker DNS (which lives at 127.0.0.11 inside containers)
     forward . 127.0.0.11
 }

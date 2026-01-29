@@ -26,7 +26,8 @@ func (k *TrainingRunStore) GetRunState(ctx context.Context, runId uint64) *types
 		return nil
 	} else {
 		if task == nil {
-			panic("keeper.GetTrainingTask: task = nil. found = true")
+			k.keeper.LogError("keeper.GetTrainingTask: task = nil. found = true", types.Training)
+			return nil
 		}
 
 		return task
@@ -73,7 +74,8 @@ func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uin
 		return nil
 	} else {
 		if activity == nil {
-			panic("GetParticipantActivity: nil training task node epoch activity")
+			k.keeper.LogError("GetParticipantActivity: nil training task node epoch activity", types.Training)
+			return nil
 		}
 
 		return activity

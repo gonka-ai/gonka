@@ -6,10 +6,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k Keeper) SetUnitOfComputePriceProposal(ctx context.Context, proposal *types.UnitOfComputePriceProposal) {
+func (k Keeper) SetUnitOfComputePriceProposal(ctx context.Context, proposal *types.UnitOfComputePriceProposal) error {
 	if err := k.UnitOfComputePriceProposals.Set(ctx, proposal.Participant, *proposal); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // TODO: fix name!

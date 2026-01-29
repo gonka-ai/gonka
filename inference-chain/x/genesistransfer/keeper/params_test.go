@@ -11,8 +11,10 @@ import (
 
 func TestGetParams(t *testing.T) {
 	k, ctx := keepertest.GenesistransferKeeper(t)
-	params := types.DefaultParams()
+	expectedParams := types.DefaultParams()
 
-	require.NoError(t, k.SetParams(ctx, params))
-	require.EqualValues(t, params, k.GetParams(ctx))
+	require.NoError(t, k.SetParams(ctx, expectedParams))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, expectedParams, params)
 }

@@ -22,7 +22,7 @@ func TestMsgValidation_ValidateBasic(t *testing.T) {
 				InferenceId:     "iid",
 				ResponsePayload: "payload",
 				ResponseHash:    "hash",
-				Value:           0.5,
+				ValueDecimal:    DecimalFromFloat(0.5),
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
@@ -33,7 +33,7 @@ func TestMsgValidation_ValidateBasic(t *testing.T) {
 				InferenceId:     "iid",
 				ResponsePayload: "payload",
 				ResponseHash:    "hash",
-				Value:           0.5,
+				ValueDecimal:    DecimalFromFloat(0.5),
 			},
 		},
 	}

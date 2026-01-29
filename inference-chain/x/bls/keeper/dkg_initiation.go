@@ -13,7 +13,10 @@ import (
 // InitiateKeyGenerationForEpoch initiates DKG for a given epoch with finalized participants
 func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
 	// Get module parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get parameters: %w", err)
+	}
 	iTotalSlots := params.ITotalSlots
 	tSlotsDegree := iTotalSlots - params.TSlotsDegreeOffset // Calculate t from offset
 
@@ -61,7 +64,9 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 	}
 
 	// Store the EpochBLSData
-	k.SetEpochBLSData(ctx, epochBLSData)
+	if err := k.SetEpochBLSData(ctx, epochBLSData); err != nil {
+		return fmt.Errorf("failed to store epoch %d BLS data: %w", epochID, err)
+	}
 
 	// Set this as the active epoch since only one DKG can be active at a time
 	k.SetActiveEpochID(ctx, epochID)
@@ -333,24 +338,33 @@ func findDonorIndex(assigned []int64, remainders []math.LegacyDec, participants 
 }
 
 // SetEpochBLSData stores EpochBLSData in the state
-func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData) {
+func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData) error {
 	store := k.storeService.OpenKVStore(ctx)
 	key := types.EpochBLSDataKey(epochBLSData.EpochId)
-	value := k.cdc.MustMarshal(&epochBLSData)
-	store.Set(key, value)
+	value, err := k.cdc.Marshal(&epochBLSData)
+	if err != nil {
+		return err
+	}
+	return store.Set(key, value)
 }
 
 // GetEpochBLSData retrieves EpochBLSData from the state
-func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLSData, bool) {
+func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
 	store := k.storeService.OpenKVStore(ctx)
 	key := types.EpochBLSDataKey(epochID)
 
 	value, err := store.Get(key)
-	if err != nil || value == nil {
-		return types.EpochBLSData{}, false
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	if value == nil {
+		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
 	}
 
 	var epochBLSData types.EpochBLSData
-	k.cdc.MustUnmarshal(value, &epochBLSData)
-	return epochBLSData, true
+	err = k.cdc.Unmarshal(value, &epochBLSData)
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	return epochBLSData, nil
 }

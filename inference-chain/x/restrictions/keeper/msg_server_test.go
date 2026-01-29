@@ -42,7 +42,8 @@ func TestMsgServer_UpdateParams_Authority(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify parameters were updated
-	updatedParams := k.GetParams(sdk.UnwrapSDKContext(ctx))
+	updatedParams, err := k.GetParams(sdk.UnwrapSDKContext(ctx))
+	require.NoError(t, err)
 	require.Equal(t, uint64(2000000), updatedParams.RestrictionEndBlock)
 
 	// Test invalid authority
@@ -134,7 +135,8 @@ func TestMsgServer_UpdateParams_ParameterValidation(t *testing.T) {
 				require.NoError(t, err)
 
 				// Verify parameters were set correctly
-				updatedParams := k.GetParams(sdk.UnwrapSDKContext(ctx))
+				updatedParams, err := k.GetParams(sdk.UnwrapSDKContext(ctx))
+				require.NoError(t, err)
 				require.Equal(t, tc.params.RestrictionEndBlock, updatedParams.RestrictionEndBlock)
 				require.Equal(t, len(tc.params.EmergencyTransferExemptions), len(updatedParams.EmergencyTransferExemptions))
 			}
@@ -187,7 +189,8 @@ func TestMsgServer_EmergencyTransfer_Integration(t *testing.T) {
 	require.Equal(t, uint64(2), resp.RemainingUses) // 3 - 1 = 2
 
 	// Verify usage tracking was updated
-	updatedParams := k.GetParams(sdk.UnwrapSDKContext(ctx))
+	updatedParams, err := k.GetParams(sdk.UnwrapSDKContext(ctx))
+	require.NoError(t, err)
 	require.Len(t, updatedParams.ExemptionUsageTracking, 1)
 	require.Equal(t, "integration-test", updatedParams.ExemptionUsageTracking[0].ExemptionId)
 	require.Equal(t, testutil.Creator, updatedParams.ExemptionUsageTracking[0].AccountAddress)
@@ -237,7 +240,8 @@ func TestMsgServer_EmergencyTransfer_CrossParameterUpdate(t *testing.T) {
 	require.Equal(t, uint64(1), resp1.RemainingUses)
 
 	// Step 3: Update parameters to add another exemption while preserving usage tracking
-	updatedParams := k.GetParams(sdk.UnwrapSDKContext(ctx)) // Get current params with usage tracking
+	updatedParams, err := k.GetParams(sdk.UnwrapSDKContext(ctx)) // Get current params with usage tracking
+	require.NoError(t, err)
 	exemption2 := types.EmergencyTransferExemption{
 		ExemptionId:   "test-exemption-2",
 		FromAddress:   testutil.Executor,
@@ -284,7 +288,8 @@ func TestMsgServer_EmergencyTransfer_CrossParameterUpdate(t *testing.T) {
 	require.Equal(t, uint64(0), resp3.RemainingUses) // 1 - 1 = 0
 
 	// Verify final usage tracking
-	finalParams := k.GetParams(sdk.UnwrapSDKContext(ctx))
+	finalParams, err := k.GetParams(sdk.UnwrapSDKContext(ctx))
+	require.NoError(t, err)
 	require.Len(t, finalParams.ExemptionUsageTracking, 2)
 
 	// Check individual usage counts

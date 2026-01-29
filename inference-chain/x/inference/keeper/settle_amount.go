@@ -10,14 +10,15 @@ import (
 )
 
 // SetSettleAmount sets a specific settleAmount in the store by participant
-func (k Keeper) SetSettleAmount(ctx context.Context, settleAmount types.SettleAmount) {
+func (k Keeper) SetSettleAmount(ctx context.Context, settleAmount types.SettleAmount) error {
 	addr, err := sdk.AccAddressFromBech32(settleAmount.Participant)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	if err := k.SettleAmounts.Set(ctx, addr, settleAmount); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // GetSettleAmount returns a settleAmount by participant
@@ -93,7 +94,9 @@ func (k Keeper) SetSettleAmountWithGovernanceTransfer(ctx context.Context, settl
 	}
 
 	// Set the new settle amount
-	k.SetSettleAmount(ctx, settleAmount)
+	if err := k.SetSettleAmount(ctx, settleAmount); err != nil {
+		return err
+	}
 	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, settleAmount.Participant, types.SettleSubAccount, settleAmount.GetTotalCoins(), "awaiting claim")
 	k.SafeLogSubAccountTransactionUint(ctx, settleAmount.Participant, types.ModuleName, types.OwedSubAccount, settleAmount.WorkCoins, "moved to settled")
 	return nil

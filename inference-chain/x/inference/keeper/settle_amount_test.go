@@ -16,7 +16,7 @@ func createNSettleAmount(keeper keeper.Keeper, ctx context.Context, n int) []typ
 	items := make([]types.SettleAmount, n)
 	for i := range items {
 		items[i].Participant = sample.AccAddress()
-		keeper.SetSettleAmount(ctx, items[i])
+		_ = keeper.SetSettleAmount(ctx, items[i])
 	}
 	return items
 }

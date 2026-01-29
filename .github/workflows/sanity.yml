@@ -29,9 +29,11 @@ jobs:
       checks: write
 
     uses: ./.github/workflows/test-workflow.yml
-
+    secrets: inherit
+    
     with:
       test_name: "Sanity Tests"
       test_command: "run-sanity"
       is_pr_comment: ${{ github.event_name == 'issue_comment' }}
       pr_number: ${{ github.event.issue.number || '' }}
+      use_matrix: true

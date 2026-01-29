@@ -65,6 +65,8 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		// wasm kv store
 		storetypes.NewKVStoreKey(wasmtypes.StoreKey),
 	); err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(err)
 	}
 
@@ -170,6 +172,8 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	// Create default node config and VM config for wasmd v0.54.2
 	nodeConfig, err := wasm.ReadNodeConfig(appOpts)
 	if err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(err)
 	}
 	vmConfig := wasmtypes.VMConfig{
@@ -261,6 +265,8 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 		//wasm module
 		wasm.NewAppModule(app.AppCodec(), &app.WasmKeeper, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, app.MsgServiceRouter(), app.GetSubspace(wasmtypes.ModuleName)),
 	); err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(err)
 	}
 

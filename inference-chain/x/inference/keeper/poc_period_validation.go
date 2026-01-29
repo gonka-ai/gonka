@@ -61,7 +61,12 @@ func (k Keeper) checkConfirmationPoCMessageTooLate(ctx sdk.Context, event *types
 		)
 	}
 
-	epochParams := k.GetParams(ctx).EpochParams
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.Logger().Debug("[ValidatePocPeriod] Error getting params", "error", err)
+		return err
+	}
+	epochParams := params.EpochParams
 
 	switch windowType {
 	case PoCWindowBatch:
@@ -91,7 +96,12 @@ func (k Keeper) checkConfirmationPoCMessageTooLate(ctx sdk.Context, event *types
 }
 
 func (k Keeper) checkRegularPoCMessageTooLate(ctx sdk.Context, startBlockHeight, currentBlockHeight int64, windowType PoCWindowType) error {
-	epochParams := k.GetParams(ctx).EpochParams
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.Logger().Debug("[ValidatePocPeriod] Error getting params", "error", err)
+		return err
+	}
+	epochParams := params.EpochParams
 	currentEpoch, found := k.GetEffectiveEpoch(ctx)
 	if !found {
 		k.Logger().Debug(

@@ -109,22 +109,28 @@ class ParticipantTests : TestermintTest() {
         val genesisParticipant = genesis.node.getRawParticipants().getParticipant(genesis)
         assertNotNull(genesisParticipant, "Unable to get participant stats for genesis")
         assertThat(genesisParticipant.epochsCompleted).isGreaterThan(0)
+        // Use DNS alias (api.{name}.test) which:
+        // 1. Is different from the original URL (genesis-api:9000)
+        // 2. Passes SSRF validation (not a private IP, not localhost)
+        // 3. Resolves via CoreDNS to the same API container for PoC v2 proof validation
+        val newUrl = genesis.getAlternativeApiUrl()
+        Logger.info("Using DNS alias URL for URL change test: $newUrl")
         val addNewParticipantMessage = MsgSubmitNewParticipant(
             creator = genesis.node.getColdAddress(),
-            url = "https://new-url.com",
+            url = newUrl,
         )
         val newMessage = genesis.submitMessage(addNewParticipantMessage)
         assertThat(newMessage).isSuccess()
         val updatedGenesisParticipant = genesis.node.getRawParticipants().getParticipant(genesis)
         assertNotNull(updatedGenesisParticipant, "Unable to get stats for new participant")
         assertThat(updatedGenesisParticipant.epochsCompleted).isEqualTo(genesisParticipant.epochsCompleted)
-        assertThat(updatedGenesisParticipant.inferenceUrl).isEqualTo("https://new-url.com")
+        assertThat(updatedGenesisParticipant.inferenceUrl).isEqualTo(newUrl)
         assertThat(updatedGenesisParticipant.status).isEqualTo(genesisParticipant.status)
         assertThat(updatedGenesisParticipant.joinTime).isEqualTo(genesisParticipant.joinTime)
         assertThat(updatedGenesisParticipant.joinHeight).isEqualTo(genesisParticipant.joinHeight)
         genesis.waitForNextEpoch()
         val genesisParticipantAfterNewEpoch = genesis.api.getActiveParticipants().getParticipant(genesis)
         assertNotNull(genesisParticipantAfterNewEpoch, "Unable to get stats for new participant")
-        assertThat(genesisParticipantAfterNewEpoch.inferenceUrl).isEqualTo("https://new-url.com")
+        assertThat(genesisParticipantAfterNewEpoch.inferenceUrl).isEqualTo(newUrl)
     }
 }

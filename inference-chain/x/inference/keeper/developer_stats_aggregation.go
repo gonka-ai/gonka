@@ -54,8 +54,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 		return err
 	}
 	k.setInferenceStatsByModel(ctx, inference.RequestedBy, inferenceStats, inferenceTime)
-	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, epochId, inferencePrevEpochId)
-	return nil
+	return k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, epochId, inferencePrevEpochId)
 }
 
 // TODO: refactor it later (move ”getter' logic to store level)
@@ -70,7 +69,11 @@ func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr str
 	}
 
 	var stats types.DeveloperStatsByEpoch
-	k.cdc.MustUnmarshal(bz, &stats)
+	err := k.cdc.Unmarshal(bz, &stats)
+	if err != nil {
+		k.LogError("Unable to unmarshal DeveloperStatsByEpoch", types.EpochGroup, "epochKey", epochKey, "error", err)
+		return types.DeveloperStatsByEpoch{}, false
+	}
 	return stats, true
 }
 
@@ -96,7 +99,11 @@ func (k Keeper) GetDeveloperStatsByTime(
 		}
 
 		var stats types.DeveloperStatsByTime
-		k.cdc.MustUnmarshal(iterator.Value(), &stats)
+		err := k.cdc.Unmarshal(iterator.Value(), &stats)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByTime", types.Participants, "key", iterator.Key(), "error", err)
+			continue
+		}
 		results = append(results, &stats)
 	}
 	return results
@@ -121,7 +128,11 @@ func (k Keeper) GetSummaryByTime(ctx context.Context, from, to int64) StatsSumma
 		}
 
 		var stats types.DeveloperStatsByTime
-		k.cdc.MustUnmarshal(iterator.Value(), &stats)
+		err := k.cdc.Unmarshal(iterator.Value(), &stats)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByTime", types.Participants, "key", iterator.Key(), "error", err)
+			continue
+		}
 		summary.TokensUsed += int64(stats.Inference.TotalTokenCount)
 		summary.InferenceCount++
 		summary.ActualCost += stats.Inference.ActualCostInCoins
@@ -160,7 +171,11 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 		}
 
 		var stats types.DeveloperStatsByEpoch
-		k.cdc.MustUnmarshal(iter.Value(), &stats)
+		err := k.cdc.Unmarshal(iter.Value(), &stats)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByEpoch", types.Participants, "key", iter.Key(), "error", err)
+			continue
+		}
 		for _, infId := range stats.InferenceIds {
 			timeKey := byInferenceStore.Get([]byte(infId))
 			if timeKey == nil {
@@ -170,7 +185,11 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
-				k.cdc.MustUnmarshal(val, &statsByTime)
+				err := k.cdc.Unmarshal(val, &statsByTime)
+				if err != nil {
+					k.LogError("Unable to Unmarshal DeveloperStatsByTime", types.Participants, "key", iter.Key(), "error", err)
+					continue
+				}
 				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)
 				summary.InferenceCount++
 				summary.ActualCost += statsByTime.Inference.ActualCostInCoins
@@ -210,7 +229,11 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 		}
 
 		var stats types.DeveloperStatsByEpoch
-		k.cdc.MustUnmarshal(iterator.Value(), &stats)
+		err := k.cdc.Unmarshal(iterator.Value(), &stats)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByEpoch", types.Participants, "key", iterator.Key(), "error", err)
+			continue
+		}
 		for _, infId := range stats.InferenceIds {
 			timeKey := byInferenceStore.Get([]byte(infId))
 			if timeKey == nil {
@@ -220,7 +243,11 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
-				k.cdc.MustUnmarshal(val, &statsByTime)
+				err := k.cdc.Unmarshal(val, &statsByTime)
+				if err != nil {
+					k.LogError("unabled to unmarhsal DeveloperStatsByTime", types.Participants, "key", iterator.Key(), "error", err)
+					continue
+				}
 				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)
 				summary.InferenceCount++
 				summary.ActualCost += statsByTime.Inference.ActualCostInCoins
@@ -253,7 +280,11 @@ func (k Keeper) GetSummaryByModelAndTime(ctx context.Context, from, to int64) ma
 		}
 
 		var stat types.DeveloperStatsByTime
-		k.cdc.MustUnmarshal(iter.Value(), &stat)
+		err := k.cdc.Unmarshal(iter.Value(), &stat)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByTime", types.Participants, "key", iter.Key(), "error", err)
+			continue
+		}
 
 		model := stat.Inference.Model
 		s, ok := stats[model]
@@ -279,7 +310,11 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.
 	epochStats := make(map[string][]*types.DeveloperStatsByEpoch)
 	for ; epochIter.Valid(); epochIter.Next() {
 		var stats types.DeveloperStatsByEpoch
-		k.cdc.MustUnmarshal(epochIter.Value(), &stats)
+		err := k.cdc.Unmarshal(epochIter.Value(), &stats)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByEpoch", types.Participants, "key", epochIter.Key(), "error", err)
+			continue
+		}
 
 		developer := extractDeveloperAddrFromKey(epochIter.Key())
 		stat := epochStats[developer]
@@ -298,7 +333,11 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.
 	timeStats := make(map[string][]*types.DeveloperStatsByTime)
 	for ; timeIter.Valid(); timeIter.Next() {
 		var stats types.DeveloperStatsByTime
-		k.cdc.MustUnmarshal(timeIter.Value(), &stats)
+		err := k.cdc.Unmarshal(timeIter.Value(), &stats)
+		if err != nil {
+			k.LogError("Unable to unmarshal DeveloperStatsByTime", types.Participants, "key", timeIter.Key(), "error", err)
+			continue
+		}
 
 		developer := extractDeveloperAddrFromKey(timeIter.Key())
 		stat := timeStats[developer]

@@ -1,10 +1,13 @@
 package keeper_test
 
 import (
-	keepertest "github.com/productscience/inference/testutil/keeper"
-	"github.com/productscience/inference/x/inference/types"
 	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func TestUnitOfComputeProposals(t *testing.T) {
@@ -14,7 +17,8 @@ func TestUnitOfComputeProposals(t *testing.T) {
 			Participant: "participant-" + strconv.Itoa(i),
 			Price:       uint64(i),
 		}
-		keeper.SetUnitOfComputePriceProposal(ctx, proposal)
+		err := keeper.SetUnitOfComputePriceProposal(ctx, proposal)
+		require.NoError(t, err)
 	}
 
 	for i := 0; i < 10; i++ {

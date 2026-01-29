@@ -223,6 +223,18 @@ data class LocalInferencePair(
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
+    /**
+     * Gets an alternative API URL using DNS alias (api.{name}.test).
+     * This URL:
+     * 1. Is different from the default container name (for URL change tests)
+     * 2. Passes SSRF validation (not a private IP)
+     * 3. Resolves via CoreDNS to the same API container
+     */
+    fun getAlternativeApiUrl(): String {
+        val cleanName = name.trimStart('/')
+        return "http://api.$cleanName.test:9000"
+    }
+
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
         val validatorInfo = status.validatorInfo

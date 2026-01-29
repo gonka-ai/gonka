@@ -14,18 +14,7 @@ const defaultDeveloperAccessUntilBlockHeight int64 = 0
 const defaultNewParticipantRegistrationStartHeight int64 = 0
 
 // GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	bz := store.Get(types.ParamsKey)
-	if bz == nil {
-		return params
-	}
-
-	k.cdc.MustUnmarshal(bz, &params)
-	return params
-}
-
-func (k Keeper) GetParamsSafe(ctx context.Context) (params types.Params, err error) {
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
@@ -41,12 +30,26 @@ func (k Keeper) GetParamsSafe(ctx context.Context) (params types.Params, err err
 
 // SetParams set the params
 func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
+	oldParams, _ := k.GetParams(ctx)
+
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz, err := k.cdc.Marshal(&params)
 	if err != nil {
 		return err
 	}
 	store.Set(types.ParamsKey, bz)
+
+	// Auto-set grace epoch when poc_v2_enabled transitions false -> true
+	if params.PocParams != nil && params.PocParams.PocV2Enabled {
+		wasV2Disabled := oldParams.PocParams == nil || !oldParams.PocParams.PocV2Enabled
+		if wasV2Disabled {
+			if _, exists := k.GetPocV2EnabledEpoch(ctx); !exists {
+				if epoch, found := k.GetEffectiveEpochIndex(ctx); found {
+					_ = k.SetPocV2EnabledEpoch(ctx, epoch)
+				}
+			}
+		}
+	}
 
 	return nil
 }
@@ -67,7 +70,10 @@ func (k Keeper) GetV1Params(ctx context.Context) (params types.ParamsV1, err err
 
 // GetBandwidthLimitsParams returns bandwidth limits parameters
 func (k Keeper) GetBandwidthLimitsParams(ctx context.Context) (*types.BandwidthLimitsParams, error) {
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if params.BandwidthLimitsParams == nil {
 		// Return default values if not set
 		return &types.BandwidthLimitsParams{
@@ -88,7 +94,11 @@ func (k Keeper) GetBandwidthLimitsParams(ctx context.Context) (*types.BandwidthL
 
 // GetGenesisGuardianAddresses returns the governance-controlled genesis guardian operator addresses.
 func (k Keeper) GetGenesisGuardianAddresses(ctx context.Context) []string {
-	p := k.GetParams(ctx)
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetGenesisGuardianAddresses", types.System, "error", err)
+		return []string{}
+	}
 	if p.GenesisGuardianParams == nil {
 		return []string{}
 	}
@@ -98,7 +108,11 @@ func (k Keeper) GetGenesisGuardianAddresses(ctx context.Context) []string {
 // GetGenesisGuardianNetworkMaturityThreshold returns the governance-controlled maturity threshold.
 // If unset (0), it falls back to a safe default.
 func (k Keeper) GetGenesisGuardianNetworkMaturityThreshold(ctx context.Context) int64 {
-	p := k.GetParams(ctx)
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetGenesisGuardianNetworkMaturityThreshold", types.System, "error", err)
+		return defaultGenesisGuardianNetworkMaturityThreshold
+	}
 	if p.GenesisGuardianParams == nil {
 		return defaultGenesisGuardianNetworkMaturityThreshold
 	}
@@ -112,7 +126,11 @@ func (k Keeper) GetGenesisGuardianNetworkMaturityThreshold(ctx context.Context) 
 // GetGenesisGuardianNetworkMaturityMinHeight returns the governance-controlled minimum height for maturity.
 // If unset, defaults to 0 (no height gating).
 func (k Keeper) GetGenesisGuardianNetworkMaturityMinHeight(ctx context.Context) int64 {
-	p := k.GetParams(ctx)
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetGenesisGuardianNetworkMaturityMinHeight", types.System, "error", err)
+		return defaultGenesisGuardianNetworkMaturityMinHeight
+	}
 	if p.GenesisGuardianParams == nil {
 		return defaultGenesisGuardianNetworkMaturityMinHeight
 	}
@@ -131,7 +149,12 @@ func (k Keeper) InNetworkMature(ctx context.Context, height int64, totalNetworkP
 }
 
 func (k Keeper) GetDeveloperAccessParams(ctx context.Context) *types.DeveloperAccessParams {
-	return k.GetParams(ctx).DeveloperAccessParams
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetDeveloperAccessParams", types.System, "error", err)
+		return nil
+	}
+	return p.DeveloperAccessParams
 }
 
 // IsDeveloperAccessRestricted returns true iff the chain is still in the restricted mode where only
@@ -166,7 +189,12 @@ func (k Keeper) IsAllowedDeveloper(ctx context.Context, developerAddress string)
 }
 
 func (k Keeper) GetParticipantAccessParams(ctx context.Context) *types.ParticipantAccessParams {
-	return k.GetParams(ctx).ParticipantAccessParams
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetParticipantAccessParams", types.System, "error", err)
+		return nil
+	}
+	return p.ParticipantAccessParams
 }
 
 // IsNewParticipantRegistrationClosed returns true iff NEW participant registration is closed at this height.

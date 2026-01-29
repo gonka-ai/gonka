@@ -15,9 +15,9 @@ import (
 // RequestThresholdSignature is the main entry point for other modules to request BLS threshold signatures
 func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.SigningData) error {
 	// Validate current epoch has completed DKG
-	epochBLSData, found := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
-	if !found {
-		return fmt.Errorf("epoch BLS data not found for epoch %d", signingData.CurrentEpochId)
+	epochBLSData, err := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
+	if err != nil {
+		return fmt.Errorf("failed to get epoch %d BLS data: %w", signingData.CurrentEpochId, err)
 	}
 
 	// Verify epoch has completed DKG (has group public key)
@@ -49,7 +49,10 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 	messageHash := hash.Sum(nil)
 
 	// Calculate deadline block height
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get parameters: %w", err)
+	}
 	deadlineBlockHeight := ctx.BlockHeight() + int64(params.SigningDeadlineBlocks)
 
 	// Create threshold signing request
@@ -68,7 +71,10 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 	}
 
 	// Store the request
-	requestBytes := k.cdc.MustMarshal(request)
+	requestBytes, err := k.cdc.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal threshold signing request: %w", err)
+	}
 	err = kvStore.Set(key, requestBytes)
 	if err != nil {
 		return fmt.Errorf("failed to store threshold signing request: %w", err)
@@ -110,7 +116,10 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 	}
 
 	var request types.ThresholdSigningRequest
-	k.cdc.MustUnmarshal(requestBytes, &request)
+	err = k.cdc.Unmarshal(requestBytes, &request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal threshold signing request: %w", err)
+	}
 	return &request, nil
 }
 
@@ -126,7 +135,10 @@ func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64
 
 	for ; iterator.Valid(); iterator.Next() {
 		var request types.ThresholdSigningRequest
-		k.cdc.MustUnmarshal(iterator.Value(), &request)
+		err := k.cdc.Unmarshal(iterator.Value(), &request)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal threshold signing request: %w", err)
+		}
 
 		// Filter by epoch and active status
 		if request.CurrentEpochId == currentEpochID &&
@@ -191,9 +203,18 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 	}
 
 	// Get current epoch BLS data for validation
-	epochBLSData, found := k.GetEpochBLSData(ctx, request.CurrentEpochId)
-	if !found {
-		return fmt.Errorf("epoch BLS data not found for epoch %d", request.CurrentEpochId)
+	epochBLSData, err := k.GetEpochBLSData(ctx, request.CurrentEpochId)
+	if err != nil {
+		return fmt.Errorf("failed to get epoch %d BLS data: %w", request.CurrentEpochId, err)
+	}
+
+	// Reject duplicate slot indices
+	seen := make(map[uint32]struct{})
+	for _, slot := range slotIndices {
+		if _, dup := seen[slot]; dup {
+			return fmt.Errorf("duplicate slot index: %d", slot)
+		}
+		seen[slot] = struct{}{}
 	}
 
 	// Validate submitter owns the claimed slot indices
@@ -277,7 +298,7 @@ func (k Keeper) verifyPartialSignature(partialSignature []byte, messageHash []by
 	}
 
 	// Verify BLS partial signature against participant's computed individual public key
-	if !k.verifyBLSPartialSignature(partialSignature, messageHash, epochBLSData, slotIndices) {
+	if !k.verifyBLSPartialSignatureBlst(partialSignature, messageHash, epochBLSData, slotIndices) {
 		return fmt.Errorf("BLS signature verification failed")
 	}
 
@@ -334,7 +355,7 @@ func (k Keeper) aggregatePartialSignatures(partialSigs []types.PartialSignature,
 	}
 
 	// Use shared BLS aggregation function
-	return k.aggregateBLSPartialSignatures(partialSigs)
+	return k.aggregateBLSPartialSignaturesBlst(partialSigs)
 }
 
 // storeThresholdSigningRequest stores a threshold signing request
@@ -342,7 +363,10 @@ func (k Keeper) storeThresholdSigningRequest(ctx sdk.Context, request *types.Thr
 	key := types.ThresholdSigningRequestKey(request.RequestId)
 	kvStore := k.storeService.OpenKVStore(ctx)
 
-	requestBytes := k.cdc.MustMarshal(request)
+	requestBytes, err := k.cdc.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal threshold signing request: %w", err)
+	}
 	return kvStore.Set(key, requestBytes)
 }
 

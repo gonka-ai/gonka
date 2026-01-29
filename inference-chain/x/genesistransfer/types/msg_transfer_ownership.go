@@ -29,7 +29,8 @@ func (msg *MsgTransferOwnership) ValidateBasic() error {
 func (msg *MsgTransferOwnership) GetSigners() []sdk.AccAddress {
 	addr, err := sdk.AccAddressFromBech32(msg.GenesisAddress)
 	if err != nil {
-		panic(err)
+		// This should not happen if ValidateBasic is called first
+		return nil
 	}
 	return []sdk.AccAddress{addr}
 }

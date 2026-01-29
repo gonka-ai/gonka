@@ -26,7 +26,7 @@ func setupInvalidateHarness(t testing.TB) (keeper.Keeper, types.MsgServer, sdk.C
 
 func setEffectiveEpoch(ctx sdk.Context, k keeper.Keeper, epochIndex uint64, mocks *keepertest.InferenceMocks) error {
 	k.SetEpoch(ctx, &types.Epoch{Index: epochIndex})
-	k.SetEffectiveEpochIndex(ctx, epochIndex)
+	_ = k.SetEffectiveEpochIndex(ctx, epochIndex)
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochIndex)
 	eg, err := k.CreateEpochGroup(ctx, epochIndex, epochIndex)
 	if err != nil {

@@ -38,3 +38,8 @@ testermint/parallel-test-results/
 run-parallel-tests/
 **/node_modules/
 **/target/
+
+# Generated proto artifacts (buf output in wrong location)
+inference-chain/proto/github.com/
+inference-chain/proto/api/
+inference-chain/proto/**/module/*.pb.go

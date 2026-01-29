@@ -39,6 +39,10 @@ type (
 		RandomSeeds    collections.Map[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]
 		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
+		// PoC v2 collections
+		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidationV2]
+		PoCV2StoreCommits         collections.Map[collections.Pair[int64, sdk.AccAddress], types.PoCV2StoreCommit]
+		MLNodeWeightDistributions collections.Map[collections.Pair[int64, sdk.AccAddress], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
 		ModelCurrentPriceMap collections.Map[string, uint64]
 		ModelCapacityMap     collections.Map[string, uint64]
@@ -68,6 +72,7 @@ type (
 		ConfirmationPoCEvents          collections.Map[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent]
 		ActiveConfirmationPoCEventItem collections.Item[types.ConfirmationPoCEvent]
 		LastUpgradeHeight              collections.Item[int64]
+		PocV2EnabledEpoch              collections.Item[uint64]
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
@@ -99,6 +104,7 @@ func NewKeeper(
 	upgradeKeeper types.UpgradeKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
+		//nolint:forbidigo // init code
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
@@ -149,6 +155,28 @@ func NewKeeper(
 			"poc_validation",
 			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidation](cdc),
+		),
+		// PoC v2 collections
+		PoCValidationsV2: collections.NewMap(
+			sb,
+			types.PoCValidationV2Prefix,
+			"poc_validation_v2",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
+			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		PoCV2StoreCommits: collections.NewMap(
+			sb,
+			types.PoCV2StoreCommitPrefix,
+			"poc_v2_store_commit",
+			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			codec.CollValue[types.PoCV2StoreCommit](cdc),
+		),
+		MLNodeWeightDistributions: collections.NewMap(
+			sb,
+			types.MLNodeWeightDistributionPrefix,
+			"mlnode_weight_distribution",
+			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			codec.CollValue[types.MLNodeWeightDistribution](cdc),
 		),
 		// dynamic pricing collections
 		ModelCurrentPriceMap: collections.NewMap(
@@ -322,6 +350,12 @@ func NewKeeper(
 			"last_upgrade_height",
 			collections.Int64Value,
 		),
+		PocV2EnabledEpoch: collections.NewItem(
+			sb,
+			types.PocV2EnabledEpochPrefix,
+			"poc_v2_enabled_epoch",
+			collections.Uint64Value,
+		),
 		BridgeContractAddresses: collections.NewMap(
 			sb,
 			types.BridgeContractAddressesPrefix,
@@ -380,6 +414,7 @@ func NewKeeper(
 	// Build the collections schema
 	schema, err := sb.Build()
 	if err != nil {
+		//nolint:forbidigo // init code
 		panic(err)
 	}
 	k.Schema = schema

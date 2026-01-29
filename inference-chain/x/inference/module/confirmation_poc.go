@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 
+	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -19,7 +20,7 @@ func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	// Get current parameters
-	params, err := am.keeper.GetParamsSafe(ctx)
+	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get params: %w", err)
 	}
@@ -358,25 +359,134 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 		return fmt.Errorf("failed to get current validator weights: %w", err)
 	}
 
-	// Get PoC batches and validations using trigger_height as key
-	allBatches, err := am.keeper.GetPoCBatchesByStage(ctx, event.TriggerHeight)
+	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get PoC batches for confirmation: %w", err)
+		return fmt.Errorf("failed to get params: %w", err)
+	}
+	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
+
+	migrationState := GetMigrationStateFromParams(params.PocParams)
+
+	useV2, dryRun := false, false
+	switch migrationState {
+	case ModeFullV2:
+		useV2 = true
+		// Grace period: dry-run for the epoch when V2 was enabled
+		if graceEpoch, ok := am.keeper.GetPocV2EnabledEpoch(ctx); ok && event.EpochIndex == graceEpoch {
+			dryRun = true
+		}
+	case ModeMigration:
+		if event.EventSequence == 0 {
+			useV2, dryRun = true, true
+		}
+	}
+	am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, weightScaleFactor, useV2, dryRun)
+
+	return nil
+}
+
+func (am AppModule) evaluateConfirmation(
+	ctx context.Context,
+	event *types.ConfirmationPoCEvent,
+	epochGroupData *types.EpochGroupData,
+	currentValidatorWeights map[string]int64,
+	weightScaleFactor mathsdk.LegacyDec,
+	useV2 bool,
+	dryRun bool,
+) {
+	var confirmationParticipants []*types.ActiveParticipant
+	if useV2 {
+		confirmationParticipants = am.updateConfirmationWeightsV2(ctx, event, currentValidatorWeights, weightScaleFactor)
+	} else {
+		confirmationParticipants = am.UpdateConfirmationWeightsV1(ctx, event, currentValidatorWeights, weightScaleFactor)
 	}
 
-	validations, err := am.keeper.GetPoCValidationByStage(ctx, event.TriggerHeight)
-	if err != nil {
-		return fmt.Errorf("failed to get PoC validations for confirmation: %w", err)
+	confirmationWeights := make(map[string]int64)
+	for _, cp := range confirmationParticipants {
+		confirmationWeights[cp.Index] = cp.Weight
 	}
 
-	// Collect participants and seeds for WeightCalculator
+	am.LogInfo("evaluateConfirmation: Confirmation weights", types.PoC,
+		"useV2", useV2, "dryRun", dryRun, "confirmationWeights", confirmationWeights)
+
+	if dryRun {
+		return
+	}
+
+	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex)
+	if err != nil {
+		am.LogError("evaluateConfirmation: Failed to get not preserved weights", types.PoC, "error", err)
+	}
+
+	updated := false
+	for i, vw := range epochGroupData.ValidationWeights {
+		if calculatedWeight, found := confirmationWeights[vw.MemberAddress]; found {
+			if calculatedWeight < vw.ConfirmationWeight {
+				previousWeight := vw.ConfirmationWeight
+				epochGroupData.ValidationWeights[i].ConfirmationWeight = calculatedWeight
+				updated = true
+				am.LogInfo("evaluateConfirmation: Updated confirmation weight", types.PoC,
+					"participant", vw.MemberAddress,
+					"previousWeight", previousWeight,
+					"newWeight", calculatedWeight)
+			}
+		} else {
+			pocWeight := notPreservedWeights[vw.MemberAddress]
+			if pocWeight > 0 && vw.ConfirmationWeight > 0 {
+				previousWeight := vw.ConfirmationWeight
+				epochGroupData.ValidationWeights[i].ConfirmationWeight = 0
+				updated = true
+				am.LogInfo("evaluateConfirmation: No batches submitted, setting weight to 0", types.PoC,
+					"participant", vw.MemberAddress,
+					"previousWeight", previousWeight)
+			}
+		}
+	}
+
+	if updated {
+		am.keeper.SetEpochGroupData(ctx, *epochGroupData)
+		am.LogInfo("evaluateConfirmation: Saved updated EpochGroupData", types.PoC,
+			"epochIndex", event.EpochIndex)
+	}
+
+	am.checkConfirmationSlashing(ctx, epochGroupData)
+}
+
+// updateConfirmationWeightsV2 calculates confirmation weights using off-chain store commits
+func (am AppModule) updateConfirmationWeightsV2(
+	ctx context.Context,
+	event *types.ConfirmationPoCEvent,
+	currentValidatorWeights map[string]int64,
+	weightScaleFactor mathsdk.LegacyDec,
+) []*types.ActiveParticipant {
+	// Get off-chain store commits using trigger_height as key
+	storeCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, event.TriggerHeight)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get store commits for confirmation", types.PoC, "error", err)
+		return nil
+	}
+
+	// Get weight distributions for per-node weights
+	weightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, event.TriggerHeight)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
+		// Continue without distributions
+	}
+
+	validationsV2, err := am.keeper.GetPoCValidationsV2ByStage(ctx, event.TriggerHeight)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get PoC v2 validations for confirmation", types.PoC, "error", err)
+		return nil
+	}
+
+	// Collect participants and seeds
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
 
-	for participantAddress := range allBatches {
+	for participantAddress := range storeCommits {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
-			am.LogWarn("updateConfirmationWeights: Participant not found", types.PoC,
+			am.LogWarn("updateConfirmationWeightsV2: Participant not found", types.PoC,
 				"address", participantAddress)
 			continue
 		}
@@ -388,13 +498,12 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 		}
 	}
 
-	// Create WeightCalculator (reuse regular PoC logic)
-	params := am.keeper.GetParams(ctx)
-	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
+	// Create WeightCalculator with store commits and distributions
 	calculator := NewWeightCalculator(
 		currentValidatorWeights,
-		allBatches,
-		validations,
+		storeCommits,
+		weightDistributions,
+		validationsV2,
 		participants,
 		seeds,
 		event.TriggerHeight,
@@ -403,68 +512,7 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	)
 
 	// Calculate confirmation weights
-	confirmationParticipants := calculator.Calculate()
-
-	// Convert to map for easy lookup
-	confirmationWeights := make(map[string]int64)
-	for _, cp := range confirmationParticipants {
-		confirmationWeights[cp.Index] = cp.Weight
-	}
-
-	am.LogInfo("updateConfirmationWeights: Confirmation weights", types.PoC,
-		"confirmationWeights", confirmationWeights)
-
-	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex)
-	if err != nil {
-		am.LogError("updateConfirmationWeights: Failed to get not preserved weights", types.PoC, "error", err)
-	}
-
-	// Update ValidationWeights: confirmation_weight = min(current, calculated)
-	updated := false
-	for i, vw := range epochGroupData.ValidationWeights {
-		if calculatedWeight, found := confirmationWeights[vw.MemberAddress]; found {
-			// Take minimum across all confirmation events (simple min, no special case for zero)
-			if calculatedWeight < vw.ConfirmationWeight {
-				previousWeight := vw.ConfirmationWeight
-				epochGroupData.ValidationWeights[i].ConfirmationWeight = calculatedWeight
-				updated = true
-				am.LogInfo("updateConfirmationWeights: Updated confirmation weight", types.PoC,
-					"participant", vw.MemberAddress,
-					"previousConfirmationWeight", previousWeight,
-					"newConfirmationWeight", calculatedWeight)
-			} else {
-				am.LogInfo("updateConfirmationWeights: Keeping current confirmation weight (minimum)", types.PoC,
-					"participant", vw.MemberAddress,
-					"currentConfirmationWeight", vw.ConfirmationWeight,
-					"calculatedWeight", calculatedWeight)
-			}
-		} else {
-			pocWeight := notPreservedWeights[vw.MemberAddress]
-			if pocWeight > 0 && vw.ConfirmationWeight > 0 {
-				previousWeight := vw.ConfirmationWeight
-				epochGroupData.ValidationWeights[i].ConfirmationWeight = 0
-				updated = true
-				am.LogInfo("updateConfirmationWeights: PoC miner did not submit batches, setting confirmation weight to 0", types.PoC,
-					"participant", vw.MemberAddress,
-					"previousConfirmationWeight", previousWeight,
-					"pocMiningWeight", pocWeight)
-			}
-		}
-	}
-
-	if updated {
-		am.keeper.SetEpochGroupData(ctx, epochGroupData)
-		am.LogInfo("updateConfirmationWeights: Saved updated EpochGroupData", types.PoC,
-			"epochIndex", event.EpochIndex)
-	} else {
-		am.LogInfo("updateConfirmationWeights: No update needed", types.PoC,
-			"epochIndex", event.EpochIndex)
-	}
-
-	// Check for slashing violations
-	am.checkConfirmationSlashing(ctx, &epochGroupData)
-
-	return nil
+	return calculator.Calculate()
 }
 
 // checkConfirmationSlashing checks if participants should be slashed based on confirmation PoC results

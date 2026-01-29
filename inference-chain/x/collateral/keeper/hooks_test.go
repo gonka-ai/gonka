@@ -20,7 +20,7 @@ func (s *KeeperTestSuite) TestStakingHooks_BeforeValidatorSlashed() {
 	// Setup collateral for the participant
 	initialAmount := int64(1000)
 	initialCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, initialAmount)
-	s.k.SetCollateral(s.ctx, accAddr, initialCollateral)
+	s.Require().NoError(s.k.SetCollateral(s.ctx, accAddr, initialCollateral))
 
 	// Define the slash
 	slashFraction := math.LegacyNewDecWithPrec(25, 2) // 25%
@@ -58,13 +58,15 @@ func (s *KeeperTestSuite) TestStakingHooks_JailingAndUnjailing() {
 	err := hooks.AfterValidatorBeginUnbonding(s.ctx, nil, valAddr)
 	s.Require().NoError(err)
 
-	isJailed := s.k.IsJailed(s.ctx, accAddr)
+	isJailed, err := s.k.IsJailed(s.ctx, accAddr)
+	s.Require().NoError(err)
 	s.Require().True(isJailed, "participant should be marked as jailed")
 
 	// 2. Test un-jailing
 	err = hooks.AfterValidatorBonded(s.ctx, nil, valAddr)
 	s.Require().NoError(err)
 
-	isJailed = s.k.IsJailed(s.ctx, accAddr)
+	isJailed, err = s.k.IsJailed(s.ctx, accAddr)
+	s.Require().NoError(err)
 	s.Require().False(isJailed, "participant should be un-jailed")
 }

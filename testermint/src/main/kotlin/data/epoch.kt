@@ -96,3 +96,7 @@ enum class ConfirmationPoCPhase(val value: Int) {
     CONFIRMATION_POC_VALIDATION(3),
     CONFIRMATION_POC_COMPLETED(4)
 }
+
+data class ConfirmationPoCEventsResponse(
+    val events: List<ConfirmationPoCEvent> = emptyList()
+)

@@ -12,10 +12,13 @@ import (
 )
 
 const (
-	TxsToSendStream             = "txs_to_send"
-	TxsToObserveStream          = "txs_to_observe"
-	TxsBatchStartStream         = "txs_batch_start"
-	TxsBatchFinishStream        = "txs_batch_finish"
+	TxsToSendStream            = "txs_to_send"
+	TxsToObserveStream         = "txs_to_observe"
+	TxsBatchStartStream        = "txs_batch_start"
+	TxsBatchFinishStream       = "txs_batch_finish"
+	TxsBatchValidationV2Stream = "txs_batch_validation_v2"
+
+	// V1 PoC batching streams
 	TxsBatchPocBatchStream      = "txs_batch_poc_batch"
 	TxsBatchPocValidationStream = "txs_batch_poc_validation"
 
@@ -86,6 +89,7 @@ func (s *server) Start() error {
 		TxsToObserveStream,
 		TxsBatchStartStream,
 		TxsBatchFinishStream,
+		TxsBatchValidationV2Stream,
 		TxsBatchPocBatchStream,
 		TxsBatchPocValidationStream,
 	})

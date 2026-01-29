@@ -35,9 +35,9 @@ func TestMsgServer_Validation(t *testing.T) {
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.9999,
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
 	})
 	require.NoError(t, err)
 	inference, found := k.GetInference(ctx, expected.InferenceId)
@@ -78,9 +78,9 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	}, nil)
 	ms := inferenceHelper.MessageServer
 	_, err = ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.80,
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.80),
 	})
 	require.NoError(t, err)
 	inference, found := k.GetInference(ctx, expected.InferenceId)
@@ -105,7 +105,7 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	_, err = ms.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Requester,
-		Value:        0.80,
+		ValueDecimal: types.DecimalFromFloat(0.80),
 		Revalidation: true,
 	})
 	inference, found = k.GetInference(ctx, expected.InferenceId)
@@ -145,9 +145,9 @@ func TestMsgServer_NoInference(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
 	createParticipants(t, ms, ctx)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: INFERENCE_ID,
-		Creator:     testutil.Validator,
-		Value:       0.9999,
+		InferenceId:  INFERENCE_ID,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
 	})
 	require.Error(t, err)
 }
@@ -158,9 +158,9 @@ func TestMsgServer_NotFinished(t *testing.T) {
 	expected, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp, calculations.DefaultMaxTokens)
 	require.NoError(t, err)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.9999,
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
 	})
 	require.Error(t, err)
 }
@@ -170,9 +170,9 @@ func TestMsgServer_InvalidExecutor(t *testing.T) {
 	mockValidator := NewMockAccount(testutil.Validator)
 	MustAddParticipant(t, ms, ctx, *mockValidator)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: INFERENCE_ID,
-		Creator:     testutil.Executor,
-		Value:       0.9999,
+		InferenceId:  INFERENCE_ID,
+		Creator:      testutil.Executor,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
 	})
 	require.Error(t, err)
 }
@@ -181,9 +181,9 @@ func TestMsgServer_ValidatorCannotBeExecutor(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
 	createParticipants(t, ms, ctx)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: INFERENCE_ID,
-		Creator:     testutil.Validator,
-		Value:       0.9999,
+		InferenceId:  INFERENCE_ID,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
 	})
 	require.Error(t, err)
 }
@@ -220,7 +220,8 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	addMembersToGroupData(k, ctx)
 
 	// Make the maximum allowed invalidations very small and deterministic
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	if params.BandwidthLimitsParams == nil {
 		params.BandwidthLimitsParams = &types.BandwidthLimitsParams{}
 	}
@@ -230,7 +231,7 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	k.SetParams(ctx, params)
 
 	// Pre-populate one active invalidation for the validator so we hit the limit (>= 1)
-	err := k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), "prev-inference"))
+	err = k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), "prev-inference"))
 	require.NoError(t, err)
 
 	// Create and finish an inference
@@ -241,9 +242,9 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 
 	// Attempt a failing validation; since limit reached, it should early-return without changing status
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.10, // below threshold so it would normally trigger invalidation
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.10), // below threshold so it would normally trigger invalidation
 	})
 	require.NoError(t, err)
 
@@ -282,17 +283,17 @@ func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(
 
 	// First validation should succeed
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.99,
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.99),
 	})
 	require.NoError(t, err)
 
 	// Second validation (same validator, same inference, not a revalidation) should return ErrDuplicateValidation
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId: expected.InferenceId,
-		Creator:     testutil.Validator,
-		Value:       0.99,
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.99),
 	})
 	require.Error(t, err)
 	require.ErrorIs(t, err, types.ErrDuplicateValidation)

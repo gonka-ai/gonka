@@ -21,7 +21,7 @@ func PrefixStore(ctx context.Context, k *Keeper, keyPrefix []byte) *prefix.Store
 	return &store
 }
 
-func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) {
+func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) error {
 	// For some reason IDE syntax highlighting shows it's OK,
 	// but I get a compiler error:
 	//   "invalid operation: object == nil (mismatched types T and untyped nil)"
@@ -32,8 +32,12 @@ func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefi
 
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, keyPrefix)
-	b := k.cdc.MustMarshal(object)
+	b, err := k.cdc.Marshal(object)
+	if err != nil {
+		return err
+	}
 	store.Set(key, b)
+	return nil
 }
 
 func SetUint64Value(k *Keeper, ctx context.Context, keyPrefix []byte, key []byte, value uint64) {
@@ -74,7 +78,10 @@ func GetValueFromStore[T proto.Message](k *Keeper, object T, store prefix.Store,
 		return object, false
 	}
 
-	k.cdc.MustUnmarshal(bz, object)
+	err := k.cdc.Unmarshal(bz, object)
+	if err != nil {
+		return object, false
+	}
 
 	return object, true
 }

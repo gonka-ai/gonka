@@ -10,6 +10,7 @@ import (
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
+	blst "github.com/supranational/blst/bindings/go"
 )
 
 const (
@@ -97,7 +98,7 @@ func (bm *BlsManager) submitPartialSignatures(epochId uint64, requestId []byte, 
 	}
 
 	// Compute partial signature for our slots
-	partialSignature, err := bm.computePartialSignature(messageHash, result)
+	partialSignature, err := bm.computePartialSignatureBlst(messageHash, result)
 	if err != nil {
 		return fmt.Errorf("failed to compute partial signature: %w", err)
 	}
@@ -117,6 +118,9 @@ func (bm *BlsManager) submitPartialSignatures(epochId uint64, requestId []byte, 
 }
 
 // computePartialSignature computes per-slot BLS partial signatures for the given message hash.
+//
+// Deprecated: use computePartialSignatureBlst. The gnark-crypto implementation is kept only
+// for legacy/reference purposes and is intended to be removed in a future cleanup.
 // Returns a concatenation of 48-byte compressed G1 signatures (one per slot in our assigned range).
 func (bm *BlsManager) computePartialSignature(messageHash []byte, result *VerificationResult) ([]byte, error) {
 	if len(result.AggregatedShares) == 0 {
@@ -137,6 +141,41 @@ func (bm *BlsManager) computePartialSignature(messageHash []byte, result *Verifi
 		sig.ScalarMultiplication(&messageG1, sk.BigInt(new(big.Int)))
 		sb := sig.Bytes()
 		concatenated = append(concatenated, sb[:]...)
+	}
+	return concatenated, nil
+}
+
+// computePartialSignatureBlst computes per-slot BLS partial signatures using blst.
+func (bm *BlsManager) computePartialSignatureBlst(messageHash []byte, result *VerificationResult) ([]byte, error) {
+	if len(result.AggregatedShares) == 0 {
+		return nil, fmt.Errorf("no aggregated shares available for signing")
+	}
+
+	// Hash the message to a G1 point for signing (using gnark-crypto for consistency)
+	messageG1Gnark, err := bm.hashToG1(messageHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash message to G1: %w", err)
+	}
+	msgG1Bytes := messageG1Gnark.Bytes()
+	messageG1Blst := new(blst.P1Affine).Uncompress(msgG1Bytes[:])
+	if messageG1Blst == nil {
+		return nil, fmt.Errorf("failed to uncompress message G1 with blst")
+	}
+
+	// For each relative slot offset, compute per-slot signature
+	var concatenated []byte
+	for rel := 0; rel < len(result.AggregatedShares); rel++ {
+		sk := result.AggregatedShares[rel]
+		skBytes := sk.Bytes()
+		// Convert to little-endian for blst
+		for i := 0; i < 16; i++ {
+			skBytes[i], skBytes[31-i] = skBytes[31-i], skBytes[i]
+		}
+
+		sig := new(blst.P1)
+		sig.FromAffine(messageG1Blst)
+		sig.MultAssign(skBytes[:], 255)
+		concatenated = append(concatenated, sig.ToAffine().Compress()...)
 	}
 	return concatenated, nil
 }

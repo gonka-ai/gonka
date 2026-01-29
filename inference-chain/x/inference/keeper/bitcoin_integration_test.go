@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -32,19 +33,22 @@ func TestBitcoinRewardIntegration_GovernanceFlagSwitching(t *testing.T) {
 		require.NoError(t, k.SetParams(ctx, params))
 
 		// Verify parameters were set correctly
-		retrievedParams := k.GetParams(ctx)
+		retrievedParams, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		require.True(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards, "Bitcoin rewards should be enabled")
 		require.Equal(t, uint64(50000), retrievedParams.BitcoinRewardParams.InitialEpochReward, "Initial epoch reward should be set")
 	})
 
 	t.Run("Test Bitcoin rewards disabled (legacy system)", func(t *testing.T) {
 		// Disable Bitcoin rewards (use legacy system)
-		params := k.GetParams(ctx)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		params.BitcoinRewardParams.UseBitcoinRewards = false
 		require.NoError(t, k.SetParams(ctx, params))
 
 		// Verify parameters were set correctly
-		retrievedParams := k.GetParams(ctx)
+		retrievedParams, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		require.False(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards, "Bitcoin rewards should be disabled")
 	})
 }
@@ -68,7 +72,8 @@ func TestBitcoinRewardIntegration_ParameterValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Retrieve and verify parameters
-	retrievedParams := k.GetParams(ctx)
+	retrievedParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	require.True(t, retrievedParams.BitcoinRewardParams.UseBitcoinRewards)
 	require.Equal(t, uint64(285000000000000), retrievedParams.BitcoinRewardParams.InitialEpochReward)
 	decayRateLegacy, err := retrievedParams.BitcoinRewardParams.DecayRate.ToLegacyDec()
@@ -84,20 +89,20 @@ func TestBitcoinRewardIntegration_RewardCalculationFunctions(t *testing.T) {
 	params := types.DefaultParams()
 	params.BitcoinRewardParams.UseBitcoinRewards = true
 	params.BitcoinRewardParams.InitialEpochReward = 100000
-	params.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(-0.001) // 0.1% decay per epoch
+	params.BitcoinRewardParams.DecayRate = types.DecimalFromFloat(-0.000001) // 0.1% decay per epoch
 	params.BitcoinRewardParams.GenesisEpoch = 0
 	require.NoError(t, k.SetParams(ctx, params))
 
 	t.Run("Test epoch reward calculation", func(t *testing.T) {
 		// Test the CalculateFixedEpochReward function directly
-		epochReward := keeper.CalculateFixedEpochReward(0, 100000, params.BitcoinRewardParams.DecayRate)
+		epochReward, _ := keeper.CalculateFixedEpochReward(0, 100000, params.BitcoinRewardParams.DecayRate)
 		require.Equal(t, uint64(100000), epochReward, "Epoch 0 should return initial reward")
 
 		// Test decay after some epochs
-		epochReward10 := keeper.CalculateFixedEpochReward(10, 100000, params.BitcoinRewardParams.DecayRate)
+		epochReward10, _ := keeper.CalculateFixedEpochReward(10, 100000, params.BitcoinRewardParams.DecayRate)
 		require.Less(t, epochReward10, uint64(100000), "Epoch 10 should have lower reward due to decay")
 
-		epochReward100 := keeper.CalculateFixedEpochReward(100, 100000, params.BitcoinRewardParams.DecayRate)
+		epochReward100, _ := keeper.CalculateFixedEpochReward(100, 100000, params.BitcoinRewardParams.DecayRate)
 		require.Less(t, epochReward100, epochReward10, "Epoch 100 should have lower reward than epoch 10")
 	})
 
@@ -271,7 +276,8 @@ func TestBitcoinRewardIntegration_DefaultParameters(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, defaultParams))
 
 	// Verify default Bitcoin reward parameters
-	retrievedParams := k.GetParams(ctx)
+	retrievedParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	bitcoinParams := retrievedParams.BitcoinRewardParams
 
 	// Test the default values match our specifications
@@ -337,7 +343,7 @@ func TestBitcoinRewardIntegration_Phase2Stubs(t *testing.T) {
 		bonuses := keeper.CalculateUtilizationBonuses(participants, epochGroupData)
 		require.NotNil(t, bonuses, "Utilization bonuses should not be nil")
 		require.Len(t, bonuses, 1, "Should have bonus entry for participant")
-		require.Equal(t, 1.0, bonuses["participant1"], "Phase 1 stub should return 1.0 multiplier")
+		require.Equal(t, decimal.NewFromInt(1), bonuses["participant1"], "Phase 1 stub should return 1.0 multiplier")
 	})
 
 	t.Run("Test coverage bonus stubs return 1.0", func(t *testing.T) {
@@ -345,7 +351,7 @@ func TestBitcoinRewardIntegration_Phase2Stubs(t *testing.T) {
 		bonuses := keeper.CalculateModelCoverageBonuses(participants, epochGroupData)
 		require.NotNil(t, bonuses, "Coverage bonuses should not be nil")
 		require.Len(t, bonuses, 1, "Should have bonus entry for participant")
-		require.Equal(t, 1.0, bonuses["participant1"], "Phase 1 stub should return 1.0 multiplier")
+		require.Equal(t, decimal.NewFromInt(1), bonuses["participant1"], "Phase 1 stub should return 1.0 multiplier")
 	})
 
 	t.Run("Test MLNode assignment stubs return empty", func(t *testing.T) {

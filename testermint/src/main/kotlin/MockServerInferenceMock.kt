@@ -227,4 +227,30 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         Logger.warn("hasRequestsToVersionedEndpoint called on MockServerInferenceMock - returning true as placeholder")
         return true
     }
+
+    /**
+     * Sets the POC v2 (artifact-based) response with the specified weight.
+     * The Ktor mock server handles v2 artifact generation via its webhook service.
+     *
+     * @param weight The number of artifacts to generate
+     * @param hostName Optional host name for the request
+     * @param scenarioName The name of the scenario
+     */
+    override fun setPocV2Response(weight: Long, hostName: String?, scenarioName: String) {
+        // The Ktor mock server uses the same weight mechanism as v1
+        // via /api/v1/responses/poc endpoint which configures the webhook service
+        setPocResponse(weight, hostName, scenarioName)
+    }
+
+    /**
+     * Sets the POC v2 validation response with the specified weight.
+     *
+     * @param weight The number of artifacts to validate
+     * @param scenarioName The name of the scenario
+     */
+    override fun setPocV2ValidationResponse(weight: Long, scenarioName: String) {
+        // For v2 validation, the mock server's webhook service handles the validation
+        // callback automatically via the same weight configuration
+        setPocResponse(weight, scenarioName)
+    }
 }

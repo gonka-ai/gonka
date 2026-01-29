@@ -244,6 +244,8 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 		},
 	)
 	if err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(fmt.Errorf("failed to create AnteHandler: %s", err))
 	}
 

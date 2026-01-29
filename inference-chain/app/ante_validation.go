@@ -43,19 +43,7 @@ func (d ValidationEarlyRejectDecorator) checkValidationMsg(ctx sdk.Context, msg 
 		return inferencetypes.ErrInferenceNotFound
 	}
 
-	// Validate membership in the *current effective epoch* model subgroup.
-	effectiveEpochIndex, ok := d.inferenceKeeper.GetEffectiveEpochIndex(ctx)
-	if !ok {
-		d.inferenceKeeper.LogDebug(
-			"AnteHandle: ValidationEarlyReject - no effective epoch index",
-			inferencetypes.Validation,
-			"creator", msg.Creator,
-			"inferenceId", msg.InferenceId,
-		)
-		return inferencetypes.ErrEffectiveEpochNotFound
-	}
-
-	groupData, found := d.inferenceKeeper.GetEpochGroupData(ctx, effectiveEpochIndex, inference.Model)
+	groupData, found := d.inferenceKeeper.GetEpochGroupData(ctx, inference.EpochId, inference.Model)
 	if !found {
 		d.inferenceKeeper.LogDebug(
 			"AnteHandle: ValidationEarlyReject - epoch group data not found",
@@ -63,7 +51,7 @@ func (d ValidationEarlyRejectDecorator) checkValidationMsg(ctx sdk.Context, msg 
 			"creator", msg.Creator,
 			"inferenceId", msg.InferenceId,
 			"modelId", inference.Model,
-			"epochIndex", effectiveEpochIndex,
+			"epochIndex", inference.EpochId,
 		)
 		return inferencetypes.ErrEpochGroupDataNotFound
 	}
@@ -75,7 +63,7 @@ func (d ValidationEarlyRejectDecorator) checkValidationMsg(ctx sdk.Context, msg 
 			"creator", msg.Creator,
 			"inferenceId", msg.InferenceId,
 			"modelId", inference.Model,
-			"epochIndex", effectiveEpochIndex,
+			"epochIndex", inference.EpochId,
 		)
 		return inferencetypes.ErrParticipantNotFound
 	}

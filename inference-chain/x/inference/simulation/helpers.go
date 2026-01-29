@@ -9,6 +9,7 @@ import (
 func FindAccount(accs []simtypes.Account, address string) (simtypes.Account, bool) {
 	creator, err := sdk.AccAddressFromBech32(address)
 	if err != nil {
+		//nolint:forbidigo // simulation code
 		panic(err)
 	}
 	return simtypes.FindAccount(accs, creator)

@@ -125,7 +125,7 @@ func CreateUpgradeHandler(
 }
 
 func setNewPocParams(ctx context.Context, k keeper.Keeper) error {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}

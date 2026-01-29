@@ -27,6 +27,7 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -794,8 +795,8 @@ func (s *InferenceValidator) checkAndInvalidateUnavailable(inf types.Inference, 
 	msgValidation := &inference.MsgValidation{
 		Id:           uuid.New().String(),
 		InferenceId:  inf.InferenceId,
-		ResponseHash: "", // No response available
-		Value:        0,  // Invalidation
+		ResponseHash: "",    // No response available
+		ValueDecimal: &zero, // Invalidation
 		Revalidation: revalidation,
 	}
 
@@ -838,8 +839,8 @@ func (s *InferenceValidator) submitHashMismatchInvalidation(inf types.Inference,
 	msgValidation := &inference.MsgValidation{
 		Id:           uuid.New().String(),
 		InferenceId:  inf.InferenceId,
-		ResponseHash: "", // Wrong payload - don't use its hash
-		Value:        0,  // Invalidation
+		ResponseHash: "",    // Wrong payload - don't use its hash
+		ValueDecimal: &zero, // Invalidation
 		Revalidation: revalidation,
 	}
 
@@ -1041,10 +1042,10 @@ func compareLogits(
 	baseComparisonResult BaseValidationResult,
 ) ValidationResult {
 	if len(originalLogits) != len(validationLogits) {
-		logging.Warn("Different length of logits", types.Validation, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
+		logging.Warn("Different length of logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
 	}
 	if len(validationLogits) < len(originalLogits) {
-		logging.Warn("Validation logits are shorter than original logits", types.Validation, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
+		logging.Warn("Validation logits are shorter than original logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
 		return &DifferentLengthValidationResult{baseComparisonResult}
 	}
 
@@ -1052,8 +1053,7 @@ func compareLogits(
 		o := originalLogits[i]
 		v := validationLogits[i]
 		if o.Token != v.Token {
-			logging.Error("Different tokens in logits", types.Validation, "originalLogits", originalLogits, "validationLogits", validationLogits)
-
+			logging.Error("Different tokens in logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits)
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
 	}
@@ -1071,6 +1071,9 @@ func customSimilarity(
 		logging.Error("Error calculating custom distance", types.Validation, "error", err)
 		return 0
 	}
+	if math.IsNaN(distance) || math.IsInf(distance, 0) {
+		return 0
+	}
 	similarity := 1 - distance
 	if similarity < 0 {
 		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
@@ -1083,6 +1086,9 @@ func customDistance(
 	originalLogprobs []completionapi.Logprob,
 	validationLogprobs []completionapi.Logprob,
 ) (float64, error) {
+	if len(originalLogprobs) == 0 {
+		return 0.0, nil
+	}
 	distance := 0.0
 	for i := range originalLogprobs {
 		o := originalLogprobs[i]
@@ -1094,7 +1100,10 @@ func customDistance(
 		}
 		distance += posDistance
 	}
-	totalLogprobs := max(100, len(originalLogprobs)) * len(originalLogprobs[0].TopLogprobs)
+	totalLogprobs := max(100, len(originalLogprobs))
+	if len(originalLogprobs[0].TopLogprobs) > 0 {
+		totalLogprobs *= len(originalLogprobs[0].TopLogprobs)
+	}
 
 	return distance / float64(totalLogprobs), nil
 }
@@ -1140,7 +1149,13 @@ func positionDistance(
 		}
 
 		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
-		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
+		if math.IsNaN(denom) || denom == 0 {
+			continue
+		}
+		term := math.Abs(v.Logprob-originalLogprob) / denom / 2.0
+		if !math.IsNaN(term) {
+			distance += term
+		}
 	}
 
 	return distance, nil
@@ -1177,6 +1192,15 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		Id:           uuid.New().String(),
 		InferenceId:  result.GetInferenceId(),
 		ResponseHash: responseHash,
-		Value:        simVal,
+		// The conversion may not be deterministic here, but that doesn't matter as the message
+		// itself is what counts, and it WILL be deterministic
+		ValueDecimal: DecimalFromFloat(simVal),
 	}, nil
+}
+
+var zero = inference.Decimal{Value: 0, Exponent: 0}
+
+func DecimalFromFloat(f float64) *inference.Decimal {
+	d := decimal.NewFromFloat(f)
+	return &inference.Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }

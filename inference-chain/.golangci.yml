@@ -1,0 +1,29 @@
+version: "2"
+run:
+  timeout: 5m
+  tests: false
+
+linters:
+  disable:
+    - errcheck
+    - unused
+    - staticcheck
+    - ineffassign
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: ^panic$
+          msg: "panic forbidden in consensus code"
+        - pattern: Must
+          msg: "Must* helpers forbidden in consensus code"
+  exclusions:
+    paths:
+      - "^testutil/"
+      - "^tests?/"   # matches test/ or tests/
+      - "^cmd/"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

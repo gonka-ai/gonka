@@ -8,15 +8,16 @@ import (
 	"strconv"
 
 	mathsdk "cosmossdk.io/math"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// WeightCalculator encapsulates all the data needed to calculate new weights for participants
+// WeightCalculator encapsulates all the data needed to calculate new weights for participants.
+// Uses off-chain store commits and weight distributions instead of on-chain batches.
 type WeightCalculator struct {
 	CurrentValidatorWeights map[string]int64
-	OriginalBatches         map[string][]types.PoCBatch
-	Validations             map[string][]types.PoCValidation
+	StoreCommits            map[string]types.PoCV2StoreCommit
+	NodeWeightDistributions map[string]types.MLNodeWeightDistribution
+	Validations             map[string][]types.PoCValidationV2
 	Participants            map[string]types.Participant
 	Seeds                   map[string]types.RandomSeed
 	EpochStartBlockHeight   int64
@@ -24,11 +25,12 @@ type WeightCalculator struct {
 	WeightScaleFactor       mathsdk.LegacyDec
 }
 
-// NewWeightCalculator creates a new WeightCalculator instance
+// NewWeightCalculator creates a new WeightCalculator instance.
 func NewWeightCalculator(
 	currentValidatorWeights map[string]int64,
-	originalBatches map[string][]types.PoCBatch,
-	validations map[string][]types.PoCValidation,
+	storeCommits map[string]types.PoCV2StoreCommit,
+	nodeWeightDistributions map[string]types.MLNodeWeightDistribution,
+	validations map[string][]types.PoCValidationV2,
 	participants map[string]types.Participant,
 	seeds map[string]types.RandomSeed,
 	epochStartBlockHeight int64,
@@ -37,7 +39,8 @@ func NewWeightCalculator(
 ) *WeightCalculator {
 	return &WeightCalculator{
 		CurrentValidatorWeights: currentValidatorWeights,
-		OriginalBatches:         originalBatches,
+		StoreCommits:            storeCommits,
+		NodeWeightDistributions: nodeWeightDistributions,
 		Validations:             validations,
 		Participants:            participants,
 		Seeds:                   seeds,
@@ -45,6 +48,259 @@ func NewWeightCalculator(
 		Logger:                  logger,
 		WeightScaleFactor:       weightScaleFactor,
 	}
+}
+
+// Calculate computes the new weights for active participants.
+func (wc *WeightCalculator) Calculate() []*types.ActiveParticipant {
+	sortedParticipants := wc.getSortedParticipantKeys()
+
+	var activeParticipants []*types.ActiveParticipant
+	for _, participantAddress := range sortedParticipants {
+		activeParticipant := wc.validatedParticipant(participantAddress)
+		if activeParticipant != nil {
+			activeParticipants = append(activeParticipants, activeParticipant)
+			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
+		}
+	}
+
+	return activeParticipants
+}
+
+func (wc *WeightCalculator) getSortedParticipantKeys() []string {
+	var sortedKeys []string
+	for key := range wc.StoreCommits {
+		sortedKeys = append(sortedKeys, key)
+	}
+	sort.Strings(sortedKeys)
+	return sortedKeys
+}
+
+func (wc *WeightCalculator) validatedParticipant(participantAddress string) *types.ActiveParticipant {
+	participant, ok := wc.Participants[participantAddress]
+	if !ok {
+		wc.Logger.LogError("Calculate: Participant not found", types.PoC, "address", participantAddress)
+		return nil
+	}
+
+	vals := wc.getParticipantValidations(participantAddress)
+	if len(vals) == 0 {
+		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", participantAddress)
+		return nil
+	}
+
+	// Get claimed weight from store commit and per-node weights from distribution
+	nodeWeights, claimedWeight := wc.calculateParticipantWeight(participantAddress)
+	if claimedWeight < 1 {
+		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
+		return nil
+	}
+	wc.Logger.LogInfo("Calculate: participant claims weight", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
+
+	if participant.ValidatorKey == "" {
+		wc.Logger.LogError("Calculate: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
+		return nil
+	}
+
+	if !wc.pocValidated(vals, participantAddress) {
+		return nil
+	}
+
+	seed, found := wc.Seeds[participantAddress]
+	if !found {
+		wc.Logger.LogError("Calculate: Seed not found", types.PoC, "blockHeight", wc.EpochStartBlockHeight, "participant", participantAddress)
+		return nil
+	}
+
+	mlNodes := make([]*types.MLNodeInfo, 0, len(nodeWeights))
+	for _, n := range nodeWeights {
+		mlNodes = append(mlNodes, &types.MLNodeInfo{
+			NodeId:    n.nodeId,
+			PocWeight: n.weight,
+		})
+	}
+
+	wc.Logger.LogInfo("Calculate: mlNodes", types.PoC, "mlNodes", mlNodes)
+
+	firstMLNodeArray := &types.ModelMLNodes{
+		MlNodes: mlNodes,
+	}
+	modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
+
+	activeParticipant := &types.ActiveParticipant{
+		Index:        participant.Address,
+		ValidatorKey: participant.ValidatorKey,
+		Weight:       claimedWeight,
+		InferenceUrl: participant.InferenceUrl,
+		Seed:         &seed,
+		Models:       make([]string, 0),
+		MlNodes:      modelMLNodesArray,
+	}
+	return activeParticipant
+}
+
+func (wc *WeightCalculator) getParticipantValidations(participantAddress string) []types.PoCValidationV2 {
+	vals := wc.Validations[participantAddress]
+
+	validators := make([]string, len(vals))
+	for i, v := range vals {
+		validators[i] = v.ValidatorParticipantAddress
+	}
+	wc.Logger.LogInfo("Calculate: Found ALL submitted validations for participant", types.PoC,
+		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
+
+	filteredVals := make([]types.PoCValidationV2, 0, len(vals))
+	for _, v := range vals {
+		if _, ok := wc.CurrentValidatorWeights[v.ValidatorParticipantAddress]; ok {
+			filteredVals = append(filteredVals, v)
+		}
+	}
+
+	filteredValidators := make([]string, len(filteredVals))
+	for i, v := range filteredVals {
+		filteredValidators[i] = v.ValidatorParticipantAddress
+	}
+	wc.Logger.LogInfo("Calculate: filtered validations to include only current validators", types.PoC,
+		"participant", participantAddress, "len(vals)", len(filteredVals), "validators", filteredValidators)
+
+	return filteredVals
+}
+
+// pocValidated checks if the participant passed validation by majority vote.
+// Uses validated_weight semantics:
+// - validated_weight > 0 -> valid vote (passed validation)
+// - validated_weight <= 0 -> invalid vote (fraud/failure detected)
+func (wc *WeightCalculator) pocValidated(vals []types.PoCValidationV2, participantAddress string) bool {
+	totalWeight := calculateTotalWeight(wc.CurrentValidatorWeights)
+	halfWeight := int64(totalWeight / 2)
+	shouldContinue := false
+
+	if len(wc.CurrentValidatorWeights) > 0 {
+		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
+		votedWeight := valOutcome.ValidWeight + valOutcome.InvalidWeight
+		if valOutcome.ValidWeight > halfWeight {
+			shouldContinue = true
+			wc.Logger.LogInfo("Calculate: Participant received valid validations from more than half of participants by weight. Accepting",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
+		} else if valOutcome.InvalidWeight > halfWeight {
+			shouldContinue = false
+			wc.Logger.LogWarn("Calculate: Participant received invalid validations from more than half of participants by weight. Rejecting",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
+		} else {
+			shouldContinue = false
+			wc.Logger.LogWarn("Calculate: Participant did not receive a majority of either valid or invalid validations. Rejecting.",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
+		}
+	} else {
+		shouldContinue = true
+		if wc.EpochStartBlockHeight > 0 {
+			wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
+		}
+	}
+
+	return shouldContinue
+}
+
+type nodeWeight struct {
+	nodeId string
+	weight int64
+}
+
+// calculateParticipantWeight computes the claimed weight from store commit and weight distribution.
+// Total weight comes from StoreCommit.Count (scaled by weightScaleFactor).
+// Per-node weights come from MLNodeWeightDistribution.
+func (wc *WeightCalculator) calculateParticipantWeight(participantAddress string) ([]nodeWeight, int64) {
+	commit, hasCommit := wc.StoreCommits[participantAddress]
+	if !hasCommit || commit.Count == 0 {
+		return nil, 0
+	}
+
+	// Calculate total weight from commit count
+	totalWeight := mathsdk.LegacyNewDec(int64(commit.Count)).Mul(wc.WeightScaleFactor).TruncateInt64()
+
+	// Get per-node weights from distribution
+	distribution, hasDistribution := wc.NodeWeightDistributions[participantAddress]
+	if !hasDistribution || len(distribution.Weights) == 0 {
+		// No distribution - create a single "unknown" node with all weight
+		wc.Logger.LogWarn("Calculate: No weight distribution for participant, using single node", types.PoC,
+			"participant", participantAddress, "totalWeight", totalWeight)
+		return []nodeWeight{{nodeId: "unknown", weight: totalWeight}}, totalWeight
+	}
+
+	// Build per-node weights from distribution
+	nodeWeightsSlice := make([]nodeWeight, 0, len(distribution.Weights))
+	for _, w := range distribution.Weights {
+		scaledWeight := mathsdk.LegacyNewDec(int64(w.Weight)).Mul(wc.WeightScaleFactor).TruncateInt64()
+		nodeWeightsSlice = append(nodeWeightsSlice, nodeWeight{nodeId: w.NodeId, weight: scaledWeight})
+	}
+	sort.Slice(nodeWeightsSlice, func(i, j int) bool {
+		return nodeWeightsSlice[i].nodeId < nodeWeightsSlice[j].nodeId
+	})
+
+	return nodeWeightsSlice, totalWeight
+}
+
+type validationOutcome struct {
+	ValidWeight   int64
+	InvalidWeight int64
+}
+
+// calculateValidationOutcome computes valid/invalid weights from validations.
+// Uses validated_weight semantics:
+// - validated_weight == -1 -> invalid vote
+// - validated_weight > 0 -> valid vote
+func calculateValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidationV2) validationOutcome {
+	validWeight := int64(0)
+	invalidWeight := int64(0)
+	for _, v := range validations {
+		if weight, ok := currentValidatorsSet[v.ValidatorParticipantAddress]; ok {
+			if v.ValidatedWeight > 0 {
+				validWeight += weight
+			} else {
+				// validated_weight <= 0 is treated as invalid (fraud/failure detected)
+				invalidWeight += weight
+			}
+		}
+	}
+	return validationOutcome{
+		ValidWeight:   validWeight,
+		InvalidWeight: invalidWeight,
+	}
+}
+
+// calculateTotalWeight calculates the total weight of all validators
+func calculateTotalWeight(validatorWeights map[string]int64) uint64 {
+	if validatorWeights == nil {
+		return 0
+	}
+
+	totalWeight := uint64(0)
+	for participant, weight := range validatorWeights {
+		if weight < 0 {
+			slog.Error("calculateTotalWeight: Negative weight found", "participant", participant, "weight", weight)
+			continue
+		}
+		totalWeight += uint64(weight)
+	}
+
+	return totalWeight
 }
 
 // getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
@@ -231,240 +487,6 @@ func (am AppModule) GetPreservedNodesByParticipant(ctx context.Context, epochId 
 	return result, nil
 }
 
-func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
-	epochStartBlockHeight := upcomingEpoch.PocStartBlockHeight
-	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
-	// STEP 1: Get preserved weights from inference-serving MLNodes in current epoch
-	preservedParticipants := am.GetPreviousEpochMLNodesWithInferenceAllocation(ctx, upcomingEpoch)
-	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
-		"numPreservedParticipants", len(preservedParticipants))
-
-	// Get current active participants weights
-	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
-	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"weights", currentValidatorWeights)
-
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-		return nil
-	}
-
-	// STEP 2: Get PoC batches and filter out batches from inference-serving nodes
-	allOriginalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-		return nil
-	}
-
-	// Build a set of inference-serving node IDs that should be excluded from PoC mining
-	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
-	am.LogInfo("ComputeNewWeights: Found inference-serving nodes", types.PoC,
-		"inferenceServingNodeIds", inferenceServingNodeIds)
-
-	// Filter out PoC batches from inference-serving nodes
-	originalBatches := am.filterPoCBatchesFromInferenceNodes(allOriginalBatches, inferenceServingNodeIds)
-
-	am.LogInfo("ComputeNewWeights: Filtered PoC batches", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"originalBatchesCount", len(allOriginalBatches),
-		"filteredBatchesCount", len(originalBatches))
-
-	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-	}
-
-	validators := make([]string, len(validations))
-	var i = 0
-	for address, _ := range validations {
-		validators[i] = address
-		i += 1
-	}
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"len(validations)", len(validations),
-		"validators", validators)
-
-	// Collect all participants, seeds, and filter batches by allowlist
-	participants := make(map[string]types.Participant)
-	seeds := make(map[string]types.RandomSeed)
-	allowedBatches := make(map[string][]types.PoCBatch)
-
-	var sortedBatchKeys []string
-	for key := range originalBatches {
-		sortedBatchKeys = append(sortedBatchKeys, key)
-	}
-	sort.Strings(sortedBatchKeys)
-
-	currentHeight := sdk.UnwrapSDKContext(ctx).BlockHeight()
-	allowlistActive := am.keeper.IsParticipantAllowlistActive(ctx, currentHeight)
-
-	isAllowed := func(addr, label string) bool {
-		if !allowlistActive {
-			return true
-		}
-		allowed, err := am.keeper.IsAllowlistedParticipant(ctx, addr)
-		if err != nil {
-			am.LogError("ComputeNewWeights: Invalid "+label+" address format", types.PoC,
-				"address", addr, "error", err)
-			return false
-		}
-		if !allowed {
-			am.LogInfo("ComputeNewWeights: Skipping non-allowlisted "+label, types.PoC,
-				"address", addr)
-			return false
-		}
-		return true
-	}
-
-	for _, participantAddress := range sortedBatchKeys {
-		if !isAllowed(participantAddress, "participant") {
-			continue
-		}
-
-		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
-		if !ok {
-			am.LogError("ComputeNewWeights: Error getting participant", types.PoC,
-				"address", participantAddress,
-				"upcomingEpoch.Index", upcomingEpoch.Index,
-				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
-			continue
-		}
-		participants[participantAddress] = participant
-
-		seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
-		if !found {
-			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
-				"upcomingEpoch.Index", upcomingEpoch.Index,
-				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-				"participant", participantAddress)
-			continue
-		}
-		seeds[participantAddress] = seed
-		allowedBatches[participantAddress] = originalBatches[participantAddress]
-	}
-
-	// STEP 3: Add seeds for preserved participants if they have submitted seeds
-	for _, preservedParticipant := range preservedParticipants {
-		participantAddress := preservedParticipant.Index
-		if seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress); found {
-			preservedParticipant.Seed = &seed
-			seeds[participantAddress] = seed
-			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,
-				"participantAddress", participantAddress)
-		} else {
-			am.LogWarn("ComputeNewWeights: No seed found for preserved participant", types.PoC,
-				"participantAddress", participantAddress)
-		}
-	}
-
-	// STEP 4: Create WeightCalculator and calculate PoC mining participants (excluding inference-serving nodes)
-	params := am.keeper.GetParams(ctx)
-	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
-	calculator := NewWeightCalculator(
-		currentValidatorWeights,
-		allowedBatches,
-		validations,
-		participants,
-		seeds,
-		epochStartBlockHeight,
-		am,
-		weightScaleFactor,
-	)
-	pocMiningParticipants := calculator.Calculate()
-
-	// STEP 4: Merge preserved participants with PoC mining participants
-	var allActiveParticipants []*types.ActiveParticipant
-
-	// Add preserved participants first
-	for _, preservedParticipant := range preservedParticipants {
-		participantAddress := preservedParticipant.Index
-
-		if !isAllowed(participantAddress, "preserved participant") {
-			continue
-		}
-
-		// Check if this participant also has PoC mining activity
-		if pocParticipant := findParticipantByAddress(pocMiningParticipants, participantAddress); pocParticipant != nil {
-			// Merge: combine weights and MLNodes from both sources
-			combinedMLNodes := mergeMLNodeArrays(preservedParticipant.MlNodes, pocParticipant.MlNodes)
-			combinedWeight := int64(0)
-			for _, mlNode := range combinedMLNodes[0].MlNodes {
-				combinedWeight += mlNode.PocWeight
-			}
-
-			mergedParticipant := &types.ActiveParticipant{
-				Index:        participantAddress,
-				ValidatorKey: preservedParticipant.ValidatorKey,
-				Weight:       combinedWeight,
-				InferenceUrl: preservedParticipant.InferenceUrl,
-				Seed:         pocParticipant.Seed, // Use PoC participant's seed
-				Models:       make([]string, 0),   // Will be populated by setModelsForParticipants
-				MlNodes:      combinedMLNodes,
-			}
-
-			allActiveParticipants = append(allActiveParticipants, mergedParticipant)
-
-			am.LogInfo("ComputeNewWeights: Merged preserved and PoC participant", types.PoC,
-				"participantAddress", participantAddress,
-				"preservedWeight", preservedParticipant.Weight,
-				"pocWeight", pocParticipant.Weight,
-				"combinedWeight", combinedWeight,
-				"combinedMLNodes", combinedMLNodes)
-		} else {
-			// Only preserved participant (no PoC mining activity)
-			allActiveParticipants = append(allActiveParticipants, preservedParticipant)
-
-			am.LogInfo("ComputeNewWeights: Added preserved-only participant", types.PoC,
-				"participantAddress", participantAddress,
-				"preservedWeight", preservedParticipant.Weight)
-		}
-	}
-
-	preservedParticipantsSet := make(map[string]bool)
-	for _, preservedParticipant := range preservedParticipants {
-		preservedParticipantsSet[preservedParticipant.Index] = true
-	}
-
-	// Add remaining PoC mining participants that weren't already merged
-	for _, pocParticipant := range pocMiningParticipants {
-		if _, alreadyPreserved := preservedParticipantsSet[pocParticipant.Index]; alreadyPreserved {
-			continue
-		}
-		// Defensive allowlist check (should already be filtered via allowedBatches, but explicit is safer)
-		if !isAllowed(pocParticipant.Index, "PoC-only participant") {
-			continue
-		}
-		allActiveParticipants = append(allActiveParticipants, pocParticipant)
-
-		am.LogInfo("ComputeNewWeights: Added PoC-only participant", types.PoC,
-			"participantAddress", pocParticipant.Index,
-			"pocWeight", pocParticipant.Weight)
-	}
-
-	am.LogInfo("ComputeNewWeights: Final summary", types.PoC,
-		"preservedParticipants", len(preservedParticipants),
-		"pocMiningParticipants", len(pocMiningParticipants),
-		"totalActiveParticipants", len(allActiveParticipants))
-
-	return allActiveParticipants
-}
-
 func findParticipantByAddress(participants []*types.ActiveParticipant, address string) *types.ActiveParticipant {
 	for _, participant := range participants {
 		if participant.Index == address {
@@ -534,251 +556,6 @@ func RecalculateWeight(p *types.ActiveParticipant) int64 {
 	return weight
 }
 
-// Calculate computes the new weights for active participants based on the data in the WeightCalculator
-func (wc *WeightCalculator) Calculate() []*types.ActiveParticipant {
-	sortedBatchKeys := wc.getSortedBatchKeys()
-
-	var activeParticipants []*types.ActiveParticipant
-	for _, participantAddress := range sortedBatchKeys {
-		activeParticipant := wc.validatedParticipant(participantAddress)
-		if activeParticipant != nil {
-			activeParticipants = append(activeParticipants, activeParticipant)
-			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
-		}
-	}
-
-	return activeParticipants
-}
-
-func (wc *WeightCalculator) getSortedBatchKeys() []string {
-	var sortedBatchKeys []string
-	for key := range wc.OriginalBatches {
-		sortedBatchKeys = append(sortedBatchKeys, key)
-	}
-	sort.Strings(sortedBatchKeys)
-	return sortedBatchKeys
-}
-
-func (wc *WeightCalculator) validatedParticipant(participantAddress string) *types.ActiveParticipant {
-	participant, ok := wc.Participants[participantAddress]
-	if !ok {
-		// This should not happen since we already checked when collecting participants
-		wc.Logger.LogError("Calculate: Participant not found", types.PoC, "address", participantAddress)
-		return nil
-	}
-
-	vals := wc.getParticipantValidations(participantAddress)
-	if len(vals) == 0 {
-		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", participantAddress)
-		return nil
-	}
-
-	nodeWeights, claimedWeight := wc.calculateParticipantWeight(wc.OriginalBatches[participantAddress])
-	if claimedWeight < 1 {
-		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
-		return nil
-	}
-	wc.Logger.LogInfo("Calculate: participant claims weight", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
-
-	if participant.ValidatorKey == "" {
-		wc.Logger.LogError("Calculate: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
-		return nil
-	}
-
-	if !wc.pocValidated(vals, participantAddress) {
-		return nil
-	}
-
-	seed, found := wc.Seeds[participantAddress]
-	if !found {
-		// This should not happen since we already checked when collecting seeds
-		wc.Logger.LogError("Calculate: Seed not found", types.PoC, "blockHeight", wc.EpochStartBlockHeight, "participant", participantAddress)
-		return nil
-	}
-
-	mlNodes := make([]*types.MLNodeInfo, 0, len(nodeWeights))
-	for _, n := range nodeWeights {
-		mlNodes = append(mlNodes, &types.MLNodeInfo{
-			NodeId:    n.nodeId,
-			PocWeight: n.weight,
-		})
-	}
-
-	wc.Logger.LogInfo("Calculate: mlNodes", types.PoC, "mlNodes", mlNodes)
-
-	// Create the double repeated structure with all MLNodes in the first array (index 0)
-	firstMLNodeArray := &types.ModelMLNodes{
-		MlNodes: mlNodes,
-	}
-	modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
-
-	activeParticipant := &types.ActiveParticipant{
-		Index:        participant.Address,
-		ValidatorKey: participant.ValidatorKey,
-		Weight:       claimedWeight,
-		InferenceUrl: participant.InferenceUrl,
-		Seed:         &seed,
-		Models:       make([]string, 0),
-		MlNodes:      modelMLNodesArray, // Now using the double repeated structure
-	}
-	return activeParticipant
-}
-
-func (wc *WeightCalculator) getParticipantValidations(participantAddress string) []types.PoCValidation {
-	vals := wc.Validations[participantAddress]
-
-	validators := make([]string, len(vals))
-	for i, v := range vals {
-		validators[i] = v.ValidatorParticipantAddress
-	}
-	wc.Logger.LogInfo("Calculate: Found ALL submitted validations for participant", types.PoC,
-		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
-
-	filteredVals := make([]types.PoCValidation, 0, len(vals))
-	for _, v := range vals {
-		if _, ok := wc.CurrentValidatorWeights[v.ValidatorParticipantAddress]; ok {
-			filteredVals = append(filteredVals, v)
-		}
-	}
-
-	filteredValidators := make([]string, len(filteredVals))
-	for i, v := range filteredVals {
-		filteredValidators[i] = v.ValidatorParticipantAddress
-	}
-	wc.Logger.LogInfo("Calculate: filtered validations to include only current validators", types.PoC,
-		"participant", participantAddress, "len(vals)", len(filteredVals), "validators", filteredValidators)
-
-	return filteredVals
-}
-
-func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participantAddress string) bool {
-	totalWeight := calculateTotalWeight(wc.CurrentValidatorWeights)
-	halfWeight := int64(totalWeight / 2)
-	shouldContinue := false
-
-	if len(wc.CurrentValidatorWeights) > 0 {
-		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
-		votedWeight := valOutcome.ValidWeight + valOutcome.InvalidWeight // For logging only
-		if valOutcome.ValidWeight > halfWeight {
-			shouldContinue = true
-			wc.Logger.LogInfo("Calculate: Participant received valid validations from more than half of participants by weight. Accepting",
-				types.PoC, "participant", participantAddress,
-				"validWeight", valOutcome.ValidWeight,
-				"invalidWeight", valOutcome.InvalidWeight,
-				"votedWeight", votedWeight,
-				"totalWeight", totalWeight,
-				"halfWeight", halfWeight,
-			)
-		} else if valOutcome.InvalidWeight > halfWeight {
-			shouldContinue = false
-			wc.Logger.LogWarn("Calculate: Participant received invalid validations from more than half of participants by weight. Rejecting",
-				types.PoC, "participant", participantAddress,
-				"validWeight", valOutcome.ValidWeight,
-				"invalidWeight", valOutcome.InvalidWeight,
-				"votedWeight", votedWeight,
-				"totalWeight", totalWeight,
-				"halfWeight", halfWeight,
-			)
-		} else {
-			shouldContinue = false
-			wc.Logger.LogWarn("Calculate: Participant did not receive a majority of either valid or invalid validations. Rejecting.",
-				types.PoC, "participant", participantAddress,
-				"validWeight", valOutcome.ValidWeight,
-				"invalidWeight", valOutcome.InvalidWeight,
-				"votedWeight", votedWeight,
-				"totalWeight", totalWeight,
-				"halfWeight", halfWeight,
-			)
-		}
-	} else {
-		// NEEDREVIEW: what are we doing here now? This is an illegal state after my recent changes!
-		// Probably just forbid creating weightCalculator with nil values??
-		shouldContinue = true
-		if wc.EpochStartBlockHeight > 0 {
-			wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
-		}
-	}
-
-	return shouldContinue
-}
-
-type nodeWeight struct {
-	nodeId string
-	weight int64
-}
-
-func (wc *WeightCalculator) calculateParticipantWeight(batches []types.PoCBatch) ([]nodeWeight, int64) {
-	nodeWeights := make(map[string]int64)
-	totalWeight := int64(0)
-
-	uniqueNonces := make(map[int64]struct{})
-	for _, batch := range batches {
-		weight := int64(0)
-		for _, nonce := range batch.Nonces {
-			if _, exists := uniqueNonces[nonce]; !exists {
-				uniqueNonces[nonce] = struct{}{}
-				weight++
-			}
-		}
-
-		weight = mathsdk.LegacyNewDec(weight).Mul(wc.WeightScaleFactor).TruncateInt64()
-		nodeId := batch.NodeId
-		nodeWeights[nodeId] += weight
-		totalWeight += weight
-	}
-
-	nodeWeightsSlice := make([]nodeWeight, 0, len(nodeWeights))
-	for nodeId, weight := range nodeWeights {
-		nodeWeightsSlice = append(nodeWeightsSlice, nodeWeight{nodeId: nodeId, weight: weight})
-	}
-	sort.Slice(nodeWeightsSlice, func(i, j int) bool {
-		return nodeWeightsSlice[i].nodeId < nodeWeightsSlice[j].nodeId
-	})
-
-	return nodeWeightsSlice, totalWeight
-}
-
-// calculateTotalWeight calculates the total weight of all validators
-func calculateTotalWeight(validatorWeights map[string]int64) uint64 {
-	if validatorWeights == nil {
-		return 0
-	}
-
-	totalWeight := uint64(0)
-	for participant, weight := range validatorWeights {
-		if weight < 0 {
-			slog.Error("calculateTotalWeight: Negative weight found", "participant", participant, "weight", weight)
-			continue
-		}
-		totalWeight += uint64(weight)
-	}
-
-	return totalWeight
-}
-
-type validationOutcome struct {
-	ValidWeight   int64
-	InvalidWeight int64
-}
-
-func calculateValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
-	validWeight := int64(0)
-	invalidWeight := int64(0)
-	for _, v := range validations {
-		if weight, ok := currentValidatorsSet[v.ValidatorParticipantAddress]; ok {
-			if v.FraudDetected {
-				invalidWeight += weight
-			} else {
-				validWeight += weight
-			}
-		}
-	}
-	return validationOutcome{
-		ValidWeight:   validWeight,
-		InvalidWeight: invalidWeight,
-	}
-}
-
 // getInferenceServingNodeIds returns a set of node IDs that have POC_SLOT = true in the current epoch
 func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]bool {
 	inferenceServingNodeIds := make(map[string]bool)
@@ -810,39 +587,293 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 	return inferenceServingNodeIds
 }
 
-// filterPoCBatchesFromInferenceNodes removes PoC batches from nodes that should be serving inference
-func (am AppModule) filterPoCBatchesFromInferenceNodes(allBatches map[string][]types.PoCBatch, inferenceServingNodeIds map[string]bool) map[string][]types.PoCBatch {
-	filteredBatches := make(map[string][]types.PoCBatch)
-	excludedBatchCount := 0
+// ComputeNewWeights computes new weights for active participants using off-chain store commits.
+func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
+	epochStartBlockHeight := upcomingEpoch.PocStartBlockHeight
+	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 
-	for participantAddress, batches := range allBatches {
-		var validBatches []types.PoCBatch
+	// Get preserved weights from inference-serving MLNodes
+	preservedParticipants := am.GetPreviousEpochMLNodesWithInferenceAllocation(ctx, upcomingEpoch)
+	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
+		"numPreservedParticipants", len(preservedParticipants))
 
-		for _, batch := range batches {
-			// Check if this batch is from an inference-serving node
-			if inferenceServingNodeIds[batch.NodeId] {
-				// Exclude this batch - the node should have been serving inference, not mining PoC
-				excludedBatchCount++
-				am.LogWarn("filterPoCBatchesFromInferenceNodes: Excluding PoC batch from inference-serving node", types.PoC,
-					"participantAddress", participantAddress,
-					"nodeId", batch.NodeId,
-					"batchNonceCount", len(batch.Nonces))
-			} else {
-				// Include this batch - it's from a legitimate PoC mining node
-				validBatches = append(validBatches, batch)
-			}
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
+	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"weights", currentValidatorWeights)
+
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		return nil
+	}
+
+	// Get off-chain store commits (replaces on-chain batches)
+	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, epochStartBlockHeight)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting store commits by PoC stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		return nil
+	}
+
+	// Get weight distributions for per-node weights
+	allWeightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, epochStartBlockHeight)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting weight distributions by PoC stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		// Continue without distributions - will use single "unknown" node
+	}
+
+	// Build inference-serving node IDs for filtering
+	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
+	am.LogInfo("ComputeNewWeights: Found inference-serving nodes", types.PoC,
+		"inferenceServingNodeIds", inferenceServingNodeIds)
+
+	// Filter out store commits with distributions that only have inference-serving nodes
+	storeCommits, weightDistributions := am.filterStoreCommitsFromInferenceNodes(allStoreCommits, allWeightDistributions, inferenceServingNodeIds)
+
+	am.LogInfo("ComputeNewWeights: Filtered store commits", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"originalCommitsCount", len(allStoreCommits),
+		"filteredCommitsCount", len(storeCommits))
+
+	// Get PoC validations
+	validations, err := am.keeper.GetPoCValidationsV2ByStage(ctx, epochStartBlockHeight)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+	}
+
+	validators := make([]string, len(validations))
+	var i = 0
+	for address := range validations {
+		validators[i] = address
+		i++
+	}
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(validations)", len(validations),
+		"validators", validators)
+
+	// Collect participants and seeds
+	participants := make(map[string]types.Participant)
+	seeds := make(map[string]types.RandomSeed)
+	allowedCommits := make(map[string]types.PoCV2StoreCommit)
+	allowedDistributions := make(map[string]types.MLNodeWeightDistribution)
+
+	var sortedCommitKeys []string
+	for key := range storeCommits {
+		sortedCommitKeys = append(sortedCommitKeys, key)
+	}
+	sort.Strings(sortedCommitKeys)
+
+	for _, participantAddress := range sortedCommitKeys {
+		// Check participant allowlist
+		if !am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress) {
+			am.LogInfo("ComputeNewWeights: Participant not in allowlist, skipping", types.PoC,
+				"address", participantAddress,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
+			continue
 		}
 
-		// Only include participant if they have valid batches remaining
-		if len(validBatches) > 0 {
-			filteredBatches[participantAddress] = validBatches
+		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
+		if !ok {
+			am.LogError("ComputeNewWeights: Error getting participant", types.PoC,
+				"address", participantAddress,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
+			continue
+		}
+		participants[participantAddress] = participant
+
+		seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		if !found {
+			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+				"participant", participantAddress)
+			continue
+		}
+		seeds[participantAddress] = seed
+		allowedCommits[participantAddress] = storeCommits[participantAddress]
+		if dist, ok := weightDistributions[participantAddress]; ok {
+			allowedDistributions[participantAddress] = dist
 		}
 	}
 
-	am.LogInfo("filterPoCBatchesFromInferenceNodes: Summary", types.PoC,
-		"excludedBatchCount", excludedBatchCount,
-		"originalParticipants", len(allBatches),
-		"filteredParticipants", len(filteredBatches))
+	// Add seeds for preserved participants
+	for _, preservedParticipant := range preservedParticipants {
+		participantAddress := preservedParticipant.Index
+		if seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress); found {
+			preservedParticipant.Seed = &seed
+			seeds[participantAddress] = seed
+			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,
+				"participantAddress", participantAddress)
+		} else {
+			am.LogWarn("ComputeNewWeights: No seed found for preserved participant", types.PoC,
+				"participantAddress", participantAddress)
+		}
+	}
 
-	return filteredBatches
+	// Create weight calculator and calculate
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting params", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		return nil
+	}
+	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
+	calculator := NewWeightCalculator(
+		currentValidatorWeights,
+		allowedCommits,
+		allowedDistributions,
+		validations,
+		participants,
+		seeds,
+		epochStartBlockHeight,
+		am,
+		weightScaleFactor,
+	)
+	pocMiningParticipants := calculator.Calculate()
+
+	// Merge preserved participants with PoC mining participants
+	var allActiveParticipants []*types.ActiveParticipant
+
+	for _, preservedParticipant := range preservedParticipants {
+		participantAddress := preservedParticipant.Index
+
+		if pocParticipant := findParticipantByAddress(pocMiningParticipants, participantAddress); pocParticipant != nil {
+			combinedMLNodes := mergeMLNodeArrays(preservedParticipant.MlNodes, pocParticipant.MlNodes)
+			combinedWeight := int64(0)
+			for _, mlNode := range combinedMLNodes[0].MlNodes {
+				combinedWeight += mlNode.PocWeight
+			}
+
+			mergedParticipant := &types.ActiveParticipant{
+				Index:        participantAddress,
+				ValidatorKey: preservedParticipant.ValidatorKey,
+				Weight:       combinedWeight,
+				InferenceUrl: preservedParticipant.InferenceUrl,
+				Seed:         pocParticipant.Seed,
+				Models:       make([]string, 0),
+				MlNodes:      combinedMLNodes,
+			}
+
+			allActiveParticipants = append(allActiveParticipants, mergedParticipant)
+
+			am.LogInfo("ComputeNewWeights: Merged preserved and PoC participant", types.PoC,
+				"participantAddress", participantAddress,
+				"preservedWeight", preservedParticipant.Weight,
+				"pocWeight", pocParticipant.Weight,
+				"combinedWeight", combinedWeight,
+				"combinedMLNodes", combinedMLNodes)
+		} else {
+			allActiveParticipants = append(allActiveParticipants, preservedParticipant)
+
+			am.LogInfo("ComputeNewWeights: Added preserved-only participant", types.PoC,
+				"participantAddress", participantAddress,
+				"preservedWeight", preservedParticipant.Weight)
+		}
+	}
+
+	preservedParticipantsSet := make(map[string]bool)
+	for _, preservedParticipant := range preservedParticipants {
+		preservedParticipantsSet[preservedParticipant.Index] = true
+	}
+
+	for _, pocParticipant := range pocMiningParticipants {
+		if _, alreadyPreserved := preservedParticipantsSet[pocParticipant.Index]; alreadyPreserved {
+			continue
+		}
+		allActiveParticipants = append(allActiveParticipants, pocParticipant)
+
+		am.LogInfo("ComputeNewWeights: Added PoC-only participant", types.PoC,
+			"participantAddress", pocParticipant.Index,
+			"pocWeight", pocParticipant.Weight)
+	}
+
+	am.LogInfo("ComputeNewWeights: Final summary", types.PoC,
+		"preservedParticipants", len(preservedParticipants),
+		"pocMiningParticipants", len(pocMiningParticipants),
+		"totalActiveParticipants", len(allActiveParticipants))
+
+	return allActiveParticipants
+}
+
+// filterStoreCommitsFromInferenceNodes filters store commits and their weight distributions
+// to exclude weight from inference-serving nodes. Returns filtered commits and distributions.
+func (am AppModule) filterStoreCommitsFromInferenceNodes(
+	allCommits map[string]types.PoCV2StoreCommit,
+	allDistributions map[string]types.MLNodeWeightDistribution,
+	inferenceServingNodeIds map[string]bool,
+) (map[string]types.PoCV2StoreCommit, map[string]types.MLNodeWeightDistribution) {
+	filteredCommits := make(map[string]types.PoCV2StoreCommit)
+	filteredDistributions := make(map[string]types.MLNodeWeightDistribution)
+	excludedNodeCount := 0
+
+	for participantAddress, commit := range allCommits {
+		distribution, hasDistribution := allDistributions[participantAddress]
+
+		if !hasDistribution || len(distribution.Weights) == 0 {
+			// No distribution - keep the commit as-is
+			filteredCommits[participantAddress] = commit
+			continue
+		}
+
+		// Filter out inference-serving nodes from distribution
+		var filteredWeights []*types.MLNodeWeight
+		filteredCount := uint32(0)
+		for _, w := range distribution.Weights {
+			if inferenceServingNodeIds[w.NodeId] {
+				excludedNodeCount++
+				am.LogWarn("filterStoreCommitsFromInferenceNodes: Excluding weight from inference-serving node", types.PoC,
+					"participantAddress", participantAddress,
+					"nodeId", w.NodeId,
+					"weight", w.Weight)
+			} else {
+				filteredWeights = append(filteredWeights, w)
+				filteredCount += w.Weight
+			}
+		}
+
+		if filteredCount == 0 {
+			// All nodes were inference-serving - skip this participant
+			am.LogWarn("filterStoreCommitsFromInferenceNodes: All nodes inference-serving, skipping participant", types.PoC,
+				"participantAddress", participantAddress)
+			continue
+		}
+
+		// Create filtered commit with adjusted count
+		filteredCommit := commit
+		filteredCommit.Count = filteredCount
+		filteredCommits[participantAddress] = filteredCommit
+
+		// Create filtered distribution
+		filteredDistribution := distribution
+		filteredDistribution.Weights = filteredWeights
+		filteredDistributions[participantAddress] = filteredDistribution
+	}
+
+	am.LogInfo("filterStoreCommitsFromInferenceNodes: Summary", types.PoC,
+		"excludedNodeCount", excludedNodeCount,
+		"originalParticipants", len(allCommits),
+		"filteredParticipants", len(filteredCommits))
+
+	return filteredCommits, filteredDistributions
 }

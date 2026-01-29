@@ -13,7 +13,7 @@ const (
 )
 
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}

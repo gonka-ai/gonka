@@ -7,6 +7,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 )
 
 // DynamicPricingKeeper contains the functions for dynamic pricing calculations
@@ -16,7 +17,10 @@ import (
 // Called from BeginBlocker to ensure prices are calculated once per block
 func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 	// Get current parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get params: %w", err)
+	}
 	if params.DynamicPricingParams == nil {
 		return fmt.Errorf("dynamic pricing parameters not found")
 	}
@@ -84,15 +88,16 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 
 		// Calculate utilization (0.0 to 1.0+)
 		// capacity is tokens/second, so scale it to the window duration in seconds
-		utilization := 0.0
+		utilization := decimal.Zero
 		if capacity > 0 {
-			capacityForWindow := float64(capacity) * float64(windowDurationSeconds) // capacity * seconds = total tokens
-			utilization = float64(tokensUsed) / capacityForWindow
+			// Integer multiplication is safe
+			capacityForWindow := capacity * windowDurationSeconds // capacity * seconds = total tokens
+			utilization = decimal.NewFromInt(tokensUsed).Div(decimal.NewFromInt(capacityForWindow))
 		}
 
 		k.LogInfo("Model utilization calculated", types.Pricing,
 			"modelId", modelId, "tokensUsed", tokensUsed, "capacityPerSec", capacity,
-			"windowDuration", windowDurationMillis, "utilization", utilization)
+			"windowDuration", windowDurationMillis, "utilization", utilization.String())
 
 		// Calculate new price using our algorithm
 		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(ctx, modelId, utilization)
@@ -118,7 +123,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 
 		k.LogInfo("Updated model price", types.Pricing,
 			"modelId", modelId, "oldPrice", oldPrice, "newPrice", newPrice,
-			"utilization", utilization, "changed", newPrice != oldPrice)
+			"utilization", utilization.String(), "changed", newPrice != oldPrice)
 	}
 
 	k.LogInfo("Completed dynamic pricing update", types.Pricing,
@@ -130,9 +135,12 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 
 // CalculateModelDynamicPrice implements the stability zone price adjustment algorithm
 // Returns the new per-token price for a specific model based on utilization
-func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string, utilization float64) (uint64, uint64, error) {
+func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string, utilization decimal.Decimal) (uint64, uint64, error) {
 	// Get current parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get params: %w", err)
+	}
 	if params.DynamicPricingParams == nil {
 		return 0, 0, fmt.Errorf("dynamic pricing parameters not found")
 	}
@@ -152,66 +160,67 @@ func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string,
 	}
 
 	// Extract parameters
-	lowerBound := dpParams.StabilityZoneLowerBound.ToFloat()
-	upperBound := dpParams.StabilityZoneUpperBound.ToFloat()
-	elasticity := dpParams.PriceElasticity.ToFloat()
+	lowerBound := dpParams.StabilityZoneLowerBound.ToDecimal()
+	upperBound := dpParams.StabilityZoneUpperBound.ToDecimal()
+	elasticity := dpParams.PriceElasticity.ToDecimal()
 	minPrice := dpParams.MinPerTokenPrice
 
 	// Growth caps derived from elasticity parameter and stability zone bounds (governance-configurable)
 	// Calculate maximum possible deviations from stability zone dynamically
 	// Maximum excess: from upperBound to 100% utilization (for price increases)
 	// Maximum deficit: from lowerBound to 0% utilization (for price decreases)
-	maxExcessDeviation := 1.0 - upperBound  // e.g., 1.0 - 0.60 = 0.40
-	maxDeficitDeviation := lowerBound - 0.0 // e.g., 0.40 - 0.0 = 0.40
+	one := decimal.NewFromInt(1)
+	maxExcessDeviation := one.Sub(upperBound) // e.g., 1.0 - 0.60 = 0.40
+	maxDeficitDeviation := lowerBound         // e.g., 0.40 - 0.0 = 0.40
 
 	// Use appropriate deviation for each scenario
-	maxIncreasePerBlock := 1.0 + (maxExcessDeviation * elasticity)  // e.g., 1.0 + (0.40 × 0.05) = 1.02
-	maxDecreasePerBlock := 1.0 - (maxDeficitDeviation * elasticity) // e.g., 1.0 - (0.40 × 0.05) = 0.98
+	maxIncreasePerBlock := one.Add(maxExcessDeviation.Mul(elasticity))  // e.g., 1.0 + (0.40 × 0.05) = 1.02
+	maxDecreasePerBlock := one.Sub(maxDeficitDeviation.Mul(elasticity)) // e.g., 1.0 - (0.40 × 0.05) = 0.98
 
 	var newPrice uint64
 
 	// Stability zone check (40%-60% by default)
-	if utilization >= lowerBound && utilization <= upperBound {
+	if utilization.GreaterThanOrEqual(lowerBound) && utilization.LessThanOrEqual(upperBound) {
 		// Stability zone - no price change
 		newPrice = currentPrice
 		k.LogInfo("Price unchanged - within stability zone", types.Pricing,
-			"modelId", modelId, "utilization", utilization, "price", newPrice)
-	} else if utilization < lowerBound {
+			"modelId", modelId, "utilization", utilization.String(), "price", newPrice)
+	} else if utilization.LessThan(lowerBound) {
 		// Below stability zone - decrease price (with cap)
-		utilizationDeficit := lowerBound - utilization
-		adjustmentFactor := 1.0 - (utilizationDeficit * elasticity)
+		utilizationDeficit := lowerBound.Sub(utilization)
+		adjustmentFactor := one.Sub(utilizationDeficit.Mul(elasticity))
 
 		// Ensure adjustment factor doesn't go negative or below max decrease cap
-		if adjustmentFactor < 0 {
-			adjustmentFactor = 0
+		if adjustmentFactor.IsNegative() {
+			adjustmentFactor = decimal.Zero
 		}
 		// Apply maximum decrease cap (2% per block)
-		if adjustmentFactor < maxDecreasePerBlock {
+		if adjustmentFactor.LessThan(maxDecreasePerBlock) {
 			adjustmentFactor = maxDecreasePerBlock
 		}
 
-		newPriceFloat := float64(currentPrice) * adjustmentFactor
-		newPrice = uint64(newPriceFloat)
+		newPriceDec := decimal.NewFromUint64(currentPrice).Mul(adjustmentFactor)
+		newPrice = uint64(newPriceDec.IntPart())
 
 		k.LogInfo("Price decreased - below stability zone", types.Pricing,
-			"modelId", modelId, "utilization", utilization, "deficit", utilizationDeficit,
-			"adjustmentFactor", adjustmentFactor, "oldPrice", currentPrice, "newPrice", newPrice)
+			"modelId", modelId, "utilization", utilization.String(), "deficit", utilizationDeficit.String(),
+			"adjustmentFactor", adjustmentFactor.String(), "oldPrice", currentPrice, "newPrice", newPrice)
 	} else {
 		// Above stability zone - increase price (with cap)
-		utilizationExcess := utilization - upperBound
-		adjustmentFactor := 1.0 + (utilizationExcess * elasticity)
+		utilizationExcess := utilization.Sub(upperBound)
+		adjustmentFactor := one.Add(utilizationExcess.Mul(elasticity))
 
 		// Apply maximum increase cap (2% per block)
-		if adjustmentFactor > maxIncreasePerBlock {
+		if adjustmentFactor.GreaterThan(maxIncreasePerBlock) {
 			adjustmentFactor = maxIncreasePerBlock
 		}
 
-		newPriceFloat := float64(currentPrice) * adjustmentFactor
-		newPrice = uint64(newPriceFloat)
+		newPriceDec := decimal.NewFromUint64(currentPrice).Mul(adjustmentFactor)
+		newPrice = uint64(newPriceDec.IntPart())
 
 		k.LogInfo("Price increased - above stability zone", types.Pricing,
-			"modelId", modelId, "utilization", utilization, "excess", utilizationExcess,
-			"adjustmentFactor", adjustmentFactor, "oldPrice", currentPrice, "newPrice", newPrice)
+			"modelId", modelId, "utilization", utilization.String(), "excess", utilizationExcess.String(),
+			"adjustmentFactor", adjustmentFactor.String(), "oldPrice", currentPrice, "newPrice", newPrice)
 	}
 
 	// Enforce minimum price floor

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -24,9 +25,12 @@ func (k Keeper) EpochBLSData(ctx context.Context, req *types.QueryEpochBLSDataRe
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	// Retrieve EpochBLSData for the requested epoch
-	epochBLSData, found := k.GetEpochBLSData(sdkCtx, req.EpochId)
-	if !found {
-		return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", req.EpochId))
+	epochBLSData, err := k.GetEpochBLSData(sdkCtx, req.EpochId)
+	if err != nil {
+		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
+			return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", req.EpochId))
+		}
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to get epoch %d BLS data: %v", req.EpochId, err))
 	}
 
 	// Return complete epoch data

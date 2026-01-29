@@ -330,7 +330,8 @@ func TestBankIntegration_EmergencyTransferExecution(t *testing.T) {
 	require.Equal(t, transferAmount, bankKeeper.GetBalance(toAddr))
 
 	// Verify usage tracking was updated
-	updatedParams := keeper.GetParams(ctx)
+	updatedParams, err := keeper.GetParams(ctx)
+	require.NoError(t, err)
 	require.Len(t, updatedParams.ExemptionUsageTracking, 1)
 	require.Equal(t, "emergency-test", updatedParams.ExemptionUsageTracking[0].ExemptionId)
 	require.Equal(t, testutil.Creator, updatedParams.ExemptionUsageTracking[0].AccountAddress)
@@ -528,7 +529,8 @@ func TestBankIntegration_WildcardExemptions(t *testing.T) {
 	require.Equal(t, totalReceived, bankKeeper.GetBalance(toAddr))
 
 	// Verify usage tracking for both senders
-	updatedParams := keeper.GetParams(ctx)
+	updatedParams, err := keeper.GetParams(ctx)
+	require.NoError(t, err)
 	require.Len(t, updatedParams.ExemptionUsageTracking, 2)
 
 	// Usage should be tracked separately per account

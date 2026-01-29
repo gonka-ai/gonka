@@ -8,15 +8,16 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) {
+func (k Keeper) SetRandomSeed(ctx context.Context, seed types.RandomSeed) error {
 	addr, err := sdk.AccAddressFromBech32(seed.Participant)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	pk := collections.Join(seed.EpochIndex, addr)
 	if err := k.RandomSeeds.Set(ctx, pk, seed); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func (k Keeper) GetRandomSeed(ctx context.Context, epochIndex uint64, participantAddress string) (types.RandomSeed, bool) {

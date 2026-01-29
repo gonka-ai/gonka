@@ -33,6 +33,7 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	k.SetTokenomicsData(ctx, types.TokenomicsData{})
 	err := k.PruningState.Set(ctx, types.PruningState{})
 	if err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 
@@ -64,10 +65,12 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 	for _, elem := range genState.ModelList {
 		if elem.ProposedBy != "genesis" {
+			//nolint:forbidigo // genesis code
 			panic("At genesis all model.ProposedBy are expected to be \"genesis\".")
 		}
 
@@ -92,7 +95,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge trade approved tokens from genesis
 		for _, elem := range genState.Bridge.TradeApprovedTokens {
-			k.SetBridgeTradeApprovedToken(ctx, *elem)
+			if err := k.SetBridgeTradeApprovedToken(ctx, *elem); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
 		}
 	}
 
@@ -107,7 +113,10 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 		PocStartBlockHeight: 0,
 	}
 	k.SetEpoch(ctx, genesisEpoch)
-	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
+	if err := k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
 
 	InitGenesisEpochGroup(ctx, k, uint64(genesisEpoch.PocStartBlockHeight))
 }
@@ -180,11 +189,13 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	supplyDenom := state.GenesisOnlyParams.SupplyDenom
 	denomMetadata, found := k.BankView.GetDenomMetaData(ctx, types.BaseCoin)
 	if !found {
+		//nolint:forbidigo // genesis code
 		panic("BaseCoin denom not found")
 	}
 
 	err := LoadMetadataToSdk(denomMetadata)
 	if err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 
@@ -197,9 +208,11 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	preProgrammedCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
 
 	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, sdk.NewCoins(topRewardCoin), "top_reward_pool init"); err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, sdk.NewCoins(preProgrammedCoin), "pre_programmed_coin_init"); err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 }
@@ -239,7 +252,12 @@ func LoadMetadataToSdk(metadata banktypes.Metadata) error {
 // ExportGenesis returns the module's exported genesis.
 func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := &types.GenesisState{}
-	genesis.Params = k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	genesis.Params = params
 
 	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
 	if found {
@@ -287,10 +305,12 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {
 	models, err := k.GetGovernanceModels(ctx)
 	if err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 	models2, err := keeper.PointersToValues(models)
 	if err != nil {
+		//nolint:forbidigo // genesis code
 		panic(err)
 	}
 	return models2

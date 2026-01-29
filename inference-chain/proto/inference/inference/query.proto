@@ -33,6 +33,7 @@ import "inference/inference/mlnode_version.proto";
 import "inference/inference/excluded_participant.proto";
 import "inference/inference/confirmation_poc_event.proto";
 import "inference/inference/liquidity_pool.proto";
+import "inference/inference/poc_v2.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -116,6 +117,33 @@ service Query {
   // Queries a list of PocValidationsForStage items.
   rpc PocValidationsForStage (QueryPocValidationsForStageRequest) returns (QueryPocValidationsForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_validations_for_stage/{block_height}";
+
+  }
+
+  // PoC v2 validation queries
+  rpc PocV2ValidationsForStage (QueryPocV2ValidationsForStageRequest) returns (QueryPocV2ValidationsForStageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_v2_validations_for_stage/{block_height}";
+
+  }
+
+  // PoC v2 off-chain commit queries
+  rpc PoCV2StoreCommit (QueryPoCV2StoreCommitRequest) returns (QueryPoCV2StoreCommitResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_v2_store_commit/{poc_stage_start_block_height}/{participant_address}";
+
+  }
+
+  rpc MLNodeWeightDistribution (QueryMLNodeWeightDistributionRequest) returns (QueryMLNodeWeightDistributionResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/mlnode_weight_distribution/{poc_stage_start_block_height}/{participant_address}";
+
+  }
+
+  rpc AllPoCV2StoreCommitsForStage (QueryAllPoCV2StoreCommitsForStageRequest) returns (QueryAllPoCV2StoreCommitsForStageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_poc_v2_store_commits/{poc_stage_start_block_height}";
+
+  }
+
+  rpc AllMLNodeWeightDistributionsForStage (QueryAllMLNodeWeightDistributionsForStageRequest) returns (QueryAllMLNodeWeightDistributionsForStageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_mlnode_weight_distributions/{poc_stage_start_block_height}";
 
   }
 
@@ -434,6 +462,15 @@ service Query {
   // Queries the currently active confirmation PoC event.
   rpc ActiveConfirmationPoCEvent (QueryActiveConfirmationPoCEventRequest) returns (QueryActiveConfirmationPoCEventResponse) {
     option (google.api.http).get = "/productscience/inference/inference/active_confirmation_poc_event";
+  }
+
+  // Queries confirmation PoC events for a specific epoch.
+  rpc ListConfirmationPoCEvents (QueryConfirmationPoCEventsRequest) returns (QueryConfirmationPoCEventsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/confirmation_poc_events/{epoch_index}";
+  }
+
+  rpc ParticipantsWithBalances (QueryParticipantsWithBalancesRequest) returns (QueryParticipantsWithBalancesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants_with_balances";
 
   }
 }
@@ -580,6 +617,73 @@ message PoCValidationsWithParticipants {
            string        pub_key        = 2;
            string        hex_pub_key    = 3;
   repeated PoCValidation poc_validation = 4 [(gogoproto.nullable) = false];
+}
+
+// PoC v2 validation query messages
+
+message QueryPocV2ValidationsForStageRequest {
+  int64 block_height = 1;
+}
+
+message QueryPocV2ValidationsForStageResponse {
+  repeated PoCValidationsWithParticipantsV2 poc_validation = 1 [(gogoproto.nullable) = false];
+}
+
+message PoCValidationsWithParticipantsV2 {
+           string           participant    = 1;
+           string           pub_key        = 2;
+           string           hex_pub_key    = 3;
+  repeated PoCValidationV2  poc_validation = 4 [(gogoproto.nullable) = false];
+}
+
+// PoC v2 off-chain commit query messages
+message QueryPoCV2StoreCommitRequest {
+  int64  poc_stage_start_block_height = 1;
+  string participant_address = 2;
+}
+
+message QueryPoCV2StoreCommitResponse {
+  uint32 count = 1;
+  bytes  root_hash = 2;
+  bool   found = 3;
+}
+
+message QueryMLNodeWeightDistributionRequest {
+  int64  poc_stage_start_block_height = 1;
+  string participant_address = 2;
+}
+
+message QueryMLNodeWeightDistributionResponse {
+  repeated MLNodeWeight weights = 1;
+  bool found = 2;
+}
+
+message QueryAllPoCV2StoreCommitsForStageRequest {
+  int64 poc_stage_start_block_height = 1;
+}
+
+message QueryAllPoCV2StoreCommitsForStageResponse {
+  repeated PoCV2StoreCommitWithAddress commits = 1;
+}
+
+message PoCV2StoreCommitWithAddress {
+  string participant_address = 1;
+  uint32 count = 2;
+  bytes root_hash = 3;
+  string hex_pub_key = 4;
+}
+
+message QueryAllMLNodeWeightDistributionsForStageRequest {
+  int64 poc_stage_start_block_height = 1;
+}
+
+message QueryAllMLNodeWeightDistributionsForStageResponse {
+  repeated MLNodeWeightDistributionWithAddress distributions = 1;
+}
+
+message MLNodeWeightDistributionWithAddress {
+  string participant_address = 1;
+  repeated MLNodeWeight weights = 2;
 }
 
 message QueryGetCurrentEpochRequest {}
@@ -1109,4 +1213,32 @@ message QueryActiveConfirmationPoCEventRequest {}
 message QueryActiveConfirmationPoCEventResponse {
   bool                 is_active = 1;
   ConfirmationPoCEvent event     = 2;
+}
+
+// QueryConfirmationPoCEventsRequest is request type for the Query/ConfirmationPoCEvents RPC method.
+message QueryConfirmationPoCEventsRequest {
+  uint64 epoch_index = 1;
+}
+
+// QueryConfirmationPoCEventsResponse is response type for the Query/ConfirmationPoCEvents RPC method.
+message QueryConfirmationPoCEventsResponse {
+  repeated ConfirmationPoCEvent events = 1;
+}
+
+// ParticipantWithBalance contains participant data along with their bank balance.
+message ParticipantWithBalance {
+  Participant                       participant = 1 [(gogoproto.nullable) = false];
+  repeated cosmos.base.v1beta1.Coin balances    = 2 [(gogoproto.nullable) = false];
+}
+
+// QueryParticipantsWithBalancesRequest is request type for the Query/ParticipantsWithBalances RPC method.
+message QueryParticipantsWithBalancesRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryParticipantsWithBalancesResponse is response type for the Query/ParticipantsWithBalances RPC method.
+message QueryParticipantsWithBalancesResponse {
+  repeated ParticipantWithBalance               participants = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+           int64                                  block_height = 3;
 }

@@ -1,0 +1,32 @@
+{
+  "scenarioName": "ModelState",
+  "requiredScenarioState": "POW_V2_VALIDATE",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/inference/pow/generate"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "status": "completed",
+      "request_id": "mock-validation-request-id"
+    }
+  },
+  "postServeActions": {
+    "webhook": {
+      "method": "POST",
+      "url": "http://{{KEY_NAME}}-api:9100/v2/poc-batches/validated",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "delay": {
+        "type": "fixed",
+        "milliseconds": 5000
+      },
+      "body": "{ \"public_key\": \"{{jsonPath originalRequest.body '$.public_key'}}\", \"block_hash\": \"{{jsonPath originalRequest.body '$.block_hash'}}\", \"block_height\": {{jsonPath originalRequest.body '$.block_height'}}, \"node_id\": {{jsonPath originalRequest.body '$.node_id'}}, \"n_total\": 10, \"n_mismatch\": 0, \"mismatch_nonces\": [], \"p_value\": 1.0, \"fraud_detected\": false }"
+    }
+  }
+}

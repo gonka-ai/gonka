@@ -4,6 +4,7 @@ import com.productscience.mockserver.routes.fileRoutes
 import com.productscience.mockserver.routes.healthRoutes
 import com.productscience.mockserver.routes.inferenceRoutes
 import com.productscience.mockserver.routes.powRoutes
+import com.productscience.mockserver.routes.powV2Routes
 import com.productscience.mockserver.routes.responseRoutes
 import com.productscience.mockserver.routes.stateRoutes
 import com.productscience.mockserver.routes.stopRoutes
@@ -106,6 +107,7 @@ fun Application.configureRouting() {
         // Register all the route handlers
         stateRoutes()
         powRoutes(webhookService)
+        powV2Routes(webhookService)  // PoC v2 (artifact-based) routes
         inferenceRoutes(responseService)
         trainRoutes()
         stopRoutes()

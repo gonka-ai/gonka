@@ -36,6 +36,8 @@ func NewKeeper(
 
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
+	blst "github.com/supranational/blst/bindings/go"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -109,7 +110,7 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 	}
 
 	// Create partial signature using previous epoch slot shares
-	partialSignature, slotIndices, err := bm.createPartialSignature(messageHash, previousEpochResult)
+	partialSignature, slotIndices, err := bm.createPartialSignatureBlst(messageHash, previousEpochResult)
 	if err != nil {
 		return fmt.Errorf("failed to create partial signature: %w", err)
 	}
@@ -182,6 +183,9 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 }
 
 // createPartialSignature creates per-slot BLS partial signatures for the validation message.
+//
+// Deprecated: use createPartialSignatureBlst. The gnark-crypto implementation is kept only
+// for legacy/reference purposes and is intended to be removed in a future cleanup.
 // Returns a concatenation of 48-byte compressed G1 signatures (one per slot, in SlotIndices order),
 // and the corresponding absolute SlotIndices.
 func (bm *BlsManager) createPartialSignature(messageHash []byte, previousEpochResult *VerificationResult) ([]byte, []uint32, error) {
@@ -229,6 +233,63 @@ func (bm *BlsManager) createPartialSignature(messageHash []byte, previousEpochRe
 		// Append compressed 48-byte signature
 		sigBytes := partialSignature.Bytes()
 		concatenated = append(concatenated, sigBytes[:]...)
+	}
+
+	return concatenated, slotIndices, nil
+}
+
+// createPartialSignatureBlst creates per-slot BLS partial signatures using blst.
+func (bm *BlsManager) createPartialSignatureBlst(messageHash []byte, previousEpochResult *VerificationResult) ([]byte, []uint32, error) {
+	if len(previousEpochResult.AggregatedShares) == 0 {
+		return nil, nil, fmt.Errorf("no aggregated shares available for previous epoch")
+	}
+
+	// Hash message to G1 point (using gnark-crypto for consistency)
+	messageG1Gnark, err := bm.hashToG1(messageHash)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to hash message to G1: %w", err)
+	}
+	msgG1Bytes := messageG1Gnark.Bytes()
+	messageG1Blst := new(blst.P1Affine).Uncompress(msgG1Bytes[:])
+	if messageG1Blst == nil {
+		return nil, nil, fmt.Errorf("failed to uncompress message G1 with blst")
+	}
+
+	// Create slot indices array
+	slotIndices := make([]uint32, 0, int(previousEpochResult.SlotRange[1]-previousEpochResult.SlotRange[0]+1))
+	for abs := previousEpochResult.SlotRange[0]; abs <= previousEpochResult.SlotRange[1]; abs++ {
+		slotIndices = append(slotIndices, abs)
+	}
+
+	var concatenated []byte
+	for rel := 0; rel < len(slotIndices); rel++ {
+		var signingKey fr.Element
+		signingKey.SetZero()
+		for dealerIdx := 0; dealerIdx < len(previousEpochResult.DealerShares); dealerIdx++ {
+			isValidDealer := true
+			if len(previousEpochResult.ValidDealers) == len(previousEpochResult.DealerShares) {
+				isValidDealer = previousEpochResult.ValidDealers[dealerIdx]
+			}
+			if !isValidDealer {
+				continue
+			}
+			shares := previousEpochResult.DealerShares[dealerIdx]
+			if len(shares) == 0 || rel >= len(shares) {
+				continue
+			}
+			signingKey.Add(&signingKey, &shares[rel])
+		}
+
+		skBytes := signingKey.Bytes()
+		// Convert to little-endian for blst
+		for i := 0; i < 16; i++ {
+			skBytes[i], skBytes[31-i] = skBytes[31-i], skBytes[i]
+		}
+
+		sig := new(blst.P1)
+		sig.FromAffine(messageG1Blst)
+		sig.MultAssign(skBytes[:], 255)
+		concatenated = append(concatenated, sig.ToAffine().Compress()...)
 	}
 
 	return concatenated, slotIndices, nil

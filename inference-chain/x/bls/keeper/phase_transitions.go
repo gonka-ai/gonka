@@ -5,7 +5,6 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/productscience/inference/x/bls/types"
 )
 
@@ -24,9 +23,9 @@ func (k Keeper) ProcessDKGPhaseTransitions(ctx sdk.Context) error {
 
 // ProcessDKGPhaseTransitionForEpoch checks a specific epoch's DKG and transitions it if needed
 func (k Keeper) ProcessDKGPhaseTransitionForEpoch(ctx sdk.Context, epochID uint64) error {
-	epochBLSData, found := k.GetEpochBLSData(ctx, epochID)
-	if !found {
-		return fmt.Errorf("EpochBLSData not found for epoch %d", epochID)
+	epochBLSData, err := k.GetEpochBLSData(ctx, epochID)
+	if err != nil {
+		return fmt.Errorf("failed to get EpochBLSData for epoch %d: %w", epochID, err)
 	}
 
 	// Skip completed or failed DKGs
@@ -74,14 +73,19 @@ func (k Keeper) TransitionToVerifyingPhase(ctx sdk.Context, epochBLSData *types.
 	// Check if we have sufficient participation (more than half the slots)
 	if slotsWithDealerParts > epochBLSData.ITotalSlots/2 {
 		// Sufficient participation - transition to VERIFYING
-		params := k.GetParams(ctx)
+		params, err := k.GetParams(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get params: %w", err)
+		}
 		currentBlockHeight := ctx.BlockHeight()
 
 		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
 		epochBLSData.VerifyingPhaseDeadlineBlock = currentBlockHeight + params.VerificationPhaseDurationBlocks
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Emit event for verifying phase started
 		if err := ctx.EventManager().EmitTypedEvent(&types.EventVerifyingPhaseStarted{
@@ -101,7 +105,9 @@ func (k Keeper) TransitionToVerifyingPhase(ctx sdk.Context, epochBLSData *types.
 		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_FAILED
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Clear active epoch since DKG process is complete (failed)
 		k.ClearActiveEpochID(ctx)
@@ -185,8 +191,17 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 		// Store valid dealers in epoch data
 		epochBLSData.ValidDealers = validDealers
 
+		// Precompute per-slot public keys for faster validation later
+		slotPublicKeys, err := k.PrecomputeSlotPublicKeysBlst(epochBLSData)
+		if err != nil {
+			return fmt.Errorf("failed to precompute slot public keys for epoch %d: %w", epochBLSData.EpochId, err)
+		}
+		epochBLSData.SlotPublicKeys = slotPublicKeys
+
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Clear active epoch since DKG process is complete (successfully)
 		k.ClearActiveEpochID(ctx)
@@ -221,7 +236,9 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_FAILED
 
 		// Store updated epoch data
-		k.SetEpochBLSData(ctx, *epochBLSData)
+		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
+		}
 
 		// Clear active epoch since DKG process is complete (failed)
 		k.ClearActiveEpochID(ctx)
@@ -318,14 +335,12 @@ func (k Keeper) ComputeGroupPublicKey(epochBLSData *types.EpochBLSData, validDea
 		return nil, fmt.Errorf("no valid dealers found for epoch %d", epochBLSData.EpochId)
 	}
 
-	// Initialize group public key as G2 identity (zero point)
-	var groupPublicKey bls12381.G2Affine
-
 	k.Logger().Info("Starting group public key computation",
 		"epochId", epochBLSData.EpochId,
 		"validDealersCount", validDealerCount)
 
-	// Aggregate C_k0 commitments from valid dealers
+	// Collect C_k0 commitments from valid dealers
+	commitmentsToAggregate := make([][]byte, 0, validDealerCount)
 	for dealerIndex, dealerIsValid := range validDealers {
 		if !dealerIsValid {
 			continue
@@ -342,40 +357,23 @@ func (k Keeper) ComputeGroupPublicKey(epochBLSData *types.EpochBLSData, validDea
 			continue
 		}
 
-		// Parse first commitment (C_k0) as compressed G2 point
-		commitmentBytes := dealerPart.Commitments[0]
-		if len(commitmentBytes) != 96 {
-			k.Logger().Error("Invalid commitment size",
-				"dealerIndex", dealerIndex,
-				"expectedSize", 96,
-				"actualSize", len(commitmentBytes))
-			return nil, fmt.Errorf("invalid commitment size for dealer %d: expected 96 bytes, got %d", dealerIndex, len(commitmentBytes))
-		}
-
-		var commitment bls12381.G2Affine
-		err := commitment.Unmarshal(commitmentBytes)
-		if err != nil {
-			k.Logger().Error("Failed to unmarshal G2 commitment",
-				"dealerIndex", dealerIndex,
-				"error", err)
-			return nil, fmt.Errorf("failed to unmarshal G2 commitment for dealer %d: %w", dealerIndex, err)
-		}
-
-		// Add to group public key: GroupPublicKey += C_k0
-		groupPublicKey.Add(&groupPublicKey, &commitment)
-
-		k.Logger().Debug("Added dealer commitment to group public key",
-			"dealerIndex", dealerIndex,
-			"dealerAddress", dealerPart.DealerAddress)
+		commitmentsToAggregate = append(commitmentsToAggregate, dealerPart.Commitments[0])
 	}
 
-	// Marshal group public key to compressed bytes
-	groupPublicKeyBytes := groupPublicKey.Bytes()
+	if len(commitmentsToAggregate) == 0 {
+		return nil, fmt.Errorf("no dealer commitments available to compute group public key for epoch %d", epochBLSData.EpochId)
+	}
+
+	// Use helper function to aggregate commitments
+	groupPublicKeyBytes, err := k.aggregateG2PointsBlst(commitmentsToAggregate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to aggregate commitments: %w", err)
+	}
 
 	k.Logger().Info("Completed group public key computation",
 		"epochId", epochBLSData.EpochId,
 		"validDealersCount", validDealerCount,
 		"groupPublicKeySize", len(groupPublicKeyBytes))
 
-	return groupPublicKeyBytes[:], nil
+	return groupPublicKeyBytes, nil
 }

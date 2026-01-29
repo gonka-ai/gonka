@@ -17,10 +17,12 @@ func TestValidatePayloadRequestSignature_ValidSignature(t *testing.T) {
 	inferenceId := "aW5mZXJlbmNlLTEyMzQ1" // base64 encoded
 	timestamp := time.Now().UnixNano()
 	validatorAddress := "cosmos1validatoraddress"
+	epochId := uint64(1)
 
 	// Validator signs: inferenceId + timestamp + validatorAddress
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",
@@ -28,7 +30,7 @@ func TestValidatePayloadRequestSignature_ValidSignature(t *testing.T) {
 	signature, err := calculations.Sign(validatorKey, components, calculations.Developer)
 	require.NoError(t, err)
 
-	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, []string{validatorKey.GetPubKeyBase64()}, signature)
+	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, epochId, []string{validatorKey.GetPubKeyBase64()}, signature)
 	require.NoError(t, err)
 }
 
@@ -38,10 +40,12 @@ func TestValidatePayloadRequestSignature_InvalidSignature(t *testing.T) {
 	inferenceId := "aW5mZXJlbmNlLTEyMzQ1"
 	timestamp := time.Now().UnixNano()
 	validatorAddress := "cosmos1validatoraddress"
+	epochId := uint64(1)
 
 	// Sign with wrong key
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",
@@ -50,7 +54,7 @@ func TestValidatePayloadRequestSignature_InvalidSignature(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate with validator's pubkey - should fail
-	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, []string{validatorKey.GetPubKeyBase64()}, signature)
+	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, epochId, []string{validatorKey.GetPubKeyBase64()}, signature)
 	require.Error(t, err)
 }
 
@@ -59,10 +63,12 @@ func TestValidatePayloadRequestSignature_WrongTimestamp(t *testing.T) {
 	inferenceId := "aW5mZXJlbmNlLTEyMzQ1"
 	timestamp := time.Now().UnixNano()
 	validatorAddress := "cosmos1validatoraddress"
+	epochId := uint64(1)
 
 	// Sign with correct timestamp
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",
@@ -71,7 +77,7 @@ func TestValidatePayloadRequestSignature_WrongTimestamp(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate with different timestamp - should fail
-	err = validatePayloadRequestSignature(inferenceId, timestamp+1000, validatorAddress, []string{validatorKey.GetPubKeyBase64()}, signature)
+	err = validatePayloadRequestSignature(inferenceId, timestamp+1000, validatorAddress, epochId, []string{validatorKey.GetPubKeyBase64()}, signature)
 	require.Error(t, err)
 }
 
@@ -80,9 +86,11 @@ func TestValidatePayloadRequestSignature_WrongInferenceId(t *testing.T) {
 	inferenceId := "aW5mZXJlbmNlLTEyMzQ1"
 	timestamp := time.Now().UnixNano()
 	validatorAddress := "cosmos1validatoraddress"
+	epochId := uint64(1)
 
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",
@@ -91,7 +99,7 @@ func TestValidatePayloadRequestSignature_WrongInferenceId(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate with different inferenceId - should fail
-	err = validatePayloadRequestSignature("different-inference-id", timestamp, validatorAddress, []string{validatorKey.GetPubKeyBase64()}, signature)
+	err = validatePayloadRequestSignature("different-inference-id", timestamp, validatorAddress, epochId, []string{validatorKey.GetPubKeyBase64()}, signature)
 	require.Error(t, err)
 }
 
@@ -102,10 +110,12 @@ func TestValidatePayloadRequestSignature_MultipleGrantees(t *testing.T) {
 	inferenceId := "aW5mZXJlbmNlLTEyMzQ1"
 	timestamp := time.Now().UnixNano()
 	validatorAddress := "cosmos1validatoraddress"
+	epochId := uint64(1)
 
 	// Sign with grantee2 (warm key)
 	components := calculations.SignatureComponents{
 		Payload:         inferenceId,
+		EpochId:         epochId,
 		Timestamp:       timestamp,
 		TransferAddress: validatorAddress,
 		ExecutorAddress: "",
@@ -115,8 +125,29 @@ func TestValidatePayloadRequestSignature_MultipleGrantees(t *testing.T) {
 
 	// Should succeed when grantee2's pubkey is in the list
 	pubkeys := []string{validatorKey.GetPubKeyBase64(), grantee1.GetPubKeyBase64(), grantee2.GetPubKeyBase64()}
-	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, pubkeys, signature)
+	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, epochId, pubkeys, signature)
 	require.NoError(t, err)
+}
+
+func TestValidatePayloadRequestSignature_WrongEpochId(t *testing.T) {
+	validatorKey := newTestKey()
+	inferenceId := "aW5mZXJlbmNlLTEyMzQ1" // base64 encoded
+	timestamp := time.Now().UnixNano()
+	validatorAddress := "cosmos1validatoraddress"
+	epochId := uint64(1)
+
+	components := calculations.SignatureComponents{
+		Payload:         inferenceId,
+		EpochId:         epochId,
+		Timestamp:       timestamp,
+		TransferAddress: validatorAddress,
+		ExecutorAddress: "",
+	}
+	signature, err := calculations.Sign(validatorKey, components, calculations.Developer)
+	require.NoError(t, err)
+
+	err = validatePayloadRequestSignature(inferenceId, timestamp, validatorAddress, epochId+1, []string{validatorKey.GetPubKeyBase64()}, signature)
+	require.Error(t, err)
 }
 
 func TestValidatePayloadRequestTimestamp_Valid(t *testing.T) {

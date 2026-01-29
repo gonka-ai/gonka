@@ -85,6 +85,7 @@ func (a AppModuleBasic) RegisterInterfaces(reg cdctypes.InterfaceRegistry) {
 // DefaultGenesis returns a default GenesisState for the module, marshalled to json.RawMessage.
 // The default GenesisState need to be defined by the module developer and is primarily used for testing.
 func (AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
+	//nolint:forbidigo // Genesis code
 	return cdc.MustMarshalJSON(types.DefaultGenesis())
 }
 
@@ -100,6 +101,7 @@ func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, config client.TxEncod
 // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the module.
 func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *runtime.ServeMux) {
 	if err := types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx)); err != nil {
+		//nolint:forbidigo // init code
 		panic(err)
 	}
 }
@@ -150,6 +152,7 @@ func (am AppModule) RegisterInvariants(_ sdk.InvariantRegistry) {}
 func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, gs json.RawMessage) {
 	var genState types.GenesisState
 	// Initialize global index to index in genesis state
+	//nolint:forbidigo // Genesis code
 	cdc.MustUnmarshalJSON(gs, &genState)
 
 	InitGenesis(ctx, am.keeper, genState)
@@ -158,12 +161,13 @@ func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, gs json.Ra
 // ExportGenesis returns the module's exported genesis state as raw JSON bytes.
 func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.RawMessage {
 	genState := ExportGenesis(ctx, am.keeper)
+	//nolint:forbidigo // Genesis code
 	return cdc.MustMarshalJSON(genState)
 }
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 10 }
+func (AppModule) ConsensusVersion() uint64 { return 11 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -228,7 +232,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		// Don't return error - allow block processing to continue
 	}
 
-	params, err := am.keeper.GetParamsSafe(ctx)
+	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
 		return err
@@ -312,7 +316,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("StartStage:onSetNewValidatorsStage", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
-		am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch))
+		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
+			return err
+		}
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
@@ -390,7 +396,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
 		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
-		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+		if err := am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
+			am.LogError("onEndOfPoCValidationStage: Unable to advance collateral epoch", types.Tokenomics, "error", err.Error())
+		}
 	} else {
 		am.LogError("collateral keeper is null", types.Tokenomics)
 	}
@@ -398,8 +406,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// Signal to the streamvesting module that the epoch has advanced.
 	// This will trigger vested token unlocking for the completed epoch.
 	if am.keeper.GetStreamVestingKeeper() != nil {
-		err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
-		if err != nil {
+		if err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
 		}
 	}
@@ -421,7 +428,18 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
+	// Dispatch to V1 or V2 weight calculation based on poc_v2_enabled flag
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err.Error())
+		return
+	}
+	var activeParticipants []*types.ActiveParticipant
+	if params.PocParams.PocV2Enabled {
+		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
+	} else {
+		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
+	}
 	if activeParticipants == nil {
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
@@ -525,7 +543,12 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {
-	validationParams := am.keeper.GetParams(ctx).ValidationParams
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("addEpochMembers: Unable to get params", types.EpochGroup, "error", err.Error())
+		return
+	}
+	validationParams := params.ValidationParams
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -558,7 +581,12 @@ func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch,
 		}
 		defaultPrice = currentEg.GroupData.UnitOfComputePrice
 	} else {
-		defaultPrice = am.keeper.GetParams(ctx).EpochParams.DefaultUnitOfComputePrice
+		params, err := am.keeper.GetParams(ctx)
+		if err != nil {
+			am.LogError("computePrice: Unable to get params", types.Pricing, "error", err.Error())
+			return 0, err
+		}
+		defaultPrice = params.EpochParams.DefaultUnitOfComputePrice
 	}
 
 	proposals, err := am.keeper.AllUnitOfComputePriceProposals(ctx)
@@ -630,7 +658,11 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousEpochIndex", previousEpochIndex)
 		return
 	}
-	params := am.keeper.GetParams(ctx)
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get params", types.EpochGroup, "blockHeight", blockHeight, "error", err.Error())
+		return
+	}
 	newGroupData.EffectiveBlockHeight = blockHeight
 	newGroupData.UnitOfComputePrice = int64(unitOfComputePrice)
 	newGroupData.PreviousEpochRequests = previousGroupData.NumberOfRequests
@@ -664,7 +696,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	}
 
 	// At this point, clear all active invalidations in case of any hanging invalidations
-	err := am.keeper.ActiveInvalidations.Clear(ctx, nil)
+	err = am.keeper.ActiveInvalidations.Clear(ctx, nil)
 	if err != nil {
 		am.LogError("Unable to clear active invalidations", types.EpochGroup, "error", err.Error())
 	}

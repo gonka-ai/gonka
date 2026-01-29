@@ -41,6 +41,8 @@ type Marketing struct {
 }
 
 // Precompiled regex for Ethereum addresses: 0x + 40 hex chars (case-insensitive)
+//
+//nolint:forbidigo // init code
 var eth40HexRegex = regexp.MustCompile(`^(?i)0x[0-9a-f]{40}$`)
 
 // TokenMetadata represents additional token metadata that can be stored in chain state
@@ -231,7 +233,7 @@ func (k Keeper) GetTokenMetadata(ctx sdk.Context, externalChain, externalContrac
 }
 
 // SetWrappedTokenContract stores a token contract mapping
-func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWrappedTokenContract) {
+func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWrappedTokenContract) error {
 	// Validate input data before saving
 	if err := k.validateBridgeWrappedTokenContract(&contract); err != nil {
 		k.LogError("Bridge exchange: Failed to save wrapped token contract - validation failed",
@@ -240,7 +242,7 @@ func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWr
 			"contractAddress", contract.ContractAddress,
 			"wrappedContractAddress", contract.WrappedContractAddress,
 			"error", err)
-		panic(fmt.Sprintf("invalid wrapped token contract data: %v", err))
+		return fmt.Errorf("invalid wrapped token contract data: %v", err)
 	}
 
 	normalizedContract := strings.ToLower(contract.ContractAddress)
@@ -250,7 +252,7 @@ func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWr
 	contract.WrappedContractAddress = normalizedWrapped
 
 	if err := k.WrappedTokenContractsMap.Set(ctx, collections.Join(contract.ChainId, normalizedContract), contract); err != nil {
-		panic(fmt.Sprintf("failed to store wrapped token contract: %v", err))
+		return fmt.Errorf("failed to store wrapped token contract: %v", err)
 	}
 
 	reference := types.BridgeTokenReference{
@@ -259,7 +261,7 @@ func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWr
 	}
 
 	if err := k.WrappedContractReverseIndex.Set(ctx, normalizedWrapped, reference); err != nil {
-		panic(fmt.Sprintf("failed to store wrapped contract reverse index: %v", err))
+		return fmt.Errorf("failed to store wrapped contract reverse index: %v", err)
 	}
 
 	k.LogInfo("Bridge exchange: Wrapped token contract stored successfully",
@@ -267,6 +269,7 @@ func (k Keeper) SetWrappedTokenContract(ctx sdk.Context, contract types.BridgeWr
 		"chainId", contract.ChainId,
 		"contractAddress", contract.ContractAddress,
 		"wrappedContractAddress", contract.WrappedContractAddress)
+	return nil
 }
 
 // validateBridgeWrappedTokenContract validates the contract data before saving
@@ -400,10 +403,11 @@ func (k Keeper) GetWrappedTokenCodeID(ctx sdk.Context) (uint64, bool) {
 	return codeID, true
 }
 
-func (k Keeper) SetWrappedTokenCodeID(ctx sdk.Context, codeID uint64) {
+func (k Keeper) SetWrappedTokenCodeID(ctx sdk.Context, codeID uint64) error {
 	if err := k.WrappedTokenCodeIDItem.Set(ctx, codeID); err != nil {
-		panic(fmt.Sprintf("failed to set wrapped token code id: %v", err))
+		return fmt.Errorf("failed to set wrapped token code id: %v", err)
 	}
+	return nil
 }
 
 // ClearWrappedTokenCodeID removes the stored wrapped token code ID from state.
@@ -443,10 +447,22 @@ func (k Keeper) MigrateAllWrappedTokenContracts(ctx sdk.Context, newCodeID uint6
 	var firstErr error
 	for _, contract := range contracts {
 		wrappedAddr := contract.WrappedContractAddress
+		addr, err := sdk.AccAddressFromBech32(wrappedAddr)
+		if err != nil {
+			k.LogError("Bridge exchange: Invalid wrapped address stored in state",
+				types.Messages,
+				"wrappedContract", wrappedAddr,
+				"error", err,
+			)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("invalid address %s: %w", wrappedAddr, err)
+			}
+			continue
+		}
 		// Execute migrate on the contract
-		_, err := permissionedKeeper.Migrate(
+		_, err = permissionedKeeper.Migrate(
 			ctx,
-			sdk.MustAccAddressFromBech32(wrappedAddr),
+			addr,
 			adminAddr,
 			newCodeID,
 			migrateMsg,
@@ -507,12 +523,17 @@ func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contra
 		return "", err
 	}
 
+	govAddr, err := sdk.AccAddressFromBech32(governanceAddr)
+	if err != nil {
+		return "", fmt.Errorf("invalid governance address: %w", err)
+	}
+
 	// Instantiate the CW20 contract
 	contractAddr, _, err := wasmKeeper.Instantiate(
 		ctx,
 		codeID,
 		k.AccountKeeper.GetModuleAddress(types.ModuleName), // Instantiator: inference module
-		sdk.MustAccAddressFromBech32(governanceAddr),       // Admin: governance module (for contract upgrades)
+		govAddr, // Admin: governance module (for contract upgrades)
 		msgBz,
 		fmt.Sprintf("Bridged Token %s:%s", chainId, contractAddress),
 		sdk.NewCoins(),
@@ -528,11 +549,14 @@ func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contra
 		"wrappedContractAddress", contractAddr.String())
 
 	wrappedContractAddr := strings.ToLower(contractAddr.String())
-	k.SetWrappedTokenContract(ctx, types.BridgeWrappedTokenContract{
+	err = k.SetWrappedTokenContract(ctx, types.BridgeWrappedTokenContract{
 		ChainId:                chainId,
 		ContractAddress:        contractAddress,
 		WrappedContractAddress: wrappedContractAddr,
 	})
+	if err != nil {
+		return "", err
+	}
 
 	// Check if metadata exists and update the contract immediately after creation
 	if metadata, metadataFound := k.GetTokenMetadata(ctx, chainId, contractAddress); metadataFound {
@@ -583,11 +607,16 @@ func (k Keeper) updateWrappedTokenContractMetadata(ctx sdk.Context, wrappedContr
 		return fmt.Errorf("failed to marshal update metadata message: %w", err)
 	}
 
+	contractAddr, err := sdk.AccAddressFromBech32(wrappedContractAddr)
+	if err != nil {
+		return fmt.Errorf("invalid wrapped contract address: %w", err)
+	}
+
 	// Execute update metadata message using PermissionedKeeper
 	permissionedKeeper := wasmkeeper.NewDefaultPermissionKeeper(wasmKeeper)
 	_, err = permissionedKeeper.Execute(
 		ctx,
-		sdk.MustAccAddressFromBech32(wrappedContractAddr),
+		contractAddr,
 		k.AccountKeeper.GetModuleAddress(types.ModuleName),
 		msgBz,
 		sdk.NewCoins(),
@@ -633,10 +662,15 @@ func (k Keeper) MintTokens(ctx sdk.Context, contractAddr string, recipient strin
 		return err
 	}
 
+	contractAccAddr, err := sdk.AccAddressFromBech32(normalizedContractAddr)
+	if err != nil {
+		return fmt.Errorf("invalid contract address: %w", err)
+	}
+
 	// Execute mint message
 	_, err = wasmKeeper.Execute(
 		ctx,
-		sdk.MustAccAddressFromBech32(normalizedContractAddr),
+		contractAccAddr,
 		k.AccountKeeper.GetModuleAddress(types.ModuleName),
 		msgBz,
 		sdk.NewCoins(),
@@ -709,7 +743,7 @@ func (k Keeper) GetAllBridgeTokenMetadata(ctx sdk.Context) []types.BridgeTokenMe
 }
 
 // SetBridgeTradeApprovedToken stores a bridge trade approved token
-func (k Keeper) SetBridgeTradeApprovedToken(ctx sdk.Context, approvedToken types.BridgeTokenReference) {
+func (k Keeper) SetBridgeTradeApprovedToken(ctx sdk.Context, approvedToken types.BridgeTokenReference) error {
 	// Validate input data before saving
 	if err := k.validateBridgeTradeApprovedToken(&approvedToken); err != nil {
 		k.LogError("Bridge exchange: Failed to save bridge trade approved token - validation failed",
@@ -717,20 +751,21 @@ func (k Keeper) SetBridgeTradeApprovedToken(ctx sdk.Context, approvedToken types
 			"chainId", approvedToken.ChainId,
 			"contractAddress", approvedToken.ContractAddress,
 			"error", err)
-		panic(fmt.Sprintf("invalid bridge trade approved token data: %v", err))
+		return fmt.Errorf("invalid bridge trade approved token data: %v", err)
 	}
 
 	normalizedContract := strings.ToLower(approvedToken.ContractAddress)
 	approvedToken.ContractAddress = normalizedContract
 
 	if err := k.LiquidityPoolApprovedTokensMap.Set(ctx, collections.Join(approvedToken.ChainId, normalizedContract), approvedToken); err != nil {
-		panic(fmt.Sprintf("failed to store bridge trade approved token: %v", err))
+		return fmt.Errorf("failed to store bridge trade approved token: %v", err)
 	}
 
 	k.LogInfo("Bridge trade approved token stored",
 		types.Messages,
 		"chainId", approvedToken.ChainId,
 		"contractAddress", approvedToken.ContractAddress)
+	return nil
 }
 
 // validateBridgeTradeApprovedToken validates the approved token data before saving

@@ -9,15 +9,15 @@ import (
 )
 
 // GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
-		return params
+		return params, nil
 	}
 
-	k.cdc.MustUnmarshal(bz, &params)
-	return params
+	err = k.cdc.Unmarshal(bz, &params)
+	return params, err
 }
 
 // SetParams set the params
@@ -36,20 +36,36 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 
 // GetITotalSlots returns the total number of slots for DKG
 func (k Keeper) GetITotalSlots(ctx context.Context) uint32 {
-	return k.GetParams(ctx).ITotalSlots
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0
+	}
+	return params.ITotalSlots
 }
 
 // GetTSlotsDegreeOffset returns the polynomial degree offset
 func (k Keeper) GetTSlotsDegreeOffset(ctx context.Context) uint32 {
-	return k.GetParams(ctx).TSlotsDegreeOffset
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0
+	}
+	return params.TSlotsDegreeOffset
 }
 
 // GetDealingPhaseDurationBlocks returns the dealing phase duration in blocks
 func (k Keeper) GetDealingPhaseDurationBlocks(ctx context.Context) int64 {
-	return k.GetParams(ctx).DealingPhaseDurationBlocks
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0
+	}
+	return params.DealingPhaseDurationBlocks
 }
 
 // GetVerificationPhaseDurationBlocks returns the verification phase duration in blocks
 func (k Keeper) GetVerificationPhaseDurationBlocks(ctx context.Context) int64 {
-	return k.GetParams(ctx).VerificationPhaseDurationBlocks
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0
+	}
+	return params.VerificationPhaseDurationBlocks
 }

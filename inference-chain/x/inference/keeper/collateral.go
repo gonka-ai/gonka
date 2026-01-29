@@ -16,7 +16,10 @@ import (
 // This function modifies the participants' weights in-memory.
 func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*types.ActiveParticipant) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	inferenceParams := k.GetParams(sdkCtx)
+	inferenceParams, err := k.GetParams(sdkCtx)
+	if err != nil {
+		return fmt.Errorf("failed to get params: %w", err)
+	}
 
 	latestEpoch, found := k.GetLatestEpoch(sdkCtx)
 	if !found {

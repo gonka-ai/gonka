@@ -278,6 +278,13 @@ jobs:
       - name: Run Tests (Non-Matrix)
         if: ${{ !inputs.use_matrix }}
         run: sudo make ${{ inputs.test_command }}
+      - name: Archive Test Results XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-xml-${{ matrix.test_group }}
+          path: ./testermint/build/test-results/**/*.xml
+          retention-days: 30
 
       - name: Archive Test Logs
         if: always()
@@ -326,6 +333,26 @@ jobs:
           path: ./testermint/build/test-results/**/*.xml
           reporter: java-junit
           fail-on-error: false
+
+      - name: Upload Results to BigQuery
+        if: always()
+        continue-on-error: true
+        env:
+          GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MATRIX_TEST_GROUP: ${{ matrix.test_group }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TEST_REPORT_URL: ${{ steps.test-reporter.outputs.url_html }}
+          LOGS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.archive-logs.outputs.artifact-id || 'N/A' }}
+        run: |
+          pip install google-cloud-bigquery
+          python .github/scripts/upload_test_results.py
 
       - name: Save Test Counts
         if: always()
@@ -528,3 +555,4 @@ jobs:
           echo "*Individual test reports are available in the Checks tab above*" >> $GITHUB_STEP_SUMMARY
           
           echo "##[debug]FINAL TOTALS: Passed=$TOTAL_PASSED, Failed=$TOTAL_FAILED, Skipped=$TOTAL_SKIPPED"
+

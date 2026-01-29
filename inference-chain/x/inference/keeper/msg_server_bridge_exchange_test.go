@@ -21,7 +21,7 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 
 	// Setup Epoch
 	epochIndex := uint64(1)
-	k.SetEffectiveEpochIndex(ctx, epochIndex)
+	_ = k.SetEffectiveEpochIndex(ctx, epochIndex)
 
 	// Setup Epoch Group Data
 	epochGroupData := types.EpochGroupData{

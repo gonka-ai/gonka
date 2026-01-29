@@ -36,6 +36,7 @@ func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
 		Params: types.DefaultParams(),
 		// this line is used by starport scaffolding # simapp/module/genesisState
 	}
+	//nolint:forbidigo // Simulation code
 	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&bookkeeperGenesis)
 }
 

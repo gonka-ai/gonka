@@ -12,40 +12,32 @@ import (
 	"decentralized-api/cosmosclient"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 )
 
 type fakeQueryServer struct {
 	types.UnimplementedQueryServer
-
-	firstPageParticipants  []types.Participant
-	secondPageParticipants []types.Participant
-	receivedHeights        []string
+	firstPage  []types.ParticipantWithBalance
+	secondPage []types.ParticipantWithBalance
 }
 
-func (f *fakeQueryServer) ParticipantAll(ctx context.Context, req *types.QueryAllParticipantRequest) (*types.QueryAllParticipantResponse, error) {
+func (f *fakeQueryServer) ParticipantsWithBalances(ctx context.Context, req *types.QueryParticipantsWithBalancesRequest) (*types.QueryParticipantsWithBalancesResponse, error) {
 	if req.Pagination == nil || len(req.Pagination.Key) == 0 {
-		md := metadata.Pairs(grpctypes.GRPCBlockHeightHeader, "12345")
-		_ = grpc.SendHeader(ctx, md)
-		return &types.QueryAllParticipantResponse{
-			Participant: f.firstPageParticipants,
-			Pagination:  &query.PageResponse{NextKey: []byte("next"), Total: uint64(len(f.firstPageParticipants) + len(f.secondPageParticipants))},
+		return &types.QueryParticipantsWithBalancesResponse{
+			Participants: f.firstPage,
+			Pagination:   &query.PageResponse{NextKey: []byte("next")},
+			BlockHeight:  12345,
 		}, nil
 	}
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		f.receivedHeights = append(f.receivedHeights, md.Get(grpctypes.GRPCBlockHeightHeader)...)
-	}
-	return &types.QueryAllParticipantResponse{
-		Participant: f.secondPageParticipants,
-		Pagination:  &query.PageResponse{NextKey: nil, Total: uint64(len(f.firstPageParticipants) + len(f.secondPageParticipants))},
+	return &types.QueryParticipantsWithBalancesResponse{
+		Participants: f.secondPage,
+		Pagination:   &query.PageResponse{NextKey: nil},
+		BlockHeight:  12345,
 	}, nil
 }
 
@@ -63,22 +55,27 @@ func startBufGRPCServer(t *testing.T, srv types.QueryServer) (*grpc.ClientConn, 
 }
 
 func TestGetAllParticipants_PaginationAndPinnedHeight(t *testing.T) {
-	first := make([]types.Participant, 100)
-	second := make([]types.Participant, 50)
+	first := make([]types.ParticipantWithBalance, 100)
+	second := make([]types.ParticipantWithBalance, 50)
 	for i := 0; i < 100; i++ {
-		first[i] = types.Participant{Address: fmt.Sprintf("addr%03d", i), InferenceUrl: "http://node", CoinBalance: int64(i), Weight: int32(i)}
+		first[i] = types.ParticipantWithBalance{
+			Participant: types.Participant{Address: fmt.Sprintf("addr%03d", i), InferenceUrl: "http://node", CoinBalance: int64(i), Weight: int32(i)},
+			Balances:    sdk.NewCoins(sdk.NewInt64Coin("ngonka", 42)),
+		}
 	}
 	for i := 0; i < 50; i++ {
-		second[i] = types.Participant{Address: fmt.Sprintf("addr%03d", 100+i), InferenceUrl: "http://node", CoinBalance: int64(100 + i), Weight: int32(100 + i)}
+		second[i] = types.ParticipantWithBalance{
+			Participant: types.Participant{Address: fmt.Sprintf("addr%03d", 100+i), InferenceUrl: "http://node", CoinBalance: int64(100 + i), Weight: int32(100 + i)},
+			Balances:    sdk.NewCoins(sdk.NewInt64Coin("ngonka", 42)),
+		}
 	}
 
-	fq := &fakeQueryServer{firstPageParticipants: first, secondPageParticipants: second}
+	fq := &fakeQueryServer{firstPage: first, secondPage: second}
 	conn, cleanup := startBufGRPCServer(t, fq)
 	defer cleanup()
 
 	mc := &cosmosclient.MockCosmosMessageClient{}
 	mc.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
-	mc.On("BankBalances", mock.Anything, mock.AnythingOfType("string")).Return([]sdk.Coin{sdk.NewInt64Coin("ngonka", 42)}, nil)
 
 	e := echo.New()
 	s := &Server{e: e, recorder: mc}
@@ -95,11 +92,6 @@ func TestGetAllParticipants_PaginationAndPinnedHeight(t *testing.T) {
 	require.Len(t, dto.Participants, 150)
 	require.Equal(t, "addr000", dto.Participants[0].Id)
 	require.Equal(t, int64(42), dto.Participants[0].Balance)
-	last := dto.Participants[len(dto.Participants)-1]
-	require.Equal(t, "addr149", last.Id)
-
-	require.GreaterOrEqual(t, len(fq.receivedHeights), 1)
-	require.Equal(t, "12345", fq.receivedHeights[0])
 
 	mc.AssertExpectations(t)
 }

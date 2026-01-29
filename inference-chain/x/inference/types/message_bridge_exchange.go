@@ -24,7 +24,7 @@ func NewMsgBridgeExchange(validator string, originChain string, contractAddress 
 	}
 }
 
-var reDigits = regexp.MustCompile(`^[0-9]+$`)
+var reDigits = regexp.MustCompile(`^[0-9]+$`) //nolint:forbidigo // init code
 
 func (msg *MsgBridgeExchange) ValidateBasic() error {
 	// validator bech32 signer

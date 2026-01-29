@@ -30,8 +30,8 @@ COLD_KEY_NAME = "gonka-account-key"
 
 INFERENCED_BINARY = SimpleNamespace(
     zip_file=BASE_DIR / "inferenced-linux-amd64.zip",
-    url="https://github.com/product-science/race-releases/releases/download/release%2Fv0.2.2-alpha7/inferenced-linux-amd64.zip",
-    checksum="6e2e60bb20ea539924f125e57335b32fea86eba5e78c019cd99f4f4c753bdbaa",
+    url="https://github.com/product-science/race-releases/releases/download/release%2Fv0.2.8-poc3/inferenced-linux-amd64.zip",
+    checksum="5ab63bfb05ae2ccc85627beb0ff3ced6b0bddf97ba864eae359bdcb0fa730e3e",
     path=BASE_DIR / "inferenced",
 )
 
@@ -806,6 +806,98 @@ def add_genesis_account(account_key: AccountKey):
     print("Genesis account added successfully!")
 
 
+def fund_distribution_module_account(community_pool_amount="120000000000000000"):
+    """
+    Fund the distribution module account for the community pool by directly editing genesis JSON.
+    This sets both the bank balance AND the distribution module's community_pool field.
+    """
+    print(f"Funding distribution module account with {community_pool_amount}ngonka...")
+    
+    # Distribution module account address (standard across Cosmos SDK)
+    distribution_address = "gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa"
+    
+    # Path to genesis file in local state
+    genesis_file = INFERENCED_STATE_DIR / "config/genesis.json"
+    
+    if not genesis_file.exists():
+        raise FileNotFoundError(f"Genesis file not found at {genesis_file}")
+    
+    # Read the genesis file
+    with open(genesis_file, 'r') as f:
+        genesis_data = json.load(f)
+    
+    # Add balance for distribution module account
+    if 'bank' not in genesis_data['app_state']:
+        genesis_data['app_state']['bank'] = {}
+    
+    if 'balances' not in genesis_data['app_state']['bank']:
+        genesis_data['app_state']['bank']['balances'] = []
+    
+    # Check if distribution module balance already exists
+    balance_exists = False
+    for balance_entry in genesis_data['app_state']['bank']['balances']:
+        if balance_entry['address'] == distribution_address:
+            # Update existing balance
+            balance_entry['coins'] = [
+                {
+                    "denom": "ngonka",
+                    "amount": community_pool_amount
+                }
+            ]
+            balance_exists = True
+            print(f"Updated existing balance for distribution module")
+            break
+    
+    if not balance_exists:
+        # Add new balance entry
+        genesis_data['app_state']['bank']['balances'].append({
+            "address": distribution_address,
+            "coins": [
+                {
+                    "denom": "ngonka",
+                    "amount": community_pool_amount
+                }
+            ]
+        })
+        print(f"Added new balance entry for distribution module")
+    
+    # Update the supply to include the community pool amount
+    if 'supply' in genesis_data['app_state']['bank']:
+        for supply_entry in genesis_data['app_state']['bank']['supply']:
+            if supply_entry['denom'] == 'ngonka':
+                current_supply = int(supply_entry['amount'])
+                new_supply = current_supply + int(community_pool_amount)
+                supply_entry['amount'] = str(new_supply)
+                print(f"Updated supply from {current_supply} to {new_supply}")
+                break
+    
+    # Set the distribution module's community_pool field
+    # This must match the bank balance to avoid "module balance does not match" panic
+    if 'distribution' not in genesis_data['app_state']:
+        genesis_data['app_state']['distribution'] = {}
+    
+    if 'fee_pool' not in genesis_data['app_state']['distribution']:
+        genesis_data['app_state']['distribution']['fee_pool'] = {}
+    
+    # Set community_pool with decimal format (amount with .000000000000000000 suffix)
+    genesis_data['app_state']['distribution']['fee_pool']['community_pool'] = [
+        {
+            "denom": "ngonka",
+            "amount": f"{community_pool_amount}.000000000000000000"
+        }
+    ]
+    print(f"Set distribution module community_pool field")
+    
+    # Write back to file with proper formatting
+    with open(genesis_file, 'w') as f:
+        json.dump(genesis_data, f, indent=2, separators=(',', ': '))
+    
+    print(f"Distribution module account funded successfully!")
+    print(f"Address: {distribution_address}")
+    print(f"Bank balance: {community_pool_amount}ngonka")
+    print(f"Community pool: {community_pool_amount}.000000000000000000ngonka")
+
+
 def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, warm_key_address: str):
     """Generate genesis transaction using local inferenced binary"""
     print("Generating genesis transaction (gentx)...")
@@ -1283,6 +1375,7 @@ def genesis_route(account_key: AccountKey):
     # Phase 3. GENTX and GENPARTICIPANT generation
     # Setup genesis.json file for local gentx generation
     setup_genesis_file()
+    fund_distribution_module_account()
     # Generate gentx transaction
     node_id = CONFIG_ENV.get("NODE_ID", "")
     if not node_id:
@@ -1292,13 +1385,12 @@ def genesis_route(account_key: AccountKey):
     # Phase 4. Genesis finalization
     collect_genesis_transactions()
     patch_genesis_participants()
-    copy_genesis_back_to_docker()
 
     # Apply genesis overrides (includes denom_metadata and other configurations)
-    # FIXME: replace with path to checked in genesis-overrides.json
-    genesis_overrides_path = BASE_DIR / "genesis-overrides.json"
+    genesis_overrides_path = GONKA_REPO_DIR / "test-net-cloud/nebius/genesis-overrides.json"
     apply_genesis_overrides(genesis_overrides_path)
 
+    copy_genesis_back_to_docker()
     copy_final_genesis_to_repo()
 
 

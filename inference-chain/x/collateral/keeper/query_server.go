@@ -68,7 +68,10 @@ func (k Keeper) UnbondingCollateral(c context.Context, req *types.QueryUnbonding
 		return nil, status.Errorf(codes.InvalidArgument, "invalid participant address: %v", err)
 	}
 
-	unbondings := k.GetUnbondingByParticipant(ctx, participantAddr)
+	unbondings, err := k.GetUnbondingByParticipant(ctx, participantAddr)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get unbonding collateral: %v", err)
+	}
 
 	return &types.QueryUnbondingCollateralResponse{Unbondings: unbondings}, nil
 }

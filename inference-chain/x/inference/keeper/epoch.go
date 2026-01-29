@@ -6,10 +6,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) {
-	if err := k.EffectiveEpochIndex.Set(ctx, epoch); err != nil {
-		panic(err)
-	}
+func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error {
+	return k.EffectiveEpochIndex.Set(ctx, epoch)
 }
 
 func (k Keeper) GetEffectiveEpochIndex(ctx context.Context) (uint64, bool) {

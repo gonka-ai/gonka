@@ -57,7 +57,8 @@ func (k Keeper) GetAllTopMiner(ctx context.Context) (list []types.TopMiner) {
 	for ; it.Valid(); it.Next() {
 		v, err := it.Value()
 		if err != nil {
-			panic(err)
+			k.LogError("failed to get top miner value during iteration", types.System, "error", err)
+			continue
 		}
 		list = append(list, v)
 	}

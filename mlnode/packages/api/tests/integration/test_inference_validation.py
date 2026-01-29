@@ -33,8 +33,8 @@ def inference_client(urls: tuple[str, str]) -> InferenceClient:
 @pytest.fixture(scope="session")
 def model_setup_big(inference_client: InferenceClient, urls: tuple[str, str]) -> str:
     _, vllm_url = urls
-    model_name = "Qwen/Qwen2.5-7B-Instruct"
-    inference_client.inference_setup(model_name, "bfloat16")
+    model_name = "Qwen/Qwen3-4B-Instruct-2507"
+    inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     return model_name
 
@@ -42,7 +42,7 @@ def model_setup_big(inference_client: InferenceClient, urls: tuple[str, str]) ->
 def model_setup_small(inference_client: InferenceClient, urls: tuple[str, str]) -> str:
     _, vllm_url = urls
     model_name = "unsloth/Llama-3.2-1B-Instruct"
-    inference_client.inference_setup(model_name, "bfloat16")
+    inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     return model_name
 
@@ -146,17 +146,17 @@ def test_different_models_inference_validation(
     _, vllm_url = urls
     
     # Set up the small model and run inference
-    inference_client.inference_setup("unsloth/Llama-3.2-1B-Instruct", "bfloat16")
+    inference_client.inference_setup("unsloth/Llama-3.2-1B-Instruct", "bfloat16", ["--max-model-len", "10000"])
     # Wait for the server to be ready with the new model
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     inference_response = run_inference_request(vllm_url, "unsloth/Llama-3.2-1B-Instruct", test_prompt)
     
     # Set up the big model and run validation
-    inference_client.inference_setup("Qwen/Qwen2.5-7B-Instruct", "bfloat16")
+    inference_client.inference_setup("Qwen/Qwen3-4B-Instruct-2507", "bfloat16", ["--max-model-len", "10000"])
     # Wait for the server to be ready with the new model
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     validation_response = run_validation_request(
-        vllm_url, "Qwen/Qwen2.5-7B-Instruct", test_prompt, enforced_str
+        vllm_url, "Qwen/Qwen3-4B-Instruct-2507", test_prompt, enforced_str
     )
     
     inference_sequence = TopLogProbsSequence.from_json(inference_response)

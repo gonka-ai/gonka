@@ -99,10 +99,10 @@ func DefaultParams() Params {
 			AllowedDeveloperAddresses: nil,
 		},
 		ParticipantAccessParams: &ParticipantAccessParams{
-			NewParticipantRegistrationStartHeight:  0,     // disabled by default
-			BlockedParticipantAddresses:            nil,   // keep nil to match proto round-trips
-			UseParticipantAllowlist:                false, // disabled by default
-			ParticipantAllowlistUntilBlockHeight:   0,     // no cutoff
+			NewParticipantRegistrationStartHeight: 0,     // disabled by default
+			BlockedParticipantAddresses:           nil,   // keep nil to match proto round-trips
+			UseParticipantAllowlist:               false, // disabled by default
+			ParticipantAllowlistUntilBlockHeight:  0,     // no cutoff
 		},
 	}
 }
@@ -161,7 +161,18 @@ func DefaultPocParams() *PocParams {
 		ValidationSampleSize:         200,
 		PocDataPruningEpochThreshold: 1,
 		WeightScaleFactor:            DecimalFromFloat(1.0),
-		ModelParams:                  DefaultPoCModelParams(),
+		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
+		ModelId:                      "",                      // Model identifier for PoC
+		SeqLen:                       256,                     // Sequence length for PoC
+		StatTest:                     DefaultPoCStatTestParams(),
+	}
+}
+
+func DefaultPoCStatTestParams() *PoCStatTestParams {
+	return &PoCStatTestParams{
+		DistThreshold:   DecimalFromFloat(0.4),
+		PMismatch:       DecimalFromFloat(0.1),
+		PValueThreshold: DecimalFromFloat(0.05),
 	}
 }
 
@@ -394,6 +405,22 @@ func (p Params) Validate() error {
 			return fmt.Errorf("participant allowlist until block height cannot be negative")
 		}
 	}
+
+	if p.PocParams != nil {
+		if err := p.PocParams.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *PocParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.SeqLen < 0 {
+		return fmt.Errorf("poc_params.seq_len cannot be negative")
+	}
 	return nil
 }
 
@@ -586,10 +613,10 @@ func (p *DynamicPricingParams) Validate() error {
 	}
 
 	// Validate stability zone bounds are logically consistent
-	lowerBound := p.StabilityZoneLowerBound.ToFloat()
-	upperBound := p.StabilityZoneUpperBound.ToFloat()
-	if lowerBound >= upperBound {
-		return fmt.Errorf("stability zone lower bound (%f) must be less than upper bound (%f)", lowerBound, upperBound)
+	lowerBound := p.StabilityZoneLowerBound.ToDecimal()
+	upperBound := p.StabilityZoneUpperBound.ToDecimal()
+	if lowerBound.GreaterThanOrEqual(upperBound) {
+		return fmt.Errorf("stability zone lower bound (%s) must be less than upper bound (%s)", lowerBound.String(), upperBound.String())
 	}
 
 	return nil
@@ -718,6 +745,10 @@ func validateDecayRate(i interface{}) error {
 	if legacyDec.LT(math.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
 		return fmt.Errorf("decay rate too extreme (less than -0.01): %s", legacyDec.String())
 	}
+	_, err = GetExponent(v.ToDecimal())
+	if err != nil {
+		return fmt.Errorf("decay rate does not have exponent defined %s", legacyDec.String())
+	}
 	return nil
 }
 
@@ -754,9 +785,9 @@ func validateStabilityZoneBound(i interface{}) error {
 		return fmt.Errorf("stability zone bound cannot be nil")
 	}
 
-	value := bound.ToFloat()
-	if value < 0.0 || value > 1.0 {
-		return fmt.Errorf("stability zone bound must be between 0.0 and 1.0, got: %f", value)
+	value := bound.ToDecimal()
+	if value.IsNegative() || value.GreaterThan(decimal.NewFromInt(1)) {
+		return fmt.Errorf("stability zone bound must be between 0.0 and 1.0, got: %s", value.String())
 	}
 	return nil
 }
@@ -770,9 +801,9 @@ func validatePriceElasticity(i interface{}) error {
 		return fmt.Errorf("price elasticity cannot be nil")
 	}
 
-	value := elasticity.ToFloat()
-	if value <= 0.0 || value > 1.0 {
-		return fmt.Errorf("price elasticity must be between 0.0 and 1.0, got: %f", value)
+	value := elasticity.ToDecimal()
+	if value.LessThanOrEqual(decimal.Zero) || value.GreaterThan(decimal.NewFromInt(1)) {
+		return fmt.Errorf("price elasticity must be between 0.0 and 1.0, got: %s", value.String())
 	}
 	return nil
 }
@@ -844,16 +875,6 @@ func validateInferencePruningEpochThreshold(i interface{}) error {
 	return nil
 }
 
-// ReduceSubsidyPercentage This produces the exact table we expect, as outlined in the whitepaper
-// We round to 4 decimal places, and we use decimal to avoid floating point errors
-func (p *TokenomicsParams) ReduceSubsidyPercentage() *TokenomicsParams {
-	csp := p.CurrentSubsidyPercentage.ToDecimal()
-	sra := p.SubsidyReductionAmount.ToDecimal()
-	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra)).Round(4)
-	p.CurrentSubsidyPercentage = &Decimal{Value: newCSP.CoefficientInt64(), Exponent: newCSP.Exponent()}
-	return p
-}
-
 func (d *Decimal) ToLegacyDec() (math.LegacyDec, error) {
 	return math.LegacyNewDecFromStr(d.ToDecimal().String())
 }
@@ -866,10 +887,6 @@ func (d *Decimal) ToFloat() float64 {
 	return d.ToDecimal().InexactFloat64()
 }
 
-func (d *Decimal) ToFloat32() float32 {
-	return float32(d.ToDecimal().InexactFloat64())
-}
-
 func DecimalFromFloat(f float64) *Decimal {
 	d := decimal.NewFromFloat(f)
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
@@ -878,6 +895,8 @@ func DecimalFromFloat(f float64) *Decimal {
 func DecimalFromDecimal(d decimal.Decimal) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
+
+var DecimalZero = Decimal{Value: 0, Exponent: 0}
 
 func DecimalFromFloat32(f float32) *Decimal {
 	d := decimal.NewFromFloat32(f)
@@ -893,4 +912,32 @@ func (p *PocParams) GetWeightScaleFactorDec() math.LegacyDec {
 		return math.LegacyOneDec()
 	}
 	return dec
+}
+
+var (
+	decayRate475       = decimal.New(-475, -6)
+	exponent475        = decimal.New(9995251127946402, -16)
+	decayRateVerySmall = decimal.New(-1, -6)
+	exponentVerySmall  = decimal.New(9999990000005, -13)
+	decayRatePositive  = decimal.New(1, -4)
+	exponentPositive   = decimal.New(10001000050001667, -16)
+	decayRateZero      = decimal.Zero
+	exponentZero       = decimal.NewFromInt(1)
+)
+
+func GetExponent(decayRate decimal.Decimal) (decimal.Decimal, error) {
+	if decayRate.Equal(decayRate475) {
+		return exponent475, nil
+	}
+	// For testing only (not a problem for production)
+	if decayRate.Equal(decayRateVerySmall) {
+		return exponentVerySmall, nil
+	}
+	if decayRate.Equal(decayRatePositive) {
+		return exponentPositive, nil
+	}
+	if decayRate.Equal(decayRateZero) {
+		return exponentZero, nil
+	}
+	return decimal.Zero, fmt.Errorf("unsupported decay rate: %s", decayRate.String())
 }

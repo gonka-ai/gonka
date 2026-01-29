@@ -13,6 +13,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/productscience/inference/x/bls/types"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
+	blst "github.com/supranational/blst/bindings/go"
 )
 
 const verifierLogTag = "[bls-verifier] "
@@ -233,7 +234,7 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 			dealerKeyIndex = keyIndex
 
 			// Verify the share against dealer's commitments
-			isValid, err := bm.verifyShareAgainstCommitments(decryptedShare, slotIndex, dealerPart.Commitments)
+			isValid, err := bm.verifyShareAgainstCommitmentsBlst(decryptedShare, slotIndex, dealerPart.Commitments)
 			if err != nil {
 				logging.Warn(verifierLogTag+"Failed to verify share", inferenceTypes.BLS,
 					"dealerIndex", dealerIndex,
@@ -392,7 +393,10 @@ func (bm *BlsManager) decryptShare(encryptedShare []byte) (*fr.Element, error) {
 	return share, nil
 }
 
-// verifyShareAgainstCommitments verifies a decrypted share against the dealer's polynomial commitments
+// verifyShareAgainstCommitments verifies a decrypted share against the dealer's polynomial commitments.
+//
+// Deprecated: use verifyShareAgainstCommitmentsBlst. The gnark-crypto implementation is kept only
+// for legacy/reference purposes and is intended to be removed in a future cleanup.
 func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
 	if len(commitments) == 0 {
 		return false, fmt.Errorf("no commitments provided")
@@ -442,6 +446,66 @@ func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex
 
 	// Verify: actualCommitment == expectedCommitment
 	return actualCommitment.Equal(&expectedCommitment), nil
+}
+
+// verifyShareAgainstCommitmentsBlst verifies a decrypted share against the dealer's polynomial commitments using blst.
+func (bm *BlsManager) verifyShareAgainstCommitmentsBlst(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
+	if len(commitments) == 0 {
+		return false, fmt.Errorf("no commitments provided")
+	}
+
+	// 1. Prepare points (commitments) in blst format
+	points := make([]*blst.P2Affine, len(commitments))
+	for j, cb := range commitments {
+		// Commitments are compressed G2 points (96 bytes)
+		if len(cb) != 96 {
+			return false, fmt.Errorf("invalid commitment length at index %d: %d, expected 96", j, len(cb))
+		}
+
+		p := new(blst.P2Affine).Uncompress(cb)
+		if p == nil {
+			return false, fmt.Errorf("failed to uncompress commitment at index %d", j)
+		}
+		// blst.Uncompress verifies encoding + on-curve, but does NOT enforce subgroup membership.
+		// For untrusted inputs, ensure points are in the correct G2 subgroup.
+		// Note: InG2 returns true for infinity (which can be a valid commitment for zero coefficients).
+		if !p.InG2() {
+			return false, fmt.Errorf("commitment at index %d is not in G2 subgroup", j)
+		}
+		points[j] = p
+	}
+
+	// 2. Prepare scalars (powers of slotIndex+1) in blst format
+	slotIndexFr := &fr.Element{}
+	slotIndexFr.SetUint64(uint64(slotIndex + 1))
+
+	slotIndexPower := &fr.Element{}
+	slotIndexPower.SetOne()
+
+	scalars := make([]byte, len(commitments)*32)
+	for j := 0; j < len(commitments); j++ {
+		// Convert to little-endian for blst
+		pBytes := slotIndexPower.Bytes()
+		for i := 0; i < 16; i++ {
+			pBytes[i], pBytes[31-i] = pBytes[31-i], pBytes[i]
+		}
+		copy(scalars[j*32:(j+1)*32], pBytes[:])
+		slotIndexPower.Mul(slotIndexPower, slotIndexFr)
+	}
+
+	// 3. Compute expected commitment using MSM (Polynomial evaluation)
+	expectedCommitment := blst.P2AffinesMult(points, scalars, 255).ToAffine()
+
+	// 4. Compute actual commitment: g * share
+	shareBytes := share.Bytes()
+	// Convert to little-endian for blst
+	for i := 0; i < 16; i++ {
+		shareBytes[i], shareBytes[31-i] = shareBytes[31-i], shareBytes[i]
+	}
+	actualCommitment := blst.P2Generator().Mult(shareBytes[:], 255).ToAffine()
+
+	// 5. Verify: actualCommitment == expectedCommitment
+	return actualCommitment.Equals(expectedCommitment), nil
 }
 
 // submitVerificationVectorSimplified constructs and submits the verification vector to the chain

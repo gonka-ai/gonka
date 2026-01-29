@@ -14,6 +14,11 @@ import (
 )
 
 func setupPostgresContainer(t *testing.T) (func(), error) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping postgres testcontainers tests in -short mode (requires Docker)")
+	}
+
 	ctx := context.Background()
 
 	container, err := postgres.Run(ctx,

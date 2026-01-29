@@ -2,7 +2,7 @@ package admin
 
 import (
 	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/poc"
+	"decentralized-api/internal/seed"
 	"decentralized-api/logging"
 	"net/http"
 	"strconv"
@@ -45,7 +45,7 @@ func (s *Server) postClaimRewardRecover(ctx echo.Context) error {
 		if req.Seed != nil {
 			seedValue = *req.Seed
 		} else {
-			generatedSeed, err := poc.CreateSeedForEpoch(s.recorder, epochIndex)
+			generatedSeed, err := seed.CreateSeedForEpoch(s.recorder, epochIndex)
 			if err != nil {
 				return echo.NewHTTPError(http.StatusInternalServerError,
 					"Failed to generate seed for epoch "+strconv.FormatUint(epochIndex, 10)+": "+err.Error())
@@ -62,7 +62,7 @@ func (s *Server) postClaimRewardRecover(ctx echo.Context) error {
 		} else {
 			seedValue = previousSeed.Seed
 			if seedValue == 0 {
-				generatedSeed, err := poc.CreateSeedForEpoch(s.recorder, epochIndex)
+				generatedSeed, err := seed.CreateSeedForEpoch(s.recorder, epochIndex)
 				if err != nil {
 					return echo.NewHTTPError(http.StatusInternalServerError,
 						"Failed to generate seed for epoch "+strconv.FormatUint(epochIndex, 10)+": "+err.Error())

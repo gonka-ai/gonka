@@ -21,7 +21,7 @@ func (t testTx) GetMsgsV2() ([]protov2.Message, error) { return nil, nil }
 
 func TestValidationEarlyRejectDecorator_DuplicateValidationRejectedInCheckTx(t *testing.T) {
 	k, ctx := testkeeper.InferenceKeeper(t)
-	k.SetEffectiveEpochIndex(ctx, 0)
+	_ = k.SetEffectiveEpochIndex(ctx, 0)
 
 	modelID := "model-1"
 	inferenceID := "inf-1"
@@ -61,7 +61,7 @@ func TestValidationEarlyRejectDecorator_DuplicateValidationRejectedInCheckTx(t *
 
 func TestValidationEarlyRejectDecorator_NotInEpochRejectedInCheckTx(t *testing.T) {
 	k, ctx := testkeeper.InferenceKeeper(t)
-	k.SetEffectiveEpochIndex(ctx, 0)
+	_ = k.SetEffectiveEpochIndex(ctx, 0)
 
 	modelID := "model-1"
 	inferenceID := "inf-1"
@@ -95,7 +95,7 @@ func TestValidationEarlyRejectDecorator_NotInEpochRejectedInCheckTx(t *testing.T
 
 func TestValidationEarlyRejectDecorator_BypassesDeliverTx(t *testing.T) {
 	k, ctx := testkeeper.InferenceKeeper(t)
-	k.SetEffectiveEpochIndex(ctx, 0)
+	_ = k.SetEffectiveEpochIndex(ctx, 0)
 
 	modelID := "model-1"
 	inferenceID := "inf-1"
@@ -130,7 +130,7 @@ func TestValidationEarlyRejectDecorator_BypassesDeliverTx(t *testing.T) {
 func TestValidationEarlyRejectDecorator_DoesNotRejectInferenceFromNextEpochInCheckTx(t *testing.T) {
 	t.Skip("TODO: This need to be re-enabled when we fixup the chain logic to use Inference Epoch, not current (bug)")
 	k, ctx := testkeeper.InferenceKeeper(t)
-	k.SetEffectiveEpochIndex(ctx, 0)
+	_ = k.SetEffectiveEpochIndex(ctx, 0)
 
 	modelID := "model-1"
 	inferenceID := "inf-next-epoch"
@@ -154,7 +154,10 @@ func TestValidationEarlyRejectDecorator_DoesNotRejectInferenceFromNextEpochInChe
 	})
 
 	decorator := NewValidationEarlyRejectDecorator(&k)
-	tx := testTx{msgs: []sdk.Msg{&inferencetypes.MsgValidation{Creator: validator, InferenceId: inferenceID, Value: 0.5}}}
+	tx := testTx{msgs: []sdk.Msg{&inferencetypes.MsgValidation{Creator: validator, InferenceId: inferenceID, ValueDecimal: &inferencetypes.Decimal{
+		Value:    5,
+		Exponent: -1,
+	}}}}
 
 	ctx = ctx.WithIsCheckTx(true)
 	_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {

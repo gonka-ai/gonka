@@ -215,6 +215,7 @@ kv client chain-id "$CHAIN_ID"
 kv client keyring-backend "$KEYRING_BACKEND"
 kv config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' $STATE_DIR/config/config.toml
+sed -Ei 's/^address = ".*:9090"$/address = "0\.0\.0\.0:9090"/g' $STATE_DIR/config/app.toml
 configure_tmkms
 update_configs
 

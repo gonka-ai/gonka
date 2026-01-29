@@ -155,7 +155,10 @@ func (k Keeper) validateAccountBalance(ctx context.Context, genesisAddr sdk.AccA
 // validateWhitelist checks if the account is allowed to be transferred (if whitelist is enabled)
 func (k Keeper) validateWhitelist(ctx context.Context, genesisAddr sdk.AccAddress) error {
 	// Get module parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
 
 	// If whitelist restriction is disabled, allow all transfers
 	if !params.RestrictToList {
@@ -187,7 +190,10 @@ func (k Keeper) IsTransferableAccount(ctx context.Context, address string) bool 
 	}
 
 	// Get module parameters
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return false
+	}
 
 	// If whitelist restriction is disabled, all valid addresses are transferable
 	if !params.RestrictToList {

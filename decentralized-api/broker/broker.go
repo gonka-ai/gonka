@@ -133,18 +133,56 @@ func (b *Broker) GetParticipantAddress() string {
 	return b.participantInfo.GetAddress()
 }
 
-const (
-	PoCBatchesPath = "/v1/poc-batches"
-)
-
-func GetPocBatchesCallbackUrl(callbackUrl string) string {
-	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
+// IsPoCv2Enabled returns whether PoC V2 (off-chain artifacts) is enabled.
+// Returns true by default if phaseTracker is not available.
+func (b *Broker) IsPoCv2Enabled() bool {
+	if b == nil || b.phaseTracker == nil {
+		return true // default V2
+	}
+	return b.phaseTracker.IsPoCv2Enabled()
 }
 
-func GetPocValidateCallbackUrl(callbackUrl string) string {
-	// For now the URl is the same, the node inference server appends "/validated" to the URL
-	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
+// IsV2EndpointsEnabled returns whether V2 endpoints should be enabled.
+// True when poc_v2_enabled=true OR confirmation_poc_v2_enabled=true (migration mode).
+func (b *Broker) IsV2EndpointsEnabled() bool {
+	if b == nil || b.phaseTracker == nil {
+		return true
+	}
+	return b.phaseTracker.IsPoCv2Enabled() || b.phaseTracker.IsConfirmationPoCv2Enabled()
+}
+
+// IsMigrationMode returns whether we're in migration mode.
+// Migration mode: poc_v2_enabled=false, confirmation_poc_v2_enabled=true.
+func (b *Broker) IsMigrationMode() bool {
+	if b == nil || b.phaseTracker == nil {
+		return false
+	}
+	return !b.phaseTracker.IsPoCv2Enabled() && b.phaseTracker.IsConfirmationPoCv2Enabled()
+}
+
+// shouldUseV2ForPoC determines if V2 should be used for PoC based on mode and event.
+// - Full V2 mode: always V2
+// - Migration mode + confirmation PoC event_sequence == 0: V2
+// - Otherwise: V1
+func (b *Broker) shouldUseV2ForPoC(confirmationEvent *types.ConfirmationPoCEvent) bool {
+	if b.IsPoCv2Enabled() {
+		return true
+	}
+	if b.IsMigrationMode() && confirmationEvent != nil && confirmationEvent.EventSequence == 0 {
+		return true
+	}
+	return false
+}
+
+const PoCBatchesBasePathV2 = "/v2/poc-batches"
+const PoCBatchesBasePathV1 = "/v1/poc-batches"
+
+func GetPoCCallbackBaseURLV2(callbackUrl string) string {
+	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV2)
+}
+
+func GetPoCCallbackBaseURLV1(callbackUrl string) string {
+	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV1)
 }
 
 type ModelArgs struct {
@@ -351,6 +389,10 @@ func (b *Broker) TriggerStatusQuery(bypassDebounce bool) {
 
 func (b *Broker) GetChainBridge() BrokerChainBridge {
 	return b.chainBridge
+}
+
+func (b *Broker) GetPhaseTracker() *chainphase.ChainPhaseTracker {
+	return b.phaseTracker
 }
 
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan NodeCommandResponse {
@@ -804,7 +846,8 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 type pocParams struct {
 	startPoCBlockHeight int64
 	startPoCBlockHash   string
-	modelParams         *types.PoCModelParams
+	modelId             string
+	seqLen              int64
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1040,7 +1083,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		// TODO: we should make reindexing as some indexes might be skipped
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
 		// Create and dispatch the command
-		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, int(totalNumNodes))
+		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, int(totalNumNodes), epochState.ActiveConfirmationPoCEvent)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
@@ -1081,10 +1124,12 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 		// CONFIRMATION PoC - use hash from event (populated by chain at generation_start_height)
 		if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
 			event := epochState.ActiveConfirmationPoCEvent
-			return &pocParams{
+			params := &pocParams{
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
-			}, nil
+			}
+			b.enrichWithPocParams(params)
+			return params, nil
 		}
 
 		// REGULAR PoC - query hash as usual
@@ -1098,7 +1143,23 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 }
 
-func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int) NodeWorkerCommand {
+// enrichWithPocParams fetches PoC params from chain and enriches pocParams.
+func (b *Broker) enrichWithPocParams(params *pocParams) {
+	paramsResp, err := b.chainBridge.GetParams()
+	if err != nil {
+		logging.Warn("Failed to query chain params", types.Nodes, "error", err)
+		return
+	}
+
+	if paramsResp.Params.PocParams != nil {
+		params.modelId = paramsResp.Params.PocParams.ModelId
+		params.seqLen = paramsResp.Params.PocParams.SeqLen
+		logging.Info("Using PoC params", types.PoC,
+			"model_id", params.modelId, "seq_len", params.seqLen)
+	}
+}
+
+func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int, confirmationEvent *types.ConfirmationPoCEvent) NodeWorkerCommand {
 	switch nodeState.IntendedStatus {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
@@ -1106,26 +1167,42 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 		switch nodeState.PocIntendedStatus {
 		case PocStatusGenerating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
-				return StartPoCNodeCommand{
+				// Dispatch V1 or V2 based on governance parameter and migration mode
+				if b.shouldUseV2ForPoC(confirmationEvent) {
+					return StartPoCNodeCommandV2{
+						BlockHeight: pocGenParams.startPoCBlockHeight,
+						BlockHash:   pocGenParams.startPoCBlockHash,
+						PubKey:      b.participantInfo.GetPubKey(),
+						CallbackUrl: GetPoCCallbackBaseURLV2(b.callbackUrl),
+						TotalNodes:  totalNodes,
+						Model:       pocGenParams.modelId,
+						SeqLen:      pocGenParams.seqLen,
+					}
+				}
+				return StartPoCNodeCommandV1{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
 					BlockHash:   pocGenParams.startPoCBlockHash,
 					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
+					CallbackUrl: GetPoCCallbackBaseURLV1(b.callbackUrl),
 					TotalNodes:  totalNodes,
-					ModelParams: pocGenParams.modelParams,
+					ModelParams: nil, // V1 uses chain-stored model params
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
 			return nil
 		case PocStatusValidating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
-				return InitValidateNodeCommand{
+				// Dispatch V1 or V2 based on governance parameter and migration mode
+				if b.shouldUseV2ForPoC(confirmationEvent) {
+					return TransitionPoCToValidatingCommandV2{}
+				}
+				return InitValidateNodeCommandV1{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
 					BlockHash:   pocGenParams.startPoCBlockHash,
 					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPocValidateCallbackUrl(b.callbackUrl),
+					CallbackUrl: GetPoCCallbackBaseURLV1(b.callbackUrl),
 					TotalNodes:  totalNodes,
-					ModelParams: pocGenParams.modelParams,
+					ModelParams: nil, // V1 uses chain-stored model params
 				}
 			}
 			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1161,19 +1238,13 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		return nil, err
 	}
 
-	paramsResp, err := b.chainBridge.GetParams()
-	var modelParams *types.PoCModelParams
-	if err != nil {
-		logging.Warn("Failed to query chain params, will use default model params", types.Nodes, "error", err)
-	} else if paramsResp.Params.PocParams != nil {
-		modelParams = paramsResp.Params.PocParams.ModelParams
-	}
-
-	return &pocParams{
+	params := &pocParams{
 		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
-		modelParams:         modelParams,
-	}, nil
+	}
+
+	b.enrichWithPocParams(params)
+	return params, nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
@@ -1285,19 +1356,27 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
 
 	if currentStatus == types.HardwareNodeStatus_INFERENCE {
-		hctx, hcancel := context.WithTimeout(context.Background(), inferenceHealthRequestTimeout)
-		defer hcancel()
-		ok, err := client.InferenceHealth(hctx)
-		if !ok || err != nil {
-			currentStatus = types.HardwareNodeStatus_FAILED
-			logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
+		// Check if PoC V2 is running inside inference (V2 runs within vLLM)
+		pctx, pcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
+		defer pcancel()
+		if pocStatus, err := client.GetPowStatusV2(pctx); err != nil {
+			logging.Debug("queryNodeStatus. GetPowStatusV2 failed", types.Nodes, "nodeId", nodeId, "error", err)
+		} else if pocStatus != nil && (pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING") {
+			logging.Debug("queryNodeStatus. PoC V2 running inside inference, reporting POC status",
+				types.Nodes, "nodeId", nodeId, "pocStatus", pocStatus.Status)
+			currentStatus = types.HardwareNodeStatus_POC
+		}
+		// Health check only if still INFERENCE (not overridden to POC)
+		if currentStatus == types.HardwareNodeStatus_INFERENCE {
+			hctx, hcancel := context.WithTimeout(context.Background(), inferenceHealthRequestTimeout)
+			defer hcancel()
+			ok, err := client.InferenceHealth(hctx)
+			if !ok || err != nil {
+				currentStatus = types.HardwareNodeStatus_FAILED
+				logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
+			}
 		}
 	}
-
-	// TODO: probably should also check PoC sub status here
-	//  but before implementing it, need to check we treat them correctly during reconciliation
-	//  for example I think we expect IDLE instead of STOPPED for PoC nodes
-	//  which is actually wrong
 
 	return &statusQueryResult{
 		PrevStatus:    prevStatus,

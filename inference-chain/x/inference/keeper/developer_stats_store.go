@@ -25,11 +25,15 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 		// completely new record
 		k.LogInfo("completely new record, create record by time", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
 		timeKey = developerByTimeAndInferenceKey(developer, uint64(inferenceTime), infStats.InferenceId)
-		byTimeStore.Set(timeKey, k.cdc.MustMarshal(&types.DeveloperStatsByTime{
+		bz, err := k.cdc.Marshal(&types.DeveloperStatsByTime{
 			EpochId:   epochId,
 			Timestamp: inferenceTime,
 			Inference: &infStats,
-		}))
+		})
+		if err != nil {
+			return 0, err
+		}
+		byTimeStore.Set(timeKey, bz)
 		byInferenceStore.Set([]byte(infStats.InferenceId), timeKey)
 		return 0, nil
 	}
@@ -41,7 +45,10 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 
 	if val := byTimeStore.Get(timeKey); val != nil {
 		k.LogInfo("record found by time key", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
-		k.cdc.MustUnmarshal(val, &statsByTime)
+		err := k.cdc.Unmarshal(val, &statsByTime)
+		if err != nil {
+			return 0, err
+		}
 		prevEpochId = statsByTime.EpochId
 
 		prevInferenceTime := statsByTime.Timestamp
@@ -64,7 +71,11 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 			Inference: &infStats,
 		}
 	}
-	byTimeStore.Set(timeKey, k.cdc.MustMarshal(&statsByTime))
+	bz, err := k.cdc.Marshal(&statsByTime)
+	if err != nil {
+		return 0, err
+	}
+	byTimeStore.Set(timeKey, bz)
 	byInferenceStore.Set([]byte(infStats.InferenceId), timeKey)
 
 	return prevEpochId, nil
@@ -78,7 +89,7 @@ func (k Keeper) setInferenceStatsByModel(ctx context.Context, developer string, 
 	byModelsStore.Set(modelKey, developerByTimeAndInferenceKey(developer, uint64(inferenceTime), stats.InferenceId))
 }
 
-func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer string, infStats types.InferenceStats, currentEpochId, prevEpochId uint64) {
+func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer string, infStats types.InferenceStats, currentEpochId, prevEpochId uint64) error {
 	k.LogDebug("stat set by epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId, "previously_known_epoch_id", prevEpochId)
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsDevelopersByEpoch))
@@ -89,10 +100,17 @@ func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer 
 		oldKey := developerByEpochKey(developer, prevEpochId)
 		if bz := epochStore.Get(oldKey); bz != nil {
 			var oldStats types.DeveloperStatsByEpoch
-			k.cdc.MustUnmarshal(bz, &oldStats)
+			err := k.cdc.Unmarshal(bz, &oldStats)
+			if err != nil {
+				return err
+			}
 
 			oldStats.InferenceIds = removeInferenceId(oldStats.InferenceIds, infStats.InferenceId)
-			epochStore.Set(oldKey, k.cdc.MustMarshal(&oldStats))
+			bz, err = k.cdc.Marshal(&oldStats)
+			if err != nil {
+				return err
+			}
+			epochStore.Set(oldKey, bz)
 		}
 	}
 
@@ -101,7 +119,10 @@ func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer 
 	newKey := developerByEpochKey(developer, currentEpochId)
 	var newStats types.DeveloperStatsByEpoch
 	if bz := epochStore.Get(newKey); bz != nil {
-		k.cdc.MustUnmarshal(bz, &newStats)
+		err := k.cdc.Unmarshal(bz, &newStats)
+		if err != nil {
+			return err
+		}
 		if newStats.InferenceIds == nil {
 			newStats.InferenceIds = make([]string, 0)
 		}
@@ -114,7 +135,12 @@ func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer 
 
 	if !inferenceIdExists(newStats.InferenceIds, infStats.InferenceId) {
 		newStats.InferenceIds = append(newStats.InferenceIds, infStats.InferenceId)
-		epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
+		bz, err := k.cdc.Marshal(&newStats)
+		if err != nil {
+			return err
+		}
+		epochStore.Set(newKey, bz)
 	}
 	k.LogDebug("stat set by epoch: inference successfully added to epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
+	return nil
 }

@@ -13,16 +13,21 @@ import (
 )
 
 const (
-	batchStartConsumer         = "batch-start-consumer"
-	batchFinishConsumer        = "batch-finish-consumer"
+	batchStartConsumer        = "batch-start-consumer"
+	batchFinishConsumer       = "batch-finish-consumer"
+	batchValidationV2Consumer = "batch-validation-v2-consumer"
+	batchAckWait              = time.Minute // must exceed FlushTimeout to prevent redelivery
+
+	// V1 PoC batch consumers
 	batchPocBatchConsumer      = "batch-poc-batch-consumer"
 	batchPocValidationConsumer = "batch-poc-validation-consumer"
-	batchAckWait               = time.Minute // must exceed FlushTimeout to prevent redelivery
 )
 
 type BatchConfig struct {
-	FlushSize    int
-	FlushTimeout time.Duration
+	FlushSize                int
+	FlushTimeout             time.Duration
+	ValidationV2FlushSize    int
+	ValidationV2FlushTimeout time.Duration
 }
 
 type pendingMsg struct {
@@ -36,18 +41,27 @@ type BatchConsumer struct {
 	txManager TxManager
 	config    BatchConfig
 
-	startBatch         []pendingMsg
-	finishBatch        []pendingMsg
+	startBatch        []pendingMsg
+	finishBatch       []pendingMsg
+	validationV2Batch []pendingMsg
+
+	// V1 PoC batches
 	pocBatchBatch      []pendingMsg
 	pocValidationBatch []pendingMsg
 
-	startMu         sync.Mutex
-	finishMu        sync.Mutex
+	startMu        sync.Mutex
+	finishMu       sync.Mutex
+	validationV2Mu sync.Mutex
+
+	// V1 PoC mutexes
 	pocBatchMu      sync.Mutex
 	pocValidationMu sync.Mutex
 
-	startCreatedAt         time.Time
-	finishCreatedAt        time.Time
+	startCreatedAt        time.Time
+	finishCreatedAt       time.Time
+	validationV2CreatedAt time.Time
+
+	// V1 PoC timestamps
 	pocBatchCreatedAt      time.Time
 	pocValidationCreatedAt time.Time
 }
@@ -65,6 +79,7 @@ func NewBatchConsumer(
 		config:             config,
 		startBatch:         make([]pendingMsg, 0, config.FlushSize),
 		finishBatch:        make([]pendingMsg, 0, config.FlushSize),
+		validationV2Batch:  make([]pendingMsg, 0, config.ValidationV2FlushSize),
 		pocBatchBatch:      make([]pendingMsg, 0, config.FlushSize),
 		pocValidationBatch: make([]pendingMsg, 0, config.FlushSize),
 	}
@@ -77,6 +92,10 @@ func (c *BatchConsumer) Start() error {
 	if err := c.subscribeStream(server.TxsBatchFinishStream, batchFinishConsumer, c.handleFinishMsg); err != nil {
 		return err
 	}
+	if err := c.subscribeStream(server.TxsBatchValidationV2Stream, batchValidationV2Consumer, c.handleValidationV2Msg); err != nil {
+		return err
+	}
+	// V1 PoC streams
 	if err := c.subscribeStream(server.TxsBatchPocBatchStream, batchPocBatchConsumer, c.handlePocBatchMsg); err != nil {
 		return err
 	}
@@ -150,6 +169,31 @@ func (c *BatchConsumer) handleFinishMsg(msg *nats.Msg) {
 	}
 }
 
+func (c *BatchConsumer) handleValidationV2Msg(msg *nats.Msg) {
+	if err := msg.InProgress(); err != nil {
+		logging.Error("Failed to mark validation v2 msg in progress", types.Messages, "error", err)
+	}
+	sdkMsg, err := c.unmarshalMsg(msg.Data)
+	if err != nil {
+		logging.Error("Failed to unmarshal validation v2 msg", types.Messages, "error", err)
+		msg.Term()
+		return
+	}
+
+	var shouldFlush bool
+	c.validationV2Mu.Lock()
+	if len(c.validationV2Batch) == 0 {
+		c.validationV2CreatedAt = time.Now()
+	}
+	c.validationV2Batch = append(c.validationV2Batch, pendingMsg{msg: sdkMsg, natsMsg: msg})
+	shouldFlush = len(c.validationV2Batch) >= c.config.ValidationV2FlushSize
+	c.validationV2Mu.Unlock()
+
+	if shouldFlush {
+		c.flushValidationV2()
+	}
+}
+
 func (c *BatchConsumer) handlePocBatchMsg(msg *nats.Msg) {
 	if err := msg.InProgress(); err != nil {
 		logging.Error("Failed to mark poc batch msg in progress", types.Messages, "error", err)
@@ -208,6 +252,7 @@ func (c *BatchConsumer) flushLoop() {
 		c.extendAckDeadlines()
 		c.checkAndFlushStart()
 		c.checkAndFlushFinish()
+		c.checkAndFlushValidationV2()
 		c.checkAndFlushPocBatch()
 		c.checkAndFlushPocValidation()
 	}
@@ -225,6 +270,12 @@ func (c *BatchConsumer) extendAckDeadlines() {
 		_ = p.natsMsg.InProgress()
 	}
 	c.finishMu.Unlock()
+
+	c.validationV2Mu.Lock()
+	for _, p := range c.validationV2Batch {
+		_ = p.natsMsg.InProgress()
+	}
+	c.validationV2Mu.Unlock()
 
 	c.pocBatchMu.Lock()
 	for _, p := range c.pocBatchBatch {
@@ -256,6 +307,16 @@ func (c *BatchConsumer) checkAndFlushFinish() {
 
 	if shouldFlush {
 		c.flushFinish()
+	}
+}
+
+func (c *BatchConsumer) checkAndFlushValidationV2() {
+	c.validationV2Mu.Lock()
+	shouldFlush := len(c.validationV2Batch) > 0 && time.Since(c.validationV2CreatedAt) >= c.config.ValidationV2FlushTimeout
+	c.validationV2Mu.Unlock()
+
+	if shouldFlush {
+		c.flushValidationV2()
 	}
 }
 
@@ -307,6 +368,23 @@ func (c *BatchConsumer) flushFinish() {
 	c.broadcastBatch("finish", batch)
 }
 
+func (c *BatchConsumer) flushValidationV2() {
+	c.validationV2Mu.Lock()
+	batch := c.validationV2Batch
+	if len(batch) == 0 {
+		c.validationV2Mu.Unlock()
+		return
+	}
+	c.validationV2Batch = make([]pendingMsg, 0, c.config.ValidationV2FlushSize)
+	c.validationV2CreatedAt = time.Time{} // reset timer
+	c.validationV2Mu.Unlock()
+
+	// Aggregate validations by height into single messages
+	aggregated := c.aggregateValidationV2Messages(batch)
+
+	c.broadcastAggregatedValidationV2(aggregated, batch)
+}
+
 func (c *BatchConsumer) flushPocBatch() {
 	c.pocBatchMu.Lock()
 	batch := c.pocBatchBatch
@@ -318,7 +396,7 @@ func (c *BatchConsumer) flushPocBatch() {
 	c.pocBatchCreatedAt = time.Time{} // reset timer
 	c.pocBatchMu.Unlock()
 
-	c.broadcastBatch("poc_batch", batch)
+	c.broadcastBatch("poc-batch", batch)
 }
 
 func (c *BatchConsumer) flushPocValidation() {
@@ -332,7 +410,69 @@ func (c *BatchConsumer) flushPocValidation() {
 	c.pocValidationCreatedAt = time.Time{} // reset timer
 	c.pocValidationMu.Unlock()
 
-	c.broadcastBatch("poc_validation", batch)
+	c.broadcastBatch("poc-validation", batch)
+}
+
+// aggregateValidationV2Messages merges multiple MsgSubmitPocValidationsV2 messages into
+// single messages grouped by PocStageStartBlockHeight. This reduces chain overhead from
+// N messages with 1 validation each to 1 message with N validations (per height).
+func (c *BatchConsumer) aggregateValidationV2Messages(batch []pendingMsg) []sdk.Msg {
+	// Group validations by height
+	byHeight := make(map[int64]*types.MsgSubmitPocValidationsV2)
+
+	for _, p := range batch {
+		msg, ok := p.msg.(*types.MsgSubmitPocValidationsV2)
+		if !ok {
+			logging.Warn("Unexpected message type in validation V2 batch", types.Messages)
+			continue
+		}
+
+		height := msg.PocStageStartBlockHeight
+		existing, found := byHeight[height]
+		if !found {
+			// First message for this height - clone it
+			byHeight[height] = &types.MsgSubmitPocValidationsV2{
+				Creator:                  msg.Creator,
+				PocStageStartBlockHeight: height,
+				Validations:              msg.Validations,
+			}
+		} else {
+			// Append validations to existing message
+			existing.Validations = append(existing.Validations, msg.Validations...)
+		}
+	}
+
+	// Convert map to slice
+	result := make([]sdk.Msg, 0, len(byHeight))
+	for _, msg := range byHeight {
+		result = append(result, msg)
+	}
+
+	return result
+}
+
+// broadcastAggregatedValidationV2 sends aggregated validation messages and acks original NATS messages.
+func (c *BatchConsumer) broadcastAggregatedValidationV2(aggregated []sdk.Msg, originalBatch []pendingMsg) {
+	totalValidations := 0
+	for _, msg := range aggregated {
+		if v, ok := msg.(*types.MsgSubmitPocValidationsV2); ok {
+			totalValidations += len(v.Validations)
+		}
+	}
+
+	logging.Info("Broadcasting aggregated validation V2", types.Messages,
+		"messages", len(aggregated),
+		"totalValidations", totalValidations,
+		"originalMessages", len(originalBatch))
+
+	if err := c.txManager.SendBatchAsyncWithRetry(aggregated); err != nil {
+		logging.Error("Failed to hand off aggregated validation V2 to TxManager", types.Messages, "error", err)
+	}
+
+	// Ack all original NATS messages
+	for _, p := range originalBatch {
+		p.natsMsg.Ack()
+	}
 }
 
 func (c *BatchConsumer) broadcastBatch(batchType string, batch []pendingMsg) {
@@ -368,6 +508,11 @@ func (c *BatchConsumer) PublishFinishInference(msg sdk.Msg) error {
 	return c.publishMsg(server.TxsBatchFinishStream, msg)
 }
 
+func (c *BatchConsumer) PublishPocValidationV2(msg sdk.Msg) error {
+	return c.publishMsg(server.TxsBatchValidationV2Stream, msg)
+}
+
+// V1 PoC publish methods
 func (c *BatchConsumer) PublishPocBatch(msg sdk.Msg) error {
 	return c.publishMsg(server.TxsBatchPocBatchStream, msg)
 }

@@ -10,12 +10,13 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/modelmanager"
 	"decentralized-api/internal/nats/server"
-	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/payloadstorage"
+	"decentralized-api/poc"
+	"decentralized-api/poc/artifacts"
 	"net"
 
 	"github.com/productscience/inference/api/inference/inference"
@@ -125,7 +126,8 @@ func main() {
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
-	nodePocOrchestrator := poc.NewNodePoCOrchestratorForCosmosChain(
+	// Create v2 orchestrator for artifact-based PoC
+	pocOrchestrator := poc.NewOrchestrator(
 		participantInfo.GetPubKey(),
 		nodeBroker,
 		config.GetApiConfig().PoCCallbackUrl,
@@ -133,7 +135,7 @@ func main() {
 		recorder,
 		chainPhaseTracker,
 	)
-	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
+	logging.Info("PoC orchestrator initialized", types.PoC)
 
 	tendermintClient := cosmosclient.TendermintClient{
 		ChainNodeUrl: config.GetChainNodeConfig().Url,
@@ -150,7 +152,7 @@ func main() {
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsManager)
+	listener := event_listener.NewEventListener(config, pocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsManager)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 
@@ -178,12 +180,24 @@ func main() {
 		3*time.Minute, // cache TTL
 	)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore)
+	// Shared managed artifact store for off-chain PoC (used by both mlnode and public servers)
+	// Manages per-height directories with automatic pruning (retains last 10)
+	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
+	defer artifactStore.Close()
+
+	// Create commit worker for time-based artifact commits and weight distribution
+	// Worker owns flush lifecycle, commits periodically (not per-request), and handles distribution
+	batchingCfg := config.GetTxBatchingConfig()
+	commitInterval := time.Duration(batchingCfg.PocCommitIntervalSeconds) * time.Second
+	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
+	defer commitWorker.Close()
+
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore, pserver.WithArtifactStore(artifactStore))
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
-	mlServer := mlserver.NewServer(recorder, nodeBroker)
+	mlServer := mlserver.NewServer(recorder, nodeBroker, mlserver.WithArtifactStore(artifactStore))
 	mlServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
