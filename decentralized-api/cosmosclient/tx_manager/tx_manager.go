@@ -66,6 +66,8 @@ type TxManager interface {
 	GetJetStream() nats.JetStreamContext
 }
 
+type ClientProvider func() *cosmosclient.Client
+
 type blockTimeTracker struct {
 	latestBlockTime time.Time
 	lastUpdatedAt   time.Time
@@ -77,6 +79,7 @@ type blockTimeTracker struct {
 type manager struct {
 	ctx              context.Context
 	client           *cosmosclient.Client
+	clientProvider   ClientProvider
 	apiAccount       *apiconfig.ApiAccount
 	txFactory        *tx.Factory
 	accountRetriever client.AccountRetriever
@@ -91,6 +94,7 @@ type manager struct {
 func StartTxManager(
 	ctx context.Context,
 	client *cosmosclient.Client,
+	clientProvider ClientProvider,
 	account *apiconfig.ApiAccount,
 	defaultTimeout time.Duration,
 	natsConnection *nats.Conn,
@@ -114,6 +118,7 @@ func StartTxManager(
 	m := &manager{
 		ctx:              ctx,
 		client:           client,
+		clientProvider:   clientProvider,
 		address:          address,
 		apiAccount:       account,
 		accountRetriever: authtypes.AccountRetriever{},
@@ -169,7 +174,25 @@ func (m *manager) GetApiAccount() apiconfig.ApiAccount {
 }
 
 func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
-	return m.client.Status(ctx)
+	return m.getClient().Status(ctx)
+}
+
+func (m *manager) getClient() *cosmosclient.Client {
+	if m.clientProvider != nil {
+		if c := m.clientProvider(); c != nil {
+			return c
+		}
+	}
+	return m.client
+}
+
+func (m *manager) getClientContext() client.Context {
+	ctx := m.client.Context()
+	alt := m.getClient()
+	if alt != nil && alt.RPC != nil && alt != m.client {
+		ctx = ctx.WithClient(alt.RPC)
+	}
+	return ctx
 }
 
 func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt ...int64) (*sdk.TxResponse, error) {
@@ -370,7 +393,7 @@ func (m *manager) putOnRetry(
 		return nil
 	}
 
-	bz, err := m.client.Context().Codec.MarshalInterfaceJSON(rawTx)
+	bz, err := m.getClientContext().Codec.MarshalInterfaceJSON(rawTx)
 	if err != nil {
 		return err
 	}
@@ -425,7 +448,7 @@ func (m *manager) putBatchOnRetry(
 
 	rawBatch := make([][]byte, len(msgs))
 	for i, msg := range msgs {
-		bz, err := m.client.Context().Codec.MarshalInterfaceJSON(msg)
+		bz, err := m.getClientContext().Codec.MarshalInterfaceJSON(msg)
 		if err != nil {
 			return err
 		}
@@ -728,7 +751,7 @@ func (m *manager) observeTxs() error {
 }
 
 func (m *manager) GetClientContext() client.Context {
-	return m.client.Context()
+	return m.getClientContext()
 }
 
 func (m *manager) checkTxStatus(hash string) (bool, error) {
@@ -738,7 +761,7 @@ func (m *manager) checkTxStatus(hash string) (bool, error) {
 		return false, ErrDecodingTxHash
 	}
 
-	resp, err := m.client.Context().Client.Tx(m.ctx, bz, false)
+	resp, err := m.getClientContext().Client.Tx(m.ctx, bz, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return false, ErrTxNotFound
@@ -757,7 +780,7 @@ func (m *manager) WaitForResponse(txHash string) (*ctypes.ResultTx, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, time.Second*15)
 	defer cancel()
 
-	transactionAppliedResult, err := m.client.WaitForTx(ctx, txHash)
+	transactionAppliedResult, err := m.getClient().WaitForTx(ctx, txHash)
 	if err != nil {
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
 		return nil, err
@@ -772,7 +795,7 @@ func (m *manager) WaitForResponse(txHash string) (*ctypes.ResultTx, error) {
 }
 
 func (m *manager) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
-	return m.client.BankBalances(ctx, address, nil)
+	return m.getClient().BankBalances(ctx, address, nil)
 }
 
 func (m *manager) GetJetStream() nats.JetStreamContext {
@@ -814,7 +837,7 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 		return nil, time.Time{}, err
 	}
 
-	resp, err := m.client.Context().BroadcastTxSync(txBytes)
+	resp, err := m.getClientContext().BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -854,7 +877,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 		return nil, time.Time{}, err
 	}
 
-	resp, err := m.client.Context().BroadcastTxSync(txBytes)
+	resp, err := m.getClientContext().BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -868,12 +891,12 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 
 func (m *manager) unpackTx(bz []byte) (sdk.Msg, error) {
 	var unpackedAny codectypes.Any
-	if err := m.client.Context().Codec.UnmarshalJSON(bz, &unpackedAny); err != nil {
+	if err := m.getClientContext().Codec.UnmarshalJSON(bz, &unpackedAny); err != nil {
 		return nil, err
 	}
 
 	var rawTx sdk.Msg
-	if err := m.client.Context().Codec.UnpackAny(&unpackedAny, &rawTx); err != nil {
+	if err := m.getClientContext().Codec.UnpackAny(&unpackedAny, &rawTx); err != nil {
 		return nil, err
 	}
 	return rawTx, nil
@@ -905,7 +928,7 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 		logging.Error("Failed to get account address", types.Messages, "tx_id", id, "error", err)
 		return nil, err
 	}
-	accountNumber, _, err := m.accountRetriever.GetAccountNumberSequence(m.client.Context(), address)
+	accountNumber, _, err := m.accountRetriever.GetAccountNumberSequence(m.getClientContext(), address)
 	if err != nil {
 		logging.Error("Failed to get account number and sequence", types.Messages, "tx_id", id, "error", err)
 		return nil, err
@@ -947,7 +970,7 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 		logging.Error("Failed to sign transaction", types.Messages, "tx_id", id, "error", err)
 		return nil, time.Time{}, err
 	}
-	txBytes, err := m.client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
+	txBytes, err := m.getClientContext().TxConfig.TxEncoder()(unsignedTx.GetTx())
 	if err != nil {
 		logging.Error("Failed to encode transaction", types.Messages, "tx_id", id, "error", err)
 		return nil, time.Time{}, err
@@ -987,7 +1010,7 @@ func (m *manager) updateChainHalt() (bool, error) {
 	}
 	m.blockTimeTracker.mtx.Unlock()
 
-	status, err := m.client.Status(m.ctx)
+	status, err := m.getClient().Status(m.ctx)
 	if err != nil {
 		logging.Error("error getting blockchain status", types.Messages, "err", err)
 		return false, err

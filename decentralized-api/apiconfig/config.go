@@ -64,13 +64,13 @@ type ApiConfig struct {
 }
 
 type ChainNodeConfig struct {
-	Url              string `koanf:"url" json:"url"`
-	IsGenesis        bool   `koanf:"is_genesis" json:"is_genesis"`
-	SeedApiUrl       string `koanf:"seed_api_url" json:"seed_api_url"`
-	AccountPublicKey string `koanf:"account_public_key" json:"account_public_key"`
-	SignerKeyName    string `koanf:"signer_key_name" json:"signer_key_name"`
-	KeyringBackend   string `koanf:"keyring_backend" json:"keyring_backend"`
-	KeyringDir       string `koanf:"keyring_dir" json:"keyring_dir"`
+	Url                string `koanf:"url" json:"url"`
+	IsGenesis          bool   `koanf:"is_genesis" json:"is_genesis"`
+	SeedApiUrl         string `koanf:"seed_api_url" json:"seed_api_url"`
+	AccountPublicKey   string `koanf:"account_public_key" json:"account_public_key"`
+	SignerKeyName      string `koanf:"signer_key_name" json:"signer_key_name"`
+	KeyringBackend     string `koanf:"keyring_backend" json:"keyring_backend"`
+	KeyringDir         string `koanf:"keyring_dir" json:"keyring_dir"`
 	KeyringPassword    string `json:"-"`
 	ConnectionPoolSize int    `koanf:"connection_pool_size" json:"connection_pool_size"`
 }

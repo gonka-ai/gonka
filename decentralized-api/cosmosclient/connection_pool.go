@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -22,6 +23,7 @@ const (
 	DefaultPingTimeout         = 5 * time.Second
 	DefaultMaxConcurrentChecks = 10
 	DefaultHealthJitter        = 0.2
+	DefaultCloseDelay          = 5 * time.Second
 )
 
 type ConnectionPool struct {
@@ -29,6 +31,7 @@ type ConnectionPool struct {
 	cancels  []context.CancelFunc
 	healthy  []atomic.Bool
 	mu       sync.RWMutex
+	randMu   sync.Mutex
 	next     uint64
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -43,7 +46,7 @@ type ConnectionPool struct {
 
 func NewConnectionPool(ctx context.Context, prefix string, config *apiconfig.ConfigManager, size int) (*ConnectionPool, error) {
 	if size <= 0 {
-		size = DefaultPoolSize
+		return nil, errors.New("connection pool size must be > 0")
 	}
 	checks := capChecks(size)
 	if size > DefaultMaxConcurrentChecks {
@@ -130,7 +133,9 @@ func (p *ConnectionPool) healthLoop() {
 }
 
 func (p *ConnectionPool) jitterDuration(base time.Duration) time.Duration {
+	p.randMu.Lock()
 	factor := 1 + ((p.rand.Float64()*2 - 1) * DefaultHealthJitter)
+	p.randMu.Unlock()
 	return time.Duration(float64(base) * factor)
 }
 
@@ -210,28 +215,53 @@ func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmoscli
 		}
 	}
 	p.mu.Unlock()
-	logging.Info("connection pool: health check result", types.System,
+	logging.Debug("connection pool: health check result", types.System,
 		"replaced", replaced, "healthy", healthy, "unhealthy", unhealthy, "total", len(pingResults))
 	for _, cancel := range toCancel {
-		cancel()
+		time.AfterFunc(DefaultCloseDelay, cancel)
 	}
 	for _, client := range toStop {
-		client.RPC.Stop()
+		c := client
+		time.AfterFunc(DefaultCloseDelay, func() {
+			c.RPC.Stop()
+		})
 	}
 }
 
 func (p *ConnectionPool) ping(c *cosmosclient.Client) bool {
-	if c == nil || c.RPC == nil {
-		logging.Warn("connection pool: ping skipped - nil client or RPC", types.System)
+	if c == nil {
+		logging.Warn("connection pool: ping skipped - nil client", types.System)
 		return false
 	}
 	ctx, cancel := context.WithTimeout(p.ctx, p.timeout)
 	defer cancel()
-	_, err := c.RPC.Status(ctx)
+	if grpcClient := c.Context().GRPCClient; grpcClient != nil {
+		return p.pingGRPC(ctx, cmtservice.NewServiceClient(grpcClient))
+	}
+	return p.pingRPC(ctx, c)
+}
+
+func (p *ConnectionPool) pingGRPC(ctx context.Context, grpcConn cmtservice.ServiceClient) bool {
+	// grpc_health_v1.Check would be better here, but Cosmos SDK nodes don't
+	// enable the health service by default, so use a lightweight query instead
+	_, err := grpcConn.GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
 	if err != nil {
 		logging.Warn("connection pool: ping failed", types.System, "error", err)
+		return false
 	}
-	return err == nil
+	return true
+}
+
+func (p *ConnectionPool) pingRPC(ctx context.Context, c *cosmosclient.Client) bool {
+	if c.RPC == nil {
+		return false
+	}
+	_, err := c.RPC.Health(ctx)
+	if err != nil {
+		logging.Warn("connection pool: ping failed", types.System, "error", err)
+		return false
+	}
+	return true
 }
 
 func (p *ConnectionPool) Close() {

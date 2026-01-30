@@ -168,7 +168,23 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		}
 	}()
 
-	mn, err := tx_manager.StartTxManager(ctx, cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
+	var queryPool *ConnectionPool
+	var txClientProvider tx_manager.ClientProvider
+	if nodeConfig.ConnectionPoolSize > 0 {
+		if pool, err := NewConnectionPool(ctx, addressPrefix, config, nodeConfig.ConnectionPoolSize); err == nil {
+			txClientProvider = func() *cosmosclient.Client {
+				if c, err := pool.Get(); err == nil {
+					return c
+				}
+				return nil
+			}
+			queryPool = pool
+		} else {
+			logging.Warn("Connection pool creation failed", types.System, "error", err)
+		}
+	}
+
+	mn, err := tx_manager.StartTxManager(ctx, cosmoclient, txClientProvider, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +194,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		Address:    accAddress,
 		apiAccount: apiAccount,
 		manager:    mn,
+		queryPool:  queryPool,
 	}
 
 	batchingCfg := config.GetTxBatchingConfig()
@@ -200,14 +217,6 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		logging.Info("Transaction batching enabled", types.Messages,
 			"flushSize", batchingCfg.FlushSize,
 			"flushTimeoutSeconds", batchingCfg.FlushTimeoutSeconds)
-	}
-
-	if nodeConfig.ConnectionPoolSize > 0 {
-		if pool, err := NewConnectionPool(ctx, addressPrefix, config, nodeConfig.ConnectionPoolSize); err == nil {
-			client.queryPool = pool
-		} else {
-			logging.Warn("Connection pool creation failed", types.System, "error", err)
-		}
 	}
 
 	success = true

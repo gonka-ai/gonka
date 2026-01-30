@@ -108,18 +108,25 @@ func TestConnectionPoolRoundRobin(t *testing.T) {
 		cancel:  cancel,
 	})
 
-	// Each call should cycle through clients
-	got1, _ := p.Get()
-	got2, _ := p.Get()
-	got3, _ := p.Get()
-	got4, _ := p.Get()
-
-	if got1 == got2 && got2 == got3 {
-		t.Error("expected round-robin to return different clients")
+	got1, err := p.Get()
+	if err != nil {
+		t.Fatalf("unexpected error from Get(): %v", err)
 	}
-	// After 3 calls, we should cycle back
-	if got1 != got4 {
-		t.Error("expected round-robin to cycle back to first client")
+	got2, err := p.Get()
+	if err != nil {
+		t.Fatalf("unexpected error from Get(): %v", err)
+	}
+	got3, err := p.Get()
+	if err != nil {
+		t.Fatalf("unexpected error from Get(): %v", err)
+	}
+	got4, err := p.Get()
+	if err != nil {
+		t.Fatalf("unexpected error from Get(): %v", err)
+	}
+
+	if got1 != c1 || got2 != c2 || got3 != c3 || got4 != c1 {
+		t.Errorf("expected round-robin sequence c1, c2, c3, c1; got %p, %p, %p, %p", got1, got2, got3, got4)
 	}
 }
 
