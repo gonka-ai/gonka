@@ -4,38 +4,31 @@ import (
 	"context"
 
 	"cosmossdk.io/collections"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// ensureEpochGroupCacheInited lazily inits the hot cache and invalidates it when current block height > cachedAtHeight
-// (e.g. new block or chain sync), so we always read fresh from store after height advance.
-// Entries are not preloaded; they are filled on first GetEpochGroupData for each (epoch, modelId). Caller must hold no cache lock.
+// InvalidateEpochGroupCache clears the epoch group cache. Call from PrepareForBlock so the cache
+// is invalidated once per block and the next Get/Set will re-init from store.
+func (k *Keeper) InvalidateEpochGroupCache() {
+	c := k.epochGroupCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.inited = false
+	c.m = make(map[epochGroupCacheKey]types.EpochGroupData)
+	c.currentDirty = false
+}
+
+// ensureEpochGroupCacheInited lazily inits the hot cache. Entries are not preloaded; they are
+// filled on first GetEpochGroupData for each (epoch, modelId). Caller must hold no cache lock.
+// Cache is invalidated in PrepareForBlock, so after a new block this will re-init from store.
 func (k Keeper) ensureEpochGroupCacheInited(ctx context.Context) {
 	c := k.epochGroupCache
-	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.inited {
-		if height > c.cachedAtHeight {
-			// New block or sync: invalidate cache so we read from store (which has the replayed/synced data).
-			c.m = make(map[epochGroupCacheKey]types.EpochGroupData)
-			c.currentDirty = false
-			c.cachedAtHeight = height
-			eff, ok := k.GetEffectiveEpochIndex(ctx)
-			if ok {
-				c.current = eff
-				if eff > 0 {
-					c.previous = eff - 1
-				} else {
-					c.previous = 0
-				}
-			}
-		}
 		return
 	}
-
 	eff, ok := k.GetEffectiveEpochIndex(ctx)
 	if !ok {
 		return
@@ -46,7 +39,6 @@ func (k Keeper) ensureEpochGroupCacheInited(ctx context.Context) {
 	} else {
 		c.previous = 0
 	}
-	c.cachedAtHeight = height
 	c.m = make(map[epochGroupCacheKey]types.EpochGroupData)
 	c.inited = true
 }

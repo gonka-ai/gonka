@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -19,16 +20,29 @@ type epochGroupCacheKey struct {
 	ModelId string
 }
 
+// RevalidationEventInfo holds inference_id and validator for an inference_validation event with needs_revalidation=true.
+type RevalidationEventInfo struct {
+	InferenceId string
+	Validator   string
+}
+
+// BlockRevalidationEventsProvider returns all inference_validation events with needs_revalidation=true
+// for a given block height (e.g. from block results). The app can implement this by reading block
+// results for the height and parsing events. When set on the keeper, ProcessPendingRevalidationEvents
+// uses it in BeginBlock to get all events from the previous block (not only "locally initiated").
+type BlockRevalidationEventsProvider interface {
+	GetInferenceValidationRevalidationEvents(ctx context.Context, height int64) ([]RevalidationEventInfo, error)
+}
+
 // epochGroupCache holds EpochGroupData for current and previous effective epoch only.
-// Cache is invalidated when current block height > cachedAtHeight (e.g. after sync or new block).
+// Cache is invalidated in PrepareForBlock each block.
 type epochGroupCache struct {
-	mu             sync.RWMutex
-	inited         bool
-	cachedAtHeight int64 // block height at which cache was last valid; invalidate if ctx.BlockHeight() > cachedAtHeight
-	current        uint64
-	previous       uint64
-	currentDirty   bool
-	m              map[epochGroupCacheKey]types.EpochGroupData
+	mu           sync.RWMutex
+	inited       bool
+	current      uint64
+	previous     uint64
+	currentDirty bool
+	m            map[epochGroupCacheKey]types.EpochGroupData
 }
 
 // randomSeedCacheKey keys the warm cache by (epochIndex, participant). Participant is Bech32 string so the key is comparable.
@@ -90,6 +104,9 @@ type (
 		epochGroupCache *epochGroupCache
 		// RandomSeed warm cache: current effective epoch only; inited on first Get, refreshed on SetEffectiveEpochIndex.
 		randomSeedCache *randomSeedCache
+		// Optional: provides all inference_validation events with needs_revalidation=true for a block (e.g. from block results).
+		// When set, used in BeginBlock to get all events from the previous block; when nil, no revalidation hook is run.
+		blockRevalidationEventsProvider BlockRevalidationEventsProvider
 		// Epoch collections
 		Epochs                    collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex       collections.Item[uint64]
@@ -513,6 +530,13 @@ func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyVals ...inter
 // Codec returns the binary codec used by the keeper.
 func (k Keeper) Codec() codec.BinaryCodec {
 	return k.cdc
+}
+
+// SetBlockRevalidationEventsProvider sets the optional provider used to get all inference_validation
+// events with needs_revalidation=true from a block (e.g. from block results). Call from the app
+// after creating the keeper to enable the revalidation hook with all events from the previous block.
+func (k *Keeper) SetBlockRevalidationEventsProvider(p BlockRevalidationEventsProvider) {
+	k.blockRevalidationEventsProvider = p
 }
 
 type EntryType int

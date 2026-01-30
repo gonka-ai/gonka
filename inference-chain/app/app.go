@@ -287,7 +287,16 @@ func New(
 		panic(err)
 	}
 
+	// Inference module: process events at Commit (Precommiter hook) so the hook runs
+	// as soon as the block is finalized. Events are collected at postHandler
+	baseAppOptions = append(baseAppOptions, RevalidationCommitOption(&app.InferenceKeeper))
+
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
+
+	// Inference module: block revalidation events. PostHandler collects events; when block is
+	// finalized (BeginBlock of next block) we call the hook; if block did not finalize we discard.
+	// - PostHandler collects events per block; PrepareForBlock discards on non-finalized attempt.
+	app.setRevalidationEventsFromPostHandler()
 
 	// SendRestriction configuration is handled automatically through dependency injection
 	// The restrictions module provides its SendRestrictionFn with the "bank-send-restrictions" group tag

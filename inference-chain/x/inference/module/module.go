@@ -173,7 +173,18 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 func (AppModule) ConsensusVersion() uint64 { return 12 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
+//
+// Event handling: events are processed
+// in the Commit Precommiter hook so the hook runs as soon as the block is finalized.
+// But we clear the proposed events every BeginBlock to only use events from the execution that committed.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	currentHeight := sdkCtx.BlockHeight()
+	// Discard events for current block (if using PostHandler collector) so we only use events
+	// from the execution that committed; if this block was re-executed after a non-finalized
+	// attempt, we don't use the old attempt's events.
+	am.keeper.PrepareForBlock(ctx, currentHeight)
+
 	// Update dynamic pricing for all models at the start of each block
 	// This ensures consistent pricing for all inferences processed in this block
 	err := am.keeper.UpdateDynamicPricing(ctx)
