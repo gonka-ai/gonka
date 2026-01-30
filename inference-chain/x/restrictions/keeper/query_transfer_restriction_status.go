@@ -17,7 +17,10 @@ func (k Keeper) TransferRestrictionStatus(goCtx context.Context, req *types.Quer
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get parameters")
+	}
 
 	currentHeight := uint64(ctx.BlockHeight())
 	restrictionEndBlock := params.RestrictionEndBlock

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
@@ -47,6 +48,9 @@ func (k Keeper) GetInference(
 ) (val types.Inference, found bool) {
 	v, err := k.Inferences.Get(ctx, index)
 	if err != nil {
+		if !errors.Is(err, collections.ErrNotFound) {
+			k.LogError("Unexpected error retrieving inference", types.Inferences, "error", err, "index", index)
+		}
 		return val, false
 	}
 	return v, true

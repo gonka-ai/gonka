@@ -16,6 +16,18 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
+	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
+	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
+	}
+
+	if msg.MaxTokens > types.MaxAllowedTokens {
+		return failedStart(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "max_tokens exceeds limit (%d > %d)", msg.MaxTokens, types.MaxAllowedTokens), msg), nil
+	}
+	if msg.PromptTokenCount > types.MaxAllowedTokens {
+		return failedStart(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
+	}
+
 	transferAgent, found := k.GetParticipant(ctx, msg.Creator)
 	if !found {
 		k.LogError("Creator not found", types.Inferences, "creator", msg.Creator, "msg", "StartInference")
@@ -60,7 +72,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments)
+	finalInference, err := k.processInferencePayments(ctx, inference, payments, false)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
@@ -124,8 +136,9 @@ func (k msgServer) validateTimestamp(
 	inferenceId string,
 	extraSeconds int64,
 ) error {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
+		k.LogError("StartInference: validateTimestamp failed to get params", types.Inferences, "error", err)
 		return err
 	}
 	k.LogInfo("Validating timestamp for StartInference:", types.Inferences,
@@ -152,9 +165,14 @@ func (k msgServer) validateTimestamp(
 }
 
 func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
-	expirationBlocks := k.GetParams(ctx).ValidationParams.ExpirationBlocks
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get params for inference timeout", types.Inferences, "error", err)
+		return
+	}
+	expirationBlocks := params.ValidationParams.ExpirationBlocks
 	expirationHeight := uint64(inference.StartBlockHeight + expirationBlocks)
-	err := k.SetInferenceTimeout(ctx, types.InferenceTimeout{
+	err = k.SetInferenceTimeout(ctx, types.InferenceTimeout{
 		ExpirationHeight: expirationHeight,
 		InferenceId:      inference.InferenceId,
 	})
@@ -173,6 +191,7 @@ func (k msgServer) processInferencePayments(
 	ctx sdk.Context,
 	inference *types.Inference,
 	payments *calculations.Payments,
+	allowRefund bool,
 ) (*types.Inference, error) {
 	if payments.EscrowAmount > 0 {
 		escrowAmount, err := k.PutPaymentInEscrow(ctx, inference, payments.EscrowAmount)
@@ -182,6 +201,9 @@ func (k msgServer) processInferencePayments(
 		inference.EscrowAmount = escrowAmount
 	}
 	if payments.EscrowAmount < 0 {
+		if !allowRefund {
+			return nil, sdkerrors.Wrapf(types.ErrInvalidEscrowAmount, "escrow amount cannot be negative here: %d", payments.EscrowAmount)
+		}
 		err := k.IssueRefund(ctx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
 		if err != nil {
 			k.LogError("Unable to Issue Refund for started inference", types.Payments, err)

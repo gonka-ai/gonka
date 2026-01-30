@@ -1,4 +1,5 @@
 name: Go Build and Test
+
 on:
   pull_request:
     branches:
@@ -17,18 +18,15 @@ jobs:
     defaults:
       run:
         working-directory: ./inference-chain
+
     steps:
       - name: Set up Go
         uses: actions/setup-go@v3.0.0
         with:
-          go-version: '1.24.2' # Replace with your Go version
+          go-version: '1.24.2'
 
       - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Clone cosmos-sdk repo with specific branch
-        run: |
-          git clone --branch release/v0.50.x https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -44,26 +42,35 @@ jobs:
       - name: Build
         run: go build -o ./build/inferenced ./cmd/inferenced/main.go
 
+      # ---------------- Fork PRs: console output only ----------------
+      - name: Run Tests (fork PRs)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
+        run: go test ./... -v
+
+      # ---------------- Internal PRs / main: JUnit + checks ----------------
       - name: Install go-junit-report
-        run: go install github.com/jstemmer/go-junit-report/v2@latest
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: go install github.com/jstemmer/go-junit-report/v2@v2.1.0
 
       - name: Run Tests and Generate JUnit Report
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
         with:
           name: node-junit-report
           path: inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
         with:
           name: Inferenced Tests
           path: inference-chain/junit-report.xml
           reporter: java-junit
+
   build-and-test-api:
     runs-on: ubuntu-latest
     name: Build and Test API Wrapper
@@ -73,18 +80,15 @@ jobs:
     defaults:
       run:
         working-directory: ./decentralized-api
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Clone cosmos-sdk repo with specific branch
-        run: |
-          git clone --branch release/v0.50.x https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
-
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
-          go-version: '1.24.2' # Replace with your Go version
+          go-version: '1.24.2'
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -100,22 +104,30 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Fork PRs: readable logs only
+      - name: Run Tests (fork PRs)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
+        run: go test ./... -v
+
+      # Internal PRs / main: JUnit + checks
       - name: Install go-junit-report
-        run: go install github.com/jstemmer/go-junit-report@latest
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: go install github.com/jstemmer/go-junit-report/v2@v2.1.0
 
       - name: Run Tests and Generate JUnit Report
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
         with:
           name: api-junit-report
           path: decentralized-api/junit-report.xml
 
       - name: Report Test Results in GitHub
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
         uses: dorny/test-reporter@v1
-        if: always()
         with:
           name: Decentralized-API Tests
           path: decentralized-api/junit-report.xml

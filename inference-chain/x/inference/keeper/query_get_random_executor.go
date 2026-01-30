@@ -65,7 +65,10 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		return nil, status.Error(codes.NotFound, "GetRandomExecutor: no effective epoch found")
 	}
 
-	epochParams := k.GetParams(goCtx)
+	epochParams, err := k.GetParams(goCtx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	if epochParams.EpochParams == nil {
 		k.Logger().Error("GetRandomExecutor: createFilterFn: epoch params are nil",
 			"model_id", modelId, "epoch_index", effectiveEpoch.Index)

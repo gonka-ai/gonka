@@ -1,3 +1,8 @@
+# WARNING:
+# This workflow deploys to real cloud + k8s infrastructure.
+# It is intentionally NOT hardened yet.
+# Do not enable or reuse until test-net-cloud is redesigned.
+
 name: Deploy Test Net Cloud
 
 on:

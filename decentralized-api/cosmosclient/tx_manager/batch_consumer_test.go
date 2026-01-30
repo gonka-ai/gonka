@@ -29,7 +29,7 @@ type mockTxManager struct {
 	mu             sync.Mutex
 }
 
-func (m *mockTxManager) SendBatchAsyncWithRetry(msgs []sdk.Msg) error {
+func (m *mockTxManager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlock ...int64) error {
 	m.mu.Lock()
 	m.sendBatchCalls = append(m.sendBatchCalls, msgs)
 	m.mu.Unlock()
@@ -42,7 +42,7 @@ func (m *mockTxManager) getBatchCalls() [][]sdk.Msg {
 	return m.sendBatchCalls
 }
 
-func (m *mockTxManager) SendTransactionAsyncWithRetry(sdk.Msg) (*sdk.TxResponse, error) {
+func (m *mockTxManager) SendTransactionAsyncWithRetry(sdk.Msg, ...int64) (*sdk.TxResponse, error) {
 	return &sdk.TxResponse{}, nil
 }
 func (m *mockTxManager) SendTransactionAsyncNoRetry(sdk.Msg) (*sdk.TxResponse, error) {
@@ -96,6 +96,35 @@ func startTestNatsServer(t *testing.T) (*server.Server, nats.JetStreamContext) {
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "txs_batch_finish",
 		Subjects: []string{"txs_batch_finish"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "txs_batch_poc_v2",
+		Subjects: []string{"txs_batch_poc_v2"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "txs_batch_validation_v2",
+		Subjects: []string{"txs_batch_validation_v2"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	// V1 PoC streams
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "txs_batch_poc_batch",
+		Subjects: []string{"txs_batch_poc_batch"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "txs_batch_poc_validation",
+		Subjects: []string{"txs_batch_poc_validation"},
 		Storage:  nats.MemoryStorage,
 	})
 	require.NoError(t, err)
@@ -226,7 +255,7 @@ func TestBatchConsumer_SeparateQueues(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Should have 2 batch calls (one for start, one for finish)
+	// Should have 2 batch calls (one for each queue type: start, finish)
 	calls := mockMgr.getBatchCalls()
 	assert.Len(t, calls, 2)
 }
@@ -264,4 +293,87 @@ func TestBatchConsumer_Persistence(t *testing.T) {
 
 	// Messages should be recovered and broadcast
 	assert.Len(t, mockMgr.getBatchCalls(), 1)
+}
+
+func TestBatchConsumer_ValidationV2Batching(t *testing.T) {
+	_, js := startTestNatsServer(t)
+	cdc := getTestCodec(t)
+
+	mockMgr := &mockTxManager{}
+
+	config := BatchConfig{
+		FlushSize:             3,
+		FlushTimeout:          10 * time.Second,
+		ValidationV2FlushSize: 10,
+	}
+
+	consumer := NewBatchConsumer(js, cdc, mockMgr, config)
+	err := consumer.Start()
+	require.NoError(t, err)
+
+	// Publish 10 validation V2 messages (validationV2FlushSize = 10)
+	for i := 0; i < 10; i++ {
+		msg := &inference.MsgSubmitPocValidationsV2{
+			Creator:                  "creator",
+			PocStageStartBlockHeight: int64(i),
+			Validations: []*inference.PoCValidationPayloadV2{
+				{
+					ParticipantAddress: "cosmos1abc",
+					ValidatedWeight:    100,
+				},
+			},
+		}
+		err := consumer.PublishPocValidationV2(msg)
+		require.NoError(t, err)
+	}
+
+	// Wait for processing
+	time.Sleep(500 * time.Millisecond)
+
+	calls := mockMgr.getBatchCalls()
+	require.Len(t, calls, 1)
+	assert.Len(t, calls[0], 10)
+}
+
+func TestBatchConsumer_AllQueuesIndependent(t *testing.T) {
+	_, js := startTestNatsServer(t)
+	cdc := getTestCodec(t)
+
+	mockMgr := &mockTxManager{}
+
+	config := BatchConfig{
+		FlushSize:             2,
+		FlushTimeout:          10 * time.Second,
+		ValidationV2FlushSize: 10,
+	}
+
+	consumer := NewBatchConsumer(js, cdc, mockMgr, config)
+	err := consumer.Start()
+	require.NoError(t, err)
+
+	// Publish 2 messages to start/finish queues (triggers 2 flushes at FlushSize=2)
+	// Validation V2 uses hardcoded validationV2FlushSize=10, so we send 10 to trigger flush
+	for i := 0; i < 2; i++ {
+		consumer.PublishStartInference(&inference.MsgStartInference{
+			Creator:     "creator",
+			InferenceId: uuid.New().String(),
+		})
+		consumer.PublishFinishInference(&inference.MsgFinishInference{
+			Creator:     "creator",
+			InferenceId: uuid.New().String(),
+		})
+	}
+	for i := 0; i < 10; i++ {
+		consumer.PublishPocValidationV2(&inference.MsgSubmitPocValidationsV2{
+			Creator:                  "creator",
+			PocStageStartBlockHeight: 100,
+			Validations:              []*inference.PoCValidationPayloadV2{{ParticipantAddress: "cosmos1abc"}},
+		})
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Should have 3 batch calls (one for each queue type)
+	calls := mockMgr.getBatchCalls()
+	assert.Len(t, calls, 3)
 }

@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"decentralized-api/chainphase"
@@ -147,4 +148,19 @@ func TestFileStorageIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, promptPayload, storedPrompt)
 	require.Equal(t, responsePayload, storedResponse)
+}
+
+func TestEmptyButParseableResponsePayload_EnforcedTokensEmptySlice(t *testing.T) {
+	resp := emptyButParseableResponsePayload("inf-empty", "test-model", 1)
+	require.NotNil(t, resp)
+
+	enforcedTokens, err := resp.GetEnforcedTokens()
+	require.NoError(t, err)
+
+	b, err := json.Marshal(enforcedTokens)
+	require.NoError(t, err)
+	t.Logf("enforcedTokens=%s", string(b))
+
+	// With our synthetic logprobs, enforced tokens should be present and parseable.
+	require.NotEmpty(t, enforcedTokens.Tokens)
 }

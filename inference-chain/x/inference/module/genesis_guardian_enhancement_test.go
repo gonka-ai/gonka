@@ -14,24 +14,32 @@ import (
 func TestApplyGenesisGuardianEnhancement_ImmatureNetwork(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000, // 10M threshold
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"genesis_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters for immature network
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000, // 10M threshold
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.25),
-		GenesisGuardianAddresses:                []string{"genesis_validator"}, // Set genesis guardian
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.25),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -44,7 +52,7 @@ func TestApplyGenesisGuardianEnhancement_ImmatureNetwork(t *testing.T) {
 	// Total: 4500 < 10M threshold (immature network)
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.True(t, result.WasEnhanced, "Should apply enhancement for immature network")
 
@@ -70,13 +78,21 @@ func TestApplyGenesisGuardianEnhancement_ImmatureNetwork(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_MatureNetwork(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000, // 10M threshold
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"genesis_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters for mature network
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000, // 10M threshold
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"genesis_validator"},
-		GenesisGuardianEnabled:                  true, // Feature enabled
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+		GenesisGuardianEnabled:       true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -99,24 +115,80 @@ func TestApplyGenesisGuardianEnhancement_MatureNetwork(t *testing.T) {
 	// Total: 11M > 10M threshold (mature network)
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.False(t, result.WasEnhanced, "Should NOT apply enhancement for mature network")
 	require.Equal(t, computeResults, result.ComputeResults, "Results should be unchanged")
 	require.Equal(t, int64(11_000_000), result.TotalPower)
 }
 
+func TestApplyGenesisGuardianEnhancement_MinHeightGating(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Power condition is satisfied, but height condition is not.
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 1,
+		NetworkMaturityMinHeight: 100,
+		GuardianAddresses:        []string{"genesis_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
+	genesisParams := types.GenesisOnlyParams{
+		// Required fields
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true,
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.25),
+	}
+	k.SetGenesisOnlyParams(ctx, &genesisParams)
+
+	computeResults := []stakingkeeper.ComputeResult{
+		{OperatorAddress: "genesis_validator", Power: 1000},
+		{OperatorAddress: "validator2", Power: 2000},
+		{OperatorAddress: "validator3", Power: 1500},
+	}
+
+	// Height below min => not mature => enhancement applies.
+	immatureHeightCtx := ctx.WithBlockHeight(50)
+	result := inference.ApplyGenesisGuardianEnhancement(immatureHeightCtx, k, computeResults)
+	require.True(t, result.WasEnhanced, "Should enhance before min height is reached")
+
+	// Height at/above min and power condition met => mature => enhancement does not apply.
+	matureHeightCtx := ctx.WithBlockHeight(100)
+	result2 := inference.ApplyGenesisGuardianEnhancement(matureHeightCtx, k, computeResults)
+	require.False(t, result2.WasEnhanced, "Should not enhance once min height is reached and power threshold is met")
+}
+
 // Test enhancement disabled by flag
 func TestApplyGenesisGuardianEnhancement_FeatureDisabled(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"genesis_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters with enhancement disabled
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"genesis_validator"},
-		GenesisGuardianEnabled:                  false, // Feature disabled
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+		GenesisGuardianEnabled:       false, // Feature disabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -137,7 +209,7 @@ func TestApplyGenesisGuardianEnhancement_FeatureDisabled(t *testing.T) {
 	}
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.False(t, result.WasEnhanced, "Should not enhance when feature is disabled")
 	require.Equal(t, computeResults, result.ComputeResults, "Results should be unchanged")
@@ -147,13 +219,21 @@ func TestApplyGenesisGuardianEnhancement_FeatureDisabled(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_NoGenesisValidator(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{}, // No genesis guardians
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters with no genesis validator
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{}, // No genesis guardians
-		GenesisGuardianEnabled:                  true,       // Feature enabled
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+		GenesisGuardianEnabled:       true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -174,7 +254,7 @@ func TestApplyGenesisGuardianEnhancement_NoGenesisValidator(t *testing.T) {
 	}
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.False(t, result.WasEnhanced, "Should not enhance without genesis validator")
 	require.Equal(t, computeResults, result.ComputeResults, "Results should be unchanged")
@@ -184,13 +264,21 @@ func TestApplyGenesisGuardianEnhancement_NoGenesisValidator(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_GenesisValidatorNotFound(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"nonexistent_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters with genesis validator that doesn't exist in results
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"nonexistent_validator"},
-		GenesisGuardianEnabled:                  true, // Feature enabled
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+		GenesisGuardianEnabled:       true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -211,7 +299,7 @@ func TestApplyGenesisGuardianEnhancement_GenesisValidatorNotFound(t *testing.T) 
 	}
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.False(t, result.WasEnhanced, "Should not enhance if genesis validator not found")
 	require.Equal(t, computeResults, result.ComputeResults, "Results should be unchanged")
@@ -221,13 +309,21 @@ func TestApplyGenesisGuardianEnhancement_GenesisValidatorNotFound(t *testing.T) 
 func TestApplyGenesisGuardianEnhancement_SingleParticipant(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"genesis_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"genesis_validator"},
-		GenesisGuardianEnabled:                  true, // Feature enabled
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+		GenesisGuardianEnabled:       true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -247,7 +343,7 @@ func TestApplyGenesisGuardianEnhancement_SingleParticipant(t *testing.T) {
 	}
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-	err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.False(t, result.WasEnhanced, "Single participant should not be enhanced")
 	require.Equal(t, computeResults, result.ComputeResults, "Results should be unchanged")
@@ -297,13 +393,21 @@ func TestApplyGenesisGuardianEnhancement_DifferentMultipliers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+			// Governance-controlled maturity params
+			p, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			p.GenesisGuardianParams = &types.GenesisGuardianParams{
+				NetworkMaturityThreshold: 10_000_000,
+				NetworkMaturityMinHeight: 0,
+				GuardianAddresses:        []string{"genesis_validator"},
+			}
+			require.NoError(t, k.SetParams(ctx, p))
+
 			// Set up parameters with different multiplier
 			genesisParams := types.GenesisOnlyParams{
-				GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-				GenesisGuardianMultiplier:               types.DecimalFromFloat(tt.multiplier),
-				MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-				GenesisGuardianAddresses:                []string{"genesis_validator"},
-				GenesisGuardianEnabled:                  true, // Feature enabled
+				GenesisGuardianMultiplier:    types.DecimalFromFloat(tt.multiplier),
+				MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+				GenesisGuardianEnabled:       true, // Feature enabled
 				// Required fields
 				TotalSupply:              1_000_000_000,
 				OriginatorSupply:         160_000_000,
@@ -326,7 +430,7 @@ func TestApplyGenesisGuardianEnhancement_DifferentMultipliers(t *testing.T) {
 			// Other participants total: 2000 + 1500 = 3500
 
 			result := inference.ApplyGenesisGuardianEnhancement(ctx, k, computeResults)
-			err := inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
+			err = inference.ValidateGuardianEnhancementResults(computeResults, result.ComputeResults, result.TotalPower)
 			require.NoError(t, err)
 			require.True(t, result.WasEnhanced, "Should apply enhancement")
 			require.Equal(t, tt.expectedTotalPower, result.TotalPower)
@@ -348,13 +452,21 @@ func TestApplyGenesisGuardianEnhancement_DifferentMultipliers(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_ValidatorIdentityPreserved(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"genesis_validator"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters
 	genesisParams := types.GenesisOnlyParams{
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000,
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"genesis_validator"},
-		GenesisGuardianEnabled:                  true, // Feature enabled
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
+		GenesisGuardianEnabled:       true, // Feature enabled
 		// Required fields
 		TotalSupply:              1_000_000_000,
 		OriginatorSupply:         160_000_000,
@@ -376,7 +488,7 @@ func TestApplyGenesisGuardianEnhancement_ValidatorIdentityPreserved(t *testing.T
 	}
 
 	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, originalResults)
-	err := inference.ValidateGuardianEnhancementResults(originalResults, result.ComputeResults, result.TotalPower)
+	err = inference.ValidateGuardianEnhancementResults(originalResults, result.ComputeResults, result.TotalPower)
 	require.NoError(t, err)
 	require.True(t, result.WasEnhanced)
 
@@ -399,24 +511,32 @@ func TestApplyGenesisGuardianEnhancement_ValidatorIdentityPreserved(t *testing.T
 func TestApplyGenesisGuardianEnhancement_TwoGuardians(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000, // 10M threshold
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"guardian1", "guardian2"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters for immature network with 2 guardians
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000, // 10M threshold
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"guardian1", "guardian2"}, // 2 guardians
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -459,24 +579,32 @@ func TestApplyGenesisGuardianEnhancement_TwoGuardians(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_ThreeGuardians(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000, // 10M threshold
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"guardian1", "guardian2", "guardian3"},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters for immature network with 3 guardians
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000, // 10M threshold
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"guardian1", "guardian2", "guardian3"}, // 3 guardians
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -518,24 +646,32 @@ func TestApplyGenesisGuardianEnhancement_ThreeGuardians(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_PartialGuardians(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000, // 10M threshold
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"guardian1", "guardian2", "guardian3"}, // 3 guardians configured
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters with 3 guardians configured
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000, // 10M threshold
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"guardian1", "guardian2", "guardian3"}, // 3 guardians configured
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 
@@ -578,24 +714,32 @@ func TestApplyGenesisGuardianEnhancement_PartialGuardians(t *testing.T) {
 func TestApplyGenesisGuardianEnhancement_SingleGuardianFallback(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
+	// Governance-controlled maturity params
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000, // 10M threshold
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"guardian1"}, // 1 guardian
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+
 	// Set up parameters for immature network with 1 guardian
 	genesisParams := types.GenesisOnlyParams{
 		// Required fields
-		TotalSupply:                             1_000_000_000,
-		OriginatorSupply:                        160_000_000,
-		TopRewardAmount:                         120_000_000,
-		PreProgrammedSaleAmount:                 120_000_000,
-		TopRewards:                              3,
-		SupplyDenom:                             "gonka",
-		TopRewardPeriod:                         365 * 24 * 60 * 60,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    4 * 365 * 24 * 60 * 60,
-		GenesisGuardianNetworkMaturityThreshold: 10_000_000, // 10M threshold
-		GenesisGuardianMultiplier:               types.DecimalFromFloat(0.52),
-		GenesisGuardianEnabled:                  true, // Feature enabled
-		MaxIndividualPowerPercentage:            types.DecimalFromFloat(0.30),
-		GenesisGuardianAddresses:                []string{"guardian1"}, // 1 guardian
+		TotalSupply:                  1_000_000_000,
+		OriginatorSupply:             160_000_000,
+		TopRewardAmount:              120_000_000,
+		PreProgrammedSaleAmount:      120_000_000,
+		TopRewards:                   3,
+		SupplyDenom:                  "gonka",
+		TopRewardPeriod:              365 * 24 * 60 * 60,
+		TopRewardPayouts:             12,
+		TopRewardPayoutsPerMiner:     4,
+		TopRewardMaxDuration:         4 * 365 * 24 * 60 * 60,
+		GenesisGuardianMultiplier:    types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:       true, // Feature enabled
+		MaxIndividualPowerPercentage: types.DecimalFromFloat(0.30),
 	}
 	k.SetGenesisOnlyParams(ctx, &genesisParams)
 

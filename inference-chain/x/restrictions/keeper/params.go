@@ -9,14 +9,17 @@ import (
 )
 
 // GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
-		return types.DefaultParams()
+		return types.DefaultParams(), nil
 	}
 
-	k.cdc.MustUnmarshal(bz, &params)
+	err = k.cdc.Unmarshal(bz, &params)
+	if err != nil {
+		return params, err
+	}
 
 	// Ensure slices are never nil (empty instead)
 	if params.EmergencyTransferExemptions == nil {
@@ -25,8 +28,7 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params) {
 	if params.ExemptionUsageTracking == nil {
 		params.ExemptionUsageTracking = []types.ExemptionUsage{}
 	}
-
-	return params
+	return params, nil
 }
 
 // SetParams set the params

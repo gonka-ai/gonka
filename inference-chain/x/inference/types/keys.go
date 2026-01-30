@@ -57,6 +57,11 @@ var (
 	WrappedContractReverseIndexPrefix = collections.NewPrefix(33)
 	LiquidityPoolPrefix               = collections.NewPrefix(34)
 	LiquidityPoolApprovedTokensPrefix = collections.NewPrefix(35)
+	ParticipantAllowListPrefix        = collections.NewPrefix(36)
+	PoCValidationV2Prefix             = collections.NewPrefix(38)
+	PoCV2StoreCommitPrefix            = collections.NewPrefix(39)
+	MLNodeWeightDistributionPrefix    = collections.NewPrefix(40)
+	PocV2EnabledEpochPrefix           = collections.NewPrefix(41)
 	ParamsKey                         = []byte("p_inference")
 )
 
