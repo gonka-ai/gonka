@@ -187,12 +187,10 @@ func (m *manager) getClient() *cosmosclient.Client {
 }
 
 func (m *manager) getClientContext() client.Context {
-	ctx := m.client.Context()
-	alt := m.getClient()
-	if alt != nil && alt.RPC != nil && alt != m.client {
-		ctx = ctx.WithClient(alt.RPC)
+	if alt := m.getClient(); alt != nil {
+		return alt.Context()
 	}
-	return ctx
+	return m.client.Context()
 }
 
 func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt ...int64) (*sdk.TxResponse, error) {

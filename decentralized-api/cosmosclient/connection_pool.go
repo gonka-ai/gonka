@@ -13,6 +13,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc"
 )
 
 var ErrNoHealthyConnections = errors.New("no healthy connections available")
@@ -28,6 +29,7 @@ const (
 
 type ConnectionPool struct {
 	clients  []*cosmosclient.Client
+	grpcConns []*grpc.ClientConn
 	cancels  []context.CancelFunc
 	healthy  []atomic.Bool
 	mu       sync.RWMutex
@@ -55,6 +57,7 @@ func NewConnectionPool(ctx context.Context, prefix string, config *apiconfig.Con
 	poolCtx, cancel := context.WithCancel(ctx)
 	p := &ConnectionPool{
 		clients:  make([]*cosmosclient.Client, size),
+		grpcConns: make([]*grpc.ClientConn, size),
 		cancels:  make([]context.CancelFunc, size),
 		healthy:  make([]atomic.Bool, size),
 		ctx:      poolCtx,
@@ -69,8 +72,9 @@ func NewConnectionPool(ctx context.Context, prefix string, config *apiconfig.Con
 	}
 	ok := 0
 	for i := range p.clients {
-		if c, cCancel, err := p.create(); err == nil {
+		if c, grpcConn, cCancel, err := p.create(); err == nil {
 			p.clients[i] = c
+			p.grpcConns[i] = grpcConn
 			p.cancels[i] = cCancel
 			p.healthy[i].Store(true)
 			ok++
@@ -92,19 +96,19 @@ func capChecks(size int) int {
 	return size
 }
 
-func (p *ConnectionPool) create() (*cosmosclient.Client, context.CancelFunc, error) {
+func (p *ConnectionPool) create() (*cosmosclient.Client, *grpc.ClientConn, context.CancelFunc, error) {
 	cfg := p.config.GetChainNodeConfig()
 	dir, err := expandPath(cfg.KeyringDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	clientCtx, cancel := context.WithCancel(p.ctx)
 	c, err := createBaseCosmosClient(clientCtx, p.prefix, cfg.Url, dir)
 	if err != nil {
 		cancel()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return c, cancel, nil
+	return c, c.Context().GRPCClient, cancel, nil
 }
 
 func (p *ConnectionPool) Get() (*cosmosclient.Client, error) {
@@ -142,8 +146,8 @@ func (p *ConnectionPool) jitterDuration(base time.Duration) time.Duration {
 func (p *ConnectionPool) check() {
 	clients := p.snapshotClients()
 	pingResults := p.pingClients(clients)
-	newClients, newCancels := p.buildReplacements(pingResults)
-	p.swapClients(pingResults, newClients, newCancels)
+	newClients, newGrpcConns, newCancels := p.buildReplacements(pingResults)
+	p.swapClients(pingResults, newClients, newGrpcConns, newCancels)
 }
 
 func (p *ConnectionPool) snapshotClients() []*cosmosclient.Client {
@@ -170,37 +174,45 @@ func (p *ConnectionPool) pingClients(clients []*cosmosclient.Client) []bool {
 	return pingResults
 }
 
-func (p *ConnectionPool) buildReplacements(pingResults []bool) ([]*cosmosclient.Client, []context.CancelFunc) {
+func (p *ConnectionPool) buildReplacements(pingResults []bool) ([]*cosmosclient.Client, []*grpc.ClientConn, []context.CancelFunc) {
 	newClients := make([]*cosmosclient.Client, len(pingResults))
+	newGrpcConns := make([]*grpc.ClientConn, len(pingResults))
 	newCancels := make([]context.CancelFunc, len(pingResults))
 	for i := range pingResults {
 		if pingResults[i] {
 			continue
 		}
-		if newC, newCancel, err := p.create(); err == nil {
+		if newC, newGrpcConn, newCancel, err := p.create(); err == nil {
 			newClients[i] = newC
+			newGrpcConns[i] = newGrpcConn
 			newCancels[i] = newCancel
 		} else {
 			logging.Warn("connection pool: failed to create connection", types.System, "index", i, "error", err)
 		}
 	}
-	return newClients, newCancels
+	return newClients, newGrpcConns, newCancels
 }
 
-func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmosclient.Client, newCancels []context.CancelFunc) {
+func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmosclient.Client, newGrpcConns []*grpc.ClientConn, newCancels []context.CancelFunc) {
 	var toCancel []context.CancelFunc
 	var toStop []*cosmosclient.Client
+	var toCloseGRPC []*grpc.ClientConn
 	var replaced, healthy, unhealthy int
 	p.mu.Lock()
 	for i := 0; i < len(p.clients); i++ {
 		if newClients[i] != nil {
 			oldClient := p.clients[i]
+			oldGrpcConn := p.grpcConns[i]
 			oldCancel := p.cancels[i]
 			p.clients[i] = newClients[i]
+			p.grpcConns[i] = newGrpcConns[i]
 			p.healthy[i].Store(true)
 			p.cancels[i] = newCancels[i]
 			if oldCancel != nil {
 				toCancel = append(toCancel, oldCancel)
+			}
+			if oldGrpcConn != nil {
+				toCloseGRPC = append(toCloseGRPC, oldGrpcConn)
 			}
 			if oldClient != nil && oldClient.RPC != nil {
 				toStop = append(toStop, oldClient)
@@ -224,6 +236,12 @@ func (p *ConnectionPool) swapClients(pingResults []bool, newClients []*cosmoscli
 		c := client
 		time.AfterFunc(DefaultCloseDelay, func() {
 			c.RPC.Stop()
+		})
+	}
+	for _, conn := range toCloseGRPC {
+		c := conn
+		time.AfterFunc(DefaultCloseDelay, func() {
+			_ = c.Close()
 		})
 	}
 }
@@ -269,6 +287,7 @@ func (p *ConnectionPool) Close() {
 	p.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(p.cancels))
 	clients := make([]*cosmosclient.Client, 0, len(p.clients))
+	grpcConns := make([]*grpc.ClientConn, 0, len(p.grpcConns))
 	for i, c := range p.clients {
 		if p.cancels[i] != nil {
 			cancels = append(cancels, p.cancels[i])
@@ -276,7 +295,13 @@ func (p *ConnectionPool) Close() {
 		if c != nil && c.RPC != nil {
 			clients = append(clients, c)
 		}
+		if i < len(p.grpcConns) && p.grpcConns[i] != nil {
+			grpcConns = append(grpcConns, p.grpcConns[i])
+		}
 		p.clients[i] = nil
+		if i < len(p.grpcConns) {
+			p.grpcConns[i] = nil
+		}
 		p.cancels[i] = nil
 		p.healthy[i].Store(false)
 	}
@@ -286,6 +311,9 @@ func (p *ConnectionPool) Close() {
 	}
 	for _, c := range clients {
 		c.RPC.Stop()
+	}
+	for _, c := range grpcConns {
+		_ = c.Close()
 	}
 }
 

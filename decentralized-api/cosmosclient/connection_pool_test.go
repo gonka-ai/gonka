@@ -9,6 +9,7 @@ import (
 	"time"
 
 	igniteclient "github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
+	"google.golang.org/grpc"
 )
 
 func TestErrNoHealthyConnections(t *testing.T) {
@@ -21,6 +22,9 @@ func TestErrNoHealthyConnections(t *testing.T) {
 func initTestPool(p *ConnectionPool) *ConnectionPool {
 	if p.rand == nil {
 		p.rand = rand.New(rand.NewSource(1))
+	}
+	if p.grpcConns == nil && len(p.clients) > 0 {
+		p.grpcConns = make([]*grpc.ClientConn, len(p.clients))
 	}
 	if p.cancels == nil && len(p.clients) > 0 {
 		p.cancels = make([]context.CancelFunc, len(p.clients))
