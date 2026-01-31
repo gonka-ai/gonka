@@ -18,4 +18,5 @@ var (
 	ErrEpochIsNotReached    = echo.NewHTTPError(http.StatusBadRequest, "Epoch is not reached")
 	ErrInferenceNotFound    = echo.NewHTTPError(http.StatusNotFound, "Inference not found")
 	ErrNoModelSpecified     = echo.NewHTTPError(http.StatusBadRequest, "No model specified")
+	ErrModelNotSupported    = echo.NewHTTPError(http.StatusBadRequest, "Model not supported")
 )

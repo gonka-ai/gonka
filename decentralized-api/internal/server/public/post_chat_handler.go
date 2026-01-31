@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -317,7 +318,14 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	executor, err := s.getExecutorForRequest(ctx.Request().Context(), request.OpenAiRequest.Model)
 	if err != nil {
-		logging.Error("Failed to get executor", types.Inferences, "error", err)
+		logging.Error("Failed to get executor", types.Inferences, "error", err, "model", request.OpenAiRequest.Model)
+		// Check if the error is due to model not being supported
+		errStr := err.Error()
+		if strings.Contains(errStr, "epoch group data not found") ||
+			strings.Contains(errStr, "sub-group") ||
+			strings.Contains(errStr, "After filtering participants the length is 0") {
+			return ErrModelNotSupported
+		}
 		return err
 	}
 
