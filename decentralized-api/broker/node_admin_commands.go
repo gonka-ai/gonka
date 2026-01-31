@@ -89,8 +89,13 @@ func (c RegisterNode) Execute(b *Broker) {
 
 	for modelId := range c.Node.Models {
 		if _, ok := modelMap[modelId]; !ok {
-			logging.Error("RegisterNode. Model is not a valid governance model", types.Nodes, "model_id", modelId)
-			c.Response <- NodeCommandResponse{Node: nil, Error: err}
+			availableModels := make([]string, 0, len(modelMap))
+			for m := range modelMap {
+				availableModels = append(availableModels, m)
+			}
+			errMsg := fmt.Sprintf("model '%s' is not a valid governance model. Available models: %v", modelId, availableModels)
+			logging.Error("RegisterNode. Model is not a valid governance model", types.Nodes, "model_id", modelId, "available_models", availableModels)
+			c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf(errMsg)}
 			return
 		}
 	}
@@ -224,8 +229,13 @@ func (c UpdateNode) Execute(b *Broker) {
 
 	for modelId := range c.Node.Models {
 		if _, ok := modelMap[modelId]; !ok {
-			logging.Error("UpdateNode. Model is not a valid governance model", types.Nodes, "model_id", modelId)
-			c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("model %s is not a valid governance model", modelId)}
+			availableModels := make([]string, 0, len(modelMap))
+			for m := range modelMap {
+				availableModels = append(availableModels, m)
+			}
+			errMsg := fmt.Sprintf("model '%s' is not a valid governance model. Available models: %v", modelId, availableModels)
+			logging.Error("UpdateNode. Model is not a valid governance model", types.Nodes, "model_id", modelId, "available_models", availableModels)
+			c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf(errMsg)}
 			return
 		}
 	}
