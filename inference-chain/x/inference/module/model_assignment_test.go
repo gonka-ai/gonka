@@ -13,10 +13,11 @@ import (
 
 // Mock Keeper
 type mockKeeperForModelAssigner struct {
-	hardwareNodes    map[string]*types.HardwareNodes
-	governanceModels []types.Model
-	epochGroupData   map[string]map[uint64]types.EpochGroupData // modelId -> epochIndex -> data
-	params           *types.Params
+	hardwareNodes           map[string]*types.HardwareNodes
+	governanceModels        []types.Model
+	epochGroupData          map[string]map[uint64]types.EpochGroupData // modelId -> epochIndex -> data
+	params                  *types.Params
+	epochPerformanceSummary map[string]map[uint64]types.EpochPerformanceSummary // participantId -> epochIndex -> summary
 }
 
 func (m *mockKeeperForModelAssigner) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
@@ -50,6 +51,23 @@ func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Param
 		return *m.params, nil
 	}
 	return types.DefaultParams(), nil
+}
+
+func (m *mockKeeperForModelAssigner) GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool) {
+	if m.epochPerformanceSummary == nil {
+		// Default behavior: return summary with rewards to maintain backward compatibility with existing tests
+		return types.EpochPerformanceSummary{
+			EpochIndex:    epochIndex,
+			ParticipantId: participantId,
+			RewardedCoins: 1000, // Non-zero to pass eligibility check
+		}, true
+	}
+	if participantData, ok := m.epochPerformanceSummary[participantId]; ok {
+		if summary, ok := participantData[epochIndex]; ok {
+			return summary, true
+		}
+	}
+	return types.EpochPerformanceSummary{}, false
 }
 
 // Mock Logger

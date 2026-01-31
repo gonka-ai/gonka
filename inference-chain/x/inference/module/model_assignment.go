@@ -276,6 +276,7 @@ type KeeperForModelAssigner interface {
 	GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool)
 	GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val types.EpochGroupData, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
+	GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool)
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
@@ -455,7 +456,7 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	}
 	ma.LogInfo("Built current epoch data map", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_current_epoch_data", "num_models", len(currentEpochData.Models()))
 
-	eligibleNodesData := ma.filterEligibleMLNodes(upcomingEpoch, previousEpochData, currentEpochData, totalCurrentEpochWeight)
+	eligibleNodesData := ma.filterEligibleMLNodes(ctx, upcomingEpoch, previousEpochData, currentEpochData, totalCurrentEpochWeight)
 	ma.LogInfo("Filtered eligible nodes for all models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "filter_all_eligible", "num_models", len(eligibleNodesData.Models()))
 
 	for _, modelId := range sortedModelIds {
@@ -548,6 +549,7 @@ func buildEligibleParticipantSet(currentEpochData *EpochMLNodeData, thresholds t
 //
 //	Selects N/2+1 participants with previous epoch history deterministically per model to rotate eligibility.
 func (ma *ModelAssigner) filterEligibleMLNodes(
+	ctx context.Context,
 	upcomingEpoch types.Epoch,
 	previousEpochData *EpochMLNodeData,
 	currentEpochData *EpochMLNodeData,
@@ -585,6 +587,7 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 
 		// Sample N/2+1 participants with history for rotation (deterministic per epoch+model)
 		eligibleParticipantsPerModel := ma.sampleEligibleParticipantsWithHistory(
+			ctx,
 			filteredParticipantAddrs,
 			previousEpochData,
 			modelId,
@@ -1015,6 +1018,7 @@ func calculateEffectiveNodeThreshold(participantThreshold, globalThreshold int64
 }
 
 func (ma *ModelAssigner) sampleEligibleParticipantsWithHistory(
+	ctx context.Context,
 	sortedParticipantAddrs []string,
 	previousEpochData *EpochMLNodeData,
 	modelId string,
@@ -1022,10 +1026,29 @@ func (ma *ModelAssigner) sampleEligibleParticipantsWithHistory(
 	allParticipantsHashStr string,
 ) []string {
 	participantsWithHistory := make([]string, 0)
+	previousEpochIndex := upcomingEpoch.Index - 1
+
 	for _, participantAddr := range sortedParticipantAddrs {
 		previousValidationWeight := previousEpochData.GetForParticipant(modelId, participantAddr)
 
 		if previousValidationWeight == nil {
+			continue
+		}
+
+		// Security fix for POC_SLOT attack (#658):
+		// Only participants who received rewards in the previous epoch are eligible for POC_SLOT.
+		// This prevents attackers from farming POC_SLOT positions with nodes that don't actually
+		// participate in PoC validation.
+		perfSummary, found := ma.keeper.GetEpochPerformanceSummary(ctx, previousEpochIndex, participantAddr)
+		if !found {
+			ma.LogDebug("Participant excluded from POC_SLOT eligibility: no performance summary",
+				types.Allocation, "participant", participantAddr, "previous_epoch", previousEpochIndex)
+			continue
+		}
+		if perfSummary.RewardedCoins == 0 {
+			ma.LogDebug("Participant excluded from POC_SLOT eligibility: no rewards in previous epoch",
+				types.Allocation, "participant", participantAddr, "previous_epoch", previousEpochIndex,
+				"rewarded_coins", perfSummary.RewardedCoins)
 			continue
 		}
 
