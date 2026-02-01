@@ -296,7 +296,8 @@ func New(
 	// Inference module: block revalidation events. PostHandler collects events; when block is
 	// finalized (BeginBlock of next block) we call the hook; if block did not finalize we discard.
 	// - PostHandler collects events per block; PrepareForBlock discards on non-finalized attempt.
-	app.setRevalidationEventsFromPostHandler()
+	// - PostHandler commits the tx-scoped EpochGroupData draft on success (on failure the draft is not committed).
+	app.setRevalidationEventsAndCommitTxDraftsFromPostHandler()
 
 	// SendRestriction configuration is handled automatically through dependency injection
 	// The restrictions module provides its SendRestrictionFn with the "bank-send-restrictions" group tag

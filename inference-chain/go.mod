@@ -54,6 +54,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/supranational/blst v0.3.16
+	github.com/tidwall/btree v1.8.1
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.45.0
 	golang.org/x/exp v0.0.0-20251009144603-d2f985daa21b

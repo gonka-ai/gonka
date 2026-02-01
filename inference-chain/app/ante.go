@@ -25,6 +25,30 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
+// EpochGroupDraftDecorator binds a tx-scoped EpochGroupData draft to the request context at tx start.
+// PostHandler must call CommitEpochGroupDraftFromContext on success. Draft is context-bound so it works with parallel execution.
+type EpochGroupDraftDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// AnteHandle attaches a new EpochGroupData draft to the request context so Get/Set use it during the tx.
+// Uses the SDK context's base context (Context()) and WithContext to bind the draft; if the SDK does not
+// support these methods, the decorator no-ops and the draft is not bound (single-tx execution still works).
+func (d EpochGroupDraftDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	// sdk.Context may expose the underlying context.Context and a way to replace it for context-bound draft.
+	if base := ctx.Context(); base != nil {
+		newBase := inferencemodulekeeper.WithEpochGroupDraft(base)
+		if newCtx := ctx.WithContext(newBase); newCtx.Context() == newBase {
+			return next(newCtx, tx, simulate)
+		}
+	}
+	return next(ctx, tx, simulate)
+}
+
+func NewEpochGroupDraftDecorator(k *inferencemodulekeeper.Keeper) EpochGroupDraftDecorator {
+	return EpochGroupDraftDecorator{InferenceKeeper: k}
+}
+
 // HandlerOptions extend the SDK's AnteHandler options by requiring the IBC
 // channel keeper.
 type HandlerOptions struct {
@@ -191,7 +215,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	}
 
 	anteDecorators := []sdk.AnteDecorator{
-		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
+		ante.NewSetUpContextDecorator(),                                                  // outermost AnteDecorator. SetUpContext must be called first
+		NewEpochGroupDraftDecorator(options.InferenceKeeper),                             // tx-scoped EpochGroupData draft; commit/discard in PostHandler
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),

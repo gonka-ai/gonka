@@ -2,6 +2,9 @@ package keeper
 
 import (
 	"context"
+
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/tidwall/btree"
 )
 
 // OnInferenceValidationNeedsRevalidation is called in BeginBlock (of the next block) for each
@@ -26,8 +29,10 @@ type BlockRevalidationEventsCollector interface {
 }
 
 // PrepareForBlock is called at the start of each block. It discards revalidation events for
-// the current block height (if the provider supports it) and invalidates the epoch group
-// cache so the next Get/Set re-inits from store.
+// the current block height (if the provider supports it), invalidates the epoch group
+// cache, and evicts old entries from the normalized weighted participants cache (keep last
+// NormalizedParticipantsCacheBlocks blocks). Normalized participants for each block are
+// computed and cached in the Commit hook when the block hash is known.
 func (k *Keeper) PrepareForBlock(ctx context.Context, currentBlockHeight int64) {
 	// Discard revalidation events for current height so we only use events from the execution that committed.
 	if k.blockRevalidationEventsProvider != nil {
@@ -37,6 +42,54 @@ func (k *Keeper) PrepareForBlock(ctx context.Context, currentBlockHeight int64) 
 	}
 	// Invalidate epoch group cache so we read fresh from store for the new block.
 	k.InvalidateEpochGroupCache()
+
+	// Evict blocks older than (current - NormalizedParticipantsCacheBlocks) from the normalized participants cache.
+	k.normalizedWeightedParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
+}
+
+// validationWeightsToParticipantWeights maps ValidationWeights to ParticipantWeight list (MemberAddress -> ConfirmationWeight).
+func validationWeightsToParticipantWeights(vws []*types.ValidationWeight) []ParticipantWeight {
+	if len(vws) == 0 {
+		return nil
+	}
+	out := make([]ParticipantWeight, 0, len(vws))
+	for _, vw := range vws {
+		if vw == nil {
+			continue
+		}
+		confirmationWeight := vw.GetConfirmationWeight()
+		if confirmationWeight == 0 {
+			continue
+		}
+		out = append(out, ParticipantWeight{
+			Address: vw.GetMemberAddress(),
+			Weight:  confirmationWeight,
+		})
+	}
+	return out
+}
+
+// SetNormalizedParticipantsForCommittedBlock computes normalized weighted participants for the
+// committed block from the current effective epoch group data (ValidationWeights -> ConfirmationWeight)
+// and adds them to the cache keyed by blockHash. Call once per commit from the Precommiter hook.
+func (k *Keeper) SetNormalizedParticipantsForCommittedBlock(ctx context.Context, blockHeight int64, blockHash []byte) {
+	effEpoch, ok := k.GetEffectiveEpochIndex(ctx)
+	if !ok {
+		return
+	}
+	epochData, found := k.GetEpochGroupData(ctx, effEpoch, "")
+	if !found {
+		return
+	}
+	weights := validationWeightsToParticipantWeights(epochData.GetValidationWeights())
+	k.normalizedWeightedParticipants.Add(blockHash, blockHeight, weights)
+}
+
+// GetNormalizedWeightedParticipants returns the BTree for the given block hash if present in the cache.
+// The tree maps cumulative normalized weight (float64) to participant address (string) for weighted sampling.
+// Cache holds the last NormalizedParticipantsCacheBlocks blocks.
+func (k Keeper) GetNormalizedWeightedParticipants(blockHash []byte) (*btree.Map[float64, string], bool) {
+	return k.normalizedWeightedParticipants.Get(blockHash)
 }
 
 // ProcessPendingRevalidationEvents gets all inference_validation events with needs_revalidation=true

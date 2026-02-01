@@ -11,7 +11,8 @@ import (
 // RevalidationCommitOption returns a BaseAppOption that wires events hooks
 // into the Commit phase via the SDK's Precommiter hook.
 // When this option is used, events for the committed block are processed
-// as soon as the block is finalized (during Commit)
+// as soon as the block is finalized (during Commit). It also computes and
+// caches normalized weighted participants for this block (keyed by blockHash).
 func RevalidationCommitOption(keeper *inferencemodulekeeper.Keeper) func(*baseapp.BaseApp) {
 	return func(bapp *baseapp.BaseApp) {
 		bapp.SetPrecommiter(func(ctx sdk.Context) {
@@ -19,6 +20,7 @@ func RevalidationCommitOption(keeper *inferencemodulekeeper.Keeper) func(*baseap
 			hash := ctx.HeaderInfo().Hash
 			//TODO: generalize events, process not only RevalidationEvents
 			keeper.ProcessPendingRevalidationEvents(context.Background(), height, hash)
+			keeper.SetNormalizedParticipantsForCommittedBlock(ctx, height, hash)
 		})
 	}
 }

@@ -65,20 +65,22 @@ func (c *blockRevalidationEventsCollector) ClearEventsForHeight(height int64) {
 // PostHandler collector and registers the PostHandler. Events are collected per block; when
 // the block is finalized (BeginBlock of next block) the hook is called; if the block did
 // not finalize, events for that height are discarded at the start of the next attempt.
-func (app *App) setRevalidationEventsFromPostHandler() {
+// The same PostHandler commits or discards the tx-scoped EpochGroupData draft.
+func (app *App) setRevalidationEventsAndCommitTxDraftsFromPostHandler() {
 	collector := newBlockRevalidationEventsCollector()
 	(&app.InferenceKeeper).SetBlockRevalidationEventsProvider(collector)
-	app.SetPostHandler(revalidationEventsPostHandler(collector))
+	app.SetPostHandler(revalidationAndEpochGroupDraftPostHandler(collector, &app.InferenceKeeper))
 }
 
-// revalidationEventsPostHandler collects inference_validation events with needs_revalidation=true
-// from each tx and adds them to the collector for the current block. Only collects when success.
-func revalidationEventsPostHandler(collector *blockRevalidationEventsCollector) sdk.PostHandler {
-	return func(ctx sdk.Context, tx sdk.Tx, simulate, success bool) (sdk.Context, error) {
+// revalidationAndEpochGroupDraftPostHandler collects revalidation events on success and
+// commits the tx-scoped EpochGroupData draft from context on success (on failure the draft is not committed).
+func revalidationAndEpochGroupDraftPostHandler(collector *blockRevalidationEventsCollector, keeper *inferencemodulekeeper.Keeper) sdk.PostHandler {
+	return func(ctx sdk.Context, _ sdk.Tx, _, success bool) (sdk.Context, error) {
 		if success {
 			height := ctx.BlockHeight()
 			collected := extractRevalidationEventsFromEvents(ctx.EventManager().Events())
 			collector.AddEventsForBlock(height, collected)
+			keeper.CommitEpochGroupDraftFromContext(ctx)
 		}
 		return ctx, nil
 	}
