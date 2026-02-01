@@ -414,10 +414,12 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 					// Use keeper settlement results: zero reward despite having weight => slashed (downtime/confirmation).
 					// Settlement was performed before model assignment, so we need to check the settle amount here.
 					settle, foundSettle := ma.keeper.GetSettleAmount(ctx, vw.MemberAddress)
-					if !foundSettle || (settle.EpochIndex == previousEpochIndex && settle.RewardCoins == 0) {
+					if !foundSettle || settle.EpochIndex != previousEpochIndex || settle.RewardCoins == 0 {
 						// Skip participants if they didn't get reward for the previous epoch
 						// Only rewarded participants can be eligible for POC_SLOT=true allocation
 						// Participants that are not added to previousEpochData will be filtered by filterEligibleMLNodes
+						ma.LogInfo("Collecting rewarded participants", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext,
+							"step", "filter_rewarded_participants", "participant_without_reward", vw.MemberAddress)
 						continue
 					}
 					dedupedNodes, dedupStats := dedupMLNodesById(vw.MlNodes)
