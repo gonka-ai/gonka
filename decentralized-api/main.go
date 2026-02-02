@@ -263,7 +263,7 @@ func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 			return params, nil
 		}
 
-		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
+		if strings.Contains(err.Error(), "inference is not ready") {
 			logging.Info("Inference not ready, retrying...", types.System, "attempt", i+1, "error", err)
 			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
 			continue
