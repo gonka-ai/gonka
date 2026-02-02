@@ -16,6 +16,8 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 
+	cmbytes "github.com/cometbft/cometbft/libs/bytes"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -383,15 +385,25 @@ func (v *OnChainValidator) getSamplingBlockHash(epochState *chainphase.EpochStat
 		return ""
 	}
 
-	client, err := cosmosclient.NewRpcClient(v.chainNodeUrl)
-	if err != nil {
-		logging.Error("OnChainValidator: failed to create RPC client", types.PoC, "error", err)
-		return ""
-	}
-
 	freshBlockHeight := epochState.CurrentBlock.Height
 	if freshBlockHeight <= 0 {
 		logging.Error("OnChainValidator: current block height not available", types.PoC)
+		return ""
+	}
+
+	if v.recorder.GetClientContext().GRPCClient != nil {
+		resp, err := v.recorder.NewCometQueryClient().GetBlockByHeight(
+			context.Background(),
+			&cmtservice.GetBlockByHeightRequest{Height: freshBlockHeight},
+		)
+		if err == nil && resp != nil && resp.BlockId != nil && len(resp.BlockId.Hash) > 0 {
+			return cmbytes.HexBytes(resp.BlockId.Hash).String()
+		}
+	}
+
+	client, err := cosmosclient.NewRpcClient(v.chainNodeUrl)
+	if err != nil {
+		logging.Error("OnChainValidator: failed to create RPC client", types.PoC, "error", err)
 		return ""
 	}
 

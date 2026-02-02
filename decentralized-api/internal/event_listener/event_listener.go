@@ -243,14 +243,13 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 }
 
 func (el *EventListener) startSyncStatusChecker() {
-	chainNodeUrl := el.configManager.GetChainNodeConfig().Url
 	hasTriedVersionSync := false
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		status, err := getStatus(chainNodeUrl)
+		status, err := el.transactionRecorder.Status(context.Background())
 		if err != nil {
 			logging.Error("Error getting node status", types.EventProcessing, "error", err)
 			continue

@@ -163,6 +163,10 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		if err != nil {
 			return nil, err
 		}
+		go func() {
+			<-ctx.Done()
+			_ = grpcConn.Close()
+		}()
 	}
 	clientCtx := cosmoclient.Context()
 	if grpcConn != nil {
@@ -202,6 +206,9 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 	defer func() {
 		if !success {
 			natsConn.Close()
+			if grpcConn != nil {
+				_ = grpcConn.Close()
+			}
 		}
 	}()
 

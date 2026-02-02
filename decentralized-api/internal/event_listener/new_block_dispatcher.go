@@ -137,8 +137,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		return configManager.SetHeight(blockHeight)
 	}
 	getStatusFunc := func() (*coretypes.ResultStatus, error) {
-		url := configManager.GetChainNodeConfig().Url
-		return getStatus(url)
+		return cosmosClient.Status(context.Background())
 	}
 
 	randomSeedManager := seed.NewRandomSeedManager(cosmosClient, configManager)

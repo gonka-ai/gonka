@@ -629,17 +629,7 @@ func (s *Server) checkMLNodes(ctx context.Context) []Check {
 }
 
 func (s *Server) checkBlockSync(ctx context.Context) Check {
-	chainNodeUrl := s.configManager.GetChainNodeConfig().Url
-	rpcClient, err := cosmosclient.NewRpcClient(chainNodeUrl)
-	if err != nil {
-		return Check{
-			ID:      "block_sync",
-			Status:  UNAVAILABLE,
-			Message: fmt.Sprintf("Failed to connect to chain node: %s", err.Error()),
-		}
-	}
-
-	status, err := rpcClient.Status(context.Background())
+	status, err := s.recorder.Status(context.Background())
 	if err != nil {
 		return Check{
 			ID:      "block_sync",

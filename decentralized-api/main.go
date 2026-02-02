@@ -65,13 +65,16 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	natssrv := server.NewServer(config.GetNatsConfig())
 	if err := natssrv.Start(); err != nil {
 		panic(err)
 	}
 
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
-		context.Background(),
+		ctx,
 		"gonka",
 		20,
 		5*time.Second,
@@ -86,7 +89,7 @@ func main() {
 
 	chainPhaseTracker := chainphase.NewChainPhaseTracker()
 	// NOTE: getParams is waiting for rpc to be ready, don't add request before it
-	params, err := getParams(context.Background(), *recorder)
+	params, err := getParams(ctx, *recorder)
 	if err != nil {
 		logging.Error("Failed to get params", types.System, "error", err)
 		return
@@ -137,17 +140,10 @@ func main() {
 	)
 	logging.Info("PoC orchestrator initialized", types.PoC)
 
-	tendermintClient := cosmosclient.TendermintClient{
-		ChainNodeUrl: config.GetChainNodeConfig().Url,
-	}
-	// Create a cancellable context for the entire system
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure resources are cleaned up
-
 	// Start periodic config auto-flush of dynamic data to DB
 	config.StartAutoFlush(ctx, 60*time.Second)
 
-	training.NewAssigner(recorder, &tendermintClient, ctx)
+	training.NewAssigner(recorder, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)

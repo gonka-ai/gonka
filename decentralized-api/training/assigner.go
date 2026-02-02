@@ -6,21 +6,21 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"fmt"
-	"github.com/cometbft/cometbft/libs/rand"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/cometbft/cometbft/libs/rand"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type Assigner struct {
-	cosmosClient     cosmosclient.CosmosMessageClient
-	tendermintClient *cosmosclient.TendermintClient
-	ctx              context.Context
-	task             *taskToAssignState
+	cosmosClient cosmosclient.CosmosMessageClient
+	ctx          context.Context
+	task         *taskToAssignState
 }
 
 type taskToAssignState struct {
@@ -29,12 +29,11 @@ type taskToAssignState struct {
 
 const logTag = "[training-task-assigner] "
 
-func NewAssigner(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient, ctx context.Context) *Assigner {
+func NewAssigner(client cosmosclient.CosmosMessageClient, ctx context.Context) *Assigner {
 	assigner := &Assigner{
-		cosmosClient:     client,
-		tendermintClient: tendermintClient,
-		ctx:              ctx,
-		task:             nil,
+		cosmosClient: client,
+		ctx:          ctx,
+		task:         nil,
 	}
 
 	// TODO: on startup do some queries to restore state (like tasks I was assigned)
@@ -66,7 +65,7 @@ func (a *Assigner) claimTasksForAssignment() {
 }
 
 func (a *Assigner) tryClaimingTaskToAssign() {
-	chainStatus, err := a.tendermintClient.Status()
+	chainStatus, err := a.cosmosClient.Status(a.ctx)
 	if err != nil {
 		slog.Error(logTag+"Failed to query chain status", "err", err)
 	}

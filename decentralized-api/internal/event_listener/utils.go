@@ -1,11 +1,8 @@
 package event_listener
 
 import (
-	"context"
-	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"fmt"
-	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
 	"log"
@@ -31,13 +28,4 @@ func getWebsocketUrl(chainNodeUrl string) string {
 	u.Path = "/websocket"
 
 	return u.String()
-}
-
-func getStatus(chainNodeUrl string) (*coretypes.ResultStatus, error) {
-	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	return client.Status(context.Background())
 }

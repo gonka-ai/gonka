@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	cmbytes "github.com/cometbft/cometbft/libs/bytes"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -67,6 +69,16 @@ func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardware
 }
 
 func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
+	if b.client.GetClientContext().GRPCClient != nil {
+		resp, err := b.client.NewCometQueryClient().GetBlockByHeight(
+			context.Background(),
+			&cmtservice.GetBlockByHeightRequest{Height: height},
+		)
+		if err == nil && resp != nil && resp.BlockId != nil && len(resp.BlockId.Hash) > 0 {
+			return cmbytes.HexBytes(resp.BlockId.Hash).String(), nil
+		}
+	}
+
 	client, err := cosmosclient.NewRpcClient(b.chainNodeUrl)
 	if err != nil {
 		return "", err
