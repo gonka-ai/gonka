@@ -212,7 +212,6 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 
 	// Wait for reconciliation to actually bring the node to INFERENCE status
 	// by polling until the mock client's InferenceUp has been called
-	mockFactory := broker.mlNodeClientFactory.(*mlnodeclient.MockClientFactory)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		allClients := mockFactory.GetAllClients()
@@ -243,8 +242,8 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	// Wait until the node is fully stable for inference in broker state.
 	// CurrentStatus can become INFERENCE before in-flight reconciliation clears,
 	// and a reconciling node is considered unavailable.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	brokerDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(brokerDeadline) {
 		nodes, _ := broker.GetNodes()
 		for _, n := range nodes {
 			if n.Node.Id == node.Id &&

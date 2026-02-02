@@ -756,13 +756,12 @@ type NodeClientAssertion struct {
 }
 
 func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *mlnodeclient.MockClient) {
-	nodeClient.Mu.Lock()
-	defer nodeClient.Mu.Unlock()
-
-	require.Equal(t, expected.InitGenerateV2Called, nodeClient.InitGenerateV2Called, "InitGenerateV2 was called. n = %d", nodeClient.InitGenerateV2Called)
-	require.Equal(t, expected.InitValidateCalled, nodeClient.InitValidateCalled, "InitValidate was called. n = %d", nodeClient.InitValidateCalled)
-	require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
-	require.Equal(t, expected.StopCalled, nodeClient.StopCalled, "Stop was called. n = %d", nodeClient.StopCalled)
+	nodeClient.WithTryLock(t, func() {
+		require.Equal(t, expected.InitGenerateV2Called, nodeClient.InitGenerateV2Called, "InitGenerateV2 was called. n = %d", nodeClient.InitGenerateV2Called)
+		require.Equal(t, expected.InitValidateCalled, nodeClient.InitValidateCalled, "InitValidate was called. n = %d", nodeClient.InitValidateCalled)
+		require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
+		require.Equal(t, expected.StopCalled, nodeClient.StopCalled, "Stop was called. n = %d", nodeClient.StopCalled)
+	})
 }
 
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled

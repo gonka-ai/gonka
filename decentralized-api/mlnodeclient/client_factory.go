@@ -55,6 +55,6 @@ func (f *MockClientFactory) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, client := range f.clients {
-		*client = *NewMockClient()
+		client.Reset()
 	}
 }
