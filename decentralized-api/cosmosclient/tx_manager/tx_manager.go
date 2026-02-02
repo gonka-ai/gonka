@@ -77,6 +77,7 @@ type blockTimeTracker struct {
 type manager struct {
 	ctx              context.Context
 	client           *cosmosclient.Client
+	clientCtx        client.Context
 	apiAccount       *apiconfig.ApiAccount
 	txFactory        *tx.Factory
 	accountRetriever client.AccountRetriever
@@ -91,6 +92,7 @@ type manager struct {
 func StartTxManager(
 	ctx context.Context,
 	client *cosmosclient.Client,
+	clientCtx client.Context,
 	account *apiconfig.ApiAccount,
 	defaultTimeout time.Duration,
 	natsConnection *nats.Conn,
@@ -114,6 +116,7 @@ func StartTxManager(
 	m := &manager{
 		ctx:              ctx,
 		client:           client,
+		clientCtx:        clientCtx,
 		address:          address,
 		apiAccount:       account,
 		accountRetriever: authtypes.AccountRetriever{},
@@ -728,7 +731,7 @@ func (m *manager) observeTxs() error {
 }
 
 func (m *manager) GetClientContext() client.Context {
-	return m.client.Context()
+	return m.clientCtx
 }
 
 func (m *manager) checkTxStatus(hash string) (bool, error) {

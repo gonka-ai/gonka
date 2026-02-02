@@ -5,3 +5,7 @@ enable = true
 
 # Address defines the API server to listen on.
 address = "tcp://0.0.0.0:1317"
+
+[grpc]
+enable = true
+address = "0.0.0.0:9090"
