@@ -28,6 +28,8 @@ type BankKeeper interface {
 	SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins
 	SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
 	GetDenomMetaData(ctx context.Context, denom string) (banktypes.Metadata, bool)
+	IterateAllBalances(ctx context.Context, cb func(address sdk.AccAddress, coin sdk.Coin) (stop bool))
+	GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
 }
 
 type GroupMessageKeeper interface {
@@ -76,7 +78,7 @@ type StakingKeeper interface {
 
 // CollateralKeeper defines the expected interface for the Collateral module.
 type CollateralKeeper interface {
-	AdvanceEpoch(ctx context.Context, completedEpoch uint64)
+	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
 	GetCollateral(ctx context.Context, participant sdk.AccAddress) (collateral sdk.Coin, found bool)
 	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec, reason string) (sdk.Coin, error)
 }
@@ -129,7 +131,7 @@ type AuthzKeeper interface {
 type BlsKeeper interface {
 	// DKG methods
 	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
-	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, bool)
+	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, error)
 	SetActiveEpochID(ctx sdk.Context, epochID uint64)
 	GetActiveEpochID(ctx sdk.Context) (uint64, bool)
 

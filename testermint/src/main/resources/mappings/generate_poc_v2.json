@@ -1,0 +1,33 @@
+{
+  "scenarioName": "ModelState",
+  "newScenarioState": "POW_V2",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/inference/pow/init/generate"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "status": "OK",
+      "backends": 1,
+      "n_groups": 1
+    }
+  },
+  "postServeActions": {
+    "webhook": {
+      "method": "POST",
+      "url": "{{jsonPath originalRequest.body '$.url'}}/v2/poc-batches/generated",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "delay": {
+        "type": "fixed",
+        "milliseconds": 1000
+      },
+      "body": "{ \"public_key\": \"{{jsonPath originalRequest.body '$.public_key'}}\", \"node_id\": {{jsonPath originalRequest.body '$.node_id'}}, \"block_hash\": \"{{jsonPath originalRequest.body '$.block_hash'}}\", \"block_height\": {{jsonPath originalRequest.body '$.block_height'}}, \"artifacts\": [{\"nonce\": 1, \"vector_b64\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"}, {\"nonce\": 2, \"vector_b64\": \"AQABAAIAAQACAAEAAQABAAIAAQACAAEAAQABAAIAAA==\"}, {\"nonce\": 3, \"vector_b64\": \"AgACAAQAAgAEAAIAAgACAAQAAgAEAAIAAgACAAQAAA==\"}, {\"nonce\": 4, \"vector_b64\": \"AwADAAYAAwAGAAMAAwADAAYAAwAGAAMAAwADAAYAAA==\"}, {\"nonce\": 5, \"vector_b64\": \"BAAEAAgABAAIAAQABAAEAAgABAAIAAQABAAEAAgAAA==\"}, {\"nonce\": 6, \"vector_b64\": \"BQAFAAoABQAKAAUABQAFAAoABQAKAAUABQAFAAoAAA==\"}, {\"nonce\": 7, \"vector_b64\": \"BgAGAAwABgAMAAYABgAGAAwABgAMAAYABgAGAAwAAA==\"}, {\"nonce\": 8, \"vector_b64\": \"BwAHAA4ABwAOAAcABwAHAA4ABwAOAAcABwAHAA4AAA==\"}, {\"nonce\": 9, \"vector_b64\": \"CAAIABAACAAACAIACAAIABAACAAACAIACAAIABAAAA==\"}, {\"nonce\": 10, \"vector_b64\": \"CQAJABIACQACCQQACQAJABIACQACCQQACQAJABIAAA==\"}], \"encoding\": {\"dtype\": \"f16\", \"k_dim\": 12, \"endian\": \"le\"} }"
+    }
+  }
+}

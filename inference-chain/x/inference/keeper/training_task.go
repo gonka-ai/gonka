@@ -24,7 +24,10 @@ func (k Keeper) CreateTask(ctx sdk.Context, task *types.TrainingTask) error {
 		return fmt.Errorf("task already exists. id = %d", task.Id)
 	}
 
-	bz := k.cdc.MustMarshal(task)
+	bz, err := k.cdc.Marshal(task)
+	if err != nil {
+		return err
+	}
 	store.Set(taskKey, bz)
 
 	// Add the task ID to the queued set (we use an empty value).
@@ -84,12 +87,18 @@ func (k Keeper) StartTask(ctx sdk.Context, taskId uint64, assignees []*types.Tra
 		return types.ErrTrainingTaskNotFound
 	}
 	var task types.TrainingTask
-	k.cdc.MustUnmarshal(bz, &task)
+	err := k.cdc.Unmarshal(bz, &task)
+	if err != nil {
+		return err
+	}
 
 	// Here update the task object
 	task.Assignees = assignees
 	task.AssignedAtBlockHeight = uint64(ctx.BlockHeight())
-	updatedBz := k.cdc.MustMarshal(&task)
+	updatedBz, err := k.cdc.Marshal(&task)
+	if err != nil {
+		return err
+	}
 	store.Set(taskKey, updatedBz)
 
 	return nil
@@ -115,10 +124,16 @@ func (k Keeper) RemoveTaskFromInProgress(ctx sdk.Context, taskId uint64) error {
 		return fmt.Errorf("task %d not found in full object store", taskId)
 	}
 	var task types.TrainingTask
-	k.cdc.MustUnmarshal(bz, &task)
+	err := k.cdc.Unmarshal(bz, &task)
+	if err != nil {
+		return err
+	}
 
 	// TODO: update the task object to mark it as "finished"
-	updatedBz := k.cdc.MustMarshal(&task)
+	updatedBz, err := k.cdc.Marshal(&task)
+	if err != nil {
+		return err
+	}
 	store.Set(taskKey, updatedBz)
 
 	return nil
@@ -176,7 +191,10 @@ func (k Keeper) GetTasks(ctx sdk.Context, ids []uint64) ([]*types.TrainingTask, 
 			return nil, fmt.Errorf("task %d not found", id)
 		}
 		var task types.TrainingTask
-		k.cdc.MustUnmarshal(bz, &task)
+		err := k.cdc.Unmarshal(bz, &task)
+		if err != nil {
+			return nil, err
+		}
 		tasks[i] = &task
 	}
 	return tasks, nil

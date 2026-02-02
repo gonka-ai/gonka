@@ -26,6 +26,12 @@ func (msg *MsgStartInference) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
+	if msg.MaxTokens > MaxAllowedTokens {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "max_tokens exceeds limit (%d > %d)", msg.MaxTokens, MaxAllowedTokens)
+	}
+	if msg.PromptTokenCount > MaxAllowedTokens {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, MaxAllowedTokens)
+	}
 	// required bech32 addresses
 	if _, err := sdk.AccAddressFromBech32(strings.TrimSpace(msg.RequestedBy)); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid requested_by address (%s)", err)

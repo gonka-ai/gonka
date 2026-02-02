@@ -8,10 +8,10 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener/chainevents"
-	"decentralized-api/internal/poc"
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/poc"
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -60,7 +60,7 @@ type EventListener struct {
 
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
-	nodePocOrchestrator poc.NodePoCOrchestrator,
+	pocOrchestrator poc.Orchestrator,
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
@@ -73,7 +73,7 @@ func NewEventListener(
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
 		nodeBroker,
 		configManager,
-		nodePocOrchestrator,
+		pocOrchestrator,
 		&transactionRecorder,
 		phaseTracker,
 		DefaultReconciliationConfig,
