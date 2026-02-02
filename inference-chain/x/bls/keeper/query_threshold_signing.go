@@ -55,7 +55,9 @@ func (k Keeper) SigningHistory(ctx context.Context, req *types.QuerySigningHisto
 	// Use pagination helper for efficient iteration
 	pageRes, err := query.Paginate(signingStore, req.Pagination, func(key []byte, value []byte) error {
 		var signingRequest types.ThresholdSigningRequest
-		k.cdc.MustUnmarshal(value, &signingRequest)
+		if err := k.cdc.Unmarshal(value, &signingRequest); err != nil {
+			return err
+		}
 
 		// Apply filters
 		if !k.matchesFilters(&signingRequest, req) {

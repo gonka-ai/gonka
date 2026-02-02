@@ -1,0 +1,76 @@
+{
+  "mappings": [
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "POW_V2",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/inference/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "GENERATING",
+          "backends": [{"port": 5001, "status": "GENERATING"}]
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "POW_V2_VALIDATE",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/inference/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "IDLE",
+          "backends": [{"port": 5001, "status": "IDLE"}]
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "INFERENCE",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/inference/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "IDLE",
+          "backends": []
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "STOPPED",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/inference/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "IDLE",
+          "backends": []
+        }
+      }
+    }
+  ]
+}

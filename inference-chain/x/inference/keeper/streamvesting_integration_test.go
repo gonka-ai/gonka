@@ -322,7 +322,8 @@ func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Retrieve and verify parameters
-	retrievedParams := k.GetParams(ctx)
+	retrievedParams, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	require.Equal(t, uint64(0), retrievedParams.TokenomicsParams.WorkVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.RewardVestingPeriod)
 	require.Equal(t, uint64(365), retrievedParams.TokenomicsParams.TopMinerVestingPeriod)

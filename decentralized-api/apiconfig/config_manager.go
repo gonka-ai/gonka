@@ -30,7 +30,7 @@ type ConfigManager struct {
 	KoanProvider   koanf.Provider
 	WriterProvider WriteCloserProvider
 	sqlDb          SqlDatabase
-	mutex          sync.Mutex
+	mutex          sync.RWMutex
 	configDumpPath string
 	sqlitePath     string
 }
@@ -61,7 +61,7 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 		KoanProvider:   file.Provider(configPath),
 		WriterProvider: NewFileWriteCloserProvider(configPath),
 		sqlDb:          db,
-		mutex:          sync.Mutex{},
+		mutex:          sync.RWMutex{},
 		configDumpPath: filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
 		sqlitePath:     sqlitePath,
 	}
@@ -149,6 +149,15 @@ func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
 	}
 	if cfg.FlushTimeoutSeconds == 0 {
 		cfg.FlushTimeoutSeconds = 5
+	}
+	if cfg.ValidationV2FlushSize == 0 {
+		cfg.ValidationV2FlushSize = 10
+	}
+	if cfg.ValidationV2FlushTimeoutSeconds == 0 {
+		cfg.ValidationV2FlushTimeoutSeconds = 30
+	}
+	if cfg.PocCommitIntervalSeconds == 0 {
+		cfg.PocCommitIntervalSeconds = 5
 	}
 	return cfg
 }
@@ -283,6 +292,18 @@ func (cm *ConfigManager) SetBandwidthParams(params BandwidthParamsCache) error {
 
 func (cm *ConfigManager) GetBandwidthParams() BandwidthParamsCache {
 	return cm.currentConfig.BandwidthParams
+}
+
+func (cm *ConfigManager) SetTransferAgentAccessCache(cache TransferAgentAccessCache) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.TransferAgentAccessCache = cache
+}
+
+func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return cm.currentConfig.TransferAgentAccessCache
 }
 
 func (cm *ConfigManager) GetHeight() int64 {

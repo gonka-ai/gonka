@@ -82,7 +82,8 @@ func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T)
 	participant3AccAddr := sdk.AccAddress([]byte("participant3________"))
 
 	// Governance params with guardian
-	p := k.GetParams(ctx)
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	p.GenesisGuardianParams = &types.GenesisGuardianParams{
 		NetworkMaturityThreshold: 10_000_000,
 		NetworkMaturityMinHeight: 0,
@@ -151,7 +152,8 @@ func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
 	participant3AccAddr := sdk.AccAddress([]byte("participant3________"))
 	participant4AccAddr := sdk.AccAddress([]byte("participant4________"))
 
-	p := k.GetParams(ctx)
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	p.GenesisGuardianParams = &types.GenesisGuardianParams{
 		NetworkMaturityThreshold: 10_000_000,
 		NetworkMaturityMinHeight: 0,

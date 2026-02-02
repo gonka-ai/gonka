@@ -25,14 +25,14 @@ func (s *KeeperTestSuite) TestEpochProcessing_ProcessUnbondingQueue() {
 	unbondingAmount2Coin := sdk.NewCoin(inftypes.BaseCoin, unbondingAmount2)
 
 	// Create unbonding entries
-	s.k.AddUnbondingCollateral(s.ctx, participant1, completedEpoch, unbondingAmount1Coin)
-	s.k.AddUnbondingCollateral(s.ctx, participant2, completedEpoch, unbondingAmount2Coin)
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, participant1, completedEpoch, unbondingAmount1Coin))
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, participant2, completedEpoch, unbondingAmount2Coin))
 
 	// Another unbonding for a future epoch that should NOT be processed
 	futureEpoch := completedEpoch + 1
 	futureParticipant, _ := sdk.AccAddressFromBech32(sample.AccAddress())
 	unbondingFutureCoin := sdk.NewInt64Coin(inftypes.BaseCoin, 50)
-	s.k.AddUnbondingCollateral(s.ctx, futureParticipant, futureEpoch, unbondingFutureCoin)
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, futureParticipant, futureEpoch, unbondingFutureCoin))
 
 	// Set mock expectations for fund transfers
 	s.bankKeeper.EXPECT().
@@ -49,7 +49,7 @@ func (s *KeeperTestSuite) TestEpochProcessing_ProcessUnbondingQueue() {
 		LogSubAccountTransaction(s.ctx, participant2.String(), types.ModuleName, types.SubAccountUnbonding, gomock.Eq(unbondingAmount2Coin), gomock.Any())
 
 	// Run the epoch processing
-	s.k.AdvanceEpoch(s.ctx, completedEpoch)
+	s.Require().NoError(s.k.AdvanceEpoch(s.ctx, completedEpoch))
 
 	// Verify that the processed unbonding entries are gone
 	_, found := s.k.GetUnbondingCollateral(s.ctx, participant1, completedEpoch)

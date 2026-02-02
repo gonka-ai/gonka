@@ -319,6 +319,32 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Get cached capacity for a specific model",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "model_id"}},
 				},
+				// PoC v2 off-chain commit queries
+				{
+					RpcMethod:      "PoCV2StoreCommit",
+					Use:            "poc-v2-store-commit [poc-stage-start-block-height] [participant-address]",
+					Short:          "Query PoC v2 store commit for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "poc_stage_start_block_height"}, {ProtoField: "participant_address"}},
+				},
+				{
+					RpcMethod:      "MLNodeWeightDistribution",
+					Use:            "mlnode-weight-distribution [poc-stage-start-block-height] [participant-address]",
+					Short:          "Query MLNode weight distribution for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "poc_stage_start_block_height"}, {ProtoField: "participant_address"}},
+				},
+				{
+					RpcMethod:      "AllPoCV2StoreCommitsForStage",
+					Use:            "all-poc-v2-store-commits [poc-stage-start-block-height]",
+					Short:          "Query all PoC v2 store commits for a stage",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "poc_stage_start_block_height"}},
+				},
+				// Confirmation PoC queries
+				{
+					RpcMethod:      "ListConfirmationPoCEvents",
+					Use:            "list-confirmation-poc-events [epoch-index]",
+					Short:          "Query all confirmation PoC events for an epoch",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

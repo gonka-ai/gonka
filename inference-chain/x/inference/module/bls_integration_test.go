@@ -144,9 +144,8 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	epochID := uint64(1)
 	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
-	require.Len(t, epochBLSData.Participants, 3)
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	for _, p := range epochBLSData.Participants {
 		expectedBytes, ok := expectedPubKeysMap[p.Address]
 		require.True(t, ok)
@@ -169,8 +168,8 @@ func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
 	epochID := uint64(2)
 	appModule.InitiateBLSKeyGeneration(ctx, epochID, []*types.ActiveParticipant{})
 
-	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.False(t, found)
+	_, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.Error(t, err)
 }
 
 func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
@@ -214,8 +213,8 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	epochID := uint64(3)
 	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.True(t, found, "DKG should proceed if at least one participant is valid")
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err, "DKG should proceed if at least one participant is valid")
 	require.Len(t, epochBLSData.Participants, 1, "Only Charlie should be included")
 	require.Equal(t, charlieAccAddrStr, epochBLSData.Participants[0].Address)
 	require.Equal(t, expectedPubKeysMap[charlieAccAddrStr], epochBLSData.Participants[0].Secp256K1PublicKey)
@@ -258,8 +257,8 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 	epochID := uint64(4)
 	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Len(t, epochBLSData.Participants, 1)
 	blsP := epochBLSData.Participants[0]
 	require.Equal(t, aliceAccAddrStr, blsP.Address)
@@ -297,8 +296,8 @@ func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
 	epochID := uint64(5)
 	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.False(t, found, "EpochBLSData should not be created if participant is not in store, even if in active list")
+	_, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.Error(t, err, "EpochBLSData should not be created if participant is not in store, even if in active list")
 }
 
 func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T) {
@@ -340,8 +339,8 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 	epochID := uint64(6)
 	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.False(t, found, "EpochBLSData should not be created if AccountKeeper yields no key AND stored WorkerKey is invalid")
+	_, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.Error(t, err, "EpochBLSData should not be created if AccountKeeper yields no key AND stored WorkerKey is invalid")
 }
 
 // Note: The actual implementation of initiateBLSKeyGeneration in the inference module (appModule.go or keeper/dkg_initiation.go)
@@ -395,14 +394,14 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 	appModule.InitiateBLSKeyGeneration(ctx, epochID1, epoch1Participants)
 
 	// Verify epoch 1 DKG was initiated
-	epochBLSData1, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID1)
-	require.True(t, found, "Epoch 1 DKG should be initiated")
+	epochBLSData1, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID1)
+	require.NoError(t, err, "Epoch 1 DKG should be initiated")
 	require.Equal(t, epochID1, epochBLSData1.EpochId)
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
 
 	// Verify epoch 1 is set as active
-	activeEpochID, found := k.BlsKeeper.GetActiveEpochID(ctx)
-	require.True(t, found, "Active epoch should be found")
+	activeEpochID, foundActive := k.BlsKeeper.GetActiveEpochID(ctx)
+	require.True(t, foundActive, "Active epoch should be found")
 	require.Equal(t, epochID1, activeEpochID, "Epoch 1 should be active")
 
 	// Initiate DKG for epoch 2 while epoch 1 is still running - should succeed (concurrent DKG allowed)
@@ -410,8 +409,8 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 	appModule.InitiateBLSKeyGeneration(ctx, epochID2, epoch2Participants)
 
 	// Verify epoch 2 DKG was also initiated (concurrent DKG rounds are allowed)
-	epochBLSData2, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID2)
-	require.True(t, found, "Epoch 2 DKG should be initiated even when epoch 1 is still running")
+	epochBLSData2, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID2)
+	require.NoError(t, err, "Epoch 2 DKG should be initiated even when epoch 1 is still running")
 	require.Equal(t, epochID2, epochBLSData2.EpochId)
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
 
@@ -423,8 +422,8 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
 
 	// Active epoch tracking should reflect the most recent one (epoch 2)
-	activeEpochID, found = k.BlsKeeper.GetActiveEpochID(ctx)
-	require.True(t, found, "Active epoch should be found after second initiation")
+	activeEpochID, foundActive = k.BlsKeeper.GetActiveEpochID(ctx)
+	require.True(t, foundActive, "Active epoch should be found after second initiation")
 	require.Equal(t, epochID2, activeEpochID, "Active epoch should be updated to the most recent one")
 
 	// Both epochs should have valid participant data

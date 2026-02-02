@@ -3,6 +3,27 @@ events {
 }
 
 http {
+    ${LIMIT_REQ_ZONE_GLOBAL}
+    ${LIMIT_REQ_ZONE_EXEMPT}
+    ${LIMIT_REQ_ZONE_GONKA_API}
+    ${LIMIT_REQ_ZONE_CHAIN_RPC}
+    ${LIMIT_REQ_ZONE_CHAIN_API}
+    ${LIMIT_REQ_ZONE_CHAIN_GRPC}
+    
+    # Custom Log Format with Timing
+    log_format detailed '$remote_addr - $remote_user [$time_local] '
+                        '"$request" $status $body_bytes_sent '
+                        '"$http_referer" "$http_user_agent" '
+                        'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time"';
+    
+    access_log /dev/stdout detailed;
+    
+    # Map for dynamic WebSocket support
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      "keep-alive";
+    }
+    
     ${RESOLVER_DIRECTIVE}
     upstream api_backend {
         zone api_backend 64k;
@@ -42,6 +63,9 @@ http {
         server_name ${SERVER_NAME};
         ${SSL_CONFIG}
 
+        # Global Rate Limiting
+        ${LIMIT_REQ_RULE_GLOBAL}
+
         # Increase client body size for large requests
         client_max_body_size 10M;
 
@@ -52,67 +76,58 @@ http {
             add_header Content-Type text/plain;
         }
 
-        # API routes - restricted to v1 only
-        location /api/v1/ {
-            proxy_pass http://api_backend/v1/;
+        # Blocked Routes (Security First)
+        ${BLOCKED_ROUTES_CONFIG}
+
+        # Exempt Routes (High Performance)
+        ${EXEMPT_ROUTES_CONFIG}
+
+        # Dynamic API Versions (e.g. /v1/, /v2/)
+        ${API_VERSION_LOCATIONS}
+
+        # Generic API routes
+        location /api/ {
+            ${LIMIT_REQ_RULE_GONKA_API}
+            ${API_STATUS}
+            proxy_pass http://api_backend/;
             proxy_set_header Host $$host;
             proxy_set_header X-Real-IP $$remote_addr;
             proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $$scheme;
             proxy_set_header Authorization $$http_authorization;
 
-            # Handle WebSocket connections if needed
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $$http_upgrade;
-            proxy_set_header Connection "upgrade";
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
 
-            # Extended timeouts for inference API (20 minutes)
-            proxy_connect_timeout 120s;
-            proxy_send_timeout 1200s;
-            proxy_read_timeout 1200s;
-        }
-
-        # Direct API v1 routes - bypasses /api/ prefix
-        location /v1/ {
-            proxy_pass http://api_backend/v1/;
-            proxy_set_header Host $$host;
-            proxy_set_header X-Real-IP $$remote_addr;
-            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $$scheme;
-            proxy_set_header Authorization $$http_authorization;
-
-            # Handle WebSocket connections if needed
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $$http_upgrade;
-            proxy_set_header Connection "upgrade";
-
-            # Extended timeouts for inference API (20 minutes)
-            proxy_connect_timeout 120s;
-            proxy_send_timeout 1200s;
-            proxy_read_timeout 1200s;
+            # Extended timeouts for inference API
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }
 
         # Chain RPC endpoint
         location /chain-rpc/ {
+            ${LIMIT_REQ_RULE_CHAIN_RPC}
+            ${CHAIN_RPC_STATUS}
             proxy_pass http://chain_rpc_backend/;
             proxy_set_header Host $$host;
             proxy_set_header X-Real-IP $$remote_addr;
             proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $$scheme;
 
-            # WebSocket support for RPC connections
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $$http_upgrade;
-            proxy_set_header Connection "upgrade";
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
 
-            # Standard timeouts for chain API (2 minutes)
-            proxy_connect_timeout 30s;
-            proxy_send_timeout 120s;
-            proxy_read_timeout 120s;
+            # Standard timeouts for chain API
+            proxy_connect_timeout ${CHAIN_RPC_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${CHAIN_RPC_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${CHAIN_RPC_TRANSFER_TIMEOUT}s;
         }
 
         # Chain API endpoint (REST API)
         location /chain-api/ {
+            ${LIMIT_REQ_RULE_CHAIN_API}
+            ${CHAIN_API_STATUS}
             proxy_pass http://chain_api_backend/;
             proxy_set_header Host $$host;
             proxy_set_header X-Real-IP $$remote_addr;
@@ -120,14 +135,18 @@ http {
             proxy_set_header X-Forwarded-Proto $$scheme;
             proxy_set_header Authorization $$http_authorization;
 
-            # Standard timeouts for chain API (2 minutes)
-            proxy_connect_timeout 30s;
-            proxy_send_timeout 120s;
-            proxy_read_timeout 120s;
+            ${CORS_CONFIG}
+
+            # Standard timeouts for chain API
+            proxy_connect_timeout ${CHAIN_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${CHAIN_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${CHAIN_API_TRANSFER_TIMEOUT}s;
         }
 
         # Chain gRPC endpoint (if needed)
         location /chain-grpc/ {
+            ${LIMIT_REQ_RULE_CHAIN_GRPC}
+            ${CHAIN_GRPC_STATUS}
             grpc_pass grpc://chain_grpc_backend;
             grpc_set_header Host $$host;
             grpc_set_header X-Real-IP $$remote_addr;
@@ -135,10 +154,10 @@ http {
             grpc_set_header X-Forwarded-Proto $$scheme;
             grpc_set_header Authorization $$http_authorization;
 
-            # Standard timeouts for chain gRPC (2 minutes)
-            grpc_connect_timeout 30s;
-            grpc_send_timeout 120s;
-            grpc_read_timeout 120s;
+            # Standard timeouts for chain gRPC
+            grpc_connect_timeout ${CHAIN_GRPC_CONNECT_TIMEOUT}s;
+            grpc_send_timeout ${CHAIN_GRPC_TRANSFER_TIMEOUT}s;
+            grpc_read_timeout ${CHAIN_GRPC_TRANSFER_TIMEOUT}s;
         }
 
         # Root location - either dashboard or not configured page
@@ -154,5 +173,3 @@ http {
         }
     }
 }
-
-

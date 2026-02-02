@@ -12,6 +12,7 @@ import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
+import "inference/inference/poc_v2.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -32,6 +33,11 @@ service Msg {
   rpc ClaimRewards                     (MsgClaimRewards) returns (MsgClaimRewardsResponse);
   rpc SubmitPocBatch                   (MsgSubmitPocBatch) returns (MsgSubmitPocBatchResponse);
   rpc SubmitPocValidation              (MsgSubmitPocValidation) returns (MsgSubmitPocValidationResponse);
+  // PoC v2 validation messages
+  rpc SubmitPocValidationsV2           (MsgSubmitPocValidationsV2) returns (MsgSubmitPocValidationsV2Response);
+  // PoC v2 off-chain commit messages
+  rpc PoCV2StoreCommit                 (MsgPoCV2StoreCommit) returns (MsgPoCV2StoreCommitResponse);
+  rpc MLNodeWeightDistribution         (MsgMLNodeWeightDistribution) returns (MsgMLNodeWeightDistributionResponse);
   rpc SubmitSeed                       (MsgSubmitSeed) returns (MsgSubmitSeedResponse);
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel) returns (MsgRegisterModelResponse);
@@ -47,14 +53,14 @@ service Msg {
   rpc JoinTrainingStatus               (MsgJoinTrainingStatus) returns (MsgJoinTrainingStatusResponse);
   rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask) returns (MsgCreateDummyTrainingTaskResponse);
   rpc BridgeExchange                   (MsgBridgeExchange) returns (MsgBridgeExchangeResponse);
-  rpc RegisterBridgeAddresses          (MsgRegisterBridgeAddresses         ) returns (MsgRegisterBridgeAddressesResponse         );
-  rpc RegisterLiquidityPool            (MsgRegisterLiquidityPool           ) returns (MsgRegisterLiquidityPoolResponse           );
-  rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata           ) returns (MsgRegisterTokenMetadataResponse           );
-  rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading    ) returns (MsgApproveBridgeTokenForTradingResponse    );
-  rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal         ) returns (MsgRequestBridgeWithdrawalResponse         );
-  rpc RequestBridgeMint                (MsgRequestBridgeMint               ) returns (MsgRequestBridgeMintResponse               );
-  rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract    ) returns (MsgRegisterWrappedTokenContractResponse    );
-  rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens         ) returns (MsgMigrateAllWrappedTokensResponse         );
+  rpc RegisterBridgeAddresses          (MsgRegisterBridgeAddresses) returns (MsgRegisterBridgeAddressesResponse);
+  rpc RegisterLiquidityPool            (MsgRegisterLiquidityPool) returns (MsgRegisterLiquidityPoolResponse);
+  rpc RegisterTokenMetadata            (MsgRegisterTokenMetadata) returns (MsgRegisterTokenMetadataResponse);
+  rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading) returns (MsgApproveBridgeTokenForTradingResponse);
+  rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal) returns (MsgRequestBridgeWithdrawalResponse);
+  rpc RequestBridgeMint                (MsgRequestBridgeMint) returns (MsgRequestBridgeMintResponse);
+  rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract) returns (MsgRegisterWrappedTokenContractResponse);
+  rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens) returns (MsgMigrateAllWrappedTokensResponse);
   rpc AddUserToTrainingAllowList       (MsgAddUserToTrainingAllowList) returns (MsgAddUserToTrainingAllowListResponse);
   rpc RemoveUserFromTrainingAllowList  (MsgRemoveUserFromTrainingAllowList) returns (MsgRemoveUserFromTrainingAllowListResponse);
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
@@ -145,10 +151,11 @@ message MsgValidation {
   string creator = 1;
   string id = 2;
   string inference_id = 3;
-  string response_payload = 4 [ deprecated = true];
+  string response_payload = 4 [deprecated = true];
   string response_hash = 5;
-  double value = 6;
+  double value = 6 [deprecated = true];
   bool   revalidation = 7;
+  Decimal value_decimal = 8;
 }
 
 message MsgValidationResponse {}
@@ -223,6 +230,37 @@ message MsgSubmitPocValidation {
 }
 
 message MsgSubmitPocValidationResponse {}
+
+// PoC v2 validation messages
+message MsgSubmitPocValidationsV2 {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated PoCValidationPayloadV2 validations = 3;
+}
+
+message MsgSubmitPocValidationsV2Response {}
+
+// PoC v2 off-chain commit - commits MMR state to chain
+message MsgPoCV2StoreCommit {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  uint32 count = 3;
+  bytes root_hash = 4;
+}
+
+message MsgPoCV2StoreCommitResponse {}
+
+// Reports per-node weight distribution after generation
+message MsgMLNodeWeightDistribution {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated MLNodeWeight weights = 3;
+}
+
+message MsgMLNodeWeightDistributionResponse {}
 
 message MsgSubmitSeed {
   option (cosmos.msg.v1.signer) = "creator";
@@ -436,9 +474,9 @@ message MsgRemoveParticipantsFromAllowListResponse {}
 
 message MsgRegisterBridgeAddresses {
   option (cosmos.msg.v1.signer) = "authority";
-  string authority              = 1;
-  string chainName              = 2;
-  repeated string addresses     = 3;
+  string authority = 1;
+  string chainName = 2;
+  repeated string addresses = 3;
 }
 
 message MsgRegisterBridgeAddressesResponse {}
@@ -458,19 +496,19 @@ message MsgRegisterTokenMetadataResponse {}
 
 message MsgApproveBridgeTokenForTrading {
   option (cosmos.msg.v1.signer) = "authority";
-  string authority              = 1;
-  string chainId                = 2;  // e.g. "ethereum"
-  string contractAddress        = 3;  // original chain contract address
+  string authority = 1;
+  string chainId = 2;  // e.g. "ethereum"
+  string contractAddress = 3;  // original chain contract address
 }
 
 message MsgApproveBridgeTokenForTradingResponse {}
 
 message MsgRegisterLiquidityPool {
   option (cosmos.msg.v1.signer) = "authority";
-  string authority              = 1;
-  string code_id                = 2;
-  string label                  = 3;
-  string instantiate_msg        = 4;  // JSON string for contract instantiation
+  string authority = 1;
+  string code_id = 2;
+  string label = 3;
+  string instantiate_msg = 4;  // JSON string for contract instantiation
 }
 
 message MsgRegisterLiquidityPoolResponse {}
@@ -478,30 +516,30 @@ message MsgRegisterLiquidityPoolResponse {}
 // Contract-only bridge withdrawal request - can only be executed by smart contracts
 message MsgRequestBridgeWithdrawal {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator                = 1; // Contract requesting withdrawal (must be the msg sender, validated automatically by SDK)
-  string user_address           = 2; // User address that triggered the withdrawal
-  string amount                 = 3; // Amount to withdraw (as string to handle large numbers)
-  string destination_address    = 4; // Ethereum address to receive tokens
+  string creator = 1; // Contract requesting withdrawal (must be the msg sender, validated automatically by SDK)
+  string user_address = 2; // User address that triggered the withdrawal
+  string amount = 3; // Amount to withdraw (as string to handle large numbers)
+  string destination_address = 4; // Ethereum address to receive tokens
 }
 
 message MsgRequestBridgeWithdrawalResponse {
-  string request_id     = 1; // Generated request ID (transaction hash)
-  uint64 epoch_index    = 2; // Current epoch ID used for signature
+  string request_id = 1; // Generated request ID (transaction hash)
+  uint64 epoch_index = 2; // Current epoch ID used for signature
   string bls_request_id = 3; // BLS signing request ID
 }
 
 // Native Gonka bridge mint request - bridges native tokens to WGNK
 message MsgRequestBridgeMint {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator              = 1; // User address sending native tokens
-  string amount               = 2; // Amount of native Gonka to bridge (as string to handle large numbers)
-  string destination_address  = 3; // Ethereum address to receive WGNK tokens
-  string chain_id             = 4; // Target chain identifier (e.g., "ethereum", "sepolia")
+  string creator = 1; // User address sending native tokens
+  string amount = 2; // Amount of native Gonka to bridge (as string to handle large numbers)
+  string destination_address = 3; // Ethereum address to receive WGNK tokens
+  string chain_id = 4; // Target chain identifier (e.g., "ethereum", "sepolia")
 }
 
 message MsgRequestBridgeMintResponse {
-  string request_id     = 1; // Generated request ID for tracking
-  uint64 epoch_index    = 2; // Current epoch ID used for signature
+  string request_id = 1; // Generated request ID for tracking
+  uint64 epoch_index = 2; // Current epoch ID used for signature
   string bls_request_id = 3; // BLS signing request ID
 }
 

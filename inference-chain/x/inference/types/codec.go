@@ -39,6 +39,15 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgSubmitPocValidation{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgSubmitPocValidationsV2{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgPoCV2StoreCommit{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgMLNodeWeightDistribution{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitSeed{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),

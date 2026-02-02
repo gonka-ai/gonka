@@ -8,4 +8,4 @@ This is a blockchain app. Certain things MUST NEVER enter the state of the block
 - Relying on external systems or APIs that may return different results at different times
 - Using floating point arithmetic that may yield different results on different architectures. All FP math must use the `shopspring/decimal` package.
 - Iterating over maps, since Go randomizes map iteration order
-
+- Any other issues that could result in a different outcome on different nodes in any way
