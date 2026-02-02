@@ -342,6 +342,40 @@ data class ApplicationAPI(
     }
 
     /**
+     * Requests PoC artifact proofs from a participant's off-chain storage.
+     * Used by validators to verify participant's artifact submissions.
+     */
+    fun getPocProofs(request: PocProofsRequest): PocProofsResponse = wrapLog("GetPocProofs", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        post(url, "v1/poc/proofs", request)
+    }
+
+    /**
+     * Requests PoC artifact proofs, returning raw response for error handling.
+     */
+    fun getPocProofsRaw(request: PocProofsRequest): Triple<Request, Response, Result<String, FuelError>> =
+        wrapLog("GetPocProofsRaw", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            val response = Fuel.post("$url/v1/poc/proofs")
+                .jsonBody(request, cosmosJson)
+                .timeout(1000 * 30)
+                .timeoutRead(1000 * 30)
+                .responseString()
+            logResponse(response)
+            response
+        }
+
+    /**
+     * Gets the current artifact store state for a given epoch.
+     * Returns count and root_hash for building proof requests.
+     */
+    fun getPocArtifactsState(pocStageStartBlockHeight: Long): PocArtifactsStateResponse =
+        wrapLog("GetPocArtifactsState", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            get(url, "v1/poc/artifacts/state?height=$pocStageStartBlockHeight")
+        }
+
+    /**
      * Stores payloads directly to the executor's PayloadStorage via admin endpoint.
      * Used by InferenceTestHelper to support offchain payload validation tests.
      *

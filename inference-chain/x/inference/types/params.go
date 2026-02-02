@@ -99,10 +99,10 @@ func DefaultParams() Params {
 			AllowedDeveloperAddresses: nil,
 		},
 		ParticipantAccessParams: &ParticipantAccessParams{
-			NewParticipantRegistrationStartHeight:  0,     // disabled by default
-			BlockedParticipantAddresses:            nil,   // keep nil to match proto round-trips
-			UseParticipantAllowlist:                false, // disabled by default
-			ParticipantAllowlistUntilBlockHeight:   0,     // no cutoff
+			NewParticipantRegistrationStartHeight: 0,     // disabled by default
+			BlockedParticipantAddresses:           nil,   // keep nil to match proto round-trips
+			UseParticipantAllowlist:               false, // disabled by default
+			ParticipantAllowlistUntilBlockHeight:  0,     // no cutoff
 		},
 	}
 }
@@ -161,7 +161,18 @@ func DefaultPocParams() *PocParams {
 		ValidationSampleSize:         200,
 		PocDataPruningEpochThreshold: 1,
 		WeightScaleFactor:            DecimalFromFloat(1.0),
-		ModelParams:                  DefaultPoCModelParams(),
+		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
+		ModelId:                      "",                      // Model identifier for PoC
+		SeqLen:                       256,                     // Sequence length for PoC
+		StatTest:                     DefaultPoCStatTestParams(),
+	}
+}
+
+func DefaultPoCStatTestParams() *PoCStatTestParams {
+	return &PoCStatTestParams{
+		DistThreshold:   DecimalFromFloat(0.4),
+		PMismatch:       DecimalFromFloat(0.1),
+		PValueThreshold: DecimalFromFloat(0.05),
 	}
 }
 
@@ -393,6 +404,22 @@ func (p Params) Validate() error {
 		if p.ParticipantAccessParams.ParticipantAllowlistUntilBlockHeight < 0 {
 			return fmt.Errorf("participant allowlist until block height cannot be negative")
 		}
+	}
+
+	if p.PocParams != nil {
+		if err := p.PocParams.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *PocParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.SeqLen < 0 {
+		return fmt.Errorf("poc_params.seq_len cannot be negative")
 	}
 	return nil
 }

@@ -219,21 +219,21 @@ else
     export API_STATUS=""
 fi
 
-if [ "${DISABLE_CHAIN_RPC}" = "true" ]; then
+if [ -z "${DISABLE_CHAIN_RPC}" ] || [ "${DISABLE_CHAIN_RPC}" = "true" ]; then
     export CHAIN_RPC_STATUS="return 404 'Chain RPC Disabled';"
     echo "   🚫 Chain RPC: Disabled"
 else
     export CHAIN_RPC_STATUS=""
 fi
 
-if [ "${DISABLE_CHAIN_API}" = "true" ]; then
+if [ -z "${DISABLE_CHAIN_API}" ] || [ "${DISABLE_CHAIN_API}" = "true" ]; then
     export CHAIN_API_STATUS="return 404 'Chain API Disabled';"
     echo "   🚫 Chain API: Disabled"
 else
     export CHAIN_API_STATUS=""
 fi
 
-if [ "${DISABLE_CHAIN_GRPC}" = "true" ]; then
+if [ -z "${DISABLE_CHAIN_GRPC}" ] || [ "${DISABLE_CHAIN_GRPC}" = "true" ]; then
     export CHAIN_GRPC_STATUS="return 404 'Chain gRPC Disabled';"
     echo "   🚫 Chain gRPC: Disabled"
 else

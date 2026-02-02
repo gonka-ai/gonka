@@ -12,6 +12,7 @@ import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
+import "inference/inference/poc_v2.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -32,6 +33,11 @@ service Msg {
   rpc ClaimRewards                     (MsgClaimRewards) returns (MsgClaimRewardsResponse);
   rpc SubmitPocBatch                   (MsgSubmitPocBatch) returns (MsgSubmitPocBatchResponse);
   rpc SubmitPocValidation              (MsgSubmitPocValidation) returns (MsgSubmitPocValidationResponse);
+  // PoC v2 validation messages
+  rpc SubmitPocValidationsV2           (MsgSubmitPocValidationsV2) returns (MsgSubmitPocValidationsV2Response);
+  // PoC v2 off-chain commit messages
+  rpc PoCV2StoreCommit                 (MsgPoCV2StoreCommit) returns (MsgPoCV2StoreCommitResponse);
+  rpc MLNodeWeightDistribution         (MsgMLNodeWeightDistribution) returns (MsgMLNodeWeightDistributionResponse);
   rpc SubmitSeed                       (MsgSubmitSeed) returns (MsgSubmitSeedResponse);
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel) returns (MsgRegisterModelResponse);
@@ -224,6 +230,37 @@ message MsgSubmitPocValidation {
 }
 
 message MsgSubmitPocValidationResponse {}
+
+// PoC v2 validation messages
+message MsgSubmitPocValidationsV2 {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated PoCValidationPayloadV2 validations = 3;
+}
+
+message MsgSubmitPocValidationsV2Response {}
+
+// PoC v2 off-chain commit - commits MMR state to chain
+message MsgPoCV2StoreCommit {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  uint32 count = 3;
+  bytes root_hash = 4;
+}
+
+message MsgPoCV2StoreCommitResponse {}
+
+// Reports per-node weight distribution after generation
+message MsgMLNodeWeightDistribution {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated MLNodeWeight weights = 3;
+}
+
+message MsgMLNodeWeightDistributionResponse {}
 
 message MsgSubmitSeed {
   option (cosmos.msg.v1.signer) = "creator";

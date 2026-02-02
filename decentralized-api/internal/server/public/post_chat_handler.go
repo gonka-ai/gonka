@@ -595,28 +595,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 }
 
 func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
-		GranterAddress: granterAddress,
-		MessageTypeUrl: "/inference.inference.MsgStartInference",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
-	}
-	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
-	for i, grantee := range grantees.Grantees {
-		granteesPubkeys[i] = grantee.PubKey
-	}
-
-	granterAccount, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: granterAddress})
-	if err != nil {
-		logging.Error("Failed to get granter account", types.Inferences, "address", granterAddress, "error", err)
-		return nil, err
-	}
-	granterPubKey := granterAccount.Pubkey
-
-	granteesPubkeys[len(granteesPubkeys)-1] = granterPubKey
-	return granteesPubkeys, nil
+	return s.authzCache.GetPubKeys(ctx.Request().Context(), granterAddress, "/inference.inference.MsgStartInference")
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
