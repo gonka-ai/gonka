@@ -39,7 +39,9 @@ func (k Keeper) TransferStatus(goCtx context.Context, req *types.QueryTransferSt
 
 	// Unmarshal the transfer record
 	var transferRecord types.TransferRecord
-	k.cdc.MustUnmarshal(bz, &transferRecord)
+	if err := k.cdc.Unmarshal(bz, &transferRecord); err != nil {
+		return nil, status.Error(codes.Internal, "failed to unmarshal transfer record")
+	}
 
 	return &types.QueryTransferStatusResponse{
 		IsTransferred:  transferRecord.Completed,
@@ -71,7 +73,10 @@ func (k Keeper) AllowedAccounts(goCtx context.Context, req *types.QueryAllowedAc
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	params := k.GetParams(goCtx)
+	params, err := k.GetParams(goCtx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get parameters")
+	}
 
 	return &types.QueryAllowedAccountsResponse{
 		AllowedAccounts: params.AllowedAccounts,

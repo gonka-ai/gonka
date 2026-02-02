@@ -11,6 +11,8 @@ import (
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
+		//nolint:forbidigo
+		//Genesis code:
 		panic(err)
 	}
 
@@ -21,7 +23,12 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 // ExportGenesis returns the module's exported genesis.
 func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := types.DefaultGenesis()
-	genesis.Params = k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		//nolint:forbidigo // Genesis/Export code
+		panic(err)
+	}
+	genesis.Params = params
 
 	// Export the current active epoch ID
 	activeEpochID, found := k.GetActiveEpochID(ctx)

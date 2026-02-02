@@ -61,6 +61,9 @@ func (m *mockInferenceQueryClient) EpochGroupData(ctx context.Context, in *types
 }
 
 func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodeclient.MockClientFactory) {
+	// Disable model enforcement in tests
+	os.Setenv("ENFORCED_MODEL_ID", "disabled")
+
 	// 1. Config Manager
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
 	assert.NoError(t, err)

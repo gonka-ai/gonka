@@ -53,7 +53,7 @@ func setPruningDefaults(ctx context.Context, k keeper.Keeper, fromVM module.Vers
 	if err != nil {
 		return err
 	}
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}

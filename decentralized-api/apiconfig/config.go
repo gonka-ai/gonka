@@ -19,10 +19,11 @@ type Config struct {
 	MLNodeKeyConfig     MLNodeKeyConfig       `koanf:"ml_node_key_config" json:"ml_node_key_config"`
 	Nats                NatsServerConfig      `koanf:"nats" json:"nats"`
 	TxBatching          TxBatchingConfig      `koanf:"tx_batching" json:"tx_batching"`
-	CurrentNodeVersion  string                `koanf:"current_node_version" json:"current_node_version"`
-	LastUsedVersion     string                `koanf:"last_used_version" json:"last_used_version"`
-	ValidationParams    ValidationParamsCache `koanf:"validation_params" json:"validation_params"`
-	BandwidthParams     BandwidthParamsCache  `koanf:"bandwidth_params" json:"bandwidth_params"`
+	CurrentNodeVersion       string                   `koanf:"current_node_version" json:"current_node_version"`
+	LastUsedVersion          string                   `koanf:"last_used_version" json:"last_used_version"`
+	ValidationParams         ValidationParamsCache    `koanf:"validation_params" json:"validation_params"`
+	BandwidthParams          BandwidthParamsCache     `koanf:"bandwidth_params" json:"bandwidth_params"`
+	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
 }
 
 type NatsServerConfig struct {
@@ -32,9 +33,12 @@ type NatsServerConfig struct {
 }
 
 type TxBatchingConfig struct {
-	Disabled            bool `koanf:"disabled" json:"disabled"`
-	FlushSize           int  `koanf:"flush_size" json:"flush_size"`
-	FlushTimeoutSeconds int  `koanf:"flush_timeout_seconds" json:"flush_timeout_seconds"`
+	Disabled                        bool `koanf:"disabled" json:"disabled"`
+	FlushSize                       int  `koanf:"flush_size" json:"flush_size"`
+	FlushTimeoutSeconds             int  `koanf:"flush_timeout_seconds" json:"flush_timeout_seconds"`
+	ValidationV2FlushSize           int  `koanf:"validation_v2_flush_size" json:"validation_v2_flush_size"`
+	ValidationV2FlushTimeoutSeconds int  `koanf:"validation_v2_flush_timeout_seconds" json:"validation_v2_flush_timeout_seconds"`
+	PocCommitIntervalSeconds        int  `koanf:"poc_commit_interval_seconds" json:"poc_commit_interval_seconds"`
 }
 
 type UpgradePlan struct {
@@ -170,4 +174,10 @@ type BandwidthParamsCache struct {
 	KbPerInputToken           float64 `koanf:"kb_per_input_token" json:"kb_per_input_token"`
 	KbPerOutputToken          float64 `koanf:"kb_per_output_token" json:"kb_per_output_token"`
 	MaxInferencesPerBlock     uint64  `koanf:"max_inferences_per_block" json:"max_inferences_per_block"`
+}
+
+// TransferAgentAccessCache caches the allowed TA addresses for O(1) lookups.
+type TransferAgentAccessCache struct {
+	AllowedAddresses map[string]struct{} // O(1) lookup
+	IsEnabled        bool                // true if whitelist is non-empty
 }

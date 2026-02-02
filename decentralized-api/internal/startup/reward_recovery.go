@@ -5,7 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/poc"
+	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"sync/atomic"
@@ -156,7 +156,7 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 
 	var seedValue int64
 	if previousSeed.EpochIndex != epochIndex || previousSeed.Seed == 0 {
-		generatedSeed, err := poc.CreateSeedForEpoch(c.recorder, epochIndex)
+		generatedSeed, err := seed.CreateSeedForEpoch(c.recorder, epochIndex)
 		if err != nil {
 			logging.Error("[AutoRewardRecovery] Failed to generate seed", types.Claims,
 				"epochIndex", epochIndex, "error", err)

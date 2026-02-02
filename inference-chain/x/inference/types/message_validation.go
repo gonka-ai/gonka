@@ -6,18 +6,19 @@ import (
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	shopspring "github.com/shopspring/decimal"
 )
 
 var _ sdk.Msg = &MsgValidation{}
 
-func NewMsgValidation(creator string, id string, inferenceId string, responsePayload string, responseHash string, value float64) *MsgValidation {
+func NewMsgValidation(creator string, id string, inferenceId string, responsePayload string, responseHash string, value *Decimal) *MsgValidation {
 	return &MsgValidation{
 		Creator:         creator,
 		Id:              id,
 		InferenceId:     inferenceId,
 		ResponsePayload: responsePayload,
 		ResponseHash:    responseHash,
-		Value:           value,
+		ValueDecimal:    value,
 	}
 }
 
@@ -40,9 +41,16 @@ func (msg *MsgValidation) ValidateBasic() error {
 	if msg.ResponseHash != "" && strings.TrimSpace(msg.ResponseHash) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_hash cannot be only whitespace")
 	}
-	// value in [0,1]
-	if msg.Value < 0 || msg.Value > 1 {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "value must be in [0,1]")
+	if msg.ValueDecimal != nil {
+		decimalValue := msg.ValueDecimal.ToDecimal()
+		// value in [0,1]
+		if decimalValue.IsNegative() || decimalValue.GreaterThan(shopspring.NewFromInt(1)) {
+			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "value must be in [0,1]")
+		}
+	} else {
+		if msg.Value < 0 || msg.Value > 1 {
+			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "value must be in [0,1]")
+		}
 	}
 	return nil
 }

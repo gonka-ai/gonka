@@ -60,22 +60,53 @@
         ]
       }
     },
+    "restrictions": {
+      "params": {
+        "restriction_end_block": "12"
+      }
+    },
     "inference": {
       "mlnode_version": {
         "current_version": "v3.0.8"
       },
       "params": {
         "epoch_params": {
-        "epoch_length": "220",
+        "epoch_length": "360",
         "epoch_multiplier": "1",
-        "epoch_shift": "150",
-        "poc_stage_duration": "60",
-        "poc_exchange_duration": "5",
-        "poc_validation_delay": "5",
+        "epoch_shift": "300",
+        "poc_stage_duration": "30",
+        "poc_exchange_duration": "2",
+        "poc_validation_delay": "2",
         "poc_validation_duration": "20",
         "set_new_validators_delay": "30",
         "inference_validation_cutoff": "20",
-        "default_unit_of_compute_price": "100"
+        "default_unit_of_compute_price": "100",
+          "inference_pruning_max": "0",
+          "poc_pruning_max": "0"
+        },
+        "validation_params": {
+          "binom_test_p0": {
+            "value": "4",
+            "exponent": -1
+          }
+        },
+        "poc_params": {
+          "weight_scale_factor": {
+            "value": "25",
+            "exponent": -1
+          },
+          "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+          "seq_len": 256,
+          "poc_v2_enabled": false,
+          "confirmation_poc_v2_enabled": true,
+          "stat_test": {
+            "dist_threshold": { "value": "4", "exponent": -1 },
+            "p_mismatch": { "value": "1", "exponent": -1 },
+            "p_value_threshold": { "value": "5", "exponent": -2 }
+          }
+        },
+        "confirmation_poc_params": {
+          "expected_confirmations_per_epoch": "4"
         },
         "bandwidth_limits_params": {
           "estimated_limits_per_block_kb": "10752",
@@ -86,7 +117,8 @@
           "kb_per_output_token": {
             "value": "64",
             "exponent": "-2"
-          }
+          },
+          "max_inferences_per_block": "1000"
         }
       },
       "model_list": [
@@ -150,6 +182,23 @@
           "validation_threshold": {
             "value": "95",
             "exponent": -2
+          }
+        },
+        {
+          "proposed_by": "genesis",
+          "id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+          "units_of_compute_per_token": "10000",
+          "hf_repo": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+          "hf_commit": "c0eb82898e3da8fb6dd017e3e6698a5e37b3a3e6",
+          "model_args": [
+            "--max-model-len",
+            "240000"
+          ],
+          "v_ram": "320",
+          "throughput_per_nonce": "1500",
+          "validation_threshold": {
+            "value": "970917",
+            "exponent": -6
           }
         }
       ],

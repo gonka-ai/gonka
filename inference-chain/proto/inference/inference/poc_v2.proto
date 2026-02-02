@@ -1,0 +1,49 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// PoCArtifactV2 represents a single artifact from PoC v2 generation.
+// Used for local off-chain storage and proof verification.
+message PoCArtifactV2 {
+  int32 nonce = 1;
+  bytes vector = 2; // Opaque bytes (encoding defined at application level)
+}
+
+// PoCValidationV2 represents a validator's attestation of a participant's PoC work.
+// validated_weight: -1 = reject/fraud, >0 = accept
+message PoCValidationV2 {
+  string participant_address = 1;
+  string validator_participant_address = 2;
+  int64 poc_stage_start_block_height = 3;
+  int64 validated_weight = 4;
+}
+
+// PoCValidationPayloadV2 is the message payload for validation submission.
+// Height is at message level, validator derived from signer.
+message PoCValidationPayloadV2 {
+  string participant_address = 1;
+  int64 validated_weight = 2;
+}
+
+// MLNodeWeight represents artifact count attributed to a single node.
+message MLNodeWeight {
+  string node_id = 1;
+  uint32 weight = 2;
+}
+
+// PoCV2StoreCommit stores the off-chain artifact store state.
+message PoCV2StoreCommit {
+  string participant_address = 1;
+  int64 poc_stage_start_block_height = 2;
+  uint32 count = 3;
+  bytes root_hash = 4;
+  int64 commit_block_height = 5; // block when this commit was recorded
+}
+
+// MLNodeWeightDistribution stores per-node weight distribution.
+message MLNodeWeightDistribution {
+  string participant_address = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated MLNodeWeight weights = 3;
+}

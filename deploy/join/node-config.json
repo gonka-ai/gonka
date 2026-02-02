@@ -11,7 +11,7 @@
           "--quantization",
           "fp8",
           "--gpu-memory-utilization",
-          "0.9"
+          "0.8"
         ]
       }
     }

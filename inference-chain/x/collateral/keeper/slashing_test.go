@@ -22,8 +22,8 @@ func (s *KeeperTestSuite) TestSlashing_Proportional() {
 	unbondingCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, unbondingAmount)
 	completionEpoch := uint64(100)
 
-	s.k.SetCollateral(s.ctx, participant, activeCollateral)
-	s.k.AddUnbondingCollateral(s.ctx, participant, completionEpoch, unbondingCollateral)
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, activeCollateral))
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, participant, completionEpoch, unbondingCollateral))
 
 	slashFraction := math.LegacyNewDecWithPrec(10, 2) // 10%
 	totalCollateral := activeAmount + unbondingAmount
@@ -66,7 +66,7 @@ func (s *KeeperTestSuite) TestSlashing_ActiveOnly() {
 	// Setup collateral state
 	activeAmount := int64(1000)
 	activeCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, activeAmount)
-	s.k.SetCollateral(s.ctx, participant, activeCollateral)
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, activeCollateral))
 
 	slashFraction := math.LegacyNewDecWithPrec(20, 2) // 20%
 	expectedSlashedAmount := math.NewInt(activeAmount).ToLegacyDec().Mul(slashFraction).TruncateInt()
@@ -93,7 +93,8 @@ func (s *KeeperTestSuite) TestSlashing_ActiveOnly() {
 	s.Require().Equal(expectedActive, newActive.Amount)
 
 	// Verify no unbonding entries were created or affected
-	unbondingEntries := s.k.GetUnbondingByParticipant(s.ctx, participant)
+	unbondingEntries, err := s.k.GetUnbondingByParticipant(s.ctx, participant)
+	s.Require().NoError(err)
 	s.Require().Empty(unbondingEntries)
 }
 
@@ -105,7 +106,7 @@ func (s *KeeperTestSuite) TestSlashing_UnbondingOnly() {
 	unbondingAmount := int64(500)
 	unbondingCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, unbondingAmount)
 	completionEpoch := uint64(100)
-	s.k.AddUnbondingCollateral(s.ctx, participant, completionEpoch, unbondingCollateral)
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, participant, completionEpoch, unbondingCollateral))
 
 	slashFraction := math.LegacyNewDecWithPrec(50, 2) // 50%
 	expectedSlashedAmount := math.NewInt(unbondingAmount).ToLegacyDec().Mul(slashFraction).TruncateInt()
@@ -143,7 +144,7 @@ func (s *KeeperTestSuite) TestSlashing_InvalidFraction() {
 
 	// Setup collateral state
 	initialCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, 1000)
-	s.k.SetCollateral(s.ctx, participant, initialCollateral)
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, initialCollateral))
 
 	// Case 1: Negative fraction
 	_, err = s.k.Slash(s.ctx, participant, math.LegacyNewDec(-1), inftypes.SlashReasonInvalidation)
