@@ -95,7 +95,7 @@
             "value": "25",
             "exponent": -1
           },
-          "model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "model_id": "Qwen/Qwen3-4B-Instruct-2507",
           "seq_len": 256,
           "poc_v2_enabled": false,
           "confirmation_poc_v2_enabled": true,
@@ -182,6 +182,23 @@
           "validation_threshold": {
             "value": "95",
             "exponent": -2
+          }
+        },
+        {
+          "proposed_by": "genesis",
+          "id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+          "units_of_compute_per_token": "10000",
+          "hf_repo": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+          "hf_commit": "c0eb82898e3da8fb6dd017e3e6698a5e37b3a3e6",
+          "model_args": [
+            "--max-model-len",
+            "240000"
+          ],
+          "v_ram": "320",
+          "throughput_per_nonce": "1500",
+          "validation_threshold": {
+            "value": "970917",
+            "exponent": -6
           }
         }
       ],

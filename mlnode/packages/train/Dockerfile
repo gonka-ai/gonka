@@ -1,5 +1,5 @@
 ################################################################################
-FROM ghcr.io/gonka-ai/vllm:v0.9.1-poc-v2-blackwell AS app
+FROM ghcr.io/gonka-ai/vllm:v0.9.1-poc-v2-post2-blackwell-sm120 AS app
 
 ENV APP_PATH=/app/packages/train
 

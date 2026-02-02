@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -424,6 +425,65 @@ func TestRecoveryWithTruncatedRecord(t *testing.T) {
 	root2 := store2.GetRoot()
 	if !bytes.Equal(root1, root2) {
 		t.Errorf("root mismatch after truncation recovery")
+	}
+}
+
+func TestConcurrentGetArtifact(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	const artifactCount = 100
+	const goroutines = 50
+	const readsPerGoroutine = 20
+
+	for i := 0; i < artifactCount; i++ {
+		vector := []byte{byte(i), byte(i + 1), byte(i + 2), byte(i + 3)}
+		if err := store.Add(int32(i), vector); err != nil {
+			t.Fatalf("Add(%d) failed: %v", i, err)
+		}
+	}
+
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, goroutines*readsPerGoroutine)
+
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+			for r := 0; r < readsPerGoroutine; r++ {
+				leafIdx := uint32((goroutineID*readsPerGoroutine + r) % artifactCount)
+				nonce, vector, err := store.GetArtifact(leafIdx)
+				if err != nil {
+					errChan <- fmt.Errorf("goroutine %d: GetArtifact(%d) failed: %v", goroutineID, leafIdx, err)
+					return
+				}
+				expectedNonce := int32(leafIdx)
+				expectedVector := []byte{byte(leafIdx), byte(leafIdx + 1), byte(leafIdx + 2), byte(leafIdx + 3)}
+				if nonce != expectedNonce {
+					errChan <- fmt.Errorf("goroutine %d: leafIdx %d: expected nonce %d, got %d", goroutineID, leafIdx, expectedNonce, nonce)
+					return
+				}
+				if !bytes.Equal(vector, expectedVector) {
+					errChan <- fmt.Errorf("goroutine %d: leafIdx %d: vector mismatch", goroutineID, leafIdx)
+					return
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		t.Error(err)
 	}
 }
 

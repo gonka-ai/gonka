@@ -49,6 +49,7 @@ services:
       - NODE_CONFIG_PATH=/root/node_config.json
       - DEBUG=true
       - IS_TEST_NET=true
+      - ENFORCED_MODEL_ID=disabled
     networks:
       - chain-public
 

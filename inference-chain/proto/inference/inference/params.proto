@@ -23,6 +23,7 @@ message Params {
   GenesisGuardianParams genesis_guardian_params = 10;
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
+  TransferAgentAccessParams transfer_agent_access_params = 13;
 }
 
 message GenesisOnlyParams {
@@ -311,4 +312,13 @@ message ParticipantAccessParams {
   // participant_allowlist_until_block_height: allowlist is enforced while current_height < this value.
   // Set to 0 to disable cutoff (allowlist stays active as long as use_participant_allowlist=true).
   int64 participant_allowlist_until_block_height = 4;
+}
+
+// TransferAgentAccessParams controls which Transfer Agents are allowed to process inference requests.
+// If allowed_transfer_addresses is empty, all TAs are allowed (no restriction).
+message TransferAgentAccessParams {
+  option (gogoproto.equal) = true;
+  // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
+  // If empty, all TAs are allowed.
+  repeated string allowed_transfer_addresses = 1;
 }

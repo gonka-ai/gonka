@@ -60,29 +60,49 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
-	// Idempotency check
-	state, err := worker.GetClient().NodeState(ctx)
-	if err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
+	// Idempotency check - skip redeploy if already running correct model
+	if state, err := worker.GetClient().NodeState(ctx); err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
 		if healthy, _ := worker.GetClient().InferenceHealth(ctx); healthy {
-			// Stop any running PoC V2 (runs inside inference/vLLM)
-			// Only stop if actually generating or validating
-			if pocStatus, err := worker.GetClient().GetPowStatusV2(ctx); err != nil {
-				logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", worker.nodeId, "error", err)
-			} else if pocStatus != nil {
-				logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", worker.nodeId, "status", pocStatus.Status)
-				if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
-					if _, err := worker.GetClient().StopPowV2(ctx); err != nil {
-						logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", worker.nodeId, "error", err)
-					}
+			// Check if loaded model matches expected
+			modelMatches := true
+			var expectedModel string
+			for modelId := range worker.node.State.EpochModels {
+				expectedModel = modelId
+				break
+			}
+			if expectedModel != "" {
+				if loadedModels, err := worker.GetClient().GetLoadedModels(ctx); err != nil {
+					logging.Debug("GetLoadedModels failed, assuming model match", types.Nodes, "node_id", worker.nodeId, "error", err)
+				} else if len(loadedModels) > 0 && loadedModels[0] != expectedModel {
+					logging.Info("Model mismatch detected, will redeploy", types.Nodes,
+						"node_id", worker.nodeId, "loaded", loadedModels[0], "expected", expectedModel)
+					modelMatches = false
 				}
 			}
-			logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
-			result.Succeeded = true
-			result.FinalStatus = types.HardwareNodeStatus_INFERENCE
-			result.FinalPocStatus = PocStatusIdle
-			return result
+
+			if modelMatches {
+				// Stop any running PoC V2 (runs inside inference/vLLM)
+				if pocStatus, err := worker.GetClient().GetPowStatusV2(ctx); err != nil {
+					logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", worker.nodeId, "error", err)
+				} else if pocStatus != nil {
+					logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", worker.nodeId, "status", pocStatus.Status)
+					if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
+						if _, err := worker.GetClient().StopPowV2(ctx); err != nil {
+							logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", worker.nodeId, "error", err)
+						}
+					}
+				}
+
+				logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
+				result.Succeeded = true
+				result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+				result.FinalPocStatus = PocStatusIdle
+				return result
+			}
 		}
 	}
+
+	// Redeploy: stop and start with correct model
 
 	// Stop node first
 	if err := worker.GetClient().Stop(ctx); err != nil {

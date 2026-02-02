@@ -24,6 +24,7 @@ vllm_backend_ports: List[int] = []
 vllm_healthy: Dict[int, bool] = {}
 vllm_counts: Dict[int, int] = {}
 poc_status_by_port: Dict[int, str] = {}  # PoC status: "IDLE", "GENERATING", "STOPPED", or ""
+pow_generate_rr_index: int = 0
 vllm_pick_lock = asyncio.Lock()
 vllm_client: Optional[httpx.AsyncClient] = None
 
@@ -163,19 +164,14 @@ def get_healthy_backends() -> List[int]:
 
 
 async def pick_backend_for_pow_generate() -> int:
-    """Pick backend for PoC /generate, preferring IDLE/STOPPED over GENERATING."""
+    """Round-robin picker for PoW /generate requests."""
+    global pow_generate_rr_index
     async with vllm_pick_lock:
-        live = [p for p, ok in vllm_healthy.items() if ok]
+        live = sorted([p for p, ok in vllm_healthy.items() if ok])
         if not live:
             raise RuntimeError("no vLLM backend")
-        
-        # Prefer backends not actively generating (IDLE, STOPPED, or unknown)
-        non_generating = [p for p in live if poc_status_by_port.get(p, "") != "GENERATING"]
-        candidates = non_generating if non_generating else live
-        
-        # Least-connections among candidates
-        port = min(candidates, key=lambda p: vllm_counts.get(p, 0))
-        vllm_counts[port] += 1
+        port = live[pow_generate_rr_index % len(live)]
+        pow_generate_rr_index += 1
         return port
 
 

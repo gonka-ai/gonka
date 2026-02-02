@@ -326,3 +326,40 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 	}
 	return err
 }
+
+// vLLMModelsResponse represents the OpenAI-compatible /v1/models response from vLLM
+type vLLMModelsResponse struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// GetLoadedModels queries the vLLM /v1/models endpoint to get the currently loaded model(s).
+// Returns a list of model IDs that are currently loaded.
+func (api *Client) GetLoadedModels(ctx context.Context) ([]string, error) {
+	requestURL, err := url.JoinPath(api.inferenceUrl, "/v1/models")
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var modelsResp vLLMModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		return nil, err
+	}
+
+	var modelIds []string
+	for _, model := range modelsResp.Data {
+		modelIds = append(modelIds, model.ID)
+	}
+	return modelIds, nil
+}

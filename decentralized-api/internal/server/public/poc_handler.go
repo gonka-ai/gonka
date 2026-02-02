@@ -91,7 +91,10 @@ type PocProofItem struct {
 
 // PocProofsResponse is the response body for POST /v1/poc/proofs
 type PocProofsResponse struct {
-	Proofs []PocProofItem `json:"proofs"`
+	Proofs        []PocProofItem `json:"proofs"`
+	SignerAddress string         `json:"signer_address,omitempty"` // participant's signer address
+	Timestamp     int64          `json:"timestamp,omitempty"`      // response timestamp (nanos)
+	Signature     string         `json:"signature,omitempty"`      // base64-encoded signature
 }
 
 // PocArtifactsStateResponse is the response for GET /v1/poc/artifacts/state
@@ -254,7 +257,31 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 	logging.Info("Serving PoC proofs", types.Validation,
 		"validatorAddress", req.ValidatorAddress, "count", len(proofs))
 
-	return ctx.JSON(http.StatusOK, PocProofsResponse{Proofs: proofs})
+	// Build and sign response
+	respTimestamp := time.Now().UnixNano()
+	signerAddress := s.recorder.GetSignerAddress()
+
+	signPayload := buildPocProofsResponseSignPayload(
+		int64(req.PocStageStartBlockHeight),
+		rootHash,
+		reqCount,
+		proofs,
+		respTimestamp,
+		signerAddress,
+	)
+
+	signature, err := s.recorder.SignBytes(signPayload)
+	if err != nil {
+		logging.Error("Failed to sign response", types.Validation, "error", err)
+		return ctx.JSON(http.StatusOK, PocProofsResponse{Proofs: proofs})
+	}
+
+	return ctx.JSON(http.StatusOK, PocProofsResponse{
+		Proofs:        proofs,
+		SignerAddress: signerAddress,
+		Timestamp:     respTimestamp,
+		Signature:     base64.StdEncoding.EncodeToString(signature),
+	})
 }
 
 // getPocArtifactsState returns the current artifact store state for a given height.
@@ -342,4 +369,44 @@ func verifyPocProofsSignatureWithPubkey(req *PocProofsRequest, rootHash []byte, 
 	}
 
 	return echo.NewHTTPError(http.StatusUnauthorized, "signature verification failed")
+}
+
+// buildPocProofsResponseSignPayload builds the binary payload for response signature.
+// Format: hex(SHA256(poc_stage_start_block_height(LE64) || root_hash(32) || count(LE32) ||
+//
+//	proofs_hash(32) || timestamp(LE64) || signer_address))
+//
+// proofs_hash = SHA256(concatenated: leaf_index(LE32) || nonce_value(LE32) || vector_bytes || proof_hashes...)
+func buildPocProofsResponseSignPayload(
+	pocStageStartBlockHeight int64,
+	rootHash []byte,
+	count uint32,
+	proofs []PocProofItem,
+	timestamp int64,
+	signerAddress string,
+) []byte {
+	// Build proofs hash
+	proofsHashBuf := new(bytes.Buffer)
+	for _, p := range proofs {
+		binary.Write(proofsHashBuf, binary.LittleEndian, p.LeafIndex)
+		binary.Write(proofsHashBuf, binary.LittleEndian, p.NonceValue)
+		proofsHashBuf.WriteString(p.VectorBytes)
+		for _, proofHash := range p.Proof {
+			proofsHashBuf.WriteString(proofHash)
+		}
+	}
+	proofsHash := sha256.Sum256(proofsHashBuf.Bytes())
+
+	// Build final payload
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, pocStageStartBlockHeight)
+	buf.Write(rootHash)
+	binary.Write(buf, binary.LittleEndian, count)
+	buf.Write(proofsHash[:])
+	binary.Write(buf, binary.LittleEndian, timestamp)
+	buf.WriteString(signerAddress)
+
+	hash := sha256.Sum256(buf.Bytes())
+	// Return hex-encoded string as bytes (consistent with request signing)
+	return []byte(hex.EncodeToString(hash[:]))
 }

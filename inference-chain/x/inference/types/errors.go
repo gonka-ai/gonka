@@ -68,4 +68,5 @@ var (
 	ErrPocArtifactVectorEmpty                = sdkerrors.Register(ModuleName, 1162, "artifact vector is empty")
 	ErrNotSupported                          = sdkerrors.Register(ModuleName, 1163, "operation not supported in current mode")
 	ErrInvalidAddress                        = sdkerrors.Register(ModuleName, 1164, "invalid address")
+	ErrTransferAgentNotAllowlisted           = sdkerrors.Register(ModuleName, 1165, "transfer agent not in allowlist")
 )

@@ -498,6 +498,13 @@ func (am AppModule) updateConfirmationWeightsV2(
 		}
 	}
 
+	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
+	guardianAddrs := am.keeper.GetGenesisGuardianAddresses(ctx)
+	guardianSet := make(map[string]bool, len(guardianAddrs))
+	for _, addr := range guardianAddrs {
+		guardianSet[addr] = true
+	}
+
 	// Create WeightCalculator with store commits and distributions
 	calculator := NewWeightCalculator(
 		currentValidatorWeights,
@@ -509,6 +516,8 @@ func (am AppModule) updateConfirmationWeightsV2(
 		event.TriggerHeight,
 		am,
 		weightScaleFactor,
+		guardianEnabled,
+		guardianSet,
 	)
 
 	// Calculate confirmation weights

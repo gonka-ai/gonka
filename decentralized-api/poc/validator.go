@@ -16,6 +16,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 
+	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -319,6 +320,8 @@ func (v *OffChainValidator) worker(
 				sampleSize,
 			)
 
+			var reportAddr string
+
 			statsMu.Lock()
 			switch result {
 			case validateSuccess:
@@ -327,6 +330,9 @@ func (v *OffChainValidator) worker(
 			case validateFailPermanent:
 				*failCount++
 				*pendingCount--
+				// Report participant as invalid to chain
+				// Uncomment when stabilized
+				// reportAddr = work.address
 			case validateFailRetry:
 				// Re-queue for retry if under max attempts
 				if work.attempt < v.config.MaxRetries-1 {
@@ -346,14 +352,19 @@ func (v *OffChainValidator) worker(
 				} else {
 					*failCount++
 					*pendingCount--
-					logging.Warn("OffChainValidator: max retries exceeded", types.PoC,
+					logging.Warn("OffChainValidator: max retries exceeded, reporting as invalid", types.PoC,
 						"participant", work.address, "attempts", work.attempt+1)
+					// Report participant as invalid to chain. We probably should separate only to report failed network requests.
+					// reportAddr = work.address
 				}
 			}
 
-			// Check if all work is done
 			done := *pendingCount <= 0
 			statsMu.Unlock()
+
+			if reportAddr != "" {
+				v.reportInvalidParticipant(pocHeight, reportAddr)
+			}
 
 			if done {
 				cancel()
@@ -675,4 +686,25 @@ func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse
 			"node_id", node.Node.Id, "status", node.State.CurrentStatus.String())
 	}
 	return filtered
+}
+
+// reportInvalidParticipant submits a validation result with ValidatedWeight=-1 (invalid) to chain.
+// This is called when validation fails permanently (e.g., retry exhaustion).
+func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participantAddress string) {
+	msg := &inference.MsgSubmitPocValidationsV2{
+		PocStageStartBlockHeight: pocHeight,
+		Validations: []*inference.PoCValidationPayloadV2{
+			{
+				ParticipantAddress: participantAddress,
+				ValidatedWeight:    -1, // Invalid
+			},
+		},
+	}
+	if err := v.recorder.SubmitPocValidationsV2(msg); err != nil {
+		logging.Error("OffChainValidator: failed to report invalid participant", types.PoC,
+			"participant", participantAddress, "error", err)
+	} else {
+		logging.Info("OffChainValidator: reported participant as invalid", types.PoC,
+			"participant", participantAddress)
+	}
 }

@@ -29,6 +29,13 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
 	}
 
+	// Transfer Agent access gating: only allowlisted TAs may be involved in inferences.
+	if k.IsTransferAgentRestricted(ctx) && !k.IsAllowedTransferAgent(ctx, msg.TransferredBy) {
+		k.LogError("FinishInference: transfer agent is not allowlisted", types.Inferences,
+			"transferAgent", msg.TransferredBy, "blockHeight", ctx.BlockHeight())
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrTransferAgentNotAllowlisted, msg.TransferredBy), msg), nil
+	}
+
 	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
 	if !found {
 		k.LogError("FinishInference: executor not found", types.Inferences, "executed_by", msg.ExecutedBy)

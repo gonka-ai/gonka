@@ -212,6 +212,13 @@ func (s *Server) postChat(ctx echo.Context) error {
 		return err
 	}
 
+	// Early TA whitelist check - covers both transfer and executor paths:
+	// - Transfer requests: TransferAddress = this node's address (set by readRequest)
+	// - Executor requests: TransferAddress = forwarding TA's address (from X-Transfer-Address header)
+	if err := s.enforceTransferAgentAccess(chatRequest.TransferAddress); err != nil {
+		return err
+	}
+
 	if chatRequest.AuthKey == "" {
 		logging.Warn("Request without authorization", types.Server, "path", ctx.Request().URL.Path)
 		return ErrRequestAuth
@@ -264,6 +271,20 @@ func (s *Server) enforceDeveloperAccessGate(ctx context.Context, requesterAddres
 	}
 
 	return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("inference requests are restricted until block height %d", p.UntilBlockHeight))
+}
+
+// enforceTransferAgentAccess checks if the given TA address is in the whitelist.
+// Returns nil if allowed, or a Forbidden error if not allowed.
+func (s *Server) enforceTransferAgentAccess(taAddress string) error {
+	cache := s.configManager.GetTransferAgentAccessCache()
+	if !cache.IsEnabled {
+		return nil // no restriction
+	}
+	if _, ok := cache.AllowedAddresses[taAddress]; ok {
+		return nil
+	}
+	logging.Warn("Transfer Agent not in whitelist", types.Inferences, "address", taAddress)
+	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {

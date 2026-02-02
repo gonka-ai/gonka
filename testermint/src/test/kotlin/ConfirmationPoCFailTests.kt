@@ -92,6 +92,10 @@ class ConfirmationPoCFailTests : TestermintTest() {
             join2.node.getColdAddress() to join2.node.getSelfBalance()
         )
 
+        // Record tokenomics before settlement to compute total reward minted this epoch
+        val initialSubsidies = genesis.node.getTokenomics().tokenomicsData.totalSubsidies
+
+
         logSection("Waiting for reward settlement with confirmation weights")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
 
@@ -131,11 +135,31 @@ class ConfirmationPoCFailTests : TestermintTest() {
 
         // Verify the ratio is approximately 8:10 (allowing some tolerance for rounding)
         val actualRatio = join1Change.toDouble() / genesisChange.toDouble()
-        val expectedRatio = 8.0 / 10.0  // 0.8
-        assertThat(actualRatio).isCloseTo(expectedRatio, Offset.offset(0.05))
-        Logger.info("  Join1 reward ratio: $actualRatio (expected: $expectedRatio)")
+        val expectedJoin1Ratio = 8.0 / 10.0  // 0.8
+        assertThat(actualRatio).isCloseTo(expectedJoin1Ratio, Offset.offset(0.05))
+        Logger.info("  Join1 reward ratio: $actualRatio (expected: $expectedJoin1Ratio)")
 
-        logSection("TEST PASSED: Confirmation PoC correctly caps rewards for lower confirmed weight")
+        // NEW: Verify CPoC reduction went to governance (not redistributed to participants)
+        logSection("Verifying CPoC reduction went to governance (not redistributed)")
+
+        val totalDistributed = genesisChange + join1Change + join2Change
+        Logger.info("Total distributed to participants: $totalDistributed")
+
+        // Compute how much reward was minted this epoch from tokenomics data
+        val finalSubsidies = genesis.node.getTokenomics().tokenomicsData.totalSubsidies
+        val mintedThisEpoch = finalSubsidies - initialSubsidies
+        Logger.info("Reward minted this epoch (tokenomics delta): $mintedThisEpoch")
+        assertThat(mintedThisEpoch).isGreaterThan(0)
+
+        // With new behavior (CPoC reduction to governance), participants should receive 28/30 of minted rewards.
+        // With old behavior (redistributed), participants would receive 30/30 (100%).
+        val actualDistributionRatio = totalDistributed.toDouble() / mintedThisEpoch.toDouble()
+        val expectedDistributionRatio = 28.0 / 30.0  // 0.933...
+        assertThat(actualDistributionRatio).isCloseTo(expectedDistributionRatio, Offset.offset(0.05))
+        Logger.info("  ✓ Participants received ${String.format("%.1f%%", actualDistributionRatio * 100)} of minted reward")
+        Logger.info("  ✓ ~6.7% went to governance (not redistributed), confirming CPoC reduction behavior")
+
+        logSection("TEST PASSED: Confirmation PoC correctly caps rewards AND transfers reduction to governance")
     }
 
     // 12m

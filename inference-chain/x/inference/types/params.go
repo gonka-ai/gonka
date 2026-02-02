@@ -104,6 +104,10 @@ func DefaultParams() Params {
 			UseParticipantAllowlist:               false, // disabled by default
 			ParticipantAllowlistUntilBlockHeight:  0,     // no cutoff
 		},
+		TransferAgentAccessParams: &TransferAgentAccessParams{
+			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
+			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
+		},
 	}
 }
 

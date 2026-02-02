@@ -1,7 +1,12 @@
+import os
+
 from fastapi import APIRouter, Body, Request, HTTPException
+from starlette.background import BackgroundTask
+from starlette.responses import JSONResponse
 
 from pow.service.manager import PowInitRequestUrl, PowManager
 from pow.compute.compute import ProofBatch
+from pow.compute.gpu_group import NotEnoughGPUResources
 from common.logger import create_logger
 
 logger = create_logger(__name__)
@@ -21,7 +26,15 @@ async def init(
     init_request: PowInitRequestUrl
 ):
     manager: PowManager = request.app.state.pow_manager
-    await manager.switch_to_pow_async(init_request)
+    try:
+        await manager.switch_to_pow_async(init_request)
+    except NotEnoughGPUResources as e:
+        logger.critical(f"GPU resources unavailable: {e}. Shutting down.")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": str(e)},
+            background=BackgroundTask(os._exit, 1),
+        )
     return {
         "status": "OK",
         "pow_status": manager.get_pow_status()
@@ -42,11 +55,19 @@ async def init_generate(
             detail="Node ID and node count must be set"
         )
     manager: PowManager = request.app.state.pow_manager
-    if not manager.is_running():
-        await manager.switch_to_pow_async(init_request)
+    try:
+        if not manager.is_running():
+            await manager.switch_to_pow_async(init_request)
 
-    if manager.init_request != init_request:
-        await manager.switch_to_pow_async(init_request)
+        if manager.init_request != init_request:
+            await manager.switch_to_pow_async(init_request)
+    except NotEnoughGPUResources as e:
+        logger.critical(f"GPU resources unavailable: {e}. Shutting down.")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": str(e)},
+            background=BackgroundTask(os._exit, 1),
+        )
 
     manager.pow_controller.start_generate()
     return {
@@ -64,11 +85,19 @@ async def init_validate(
     init_request: PowInitRequestUrl
 ):
     manager: PowManager = request.app.state.pow_manager
-    if not manager.is_running():
-        await manager.switch_to_pow_async(init_request)
+    try:
+        if not manager.is_running():
+            await manager.switch_to_pow_async(init_request)
 
-    if manager.init_request != init_request:
-        await manager.switch_to_pow_async(init_request)
+        if manager.init_request != init_request:
+            await manager.switch_to_pow_async(init_request)
+    except NotEnoughGPUResources as e:
+        logger.critical(f"GPU resources unavailable: {e}. Shutting down.")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": str(e)},
+            background=BackgroundTask(os._exit, 1),
+        )
 
     manager.pow_controller.start_validate()
     return {

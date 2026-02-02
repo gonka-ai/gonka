@@ -401,11 +401,8 @@ func (s *ArtifactStore) GetArtifact(leafIndex uint32) (nonce int32, vector []byt
 	}
 
 	offset := s.offsets[leafIndex]
-	if _, err := s.dataFile.Seek(int64(offset), io.SeekStart); err != nil {
-		return 0, nil, fmt.Errorf("seek data file: %w", err)
-	}
-
-	nonce, vector, _, err = readArtifact(s.dataFile)
+	// Use ReadAt for thread-safe concurrent reads (doesn't modify shared file position)
+	nonce, vector, _, err = readArtifactAt(s.dataFile, int64(offset))
 	if err != nil {
 		return 0, nil, fmt.Errorf("read artifact: %w", err)
 	}
@@ -490,6 +487,27 @@ func readArtifact(r io.Reader) (int32, []byte, int, error) {
 	vectorLen := totalLen - 4
 	vector := make([]byte, vectorLen)
 	if _, err := io.ReadFull(r, vector); err != nil {
+		return 0, nil, 0, err
+	}
+
+	return nonce, vector, 8 + int(vectorLen), nil
+}
+
+// readArtifactAt reads an artifact at a specific offset using ReadAt.
+// Unlike readArtifact, this is thread-safe for concurrent reads because
+// ReadAt doesn't modify the shared file position.
+func readArtifactAt(r io.ReaderAt, offset int64) (int32, []byte, int, error) {
+	var header [8]byte
+	if _, err := r.ReadAt(header[:], offset); err != nil {
+		return 0, nil, 0, err
+	}
+
+	totalLen := binary.LittleEndian.Uint32(header[0:4])
+	nonce := int32(binary.LittleEndian.Uint32(header[4:8]))
+
+	vectorLen := totalLen - 4
+	vector := make([]byte, vectorLen)
+	if _, err := r.ReadAt(vector, offset+8); err != nil {
 		return 0, nil, 0, err
 	}
 

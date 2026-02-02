@@ -21,6 +21,13 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
 	}
 
+	// Transfer Agent access gating: only allowlisted TAs may submit StartInference.
+	if k.IsTransferAgentRestricted(ctx) && !k.IsAllowedTransferAgent(ctx, msg.Creator) {
+		k.LogError("StartInference: transfer agent is not allowlisted", types.Inferences,
+			"transferAgent", msg.Creator, "blockHeight", ctx.BlockHeight())
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrTransferAgentNotAllowlisted, msg.Creator), msg), nil
+	}
+
 	if msg.MaxTokens > types.MaxAllowedTokens {
 		return failedStart(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "max_tokens exceeds limit (%d > %d)", msg.MaxTokens, types.MaxAllowedTokens), msg), nil
 	}

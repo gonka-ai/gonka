@@ -7,6 +7,7 @@ import torch
 import shutil
 import shlex
 import psutil
+import signal
 from pathlib import Path
 from typing import Optional, List
 from abc import abstractmethod
@@ -164,14 +165,18 @@ class VLLMRunner(IVLLMRunner):
                 parent = psutil.Process(pid)
                 processes = parent.children(recursive=True) + [parent]
                 
-                for proc in processes:
-                    try:
-                        proc.terminate()
-                    except psutil.NoSuchProcess:
-                        pass
+                try:
+                    logger.info("Sending SIGINT to vLLM process group (PGID %d) for graceful shutdown...", pid)
+                    os.killpg(pid, signal.SIGINT)
+                except Exception:
+                    logger.exception("Failed to send SIGINT to PGID %d; falling back to individual SIGTERM.", pid)
+                    for proc in processes:
+                        try:
+                            proc.terminate()
+                        except psutil.NoSuchProcess:
+                            pass
                 
-                logger.info(f"Sent SIGTERM to process tree (PID {pid}), waiting for graceful shutdown...")
-                
+                logger.info("Waiting for %d processes to terminate...", len(processes))
                 _, alive = psutil.wait_procs(processes, timeout=TERMINATION_TIMEOUT)
                 
                 for proc in alive:
@@ -181,7 +186,7 @@ class VLLMRunner(IVLLMRunner):
                         pass
                 
             except psutil.NoSuchProcess:
-                logger.debug(f"Process {pid} already terminated")
+                logger.debug("Process %d already terminated.", pid)
 
         for p in self.processes:
             try:

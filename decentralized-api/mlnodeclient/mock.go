@@ -259,6 +259,16 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 	return nil
 }
 
+func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	// Return the last inference model that was loaded, if any
+	if m.LastInferenceModel != "" {
+		return []string{m.LastInferenceModel}, nil
+	}
+	return nil, nil
+}
+
 func (m *MockClient) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
