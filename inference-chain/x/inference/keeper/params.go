@@ -233,3 +233,35 @@ func (k Keeper) IsPoCParticipantBlocked(ctx context.Context, address string) boo
 	_, ok := blocked[address]
 	return ok
 }
+
+func (k Keeper) GetTransferAgentAccessParams(ctx context.Context) *types.TransferAgentAccessParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetTransferAgentAccessParams", types.System, "error", err)
+		return nil
+	}
+	return p.TransferAgentAccessParams
+}
+
+// IsTransferAgentRestricted returns true if TA whitelist is active (non-empty list).
+func (k Keeper) IsTransferAgentRestricted(ctx context.Context) bool {
+	p := k.GetTransferAgentAccessParams(ctx)
+	if p == nil {
+		return false
+	}
+	return len(p.AllowedTransferAddresses) > 0
+}
+
+// IsAllowedTransferAgent returns true if the address is in the TA whitelist (or whitelist is empty).
+func (k Keeper) IsAllowedTransferAgent(ctx context.Context, taAddress string) bool {
+	p := k.GetTransferAgentAccessParams(ctx)
+	if p == nil || len(p.AllowedTransferAddresses) == 0 {
+		return true // no restriction
+	}
+	for _, a := range p.AllowedTransferAddresses {
+		if a == taAddress {
+			return true
+		}
+	}
+	return false
+}

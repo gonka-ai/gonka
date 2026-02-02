@@ -6,6 +6,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"fmt"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -203,10 +204,14 @@ type IntegrationTestSetup struct {
 }
 
 func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfig, params *types.EpochParams) *IntegrationTestSetup {
+	// Disable model enforcement in tests
+	os.Setenv("ENFORCED_MODEL_ID", "disabled")
+
 	mockQueryClient := &MockQueryClient{}
 	mockSeedManager := &MockRandomSeedManager{}
 
 	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker.UpdatePocV2Enabled(true)
 
 	// Create mock client factory that tracks calls
 	mockClientFactory := mlnodeclient.NewMockClientFactory()

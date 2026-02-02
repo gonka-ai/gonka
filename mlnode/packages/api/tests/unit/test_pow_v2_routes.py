@@ -78,19 +78,18 @@ class TestInitGenerateFanout:
         assert response.status_code == 503
 
 
-class TestValidationLBPrefersIdle:
-    """Test that /generate prefers idle backends over generating ones."""
+class TestRoundRobinLoadBalancing:
+    """Test that /generate uses round-robin across healthy backends."""
     
     @patch('api.proxy.vllm_backend_ports', [5001, 5002])
     @patch('api.proxy.vllm_healthy', {5001: True, 5002: True})
-    @patch('api.proxy.vllm_counts', {5001: 0, 5002: 0})
-    @patch('api.proxy.poc_status_by_port', {5001: "GENERATING", 5002: "IDLE"})
-    def test_prefers_idle_backend(self, client):
-        """Test /generate routes to IDLE backend when one is GENERATING."""
-        captured_url = []
+    @patch('api.proxy.pow_generate_rr_index', 0)
+    def test_round_robin_cycles_backends(self, client):
+        """Test /generate cycles through backends in round-robin order."""
+        captured_urls = []
         
         async def mock_post(url, json=None, timeout=None):
-            captured_url.append(url)
+            captured_urls.append(url)
             return make_mock_response(200, {
                 "status": "completed",
                 "request_id": "test-uuid",
@@ -100,7 +99,7 @@ class TestValidationLBPrefersIdle:
         with patch('api.proxy.vllm_client') as mock_client:
             mock_client.post = AsyncMock(side_effect=mock_post)
             
-            response = client.post("/api/v1/inference/pow/generate", json={
+            request_body = {
                 "block_hash": "0xabc123",
                 "block_height": 100,
                 "public_key": "pub_key_test",
@@ -109,23 +108,29 @@ class TestValidationLBPrefersIdle:
                 "nonces": [0, 1, 2],
                 "params": {"model": "test-model", "seq_len": 256},
                 "wait": True
-            })
+            }
             
-            assert response.status_code == 200
-            # Should have routed to port 5002 (IDLE), not 5001 (GENERATING)
-            assert len(captured_url) == 1
-            assert "5002" in captured_url[0]
+            # Make 4 requests to see round-robin cycling
+            for _ in range(4):
+                response = client.post("/api/v1/inference/pow/generate", json=request_body)
+                assert response.status_code == 200
+            
+            # Should cycle: 5001, 5002, 5001, 5002
+            assert len(captured_urls) == 4
+            assert "5001" in captured_urls[0]
+            assert "5002" in captured_urls[1]
+            assert "5001" in captured_urls[2]
+            assert "5002" in captured_urls[3]
     
-    @patch('api.proxy.vllm_backend_ports', [5001, 5002])
-    @patch('api.proxy.vllm_healthy', {5001: True, 5002: True})
-    @patch('api.proxy.vllm_counts', {5001: 0, 5002: 0})
-    @patch('api.proxy.poc_status_by_port', {5001: "GENERATING", 5002: "GENERATING"})
-    def test_falls_back_when_all_generating(self, client):
-        """Test /generate falls back to least-connections when all are GENERATING."""
-        captured_url = []
+    @patch('api.proxy.vllm_backend_ports', [5001, 5002, 5003])
+    @patch('api.proxy.vllm_healthy', {5001: True, 5002: False, 5003: True})
+    @patch('api.proxy.pow_generate_rr_index', 0)
+    def test_round_robin_skips_unhealthy(self, client):
+        """Test /generate skips unhealthy backends in round-robin."""
+        captured_urls = []
         
         async def mock_post(url, json=None, timeout=None):
-            captured_url.append(url)
+            captured_urls.append(url)
             return make_mock_response(200, {
                 "status": "completed",
                 "request_id": "test-uuid",
@@ -135,7 +140,7 @@ class TestValidationLBPrefersIdle:
         with patch('api.proxy.vllm_client') as mock_client:
             mock_client.post = AsyncMock(side_effect=mock_post)
             
-            response = client.post("/api/v1/inference/pow/generate", json={
+            request_body = {
                 "block_hash": "0xabc123",
                 "block_height": 100,
                 "public_key": "pub_key_test",
@@ -144,11 +149,17 @@ class TestValidationLBPrefersIdle:
                 "nonces": [0, 1, 2],
                 "params": {"model": "test-model", "seq_len": 256},
                 "wait": True
-            })
+            }
             
-            assert response.status_code == 200
-            # Should still work, picking one of the backends
-            assert len(captured_url) == 1
+            # Make 4 requests
+            for _ in range(4):
+                response = client.post("/api/v1/inference/pow/generate", json=request_body)
+                assert response.status_code == 200
+            
+            # Should cycle only healthy: 5001, 5003, 5001, 5003 (5002 skipped)
+            assert len(captured_urls) == 4
+            for url in captured_urls:
+                assert "5002" not in url
 
 
 class TestQueuedRequestIdRoundtrip:
