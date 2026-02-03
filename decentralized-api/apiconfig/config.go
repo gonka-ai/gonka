@@ -68,6 +68,8 @@ type ApiConfig struct {
 
 type ChainNodeConfig struct {
 	Url              string `koanf:"url" json:"url"`
+	GrpcEnabled      bool   `koanf:"grpc_enabled" json:"grpc_enabled"`
+	GrpcPort         int    `koanf:"grpc_port" json:"grpc_port"`
 	IsGenesis        bool   `koanf:"is_genesis" json:"is_genesis"`
 	SeedApiUrl       string `koanf:"seed_api_url" json:"seed_api_url"`
 	AccountPublicKey string `koanf:"account_public_key" json:"account_public_key"`

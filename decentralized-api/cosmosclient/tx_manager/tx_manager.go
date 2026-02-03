@@ -77,6 +77,7 @@ type blockTimeTracker struct {
 type manager struct {
 	ctx              context.Context
 	client           *cosmosclient.Client
+	clientCtx        client.Context
 	apiAccount       *apiconfig.ApiAccount
 	txFactory        *tx.Factory
 	accountRetriever client.AccountRetriever
@@ -90,7 +91,8 @@ type manager struct {
 
 func StartTxManager(
 	ctx context.Context,
-	client *cosmosclient.Client,
+	cosmosClient *cosmosclient.Client,
+	clientCtx client.Context,
 	account *apiconfig.ApiAccount,
 	defaultTimeout time.Duration,
 	natsConnection *nats.Conn,
@@ -102,18 +104,19 @@ func StartTxManager(
 	}
 
 	// Register all module interfaces to match admin server codec
-	app.RegisterLegacyModules(client.Context().InterfaceRegistry)
-	types.RegisterInterfaces(client.Context().InterfaceRegistry)
-	banktypes.RegisterInterfaces(client.Context().InterfaceRegistry)
-	v1.RegisterInterfaces(client.Context().InterfaceRegistry)
-	upgradetypes.RegisterInterfaces(client.Context().InterfaceRegistry)
-	collateraltypes.RegisterInterfaces(client.Context().InterfaceRegistry)
-	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
-	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	app.RegisterLegacyModules(clientCtx.InterfaceRegistry)
+	types.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	banktypes.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	v1.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	upgradetypes.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	collateraltypes.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	restrictionstypes.RegisterInterfaces(clientCtx.InterfaceRegistry)
+	blstypes.RegisterInterfaces(clientCtx.InterfaceRegistry)
 
 	m := &manager{
 		ctx:              ctx,
-		client:           client,
+		client:           cosmosClient,
+		clientCtx:        clientCtx,
 		address:          address,
 		apiAccount:       account,
 		accountRetriever: authtypes.AccountRetriever{},
@@ -728,7 +731,7 @@ func (m *manager) observeTxs() error {
 }
 
 func (m *manager) GetClientContext() client.Context {
-	return m.client.Context()
+	return m.clientCtx
 }
 
 func (m *manager) checkTxStatus(hash string) (bool, error) {

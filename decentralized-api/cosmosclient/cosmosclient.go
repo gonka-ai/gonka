@@ -11,13 +11,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -78,6 +83,27 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
+func grpcTargetFromNodeURL(nodeURL string, port int) (string, error) {
+	parsed, err := url.Parse(nodeURL)
+	if err != nil {
+		parsed, err = url.Parse("http://" + nodeURL)
+		if err != nil {
+			return "", err
+		}
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		host = parsed.Host
+	}
+	if host == "" {
+		return "", fmt.Errorf("invalid node url: %s", nodeURL)
+	}
+	if port == 0 {
+		port = 9090
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
+}
+
 // 'file' keyring backend to automatically provide interactive prompts for signing
 func updateKeyringIfNeeded(client *cosmosclient.Client, keyringDir string, config *apiconfig.ConfigManager) error {
 	nodeConfig := config.GetChainNodeConfig()
@@ -133,6 +159,32 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
+	var grpcConn *grpc.ClientConn
+	if nodeConfig.GrpcEnabled {
+		target, err := grpcTargetFromNodeURL(nodeConfig.Url, nodeConfig.GrpcPort)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build gRPC target: %w", err)
+		}
+		grpcConn, err = grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
+		}
+		go func() {
+			<-ctx.Done()
+			_ = grpcConn.Close()
+		}()
+	}
+
+	clientCtx := cosmoclient.Context()
+	if grpcConn != nil {
+		clientCtx = clientCtx.WithGRPCClient(grpcConn)
+	}
+	grpcEnabled := clientCtx.GRPCClient != nil
+	logging.Info("Cosmos gRPC status", types.System, "enabled", grpcEnabled)
+	if grpcEnabled {
+		logging.Info("Cosmos gRPC target", types.System, "target", clientCtx.GRPCClient.Target())
+	}
+
 	apiAccount, err := apiconfig.NewApiAccount(addressPrefix, nodeConfig, &cosmoclient)
 	if err != nil {
 		log.Printf("Error creating api account: %s", err)
@@ -151,15 +203,18 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
-	// Ensure natsConn is closed on any error to unbind consumers
+	// Ensure resources are closed on any error
 	var success bool
 	defer func() {
 		if !success {
 			natsConn.Close()
+			if grpcConn != nil {
+				_ = grpcConn.Close()
+			}
 		}
 	}()
 
-	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
+	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, clientCtx, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
 	if err != nil {
 		return nil, err
 	}
