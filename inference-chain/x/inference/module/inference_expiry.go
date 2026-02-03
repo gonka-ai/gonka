@@ -33,12 +33,12 @@ func (am AppModule) GetLatestPoCOrCPoCRangeWithData(
 
 	epochParams := params.EpochParams
 	epochContext := types.NewEpochContext(*currentEpoch, *epochParams)
+	nextPoCStart := epochContext.NextPoCStart()
 
-	// 1. Check if next PoC started
-	if epochContext.IsNextPoCStart(blockHeight) {
+	// 1. Check if next PoC started (or we are already past its start)
+	if blockHeight >= nextPoCStart {
 		// We're at the start of the next epoch's PoC
 		// Return range from start of next PoC to current block
-		nextPoCStart := epochContext.NextPoCStart()
 		return &PoCTimeRange{
 			StartBlock: nextPoCStart,
 			EndBlock:   blockHeight, // Can't predict future, use current block
