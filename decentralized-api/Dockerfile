@@ -8,6 +8,7 @@ FROM golang:1.24.2-alpine3.20 AS builder
 ARG BUILD_FLAGS
 ARG GOOS
 ARG GOARCH
+ARG BLST_PORTABLE=0
 
 ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
@@ -15,8 +16,10 @@ ENV GOOS=${GOOS} \
     GO111MODULE=on \
     GOCACHE=/root/.cache/go-build \
     GOMODCACHE=/go/pkg/mod \
-    CGO_CFLAGS="-I/lib" \
+    CGO_CFLAGS="-I/lib -O2" \
+    CGO_CFLAGS_ALLOW=".*" \
     CGO_LDFLAGS="-L/lib" \
+    BLST_PORTABLE=${BLST_PORTABLE} \
     # Override the wasmvm library path to use our musl version
     LD_LIBRARY_PATH=/lib
 
@@ -50,6 +53,7 @@ COPY decentralized-api/. .
 # ARG LDFLAGS
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     --mount=type=cache,id=go-mod-cache3,target=/go/pkg/mod \
+    if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -tags muslc -ldflags "$LDFLAGS" \
     -o ./build/dapi \
@@ -59,6 +63,7 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     --mount=type=cache,id=go-mod-cache3,target=/go/pkg/mod \
     cd /app/inference-chain && \
+    if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -tags muslc -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inference-chaind" \
     -o ./build/inferenced ./cmd/inferenced/main.go \
