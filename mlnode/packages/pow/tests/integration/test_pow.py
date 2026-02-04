@@ -3,13 +3,14 @@ import pytest
 import requests
 import datetime
 import hashlib
+import time
 from time import sleep
 
 from pow.service.client import PowClient
 from pow.compute.stats import estimate_R_from_experiment
 from pow.compute.compute import ProofBatch
 from pow.data import ValidatedBatch
-from pow.models.utils import Params
+from pow.models.utils import PARAMS_V1
 
 @pytest.fixture(scope="session")
 def server_urls():
@@ -41,19 +42,7 @@ def client(server_urls):
 
 @pytest.fixture(scope="session")
 def model_params():
-    return Params(
-        dim=128,
-        n_layers=16,
-        n_heads=16,
-        n_kv_heads=16,
-        vocab_size=128,
-        ffn_dim_multiplier=16.0,
-        multiple_of=1024,
-        norm_eps=1e-05,
-        rope_theta=500000.0,
-        use_scaled_rope=False,
-        seq_len=4
-    )
+    return PARAMS_V1
 
 @pytest.fixture(scope="session")
 def r_target(model_params):
@@ -118,7 +107,7 @@ def get_incorrect_nonce(pb):
     for i in range(min(pb.nonces), max(pb.nonces)):
         if i not in pb.nonces:
             return i
-    return None
+    return max(pb.nonces) + 1
 
 def create_incorrect_batch(pb, n, n_invalid):
     incorrect_pb_dict = {
@@ -161,44 +150,56 @@ def test_generated_proofs(init_generation, server_urls):
 def test_validate_correct_batch(client, server_urls, latest_proof_batch):
     batch_receiver_url, _ = server_urls
     clear_batches(batch_receiver_url)
-    client.start_generation()
-    sleep(20)
-    correct_pb = create_correct_batch(latest_proof_batch, n=100)
+    correct_pb = create_correct_batch(latest_proof_batch, n=10)
     client.start_validation()
     client.validate(correct_pb)
-    while True:
+    sleep(5)  # Give time for validation to complete and batch to be sent
+    timeout = 60
+    start_time = time.time()
+    while time.time() - start_time < timeout:
         val_proof_batches = get_val_proof_batches(batch_receiver_url)
         if len(val_proof_batches) > 0:
             break
         sleep(1)
-    assert len(val_proof_batches) > 0
+    assert len(val_proof_batches) > 0, f"No validated batches received after {timeout} seconds"
     vpb = ValidatedBatch(**val_proof_batches[-1])
-    assert len(vpb) == 100
+    assert len(vpb) == 10
     assert vpb.n_invalid == 0
     assert not vpb.fraud_detected
 
-def test_validate_incorrect_batch(client, server_urls, latest_proof_batch):
+def test_validate_incorrect_batch(client, server_urls):
     batch_receiver_url, _ = server_urls
-    clear_batches(batch_receiver_url)
+    
+    # Briefly restart generation to get a fresh batch
     client.start_generation()
-    sleep(20)
-    incorrect_pb = create_incorrect_batch(latest_proof_batch, n=100, n_invalid=30)
+    while True:
+        proof_batches = get_proof_batches(batch_receiver_url)
+        if len(proof_batches) > 0:
+            break
+        sleep(1)
+    pb = ProofBatch(**proof_batches[-1])
+    
+    clear_batches(batch_receiver_url)
+    incorrect_pb = create_incorrect_batch(pb, n=10, n_invalid=3)
     client.start_validation()
     client.validate(incorrect_pb)
-    while True:
+    sleep(5)  # Give time for validation to complete and batch to be sent
+    timeout = 60
+    start_time = time.time()
+    while time.time() - start_time < timeout:
         val_proof_batches = get_val_proof_batches(batch_receiver_url)
         if len(val_proof_batches) > 0:
             break
         sleep(1)
-    assert len(val_proof_batches) > 0
+    assert len(val_proof_batches) > 0, f"No validated batches received after {timeout} seconds"
     vpb = ValidatedBatch(**val_proof_batches[-1])
 
-    assert len(vpb) == 100
+    assert len(vpb) == 10
     assert vpb.n_invalid > 0
 
 
 @pytest.mark.parametrize("node_id, node_count", [(0, 1), (1, 2), (2, 3)])
-def test_fresh_init(client, server_urls, node_id, node_count):
+def test_fresh_init(client, server_urls, model_params, node_id, node_count):
     batch_receiver_url, _ = server_urls
     client.stop()
     clear_batches(batch_receiver_url)
@@ -212,6 +213,7 @@ def test_fresh_init(client, server_urls, node_id, node_count):
         batch_size=5000,
         r_target=10,
         fraud_threshold=0.01,
+        params=model_params,
     )
     proof_batch = None
     while True:

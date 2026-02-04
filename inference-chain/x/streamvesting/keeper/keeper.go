@@ -45,6 +45,8 @@ func NewKeeper(
 	bookkeepingBankKeeper types.BookkeepingBankKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
@@ -66,6 +68,8 @@ func NewKeeper(
 
 	schema, err := sb.Build()
 	if err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(err)
 	}
 	k.Schema = schema
@@ -162,7 +166,9 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 	}
 
 	// Store the updated schedule
-	k.SetVestingSchedule(sdkCtx, schedule)
+	if err := k.SetVestingSchedule(sdkCtx, schedule); err != nil {
+		return err
+	}
 
 	// Emit event for reward vesting
 	sdkCtx.EventManager().EmitEvent(
@@ -197,7 +203,10 @@ func (k Keeper) AdvanceEpoch(ctx context.Context, completedEpoch uint64) error {
 // ProcessEpochUnlocks processes all vesting schedules and unlocks the first epoch's tokens
 func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 	// Get all vesting schedules
-	schedules := k.GetAllVestingSchedules(ctx)
+	schedules, err := k.GetAllVestingSchedules(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Track totals for summary event
 	totalUnlocked := sdk.NewCoins()
@@ -224,7 +233,9 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 			if len(schedule.EpochAmounts) == 0 {
 				k.RemoveVestingSchedule(ctx, schedule.ParticipantAddress)
 			} else {
-				k.SetVestingSchedule(ctx, schedule)
+				if err := k.SetVestingSchedule(ctx, schedule); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -249,7 +260,9 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 		if len(schedule.EpochAmounts) == 0 {
 			k.RemoveVestingSchedule(ctx, schedule.ParticipantAddress)
 		} else {
-			k.SetVestingSchedule(ctx, schedule)
+			if err := k.SetVestingSchedule(ctx, schedule); err != nil {
+				return err
+			}
 		}
 		for _, coin := range coinsToUnlock {
 			k.bookkeepingBankKeeper.LogSubAccountTransaction(
@@ -284,14 +297,12 @@ func (k Keeper) ProcessEpochUnlocks(ctx sdk.Context) error {
 }
 
 // SetVestingSchedule stores a vesting schedule for a participant
-func (k Keeper) SetVestingSchedule(ctx sdk.Context, schedule types.VestingSchedule) {
+func (k Keeper) SetVestingSchedule(ctx sdk.Context, schedule types.VestingSchedule) error {
 	addr, err := sdk.AccAddressFromBech32(schedule.ParticipantAddress)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	if err := k.VestingSchedules.Set(ctx, addr, schedule); err != nil {
-		panic(err)
-	}
+	return k.VestingSchedules.Set(ctx, addr, schedule)
 }
 
 // GetVestingSchedule retrieves a vesting schedule for a participant
@@ -317,14 +328,10 @@ func (k Keeper) RemoveVestingSchedule(ctx sdk.Context, participantAddress string
 }
 
 // GetAllVestingSchedules retrieves all vesting schedules
-func (k Keeper) GetAllVestingSchedules(ctx sdk.Context) []types.VestingSchedule {
+func (k Keeper) GetAllVestingSchedules(ctx sdk.Context) ([]types.VestingSchedule, error) {
 	iter, err := k.VestingSchedules.Iterate(ctx, nil)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	values, err := iter.Values()
-	if err != nil {
-		panic(err)
-	}
-	return values
+	return iter.Values()
 }

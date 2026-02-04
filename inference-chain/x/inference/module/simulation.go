@@ -148,7 +148,7 @@ func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
 		Params: types.DefaultParams(),
 		// this line is used by starport scaffolding # simapp/module/genesisState
 	}
-	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&inferenceGenesis)
+	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&inferenceGenesis) //nolint:forbidigo // Simulation code
 }
 
 // RegisterStoreDecoder registers a decoder.

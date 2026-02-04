@@ -54,7 +54,7 @@ func CreateUpgradeHandler(
 }
 
 func setNewInvalidationParams(ctx context.Context, k keeper.Keeper, vm module.VersionMap) error {
-	params, err := k.GetParamsSafe(ctx)
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}

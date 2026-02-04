@@ -15,11 +15,25 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
+	if msg.PromptTokenCount > types.MaxAllowedTokens {
+		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
+	}
+	if msg.CompletionTokenCount > types.MaxAllowedTokens {
+		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "completion_token_count exceeds limit (%d > %d)", msg.CompletionTokenCount, types.MaxAllowedTokens), msg), nil
+	}
+
 	// Developer access gating: until cutoff height only allowlisted developers may run inference flows.
 	// We gate by the original requester (developer), not the executor/TA.
 	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
 		k.LogError("FinishInference: developer is not allowlisted at this height", types.Inferences, "developer", msg.RequestedBy, "blockHeight", ctx.BlockHeight())
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
+	}
+
+	// Transfer Agent access gating: only allowlisted TAs may be involved in inferences.
+	if k.IsTransferAgentRestricted(ctx) && !k.IsAllowedTransferAgent(ctx, msg.TransferredBy) {
+		k.LogError("FinishInference: transfer agent is not allowlisted", types.Inferences,
+			"transferAgent", msg.TransferredBy, "blockHeight", ctx.BlockHeight())
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrTransferAgentNotAllowlisted, msg.TransferredBy), msg), nil
 	}
 
 	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
@@ -82,9 +96,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
 	}
 
-	inference, payments := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
+	inference, payments, err := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
+	if err != nil {
+		return failedFinish(ctx, err, msg), nil
+	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments)
+	finalInference, err := k.processInferencePayments(ctx, inference, payments, true)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}

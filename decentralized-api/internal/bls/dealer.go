@@ -31,6 +31,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/cosmos/cosmos-sdk/crypto/ecies"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	blst "github.com/supranational/blst/bindings/go"
 )
 
 // DEALER METHODS - All methods operate on BlsManager
@@ -191,7 +192,7 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	}
 
 	// Compute public commitments to coefficients (C_kj = g * a_kj, G2 points)
-	commitments := computeG2Commitments(polynomial)
+	commitments := computeG2CommitmentsBlst(polynomial)
 
 	// Create encrypted shares for participants using deterministic array indexing
 	encryptedSharesForParticipants := make([]types.EncryptedSharesForParticipant, len(participants))
@@ -306,6 +307,23 @@ func computeG2Commitments(coefficients []*fr.Element) [][]byte {
 		// This is more efficient for blockchain storage and network transmission
 		compressedBytes := commitment.Bytes() // Returns [96]byte
 		commitments[i] = compressedBytes[:]   // Convert to []byte slice
+	}
+	return commitments
+}
+
+// computeG2CommitmentsBlst computes G2 commitments for polynomial coefficients using blst.
+func computeG2CommitmentsBlst(coefficients []*fr.Element) [][]byte {
+	commitments := make([][]byte, len(coefficients))
+
+	for i, coeff := range coefficients {
+		coeffBytes := coeff.Bytes()
+		// Convert to little-endian for blst
+		for j := 0; j < 16; j++ {
+			coeffBytes[j], coeffBytes[31-j] = coeffBytes[31-j], coeffBytes[j]
+		}
+
+		commitment := blst.P2Generator().Mult(coeffBytes[:], 255).ToAffine()
+		commitments[i] = commitment.Compress()
 	}
 	return commitments
 }

@@ -33,9 +33,9 @@ func (msg *MsgSubmitNewUnfundedParticipant) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(msg.Address); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid address (%s)", err)
 	}
-	// URL optional; if provided, must be valid format
+	// URL optional; if provided, must be valid format with SSRF protection
 	if strings.TrimSpace(msg.Url) != "" {
-		if err := utils.ValidateURL("url", msg.Url); err != nil {
+		if err := utils.ValidateURLWithSSRFProtection("url", msg.Url); err != nil {
 			return err
 		}
 	}

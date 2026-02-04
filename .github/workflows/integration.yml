@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - main
+      - upgrade-v*
     paths:
       - 'inference-chain/**'
       - 'decentralized-api/**'
@@ -37,6 +38,7 @@ jobs:
       )
 
     uses: ./.github/workflows/test-workflow.yml
+    secrets: inherit
 
     permissions:
       contents: read

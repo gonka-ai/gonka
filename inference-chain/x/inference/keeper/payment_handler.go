@@ -80,7 +80,7 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 		if err != nil {
 			return err
 		}
-		err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
+		return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
 	}
 	return err
 }
