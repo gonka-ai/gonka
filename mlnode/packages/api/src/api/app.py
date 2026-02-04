@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from api.inference.manager import InferenceManager
 from api.inference.routes import router as inference_router
+from api.inference.pow_v2_routes import router as pow_v2_router
 
 from api.models.manager import ModelManager
 from api.models.routes import router as models_router
@@ -103,6 +104,13 @@ app.include_router(
     prefix=API_PREFIX,
     tags=["Inference"],
     dependencies=[Depends(check_service_conflicts)]
+)
+
+# PoC v2 routes work when inference (vLLM) is running - no conflict check needed
+app.include_router(
+    pow_v2_router,
+    prefix=API_PREFIX,
+    tags=["PoC v2"],
 )
 
 app.include_router(

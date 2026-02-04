@@ -16,7 +16,10 @@ func (k Keeper) EpochInfo(goCtx context.Context, req *types.QueryEpochInfoReques
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	latestEpoch, found := k.GetLatestEpoch(ctx)
 	if !found {
 		k.LogError("GetLatestEpoch returned false, no latest epoch found", types.EpochGroup)

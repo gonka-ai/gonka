@@ -78,27 +78,36 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 	err := app.StakingKeeper.IterateValidators(ctx, func(_ int64, val stakingtypes.ValidatorI) (stop bool) {
 		valBz, err := app.StakingKeeper.ValidatorAddressCodec().StringToBytes(val.GetOperator())
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		_, _ = app.DistrKeeper.WithdrawValidatorCommission(ctx, valBz)
 		return false
 	})
 	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
 		panic(err)
 	}
 
 	// withdraw all delegator rewards
 	dels, err := app.StakingKeeper.GetAllDelegations(ctx)
 	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
 		panic(err)
 	}
 
 	for _, delegation := range dels {
 		valAddr, err := sdk.ValAddressFromBech32(delegation.ValidatorAddress)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 
+		//nolint:forbidigo // Genesis code
 		delAddr := sdk.MustAccAddressFromBech32(delegation.DelegatorAddress)
 
 		_, _ = app.DistrKeeper.WithdrawDelegationRewards(ctx, delAddr, valAddr)
@@ -118,23 +127,33 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 	err = app.StakingKeeper.IterateValidators(ctx, func(_ int64, val stakingtypes.ValidatorI) (stop bool) {
 		valBz, err := app.StakingKeeper.ValidatorAddressCodec().StringToBytes(val.GetOperator())
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		// donate any unwithdrawn outstanding reward fraction tokens to the community pool
 		scraps, err := app.DistrKeeper.GetValidatorOutstandingRewardsCoins(ctx, valBz)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		feePool, err := app.DistrKeeper.FeePool.Get(ctx)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		feePool.CommunityPool = feePool.CommunityPool.Add(scraps...)
 		if err := app.DistrKeeper.FeePool.Set(ctx, feePool); err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 
 		if err := app.DistrKeeper.Hooks().AfterValidatorCreated(ctx, valBz); err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		return false
@@ -144,17 +163,24 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 	for _, del := range dels {
 		valAddr, err := sdk.ValAddressFromBech32(del.ValidatorAddress)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
+		//nolint:forbidigo // Genesis code
 		delAddr := sdk.MustAccAddressFromBech32(del.DelegatorAddress)
 
 		if err := app.DistrKeeper.Hooks().BeforeDelegationCreated(ctx, delAddr, valAddr); err != nil {
 			// never called as BeforeDelegationCreated always returns nil
+			//nolint:forbidigo
+			//Genesis code:
 			panic(fmt.Errorf("error while incrementing period: %w", err))
 		}
 
 		if err := app.DistrKeeper.Hooks().AfterDelegationModified(ctx, delAddr, valAddr); err != nil {
 			// never called as AfterDelegationModified always returns nil
+			//nolint:forbidigo
+			//Genesis code:
 			panic(fmt.Errorf("error while creating a new delegation period record: %w", err))
 		}
 	}
@@ -171,11 +197,15 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 		}
 		err = app.StakingKeeper.SetRedelegation(ctx, red)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		return false
 	})
 	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
 		panic(err)
 	}
 
@@ -186,11 +216,15 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 		}
 		err = app.StakingKeeper.SetUnbondingDelegation(ctx, ubd)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		return false
 	})
 	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
 		panic(err)
 	}
 
@@ -204,6 +238,8 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 		addr := sdk.ValAddress(stakingtypes.AddressFromValidatorsKey(iter.Key()))
 		validator, err := app.StakingKeeper.GetValidator(ctx, addr)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic("expected validator, not found")
 		}
 
@@ -213,6 +249,8 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 		}
 
 		if err := app.StakingKeeper.SetValidator(ctx, validator); err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
 		counter++

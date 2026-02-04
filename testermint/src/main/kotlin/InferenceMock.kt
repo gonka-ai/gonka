@@ -41,6 +41,9 @@ interface IInferenceMock {
 
     fun setPocResponse(weight: Long, hostName: String? = null, scenarioName: String = "ModelState")
     fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState")
+    // PoC v2 (artifact-based) methods
+    fun setPocV2Response(weight: Long, hostName: String? = null, scenarioName: String = "ModelState")
+    fun setPocV2ValidationResponse(weight: Long, scenarioName: String = "ModelState")
     fun getLastInferenceRequest(): InferenceRequestPayload?
     fun hasRequestsToVersionedEndpoint(segment: String): Boolean
     fun resetMocks()
@@ -239,6 +242,90 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
                         "url" to "{{jsonPath originalRequest.body '$.url'}}/validated",
                         "headers" to mapOf("Content-Type" to "application/json"),
                         "delay" to mapOf("type" to "fixed", "milliseconds" to 5000), // Adjust delay as needed
+                        "body" to callbackBody
+                    )
+                )
+        )
+    }
+
+    // ======== PoC v2 (artifact-based) WireMock stubs ========
+
+    override fun setPocV2Response(weight: Long, hostName: String?, scenarioName: String) {
+        // Generate 'weight' artifacts with deterministic vectors (base64-encoded)
+        val artifacts = (1..weight).joinToString(", ") { nonce ->
+            // Simple deterministic vector: 24 bytes (12 fp16 values), all based on nonce
+            val vectorBytes = ByteArray(24) { i -> ((nonce * 2 + i) % 256).toByte() }
+            val vectorB64 = java.util.Base64.getEncoder().encodeToString(vectorBytes)
+            """{"nonce": $nonce, "vector_b64": "$vectorB64"}"""
+        }
+
+        val body = """
+            {
+              "public_key": "{{jsonPath originalRequest.body '$.public_key'}}",
+              "node_id": {{jsonPath originalRequest.body '$.node_id'}},
+              "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
+              "block_height": {{jsonPath originalRequest.body '$.block_height'}},
+              "artifacts": [$artifacts],
+              "encoding": {"dtype": "f16", "k_dim": 12, "endian": "le"}
+            }
+        """.trimIndent()
+
+        this.givenThat(
+            post(urlEqualTo("/api/v1/inference/pow/init/generate"))
+                .inScenario(scenarioName)
+                .willSetStateTo("POW_V2")
+                .willReturn(
+                    aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""{"status": "OK", "backends": 1, "n_groups": 1}""")
+                )
+                .withPostServeAction(
+                    "webhook",
+                    mapOf(
+                        "method" to "POST",
+                        "url" to "{{jsonPath originalRequest.body '$.url'}}/v2/poc-artifacts/generated",
+                        "headers" to mapOf("Content-Type" to "application/json"),
+                        "delay" to mapOf("type" to "fixed", "milliseconds" to 1000),
+                        "body" to body
+                    )
+                )
+        )
+    }
+
+    override fun setPocV2ValidationResponse(weight: Long, scenarioName: String) {
+        val callbackBody = """
+            {
+              "public_key": "{{jsonPath originalRequest.body '$.public_key'}}",
+              "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
+              "block_height": {{jsonPath originalRequest.body '$.block_height'}},
+              "node_id": {{jsonPath originalRequest.body '$.node_id'}},
+              "n_total": $weight,
+              "n_mismatch": 0,
+              "mismatch_nonces": [],
+              "p_value": 1.0,
+              "fraud_detected": false
+            }
+        """.trimIndent()
+
+        this.givenThat(
+            post(urlEqualTo("/api/v1/inference/pow/generate"))
+                .inScenario(scenarioName)
+                .whenScenarioStateIs("POW_V2")
+                .willSetStateTo("POW_V2_VALIDATE")
+                .willReturn(
+                    aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""{"status": "completed", "request_id": "mock-validation-request-id"}""")
+                )
+                .withPostServeAction(
+                    "webhook",
+                    mapOf(
+                        "method" to "POST",
+                        "url" to "{{jsonPath originalRequest.body '$.url'}}/v2/poc-artifacts/validated",
+                        "headers" to mapOf("Content-Type" to "application/json"),
+                        "delay" to mapOf("type" to "fixed", "milliseconds" to 5000),
                         "body" to callbackBody
                     )
                 )

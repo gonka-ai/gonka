@@ -296,7 +296,11 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 
 	// Idempotency: detect if current guardian percentage already ≈ f
 	currentGuardianFraction := decimal.NewFromInt(totalGuardianPower).Div(decimal.NewFromInt(totalWeight))
-	if currentGuardianFraction.Sub(f).Abs().LessThan(decimal.NewFromFloat(0.005)) {
+	fromString, err := decimal.NewFromString("0.005")
+	if err != nil {
+		return nil
+	}
+	if currentGuardianFraction.Sub(f).Abs().LessThan(fromString) {
 		return nil
 	}
 

@@ -42,7 +42,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	currentEpochIndex := uint64(101)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(ctx, &currentEpoch)
-	k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -66,7 +66,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		RewardCoins:   500,
 		SeedSignature: signatureHex,
 	}
-	k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
+	_ = k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
 
 	// Setup epoch group data
 	epochData := types.EpochGroupData{
@@ -194,7 +194,7 @@ func TestMsgServer_ClaimRewards_NoRewards(t *testing.T) {
 	currentEpochIndex := uint64(101)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(ctx, &currentEpoch)
-	k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -231,7 +231,7 @@ func TestMsgServer_ClaimRewards_WrongHeight(t *testing.T) {
 	currentEpochIndex := uint64(101)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(ctx, &currentEpoch)
-	k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -255,7 +255,7 @@ func TestMsgServer_ClaimRewards_WrongHeight(t *testing.T) {
 		RewardCoins:   500,
 		SeedSignature: "0102030405060708",
 	}
-	k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
+	_ = k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
 
 	// Call ClaimRewards with a different height
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
@@ -278,7 +278,7 @@ func TestMsgServer_ClaimRewards_ZeroRewards(t *testing.T) {
 	currentEpochIndex := uint64(101)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(ctx, &currentEpoch)
-	k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(ctx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -302,7 +302,7 @@ func TestMsgServer_ClaimRewards_ZeroRewards(t *testing.T) {
 		RewardCoins:   0,
 		SeedSignature: "0102030405060708",
 	}
-	k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
+	_ = k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
 
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
@@ -348,7 +348,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	currentEpochIndex := uint64(101)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(sdkCtx, &currentEpoch)
-	k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -371,7 +371,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		RewardCoins:   500,
 		SeedSignature: signatureHex,
 	}
-	k.SetSettleAmount(sdkCtx, settleAmount)
+	_ = k.SetSettleAmount(sdkCtx, settleAmount)
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
@@ -563,7 +563,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	currentEpochIndex := uint64(101)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(sdkCtx, &currentEpoch)
-	k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -586,7 +586,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		RewardCoins:   500,
 		SeedSignature: signatureHex,
 	}
-	k.SetSettleAmount(sdkCtx, settleAmount)
+	_ = k.SetSettleAmount(sdkCtx, settleAmount)
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
@@ -714,7 +714,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 
 	// Update the settle amount with the new signature
 	settleAmount.SeedSignature = signatureHex
-	k.SetSettleAmount(sdkCtx, settleAmount)
+	_ = k.SetSettleAmount(sdkCtx, settleAmount)
 
 	// Call ClaimRewards with the new seed
 	_, _ = ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
@@ -765,7 +765,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	currentEpochIndex2 := uint64(102)
 	currentEpoch2 := types.Epoch{Index: currentEpochIndex2, PocStartBlockHeight: 2100}
 	k.SetEpoch(sdkCtx, &currentEpoch2)
-	k.SetEffectiveEpochIndex(sdkCtx, currentEpoch2.Index)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, currentEpoch2.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData2 := types.EpochGroupData{
@@ -835,7 +835,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		RewardCoins:   500,
 		SeedSignature: signatureHex2,
 	}
-	k.SetSettleAmount(sdkCtx, settleAmount2)
+	_ = k.SetSettleAmount(sdkCtx, settleAmount2)
 
 	// Setup performance summary for second epoch
 	perfSummary2 := types.EpochPerformanceSummary{
@@ -907,7 +907,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	currentEpochIndex := uint64(2)
 	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
 	k.SetEpoch(sdkCtx, &currentEpoch)
-	k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
 
 	// Setup current epoch group data (required for validation)
 	currentEpochData := types.EpochGroupData{
@@ -937,7 +937,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 		RewardCoins:   500,
 		SeedSignature: signatureHex,
 	}
-	k.SetSettleAmount(sdkCtx, settleAmount)
+	_ = k.SetSettleAmount(sdkCtx, settleAmount)
 
 	// Epoch Group Data (Main and Sub-group)
 	// Claimant has two nodes, one with full availability

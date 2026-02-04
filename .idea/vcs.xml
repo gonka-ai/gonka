@@ -2,6 +2,7 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/cosmos-sdk" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/mlnode/packages/train/third_party/gorilla" vcs="Git" />
   </component>
 </project>

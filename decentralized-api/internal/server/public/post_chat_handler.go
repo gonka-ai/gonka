@@ -61,6 +61,14 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
+func NewNoRedirectClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // emptyButParseableResponsePayload returns a deterministic "empty" response payload that:
 // - is valid JSON parseable by older validators
 // - yields no logits (so validator re-execution cannot meaningfully compare)
@@ -208,6 +216,13 @@ func (s *Server) postChat(ctx echo.Context) error {
 		return err
 	}
 
+	// Early TA whitelist check - covers both transfer and executor paths:
+	// - Transfer requests: TransferAddress = this node's address (set by readRequest)
+	// - Executor requests: TransferAddress = forwarding TA's address (from X-Transfer-Address header)
+	if err := s.enforceTransferAgentAccess(chatRequest.TransferAddress); err != nil {
+		return err
+	}
+
 	if chatRequest.AuthKey == "" {
 		logging.Warn("Request without authorization", types.Server, "path", ctx.Request().URL.Path)
 		return ErrRequestAuth
@@ -260,6 +275,20 @@ func (s *Server) enforceDeveloperAccessGate(ctx context.Context, requesterAddres
 	}
 
 	return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("inference requests are restricted until block height %d", p.UntilBlockHeight))
+}
+
+// enforceTransferAgentAccess checks if the given TA address is in the whitelist.
+// Returns nil if allowed, or a Forbidden error if not allowed.
+func (s *Server) enforceTransferAgentAccess(taAddress string) error {
+	cache := s.configManager.GetTransferAgentAccessCache()
+	if !cache.IsEnabled {
+		return nil // no restriction
+	}
+	if _, ok := cache.AllowedAddresses[taAddress]; ok {
+		return nil
+	}
+	logging.Warn("Transfer Agent not in whitelist", types.Inferences, "address", taAddress)
+	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
@@ -372,7 +401,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewNoRedirectClient().Do(req)
 	if err != nil {
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
@@ -591,28 +620,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 }
 
 func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
-		GranterAddress: granterAddress,
-		MessageTypeUrl: "/inference.inference.MsgStartInference",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
-	}
-	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
-	for i, grantee := range grantees.Grantees {
-		granteesPubkeys[i] = grantee.PubKey
-	}
-
-	granterAccount, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: granterAddress})
-	if err != nil {
-		logging.Error("Failed to get granter account", types.Inferences, "address", granterAddress, "error", err)
-		return nil, err
-	}
-	granterPubKey := granterAccount.Pubkey
-
-	granteesPubkeys[len(granteesPubkeys)-1] = granterPubKey
-	return granteesPubkeys, nil
+	return s.authzCache.GetPubKeys(ctx.Request().Context(), granterAddress, "/inference.inference.MsgStartInference")
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
@@ -687,7 +695,8 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 		logging.Warn("Request timestamp is in the future", types.Inferences,
 			"inferenceId", request.InferenceId,
 			"offset", time.Duration(requestOffset).String())
-		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
+		// For now, we do NOT return an error here. This is solely harmful to EA with the current
+		// scheme, and is happening during chain-slow periods regularly
 	}
 
 	if checkAndRecordAuthKey(request.AuthKey, currentBlockHeight, ExecutorContext) {

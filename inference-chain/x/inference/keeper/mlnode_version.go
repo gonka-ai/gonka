@@ -9,11 +9,15 @@ import (
 )
 
 // SetMLNodeVersion set mlNodeVersion in the store
-func (k Keeper) SetMLNodeVersion(ctx context.Context, mlNodeVersion types.MLNodeVersion) {
+func (k Keeper) SetMLNodeVersion(ctx context.Context, mlNodeVersion types.MLNodeVersion) error {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.MLNodeVersionKey))
-	b := k.cdc.MustMarshal(&mlNodeVersion)
+	b, err := k.cdc.Marshal(&mlNodeVersion)
+	if err != nil {
+		return err
+	}
 	store.Set([]byte{0}, b)
+	return nil
 }
 
 // GetMLNodeVersion returns mlNodeVersion
@@ -26,6 +30,9 @@ func (k Keeper) GetMLNodeVersion(ctx context.Context) (val types.MLNodeVersion, 
 		return val, false
 	}
 
-	k.cdc.MustUnmarshal(b, &val)
+	err := k.cdc.Unmarshal(b, &val)
+	if err != nil {
+		return val, false
+	}
 	return val, true
 }
