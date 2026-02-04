@@ -179,6 +179,8 @@ type App struct {
 func init() {
 	userHomeDir, err := os.UserHomeDir()
 	if err != nil {
+		//nolint:forbidigo
+		// init code
 		panic(err)
 	}
 
@@ -280,6 +282,8 @@ func New(
 		&app.GenesistransferKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(err)
 	}
 
@@ -429,7 +433,10 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
 	// register swagger API in app.go so that other applications can override easily
 	if err := server.RegisterSwaggerAPI(apiSvr.ClientCtx, apiSvr.Router, apiConfig.Swagger); err != nil {
+		//nolint:forbidigo
+		//init code:
 		panic(err)
+
 	}
 
 	// register app's OpenAPI routes.

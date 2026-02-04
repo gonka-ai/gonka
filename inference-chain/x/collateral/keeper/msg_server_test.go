@@ -71,7 +71,7 @@ func (s *KeeperTestSuite) TestMsgDepositCollateral_Aggregation() {
 
 	// First deposit
 	initialDeposit := sdk.NewInt64Coin(inftypes.BaseCoin, 100)
-	s.k.SetCollateral(s.ctx, participant, initialDeposit)
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, initialDeposit))
 
 	// Second deposit
 	secondDepositAmount := int64(50)
@@ -151,7 +151,8 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_Success() {
 	s.Require().NoError(err)
 
 	// Verify completion epoch in response
-	params := s.k.GetParams(s.ctx)
+	params, err := s.k.GetParams(s.ctx)
+	s.Require().NoError(err)
 	expectedCompletionEpoch := uint64(10) + params.UnbondingPeriodEpochs
 	s.Require().Equal(expectedCompletionEpoch, res.CompletionEpoch)
 
@@ -223,7 +224,8 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_FullWithdrawal() {
 	s.Require().NoError(err)
 
 	// Verify completion epoch in response
-	params := s.k.GetParams(s.ctx)
+	params, err := s.k.GetParams(s.ctx)
+	s.Require().NoError(err)
 	expectedCompletionEpoch := uint64(20) + params.UnbondingPeriodEpochs
 	s.Require().Equal(expectedCompletionEpoch, res.CompletionEpoch)
 
@@ -247,12 +249,13 @@ func (s *KeeperTestSuite) TestMsgWithdrawCollateral_UnbondingAggregation() {
 
 	// Setup initial collateral
 	initialCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, initialAmount)
-	s.k.SetCollateral(s.ctx, participant, initialCollateral)
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, initialCollateral))
 
 	// Set current epoch
 	currentEpoch := uint64(30)
-	s.k.SetCurrentEpoch(s.ctx, currentEpoch)
-	params := s.k.GetParams(s.ctx)
+	s.Require().NoError(s.k.SetCurrentEpoch(s.ctx, currentEpoch))
+	params, err := s.k.GetParams(s.ctx)
+	s.Require().NoError(err)
 	expectedCompletionEpoch := currentEpoch + params.UnbondingPeriodEpochs
 
 	// First withdrawal

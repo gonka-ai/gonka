@@ -9,11 +9,15 @@ import (
 )
 
 // SetTokenomicsData set tokenomicsData in the store
-func (k Keeper) SetTokenomicsData(ctx context.Context, tokenomicsData types.TokenomicsData) {
+func (k Keeper) SetTokenomicsData(ctx context.Context, tokenomicsData types.TokenomicsData) error {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.TokenomicsDataKey))
-	b := k.cdc.MustMarshal(&tokenomicsData)
+	b, err := k.cdc.Marshal(&tokenomicsData)
+	if err != nil {
+		return err
+	}
 	store.Set([]byte{0}, b)
+	return nil
 }
 
 // GetTokenomicsData returns tokenomicsData
@@ -26,11 +30,14 @@ func (k Keeper) GetTokenomicsData(ctx context.Context) (val types.TokenomicsData
 		return val, false
 	}
 
-	k.cdc.MustUnmarshal(b, &val)
+	err := k.cdc.Unmarshal(b, &val)
+	if err != nil {
+		return val, false
+	}
 	return val, true
 }
 
-func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.TokenomicsData) {
+func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.TokenomicsData) error {
 	k.LogInfo("Adding tokenomics data", types.Tokenomics, "tokenomicsData", tokenomicsData)
 	current, found := k.GetTokenomicsData(ctx)
 	if !found {
@@ -40,7 +47,11 @@ func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.Tok
 	current.TotalFees = current.TotalFees + tokenomicsData.TotalFees
 	current.TotalSubsidies = current.TotalSubsidies + tokenomicsData.TotalSubsidies
 	current.TotalRefunded = current.TotalRefunded + tokenomicsData.TotalRefunded
-	k.SetTokenomicsData(ctx, current)
+	err := k.SetTokenomicsData(ctx, current)
+	if err != nil {
+		return err
+	}
 	newData, _ := k.GetTokenomicsData(ctx)
 	k.LogInfo("Tokenomics data added", types.Tokenomics, "tokenomicsData", newData)
+	return nil
 }

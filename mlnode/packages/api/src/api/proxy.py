@@ -23,6 +23,8 @@ LIMITS = httpx.Limits(
 vllm_backend_ports: List[int] = []
 vllm_healthy: Dict[int, bool] = {}
 vllm_counts: Dict[int, int] = {}
+poc_status_by_port: Dict[int, str] = {}  # PoC status: "IDLE", "GENERATING", "STOPPED", or ""
+pow_generate_rr_index: int = 0
 vllm_pick_lock = asyncio.Lock()
 vllm_client: Optional[httpx.AsyncClient] = None
 
@@ -156,6 +158,37 @@ async def _release_vllm_backend(port: int):
         vllm_counts[port] -= 1
 
 
+def get_healthy_backends() -> List[int]:
+    """Return list of healthy backend ports in stable order."""
+    return sorted([p for p, ok in vllm_healthy.items() if ok])
+
+
+async def pick_backend_for_pow_generate() -> int:
+    """Round-robin picker for PoW /generate requests."""
+    global pow_generate_rr_index
+    async with vllm_pick_lock:
+        live = sorted([p for p, ok in vllm_healthy.items() if ok])
+        if not live:
+            raise RuntimeError("no vLLM backend")
+        port = live[pow_generate_rr_index % len(live)]
+        pow_generate_rr_index += 1
+        return port
+
+
+async def call_backend(port: int, method: str, path: str, json_body: dict = None) -> httpx.Response:
+    """Make a direct call to a specific backend port."""
+    if vllm_client is None:
+        raise RuntimeError("vLLM client not initialized")
+    
+    url = f"http://{VLLM_HOST}:{port}{path}"
+    if method.upper() == "GET":
+        return await vllm_client.get(url, timeout=60)
+    elif method.upper() == "POST":
+        return await vllm_client.post(url, json=json_body, timeout=60)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+
+
 async def _health_check_vllm(interval: float = 2.0):
     """Health check for vLLM backends and manage compatibility server."""
     logger.info("Health check loop started, checking every %s seconds", interval)
@@ -182,6 +215,20 @@ async def _health_check_vllm(interval: float = 2.0):
             if prev != ok:
                 logger.info("%s:%d is %s", VLLM_HOST, p, "UP" if ok else "DOWN")
             vllm_healthy[p] = ok
+            
+            # Poll PoC status for healthy backends
+            if ok:
+                try:
+                    r = await vllm_client.get(f"http://{VLLM_HOST}:{p}/api/v1/pow/status", timeout=2)
+                    if r.status_code == 200:
+                        data = r.json()
+                        poc_status_by_port[p] = data.get("status", "")
+                    else:
+                        poc_status_by_port[p] = ""
+                except Exception:
+                    poc_status_by_port[p] = ""
+            else:
+                poc_status_by_port[p] = ""
         
         # Manage backward compatibility server based on backend health
         has_healthy_backends = any(vllm_healthy.values())
@@ -202,6 +249,7 @@ def setup_vllm_proxy(backend_ports: List[int]):
     vllm_backend_ports = backend_ports
     vllm_counts = {p: 0 for p in vllm_backend_ports}
     vllm_healthy.update({p: False for p in vllm_backend_ports})
+    poc_status_by_port.update({p: "" for p in vllm_backend_ports})
     logger.info("vLLM proxy setup with %d backends: %s", len(backend_ports), backend_ports)
     logger.debug("vLLM backend ports: %s", vllm_backend_ports)
     logger.debug("vLLM healthy status: %s", vllm_healthy)
