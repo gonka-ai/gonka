@@ -42,7 +42,9 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 	k.bookkeepingBankKeeper.LogSubAccountTransaction(goCtx, types.ModuleName, msg.Participant, types.SubAccountCollateral, msg.Amount, "collateral deposit")
 
 	// Store the updated collateral
-	k.SetCollateral(ctx, participantAddr, currentCollateral)
+	if err := k.SetCollateral(ctx, participantAddr, currentCollateral); err != nil {
+		return nil, err
+	}
 
 	// Emit deposit event
 	ctx.EventManager().EmitEvents(sdk.Events{

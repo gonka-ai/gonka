@@ -5,7 +5,7 @@ import toml
 import urllib.parse
 import hashlib
 from datetime import datetime
-from pow.models.utils import Params
+from pow.models.utils import Params, PARAMS_V1
 from pow.service.client import PowClient
 from api.inference.client import InferenceClient
 from zeroband.service.client import TrainClient
@@ -39,23 +39,11 @@ def train_config_dict():
 
 @pytest.fixture(scope="session")
 def model_name():
-    return "Qwen/Qwen2.5-7B-Instruct"
+    return "Qwen/Qwen3-4B-Instruct-2507"
 
 @pytest.fixture(scope="session")
 def pow_params():
-    return Params(
-        dim=512,
-        n_layers=64,
-        n_heads=128,
-        n_kv_heads=128,
-        vocab_size=8192,
-        ffn_dim_multiplier=16.0,
-        multiple_of=1024,
-        norm_eps=1e-05,
-        rope_theta=500000.0,
-        use_scaled_rope=False,
-        seq_len=4
-    )
+    return PARAMS_V1
 
 def test_exclusive_services(
     server_url,
@@ -82,7 +70,7 @@ def test_exclusive_services(
     })
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        inference_client.inference_setup(model_name, "bfloat16")
+        inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     assert exc_info.value.response.status_code == 409
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
@@ -103,7 +91,7 @@ def test_exclusive_services(
     train_client.stop()
 
     print("Setting up inference")
-    inference_client.inference_setup(model_name, "bfloat16")
+    inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
         pow_client.init_generate(
@@ -144,7 +132,7 @@ def test_exclusive_services(
     assert exc_info.value.response.status_code == 409
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        inference_client.inference_setup(model_name, "bfloat16")
+        inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     assert exc_info.value.response.status_code == 409
 
     pow_client.stop()

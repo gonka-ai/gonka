@@ -13,31 +13,51 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	for _, elem := range genState.CollateralBalanceList {
 		participant, err := sdk.AccAddressFromBech32(elem.Participant)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
-		k.SetCollateral(ctx, participant, elem.Amount)
+		if err := k.SetCollateral(ctx, participant, elem.Amount); err != nil {
+			//nolint:forbidigo
+			//Genesis code:
+			panic(err)
+		}
 	}
 
 	// Set all the unbonding collateral entries
 	for _, elem := range genState.UnbondingCollateralList {
 		participant, err := sdk.AccAddressFromBech32(elem.Participant)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
-		k.AddUnbondingCollateral(ctx, participant, elem.CompletionEpoch, elem.Amount)
+		if err := k.AddUnbondingCollateral(ctx, participant, elem.CompletionEpoch, elem.Amount); err != nil {
+			//nolint:forbidigo
+			//Genesis code:
+			panic(err)
+		}
 	}
 
 	// Set all the jailedParticipant
 	for _, elem := range genState.JailedParticipantList {
 		jailedAddr, err := sdk.AccAddressFromBech32(elem.Address)
 		if err != nil {
+			//nolint:forbidigo
+			//Genesis code:
 			panic(err)
 		}
-		k.SetJailed(ctx, jailedAddr)
+		if err := k.SetJailed(ctx, jailedAddr); err != nil {
+			//nolint:forbidigo
+			//Genesis code:
+			panic(err)
+		}
 	}
 
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
+		//nolint:forbidigo
+		//Genesis code:
 		panic(err)
 	}
 }
@@ -45,25 +65,45 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 // ExportGenesis returns the module's exported genesis.
 func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := types.DefaultGenesis()
-	genesis.Params = k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
+		panic(err)
+	}
+	genesis.Params = params
 
 	collateralBalances := make([]types.CollateralBalance, 0)
 	// Export all collateral balances
-	k.IterateCollaterals(ctx, func(participant sdk.AccAddress, amount sdk.Coin) (stop bool) {
+	if err := k.IterateCollaterals(ctx, func(participant sdk.AccAddress, amount sdk.Coin) (stop bool) {
 		collateralBalances = append(collateralBalances, types.CollateralBalance{
 			Participant: participant.String(),
 			Amount:      amount,
 		})
 		return false
-	})
+	}); err != nil {
+		//nolint:forbidigo
+		//Genesis code:
+		panic(err)
+	}
 
 	genesis.CollateralBalanceList = collateralBalances
 
 	// Export all unbonding collateral entries
-	unbondingCollaterals := k.GetAllUnbondings(ctx)
+	unbondingCollaterals, err := k.GetAllUnbondings(ctx)
+	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
+		panic(err)
+	}
 	genesis.UnbondingCollateralList = unbondingCollaterals
 
-	jailedParticipants := k.GetAllJailed(ctx)
+	jailedParticipants, err := k.GetAllJailed(ctx)
+	if err != nil {
+		//nolint:forbidigo
+		//Genesis code:
+		panic(err)
+	}
 	genesis.JailedParticipantList = make([]*types.JailedParticipant, len(jailedParticipants))
 	for i, addr := range jailedParticipants {
 		genesis.JailedParticipantList[i] = &types.JailedParticipant{Address: addr.String()}

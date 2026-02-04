@@ -25,12 +25,17 @@ func (k Keeper) CheckAndUnregisterRestriction(ctx sdk.Context) error {
 	}
 
 	// Restrictions have expired, unregister the SendRestriction
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.logger.Error("Failed to get params for unregistration", "error", err)
+		return err
+	}
+
 	k.logger.Info("Transfer restrictions deadline reached, unregistering SendRestriction",
 		"current_height", ctx.BlockHeight(),
-		"restriction_end_block", k.GetParams(ctx).RestrictionEndBlock)
+		"restriction_end_block", params.RestrictionEndBlock)
 
 	// Emit event for restriction lifting
-	params := k.GetParams(ctx)
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			types.EventTypeRestrictionLifted,

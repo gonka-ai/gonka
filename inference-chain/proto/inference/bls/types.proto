@@ -125,6 +125,10 @@ message EpochBLSData {
   // For Epoch N+1, stores the signature from Epoch N validators confirming the new group public key
   // Format: 48-byte G1 compressed signature
   bytes validation_signature = 12;
+
+  // slot_public_keys contains precomputed per-slot public keys (G2 points).
+  // Index i corresponds to slot i. Each entry is a 96-byte compressed G2.
+  repeated bytes slot_public_keys = 13;
 }
 
  

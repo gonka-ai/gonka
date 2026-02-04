@@ -25,7 +25,10 @@ func (k Keeper) ExemptionUsage(goCtx context.Context, req *types.QueryExemptionU
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get parameters")
+	}
 
 	var filteredUsage []types.ExemptionUsage
 

@@ -34,8 +34,8 @@ def session_identifiers() -> tuple[str, str, str]:
 @pytest.fixture(scope="session")
 def model_setup(inference_client: InferenceClient, urls: tuple[str, str]) -> str:
     _, vllm_url = urls
-    model_name = "Qwen/Qwen2.5-7B-Instruct"
-    inference_client.inference_setup(model_name, "bfloat16")
+    model_name = "Qwen/Qwen3-4B-Instruct-2507"
+    inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     wait_for_server(f"{vllm_url}/v1/models", timeout=300)
     return model_name
 

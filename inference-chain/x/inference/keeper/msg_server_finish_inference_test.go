@@ -40,7 +40,7 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 	// The genesis groups have already been created
 	newEpoch := types.Epoch{Index: epochIndex + 1, PocStartBlockHeight: blockHeight}
 	k.SetEpoch(ctx, &newEpoch)
-	k.SetEffectiveEpochIndex(ctx, newEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(ctx, newEpoch.Index)
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochGroupId)
 
 	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight), epochIndex+1)
@@ -73,12 +73,14 @@ func TestMsgServer_FinishInference(t *testing.T) {
 
 	// Developer access gating should apply to FinishInference as well (gated by RequestedBy).
 	t.Run("DeveloperAccessRestricted", func(t *testing.T) {
-		originalParams := k.GetParams(ctx)
+		originalParams, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		t.Cleanup(func() {
 			_ = k.SetParams(ctx, originalParams)
 		})
 
-		params := k.GetParams(ctx)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
 		params.DeveloperAccessParams = &types.DeveloperAccessParams{
 			UntilBlockHeight:          9999999,
 			AllowedDeveloperAddresses: []string{"gonka1someotherxxxxxxxxxxxxxxxxxxxxxx"},
@@ -229,7 +231,8 @@ func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, 
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
 	// Disable grace period for tests so we get actual pricing instead of 0
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	params.DynamicPricingParams.GracePeriodEndEpoch = 0
 	k.SetParams(ctx, params)
 

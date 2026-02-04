@@ -57,6 +57,39 @@ Key runtime environment variables:
 | `EXPLORER_SERVICE_NAME` | explorer | Service name for explorer upstream |
 | `KEY_NAME` | - | Optional stack key; when set, service names are prefixed as `<KEY_NAME>-*` |
 | `RESOLVER` | 127.0.0.11 | DNS resolver for dynamic upstream resolution (override if needed) |
+| `DISABLE_GONKA_API` | false | Set to `true` to disable `/api/v1/` and `/v1/` routes |
+| `DISABLE_CHAIN_RPC` | false | Set to `true` to disable `/chain-rpc/` routes |
+| `DISABLE_CHAIN_API` | false | Set to `true` to disable `/chain-api/` routes |
+| `DISABLE_CHAIN_GRPC` | false | Set to `true` to disable `/chain-grpc/` routes |
+| `CORS_ALLOW_ORIGIN` | * | Allowed Origin for CORS headers. Defaults to wildcard `*`. |
+| `GLOBAL_RATE_LIMIT_RPS` | 1000 | Global "safety net" rate limit (default: 1000). |
+| `GLOBAL_RATE_UNIT` | s | Unit for global limit (`s` or `m`). |
+| `GLOBAL_BURST` | 5000 | Burst for global limit. |
+| `GONKA_API_RATE_LIMIT_RPS` | 10 | Base rate for `/api/`. Combined with high burst for "Punisher" strategy. |
+| `GONKA_API_RATE_UNIT` | m | Rate unit (`s` or `m`). Default `m` for slow recovery. |
+| `GONKA_API_BURST` | 600 | High burst capacity allows spikes but penalizes sustained spam. |
+| `GONKA_API_EXEMPT_ROUTES` | `chat inference training` | List of route prefixes to exempt. Matches prefix (e.g. `chat` matches `/chat`, `/chat/`, `/chat/123`). |
+| `GONKA_API_BLOCKED_ROUTES` | `poc-batches` | List of route prefixes to BLOCK. Returns 403 Forbidden. |
+| `CHAIN_API_EXEMPT_ROUTES` | - | List of Chain API route prefixes to exempt from standard limits. |
+| `CHAIN_API_BLOCKED_ROUTES` | - | List of Chain API route prefixes to BLOCK. |
+| `CHAIN_RPC_EXEMPT_ROUTES` | - | List of Chain RPC route prefixes to exempt from standard limits. |
+| `CHAIN_RPC_BLOCKED_ROUTES` | - | List of Chain RPC route prefixes to BLOCK. |
+| `CHAIN_GRPC_EXEMPT_ROUTES` | - | List of Chain gRPC route prefixes to exempt from standard limits. |
+| `CHAIN_GRPC_BLOCKED_ROUTES` | - | List of Chain gRPC route prefixes to BLOCK. |
+| `EXEMPT_RATE_LIMIT_RPS` | 500 | Rate limit for exempt routes. |
+| `EXEMPT_RATE_UNIT` | s | Unit for exempt routes (`s` or `m`). |
+| `EXEMPT_BURST` | 2000 | Burst for exempt routes. |
+| `CHAIN_API_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-api/` (default: 20). |
+| `CHAIN_API_RATE_UNIT` | m | Unit for chain API (`s` or `m`). Default `m`. |
+| `CHAIN_API_BURST` | 200 | Burst for chain API. |
+| `CHAIN_RPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-rpc/` (default: 20). |
+| `CHAIN_RPC_RATE_UNIT` | m | Unit for chain RPC (`s` or `m`). Default `m`. |
+| `CHAIN_RPC_BURST` | 200 | Burst for chain RPC. |
+| `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
+| `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
+| `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
+
+> **Note**: `GLOBAL_RATE_LIMIT_RPS` acts as a total ceiling for a single IP. It must be higher than your highest specific limit (e.g. higher than Exempt limit).
 
 ### Modes
 

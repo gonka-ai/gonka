@@ -23,6 +23,7 @@ message Params {
   GenesisGuardianParams genesis_guardian_params = 10;
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
+  TransferAgentAccessParams transfer_agent_access_params = 13;
 }
 
 message GenesisOnlyParams {
@@ -118,13 +119,26 @@ message PoCModelParams {
   Decimal r_target = 12;
 }
 
+// PoCStatTestParams defines statistical test parameters for PoC V2 validation.
+message PoCStatTestParams {
+  option (gogoproto.equal) = true;
+  Decimal dist_threshold = 1;      // L2 distance above which vectors are mismatched (default: 0.4)
+  Decimal p_mismatch = 2;          // Null hypothesis probability - expected honest mismatch rate (default: 0.1)
+  Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
+}
+
 message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
   uint64 poc_data_pruning_epoch_threshold = 3;
   Decimal weight_scale_factor = 4;
-  PoCModelParams model_params = 5;
+  PoCModelParams model_params = 5 [deprecated = true]; // V1 model architecture params, deprecated
+  string model_id = 6;  // Model identifier for PoC generation/validation
+  int64 seq_len = 7;    // Sequence length for PoC generation/validation
+  bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
+  bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
+  PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
 }
 
 message Decimal {
@@ -298,4 +312,13 @@ message ParticipantAccessParams {
   // participant_allowlist_until_block_height: allowlist is enforced while current_height < this value.
   // Set to 0 to disable cutoff (allowlist stays active as long as use_participant_allowlist=true).
   int64 participant_allowlist_until_block_height = 4;
+}
+
+// TransferAgentAccessParams controls which Transfer Agents are allowed to process inference requests.
+// If allowed_transfer_addresses is empty, all TAs are allowed (no restriction).
+message TransferAgentAccessParams {
+  option (gogoproto.equal) = true;
+  // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
+  // If empty, all TAs are allowed.
+  repeated string allowed_transfer_addresses = 1;
 }

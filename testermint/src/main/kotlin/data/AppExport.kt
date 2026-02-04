@@ -74,6 +74,8 @@ data class InferenceParams(
     val bandwidthLimitsParams: BandwidthLimitsParams? = null,
     @SerializedName("confirmation_poc_params")
     val confirmationPocParams: ConfirmationPoCParams? = null,
+    @SerializedName("transfer_agent_access_params")
+    val transferAgentAccessParams: TransferAgentAccessParams? = null,
 )
 
 data class TokenomicsParams(
@@ -239,6 +241,11 @@ data class ConfirmationPoCParams(
     val upgradeProtectionWindow: Long = 2,  // Default: 500 blocks
 )
 
+data class TransferAgentAccessParams(
+    @SerializedName("allowed_transfer_addresses")
+    val allowedTransferAddresses: List<String> = emptyList(),
+)
+
 data class PocParams(
     val defaultDifficulty: Int,
     val validationSampleSize: Int,
@@ -248,6 +255,14 @@ data class PocParams(
     val weightScaleFactor: Decimal? = null,
     @SerializedName("model_params")
     val modelParams: PoCModelParams? = null,
+    @SerializedName("model_id")
+    val modelId: String? = null,
+    @SerializedName("seq_len")
+    val seqLen: Long? = null,
+    @SerializedName("poc_v2_enabled")
+    val pocV2Enabled: Boolean = true,  // V2 enabled by default
+    @SerializedName("confirmation_poc_v2_enabled")
+    val confirmationPocV2Enabled: Boolean = true,  // V2 for confirmation PoC, enables migration mode
 )
 
 data class PoCModelParams(

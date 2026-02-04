@@ -78,17 +78,17 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
 	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
-	keeper.SetEffectiveEpochIndex(ctx, epochId1)
+	_ = keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer1)) // tagged to epoch 1
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer2)) // tagged to epoch 1
 
 	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
-	keeper.SetEffectiveEpochIndex(ctx, epochId2)
+	_ = keeper.SetEffectiveEpochIndex(ctx, epochId2)
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer1)) // tagged to epoch 2
 
 	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId3, PocStartBlockHeight: int64(epochId3 * 10)})
-	keeper.SetEffectiveEpochIndex(ctx, epochId3)
+	_ = keeper.SetEffectiveEpochIndex(ctx, epochId3)
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer2)) // tagged to epoch 3
 
 	defaultExpectedStatsByTime := map[string]*types.DeveloperStatsByTime{
@@ -300,7 +300,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 	t.Run("inferences with zero start_timestamp and same end_timestamp, epoch and developer", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
 		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
-		keeper.SetEffectiveEpochIndex(ctx, epochId1)
+		_ = keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 		now := time.Now().UnixMilli()
 
@@ -350,7 +350,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 	t.Run("update same inference", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
 		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
-		keeper.SetEffectiveEpochIndex(ctx, epochId1)
+		_ = keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 		inference := types.Inference{
 			InferenceId:          "inferenceId1",
@@ -385,7 +385,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		inference.EndBlockTimestamp = time.Now().Add(5 * time.Second).UnixMilli()
 
 		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
-		keeper.SetEffectiveEpochIndex(ctx, epochId2)
+		_ = keeper.SetEffectiveEpochIndex(ctx, epochId2)
 		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
 
 		expectedStatsAfterUpdate := types.InferenceStats{
@@ -412,7 +412,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
 		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
 		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
-		keeper.SetEffectiveEpochIndex(ctx, epochId3)
+		_ = keeper.SetEffectiveEpochIndex(ctx, epochId3)
 
 		inference := types.Inference{
 			InferenceId:              uuid.New().String(),
