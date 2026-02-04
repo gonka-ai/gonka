@@ -3,7 +3,6 @@ package mlnodeclient
 import (
 	"context"
 	"decentralized-api/logging"
-	"errors"
 	"sync"
 	"testing"
 
@@ -242,77 +241,6 @@ func (m *MockClient) SetNodeState(ctx context.Context, state MLNodeState, errorR
 		return m.SetNodeStateError
 	}
 	m.CurrentState = state
-	return nil
-}
-
-func (m *MockClient) GetPowStatus(ctx context.Context) (*PowStatusResponse, error) {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	m.GetPowStatusCalled++
-	if m.GetPowStatusError != nil {
-		return nil, m.GetPowStatusError
-	}
-	return &PowStatusResponse{
-		Status:             m.PowStatus,
-		IsModelInitialized: m.PowStatus == POW_GENERATING,
-	}, nil
-}
-
-func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	if m.CurrentState != MlNodeState_STOPPED {
-		return errors.New("InitGenerate called with invalid state. Expected STOPPED. Actual: currentState =" + string(m.CurrentState))
-	}
-
-	logging.Info("MockClient. InitGenerate: called", types.Testing)
-	m.InitGenerateCalled++
-	m.LastInitDto = &dto
-	if m.InitGenerateError != nil {
-		return m.InitGenerateError
-	}
-	m.CurrentState = MlNodeState_POW
-	m.PowStatus = POW_GENERATING
-	return nil
-}
-
-func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	if m.CurrentState != MlNodeState_POW ||
-		m.PowStatus != POW_GENERATING {
-		return errors.New("InitValidate called with invalid state. Expected MlNodeState_POW and POW_GENERATING. Actual: currentState = " + string(m.CurrentState) + ". powStatus =" + string(m.PowStatus))
-	}
-
-	logging.Info("MockClient. InitValidate: called", types.Testing)
-	m.InitValidateCalled++
-	m.LastInitValidateDto = &dto
-	if m.InitValidateError != nil {
-		return m.InitValidateError
-	}
-	m.CurrentState = MlNodeState_POW
-	m.PowStatus = POW_VALIDATING
-	return nil
-}
-
-func (m *MockClient) ValidateBatch(ctx context.Context, batch ProofBatch) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	if m.CurrentState != MlNodeState_POW ||
-		m.PowStatus != POW_VALIDATING {
-		return errors.New("ValidateBatch called with invalid state. Expected MlNodeState_POW and POW_VALIDATING. Actual: currentState = " + string(m.CurrentState) + ". powStatus =" + string(m.PowStatus))
-	}
-
-	m.ValidateBatchCalled++
-	m.LastValidateBatch = batch
-	if m.ValiateBatchError != nil {
-		return m.ValiateBatchError
-	}
-	m.CurrentState = MlNodeState_POW
-	m.PowStatus = POW_VALIDATING
 	return nil
 }
 
