@@ -94,6 +94,7 @@ func NewServer(
 	g.GET("identity", s.getIdentity)
 
 	g.POST("chat/completions", s.postChat)
+	g.POST("completions", s.postCompletions)
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
@@ -156,14 +157,6 @@ func NewServer(
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
-
-	// OpenRouter-compatible API
-	openrouter := e.Group("/openrouter/api/v1")
-	openrouter.Use(middleware.LoggingMiddleware)
-	openrouter.GET("/models", s.getModelsOpenRouter)
-	openrouter.POST("/chat/completions", s.postChatOpenRouter)
-	openrouter.POST("/completions", s.postCompletionsOpenRouter)
-
 	return s
 }
 

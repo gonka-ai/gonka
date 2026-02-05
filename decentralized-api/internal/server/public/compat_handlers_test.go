@@ -17,19 +17,19 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-type fakeOpenRouterQueryServer struct {
+type fakeModelsQueryServer struct {
 	types.UnimplementedQueryServer
 	epochGroupData      *types.EpochGroupData
 	modelEpochGroupData map[string]*types.EpochGroupData
 }
 
-func (f *fakeOpenRouterQueryServer) CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest) (*types.QueryCurrentEpochGroupDataResponse, error) {
+func (f *fakeModelsQueryServer) CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest) (*types.QueryCurrentEpochGroupDataResponse, error) {
 	return &types.QueryCurrentEpochGroupDataResponse{
 		EpochGroupData: *f.epochGroupData,
 	}, nil
 }
 
-func (f *fakeOpenRouterQueryServer) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGroupDataRequest) (*types.QueryGetEpochGroupDataResponse, error) {
+func (f *fakeModelsQueryServer) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGroupDataRequest) (*types.QueryGetEpochGroupDataResponse, error) {
 	if data, ok := f.modelEpochGroupData[req.ModelId]; ok {
 		return &types.QueryGetEpochGroupDataResponse{
 			EpochGroupData: *data,
@@ -38,7 +38,7 @@ func (f *fakeOpenRouterQueryServer) EpochGroupData(ctx context.Context, req *typ
 	return nil, nil
 }
 
-func startOpenRouterGRPCServer(t *testing.T, srv types.QueryServer) (*grpc.ClientConn, func()) {
+func startTestGRPCServer(t *testing.T, srv types.QueryServer) (*grpc.ClientConn, func()) {
 	t.Helper()
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
@@ -51,8 +51,8 @@ func startOpenRouterGRPCServer(t *testing.T, srv types.QueryServer) (*grpc.Clien
 	return conn, cleanup
 }
 
-func TestOpenRouterModelsEndpoint_Minimal(t *testing.T) {
-	fq := &fakeOpenRouterQueryServer{
+func TestModelsEndpoint_Minimal(t *testing.T) {
+	fq := &fakeModelsQueryServer{
 		epochGroupData: &types.EpochGroupData{
 			EpochIndex:     1,
 			SubGroupModels: []string{"test-model"},
@@ -67,7 +67,7 @@ func TestOpenRouterModelsEndpoint_Minimal(t *testing.T) {
 		},
 	}
 
-	conn, cleanup := startOpenRouterGRPCServer(t, fq)
+	conn, cleanup := startTestGRPCServer(t, fq)
 	defer cleanup()
 
 	mc := &cosmosclient.MockCosmosMessageClient{}
@@ -77,14 +77,14 @@ func TestOpenRouterModelsEndpoint_Minimal(t *testing.T) {
 	e := echo.New()
 	s := &Server{e: e, recorder: mc}
 
-	req := httptest.NewRequest(http.MethodGet, "/openrouter/api/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	require.NoError(t, s.getModelsOpenRouter(c))
+	require.NoError(t, s.getModels(c))
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var resp OpenRouterModelsResponse
+	var resp ModelsListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
 
@@ -96,14 +96,14 @@ func TestOpenRouterModelsEndpoint_Minimal(t *testing.T) {
 	require.Equal(t, []string{"text"}, model.InputModalities)
 	require.Equal(t, []string{"text"}, model.OutputModalities)
 	require.NotNil(t, model.Pricing)
-	require.Equal(t, openRouterSupportedSamplingParameters, model.SupportedSamplingParameters)
-	require.Equal(t, openRouterSupportedFeatures, model.SupportedFeatures)
+	require.Equal(t, supportedSamplingParameters, model.SupportedSamplingParameters)
+	require.Equal(t, supportedFeatures, model.SupportedFeatures)
 
 	mc.AssertExpectations(t)
 }
 
 func TestTransformCompletionsToChatRequest_Basic(t *testing.T) {
-	req := &OpenRouterCompletionsRequest{
+	req := &CompletionsRequest{
 		Model:  "test-model",
 		Prompt: StringOrArray{"Hello, world!"},
 	}

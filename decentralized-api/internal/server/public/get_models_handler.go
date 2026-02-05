@@ -2,25 +2,48 @@ package public
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 )
 
+var (
+	modelSlugPrefix             = "gonka"
+	supportedSamplingParameters = []string{
+		"temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty", "stop", "seed",
+	}
+	supportedFeatures = []string{
+		"logprobs",
+	}
+)
+
+func pricingForModel(model *types.Model, unitOfComputePrice uint64) *ModelPricing {
+	pricePerToken := model.UnitsOfComputePerToken * unitOfComputePrice
+	priceStr := strconv.FormatUint(pricePerToken, 10)
+	return &ModelPricing{
+		Prompt:         priceStr,
+		Completion:     priceStr,
+		Request:        "0",
+		Image:          "0",
+		InputCacheRead: "0",
+		Currency:       "ngonka",
+	}
+}
+
 func (s *Server) getModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	context := s.recorder.GetContext()
 
-	// Get the current epoch group to find out which models are active.
 	currentEpoch, err := queryClient.CurrentEpochGroupData(context, &types.QueryCurrentEpochGroupDataRequest{})
 	if err != nil {
 		return err
 	}
 
-	var activeModels []types.Model
+	models := make([]ModelDescriptor, 0)
 	parentEpochData := currentEpoch.GetEpochGroupData()
+	unitOfComputePrice := uint64(parentEpochData.UnitOfComputePrice)
 
-	// Iterate over the subgroup models to get the snapshot for each one.
 	for _, modelId := range parentEpochData.SubGroupModels {
 		req := &types.QueryGetEpochGroupDataRequest{
 			EpochIndex: parentEpochData.EpochIndex,
@@ -28,17 +51,30 @@ func (s *Server) getModels(ctx echo.Context) error {
 		}
 		modelEpochData, err := queryClient.EpochGroupData(context, req)
 		if err != nil {
-			// If a model subgroup is listed but not found, we can log it, but we shouldn't fail the entire request.
 			continue
 		}
 
 		if modelEpochData.EpochGroupData.ModelSnapshot != nil {
-			activeModels = append(activeModels, *modelEpochData.EpochGroupData.ModelSnapshot)
+			m := modelEpochData.EpochGroupData.ModelSnapshot
+			models = append(models, ModelDescriptor{
+				ID:                          m.Id,
+				Name:                        m.Id,
+				Created:                     0,
+				InputModalities:             []string{"text"},
+				OutputModalities:            []string{"text"},
+				ContextLength:               m.ContextWindow,
+				MaxOutputLength:             m.ContextWindow,
+				Pricing:                     pricingForModel(m, unitOfComputePrice),
+				SupportedSamplingParameters: supportedSamplingParameters,
+				SupportedFeatures:           supportedFeatures,
+				Provider:                    &ModelMetadata{Slug: modelSlugPrefix + "/" + m.Id},
+			})
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, &ModelsResponse{
-		Models: activeModels,
+	// NOTE: Response uses {models:[...]} envelope.
+	return ctx.JSON(http.StatusOK, ModelsListResponse{
+		Data: models,
 	})
 }
 

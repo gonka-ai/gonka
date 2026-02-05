@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenRouterCompletionsFormat_NonStream(t *testing.T) {
+func TestCompletionsFormat_NonStream(t *testing.T) {
 	mockChatResponse := `{
 		"id": "chatcmpl-abc123",
 		"object": "chat.completion",
@@ -35,7 +35,7 @@ func TestOpenRouterCompletionsFormat_NonStream(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(result, "", "  ")
 	require.NoError(t, err)
 
-	t.Logf("OpenRouter /completions response format:\n%s", string(jsonBytes))
+	t.Logf("/completions response format:\n%s", string(jsonBytes))
 
 	require.Equal(t, "text_completion", result.Object)
 	require.Equal(t, "chatcmpl-abc123", result.ID)
@@ -49,7 +49,7 @@ func TestOpenRouterCompletionsFormat_NonStream(t *testing.T) {
 	require.Equal(t, 20, result.Usage.TotalTokens)
 }
 
-func TestOpenRouterCompletionsFormat_Stream(t *testing.T) {
+func TestCompletionsFormat_Stream(t *testing.T) {
 	chunks := []string{
 		`{"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1700000000,"model":"qwen/qwen3-32b","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
 		`{"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1700000000,"model":"qwen/qwen3-32b","choices":[{"index":0,"delta":{"content":"The "},"finish_reason":null}]}`,
@@ -58,7 +58,7 @@ func TestOpenRouterCompletionsFormat_Stream(t *testing.T) {
 		`{"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1700000000,"model":"qwen/qwen3-32b","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}`,
 	}
 
-	t.Log("OpenRouter /completions streaming format:")
+	t.Log("/completions streaming format:")
 	for i, chunk := range chunks {
 		result, err := transformChatChunkToCompletionChunk(chunk)
 		require.NoError(t, err)
@@ -77,14 +77,14 @@ func TestOpenRouterCompletionsFormat_Stream(t *testing.T) {
 	require.Equal(t, 20, lastChunk.Usage.TotalTokens)
 }
 
-func TestOpenRouterCompletionsRequest_PromptToMessages(t *testing.T) {
+func TestCompletionsRequest_PromptToMessages(t *testing.T) {
 	e := echo.New()
 
 	requestBody := `{"model": "qwen/qwen3-32b", "prompt": "What is the weather?", "max_tokens": 100}`
-	req := httptest.NewRequest(http.MethodPost, "/openrouter/api/v1/completions", strings.NewReader(requestBody))
+	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/json")
 
-	var completionsReq OpenRouterCompletionsRequest
+	var completionsReq CompletionsRequest
 	require.NoError(t, json.Unmarshal([]byte(requestBody), &completionsReq))
 
 	chatReq := transformCompletionsToChatRequest(&completionsReq)

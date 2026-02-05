@@ -12,110 +12,9 @@ import (
 	"sync"
 
 	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/x/inference/types"
 )
 
-var (
-	openRouterSupportedSamplingParameters = []string{
-		"temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty", "stop", "seed",
-	}
-
-	openRouterSupportedFeatures = []string{
-		"logprobs",
-	}
-
-	openRouterDefaultPricing = &OpenRouterPricing{
-		Prompt:     "0",
-		Completion: "0",
-		Request:    "0",
-		Image:      "0",
-	}
-)
-
-func (s *Server) getModelsOpenRouter(ctx echo.Context) error {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	context := s.recorder.GetContext()
-
-	currentEpoch, err := queryClient.CurrentEpochGroupData(context, &types.QueryCurrentEpochGroupDataRequest{})
-	if err != nil {
-		return err
-	}
-
-	var models []OpenRouterModel
-	parentEpochData := currentEpoch.GetEpochGroupData()
-
-	for _, modelId := range parentEpochData.SubGroupModels {
-		req := &types.QueryGetEpochGroupDataRequest{
-			EpochIndex: parentEpochData.EpochIndex,
-			ModelId:    modelId,
-		}
-		modelEpochData, err := queryClient.EpochGroupData(context, req)
-		if err != nil {
-			continue
-		}
-
-		if modelEpochData.EpochGroupData.ModelSnapshot != nil {
-			m := modelEpochData.EpochGroupData.ModelSnapshot
-			models = append(models, OpenRouterModel{
-				ID:                          m.Id,
-				Name:                        m.Id,
-				Created:                     0,
-				InputModalities:             []string{"text"},
-				OutputModalities:            []string{"text"},
-				ContextLength:               m.ContextWindow,
-				MaxOutputLength:             m.ContextWindow,
-				Pricing:                     openRouterDefaultPricing,
-				SupportedSamplingParameters: openRouterSupportedSamplingParameters,
-				SupportedFeatures:           openRouterSupportedFeatures,
-			})
-		}
-	}
-
-	return ctx.JSON(http.StatusOK, OpenRouterModelsResponse{
-		Data: models,
-	})
-}
-
-func (s *Server) postChatOpenRouter(ctx echo.Context) error {
-	body, err := io.ReadAll(ctx.Request().Body)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
-	}
-	ctx.Request().Body.Close()
-
-	var rawReq map[string]interface{}
-	if err := json.Unmarshal(body, &rawReq); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request format")
-	}
-
-	if _, hasMessages := rawReq["messages"]; !hasMessages {
-		promptRaw, hasPrompt := rawReq["prompt"]
-		if !hasPrompt {
-			return echo.NewHTTPError(http.StatusBadRequest, "messages or prompt is required")
-		}
-		var prompt StringOrArray
-		promptBytes, _ := json.Marshal(promptRaw)
-		if err := json.Unmarshal(promptBytes, &prompt); err != nil || len(prompt) == 0 || len(prompt) > 1 || prompt.First() == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "messages or prompt is required")
-		}
-		rawReq["messages"] = []map[string]string{
-			{"role": "user", "content": prompt.First()},
-		}
-		delete(rawReq, "prompt")
-	}
-
-	newBody, err := json.Marshal(rawReq)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to process request")
-	}
-
-	ctx.Request().Body = io.NopCloser(bytes.NewReader(newBody))
-	ctx.Request().ContentLength = int64(len(newBody))
-
-	return s.postChat(ctx)
-}
-
-func transformCompletionsToChatRequest(req *OpenRouterCompletionsRequest) map[string]interface{} {
+func transformCompletionsToChatRequest(req *CompletionsRequest) map[string]interface{} {
 	chatReq := map[string]interface{}{
 		"model": req.Model,
 		"messages": []map[string]string{
@@ -154,13 +53,13 @@ func transformCompletionsToChatRequest(req *OpenRouterCompletionsRequest) map[st
 	return chatReq
 }
 
-func transformCompletionsToChatRequestWithPrompt(req *OpenRouterCompletionsRequest, prompt string) map[string]interface{} {
+func transformCompletionsToChatRequestWithPrompt(req *CompletionsRequest, prompt string) map[string]interface{} {
 	clone := *req
 	clone.Prompt = StringOrArray{prompt}
 	return transformCompletionsToChatRequest(&clone)
 }
 
-func buildChatBodyFromCompletions(req *OpenRouterCompletionsRequest, prompt string) ([]byte, error) {
+func buildChatBodyFromCompletions(req *CompletionsRequest, prompt string) ([]byte, error) {
 	chatReq := transformCompletionsToChatRequestWithPrompt(req, prompt)
 	return json.Marshal(chatReq)
 }
@@ -173,7 +72,7 @@ func (s *Server) executeChatRequest(ctx echo.Context, body []byte) (int, []byte,
 
 	echoCtx := ctx.Echo().NewContext(req, rec)
 	if err := s.postChat(echoCtx); err != nil {
-		return 0, nil, err
+		echoCtx.Echo().HTTPErrorHandler(err, echoCtx)
 	}
 
 	return rec.Code, rec.Body.Bytes(), nil
@@ -194,14 +93,14 @@ func (s *Server) completionFromChat(ctx echo.Context, body []byte) (*CompletionR
 	return completionResp, statusCode, respBody, nil
 }
 
-func (s *Server) postCompletionsOpenRouter(ctx echo.Context) error {
+func (s *Server) postCompletions(ctx echo.Context) error {
 	body, err := io.ReadAll(ctx.Request().Body)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
 	}
 	ctx.Request().Body.Close()
 
-	var completionsReq OpenRouterCompletionsRequest
+	var completionsReq CompletionsRequest
 	if err := json.Unmarshal(body, &completionsReq); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request format")
 	}
@@ -221,7 +120,7 @@ func (s *Server) postCompletionsOpenRouter(ctx echo.Context) error {
 	return s.handleSingleCompletion(ctx, &completionsReq)
 }
 
-func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *OpenRouterCompletionsRequest) error {
+func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *CompletionsRequest) error {
 	newBody, err := buildChatBodyFromCompletions(completionsReq, completionsReq.Prompt.First())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create chat request")
@@ -240,10 +139,12 @@ func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *OpenRo
 	return ctx.JSON(http.StatusOK, completionResp)
 }
 
-func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *OpenRouterCompletionsRequest) error {
+func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *CompletionsRequest) error {
 	prompts := completionsReq.Prompt
 	results := make([]*CompletionResponse, len(prompts))
 	errors := make([]error, len(prompts))
+	statusCodes := make([]int, len(prompts))
+	responseBodies := make([][]byte, len(prompts))
 
 	var wg sync.WaitGroup
 	for i, prompt := range prompts {
@@ -257,14 +158,15 @@ func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *OpenRo
 				return
 			}
 
-			resp, statusCode, _, err := s.completionFromChat(ctx, newBody)
+			resp, statusCode, respBody, err := s.completionFromChat(ctx, newBody)
 			if err != nil {
 				errors[idx] = err
 				return
 			}
 
 			if resp == nil {
-				errors[idx] = fmt.Errorf("request failed with status %d", statusCode)
+				statusCodes[idx] = statusCode
+				responseBodies[idx] = respBody
 				return
 			}
 
@@ -274,9 +176,18 @@ func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *OpenRo
 
 	wg.Wait()
 
-	for _, err := range errors {
+	for i, err := range errors {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+		if results[i] == nil {
+			statusCode := statusCodes[i]
+			if statusCode == 0 {
+				return echo.NewHTTPError(http.StatusInternalServerError, "request failed without status")
+			}
+			ctx.Response().WriteHeader(statusCode)
+			_, _ = ctx.Response().Write(responseBodies[i])
+			return nil
 		}
 	}
 
@@ -330,7 +241,7 @@ func mergeBatchCompletionResponses(results []*CompletionResponse) *CompletionRes
 	return merged
 }
 
-func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *OpenRouterCompletionsRequest) error {
+func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *CompletionsRequest) error {
 	if len(completionsReq.Prompt) > 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, "streaming with batch prompts is not supported")
 	}
@@ -357,7 +268,9 @@ func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *Op
 
 	go func() {
 		defer pw.Close()
-		_ = s.postChat(echoCtx)
+		if err := s.postChat(echoCtx); err != nil {
+			echoCtx.Echo().HTTPErrorHandler(err, echoCtx)
+		}
 	}()
 
 	statusCode := <-statusChan
