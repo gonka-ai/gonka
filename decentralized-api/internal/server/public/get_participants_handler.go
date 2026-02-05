@@ -106,7 +106,22 @@ func (s *Server) getParticipants(ctx context.Context, epoch uint64) (*ActivePart
 		return nil, err
 	}
 
-	result, err := queryActiveParticipants(rpcClient, cdc, epoch)
+	// Get block height from ChainPhaseTracker (more efficient than RPC call)
+	var blockHeight int64
+	if epochState := s.phaseTracker.GetCurrentEpochState(); epochState != nil && epochState.IsSynced {
+		blockHeight = epochState.CurrentBlock.Height
+	} else {
+		// Fallback to RPC if tracker not ready (e.g., during startup)
+		status, err := rpcClient.Status(ctx)
+		if err != nil {
+			logging.Error("Failed to get node status for query height", types.System, "error", err)
+			return nil, err
+		}
+		blockHeight = status.SyncInfo.LatestBlockHeight
+		logging.Debug("Using RPC fallback for block height", types.Participants, "height", blockHeight)
+	}
+
+	result, err := queryActiveParticipants(rpcClient, cdc, epoch, blockHeight)
 	if err != nil {
 		logging.Error("Failed to query active participants. Outer", types.Participants, "error", err)
 		return nil, err
@@ -255,9 +270,9 @@ func (s *Server) getAllParticipants(ctx echo.Context) error {
 	})
 }
 
-func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, epoch uint64) (*coretypes.ResultABCIQuery, error) {
+func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, epoch uint64, blockHeight int64) (*coretypes.ResultABCIQuery, error) {
 	dataKey := types.ActiveParticipantsFullKey(epoch)
-	result, err := cosmos_client.QueryByKey(rpcClient, "inference", dataKey)
+	result, err := cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, false)
 	if err != nil {
 		logging.Error("Failed to query active participants. Req 1", types.Participants, "error", err)
 		return nil, err
@@ -280,8 +295,8 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	//    they are now signed by the validators active during the epoch.
 	// 2. The implemented proof system has a bug anyway and needs to be revisited
 
-	blockHeight := activeParticipants.CreatedAtBlockHeight
-	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
+	proofBlockHeight := activeParticipants.CreatedAtBlockHeight
+	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, proofBlockHeight, true)
 	if err != nil {
 		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
 		return nil, err
