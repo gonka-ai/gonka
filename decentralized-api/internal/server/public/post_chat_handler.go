@@ -660,7 +660,7 @@ func (s *Server) getAllowedPubKeysForTAsAndValidators(ctx echo.Context, granterA
 		return nil, fmt.Errorf("granter is not active in the current epoch")
 	}
 
-	return s.getAllowedPubKeys(ctx, granterAddress)
+	return s.authzCache.GetPubKeys(ctx.Request().Context(), granterAddress, "/inference.inference.MsgStartInference")
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
