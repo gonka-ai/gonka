@@ -404,6 +404,7 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	ma.LogDebug("Collected unique models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "collect_unique_models", "num_unique_models", len(uniqueModels))
 
 	sortedModelIds := sortedKeys(uniqueModels)
+	previouslySafeNodes := make(map[string]map[string]bool) // participant -> nodeId -> true
 	if upcomingEpoch.Index > 0 {
 		for _, modelId := range sortedModelIds {
 			previousEpochGroupData, found := ma.keeper.GetEpochGroupData(ctx, upcomingEpoch.Index-1, modelId)
@@ -421,6 +422,16 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 						"epoch_index", upcomingEpoch.Index-1,
 					)
 					previousEpochData.Set(modelId, vw.MemberAddress, dedupedNodes)
+
+					// Track nodes that were in the PoC (safe) slot in the previous epoch
+					for _, node := range dedupedNodes {
+						if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+							if previouslySafeNodes[vw.MemberAddress] == nil {
+								previouslySafeNodes[vw.MemberAddress] = make(map[string]bool)
+							}
+							previouslySafeNodes[vw.MemberAddress][node.NodeId] = true
+						}
+					}
 				}
 				ma.LogInfo("Loaded previous epoch data for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "load_prev_epoch_data", "model_id", modelId, "num_validation_weights", len(previousEpochGroupData.ValidationWeights))
 			}
@@ -460,7 +471,7 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 
 	for _, modelId := range sortedModelIds {
 		ma.LogInfo("Processing model for PoC allocation", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_loop_start", "model_id", modelId)
-		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
+		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction, previouslySafeNodes)
 	}
 }
 
@@ -664,6 +675,7 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	currentEpochData *EpochMLNodeData,
 	eligibleNodesData *EpochMLNodeData,
 	fraction *types.Decimal,
+	previouslySafeNodes map[string]map[string]bool,
 ) {
 	ma.LogInfo("Starting allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_start", "model_id", modelId)
 
@@ -693,7 +705,7 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 		participantAddr := eligibleParticipantAddrs[currentParticipantIdx]
 		nodes := eligibleNodesData.GetForParticipant(modelId, participantAddr)
 
-		nextMLNode := getSmallestMLNodeWithPOCSLotFalse(nodes)
+		nextMLNode := getSmallestMLNodeWithPOCSLotFalse(nodes, previouslySafeNodes[participantAddr])
 
 		if nextMLNode == nil {
 			currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
@@ -741,16 +753,28 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	ma.LogInfo("Finished allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_end", "model_id", modelId, "achieved_weight", currentWeight, "target_weight", targetPoCWeight, "total_weight", totalWeight)
 }
 
-func getSmallestMLNodeWithPOCSLotFalse(nodes []*types.MLNodeInfo) *types.MLNodeInfo {
+func getSmallestMLNodeWithPOCSLotFalse(nodes []*types.MLNodeInfo, previouslySafeIds map[string]bool) *types.MLNodeInfo {
 	var smallest *types.MLNodeInfo
+	var smallestPreviouslySafe *types.MLNodeInfo
+
 	for _, node := range nodes {
 		if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
-			if smallest == nil || node.PocWeight < smallest.PocWeight {
-				smallest = node
+			if previouslySafeIds[node.NodeId] {
+				if smallestPreviouslySafe == nil || node.PocWeight < smallestPreviouslySafe.PocWeight {
+					smallestPreviouslySafe = node
+				}
+			} else {
+				if smallest == nil || node.PocWeight < smallest.PocWeight {
+					smallest = node
+				}
 			}
 		}
 	}
-	return smallest
+
+	if smallest != nil {
+		return smallest
+	}
+	return smallestPreviouslySafe
 }
 
 // calculateWeightThresholdWithCount calculates both the weight threshold and target node count.
