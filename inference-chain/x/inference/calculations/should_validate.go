@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 
@@ -21,6 +22,10 @@ func ShouldValidate(
 	debug bool,
 ) (bool, string) {
 	if totalPower <= executorPower {
+		slog.Error("ShouldValidate: totalPower <= executorPower",
+			"inferenceId", inferenceDetails.InferenceId,
+			"totalPower", totalPower,
+			"executorPower", executorPower)
 		return false, "ShouldValidate:false"
 	}
 	// Creating with exponent vs dividing

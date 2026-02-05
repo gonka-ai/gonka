@@ -74,7 +74,7 @@ func NewServer(
 		phaseTracker:        phaseTracker,
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
-		httpClient:          &http.Client{Timeout: httpClientTimeout},
+		httpClient:          NewNoRedirectClient(httpClientTimeout),
 	}
 
 	for _, opt := range opts {

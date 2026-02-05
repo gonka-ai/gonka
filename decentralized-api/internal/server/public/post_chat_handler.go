@@ -57,8 +57,9 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
-func NewNoRedirectClient() *http.Client {
+func NewNoRedirectClient(timeout time.Duration) *http.Client {
 	return &http.Client{
+		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
