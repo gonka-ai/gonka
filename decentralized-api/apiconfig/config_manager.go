@@ -30,7 +30,7 @@ type ConfigManager struct {
 	KoanProvider   koanf.Provider
 	WriterProvider WriteCloserProvider
 	sqlDb          SqlDatabase
-	mutex          sync.Mutex
+	mutex          sync.RWMutex
 	configDumpPath string
 	sqlitePath     string
 }
@@ -61,7 +61,7 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 		KoanProvider:   file.Provider(configPath),
 		WriterProvider: NewFileWriteCloserProvider(configPath),
 		sqlDb:          db,
-		mutex:          sync.Mutex{},
+		mutex:          sync.RWMutex{},
 		configDumpPath: filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
 		sqlitePath:     sqlitePath,
 	}
@@ -70,17 +70,19 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 		return nil, err
 	}
 
-	err = manager.migrateDynamicDataToDb(ctx)
+	migrated, err := manager.migrateDynamicDataToDb(ctx)
 	if err != nil {
 		log.Printf("Error migrating dynamic data to DB: %+v", err)
 		return nil, err
 	}
 
-	if err = manager.Write(); err != nil {
-		log.Printf("Error writing config: %+v", err)
-		return nil, err
+	if migrated {
+		if err = manager.Write(); err != nil {
+			log.Printf("Error writing config: %+v", err)
+			return nil, err
+		}
+		logging.Info("Saved static config after initial migration", types.Config)
 	}
-	log.Printf("Saved static config after load")
 
 	// Hydrate in-memory dynamic state from DB once
 	if err := manager.HydrateFromDB(context.Background()); err != nil {
@@ -290,6 +292,18 @@ func (cm *ConfigManager) SetBandwidthParams(params BandwidthParamsCache) error {
 
 func (cm *ConfigManager) GetBandwidthParams() BandwidthParamsCache {
 	return cm.currentConfig.BandwidthParams
+}
+
+func (cm *ConfigManager) SetTransferAgentAccessCache(cache TransferAgentAccessCache) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.TransferAgentAccessCache = cache
+}
+
+func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return cm.currentConfig.TransferAgentAccessCache
 }
 
 func (cm *ConfigManager) GetHeight() int64 {
@@ -623,15 +637,15 @@ func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]InferenceNo
 	return newNodes, nil
 }
 
-func (cm *ConfigManager) migrateDynamicDataToDb(ctx context.Context) error {
+func (cm *ConfigManager) migrateDynamicDataToDb(ctx context.Context) (bool, error) {
 	if err := cm.ensureDbReady(ctx); err != nil {
-		return err
+		return false, err
 	}
 	// Only migrate once, gated by a KV flag
 	var migrated bool
 	if ok, err := KVGetJSON(ctx, cm.sqlDb.GetDb(), kvKeyConfigMigrated, &migrated); err == nil && ok && migrated {
 		logging.Info("Config migration already completed. Skipping", types.Config)
-		return nil
+		return false, nil
 	}
 	config := cm.currentConfig
 	// If YAML indicates nodes were already merged historically, persist the flag so LoadNodeConfig skips
@@ -641,7 +655,7 @@ func (cm *ConfigManager) migrateDynamicDataToDb(ctx context.Context) error {
 	// Nodes: upsert unconditionally (idempotent)
 	if err := WriteNodes(ctx, cm.sqlDb.GetDb(), config.Nodes); err != nil {
 		logging.Error("Error writing nodes to DB", types.Config, "error", err)
-		return err
+		return false, err
 	}
 
 	// Per-key idempotent migrations: only populate if missing
@@ -696,7 +710,7 @@ func (cm *ConfigManager) migrateDynamicDataToDb(ctx context.Context) error {
 
 	// Mark migration as done
 	_ = KVSetJSON(ctx, cm.sqlDb.GetDb(), kvKeyConfigMigrated, true)
-	return nil
+	return true, nil
 }
 
 // HydrateFromDB loads dynamic fields from DB into memory ONCE during startup.

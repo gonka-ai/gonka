@@ -10,7 +10,6 @@ from api.proxy import (
     get_healthy_backends,
     pick_backend_for_pow_generate,
     call_backend,
-    _release_vllm_backend,
     VLLM_HOST,
 )
 
@@ -189,7 +188,7 @@ async def status() -> dict:
 
 @router.post("/generate")
 async def generate(body: PoCGenerateRequest) -> dict:
-    """Route /generate to a backend, preferring non-generating ones."""
+    """Route /generate to a backend using round-robin."""
     try:
         port = await pick_backend_for_pow_generate()
     except RuntimeError:
@@ -199,7 +198,6 @@ async def generate(body: PoCGenerateRequest) -> dict:
         r = await call_backend(port, "POST", "/api/v1/pow/generate", body.model_dump())
         
         if r.status_code != 200:
-            await _release_vllm_backend(port)
             raise HTTPException(status_code=r.status_code, detail=r.text)
         
         data = r.json()
@@ -208,13 +206,11 @@ async def generate(body: PoCGenerateRequest) -> dict:
         if data.get("status") == "queued" and "request_id" in data:
             data["request_id"] = f"{port}:{data['request_id']}"
         
-        await _release_vllm_backend(port)
         return data
         
     except HTTPException:
         raise
     except Exception as e:
-        await _release_vllm_backend(port)
         raise HTTPException(status_code=502, detail=str(e))
 
 

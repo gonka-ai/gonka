@@ -187,6 +187,9 @@ func (f *failingNodeClient) InferenceHealth(ctx context.Context) (bool, error) {
 func (f *failingNodeClient) InferenceUp(ctx context.Context, model string, args []string) error {
 	return nil
 }
+func (f *failingNodeClient) GetLoadedModels(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
 func (f *failingNodeClient) GetGPUDevices(ctx context.Context) (*mlnodeclient.GPUDevicesResponse, error) {
 	return &mlnodeclient.GPUDevicesResponse{}, nil
 }
@@ -251,6 +254,7 @@ func (f fakeNodeClient) InferenceHealth(ctx context.Context) (bool, error) { ret
 func (f fakeNodeClient) InferenceUp(ctx context.Context, model string, args []string) error {
 	return nil
 }
+func (f fakeNodeClient) GetLoadedModels(ctx context.Context) ([]string, error) { return nil, nil }
 
 // GPU operations
 func (f fakeNodeClient) GetGPUDevices(ctx context.Context) (*mlnodeclient.GPUDevicesResponse, error) {

@@ -74,6 +74,8 @@ data class InferenceParams(
     val bandwidthLimitsParams: BandwidthLimitsParams? = null,
     @SerializedName("confirmation_poc_params")
     val confirmationPocParams: ConfirmationPoCParams? = null,
+    @SerializedName("transfer_agent_access_params")
+    val transferAgentAccessParams: TransferAgentAccessParams? = null,
 )
 
 data class TokenomicsParams(
@@ -237,6 +239,11 @@ data class ConfirmationPoCParams(
     val slashFraction: Decimal = Decimal(10, -2),  // 0.10
     @SerializedName("upgrade_protection_window")
     val upgradeProtectionWindow: Long = 2,  // Default: 500 blocks
+)
+
+data class TransferAgentAccessParams(
+    @SerializedName("allowed_transfer_addresses")
+    val allowedTransferAddresses: List<String> = emptyList(),
 )
 
 data class PocParams(

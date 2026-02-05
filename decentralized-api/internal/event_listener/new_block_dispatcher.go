@@ -217,6 +217,22 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				}
 			}
 
+			// Update Transfer Agent access cache from chain params
+			if params.Params.TransferAgentAccessParams != nil {
+				addresses := params.Params.TransferAgentAccessParams.AllowedTransferAddresses
+				cache := apiconfig.TransferAgentAccessCache{
+					AllowedAddresses: make(map[string]struct{}, len(addresses)),
+					IsEnabled:        len(addresses) > 0,
+				}
+				for _, addr := range addresses {
+					cache.AllowedAddresses[addr] = struct{}{}
+				}
+				d.configManager.SetTransferAgentAccessCache(cache)
+
+				logging.Debug("Updated transfer agent access cache from chain", types.Config,
+					"enabled", cache.IsEnabled, "count", len(addresses))
+			}
+
 			// Update PoC V2 enabled flags for runtime V1/V2 switching
 			if params.Params.PocParams != nil {
 				d.phaseTracker.UpdatePocV2Enabled(params.Params.PocParams.PocV2Enabled)

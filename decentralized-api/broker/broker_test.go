@@ -6,6 +6,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -16,6 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
 )
+
+func TestMain(m *testing.M) {
+	// Disable model enforcement for all tests
+	os.Setenv("ENFORCED_MODEL_ID", "disabled")
+	os.Exit(m.Run())
+}
 
 type MockBrokerChainBridge struct {
 	mock.Mock
@@ -74,6 +81,7 @@ func NewTestBroker() *Broker {
 		PubKey:  "dummyPubKey",
 	}
 	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker.UpdatePocV2Enabled(true)
 	phaseTracker.Update(
 		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
 		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
