@@ -458,9 +458,11 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	eligibleNodesData := ma.filterEligibleMLNodes(upcomingEpoch, previousEpochData, currentEpochData, totalCurrentEpochWeight)
 	ma.LogInfo("Filtered eligible nodes for all models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "filter_all_eligible", "num_models", len(eligibleNodesData.Models()))
 
+	allParticipantsHashStr := currentEpochData.GetAllParticipantsHash()
+
 	for _, modelId := range sortedModelIds {
 		ma.LogInfo("Processing model for PoC allocation", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_loop_start", "model_id", modelId)
-		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
+		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction, upcomingEpoch.Index, allParticipantsHashStr)
 	}
 }
 
@@ -664,6 +666,8 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	currentEpochData *EpochMLNodeData,
 	eligibleNodesData *EpochMLNodeData,
 	fraction *types.Decimal,
+	epochIndex uint64,
+	allParticipantsHashStr string,
 ) {
 	ma.LogInfo("Starting allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_start", "model_id", modelId)
 
@@ -678,7 +682,19 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	eligibleModelNodes := eligibleNodesData.GetForModel(modelId)
 	eligibleParticipantAddrs := sortedKeys(eligibleModelNodes)
 
-	ma.LogInfo("Built participant list", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_participants", "model_id", modelId, "num_participants", len(eligibleParticipantAddrs))
+	// Deterministic shuffle to eliminate alphabetical bias in round-robin allocation
+	// Uses SHA256(epochIndex + modelId + participantsHash) as seed for consensus-safe ordering
+	shuffleSeed := fmt.Sprintf("poc_allocate_%d_%s_%s", epochIndex, modelId, allParticipantsHashStr)
+	shuffleHash := sha256.Sum256([]byte(shuffleSeed))
+	shuffleSeedInt := int64(binary.BigEndian.Uint64(shuffleHash[:8]))
+	//nolint:gosec // Deterministic shuffle for consensus - not used for security
+	shuffleRng := rand.New(rand.NewSource(shuffleSeedInt))
+
+	shuffleRng.Shuffle(len(eligibleParticipantAddrs), func(i, j int) {
+		eligibleParticipantAddrs[i], eligibleParticipantAddrs[j] = eligibleParticipantAddrs[j], eligibleParticipantAddrs[i]
+	})
+
+	ma.LogInfo("Built participant list", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_participants", "model_id", modelId, "num_participants", len(eligibleParticipantAddrs), "shuffle_seed", shuffleSeed)
 
 	if len(eligibleParticipantAddrs) == 0 {
 		ma.LogInfo("No participants with eligible nodes for this model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "no_participants", "model_id", modelId)
