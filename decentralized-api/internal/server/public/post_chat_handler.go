@@ -61,8 +61,9 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
-func NewNoRedirectClient() *http.Client {
+func NewNoRedirectClient(timeout time.Duration) *http.Client {
 	return &http.Client{
+		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -401,7 +402,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	resp, err := NewNoRedirectClient().Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
@@ -473,7 +474,7 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			return nil, broker.NewApplicationActionError(err)
 		}
 
-		resp, postErr := http.Post(
+		resp, postErr := s.httpClient.Post(
 			tokenizeUrl,
 			"application/json",
 			bytes.NewReader(jsonData),
@@ -555,7 +556,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		resp, postErr := http.Post(
+		resp, postErr := s.httpClient.Post(
 			completionsUrl,
 			request.Request.Header.Get("Content-Type"),
 			bytes.NewReader(modifiedRequestBody.NewBody),
