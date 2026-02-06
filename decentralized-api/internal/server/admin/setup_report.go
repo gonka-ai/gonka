@@ -396,7 +396,7 @@ func (s *Server) checkConsensusKey(ctx context.Context) []Check {
 
 		// Query active participants using store key
 		dataKey := types.ActiveParticipantsFullKey(currentEpoch)
-		result, err := cosmosclient.QueryByKey(rpcClient, "inference", dataKey)
+		result, err := cosmosclient.QueryByKey(rpcClient, "inference", dataKey, status.SyncInfo.LatestBlockHeight)
 
 		if err != nil || len(result.Response.Value) == 0 {
 			checks = append(checks, Check{
