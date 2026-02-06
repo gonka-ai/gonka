@@ -916,7 +916,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httputils.SharedHTTPClient.Do(req)
+	resp, err := httputils.SharedNoRedirectHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
