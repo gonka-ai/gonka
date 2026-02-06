@@ -37,6 +37,10 @@ const (
 	ExecutorContext AuthKeyContext = 2
 	// BothContexts indicates the AuthKey was used for both transfer and executor requests
 	BothContexts = TransferContext | ExecutorContext
+
+	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MB)
+	// This prevents memory exhaustion attacks from oversized requests
+	MaxRequestBodySize = 10 * 1024 * 1024
 )
 
 // Package-level variables for AuthKey reuse prevention
@@ -57,8 +61,9 @@ var (
 	configManagerRef *apiconfig.ConfigManager
 )
 
-func NewNoRedirectClient() *http.Client {
+func NewNoRedirectClient(timeout time.Duration) *http.Client {
 	return &http.Client{
+		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -212,6 +217,13 @@ func (s *Server) postChat(ctx echo.Context) error {
 		return err
 	}
 
+	// Early TA whitelist check - covers both transfer and executor paths:
+	// - Transfer requests: TransferAddress = this node's address (set by readRequest)
+	// - Executor requests: TransferAddress = forwarding TA's address (from X-Transfer-Address header)
+	if err := s.enforceTransferAgentAccess(chatRequest.TransferAddress); err != nil {
+		return err
+	}
+
 	if chatRequest.AuthKey == "" {
 		logging.Warn("Request without authorization", types.Server, "path", ctx.Request().URL.Path)
 		return ErrRequestAuth
@@ -264,6 +276,20 @@ func (s *Server) enforceDeveloperAccessGate(ctx context.Context, requesterAddres
 	}
 
 	return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("inference requests are restricted until block height %d", p.UntilBlockHeight))
+}
+
+// enforceTransferAgentAccess checks if the given TA address is in the whitelist.
+// Returns nil if allowed, or a Forbidden error if not allowed.
+func (s *Server) enforceTransferAgentAccess(taAddress string) error {
+	cache := s.configManager.GetTransferAgentAccessCache()
+	if !cache.IsEnabled {
+		return nil // no restriction
+	}
+	if _, ok := cache.AllowedAddresses[taAddress]; ok {
+		return nil
+	}
+	logging.Warn("Transfer Agent not in whitelist", types.Inferences, "address", taAddress)
+	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
@@ -376,7 +402,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	resp, err := NewNoRedirectClient().Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
@@ -448,7 +474,7 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			return nil, broker.NewApplicationActionError(err)
 		}
 
-		resp, postErr := http.Post(
+		resp, postErr := s.httpClient.Post(
 			tokenizeUrl,
 			"application/json",
 			bytes.NewReader(jsonData),
@@ -530,7 +556,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		resp, postErr := http.Post(
+		resp, postErr := s.httpClient.Post(
 			completionsUrl,
 			request.Request.Header.Get("Content-Type"),
 			bytes.NewReader(modifiedRequestBody.NewBody),
@@ -938,6 +964,9 @@ func readRequest(request *http.Request, transferAddress string) (*ChatRequest, e
 }
 
 func readRequestBody(r *http.Request) ([]byte, error) {
+	// Limit request body size to prevent memory exhaustion attacks
+	r.Body = http.MaxBytesReader(nil, r.Body, MaxRequestBodySize)
+
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r.Body); err != nil {
 		return nil, err

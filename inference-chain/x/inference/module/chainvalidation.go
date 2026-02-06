@@ -9,6 +9,7 @@ import (
 
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 // WeightCalculator encapsulates all the data needed to calculate new weights for participants.
@@ -23,6 +24,8 @@ type WeightCalculator struct {
 	EpochStartBlockHeight   int64
 	Logger                  types.InferenceLogger
 	WeightScaleFactor       mathsdk.LegacyDec
+	GuardianEnabled         bool
+	GuardianAddresses       map[string]bool
 }
 
 // NewWeightCalculator creates a new WeightCalculator instance.
@@ -36,6 +39,8 @@ func NewWeightCalculator(
 	epochStartBlockHeight int64,
 	logger types.InferenceLogger,
 	weightScaleFactor mathsdk.LegacyDec,
+	guardianEnabled bool,
+	guardianAddresses map[string]bool,
 ) *WeightCalculator {
 	return &WeightCalculator{
 		CurrentValidatorWeights: currentValidatorWeights,
@@ -47,6 +52,8 @@ func NewWeightCalculator(
 		EpochStartBlockHeight:   epochStartBlockHeight,
 		Logger:                  logger,
 		WeightScaleFactor:       weightScaleFactor,
+		GuardianEnabled:         guardianEnabled,
+		GuardianAddresses:       guardianAddresses,
 	}
 }
 
@@ -199,14 +206,66 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidationV2, participa
 			)
 		} else {
 			shouldContinue = false
-			wc.Logger.LogWarn("Calculate: Participant did not receive a majority of either valid or invalid validations. Rejecting.",
-				types.PoC, "participant", participantAddress,
-				"validWeight", valOutcome.ValidWeight,
-				"invalidWeight", valOutcome.InvalidWeight,
-				"votedWeight", votedWeight,
-				"totalWeight", totalWeight,
-				"halfWeight", halfWeight,
-			)
+			guardianValidCount := 0
+			guardianInvalidCount := 0
+
+			if wc.GuardianEnabled && len(wc.GuardianAddresses) > 0 {
+				for _, v := range vals {
+					if wc.GuardianAddresses[v.ValidatorParticipantAddress] {
+						if v.ValidatedWeight > 0 {
+							guardianValidCount++
+						} else {
+							guardianInvalidCount++
+						}
+					}
+				}
+
+				// Guardian tiebreaker: all voting guardians must agree
+				if guardianValidCount > 0 && guardianInvalidCount == 0 {
+					shouldContinue = true
+					wc.Logger.LogInfo("Calculate: Guardian tiebreaker - unanimous valid. Accepting.",
+						types.PoC, "participant", participantAddress,
+						"validWeight", valOutcome.ValidWeight,
+						"invalidWeight", valOutcome.InvalidWeight,
+						"votedWeight", votedWeight,
+						"totalWeight", totalWeight,
+						"halfWeight", halfWeight,
+						"guardianValidCount", guardianValidCount,
+						"guardianInvalidCount", guardianInvalidCount,
+					)
+				} else if guardianInvalidCount > 0 && guardianValidCount == 0 {
+					wc.Logger.LogWarn("Calculate: Guardian tiebreaker - unanimous invalid. Rejecting.",
+						types.PoC, "participant", participantAddress,
+						"validWeight", valOutcome.ValidWeight,
+						"invalidWeight", valOutcome.InvalidWeight,
+						"votedWeight", votedWeight,
+						"totalWeight", totalWeight,
+						"halfWeight", halfWeight,
+						"guardianValidCount", guardianValidCount,
+						"guardianInvalidCount", guardianInvalidCount,
+					)
+				} else {
+					wc.Logger.LogWarn("Calculate: No majority and guardians did not reach consensus. Rejecting.",
+						types.PoC, "participant", participantAddress,
+						"validWeight", valOutcome.ValidWeight,
+						"invalidWeight", valOutcome.InvalidWeight,
+						"votedWeight", votedWeight,
+						"totalWeight", totalWeight,
+						"halfWeight", halfWeight,
+						"guardianValidCount", guardianValidCount,
+						"guardianInvalidCount", guardianInvalidCount,
+					)
+				}
+			} else {
+				wc.Logger.LogWarn("Calculate: Participant did not receive a majority of either valid or invalid validations. Rejecting.",
+					types.PoC, "participant", participantAddress,
+					"validWeight", valOutcome.ValidWeight,
+					"invalidWeight", valOutcome.InvalidWeight,
+					"votedWeight", votedWeight,
+					"totalWeight", totalWeight,
+					"halfWeight", halfWeight,
+				)
+			}
 		}
 	} else {
 		shouldContinue = true
@@ -739,6 +798,28 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		return nil
 	}
 	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
+
+	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
+	guardianAddrs := am.keeper.GetGenesisGuardianAddresses(ctx)
+	guardianSet := make(map[string]bool, len(guardianAddrs))
+	for _, addr := range guardianAddrs {
+		accAddr, err := utils.OperatorAddressToAccAddress(addr)
+		if err != nil {
+			am.LogWarn("ComputeNewWeights: Failed to convert guardian address", types.PoC,
+				"operatorAddress", addr, "error", err)
+			continue
+		}
+		guardianSet[accAddr] = true
+	}
+
+	guardianAccAddrs := make([]string, 0, len(guardianSet))
+	for addr := range guardianSet {
+		guardianAccAddrs = append(guardianAccAddrs, addr)
+	}
+	am.LogInfo("ComputeNewWeights: Resolved guardian addresses", types.PoC,
+		"guardianEnabled", guardianEnabled,
+		"guardianAccAddrs", guardianAccAddrs)
+
 	calculator := NewWeightCalculator(
 		currentValidatorWeights,
 		allowedCommits,
@@ -749,6 +830,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		epochStartBlockHeight,
 		am,
 		weightScaleFactor,
+		guardianEnabled,
+		guardianSet,
 	)
 	pocMiningParticipants := calculator.Calculate()
 
