@@ -273,16 +273,23 @@ func TestShouldValidate_LargeWeights(t *testing.T) {
 
 	// Test with values larger than uint32 max (4,294,967,295)
 	// These would have been truncated with uint32
-	largeTotal := int64(10_000_000_000)     // 10 billion
-	largeValidator := int64(1_000_000_000)  // 1 billion
-	largeExecutor := int64(500_000_000)     // 500 million
+	largeTotal := int64(10_000_000_000)    // 10 billion
+	largeValidator := int64(1_000_000_000) // 1 billion
+	largeExecutor := int64(500_000_000)    // 500 million
 
 	// Should not panic and should return a valid result
 	result, message := ShouldValidate(12345, inferenceDetails, largeTotal, largeValidator, largeExecutor, testParams, true)
 	t.Logf("Large weights result: %v, message: %s", result, message)
 
-	// The function should complete without panic
-	require.NotEmpty(t, message, "Should return a message")
+	// Parse the debug message and verify consistency
+	shouldValidate, _, ourProbability, err := ExtractValidationDetails(message)
+	require.NoError(t, err, "Should parse validation details from message")
+	require.Equal(t, result, shouldValidate, "Result must match parsed shouldValidate from message")
+
+	// With seed=12345, these large int64 weights produce a deterministic result
+	require.False(t, result, "Expected false for large weights with seed 12345")
+	require.InEpsilon(t, 0.0578947368421053, ourProbability, 0.01,
+		fmt.Sprintf("Expected probability ~0.0579 but got %f", ourProbability))
 }
 
 func TestShouldValidatePerformance(t *testing.T) {
