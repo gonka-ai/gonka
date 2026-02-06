@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"time"
 
+	echoMiddleware "github.com/labstack/echo/v4/middleware"
+
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 )
@@ -88,6 +90,7 @@ func NewServer(
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
+	e.Use(echoMiddleware.BodyLimit("10M"))
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)

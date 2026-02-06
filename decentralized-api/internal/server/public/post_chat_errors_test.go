@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -296,7 +297,7 @@ func TestHandleTransferRequest_CapacityLimit(t *testing.T) {
 		OpenAiRequest: OpenAiRequest{
 			Model:     "test-model",
 			MaxTokens: 1,
-			Messages:  []Message{{Content: strings.Repeat("x", 10)}},
+			Messages:  []Message{{Role: "user", Content: json.RawMessage(`"` + strings.Repeat("x", 10) + `"`)}},
 		},
 	}
 

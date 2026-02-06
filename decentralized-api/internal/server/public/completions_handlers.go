@@ -2,7 +2,6 @@ package public
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,14 @@ import (
 	"strings"
 	"sync"
 
+	"decentralized-api/utils"
+
 	"github.com/labstack/echo/v4"
+)
+
+const (
+	scannerInitBufSize = 64 * 1024   // 64 KB initial buffer for SSE scanner
+	scannerMaxBufSize  = 1024 * 1024 // 1 MB max buffer for SSE scanner
 )
 
 func transformCompletionsToChatRequest(req *CompletionsRequest) map[string]interface{} {
@@ -64,22 +70,20 @@ func buildChatBodyFromCompletions(req *CompletionsRequest, prompt string) ([]byt
 	return json.Marshal(chatReq)
 }
 
-func (s *Server) executeChatRequest(ctx echo.Context, body []byte) (int, []byte, error) {
+func (s *Server) executeChatRequest(ctx echo.Context, body []byte, signBodyHash string) (int, []byte, error) {
 	rec := httptest.NewRecorder()
 	req := ctx.Request().Clone(ctx.Request().Context())
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	req.ContentLength = int64(len(body))
 
 	echoCtx := ctx.Echo().NewContext(req, rec)
-	if err := s.postChat(echoCtx); err != nil {
+	if err := s.postChatWithBody(echoCtx, body, signBodyHash); err != nil {
 		echoCtx.Echo().HTTPErrorHandler(err, echoCtx)
 	}
 
 	return rec.Code, rec.Body.Bytes(), nil
 }
 
-func (s *Server) completionFromChat(ctx echo.Context, body []byte) (*CompletionResponse, int, []byte, error) {
-	statusCode, respBody, err := s.executeChatRequest(ctx, body)
+func (s *Server) completionFromChat(ctx echo.Context, body []byte, signBodyHash string) (*CompletionResponse, int, []byte, error) {
+	statusCode, respBody, err := s.executeChatRequest(ctx, body, signBodyHash)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -99,6 +103,7 @@ func (s *Server) postCompletions(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
 	}
 	ctx.Request().Body.Close()
+	signBodyHash := utils.GenerateSHA256Hash(string(body))
 
 	var completionsReq CompletionsRequest
 	if err := json.Unmarshal(body, &completionsReq); err != nil {
@@ -110,23 +115,23 @@ func (s *Server) postCompletions(ctx echo.Context) error {
 	}
 
 	if completionsReq.Stream {
-		return s.handleStreamingCompletions(ctx, &completionsReq)
+		return s.handleStreamingCompletions(ctx, &completionsReq, signBodyHash)
 	}
 
 	if len(completionsReq.Prompt) > 1 {
-		return s.handleBatchCompletions(ctx, &completionsReq)
+		return s.handleBatchCompletions(ctx, &completionsReq, signBodyHash)
 	}
 
-	return s.handleSingleCompletion(ctx, &completionsReq)
+	return s.handleSingleCompletion(ctx, &completionsReq, signBodyHash)
 }
 
-func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *CompletionsRequest) error {
+func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *CompletionsRequest, signBodyHash string) error {
 	newBody, err := buildChatBodyFromCompletions(completionsReq, completionsReq.Prompt.First())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create chat request")
 	}
 
-	completionResp, statusCode, respBody, err := s.completionFromChat(ctx, newBody)
+	completionResp, statusCode, respBody, err := s.completionFromChat(ctx, newBody, signBodyHash)
 	if err != nil {
 		return err
 	}
@@ -139,7 +144,7 @@ func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *Comple
 	return ctx.JSON(http.StatusOK, completionResp)
 }
 
-func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *CompletionsRequest) error {
+func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *CompletionsRequest, signBodyHash string) error {
 	prompts := completionsReq.Prompt
 	results := make([]*CompletionResponse, len(prompts))
 	errors := make([]error, len(prompts))
@@ -158,7 +163,7 @@ func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *Comple
 				return
 			}
 
-			resp, statusCode, respBody, err := s.completionFromChat(ctx, newBody)
+			resp, statusCode, respBody, err := s.completionFromChat(ctx, newBody, signBodyHash)
 			if err != nil {
 				errors[idx] = err
 				return
@@ -241,7 +246,7 @@ func mergeBatchCompletionResponses(results []*CompletionResponse) *CompletionRes
 	return merged
 }
 
-func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *CompletionsRequest) error {
+func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *CompletionsRequest, signBodyHash string) error {
 	if len(completionsReq.Prompt) > 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, "streaming with batch prompts is not supported")
 	}
@@ -255,8 +260,6 @@ func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *Co
 	statusChan := make(chan int, 1)
 
 	req := ctx.Request().Clone(ctx.Request().Context())
-	req.Body = io.NopCloser(bytes.NewReader(newBody))
-	req.ContentLength = int64(len(newBody))
 
 	pipeResponseWriter := &pipeResponseWriter{
 		header:     make(http.Header),
@@ -268,7 +271,7 @@ func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *Co
 
 	go func() {
 		defer pw.Close()
-		if err := s.postChat(echoCtx); err != nil {
+		if err := s.postChatWithBody(echoCtx, newBody, signBodyHash); err != nil {
 			echoCtx.Echo().HTTPErrorHandler(err, echoCtx)
 		}
 	}()
@@ -288,7 +291,7 @@ func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *Co
 	ctx.Response().WriteHeader(http.StatusOK)
 
 	scanner := bufio.NewScanner(pr)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, scannerInitBufSize), scannerMaxBufSize)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -376,6 +379,12 @@ func transformChatChunkToCompletionChunk(chatChunkJSON string) (string, error) {
 		Created: chatChunk.Created,
 		Model:   chatChunk.Model,
 		Usage:   chatChunk.Usage,
+		Choices: make([]struct {
+			Text         string  `json:"text"`
+			Index        int     `json:"index"`
+			Logprobs     *int    `json:"logprobs"`
+			FinishReason *string `json:"finish_reason"`
+		}, 0),
 	}
 
 	for _, c := range chatChunk.Choices {

@@ -35,6 +35,7 @@ func (s *Server) getModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	context := s.recorder.GetContext()
 
+	// Get the current epoch group to find out which models are active.
 	currentEpoch, err := queryClient.CurrentEpochGroupData(context, &types.QueryCurrentEpochGroupDataRequest{})
 	if err != nil {
 		return err
@@ -44,6 +45,7 @@ func (s *Server) getModels(ctx echo.Context) error {
 	parentEpochData := currentEpoch.GetEpochGroupData()
 	unitOfComputePrice := uint64(parentEpochData.UnitOfComputePrice)
 
+	// Iterate over the subgroup models to get the snapshot for each one.
 	for _, modelId := range parentEpochData.SubGroupModels {
 		req := &types.QueryGetEpochGroupDataRequest{
 			EpochIndex: parentEpochData.EpochIndex,
@@ -51,6 +53,7 @@ func (s *Server) getModels(ctx echo.Context) error {
 		}
 		modelEpochData, err := queryClient.EpochGroupData(context, req)
 		if err != nil {
+			// If a model subgroup is listed but not found, we can log it, but we shouldn't fail the entire request.
 			continue
 		}
 
@@ -58,6 +61,7 @@ func (s *Server) getModels(ctx echo.Context) error {
 			m := modelEpochData.EpochGroupData.ModelSnapshot
 			models = append(models, ModelDescriptor{
 				ID:                          m.Id,
+				HuggingFaceID:               m.HfRepo,
 				Name:                        m.Id,
 				Created:                     0,
 				InputModalities:             []string{"text"},
@@ -67,12 +71,12 @@ func (s *Server) getModels(ctx echo.Context) error {
 				Pricing:                     pricingForModel(m, unitOfComputePrice),
 				SupportedSamplingParameters: supportedSamplingParameters,
 				SupportedFeatures:           supportedFeatures,
-				Provider:                    &ModelMetadata{Slug: modelSlugPrefix + "/" + m.Id},
+				Provider:                    &ModelMetadata{Slug: modelSlugPrefix},
 			})
 		}
 	}
 
-	// NOTE: Response uses {models:[...]} envelope.
+	// NOTE: Response uses {data:[...]} envelope (OpenRouter-compatible).
 	return ctx.JSON(http.StatusOK, ModelsListResponse{
 		Data: models,
 	})

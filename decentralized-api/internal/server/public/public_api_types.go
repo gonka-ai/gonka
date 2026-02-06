@@ -75,7 +75,7 @@ type ModelDescriptor struct {
 }
 
 type ModelsListResponse struct {
-	Data []ModelDescriptor `json:"models"`
+	Data []ModelDescriptor `json:"data"`
 }
 
 type CompletionsRequest struct {

@@ -37,6 +37,17 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 	k.Logger().Info("GetRandomExecutor: Retrieved epoch group",
 		"model_id", req.Model, "epoch_id", epochGroup.GroupData.EpochIndex)
 
+	modelFound := false
+	for _, m := range epochGroup.GroupData.GetSubGroupModels() {
+		if m == req.Model {
+			modelFound = true
+			break
+		}
+	}
+	if !modelFound {
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("model %s not registered", req.Model))
+	}
+
 	participant, err := epochGroup.GetRandomMemberForModel(goCtx, req.Model, filterFn)
 	if err != nil {
 		k.Logger().Error("GetRandomExecutor: failed to get random member",
