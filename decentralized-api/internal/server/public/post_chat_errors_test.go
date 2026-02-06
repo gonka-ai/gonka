@@ -187,6 +187,7 @@ func TestValidateRequester_InsufficientBalance(t *testing.T) {
 		Timestamp:       timestamp,
 		TransferAddress: transferAddress,
 		AuthKey:         signature,
+		SignBodyHash:    utils.GenerateSHA256Hash(body),
 		OpenAiRequest: OpenAiRequest{
 			Model:     "test-model",
 			MaxTokens: 1,
@@ -294,6 +295,7 @@ func TestHandleTransferRequest_CapacityLimit(t *testing.T) {
 		TransferAddress:  transferAddress,
 		RequesterAddress: "dev1",
 		AuthKey:          signature,
+		SignBodyHash:     utils.GenerateSHA256Hash(body),
 		OpenAiRequest: OpenAiRequest{
 			Model:     "test-model",
 			MaxTokens: 1,
