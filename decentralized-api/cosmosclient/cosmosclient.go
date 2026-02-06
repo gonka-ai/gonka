@@ -83,7 +83,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
-func grpcTargetFromNodeURL(nodeURL string, port int) (string, error) {
+func grpcTargetFromNodeURL(nodeURL string, port int32) (string, error) {
 	parsed, err := url.Parse(nodeURL)
 	if err != nil {
 		parsed, err = url.Parse("http://" + nodeURL)
@@ -101,7 +101,7 @@ func grpcTargetFromNodeURL(nodeURL string, port int) (string, error) {
 	if port == 0 {
 		port = 9090
 	}
-	return net.JoinHostPort(host, strconv.Itoa(port)), nil
+	return net.JoinHostPort(host, strconv.Itoa(int(port))), nil
 }
 
 // 'file' keyring backend to automatically provide interactive prompts for signing
@@ -160,6 +160,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 	}
 
 	var grpcConn *grpc.ClientConn
+	var grpcCancel context.CancelFunc
 	if nodeConfig.GrpcEnabled {
 		target, err := grpcTargetFromNodeURL(nodeConfig.Url, nodeConfig.GrpcPort)
 		if err != nil {
@@ -169,8 +170,10 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
 		}
+		var grpcCtx context.Context
+		grpcCtx, grpcCancel = context.WithCancel(ctx)
 		go func() {
-			<-ctx.Done()
+			<-grpcCtx.Done()
 			_ = grpcConn.Close()
 		}()
 	}
@@ -208,8 +211,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 	defer func() {
 		if !success {
 			natsConn.Close()
-			if grpcConn != nil {
-				_ = grpcConn.Close()
+			if grpcCancel != nil {
+				grpcCancel()
 			}
 		}
 	}()
