@@ -1,7 +1,6 @@
 package inference
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,13 +26,13 @@ func TestInferenceSlotRotation_FixVerification(t *testing.T) {
 	nodes := []*types.MLNodeInfo{nodeA, nodeB}
 	
 	// Simulation: Epoch 1 Allocation
-	fmt.Println("--- Epoch 1 Allocation ---")
+	t.Log("--- Epoch 1 Allocation ---")
 	// No previously safe nodes in Epoch 1
 	prevSafe1 := make(map[string]bool)
 	selected1 := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe1)
 	require.Equal(t, "NodeA_Small", selected1.NodeId, "Epoch 1 should pick NodeA (smallest)")
 	selected1.TimeslotAllocation[1] = true
-	fmt.Printf("Epoch 1 picked: %s\n", selected1.NodeId)
+	t.Logf("Epoch 1 picked: %s", selected1.NodeId)
 
 	// Simulation: Epoch 2 Allocation preparation
 	// Identify previously safe nodes
@@ -49,16 +48,16 @@ func TestInferenceSlotRotation_FixVerification(t *testing.T) {
 		n.TimeslotAllocation = []bool{true, false}
 	}
 	
-	fmt.Println("--- Epoch 2 Allocation ---")
+	t.Log("--- Epoch 2 Allocation ---")
 	// Epoch 2 should pick NodeB even though it's larger, because NodeA was safe previously
 	selected2 := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe2)
 	
 	require.Equal(t, "NodeB_Large", selected2.NodeId, "Epoch 2 should pick NodeB (rotation)")
 	selected2.TimeslotAllocation[1] = true
-	fmt.Printf("Epoch 2 picked: %s\n", selected2.NodeId)
+	t.Logf("Epoch 2 picked: %s", selected2.NodeId)
 
 	require.NotEqual(t, selected1.NodeId, selected2.NodeId, "Rotation should have occurred")
-	fmt.Println("[Verification] Rotation confirmed: NodeB was picked to avoid hogging.")
+	t.Log("[Verification] Rotation confirmed: NodeB was picked to avoid hogging.")
 }
 
 func TestInferenceSlotRotation_SingleNode(t *testing.T) {
@@ -70,7 +69,7 @@ func TestInferenceSlotRotation_SingleNode(t *testing.T) {
 	}
 	nodes := []*types.MLNodeInfo{nodeA}
 
-	fmt.Println("--- Single Node Epoch 1 ---")
+	t.Log("--- Single Node Epoch 1 ---")
 	selected1 := getSmallestMLNodeWithPOCSLotFalse(nodes, nil)
 	require.Equal(t, "OnlyNode", selected1.NodeId)
 	selected1.TimeslotAllocation[1] = true
@@ -79,8 +78,8 @@ func TestInferenceSlotRotation_SingleNode(t *testing.T) {
 	prevSafe := map[string]bool{"OnlyNode": true}
 	nodeA.TimeslotAllocation = []bool{true, false}
 
-	fmt.Println("--- Single Node Epoch 2 ---")
+	t.Log("--- Single Node Epoch 2 ---")
 	selected2 := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe)
 	require.Equal(t, "OnlyNode", selected2.NodeId, "Should still pick the node if it's the only one")
-	fmt.Println("[Verification] Single node case handled correctly (rotation ignored if no alternatives).")
+	t.Log("[Verification] Single node case handled correctly (rotation ignored if no alternatives).")
 }
