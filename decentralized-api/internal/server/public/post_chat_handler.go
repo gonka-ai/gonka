@@ -37,6 +37,13 @@ const (
 	ExecutorContext AuthKeyContext = 2
 	// BothContexts indicates the AuthKey was used for both transfer and executor requests
 	BothContexts = TransferContext | ExecutorContext
+
+	// MaxResponseBodySize is the maximum allowed size for response bodies (50 MB)
+	// This prevents memory exhaustion attacks from malicious executor responses
+	MaxResponseBodySize = 50 * 1024 * 1024
+
+	// MaxErrorResponseSize is the maximum size for error response bodies (1 MB)
+	MaxErrorResponseSize = 1 * 1024 * 1024
 )
 
 // Package-level variables for AuthKey reuse prevention
@@ -914,7 +921,9 @@ func createInferenceStartRequest(s *Server, request *ChatRequest, seed int32, in
 
 func getInferenceErrorMessage(resp *http.Response) string {
 	msg := fmt.Sprintf("Inference node response with an error. code = %d.", resp.StatusCode)
-	bodyBytes, err := io.ReadAll(resp.Body)
+	// Limit error response size to prevent memory exhaustion
+	limitedReader := io.LimitReader(resp.Body, MaxErrorResponseSize)
+	bodyBytes, err := io.ReadAll(limitedReader)
 	if err == nil {
 		return msg + fmt.Sprintf(" error = %s.", string(bodyBytes))
 	} else {

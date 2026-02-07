@@ -88,7 +88,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 }
 
 func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor, inferenceId string) {
-	var bodyBytes, err = io.ReadAll(resp.Body)
+	// Limit response body size to prevent memory exhaustion from malicious executors
+	limitedReader := io.LimitReader(resp.Body, MaxResponseBodySize)
+	var bodyBytes, err = io.ReadAll(limitedReader)
 	if err != nil {
 		logging.Error("Failed to read inference node response body", types.Inferences, "inferenceId", inferenceId, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to read inference node response body. inferenceId = %s", inferenceId), http.StatusInternalServerError)
