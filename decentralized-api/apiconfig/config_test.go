@@ -2,14 +2,18 @@ package apiconfig_test
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/knadh/koanf/providers/rawbytes"
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestConfigLoad(t *testing.T) {
@@ -35,6 +39,159 @@ func TestNodeVersion(t *testing.T) {
 
 	// Test that default version is returned correctly
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "v3.0.8")
+}
+
+func TestSetCurrentNodeVersion(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	// Initial version from config
+	require.Equal(t, "v3.0.8", testManager.GetCurrentNodeVersion())
+
+	// Update version
+	err = testManager.SetCurrentNodeVersion("v4.0.0")
+	require.NoError(t, err)
+	require.Equal(t, "v4.0.0", testManager.GetCurrentNodeVersion())
+
+	// Update to empty version
+	err = testManager.SetCurrentNodeVersion("")
+	require.NoError(t, err)
+	require.Equal(t, "", testManager.GetCurrentNodeVersion())
+}
+
+func TestShouldRefreshClients(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	// Initially, LastUsedVersion is empty and CurrentNodeVersion is "v3.0.8"
+	// They differ, so should refresh
+	require.True(t, testManager.ShouldRefreshClients())
+
+	// Set LastUsedVersion to match CurrentNodeVersion
+	err = testManager.SetLastUsedVersion("v3.0.8")
+	require.NoError(t, err)
+	require.False(t, testManager.ShouldRefreshClients())
+
+	// Update CurrentNodeVersion - now they differ again
+	err = testManager.SetCurrentNodeVersion("v4.0.0")
+	require.NoError(t, err)
+	require.True(t, testManager.ShouldRefreshClients())
+
+	// Sync LastUsedVersion to match
+	err = testManager.SetLastUsedVersion("v4.0.0")
+	require.NoError(t, err)
+	require.False(t, testManager.ShouldRefreshClients())
+}
+
+func TestVersionUpdateTriggersRefresh(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	// Simulate initial sync: set LastUsedVersion to current
+	err = testManager.SetLastUsedVersion(testManager.GetCurrentNodeVersion())
+	require.NoError(t, err)
+	require.False(t, testManager.ShouldRefreshClients())
+
+	// Simulate chain version update
+	newChainVersion := "v5.0.0"
+	err = testManager.SetCurrentNodeVersion(newChainVersion)
+	require.NoError(t, err)
+
+	// Now ShouldRefreshClients should return true
+	require.True(t, testManager.ShouldRefreshClients())
+
+	// After refreshing clients, update LastUsedVersion
+	err = testManager.SetLastUsedVersion(newChainVersion)
+	require.NoError(t, err)
+	require.False(t, testManager.ShouldRefreshClients())
+}
+
+type mockCosmosQueryClient struct {
+	version string
+	err     error
+}
+
+func (m *mockCosmosQueryClient) MLNodeVersion(ctx context.Context, req *types.QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*types.QueryGetMLNodeVersionResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &types.QueryGetMLNodeVersionResponse{
+		MlnodeVersion: types.MLNodeVersion{
+			CurrentVersion: m.version,
+		},
+	}, nil
+}
+
+func TestSyncVersionFromChain_UpdatesWhenDifferent(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	// Initial version from config
+	require.Equal(t, "v3.0.8", testManager.GetCurrentNodeVersion())
+
+	// Sync with chain that has a different version
+	mockClient := &mockCosmosQueryClient{version: "v4.0.0"}
+	err = testManager.SyncVersionFromChain(mockClient)
+	require.NoError(t, err)
+
+	// Version should be updated to chain version
+	require.Equal(t, "v4.0.0", testManager.GetCurrentNodeVersion())
+}
+
+func TestSyncVersionFromChain_NoUpdateWhenSame(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	// Initial version from config
+	require.Equal(t, "v3.0.8", testManager.GetCurrentNodeVersion())
+
+	// Sync with chain that has the same version
+	mockClient := &mockCosmosQueryClient{version: "v3.0.8"}
+	err = testManager.SyncVersionFromChain(mockClient)
+	require.NoError(t, err)
+
+	// Version should remain the same
+	require.Equal(t, "v3.0.8", testManager.GetCurrentNodeVersion())
+}
+
+func TestSyncVersionFromChain_ErrorKeepsCurrentVersion(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	// Initial version from config
+	require.Equal(t, "v3.0.8", testManager.GetCurrentNodeVersion())
+
+	// Sync with chain that returns an error
+	mockClient := &mockCosmosQueryClient{err: errors.New("chain unavailable")}
+	err = testManager.SyncVersionFromChain(mockClient)
+	require.Error(t, err)
+
+	// Version should remain unchanged
+	require.Equal(t, "v3.0.8", testManager.GetCurrentNodeVersion())
 }
 
 func TestConfigLoadEnvOverride(t *testing.T) {
