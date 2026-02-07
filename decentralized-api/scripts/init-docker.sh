@@ -15,6 +15,14 @@ if [ -z "${KEY_NAME-}" ]; then
   exit 1
 fi
 
+# Default to 'test' for local dev; deploy/join overrides to 'file' via docker-compose
+KEYRING_BACKEND="${KEYRING_BACKEND:-test}"
+
+case "$KEYRING_BACKEND" in
+  test|file|os|memory|pass|kwallet) ;;
+  *) fail "Invalid KEYRING_BACKEND: $KEYRING_BACKEND (must be test, file, os, memory, pass, or kwallet)" ;;
+esac
+
 if [ "${CREATE_KEY:-false}" = "true" ]; then
   echo "Creating account key: $KEY_NAME"
 
@@ -25,10 +33,10 @@ if [ "${CREATE_KEY:-false}" = "true" ]; then
   fi
 
   $APP_NAME keys add "$KEY_NAME" \
-    --keyring-backend test \
+    --keyring-backend "$KEYRING_BACKEND" \
     --keyring-dir /root/.inference
 
-  ACCOUNT_PUBKEY=$($APP_NAME keys show "$KEY_NAME" --pubkey --keyring-backend test --keyring-dir /root/.inference | jq -r '.key')
+  ACCOUNT_PUBKEY=$($APP_NAME keys show "$KEY_NAME" --pubkey --keyring-backend "$KEYRING_BACKEND" --keyring-dir /root/.inference | jq -r '.key')
   export ACCOUNT_PUBKEY
   echo "Generated ACCOUNT_PUBKEY: $ACCOUNT_PUBKEY"
 fi
@@ -39,10 +47,9 @@ if [ -z "${ACCOUNT_PUBKEY-}" ]; then
   echo "WARNING: For production, explicitly provide ACCOUNT_PUBKEY or set CREATE_KEY=true"
   sleep 20
 
-  export KEYRING_BACKEND="test"
   # Check if the key exists
-  if inferenced keys show "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference >/dev/null 2>&1; then
-    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend $KEYRING_BACKEND --keyring-dir /root/.inference | jq -r '.key')
+  if inferenced keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir /root/.inference >/dev/null 2>&1; then
+    ACCOUNT_PUBKEY=$(inferenced keys show "$KEY_NAME" --pubkey --keyring-backend "$KEYRING_BACKEND" --keyring-dir /root/.inference | jq -r '.key')
     export ACCOUNT_PUBKEY
     echo "Extracted ACCOUNT_PUBKEY from existing key: $ACCOUNT_PUBKEY"
   else
