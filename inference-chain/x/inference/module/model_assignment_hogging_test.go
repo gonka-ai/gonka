@@ -84,3 +84,95 @@ func TestInferenceSlotRotation_SingleNode(t *testing.T) {
 	require.Equal(t, "OnlyNode", selected2.NodeId, "Should still pick the node if it's the only one")
 	t.Log("[Verification] Single node case handled correctly (rotation ignored if no alternatives).")
 }
+
+func TestGetSmallestMLNodeWithPOCSLotFalse_EdgeCases(t *testing.T) {
+	t.Run("empty list returns nil", func(t *testing.T) {
+		require.Nil(t, getSmallestMLNodeWithPOCSLotFalse(nil, nil))
+	})
+
+	t.Run("all nodes already allocated returns nil", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 100, TimeslotAllocation: []bool{true, true}},
+			{NodeId: "N2", PocWeight: 200, TimeslotAllocation: []bool{true, true}},
+		}
+		require.Nil(t, getSmallestMLNodeWithPOCSLotFalse(nodes, nil))
+	})
+
+	t.Run("ignores nodes with short TimeslotAllocation", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 100, TimeslotAllocation: []bool{}},
+			{NodeId: "N2", PocWeight: 90, TimeslotAllocation: []bool{true}},
+			{NodeId: "N3", PocWeight: 80, TimeslotAllocation: []bool{true, false}},
+		}
+		selected := getSmallestMLNodeWithPOCSLotFalse(nodes, nil)
+		require.NotNil(t, selected)
+		require.Equal(t, "N3", selected.NodeId)
+	})
+
+	t.Run("previouslySafeIds nil selects smallest non-safe", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 120, TimeslotAllocation: []bool{true, false}},
+			{NodeId: "N2", PocWeight: 90, TimeslotAllocation: []bool{true, false}},
+		}
+		selected := getSmallestMLNodeWithPOCSLotFalse(nodes, nil)
+		require.NotNil(t, selected)
+		require.Equal(t, "N2", selected.NodeId)
+	})
+
+	t.Run("prefers non-safe even if safe is lighter", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+			{NodeId: "N2", PocWeight: 60, TimeslotAllocation: []bool{true, false}},
+		}
+		prevSafe := map[string]bool{"N1": true}
+		selected := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe)
+		require.NotNil(t, selected)
+		require.Equal(t, "N2", selected.NodeId)
+	})
+
+	t.Run("all candidates are safe picks smallest safe", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 70, TimeslotAllocation: []bool{true, false}},
+			{NodeId: "N2", PocWeight: 90, TimeslotAllocation: []bool{true, false}},
+		}
+		prevSafe := map[string]bool{"N1": true, "N2": true}
+		selected := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe)
+		require.NotNil(t, selected)
+		require.Equal(t, "N1", selected.NodeId)
+	})
+
+	t.Run("equal weights uses deterministic order", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 100, TimeslotAllocation: []bool{true, false}},
+			{NodeId: "N2", PocWeight: 100, TimeslotAllocation: []bool{true, false}},
+		}
+		selected := getSmallestMLNodeWithPOCSLotFalse(nodes, nil)
+		require.NotNil(t, selected)
+		require.Equal(t, "N1", selected.NodeId)
+	})
+
+	t.Run("rotation across multiple candidates", func(t *testing.T) {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: "N1", PocWeight: 100, TimeslotAllocation: []bool{true, false}},
+			{NodeId: "N2", PocWeight: 200, TimeslotAllocation: []bool{true, false}},
+			{NodeId: "N3", PocWeight: 300, TimeslotAllocation: []bool{true, false}},
+		}
+
+		// First pick should be smallest (N1)
+		selected1 := getSmallestMLNodeWithPOCSLotFalse(nodes, nil)
+		require.NotNil(t, selected1)
+		require.Equal(t, "N1", selected1.NodeId)
+
+		// Mark N1 as previously safe; next pick should be N2
+		prevSafe := map[string]bool{"N1": true}
+		selected2 := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe)
+		require.NotNil(t, selected2)
+		require.Equal(t, "N2", selected2.NodeId)
+
+		// Mark N1 and N2 safe; next pick should be N3
+		prevSafe["N2"] = true
+		selected3 := getSmallestMLNodeWithPOCSLotFalse(nodes, prevSafe)
+		require.NotNil(t, selected3)
+		require.Equal(t, "N3", selected3.NodeId)
+	})
+}
