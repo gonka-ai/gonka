@@ -29,6 +29,7 @@ func (l DebugLogger) LogDebug(msg string, subSystem types.SubSystem, keyvals ...
 // setupTestEnvironment creates a fresh mock keeper and participants for each test run
 // Adds a small "validation node" to bypass voting constraints (34% rule)
 func setupTestEnvironment(t *testing.T) (*types.ActiveParticipant, *types.ActiveParticipant, *mockKeeperForModelAssigner) {
+	t.Helper()
 	modelID := "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
 
 	pA := &types.ActiveParticipant{
@@ -98,13 +99,15 @@ func setupTestEnvironment(t *testing.T) (*types.ActiveParticipant, *types.Active
 }
 
 func getAllocatedParticipant(
+	t *testing.T,
 	ctx context.Context,
 	assigner *ModelAssigner,
-	mockKeeper *mockKeeperForModelAssigner, 
-	pA, pZ *types.ActiveParticipant, 
+	mockKeeper *mockKeeperForModelAssigner,
+	pA, pZ *types.ActiveParticipant,
 	epochIdx uint64,
 	modelID string,
 ) string {
+	t.Helper()
 	// Setup previous epoch data to ensure they pass "History" filter
 	prevData := types.EpochGroupData{
 		ValidationWeights: []*types.ValidationWeight{
@@ -180,7 +183,7 @@ func TestAllocateMLNodesForPoC_DeterministicShuffle(t *testing.T) {
 	aWins := 0
 
 	for i := uint64(1); i <= 20; i++ {
-		winner := getAllocatedParticipant(ctx, assigner, mockKeeper, pA, pZ, i, "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
+		winner := getAllocatedParticipant(t, ctx, assigner, mockKeeper, pA, pZ, i, "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
 		if winner == "Z" { zWins++ }
 		if winner == "A" { aWins++ }
 	}
@@ -191,9 +194,8 @@ func TestAllocateMLNodesForPoC_DeterministicShuffle(t *testing.T) {
 	require.Greater(t, aWins, 0, "ParticipantA should win at least once (Shuffle verification)")
 
 	// Determinism Check
-	w1 := getAllocatedParticipant(ctx, assigner, mockKeeper, pA, pZ, 5, "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
-	w2 := getAllocatedParticipant(ctx, assigner, mockKeeper, pA, pZ, 5, "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
+	w1 := getAllocatedParticipant(t, ctx, assigner, mockKeeper, pA, pZ, 5, "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
+	w2 := getAllocatedParticipant(t, ctx, assigner, mockKeeper, pA, pZ, 5, "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
 	require.Equal(t, w1, w2)
 }
-
 
