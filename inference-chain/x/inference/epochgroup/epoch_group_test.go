@@ -201,6 +201,19 @@ func TestCalculateInferenceServingWeight_NilNodes(t *testing.T) {
 	require.Equal(t, int64(100), weight)
 }
 
+func TestSanitizeMembers_FiltersNilMembers(t *testing.T) {
+	members := []*group.GroupMember{
+		nil,
+		{Member: nil},
+		{Member: &group.Member{Address: "addr1", Weight: "1"}},
+	}
+
+	filtered := sanitizeMembers(members)
+
+	require.Len(t, filtered, 1)
+	require.Equal(t, "addr1", filtered[0].Member.Address)
+}
+
 func TestCalculateInferenceServingWeight_MultipleModelArrays(t *testing.T) {
 	// Multiple model arrays (though typically there's only one)
 	mlNodes := []*types.ModelMLNodes{

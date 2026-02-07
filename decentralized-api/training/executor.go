@@ -197,12 +197,13 @@ func getMasterNode(ctx context.Context, rankedNodes []nodeWithParticipant, query
 }
 
 func (e *Executor) checkStatusRoutine() {
-	timer := time.NewTimer(60 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-e.ctx.Done():
 			return
-		case <-timer.C:
+		case <-ticker.C:
 			e.checkInProgressTasksOnChain()
 			e.checkStatus()
 		}

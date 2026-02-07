@@ -275,6 +275,7 @@ type KeeperForModelAssigner interface {
 	GetHardwareNodes(ctx context.Context, participantId string) (*types.HardwareNodes, bool)
 	GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool)
 	GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val types.EpochGroupData, found bool)
+	GetSettleAmount(ctx context.Context, participant string) (val types.SettleAmount, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
 }
 
@@ -405,10 +406,22 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 
 	sortedModelIds := sortedKeys(uniqueModels)
 	if upcomingEpoch.Index > 0 {
+		previousEpochIndex := upcomingEpoch.Index - 1
 		for _, modelId := range sortedModelIds {
-			previousEpochGroupData, found := ma.keeper.GetEpochGroupData(ctx, upcomingEpoch.Index-1, modelId)
+			previousEpochGroupData, found := ma.keeper.GetEpochGroupData(ctx, previousEpochIndex, modelId)
 			if found {
 				for _, vw := range previousEpochGroupData.ValidationWeights {
+					// Use keeper settlement results: zero reward despite having weight => slashed (downtime/confirmation).
+					// Settlement was performed before model assignment, so we need to check the settle amount here.
+					settle, foundSettle := ma.keeper.GetSettleAmount(ctx, vw.MemberAddress)
+					if !foundSettle || settle.EpochIndex != previousEpochIndex || settle.RewardCoins == 0 {
+						// Skip participants if they didn't get reward for the previous epoch
+						// Only rewarded participants can be eligible for POC_SLOT=true allocation
+						// Participants that are not added to previousEpochData will be filtered by filterEligibleMLNodes
+						ma.LogInfo("Collecting rewarded participants", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext,
+							"step", "filter_rewarded_participants", "participant_without_reward", vw.MemberAddress)
+						continue
+					}
 					dedupedNodes, dedupStats := dedupMLNodesById(vw.MlNodes)
 					ma.logMLNodeDedupStats(
 						"Duplicate ML nodes detected in previous epoch data",
@@ -418,7 +431,7 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 						"step", "dedup_previous_epoch_nodes",
 						"model_id", modelId,
 						"participant", vw.MemberAddress,
-						"epoch_index", upcomingEpoch.Index-1,
+						"epoch_index", previousEpochIndex,
 					)
 					previousEpochData.Set(modelId, vw.MemberAddress, dedupedNodes)
 				}
@@ -455,6 +468,8 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	}
 	ma.LogInfo("Built current epoch data map", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_current_epoch_data", "num_models", len(currentEpochData.Models()))
 
+	// Participants not in previousEpochData (no nodes in previous epoch for a model) cannot be selected as eligible:
+	// sampleEligibleParticipantsWithHistory only appends participants that have previousEpochData.GetForParticipant(modelId, addr) != nil.
 	eligibleNodesData := ma.filterEligibleMLNodes(upcomingEpoch, previousEpochData, currentEpochData, totalCurrentEpochWeight)
 	ma.LogInfo("Filtered eligible nodes for all models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "filter_all_eligible", "num_models", len(eligibleNodesData.Models()))
 
@@ -1014,6 +1029,9 @@ func calculateEffectiveNodeThreshold(participantThreshold, globalThreshold int64
 	return min(participantThreshold, globalThreshold)
 }
 
+// sampleEligibleParticipantsWithHistory selects N/2+1 eligible participants per model.
+// Only participants present in previousEpochData for this model can be selected; participants
+// who did not work in the previous epoch (not in previousEpochData) are skipped and cannot be eligible.
 func (ma *ModelAssigner) sampleEligibleParticipantsWithHistory(
 	sortedParticipantAddrs []string,
 	previousEpochData *EpochMLNodeData,
