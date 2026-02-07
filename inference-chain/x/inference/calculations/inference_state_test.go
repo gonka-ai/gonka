@@ -241,13 +241,14 @@ func TestCalculateEscrow_TokenCountOverflow(t *testing.T) {
 
 func TestSetEscrowForFinished(t *testing.T) {
 	tests := []struct {
-		name            string
-		inference       *types.Inference
-		escrowAmount    int64
-		payments        *Payments
-		expectedActual  int64
-		expectedEscrow  int64
-		expectedPayment int64
+		name                    string
+		inference               *types.Inference
+		escrowAmount            int64
+		payments                *Payments
+		expectedActual          int64
+		expectedEscrow          int64
+		expectedExecutorPayment int64
+		expectedTAPayment       int64
 	}{
 		{
 			name: "Actual cost less than escrow",
@@ -256,11 +257,12 @@ func TestSetEscrowForFinished(t *testing.T) {
 				CompletionTokenCount: 10,
 				PerTokenPrice:        PerTokenCost, // Simulate dynamic pricing setting legacy fallback
 			},
-			escrowAmount:    30 * PerTokenCost,
-			payments:        &Payments{},
-			expectedActual:  20 * PerTokenCost,
-			expectedEscrow:  20 * PerTokenCost,
-			expectedPayment: 20 * PerTokenCost,
+			escrowAmount:            30 * PerTokenCost,
+			payments:                &Payments{},
+			expectedActual:          20 * PerTokenCost,
+			expectedEscrow:          20 * PerTokenCost,
+			expectedExecutorPayment: 18 * PerTokenCost, // 90% of 20 * PerTokenCost
+			expectedTAPayment:       2 * PerTokenCost,  // 10% of 20 * PerTokenCost
 		},
 		{
 			name: "Actual cost more than escrow",
@@ -269,11 +271,12 @@ func TestSetEscrowForFinished(t *testing.T) {
 				CompletionTokenCount: 20,
 				PerTokenPrice:        PerTokenCost, // Simulate dynamic pricing setting legacy fallback
 			},
-			escrowAmount:    30 * PerTokenCost,
-			payments:        &Payments{},
-			expectedActual:  30 * PerTokenCost,
-			expectedEscrow:  30 * PerTokenCost,
-			expectedPayment: 30 * PerTokenCost,
+			escrowAmount:            30 * PerTokenCost,
+			payments:                &Payments{},
+			expectedActual:          30 * PerTokenCost,
+			expectedEscrow:          30 * PerTokenCost,
+			expectedExecutorPayment: 27 * PerTokenCost, // 90% of 30 * PerTokenCost
+			expectedTAPayment:       3 * PerTokenCost,  // 10% of 30 * PerTokenCost
 		},
 	}
 
@@ -283,7 +286,57 @@ func TestSetEscrowForFinished(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedActual, tt.inference.ActualCost)
 			assert.Equal(t, tt.expectedEscrow, tt.payments.EscrowAmount)
-			assert.Equal(t, tt.expectedPayment, tt.payments.ExecutorPayment)
+			assert.Equal(t, tt.expectedExecutorPayment, tt.payments.ExecutorPayment)
+			assert.Equal(t, tt.expectedTAPayment, tt.payments.TransferAgentPayment)
+		})
+	}
+}
+
+func TestSplitPayments(t *testing.T) {
+	tests := []struct {
+		name                    string
+		totalPayment            int64
+		expectedExecutorPayment int64
+		expectedTAPayment       int64
+	}{
+		{
+			name:                    "Zero payment",
+			totalPayment:            0,
+			expectedExecutorPayment: 0,
+			expectedTAPayment:       0,
+		},
+		{
+			name:                    "Negative payment",
+			totalPayment:            -100,
+			expectedExecutorPayment: 0,
+			expectedTAPayment:       0,
+		},
+		{
+			name:                    "Normal payment - 10000",
+			totalPayment:            10000,
+			expectedExecutorPayment: 9000, // 90%
+			expectedTAPayment:       1000, // 10%
+		},
+		{
+			name:                    "Small payment - 100",
+			totalPayment:            100,
+			expectedExecutorPayment: 90, // 90%
+			expectedTAPayment:       10, // 10%
+		},
+		{
+			name:                    "Very small payment - 9",
+			totalPayment:            9,
+			expectedExecutorPayment: 9, // Remaining after TA gets 0
+			expectedTAPayment:       0, // 10% of 9 = 0 (integer division)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payments := &Payments{}
+			splitPayments(payments, tt.totalPayment)
+			assert.Equal(t, tt.expectedExecutorPayment, payments.ExecutorPayment)
+			assert.Equal(t, tt.expectedTAPayment, payments.TransferAgentPayment)
 		})
 	}
 }

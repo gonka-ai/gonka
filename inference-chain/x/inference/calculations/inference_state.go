@@ -16,6 +16,11 @@ type StartInferenceMessage struct {
 const (
 	DefaultMaxTokens = 5000
 	PerTokenCost     = 1000 // Legacy fallback price
+
+	// TransferAgentRewardBasisPoints defines the percentage of executor payment
+	// that goes to the Transfer Agent (in basis points, 1000 = 10%).
+	// This incentivizes running TA nodes as entry points for inference requests.
+	TransferAgentRewardBasisPoints = 1000 // 10%
 )
 
 const maxInt64Uint64 = uint64(math.MaxInt64)
@@ -26,8 +31,9 @@ type BlockContext struct {
 }
 
 type Payments struct {
-	EscrowAmount    int64
-	ExecutorPayment int64
+	EscrowAmount         int64
+	ExecutorPayment      int64
+	TransferAgentPayment int64
 }
 
 func ProcessStartInference(
@@ -117,8 +123,34 @@ func setEscrowForFinished(currentInference *types.Inference, escrowAmount int64,
 	// to be the same as the amount actually paid, not the cost of the inference by itself.
 	currentInference.ActualCost = amountToPay
 	payments.EscrowAmount = amountToPay
-	payments.ExecutorPayment = amountToPay
+
+	// Split payment between executor and transfer agent
+	splitPayments(payments, amountToPay)
 	return nil
+}
+
+// splitPayments divides the total payment between executor and transfer agent
+// based on TransferAgentRewardBasisPoints (10000 basis points = 100%)
+func splitPayments(payments *Payments, totalPayment int64) {
+	if totalPayment <= 0 {
+		payments.ExecutorPayment = 0
+		payments.TransferAgentPayment = 0
+		return
+	}
+
+	// Overflow check: ensure totalPayment * TransferAgentRewardBasisPoints won't overflow int64
+	if totalPayment > math.MaxInt64/TransferAgentRewardBasisPoints {
+		// Fallback: use division-first approach to avoid overflow (slightly less precise but safe)
+		taPayment := totalPayment / 10000 * TransferAgentRewardBasisPoints
+		payments.TransferAgentPayment = taPayment
+		payments.ExecutorPayment = totalPayment - taPayment
+		return
+	}
+
+	// Calculate TA share: totalPayment * basisPoints / 10000
+	taPayment := (totalPayment * TransferAgentRewardBasisPoints) / 10000
+	payments.TransferAgentPayment = taPayment
+	payments.ExecutorPayment = totalPayment - taPayment
 }
 
 func ProcessFinishInference(
@@ -175,13 +207,16 @@ func ProcessFinishInference(
 	currentInference.ActualCost = actualCost
 	if startProcessed(currentInference) {
 		escrowAmount := currentInference.EscrowAmount
+		var totalPayment int64
 		if currentInference.ActualCost >= escrowAmount {
-			payments.ExecutorPayment = escrowAmount
+			totalPayment = escrowAmount
 		} else {
-			payments.ExecutorPayment = currentInference.ActualCost
+			totalPayment = currentInference.ActualCost
 			// Will be a negative number, meaning a refund
 			payments.EscrowAmount = currentInference.ActualCost - escrowAmount
 		}
+		// Split payment between executor and transfer agent
+		splitPayments(&payments, totalPayment)
 	}
 	return currentInference, &payments, nil
 }

@@ -224,14 +224,52 @@ func (k msgServer) processInferencePayments(
 		}
 		executor.CoinBalance += payments.ExecutorPayment
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
-		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
+		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_executor_payment:"+inference.InferenceId)
 		err := k.SetParticipant(ctx, executor)
 		if err != nil {
 			return nil, err
 		}
 	}
+	// Pay the Transfer Agent their share of the inference fee
+	if payments.TransferAgentPayment > 0 {
+		transferredBy := inference.TransferredBy
+		transferAgent, found := k.GetParticipant(ctx, transferredBy)
+		if !found {
+			// TA not found - return their share to the executor so funds are not lost
+			k.LogWarn("Transfer Agent not found for payment, returning share to executor", types.Payments,
+				"transfer_agent", transferredBy,
+				"inference_id", inference.InferenceId,
+				"payment_amount", payments.TransferAgentPayment)
+			executor, executorFound := k.GetParticipant(ctx, inference.ExecutedBy)
+			if executorFound {
+				executor.CoinBalance += payments.TransferAgentPayment
+				executor.CurrentEpochStats.EarnedCoins += uint64(payments.TransferAgentPayment)
+				k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_ta_share_to_executor:"+inference.InferenceId)
+				if err := k.SetParticipant(ctx, executor); err != nil {
+					return nil, err
+				}
+			} else {
+				k.LogError("Executor also not found as participant, TA share lost", types.Payments,
+					"executor", inference.ExecutedBy,
+					"transfer_agent", transferredBy,
+					"inference_id", inference.InferenceId,
+					"lost_amount", payments.TransferAgentPayment)
+			}
+		} else {
+			transferAgent.CoinBalance += payments.TransferAgentPayment
+			transferAgent.CurrentEpochStats.EarnedCoins += uint64(payments.TransferAgentPayment)
+			k.SafeLogSubAccountTransaction(ctx, transferAgent.Address, types.ModuleName, types.OwedSubAccount, transferAgent.CoinBalance, "inference_ta_payment:"+inference.InferenceId)
+			err := k.SetParticipant(ctx, transferAgent)
+			if err != nil {
+				return nil, err
+			}
+			k.LogInfo("Transfer Agent payment processed", types.Payments,
+				"transfer_agent", transferredBy,
+				"inference_id", inference.InferenceId,
+				"payment_amount", payments.TransferAgentPayment)
+		}
+	}
 	return inference, nil
-
 }
 
 // getDevSignatureComponents returns components for dev signature verification
