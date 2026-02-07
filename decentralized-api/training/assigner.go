@@ -71,6 +71,10 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 		slog.Error(logTag+"Failed to query chain status", "err", err)
 		return
 	}
+	if chainStatus == nil {
+		slog.Error(logTag + "Failed to query chain status: empty response")
+		return
+	}
 
 	if chainStatus.SyncInfo.CatchingUp {
 		slog.Info(logTag + "Node is catching up, skipping task query")

@@ -1,8 +1,11 @@
 package public
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 
 	"decentralized-api/chainphase"
@@ -11,6 +14,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
+
+// createTestRequest creates a test HTTP request with the given body
+func createTestRequest(body []byte) *http.Request {
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", io.NopCloser(bytes.NewReader(body)))
+	return req
+}
 
 type mockPayloadStorage struct {
 	stored         map[string]struct{ prompt, response []byte }
@@ -163,4 +172,58 @@ func TestEmptyButParseableResponsePayload_EnforcedTokensEmptySlice(t *testing.T)
 
 	// With our synthetic logprobs, enforced tokens should be present and parseable.
 	require.NotEmpty(t, enforcedTokens.Tokens)
+}
+
+// TestReadRequestBody_NormalSize tests that normal-sized requests are read successfully
+func TestReadRequestBody_NormalSize(t *testing.T) {
+	body := []byte(`{"model": "test", "messages": [{"role": "user", "content": "Hello"}]}`)
+	req := createTestRequest(body)
+
+	result, err := readRequestBody(req)
+	require.NoError(t, err)
+	require.Equal(t, body, result)
+}
+
+// TestReadRequestBody_ExceedsMaxSize tests that oversized requests are rejected
+func TestReadRequestBody_ExceedsMaxSize(t *testing.T) {
+	// Create a body larger than MaxRequestBodySize (10 MB)
+	oversizedBody := make([]byte, MaxRequestBodySize+1)
+	for i := range oversizedBody {
+		oversizedBody[i] = 'a'
+	}
+	req := createTestRequest(oversizedBody)
+
+	_, err := readRequestBody(req)
+	require.Error(t, err)
+	// http.MaxBytesReader returns an error when limit is exceeded
+}
+
+// TestReadRequestBody_ExactlyMaxSize tests that requests at exactly max size work
+func TestReadRequestBody_ExactlyMaxSize(t *testing.T) {
+	// Create a body exactly at MaxRequestBodySize
+	exactBody := make([]byte, MaxRequestBodySize)
+	for i := range exactBody {
+		exactBody[i] = 'b'
+	}
+	req := createTestRequest(exactBody)
+
+	result, err := readRequestBody(req)
+	require.NoError(t, err)
+	require.Len(t, result, MaxRequestBodySize)
+}
+
+// TestReadRequestBody_EmptyBody tests that empty bodies work
+func TestReadRequestBody_EmptyBody(t *testing.T) {
+	req := createTestRequest([]byte{})
+
+	result, err := readRequestBody(req)
+	require.NoError(t, err)
+	require.Empty(t, result)
+}
+
+// TestMaxRequestBodySizeConstant verifies the constant is set to expected value
+func TestMaxRequestBodySizeConstant(t *testing.T) {
+	// MaxRequestBodySize should be 10 MB
+	expectedSize := 10 * 1024 * 1024
+	require.Equal(t, expectedSize, MaxRequestBodySize, "MaxRequestBodySize should be 10 MB")
 }
