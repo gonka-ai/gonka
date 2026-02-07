@@ -15,6 +15,29 @@ data class MsgSubmitNewParticipant(
     val workerKey: String = "",
 ) : TxMessage
 
+data class MsgSend(
+    override val type: String = "/cosmos.bank.v1beta1.MsgSend",
+    val fromAddress: String = "",
+    val toAddress: String = "",
+    val amount: List<Coin> = listOf(),
+) : TxMessage, GovernanceMessage {
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(fromAddress = authority)
+    }
+}
+
+data class MsgTransferWithVesting(
+    override val type: String = "/inference.streamvesting.MsgTransferWithVesting",
+    val sender: String = "",
+    val recipient: String = "",
+    val amount: List<Coin> = listOf(),
+    val vestingEpochs: Long,
+) : TxMessage, GovernanceMessage {
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(sender = authority)
+    }
+}
+
 interface GovernanceMessage : TxMessage {
     override val type: String
     fun withAuthority(authority: String): GovernanceMessage
