@@ -29,7 +29,7 @@ require (
 	github.com/CosmWasm/wasmd v0.54.2
 	github.com/CosmWasm/wasmvm/v2 v2.2.4
 	github.com/bufbuild/buf v1.61.0
-	github.com/cometbft/cometbft v0.38.17
+	github.com/cometbft/cometbft v0.38.21
 	github.com/consensys/gnark-crypto v0.18.0
 	github.com/cosmos/cosmos-db v1.1.1
 	github.com/cosmos/cosmos-proto v1.0.0-beta.5
