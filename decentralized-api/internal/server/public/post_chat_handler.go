@@ -118,10 +118,15 @@ func emptyButParseableResponsePayload(inferenceId, model string, promptTokens ui
 
 // checkAndRecordAuthKey checks if an AuthKey has been used before and records it if not
 // Returns true if the key has been used before in the specified context, false otherwise
+//
+// This function uses a single Lock for the entire check-and-record operation to prevent
+// race conditions (TOCTOU). Previously, using RLock for check followed by Lock for write
+// created a window where another goroutine could record the same key.
 func checkAndRecordAuthKey(authKey string, currentBlockHeight int64, context AuthKeyContext) bool {
-	authKeysMutex.RLock()
+	authKeysMutex.Lock()
+	defer authKeysMutex.Unlock()
+
 	existingContext, exists := usedAuthKeys[authKey]
-	authKeysMutex.RUnlock()
 
 	if exists {
 		// If the key exists, check if it's been used in the current context
@@ -130,18 +135,11 @@ func checkAndRecordAuthKey(authKey string, currentBlockHeight int64, context Aut
 		}
 
 		// Key exists but hasn't been used in this context, update the context
-		authKeysMutex.Lock()
-		defer authKeysMutex.Unlock()
-
-		// Update the context to include the new context
 		usedAuthKeys[authKey] = existingContext | context
 		return false // Key wasn't used before in this context
 	}
 
 	// Key doesn't exist, add it with the current context
-	authKeysMutex.Lock()
-	defer authKeysMutex.Unlock()
-
 	usedAuthKeys[authKey] = context
 
 	authKeysByBlock[currentBlockHeight] = append(authKeysByBlock[currentBlockHeight], authKey)
