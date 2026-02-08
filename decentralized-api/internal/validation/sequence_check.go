@@ -106,7 +106,7 @@ func VerifyReproducibleSampling(userSeed int32, inferenceId string, enforcedToke
 		// or when the model doesn't provide logprobs. We log a warning but continue
 		// validation as this is not necessarily an error.
 		if len(tokenInfo.TopTokens) == 0 {
-			logging.Warn("VerifyReproducibleSampling: position has no top tokens",
+			logging.Debug("VerifyReproducibleSampling: position has no top tokens",
 				types.Validation,
 				"position", i,
 				"inferenceId", inferenceId)
@@ -132,7 +132,7 @@ func VerifyReproducibleSampling(userSeed int32, inferenceId string, enforcedToke
 		actualToken := tokenInfo.Token
 
 		if expectedToken != actualToken {
-			logging.Warn("VerifyReproducibleSampling: token mismatch detected",
+			logging.Error("VerifyReproducibleSampling: token mismatch detected",
 				types.Validation,
 				"position", i,
 				"inferenceId", inferenceId,
