@@ -5,9 +5,9 @@ import (
 	"math/rand"
 	"testing"
 
-	"decentralized-api/completionapi"
-
 	"github.com/stretchr/testify/require"
+
+	"decentralized-api/completionapi"
 )
 
 func TestExtractSeedFromPrompt(t *testing.T) {
