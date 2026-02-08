@@ -1957,3 +1957,276 @@ func TestAllocateMLNodesForPoC_DedupesBeforeAllocation(t *testing.T) {
 	})
 	require.Equal(t, int64(50), participants[0].MlNodes[0].MlNodes[0].PocWeight)
 }
+
+// TestAllocateMLNodesForPoC_RotationPreventsSlotHogging tests that nodes which were
+// in the safe slot (POC_SLOT=false) in the previous epoch are prioritized for PoC
+// allocation in the current epoch. This ensures rotation and prevents the same nodes
+// from always avoiding PoC verification.
+//
+// Fixes issue #706: Inference Slot Hogging
+func TestAllocateMLNodesForPoC_RotationPreventsSlotHogging(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-rotation"
+
+	params := types.DefaultParams()
+	// Set 50% allocation - should allocate roughly half of nodes
+	params.EpochParams.PocSlotAllocation = &types.Decimal{Value: 5, Exponent: -1}
+
+	// Scenario: Multiple validators with 4 nodes each to ensure multiple nodes pass the 25% threshold.
+	// With 4 nodes at uniform weight, 25% rule selects 1 node, but we need the nodes to all be
+	// in the eligible set. Use varying weights where the "safe slot" nodes have LOWER weights
+	// so they pass the threshold filtering.
+	//
+	// In epoch 0: Nodes A1, C1, E1 (higher weight) were allocated to PoC;
+	//             Nodes B2, D2, F2 (lower weight) stayed in safe slot
+	// In epoch 1: B2, D2, F2 should be prioritized for PoC allocation due to rotation
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: []types.Model{
+			{ProposedBy: "genesis", Id: modelID},
+		},
+		params: &params,
+		epochGroupData: map[string]map[uint64]types.EpochGroupData{
+			modelID: {
+				// Epoch 0 data: Higher weight nodes were in PoC, lower weight nodes in safe slot
+				0: {
+					ValidationWeights: []*types.ValidationWeight{
+						{
+							MemberAddress: "validator1",
+							MlNodes: []*types.MLNodeInfo{
+								{NodeId: "node-A1", PocWeight: 50, TimeslotAllocation: []bool{true, true}},  // Was in PoC (higher weight)
+								{NodeId: "node-B2", PocWeight: 20, TimeslotAllocation: []bool{true, false}}, // Was in safe slot (lower weight)
+							},
+						},
+						{
+							MemberAddress: "validator2",
+							MlNodes: []*types.MLNodeInfo{
+								{NodeId: "node-C1", PocWeight: 50, TimeslotAllocation: []bool{true, true}},  // Was in PoC
+								{NodeId: "node-D2", PocWeight: 20, TimeslotAllocation: []bool{true, false}}, // Was in safe slot
+							},
+						},
+						{
+							MemberAddress: "validator3",
+							MlNodes: []*types.MLNodeInfo{
+								{NodeId: "node-E1", PocWeight: 50, TimeslotAllocation: []bool{true, true}},  // Was in PoC
+								{NodeId: "node-F2", PocWeight: 20, TimeslotAllocation: []bool{true, false}}, // Was in safe slot
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Current epoch (epoch 1) participants - all nodes start with POC_SLOT=false
+	// Lower weight nodes (B2, D2, F2) should pass the threshold filter
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  "validator1",
+			Models: []string{modelID},
+			Weight: 70, // Total weight of both nodes
+			MlNodes: []*types.ModelMLNodes{
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-A1", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+						{NodeId: "node-B2", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+					},
+				},
+			},
+		},
+		{
+			Index:  "validator2",
+			Models: []string{modelID},
+			Weight: 70,
+			MlNodes: []*types.ModelMLNodes{
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-C1", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+						{NodeId: "node-D2", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+					},
+				},
+			},
+		},
+		{
+			Index:  "validator3",
+			Models: []string{modelID},
+			Weight: 70,
+			MlNodes: []*types.ModelMLNodes{
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-E1", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
+						{NodeId: "node-F2", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+					},
+				},
+			},
+		},
+	}
+
+	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
+	modelAssigner.AllocateMLNodesForPoC(ctx, types.Epoch{Index: 1}, participants)
+
+	// Collect all nodes that were in safe slot in previous epoch and check if they're now prioritized
+	// Nodes B2, D2, F2 (lower weight) were in safe slot (POC_SLOT=false) in epoch 0
+	previousSafeSlotNodes := []string{"node-B2", "node-D2", "node-F2"}
+	previousPocSlotNodes := []string{"node-A1", "node-C1", "node-E1"}
+
+	// Count how many nodes from each category got allocated to PoC slot
+	safeSlotNowInPoc := 0
+	pocSlotNowInPoc := 0
+
+	for _, participant := range participants {
+		if len(participant.MlNodes) == 0 {
+			continue
+		}
+		for _, node := range participant.MlNodes[0].MlNodes {
+			if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+				// Node is now in PoC slot
+				for _, safeNode := range previousSafeSlotNodes {
+					if node.NodeId == safeNode {
+						safeSlotNowInPoc++
+						t.Logf("Node %s (was in safe slot) -> now in PoC slot", node.NodeId)
+					}
+				}
+				for _, pocNode := range previousPocSlotNodes {
+					if node.NodeId == pocNode {
+						pocSlotNowInPoc++
+						t.Logf("Node %s (was in PoC slot) -> still in PoC slot", node.NodeId)
+					}
+				}
+			}
+		}
+	}
+
+	t.Logf("Rotation test results:")
+	t.Logf("  Nodes from previous safe slot now in PoC: %d/%d", safeSlotNowInPoc, len(previousSafeSlotNodes))
+	t.Logf("  Nodes from previous PoC slot now in PoC: %d/%d", pocSlotNowInPoc, len(previousPocSlotNodes))
+
+	// The rotation fix should prioritize nodes that were in the safe slot.
+	// With 50% allocation, we expect more nodes from the previous safe slot to be selected
+	// than from the previous PoC slot (which already served their turn).
+	require.Greater(t, safeSlotNowInPoc, 0,
+		"At least some nodes from previous safe slot should be in PoC slot now (rotation should prioritize them)")
+}
+
+// TestGetSmallestMLNodeWithPOCSLotFalseWithRotation tests the rotation-aware node selection
+func TestGetSmallestMLNodeWithPOCSLotFalseWithRotation(t *testing.T) {
+	testCases := []struct {
+		name                  string
+		nodes                 []*types.MLNodeInfo
+		previousSafeSlotNodes map[string]bool
+		expectedNodeId        string
+		description           string
+	}{
+		{
+			name: "prioritizes node from previous safe slot",
+			nodes: []*types.MLNodeInfo{
+				{NodeId: "node-A", PocWeight: 10, TimeslotAllocation: []bool{true, false}},
+				{NodeId: "node-B", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+			},
+			previousSafeSlotNodes: map[string]bool{"node-B": true},
+			expectedNodeId:        "node-B",
+			description:           "Node B was in safe slot, should be prioritized despite higher weight",
+		},
+		{
+			name: "falls back to smallest when no previous safe slot data",
+			nodes: []*types.MLNodeInfo{
+				{NodeId: "node-A", PocWeight: 10, TimeslotAllocation: []bool{true, false}},
+				{NodeId: "node-B", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+			},
+			previousSafeSlotNodes: map[string]bool{},
+			expectedNodeId:        "node-A",
+			description:           "No previous data, fallback to smallest weight",
+		},
+		{
+			name: "picks smallest among multiple safe slot nodes",
+			nodes: []*types.MLNodeInfo{
+				{NodeId: "node-A", PocWeight: 10, TimeslotAllocation: []bool{true, false}},
+				{NodeId: "node-B", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+				{NodeId: "node-C", PocWeight: 15, TimeslotAllocation: []bool{true, false}},
+			},
+			previousSafeSlotNodes: map[string]bool{"node-B": true, "node-C": true},
+			expectedNodeId:        "node-C",
+			description:           "Both B and C were in safe slot, picks smaller (C)",
+		},
+		{
+			name: "skips already allocated nodes",
+			nodes: []*types.MLNodeInfo{
+				{NodeId: "node-A", PocWeight: 10, TimeslotAllocation: []bool{true, true}}, // Already allocated
+				{NodeId: "node-B", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+			},
+			previousSafeSlotNodes: map[string]bool{"node-A": true, "node-B": true},
+			expectedNodeId:        "node-B",
+			description:           "Node A is already allocated, picks B",
+		},
+		{
+			name: "returns nil when all nodes allocated",
+			nodes: []*types.MLNodeInfo{
+				{NodeId: "node-A", PocWeight: 10, TimeslotAllocation: []bool{true, true}},
+				{NodeId: "node-B", PocWeight: 20, TimeslotAllocation: []bool{true, true}},
+			},
+			previousSafeSlotNodes: map[string]bool{},
+			expectedNodeId:        "",
+			description:           "All nodes already have POC_SLOT=true",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := getSmallestMLNodeWithPOCSLotFalseWithRotation(tc.nodes, tc.previousSafeSlotNodes)
+
+			if tc.expectedNodeId == "" {
+				require.Nil(t, result, tc.description)
+			} else {
+				require.NotNil(t, result, tc.description)
+				require.Equal(t, tc.expectedNodeId, result.NodeId, tc.description)
+			}
+		})
+	}
+}
+
+// TestBuildPreviousSafeSlotNodeSet tests the helper function that builds the safe slot set
+func TestBuildPreviousSafeSlotNodeSet(t *testing.T) {
+	modelID := "test-model"
+
+	t.Run("extracts nodes with POC_SLOT=false", func(t *testing.T) {
+		epochData := NewEpochMLNodeData()
+		epochData.Set(modelID, "participant1", []*types.MLNodeInfo{
+			{NodeId: "node-A", TimeslotAllocation: []bool{true, true}},  // Was in PoC
+			{NodeId: "node-B", TimeslotAllocation: []bool{true, false}}, // Was in safe slot
+		})
+
+		result := buildPreviousSafeSlotNodeSet(epochData, modelID)
+
+		require.Len(t, result, 1)
+		require.True(t, result["node-B"])
+		require.False(t, result["node-A"])
+	})
+
+	t.Run("handles nil epoch data", func(t *testing.T) {
+		result := buildPreviousSafeSlotNodeSet(nil, modelID)
+		require.Empty(t, result)
+	})
+
+	t.Run("handles missing model", func(t *testing.T) {
+		epochData := NewEpochMLNodeData()
+		result := buildPreviousSafeSlotNodeSet(epochData, "non-existent-model")
+		require.Empty(t, result)
+	})
+
+	t.Run("aggregates across multiple participants", func(t *testing.T) {
+		epochData := NewEpochMLNodeData()
+		epochData.Set(modelID, "participant1", []*types.MLNodeInfo{
+			{NodeId: "node-A", TimeslotAllocation: []bool{true, false}}, // Safe slot
+		})
+		epochData.Set(modelID, "participant2", []*types.MLNodeInfo{
+			{NodeId: "node-B", TimeslotAllocation: []bool{true, false}}, // Safe slot
+			{NodeId: "node-C", TimeslotAllocation: []bool{true, true}},  // PoC slot
+		})
+
+		result := buildPreviousSafeSlotNodeSet(epochData, modelID)
+
+		require.Len(t, result, 2)
+		require.True(t, result["node-A"])
+		require.True(t, result["node-B"])
+		require.False(t, result["node-C"])
+	})
+}

@@ -460,7 +460,7 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 
 	for _, modelId := range sortedModelIds {
 		ma.LogInfo("Processing model for PoC allocation", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_loop_start", "model_id", modelId)
-		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
+		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, previousEpochData, allocationFraction)
 	}
 }
 
@@ -663,6 +663,7 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	modelId string,
 	currentEpochData *EpochMLNodeData,
 	eligibleNodesData *EpochMLNodeData,
+	previousEpochData *EpochMLNodeData,
 	fraction *types.Decimal,
 ) {
 	ma.LogInfo("Starting allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_start", "model_id", modelId)
@@ -685,6 +686,11 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 		return
 	}
 
+	// Build a set of node IDs that were in the safe slot (POC_SLOT=false) in the previous epoch.
+	// These nodes should be prioritized for PoC allocation in the current epoch to ensure rotation.
+	previousSafeSlotNodes := buildPreviousSafeSlotNodeSet(previousEpochData, modelId)
+	ma.LogInfo("Built previous safe slot node set for rotation", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_safe_slot_set", "model_id", modelId, "safe_slot_node_count", len(previousSafeSlotNodes))
+
 	var currentWeight int64
 	currentParticipantIdx := 0
 	allocatedInRound := false
@@ -693,7 +699,10 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 		participantAddr := eligibleParticipantAddrs[currentParticipantIdx]
 		nodes := eligibleNodesData.GetForParticipant(modelId, participantAddr)
 
-		nextMLNode := getSmallestMLNodeWithPOCSLotFalse(nodes)
+		// Fix for issue #706: Prioritize nodes that were in the safe slot (POC_SLOT=false)
+		// in the previous epoch. This ensures rotation and prevents the same nodes from
+		// always avoiding PoC verification.
+		nextMLNode := getSmallestMLNodeWithPOCSLotFalseWithRotation(nodes, previousSafeSlotNodes)
 
 		if nextMLNode == nil {
 			currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
@@ -751,6 +760,77 @@ func getSmallestMLNodeWithPOCSLotFalse(nodes []*types.MLNodeInfo) *types.MLNodeI
 		}
 	}
 	return smallest
+}
+
+// getSmallestMLNodeWithPOCSLotFalseWithRotation selects the next node to allocate to PoC slot,
+// prioritizing nodes that were in the safe slot (POC_SLOT=false) in the previous epoch.
+// This ensures rotation and prevents the same nodes from always avoiding PoC verification.
+//
+// Selection priority:
+// 1. Nodes that were in safe slot in previous epoch (smallest weight first)
+// 2. Other nodes (smallest weight first, for tie-breaking)
+//
+// Fixes issue #706: Inference Slot Hogging
+func getSmallestMLNodeWithPOCSLotFalseWithRotation(nodes []*types.MLNodeInfo, previousSafeSlotNodes map[string]bool) *types.MLNodeInfo {
+	var smallestFromSafeSlot *types.MLNodeInfo
+	var smallestOther *types.MLNodeInfo
+
+	for _, node := range nodes {
+		// Skip nodes that already have POC_SLOT=true
+		if len(node.TimeslotAllocation) <= 1 || node.TimeslotAllocation[1] {
+			continue
+		}
+
+		// Check if this node was in the safe slot in the previous epoch
+		if previousSafeSlotNodes[node.NodeId] {
+			// Prioritize nodes from the previous safe slot
+			if smallestFromSafeSlot == nil || node.PocWeight < smallestFromSafeSlot.PocWeight {
+				smallestFromSafeSlot = node
+			}
+		} else {
+			// Track other eligible nodes as fallback
+			if smallestOther == nil || node.PocWeight < smallestOther.PocWeight {
+				smallestOther = node
+			}
+		}
+	}
+
+	// Return node from previous safe slot if available (ensures rotation)
+	if smallestFromSafeSlot != nil {
+		return smallestFromSafeSlot
+	}
+	// Fall back to other nodes (for new nodes or first epoch)
+	return smallestOther
+}
+
+// buildPreviousSafeSlotNodeSet builds a set of node IDs that were in the safe slot
+// (POC_SLOT=false) in the previous epoch for a specific model.
+// These nodes should be prioritized for PoC allocation in the current epoch.
+func buildPreviousSafeSlotNodeSet(previousEpochData *EpochMLNodeData, modelId string) map[string]bool {
+	safeSlotNodes := make(map[string]bool)
+
+	if previousEpochData == nil {
+		return safeSlotNodes
+	}
+
+	participantNodes := previousEpochData.GetForModel(modelId)
+	if participantNodes == nil {
+		return safeSlotNodes
+	}
+
+	for _, nodes := range participantNodes {
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+			// A node was in the safe slot if POC_SLOT was false
+			if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
+				safeSlotNodes[node.NodeId] = true
+			}
+		}
+	}
+
+	return safeSlotNodes
 }
 
 // calculateWeightThresholdWithCount calculates both the weight threshold and target node count.
