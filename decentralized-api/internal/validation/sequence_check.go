@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 
 	"decentralized-api/completionapi"
@@ -24,6 +25,9 @@ func ExtractSeedFromPrompt(promptPayload []byte) (int32, error) {
 	if seed, ok := request["seed"]; ok {
 		switch v := seed.(type) {
 		case float64:
+			if v > math.MaxInt32 || v < math.MinInt32 {
+				return 0, fmt.Errorf("seed value %f exceeds int32 range", v)
+			}
 			return int32(v), nil
 		case int:
 			return int32(v), nil
@@ -88,13 +92,19 @@ func VerifyReproducibleSampling(userSeed int32, inferenceId string, enforcedToke
 	// This ensures deterministic but unique seed per inference
 	runSeed := generateRunSeed(userSeed, inferenceId)
 
-	// Initialize RNG with run_seed
+	// NOTE: This uses math/rand which is deterministic for a given seed.
+	// The behavior is consistent within the same Go version.
+	// All validators MUST use the same Go version to ensure consensus.
+	// The seed is derived via SHA256 which is version-independent.
 	source := rand.NewSource(runSeed)
 	rng := rand.New(source)
 
 	// Verify each position
 	for i := int64(0); i < int64(len(enforcedTokens.Tokens)); i++ {
 		tokenInfo := enforcedTokens.Tokens[i]
+		// Skip positions with no top tokens - this can happen for special tokens
+		// or when the model doesn't provide logprobs. We log a warning but continue
+		// validation as this is not necessarily an error.
 		if len(tokenInfo.TopTokens) == 0 {
 			logging.Warn("VerifyReproducibleSampling: position has no top tokens",
 				types.Validation,
@@ -114,6 +124,7 @@ func VerifyReproducibleSampling(userSeed int32, inferenceId string, enforcedToke
 		}
 
 		// Sample an index from [0, k) using the RNG
+		// Note: int(k) is required by stdlib API (Intn takes int), safe as k <= maxTopTokens
 		sampledIndex := rng.Intn(int(k))
 
 		// The chosen token must be the one at the sampled index
@@ -156,10 +167,11 @@ func VerifyReproducibleSampling(userSeed int32, inferenceId string, enforcedToke
 // This matches the proposal specification for reproducible sampling.
 func generateRunSeed(userSeed int32, inferenceId string) int64 {
 	// Create input: user_seed (as 4 bytes big-endian) || inference_id (as bytes)
-	seedBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(seedBytes, uint32(userSeed))
-
-	input := append(seedBytes, []byte(inferenceId)...)
+	// Convert int32 to uint32 using two's complement representation.
+	// Negative seeds are valid and will produce deterministic results.
+	input := make([]byte, 4+len(inferenceId))
+	binary.BigEndian.PutUint32(input[:4], uint32(userSeed))
+	copy(input[4:], inferenceId)
 
 	// Compute SHA256 hash
 	hash := sha256.Sum256(input)

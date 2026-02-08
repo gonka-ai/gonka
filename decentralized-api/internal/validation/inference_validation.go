@@ -889,7 +889,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		// Only run sequence check if seed is present
 		seqResult := VerifyReproducibleSampling(userSeed, inference.InferenceId, enforcedTokens)
 		if !seqResult.Valid {
-			logging.Warn("Stage 1 sequence check failed", types.Validation,
+			logging.Error("Stage 1 sequence check failed", types.Validation,
 				"inference_id", inference.InferenceId,
 				"position", seqResult.FailedPosition,
 				"message", seqResult.Message)

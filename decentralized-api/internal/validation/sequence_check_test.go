@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -222,4 +223,84 @@ func TestVerifyReproducibleSampling_DifferentSeeds(t *testing.T) {
 	// due to the probabilistic nature. For a robust test, we just check it produces a result.
 	t.Logf("Result with wrong seed: valid=%v, message=%s", result2.Valid, result2.Message)
 	require.False(t, result2.Valid, "different seed should produce different sampling")
+}
+
+func TestVerifyReproducibleSampling_MaxTokensToVerify(t *testing.T) {
+	userSeed := int32(42)
+	inferenceId := "test-inference-boundary"
+
+	// Test with exactly maxTokensToVerify tokens
+	runSeed := generateRunSeed(userSeed, inferenceId)
+	source := rand.NewSource(runSeed)
+	rng := rand.New(source)
+
+	tokens := make([]completionapi.EnforcedToken, maxTokensToVerify)
+	topTokens := []string{"token_a", "token_b", "token_c"}
+	for i := int64(0); i < maxTokensToVerify; i++ {
+		sampledIndex := rng.Intn(len(topTokens))
+		tokens[i] = completionapi.EnforcedToken{
+			Token:     topTokens[sampledIndex],
+			TopTokens: topTokens,
+		}
+	}
+
+	enforcedTokens := completionapi.EnforcedTokens{Tokens: tokens}
+	result := VerifyReproducibleSampling(userSeed, inferenceId, enforcedTokens)
+	require.True(t, result.Valid, "exactly maxTokensToVerify tokens should pass: %s", result.Message)
+
+	// Test with maxTokensToVerify + 1 tokens (should fail)
+	tokensOverLimit := make([]completionapi.EnforcedToken, maxTokensToVerify+1)
+	for i := int64(0); i < maxTokensToVerify+1; i++ {
+		tokensOverLimit[i] = completionapi.EnforcedToken{
+			Token:     "token_a",
+			TopTokens: topTokens,
+		}
+	}
+	enforcedTokensOverLimit := completionapi.EnforcedTokens{Tokens: tokensOverLimit}
+	resultOverLimit := VerifyReproducibleSampling(userSeed, inferenceId, enforcedTokensOverLimit)
+	require.False(t, resultOverLimit.Valid, "exceeding maxTokensToVerify should fail")
+	require.Contains(t, resultOverLimit.Message, "exceeds maximum")
+}
+
+func TestVerifyReproducibleSampling_MaxTopTokens(t *testing.T) {
+	userSeed := int32(42)
+	inferenceId := "test-inference-top-tokens"
+
+	// Test with exactly maxTopTokens top tokens
+	runSeed := generateRunSeed(userSeed, inferenceId)
+	source := rand.NewSource(runSeed)
+	rng := rand.New(source)
+
+	topTokens := make([]string, maxTopTokens)
+	for i := int64(0); i < maxTopTokens; i++ {
+		topTokens[i] = fmt.Sprintf("token_%d", i)
+	}
+
+	sampledIndex := rng.Intn(len(topTokens))
+	tokens := []completionapi.EnforcedToken{
+		{
+			Token:     topTokens[sampledIndex],
+			TopTokens: topTokens,
+		},
+	}
+
+	enforcedTokens := completionapi.EnforcedTokens{Tokens: tokens}
+	result := VerifyReproducibleSampling(userSeed, inferenceId, enforcedTokens)
+	require.True(t, result.Valid, "exactly maxTopTokens should pass: %s", result.Message)
+
+	// Test with maxTopTokens + 1 top tokens (should fail)
+	topTokensOverLimit := make([]string, maxTopTokens+1)
+	for i := int64(0); i < maxTopTokens+1; i++ {
+		topTokensOverLimit[i] = fmt.Sprintf("token_%d", i)
+	}
+	tokensOverLimit := []completionapi.EnforcedToken{
+		{
+			Token:     topTokensOverLimit[0],
+			TopTokens: topTokensOverLimit,
+		},
+	}
+	enforcedTokensOverLimit := completionapi.EnforcedTokens{Tokens: tokensOverLimit}
+	resultOverLimit := VerifyReproducibleSampling(userSeed, inferenceId, enforcedTokensOverLimit)
+	require.False(t, resultOverLimit.Valid, "exceeding maxTopTokens should fail")
+	require.Contains(t, resultOverLimit.Message, "exceeds maximum")
 }

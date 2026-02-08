@@ -51,8 +51,8 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 	// 2. Validators can reproduce the exact token sequence
 	// 3. Any deviation indicates fraud (wrong model, speculative decoding, etc.)
 	//
-	// Note: The seed is derived from the inference_id by the caller (ModifyRequestBody),
-	// making it unique per request while still being reproducible.
+	// Note: When used with inference validation, the run_seed is derived from
+	// this seed and the inference_id in the validation layer.
 	if _, ok := requestMap["seed"]; !ok {
 		requestMap["seed"] = defaultSeed
 	}
