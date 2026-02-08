@@ -43,6 +43,7 @@ func (eg *EpochGroup) GetRandomMember(
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	activeParticipants = sanitizeMembers(activeParticipants)
 	if len(activeParticipants) == 0 {
 		return nil, status.Error(codes.Internal, "Active participants found, but length is 0")
 	}
@@ -87,9 +88,26 @@ func computeCumulativeArray(participants []*group.GroupMember) []int64 {
 }
 
 func getWeight(participant *group.GroupMember) int64 {
+	if participant == nil || participant.Member == nil {
+		return 0
+	}
 	weight, err := strconv.Atoi(participant.Member.Weight)
 	if err != nil {
 		return 0
 	}
 	return int64(weight)
+}
+
+func sanitizeMembers(members []*group.GroupMember) []*group.GroupMember {
+	if len(members) == 0 {
+		return members
+	}
+	filtered := make([]*group.GroupMember, 0, len(members))
+	for _, member := range members {
+		if member == nil || member.Member == nil {
+			continue
+		}
+		filtered = append(filtered, member)
+	}
+	return filtered
 }
