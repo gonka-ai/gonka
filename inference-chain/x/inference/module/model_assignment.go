@@ -750,18 +750,6 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	ma.LogInfo("Finished allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_end", "model_id", modelId, "achieved_weight", currentWeight, "target_weight", targetPoCWeight, "total_weight", totalWeight)
 }
 
-func getSmallestMLNodeWithPOCSLotFalse(nodes []*types.MLNodeInfo) *types.MLNodeInfo {
-	var smallest *types.MLNodeInfo
-	for _, node := range nodes {
-		if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
-			if smallest == nil || node.PocWeight < smallest.PocWeight {
-				smallest = node
-			}
-		}
-	}
-	return smallest
-}
-
 // getSmallestMLNodeWithPOCSLotFalseWithRotation selects the next node to allocate to PoC slot,
 // prioritizing nodes that were in the safe slot (POC_SLOT=false) in the previous epoch.
 // This ensures rotation and prevents the same nodes from always avoiding PoC verification.
@@ -818,7 +806,8 @@ func buildPreviousSafeSlotNodeSet(previousEpochData *EpochMLNodeData, modelId st
 		return safeSlotNodes
 	}
 
-	for _, nodes := range participantNodes {
+	for _, participantAddr := range sortedKeys(participantNodes) {
+		nodes := participantNodes[participantAddr]
 		for _, node := range nodes {
 			if node == nil {
 				continue

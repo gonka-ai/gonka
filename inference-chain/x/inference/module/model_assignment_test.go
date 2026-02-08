@@ -2105,6 +2105,22 @@ func TestAllocateMLNodesForPoC_RotationPreventsSlotHogging(t *testing.T) {
 	// than from the previous PoC slot (which already served their turn).
 	require.Greater(t, safeSlotNowInPoc, 0,
 		"At least some nodes from previous safe slot should be in PoC slot now (rotation should prioritize them)")
+
+	// Stronger assertion: nodes from previous safe slot should be prioritized over nodes
+	// that were already in PoC. Since safe slot nodes have lower weights (20 vs 50) and
+	// the rotation logic prioritizes them, they should be selected first.
+	require.Greater(t, safeSlotNowInPoc, pocSlotNowInPoc,
+		"Rotation should prioritize nodes from previous safe slot over nodes that were already in PoC")
+
+	// Verify that the rotation is actually happening: nodes that were in PoC slot before
+	// should NOT be selected when safe slot nodes are available (they already served their turn)
+	require.Equal(t, 0, pocSlotNowInPoc,
+		"Nodes that were already in PoC slot should not be selected when safe slot nodes are available")
+
+	// At least 2 safe slot nodes should be allocated (with 50% allocation and total weight 210,
+	// target is ~105 weight; 2 nodes at 20 each = 40 weight which triggers further allocation)
+	require.GreaterOrEqual(t, safeSlotNowInPoc, 2,
+		"Multiple nodes from previous safe slot should be allocated to PoC due to rotation priority")
 }
 
 // TestGetSmallestMLNodeWithPOCSLotFalseWithRotation tests the rotation-aware node selection
