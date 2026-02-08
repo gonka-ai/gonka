@@ -34,6 +34,25 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 	requestMap["max_tokens"] = maxTokens
 	requestMap["max_completion_tokens"] = maxTokens
 	requestMap["skip_special_tokens"] = false
+
+	// Ensure reproducible sampling for inference validation:
+	// The seed controls the RNG state for token sampling, ensuring that both
+	// executor and validator produce identical token sequences given the same
+	// seed and model. This is critical for the sequence check in validation.
+	//
+	// Protection against speculative decoding attacks:
+	// Speculative decoding can produce non-deterministic results due to:
+	// - Draft model differences across nodes
+	// - Floating-point precision variations
+	// - Batching and scheduling differences
+	//
+	// By always setting a seed, we ensure that:
+	// 1. All sampling is deterministic based on the seed
+	// 2. Validators can reproduce the exact token sequence
+	// 3. Any deviation indicates fraud (wrong model, speculative decoding, etc.)
+	//
+	// Note: The seed is derived from the inference_id by the caller (ModifyRequestBody),
+	// making it unique per request while still being reproducible.
 	if _, ok := requestMap["seed"]; !ok {
 		requestMap["seed"] = defaultSeed
 	}

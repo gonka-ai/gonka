@@ -153,3 +153,40 @@ func TestMaxTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestSeedIsSetForReproducibleSampling(t *testing.T) {
+	// Test that seed is set when not provided in request
+	r, err := ModifyRequestBody([]byte(jsonBody), 42)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	var requestMap map[string]interface{}
+	err = json.Unmarshal(r.NewBody, &requestMap)
+	require.NoError(t, err, "failed to unmarshal request body")
+
+	// Verify seed is set to the default value
+	seed := requestMap["seed"].(float64)
+	require.Equal(t, float64(42), seed, "seed should be set for reproducible sampling")
+}
+
+func TestSeedIsPreservedWhenProvided(t *testing.T) {
+	// Test that user-provided seed is preserved
+	jsonBodyWithSeed := `{
+		"temperature": 0.8,
+		"model": "Qwen/Qwen2.5-7B-Instruct",
+		"seed": 12345,
+		"messages": [{"role": "user", "content": "Hi!"}]
+	}`
+
+	r, err := ModifyRequestBody([]byte(jsonBodyWithSeed), 42)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	var requestMap map[string]interface{}
+	err = json.Unmarshal(r.NewBody, &requestMap)
+	require.NoError(t, err, "failed to unmarshal request body")
+
+	// Verify user-provided seed is preserved (not overwritten by default)
+	seed := requestMap["seed"].(float64)
+	require.Equal(t, float64(12345), seed, "user-provided seed should be preserved")
+}
