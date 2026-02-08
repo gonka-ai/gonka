@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+
 	"github.com/productscience/inference/x/collateral/keeper"
 )
 
@@ -30,22 +31,87 @@ func (h StakingHooks) BeforeValidatorModified(ctx context.Context, valAddr sdk.V
 }
 
 func (h StakingHooks) AfterValidatorRemoved(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	accAddr := sdk.AccAddress(valAddr)
+
+	// When a validator is fully removed from the validator set, clean up all associated
+	// collateral module data to prevent orphaned entries.
+
+	// 1. Remove any collateral held by this participant
+	if err := h.k.RemoveCollateral(sdkCtx, accAddr); err != nil {
+		h.k.Logger().Error("Staking hook: AfterValidatorRemoved, failed to remove collateral",
+			"validator_address", valAddr.String(),
+			"error", err,
+		)
+		return err
+	}
+
+	// 2. Remove jailed status if set
+	if err := h.k.RemoveJailed(sdkCtx, accAddr); err != nil {
+		h.k.Logger().Error("Staking hook: AfterValidatorRemoved, failed to remove jailed status",
+			"validator_address", valAddr.String(),
+			"error", err,
+		)
+		return err
+	}
+
+	// 3. Remove all unbonding collateral entries for this participant
+	removedCount, err := h.k.RemoveAllUnbondingByParticipant(sdkCtx, accAddr)
+	if err != nil {
+		h.k.Logger().Error("Staking hook: AfterValidatorRemoved, failed to remove unbonding collateral",
+			"validator_address", valAddr.String(),
+			"error", err,
+		)
+		return err
+	}
+
+	h.k.Logger().Info("Staking hook: AfterValidatorRemoved, cleaned up collateral data",
+		"validator_address", valAddr.String(),
+		"participant_address", accAddr.String(),
+		"unbonding_entries_removed", removedCount,
+		"height", sdkCtx.BlockHeight(),
+	)
+
 	return nil
 }
 
 func (h StakingHooks) AfterValidatorBonded(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	accAddr := sdk.AccAddress(valAddr)
+
 	// When a validator is bonded (e.g., un-jailed), we remove them from our jailed list.
-	h.k.RemoveJailed(sdkCtx, sdk.AccAddress(valAddr))
-	h.k.Logger().Debug("Staking hook: AfterValidatorBonded, removed jailed status", "validator_address", valAddr.String(), "height", sdkCtx.BlockHeight())
+	if err := h.k.RemoveJailed(sdkCtx, accAddr); err != nil {
+		h.k.Logger().Error("Staking hook: AfterValidatorBonded, failed to remove jailed status",
+			"validator_address", valAddr.String(),
+			"error", err,
+		)
+		return err
+	}
+
+	h.k.Logger().Debug("Staking hook: AfterValidatorBonded, removed jailed status",
+		"validator_address", valAddr.String(),
+		"height", sdkCtx.BlockHeight(),
+	)
 	return nil
 }
 
 func (h StakingHooks) AfterValidatorBeginUnbonding(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	accAddr := sdk.AccAddress(valAddr)
+
 	// When a validator is jailed, we mark their corresponding participant as jailed in our module.
-	h.k.SetJailed(sdkCtx, sdk.AccAddress(valAddr))
-	h.k.Logger().Debug("Staking hook: AfterValidatorBeginUnbonding, set jailed status", "validator_address", valAddr.String(), "height", sdkCtx.BlockHeight())
+	if err := h.k.SetJailed(sdkCtx, accAddr); err != nil {
+		h.k.Logger().Error("Staking hook: AfterValidatorBeginUnbonding, failed to set jailed status",
+			"validator_address", valAddr.String(),
+			"error", err,
+		)
+		return err
+	}
+
+	h.k.Logger().Debug("Staking hook: AfterValidatorBeginUnbonding, set jailed status",
+		"validator_address", valAddr.String(),
+		"height", sdkCtx.BlockHeight(),
+	)
 	return nil
 }
 

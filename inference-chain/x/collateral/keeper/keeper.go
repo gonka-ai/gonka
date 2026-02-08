@@ -128,8 +128,8 @@ func (k Keeper) GetCollateral(ctx context.Context, participantAddress sdk.AccAdd
 }
 
 // RemoveCollateral removes a participant's collateral from the store
-func (k Keeper) RemoveCollateral(ctx context.Context, participantAddress sdk.AccAddress) {
-	k.CollateralMap.Remove(ctx, participantAddress)
+func (k Keeper) RemoveCollateral(ctx context.Context, participantAddress sdk.AccAddress) error {
+	return k.CollateralMap.Remove(ctx, participantAddress)
 }
 
 func (k Keeper) IterateCollaterals(ctx context.Context, process func(address sdk.AccAddress, amount sdk.Coin) (stop bool)) error {
@@ -241,6 +241,42 @@ func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress sd
 		list = append(list, v)
 	}
 	return list, nil
+}
+
+// maxUnbondingEntriesPerParticipant is the maximum number of unbonding entries
+// that can be removed in a single call to prevent memory exhaustion attacks.
+const maxUnbondingEntriesPerParticipant int64 = 10000
+
+// RemoveAllUnbondingByParticipant removes all unbonding entries for a specific participant.
+// This is used when a validator is removed to clean up orphaned unbonding collateral.
+// Returns an error if the number of entries exceeds maxUnbondingEntriesPerParticipant.
+func (k Keeper) RemoveAllUnbondingByParticipant(ctx sdk.Context, participantAddress sdk.AccAddress) (int64, error) {
+	idxIter, err := k.UnbondingIM.Indexes.ByParticipant.MatchExact(ctx, participantAddress)
+	if err != nil {
+		return 0, err
+	}
+	defer idxIter.Close()
+
+	var keysToRemove []collections.Pair[uint64, sdk.AccAddress]
+	for ; idxIter.Valid(); idxIter.Next() {
+		if int64(len(keysToRemove)) >= maxUnbondingEntriesPerParticipant {
+			return 0, fmt.Errorf("unbonding entries count exceeds maximum allowed (%d) for participant %s",
+				maxUnbondingEntriesPerParticipant, participantAddress.String())
+		}
+		pk, err := idxIter.PrimaryKey()
+		if err != nil {
+			return 0, err
+		}
+		keysToRemove = append(keysToRemove, pk)
+	}
+
+	for _, pk := range keysToRemove {
+		if err := k.UnbondingIM.Remove(ctx, pk); err != nil {
+			return 0, err
+		}
+	}
+
+	return int64(len(keysToRemove)), nil
 }
 
 // GetCurrentEpoch retrieves the current epoch from the store.
