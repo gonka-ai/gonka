@@ -9,6 +9,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExtractSeedFromPrompt(t *testing.T) {
+	// Test extracting seed as float64 (JSON default for numbers)
+	payload := []byte(`{"model": "test-model", "seed": 42, "messages": []}`)
+	seed, err := ExtractSeedFromPrompt(payload)
+	require.NoError(t, err)
+	require.Equal(t, int32(42), seed)
+
+	// Test extracting seed with decimal (JSON parses as float64)
+	payload = []byte(`{"seed": 123.0}`)
+	seed, err = ExtractSeedFromPrompt(payload)
+	require.NoError(t, err)
+	require.Equal(t, int32(123), seed)
+
+	// Test missing seed
+	payload = []byte(`{"model": "test-model", "messages": []}`)
+	_, err = ExtractSeedFromPrompt(payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no seed")
+
+	// Test invalid JSON
+	payload = []byte(`{invalid json}`)
+	_, err = ExtractSeedFromPrompt(payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to parse")
+
+	// Test null seed
+	payload = []byte(`{"seed": null}`)
+	_, err = ExtractSeedFromPrompt(payload)
+	require.Error(t, err)
+
+	// Test negative seed
+	payload = []byte(`{"seed": -42}`)
+	seed, err = ExtractSeedFromPrompt(payload)
+	require.NoError(t, err)
+	require.Equal(t, int32(-42), seed)
+}
+
 func TestGenerateRunSeed(t *testing.T) {
 	// Test deterministic seed generation
 	seed1 := generateRunSeed(42, "inference-123")

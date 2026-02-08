@@ -3,6 +3,7 @@ package validation
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -12,6 +13,24 @@ import (
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// ExtractSeedFromPrompt extracts the seed value from the prompt payload JSON.
+// Returns the seed if present, or an error if the seed is not found or cannot be parsed.
+func ExtractSeedFromPrompt(promptPayload []byte) (int32, error) {
+	var request map[string]interface{}
+	if err := json.Unmarshal(promptPayload, &request); err != nil {
+		return 0, fmt.Errorf("failed to parse prompt payload: %w", err)
+	}
+	if seed, ok := request["seed"]; ok {
+		switch v := seed.(type) {
+		case float64:
+			return int32(v), nil
+		case int:
+			return int32(v), nil
+		}
+	}
+	return 0, errors.New("no seed in prompt payload")
+}
 
 // SequenceCheckResult contains the result of verifying reproducible sampling.
 type SequenceCheckResult struct {

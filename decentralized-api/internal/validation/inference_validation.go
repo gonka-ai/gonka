@@ -878,6 +878,31 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return &InvalidInferenceResult{inference.InferenceId, "Failed to get enforced string.", err}, nil
 	}
 
+	// Stage 1: Sequence Check
+	// Verifies that each token was correctly sampled from the top-k distribution using
+	// deterministic RNG. This binds the token sequence to the seed and probability
+	// distributions, preventing pre-fill attacks where an attacker generates tokens
+	// with a cheap model and computes probabilities with the real model.
+	// Uses uniform sampling from top-k which matches the proposal specification.
+	userSeed, seedErr := ExtractSeedFromPrompt(promptPayload)
+	if seedErr == nil {
+		// Only run sequence check if seed is present
+		seqResult := VerifyReproducibleSampling(userSeed, inference.InferenceId, enforcedTokens)
+		if !seqResult.Valid {
+			logging.Warn("Stage 1 sequence check failed", types.Validation,
+				"inference_id", inference.InferenceId,
+				"position", seqResult.FailedPosition,
+				"message", seqResult.Message)
+			return &InvalidInferenceResult{
+				InferenceId: inference.InferenceId,
+				Reason:      fmt.Sprintf("sequence check failed: %s", seqResult.Message),
+			}, nil
+		}
+		logging.Debug("Stage 1 sequence check passed", types.Validation,
+			"inference_id", inference.InferenceId)
+	}
+
+	// Stage 2: Distribution Check
 	// From here on, errors are on the part of the validator, not the inference that was passed in
 	requestMap["enforced_tokens"] = enforcedTokens
 	requestMap["stream"] = false
