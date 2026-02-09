@@ -64,15 +64,14 @@ func (m *mockGroupKeeper) ProposalsByGroupPolicy(ctx context.Context, req *group
 	return nil, nil
 }
 
-func TestCalculatePocParticipatingNodesWeight_POCSlotTrue(t *testing.T) {
-	// Nodes with POC_SLOT=true (index 1 = true) should be EXCLUDED
+func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
 				{
 					NodeId:             "node1",
 					PocWeight:          100,
-					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (continues inference)
+					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (serves inference)
 				},
 				{
 					NodeId:             "node2",
@@ -89,20 +88,19 @@ func TestCalculatePocParticipatingNodesWeight_POCSlotTrue(t *testing.T) {
 	require.Equal(t, int64(0), weight)
 }
 
-func TestCalculatePocParticipatingNodesWeight_POCSlotFalse(t *testing.T) {
-	// Nodes with POC_SLOT=false (index 1 = false) should be INCLUDED
+func TestCalculatePocParticipatingNodesWeight_NoneServeInference(t *testing.T) {
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
 				{
 					NodeId:             "node1",
 					PocWeight:          100,
-					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false (serves inference)
+					TimeslotAllocation: []bool{true, false},
 				},
 				{
 					NodeId:             "node2",
 					PocWeight:          200,
-					TimeslotAllocation: []bool{false, false}, // POC_SLOT=false
+					TimeslotAllocation: []bool{false, false},
 				},
 			},
 		},
@@ -110,12 +108,12 @@ func TestCalculatePocParticipatingNodesWeight_POCSlotFalse(t *testing.T) {
 
 	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
-	// Should be sum of all weights since all have POC_SLOT=false
+	// Should be sum of all weights since all have POC_SLOT=false,
+	//  meaning no nodes serve inference during PoC
 	require.Equal(t, int64(300), weight)
 }
 
 func TestCalculatePocParticipatingNodesWeight_Mixed(t *testing.T) {
-	// Mixed nodes - some with POC_SLOT=true, some with POC_SLOT=false
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
