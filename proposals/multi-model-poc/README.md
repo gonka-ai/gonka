@@ -39,9 +39,9 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $consensus\_weight_S(p) = \sum_{i: group_i \in E_S} consensus\_koeff_i \times poc\_weight_S(group_i, p)$ (see Appendix A for cap protection)
 
-- $members(group_i) = \{p : p$ has MLNode deployed for model $i\}$ — hosts with MLNode deployed for the model
+- $members(group_i) = \lbrace p : p \text{ has MLNode deployed for model } i \rbrace$ — hosts with MLNode deployed for the model
 
-- $hosts_S(group_i) = \{p : consensus\_weight_S(p) > 0$ and $p \in members(group_i)\}$
+- $hosts_S(group_i) = \lbrace p : consensus\_weight_S(p) > 0 \text{ and } p \in members(group_i) \rbrace$
 
   Members with non-zero consensus weight. The weight may come from any eligible group, not necessarily $group_i$.
 
