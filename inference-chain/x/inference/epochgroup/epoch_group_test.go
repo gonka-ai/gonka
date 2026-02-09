@@ -64,15 +64,14 @@ func (m *mockGroupKeeper) ProposalsByGroupPolicy(ctx context.Context, req *group
 	return nil, nil
 }
 
-func TestCalculateInferenceServingWeight_POCSlotTrue(t *testing.T) {
-	// Nodes with POC_SLOT=true (index 1 = true) should be EXCLUDED
+func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
 				{
 					NodeId:             "node1",
 					PocWeight:          100,
-					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (continues inference)
+					TimeslotAllocation: []bool{true, true}, // POC_SLOT=true (serves inference)
 				},
 				{
 					NodeId:             "node2",
@@ -83,39 +82,38 @@ func TestCalculateInferenceServingWeight_POCSlotTrue(t *testing.T) {
 		},
 	}
 
-	weight := calculateInferenceServingWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
 	// Should be 0 since all nodes have POC_SLOT=true
 	require.Equal(t, int64(0), weight)
 }
 
-func TestCalculateInferenceServingWeight_POCSlotFalse(t *testing.T) {
-	// Nodes with POC_SLOT=false (index 1 = false) should be INCLUDED
+func TestCalculatePocParticipatingNodesWeight_NoneServeInference(t *testing.T) {
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
 				{
 					NodeId:             "node1",
 					PocWeight:          100,
-					TimeslotAllocation: []bool{true, false}, // POC_SLOT=false (serves inference)
+					TimeslotAllocation: []bool{true, false},
 				},
 				{
 					NodeId:             "node2",
 					PocWeight:          200,
-					TimeslotAllocation: []bool{false, false}, // POC_SLOT=false
+					TimeslotAllocation: []bool{false, false},
 				},
 			},
 		},
 	}
 
-	weight := calculateInferenceServingWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
-	// Should be sum of all weights since all have POC_SLOT=false
+	// Should be sum of all weights since all have POC_SLOT=false,
+	//  meaning no nodes serve inference during PoC
 	require.Equal(t, int64(300), weight)
 }
 
-func TestCalculateInferenceServingWeight_Mixed(t *testing.T) {
-	// Mixed nodes - some with POC_SLOT=true, some with POC_SLOT=false
+func TestCalculatePocParticipatingNodesWeight_Mixed(t *testing.T) {
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -143,13 +141,13 @@ func TestCalculateInferenceServingWeight_Mixed(t *testing.T) {
 		},
 	}
 
-	weight := calculateInferenceServingWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
 	// Should be 100 + 300 = 400 (only POC_SLOT=false nodes)
 	require.Equal(t, int64(400), weight)
 }
 
-func TestCalculateInferenceServingWeight_EmptySlots(t *testing.T) {
+func TestCalculatePocParticipatingNodesWeight_EmptySlots(t *testing.T) {
 	// Nodes with empty or short TimeslotAllocation arrays
 	mlNodes := []*types.ModelMLNodes{
 		{
@@ -173,13 +171,13 @@ func TestCalculateInferenceServingWeight_EmptySlots(t *testing.T) {
 		},
 	}
 
-	weight := calculateInferenceServingWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
 	// Should be 300 (only node3 has valid POC_SLOT at index 1)
 	require.Equal(t, int64(300), weight)
 }
 
-func TestCalculateInferenceServingWeight_NilNodes(t *testing.T) {
+func TestCalculatePocParticipatingNodesWeight_NilNodes(t *testing.T) {
 	// Test handling of nil nodes
 	mlNodes := []*types.ModelMLNodes{
 		nil, // Nil model nodes
@@ -195,7 +193,7 @@ func TestCalculateInferenceServingWeight_NilNodes(t *testing.T) {
 		},
 	}
 
-	weight := calculateInferenceServingWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
 	// Should handle nils gracefully and count only valid node
 	require.Equal(t, int64(100), weight)
@@ -214,7 +212,7 @@ func TestSanitizeMembers_FiltersNilMembers(t *testing.T) {
 	require.Equal(t, "addr1", filtered[0].Member.Address)
 }
 
-func TestCalculateInferenceServingWeight_MultipleModelArrays(t *testing.T) {
+func TestCalculatePocParticipatingNodesWeight_MultipleModelArrays(t *testing.T) {
 	// Multiple model arrays (though typically there's only one)
 	mlNodes := []*types.ModelMLNodes{
 		{
@@ -237,7 +235,7 @@ func TestCalculateInferenceServingWeight_MultipleModelArrays(t *testing.T) {
 		},
 	}
 
-	weight := calculateInferenceServingWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(mlNodes)
 
 	// Should sum across all model arrays
 	require.Equal(t, int64(300), weight)
