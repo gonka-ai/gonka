@@ -69,6 +69,7 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	validator            *validation.InferenceValidator
 	epochGroupDataCache  *internal.EpochGroupDataCache
+	setCacheHeight       func(int64)
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -157,6 +158,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		validator,
 	)
 	dispatcher.epochGroupDataCache = epochGroupDataCache
+	dispatcher.setCacheHeight = cosmosClient.SetQueryCacheHeight
 	return dispatcher
 }
 
@@ -165,6 +167,10 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	logging.Debug("Processing new block", types.Stages,
 		"height", blockInfo.Height,
 		"hash", blockInfo.Hash)
+
+	if d.setCacheHeight != nil {
+		d.setCacheHeight(blockInfo.Height)
+	}
 
 	// 1. Query network for current state (sync status, epoch params)
 	networkInfo, err := d.queryNetworkInfo(ctx)
@@ -274,9 +280,6 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
 		return nil
 	}
-
-	// Clear cache only when synced to avoid thrashing during catch-up
-	cosmosclient.ClearCache()
 
 	// 3. Check for phase transitions and stage events
 	d.handlePhaseTransitions(*epochState)

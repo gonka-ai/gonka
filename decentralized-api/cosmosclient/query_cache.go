@@ -2,142 +2,114 @@ package cosmosclient
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"fmt"
+	"strconv"
 	"sync"
-	"sync/atomic"
-	"time"
 
-	"github.com/hashicorp/golang-lru/v2/expirable"
-	"golang.org/x/sync/singleflight"
+	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	MaxCacheEntries = 1000
-	CacheTTL        = 30 * time.Second
-)
-
-var (
-	cacheableQueriesMu sync.RWMutex
-	cacheableQueries   = map[string]bool{
-		"/inference.inference.Query/Params":                           true,
-		"/inference.inference.Query/ModelsAll":                        true,
-		"/inference.inference.Query/CurrentEpochGroupData":            true,
-		"/inference.inference.Query/EpochGroupData":                   true,
-		"/inference.inference.Query/GetAllModelCapacities":            true,
-		"/inference.inference.Query/GetAllModelPerTokenPrices":        true,
-		"/inference.inference.Query/EpochInfo":                        true,
-		"/inference.inference.Query/GetCurrentEpoch":                  true,
-		"/inference.inference.Query/HardwareNodesAll":                 true,
-		"/inference.inference.Query/InferencesAndTokensStatsByModels": true,
-		"/inference.inference.Query/ExcludedParticipants":             true,
-		"/inference.inference.Query/CountParticipants":                true,
-	}
-)
-
-var (
-	grpcCache       = expirable.NewLRU[string, []byte](MaxCacheEntries, nil, CacheTTL)
-	sfGroup         singleflight.Group
-	cacheGeneration atomic.Uint64
-)
-
-func IsCacheable(method string) bool {
-	cacheableQueriesMu.RLock()
-	defer cacheableQueriesMu.RUnlock()
-	return cacheableQueries[method]
+type QueryCache struct {
+	mu      sync.RWMutex
+	height  int64
+	entries map[string][]byte
 }
 
-func SetCacheable(method string, cacheable bool) {
-	cacheableQueriesMu.Lock()
-	defer cacheableQueriesMu.Unlock()
-	if cacheable {
-		cacheableQueries[method] = true
-	} else {
-		delete(cacheableQueries, method)
-	}
+func NewQueryCache() *QueryCache {
+	return &QueryCache{entries: make(map[string][]byte)}
 }
 
-func ClearCache() {
-	cacheGeneration.Add(1)
-	grpcCache.Purge()
-}
-
-func cacheKey(method string, req proto.Message) (string, error) {
-	data, err := proto.Marshal(req)
-	if err != nil {
-		return "", err
+func (c *QueryCache) SetHeight(h int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if h > c.height {
+		c.height = h
+		c.entries = make(map[string][]byte)
 	}
-	hash := sha256.Sum256(data)
-	return method + ":" + hex.EncodeToString(hash[:16]), nil
-}
-
-func CachedInvoke(ctx context.Context, conn grpc.ClientConnInterface, method string, req, reply proto.Message) error {
-	if !IsCacheable(method) {
-		return conn.Invoke(ctx, method, req, reply)
-	}
-
-	key, err := cacheKey(method, req)
-	if err != nil {
-		return conn.Invoke(ctx, method, req, reply)
-	}
-
-	if data, ok := grpcCache.Get(key); ok {
-		return proto.Unmarshal(data, reply)
-	}
-
-	result, err, _ := sfGroup.Do(key, func() (any, error) {
-		if data, ok := grpcCache.Get(key); ok {
-			return data, nil
-		}
-
-		startGen := cacheGeneration.Load()
-
-		err := conn.Invoke(ctx, method, req, reply)
-		if err != nil {
-			return nil, err
-		}
-
-		data, err := proto.Marshal(reply)
-		if err != nil {
-			return nil, err
-		}
-
-		if cacheGeneration.Load() == startGen {
-			grpcCache.Add(key, data)
-		}
-		return data, nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	if data, ok := result.([]byte); ok && data != nil {
-		return proto.Unmarshal(data, reply)
-	}
-	return nil
 }
 
 type CachingConn struct {
 	inner grpc.ClientConnInterface
+	cache *QueryCache
 }
 
-func NewCachingConn(inner grpc.ClientConnInterface) *CachingConn {
-	return &CachingConn{inner: inner}
-}
-
-func (c *CachingConn) Invoke(ctx context.Context, method string, args any, reply any, opts ...grpc.CallOption) error {
-	reqMsg, reqOk := args.(proto.Message)
-	replyMsg, replyOk := reply.(proto.Message)
-
-	if reqOk && replyOk {
-		return CachedInvoke(ctx, c.inner, method, reqMsg, replyMsg)
+func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply interface{}, opts ...grpc.CallOption) error {
+	reqMsg, ok := args.(proto.Message)
+	if !ok {
+		return c.inner.Invoke(ctx, method, args, reply, opts...)
 	}
-	return c.inner.Invoke(ctx, method, args, reply, opts...)
+	replyMsg, ok := reply.(proto.Message)
+	if !ok {
+		return c.inner.Invoke(ctx, method, args, reply, opts...)
+	}
+
+	explicitHeight := heightFromOutgoingCtx(ctx)
+
+	c.cache.mu.RLock()
+	height := c.cache.height
+	if explicitHeight > 0 {
+		height = explicitHeight
+	}
+	if height == 0 {
+		c.cache.mu.RUnlock()
+		return c.inner.Invoke(ctx, method, args, reply, opts...)
+	}
+	key := buildCacheKey(method, reqMsg, height)
+	cached, hit := c.cache.entries[key]
+	c.cache.mu.RUnlock()
+
+	if hit {
+		return proto.Unmarshal(cached, replyMsg)
+	}
+
+	pinnedCtx := ctx
+	if explicitHeight == 0 {
+		pinnedCtx = setPinnedHeight(ctx, height)
+	}
+
+	if err := c.inner.Invoke(pinnedCtx, method, args, reply, opts...); err != nil {
+		return err
+	}
+
+	if data, err := proto.Marshal(replyMsg); err == nil {
+		c.cache.mu.Lock()
+		if c.cache.height == height {
+			c.cache.entries[key] = data
+		}
+		c.cache.mu.Unlock()
+	}
+	return nil
+}
+
+func heightFromOutgoingCtx(ctx context.Context) int64 {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		return 0
+	}
+	vals := md.Get(grpctypes.GRPCBlockHeightHeader)
+	if len(vals) == 0 {
+		return 0
+	}
+	h, _ := strconv.ParseInt(vals[0], 10, 64)
+	return h
+}
+
+func setPinnedHeight(ctx context.Context, height int64) context.Context {
+	return metadata.AppendToOutgoingContext(ctx,
+		grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(height, 10))
 }
 
 func (c *CachingConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	return c.inner.NewStream(ctx, desc, method, opts...)
+}
+
+func buildCacheKey(method string, msg proto.Message, height int64) string {
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Sprintf("%s|%d", method, height)
+	}
+	return fmt.Sprintf("%s|%d|%x", method, height, data)
 }

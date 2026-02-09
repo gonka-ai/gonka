@@ -6,19 +6,19 @@ import (
 )
 
 type Config struct {
-	Api                 ApiConfig             `koanf:"api" json:"api"`
-	Nodes               []InferenceNodeConfig `koanf:"nodes" json:"nodes"`
-	NodeConfigIsMerged  bool                  `koanf:"merged_node_config" json:"merged_node_config"`
-	ChainNode           ChainNodeConfig       `koanf:"chain_node" json:"chain_node"`
-	UpcomingSeed        SeedInfo              `koanf:"upcoming_seed" json:"upcoming_seed"`
-	CurrentSeed         SeedInfo              `koanf:"current_seed" json:"current_seed"`
-	PreviousSeed        SeedInfo              `koanf:"previous_seed" json:"previous_seed"`
-	CurrentHeight       int64                 `koanf:"current_height" json:"current_height"`
-	LastProcessedHeight int64                 `koanf:"last_processed_height" json:"last_processed_height"`
-	UpgradePlan         UpgradePlan           `koanf:"upgrade_plan" json:"upgrade_plan"`
-	MLNodeKeyConfig     MLNodeKeyConfig       `koanf:"ml_node_key_config" json:"ml_node_key_config"`
-	Nats                NatsServerConfig      `koanf:"nats" json:"nats"`
-	TxBatching          TxBatchingConfig      `koanf:"tx_batching" json:"tx_batching"`
+	Api                      ApiConfig                `koanf:"api" json:"api"`
+	Nodes                    []InferenceNodeConfig    `koanf:"nodes" json:"nodes"`
+	NodeConfigIsMerged       bool                     `koanf:"merged_node_config" json:"merged_node_config"`
+	ChainNode                ChainNodeConfig          `koanf:"chain_node" json:"chain_node"`
+	UpcomingSeed             SeedInfo                 `koanf:"upcoming_seed" json:"upcoming_seed"`
+	CurrentSeed              SeedInfo                 `koanf:"current_seed" json:"current_seed"`
+	PreviousSeed             SeedInfo                 `koanf:"previous_seed" json:"previous_seed"`
+	CurrentHeight            int64                    `koanf:"current_height" json:"current_height"`
+	LastProcessedHeight      int64                    `koanf:"last_processed_height" json:"last_processed_height"`
+	UpgradePlan              UpgradePlan              `koanf:"upgrade_plan" json:"upgrade_plan"`
+	MLNodeKeyConfig          MLNodeKeyConfig          `koanf:"ml_node_key_config" json:"ml_node_key_config"`
+	Nats                     NatsServerConfig         `koanf:"nats" json:"nats"`
+	TxBatching               TxBatchingConfig         `koanf:"tx_batching" json:"tx_batching"`
 	CurrentNodeVersion       string                   `koanf:"current_node_version" json:"current_node_version"`
 	LastUsedVersion          string                   `koanf:"last_used_version" json:"last_used_version"`
 	ValidationParams         ValidationParamsCache    `koanf:"validation_params" json:"validation_params"`
@@ -68,14 +68,15 @@ type ApiConfig struct {
 }
 
 type ChainNodeConfig struct {
-	Url              string `koanf:"url" json:"url"`
-	IsGenesis        bool   `koanf:"is_genesis" json:"is_genesis"`
-	SeedApiUrl       string `koanf:"seed_api_url" json:"seed_api_url"`
-	AccountPublicKey string `koanf:"account_public_key" json:"account_public_key"`
-	SignerKeyName    string `koanf:"signer_key_name" json:"signer_key_name"`
-	KeyringBackend   string `koanf:"keyring_backend" json:"keyring_backend"`
-	KeyringDir       string `koanf:"keyring_dir" json:"keyring_dir"`
-	KeyringPassword  string `json:"-"`
+	Url               string `koanf:"url" json:"url"`
+	IsGenesis         bool   `koanf:"is_genesis" json:"is_genesis"`
+	SeedApiUrl        string `koanf:"seed_api_url" json:"seed_api_url"`
+	AccountPublicKey  string `koanf:"account_public_key" json:"account_public_key"`
+	SignerKeyName     string `koanf:"signer_key_name" json:"signer_key_name"`
+	KeyringBackend    string `koanf:"keyring_backend" json:"keyring_backend"`
+	KeyringDir        string `koanf:"keyring_dir" json:"keyring_dir"`
+	KeyringPassword   string `json:"-"`
+	QueryCacheEnabled bool   `koanf:"query_cache_enabled" json:"query_cache_enabled"`
 }
 
 type MLNodeKeyConfig struct {
