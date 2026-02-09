@@ -56,7 +56,12 @@ func (k Keeper) MigrateConfirmationWeights(ctx sdk.Context) error {
 	return nil
 }
 
-// calculatePocParticipatingNodesWeight calculates the total weight of nodes participating in PoC
+// calculatePocParticipatingNodesWeight calculates the total weight of nodes participating in PoC.
+//
+// NOTE: This logic is intentionally duplicated from the epoch group implementation in
+// x/inference/epochgroup/epoch_group.go. Any changes to the weight-calculation logic here
+// must also be applied there (and vice versa) to keep confirmation and validation weights
+// consistent across the codebase.
 func calculatePocParticipatingNodesWeight(mlNodes []*types.ModelMLNodes) int64 {
 	totalWeight := int64(0)
 
