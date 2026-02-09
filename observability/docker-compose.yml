@@ -1,6 +1,6 @@
 services:
   prometheus:
-    image: prom/prometheus:v2.55.1
+    image: prom/prometheus:v3.9.1
     entrypoint: ["sh", "/etc/prometheus/entrypoint.sh"]
     environment:
       - CHAIN_NODE=${CHAIN_NODE:-node}
@@ -13,11 +13,11 @@ services:
       - "127.0.0.1:9099:9090"
     networks:
       - default
-      - chain-public
+      - observability
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.2.0
+    image: grafana/grafana:12.3.2
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
@@ -36,6 +36,6 @@ volumes:
   grafana-data:
 
 networks:
-  chain-public:
-    external: true
-    name: chain-public
+  observability:
+    name: observability
+    driver: bridge
