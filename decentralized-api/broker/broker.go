@@ -232,18 +232,19 @@ func (n *Node) InferenceUrl() string {
 }
 
 func (n *Node) InferenceUrlWithVersion(version string) string {
+	v := strings.TrimSpace(version)
 	// If BaseURL is provided, build on top of it
 	if n.BaseURL != "" {
 		base := strings.TrimRight(n.BaseURL, "/")
-		if version == "" {
+		if v == "" {
 			return fmt.Sprintf("%s%s", base, n.InferenceSegment)
 		}
-		return fmt.Sprintf("%s/%s%s", base, version, n.InferenceSegment)
+		return fmt.Sprintf("%s/%s%s", base, v, n.InferenceSegment)
 	}
-	if version == "" {
+	if v == "" {
 		return n.InferenceUrl()
 	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.InferencePort, version, n.InferenceSegment)
+	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.InferencePort, v, n.InferenceSegment)
 }
 
 func (n *Node) PoCUrl() string {
@@ -251,18 +252,19 @@ func (n *Node) PoCUrl() string {
 }
 
 func (n *Node) PoCUrlWithVersion(version string) string {
+	v := strings.TrimSpace(version)
 	// If BaseURL is provided, build on top of it
 	if n.BaseURL != "" {
 		base := strings.TrimRight(n.BaseURL, "/")
-		if version == "" {
+		if v == "" {
 			return fmt.Sprintf("%s%s", base, n.PoCSegment)
 		}
-		return fmt.Sprintf("%s/%s%s", base, version, n.PoCSegment)
+		return fmt.Sprintf("%s/%s%s", base, v, n.PoCSegment)
 	}
-	if version == "" {
+	if v == "" {
 		return n.PoCUrl()
 	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
+	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, v, n.PoCSegment)
 }
 
 // BaseUrlWithVersion constructs a base URL with version

@@ -100,7 +100,7 @@ private suspend fun handleChatCompletions(call: ApplicationCall, responseService
             authHeader == expectedAuth
         }
         if (!valid) {
-            logger.warn("Unauthorized request for host {}. Expected Authorization: {} but got: {}", hostName.name, expectedAuth, authHeader)
+            logger.warn("Unauthorized request for host {}. Authorization header mismatch (expected={}, got={})", hostName.name, expectedAuth != null, authHeader != null)
             call.response.header("Content-Type", "application/json")
             call.respondText(
                 """{"error":"unauthorized","message":"Authorization header missing or invalid"}""",

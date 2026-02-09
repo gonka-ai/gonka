@@ -815,10 +815,10 @@ func formatBaseURL(baseURL string, segment string) string {
 }
 
 func formatBaseURLWithVersion(baseURL string, version string, segment string) string {
-	// seg := segment
-	// if seg == "" {
-	// 	seg = "/"
-	// }
 	base := strings.TrimRight(baseURL, "/")
-	return fmt.Sprintf("%s/%s%s", base, version, segment)
+	v := strings.TrimSpace(version)
+	if v == "" {
+		return fmt.Sprintf("%s%s", base, segment)
+	}
+	return fmt.Sprintf("%s/%s%s", base, v, segment)
 }
