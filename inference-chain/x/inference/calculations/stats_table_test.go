@@ -68,7 +68,7 @@ func TestMissedStatTestLookupWithP0ErrorConditions(t *testing.T) {
 
 func TestMissedStatTestLookupWithP0_P010(t *testing.T) {
 	// Table values for p0=0.10, alpha=0.05:
-	// n<5: no penalty, n=10: critical=2, n=20: critical=4, n=100: critical=14, n=500: critical=61
+	// n<5: no penalty, n=10: critical=4, n=20: critical=4, n=100: critical=14, n=500: critical=61
 	tests := []struct {
 		name     string
 		nMissed  int
