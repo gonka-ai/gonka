@@ -37,7 +37,8 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $consensus\\_koeff_i$ — coefficient converting $poc\\_weight$ in $group_i$ to consensus weight. Defined by governance per model.
 
-- $consensus\\_weight_S(p) = \sum_{i: group_i \in E_S} consensus\\_koeff_i \times poc\\_weight_S(group_i, p)$ (see Appendix A for cap protection)
+- $$ consensus\\_weight_S(p) = \sum_{i: group_i \in E_S} consensus\\_koeff_i \times poc\\_weight_S(group_i, p) $$
+    (see Appendix A for cap protection)
 
 - $members(group_i) = \lbrace p : p \text{ has MLNode deployed for model } i \rbrace$ — hosts with MLNode deployed for the model
 
@@ -47,12 +48,12 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $PreE_{S+1}$ — set of pre-eligible groups for epoch $S+1$. A group $group_i \in PreE_{S+1}$ if conditions 1-3 hold:
   1. Model $i$ is approved by governance with defined $consensus\\_koeff_i$
-  2. $\sum_{p \in members(group_i)} consensus\\_weight_S(p) \geq W_{threshold} \times \sum_{p} consensus\\_weight_S(p)$
+  2. $$\sum_{p \in members(group_i)} consensus\\_weight_S(p) \geq W_{threshold} \times \sum_{p} consensus\\_weight_S(p)$$
   3. $|hosts_S(group_i)| \geq V_{min}$
 
 - $E_{S+1}$ — set of consensus-eligible groups for epoch $S+1$. A group $group_i \in E_{S+1}$ if:
-  - $group_i \in PreE_{S+1}$, AND
-  4. At least $V_{min}$ hosts in the group pass PoC validation at epoch $S+1$ (see validation rule below)
+  - $group_i \in PreE_{S+1}$
+  - At least $V_{min}$ hosts in the group pass PoC validation at epoch $S+1$ (see validation rule below)
 
 - $W_{threshold}$ — minimum fraction of total network consensus weight required for group eligibility (governance parameter)
 
