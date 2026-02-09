@@ -241,7 +241,11 @@ func formatURL(host string, port int, segment string) string {
 }
 
 func formatURLWithVersion(host string, port int, version string, segment string) string {
-	return fmt.Sprintf("http://%s:%d/%s%s", host, port, version, segment)
+	v := strings.TrimSpace(version)
+	if v == "" {
+		return fmt.Sprintf("http://%s:%d%s", host, port, segment)
+	}
+	return fmt.Sprintf("http://%s:%d/%s%s", host, port, v, segment)
 }
 
 func formatBaseURL(baseURL string, segment string) string {
@@ -254,12 +258,12 @@ func formatBaseURL(baseURL string, segment string) string {
 }
 
 func formatBaseURLWithVersion(baseURL string, version string, segment string) string {
-	// seg := segment
-	// if seg == "" {
-	// 	seg = "/"
-	// }
 	base := strings.TrimRight(baseURL, "/")
-	return fmt.Sprintf("%s/%s%s", base, version, segment)
+	v := strings.TrimSpace(version)
+	if v == "" {
+		return fmt.Sprintf("%s%s", base, segment)
+	}
+	return fmt.Sprintf("%s/%s%s", base, v, segment)
 }
 
 func getBaseUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {

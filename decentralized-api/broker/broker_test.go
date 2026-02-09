@@ -197,7 +197,7 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	mockClient := mockFactory.GetClientForNode(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort))
 	if mockClient == nil {
 		// If it's not created yet, create it.
-		mockClient = mockFactory.CreateClient(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort), fmt.Sprintf("http://%s:%d", node.Host, node.InferencePort)).(*mlnodeclient.MockClient)
+		mockClient = mockFactory.CreateClient(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort), fmt.Sprintf("http://%s:%d", node.Host, node.InferencePort), "", "").(*mlnodeclient.MockClient)
 	}
 	mockClient.Mu.Lock()
 	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
