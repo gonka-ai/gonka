@@ -33,21 +33,21 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $group_i$ — model group for model $i$ (members are hosts with MLNodes serving model $i$). Network supports $M$ models on-chain.
 
-- $poc\_weight_S(group_i, p)$ — weight of host $p$ in $group_i$ at epoch $S$. Equals the number of nonces computed by $p$ in PoC procedure for this group and successfully validated. Local weight within the group.
+- $poc\\_weight_S(group_i, p)$ — weight of host $p$ in $group_i$ at epoch $S$. Equals the number of nonces computed by $p$ in PoC procedure for this group and successfully validated. Local weight within the group.
 
-- $consensus\_koeff_i$ — coefficient converting $poc\_weight$ in $group_i$ to consensus weight. Defined by governance per model.
+- $consensus\\_koeff_i$ — coefficient converting $poc\\_weight$ in $group_i$ to consensus weight. Defined by governance per model.
 
-- $consensus\_weight_S(p) = \sum_{i: group_i \in E_S} consensus\_koeff_i \times poc\_weight_S(group_i, p)$ (see Appendix A for cap protection)
+- $consensus\\_weight_S(p) = \sum_{i: group_i \in E_S} consensus\\_koeff_i \times poc\\_weight_S(group_i, p)$ (see Appendix A for cap protection)
 
 - $members(group_i) = \lbrace p : p \text{ has MLNode deployed for model } i \rbrace$ — hosts with MLNode deployed for the model
 
-- $hosts_S(group_i) = \lbrace p : consensus\_weight_S(p) > 0 \text{ and } p \in members(group_i) \rbrace$
+- $hosts_S(group_i) = \lbrace p : consensus\\_weight_S(p) > 0 \text{ and } p \in members(group_i) \rbrace$
 
   Members with non-zero consensus weight. The weight may come from any eligible group, not necessarily $group_i$.
 
 - $PreE_{S+1}$ — set of pre-eligible groups for epoch $S+1$. A group $group_i \in PreE_{S+1}$ if conditions 1-3 hold:
-  1. Model $i$ is approved by governance with defined $consensus\_koeff_i$
-  2. $\sum_{p \in members(group_i)} consensus\_weight_S(p) \geq W_{threshold} \times \sum_{p} consensus\_weight_S(p)$
+  1. Model $i$ is approved by governance with defined $consensus\\_koeff_i$
+  2. $\sum_{p \in members(group_i)} consensus\\_weight_S(p) \geq W_{threshold} \times \sum_{p} consensus\\_weight_S(p)$
   3. $|hosts_S(group_i)| \geq V_{min}$
 
 - $E_{S+1}$ — set of consensus-eligible groups for epoch $S+1$. A group $group_i \in E_{S+1}$ if:
@@ -66,9 +66,9 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $delegation_S(group_i, p_{from}, p_{to})$ — consensus weight delegated from host $p_{from}$ to host $p_{to}$ for validation in $group_i$ at epoch $S$. Host $p_{from} \notin members(group_i)$; host $p_{to} \in members(group_i)$. Delegation is set before epoch start; changes during an epoch take effect from the next epoch.
 
-- $voting\_power_S(group_i, p) = consensus\_weight_S(p) + \sum_{p_{from}} delegation_S(group_i, p_{from}, p)$ — total validation voting power of host $p$ in $group_i$
+- $voting\\_power_S(group_i, p) = consensus\\_weight_S(p) + \sum_{p_{from}} delegation_S(group_i, p_{from}, p)$ — total validation voting power of host $p$ in $group_i$
 
-  Delegation constraints: $delegation_S(group_i, p_{from}, p_{to}) \ge 0$ and, for each $(group_i, p_{from})$, $\sum_{p_{to}} delegation_S(group_i, p_{from}, p_{to}) \le consensus\_weight_S(p_{from})$.
+  Delegation constraints: $delegation_S(group_i, p_{from}, p_{to}) \ge 0$ and, for each $(group_i, p_{from})$, $\sum_{p_{to}} delegation_S(group_i, p_{from}, p_{to}) \le consensus\\_weight_S(p_{from})$.
 
 **Q1: Can a host split delegation across multiple hosts in the same group?**
 
@@ -82,7 +82,7 @@ Weight computed in PoC procedure for eligible model groups contributes to total 
 - PoC validation voting power
 - **Bitcoin-style reward distribution** (proportional to consensus weight)
 
-Within a group, inference requests are distributed according to $poc\_weight_S(group_i, p)$. Inference rewards follow the same distribution.
+Within a group, inference requests are distributed according to $poc\\_weight_S(group_i, p)$. Inference rewards follow the same distribution.
 
 ### PoC Validation
 
@@ -90,9 +90,9 @@ Within a group, inference requests are distributed according to $poc\_weight_S(g
 
 **Validation rule**: Host $p$'s PoC result in eligible $group_i$ is accepted if:
 
-$$\frac{\sum_{v \text{ votes valid for } p} voting\_power_S(group_i, v)}{\sum_{q} consensus\_weight_S(q)} > \frac{1}{2}$$
+$$\frac{\sum_{v \text{ votes valid for } p} voting\\_power_S(group_i, v)}{\sum_{q} consensus\\_weight_S(q)} > \frac{1}{2}$$
 
-- Numerator: sum of $voting\_power_S(group_i, v)$ from all validators $v$ who approved $p$
+- Numerator: sum of $voting\\_power_S(group_i, v)$ from all validators $v$ who approved $p$
 - Denominator: total network consensus weight (all hosts, all groups)
 
 Hosts not in the group and not delegating effectively vote against approval. Delegation is therefore essential for any group whose direct members hold less than 50% of total network weight.
@@ -107,9 +107,9 @@ Hosts not in the group and not delegating effectively vote against approval. Del
 
 ### Non-Eligible Groups
 
-If a group is not eligible, PoC validation uses only the group's members as validators. A host $p$'s result is accepted if >50% of $\sum_{v \in members(group_i)} consensus\_weight_S(v)$ votes valid. Validators use their consensus weight from other eligible groups; validated hosts receive $poc\_weight$ in this group.
+If a group is not eligible, PoC validation uses only the group's members as validators. A host $p$'s result is accepted if >50% of $\sum_{v \in members(group_i)} consensus\\_weight_S(v)$ votes valid. Validators use their consensus weight from other eligible groups; validated hosts receive $poc\\_weight$ in this group.
 
-Non-eligible groups can still serve inference requests. Tasks are distributed proportionally to $poc\_weight_S(group_i, p)$.
+Non-eligible groups can still serve inference requests. Tasks are distributed proportionally to $poc\\_weight_S(group_i, p)$.
 
 Non-eligible groups cannot:
 - Affect consensus weight
@@ -122,10 +122,10 @@ Hosts in non-eligible groups only receive payment for inference.
 
 ### New Group Onboarding
 
-1. Governance proposal to add new model and create new group (defines $consensus\_koeff_i$)
+1. Governance proposal to add new model and create new group (defines $consensus\\_koeff_i$)
 2. Early adopters join the group with minimal hardware and serve inferences (group is non-eligible at this stage)
 3. Once the group meets conditions 1-3 (sufficient hosts and consensus weight), group becomes pre-eligible ($group_i \in PreE_{S+1}$)
-4. Pre-eligible group's PoC is validated by total network (>50% of $voting\_power$); if at least $V_{min}$ hosts pass, group becomes eligible ($group_i \in E_{S+1}$) and affects consensus
+4. Pre-eligible group's PoC is validated by total network (>50% of $voting\\_power$); if at least $V_{min}$ hosts pass, group becomes eligible ($group_i \in E_{S+1}$) and affects consensus
 
 **Q4: Should participating in non-eligible group be replaceable with commitment (with deposit) to participate in PoC if group becomes eligible >= N blocks before epoch start?** N blocks gives time to deploy the model. If host fails to participate after commitment, deposit is burned. This helps collect sufficient weight without hosts losing consensus weight during non-eligible epochs.
 
@@ -135,7 +135,7 @@ Hosts in non-eligible groups only receive payment for inference.
 
 ## Appendix A: Delegation-based Attack and Protection
 
-**Attack:** Host accumulates >50% $voting\_power$ via delegation, validates fake participant claiming large weight, gains consensus control.
+**Attack:** Host accumulates >50% $voting\\_power$ via delegation, validates fake participant claiming large weight, gains consensus control.
 
 **Protection option:** Cap weight from each group by members' proven weight elsewhere.
 
@@ -143,11 +143,11 @@ $$\text{consensus weight from } group_i \leq f \times \sum_{p \in members(group_
 
 If a group's raw PoC weight exceeds the cap, scale all members proportionally to fit.
 
-For clarity: "other eligible groups" refers to consensus weight already earned from eligible groups excluding $group_i$ itself (i.e., using $consensus\_weight_S$ contributions from $E_S \setminus \{group_i\}$), to avoid circular dependence.
+For clarity: "other eligible groups" refers to consensus weight already earned from eligible groups excluding $group_i$ itself (i.e., using $consensus\\_weight_S$ contributions from $E_S \setminus \{group_i\}$), to avoid circular dependence.
 
 - Initial group exempt (no cap)
 - $f$ is a governance parameter
-- Delegation affects $voting\_power$ but not the cap (cap is PoC-weight-based)
+- Delegation affects $voting\\_power$ but not the cap (cap is PoC-weight-based)
 
 This bounds the damage from fake participants: even if they pass validation, their weight contribution is limited by real members' stake in other groups. The cap is a secondary defense; validation (>50% of network weight) remains the primary one.
 
