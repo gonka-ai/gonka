@@ -1,5 +1,6 @@
 import com.productscience.EpochStage
 import com.productscience.data.UpdateParams
+import com.productscience.data.ProposalStatus
 import com.productscience.data.spec
 import com.productscience.data.AppState
 import com.productscience.data.InferenceState
@@ -128,7 +129,7 @@ class GovernanceTests : TestermintTest() {
         }
         assertThat(paramsProposal.finalTallyResult.noCount).isEqualTo(12)
         assertThat(paramsProposal.finalTallyResult.yesCount).isEqualTo(11)
-        assertThat(paramsProposal.status).isEqualTo(4)
+        assertThat(paramsProposal.status).isEqualTo(ProposalStatus.REJECTED)
         
         // Mark for reboot to reset parameters for subsequent tests
         genesis.markNeedsReboot()
