@@ -99,6 +99,7 @@ const (
 	Query_ActiveConfirmationPoCEvent_FullMethodName                = "/inference.inference.Query/ActiveConfirmationPoCEvent"
 	Query_ListConfirmationPoCEvents_FullMethodName                 = "/inference.inference.Query/ListConfirmationPoCEvents"
 	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
+	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
 )
 
 // QueryClient is the client API for Query service.
@@ -242,6 +243,8 @@ type QueryClient interface {
 	// Queries confirmation PoC events for a specific epoch.
 	ListConfirmationPoCEvents(ctx context.Context, in *QueryConfirmationPoCEventsRequest, opts ...grpc.CallOption) (*QueryConfirmationPoCEventsResponse, error)
 	ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error)
+	// Queries PoC validation snapshot for deterministic sampling synchronization.
+	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
 }
 
 type queryClient struct {
@@ -972,6 +975,15 @@ func (c *queryClient) ParticipantsWithBalances(ctx context.Context, in *QueryPar
 	return out, nil
 }
 
+func (c *queryClient) PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error) {
+	out := new(QueryPoCValidationSnapshotResponse)
+	err := c.cc.Invoke(ctx, Query_PoCValidationSnapshot_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -1113,6 +1125,8 @@ type QueryServer interface {
 	// Queries confirmation PoC events for a specific epoch.
 	ListConfirmationPoCEvents(context.Context, *QueryConfirmationPoCEventsRequest) (*QueryConfirmationPoCEventsResponse, error)
 	ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error)
+	// Queries PoC validation snapshot for deterministic sampling synchronization.
+	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1359,6 +1373,9 @@ func (UnimplementedQueryServer) ListConfirmationPoCEvents(context.Context, *Quer
 }
 func (UnimplementedQueryServer) ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParticipantsWithBalances not implemented")
+}
+func (UnimplementedQueryServer) PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PoCValidationSnapshot not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2813,6 +2830,24 @@ func _Query_ParticipantsWithBalances_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PoCValidationSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPoCValidationSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PoCValidationSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PoCValidationSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PoCValidationSnapshot(ctx, req.(*QueryPoCValidationSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3139,6 +3174,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ParticipantsWithBalances",
 			Handler:    _Query_ParticipantsWithBalances_Handler,
+		},
+		{
+			MethodName: "PoCValidationSnapshot",
+			Handler:    _Query_PoCValidationSnapshot_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

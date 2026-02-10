@@ -263,6 +263,19 @@ data class PocParams(
     val pocV2Enabled: Boolean = true,  // V2 enabled by default
     @SerializedName("confirmation_poc_v2_enabled")
     val confirmationPocV2Enabled: Boolean = true,  // V2 for confirmation PoC, enables migration mode
+    @SerializedName("stat_test")
+    val statTest: PoCStatTestParams? = null,
+    @SerializedName("validation_slots")
+    val validationSlots: Long = 2,
+)
+
+data class PoCStatTestParams(
+    @SerializedName("dist_threshold")
+    val distThreshold: Decimal? = null,
+    @SerializedName("p_mismatch")
+    val pMismatch: Decimal? = null,
+    @SerializedName("p_value_threshold")
+    val pValueThreshold: Decimal? = null,
 )
 
 data class PoCModelParams(

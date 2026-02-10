@@ -28,6 +28,7 @@ func TestComputeNewWeightsV1WithStakingValidators(t *testing.T) {
 	require.NoError(t, err, "Failed to convert operator address to account address")
 
 	// Create validators to be returned by the staking keeper
+	// validator2 has 201 tokens so a single valid vote exceeds 2/3 threshold (201 > 301*2/3 = 200.67)
 	validators := []stakingtypes.Validator{
 		{
 			OperatorAddress: validatorOperatorAddress1,
@@ -37,7 +38,7 @@ func TestComputeNewWeightsV1WithStakingValidators(t *testing.T) {
 		{
 			OperatorAddress: validatorOperatorAddress2,
 			ConsensusPubkey: &codectypes.Any{},
-			Tokens:          math.NewInt(200),
+			Tokens:          math.NewInt(201),
 		},
 	}
 

@@ -262,6 +262,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 
 	// GENERATION -> VALIDATION transition
 	if event.ShouldTransitionToValidation(blockHeight, epochParams) {
+		am.captureValidationSnapshot(ctx, blockHeight, event.TriggerHeight, "confirmation PoC")
+
 		event.Phase = types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION
 		updated = true
 		transitionCount++
@@ -300,6 +302,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
+			// Clean up validation snapshot
+			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
+
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to clear active confirmation PoC event: %w", err)
@@ -520,6 +525,31 @@ func (am AppModule) updateConfirmationWeightsV2(
 		"guardianEnabled", guardianEnabled,
 		"guardianAccAddrs", guardianAccAddrs)
 
+	// Get validation snapshot for sampling (if enabled)
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get params", types.PoC, "error", err)
+		return nil
+	}
+
+	var appHash string
+	var validationSlots int
+	if params.PocParams.ValidationSlots > 0 {
+		snapshot, snapshotFound, _ := am.keeper.GetPoCValidationSnapshot(ctx, event.TriggerHeight)
+		if snapshotFound {
+			appHash = snapshot.AppHash
+			validationSlots = int(params.PocParams.ValidationSlots)
+			am.LogInfo("updateConfirmationWeightsV2: Using validation snapshot for sampling", types.PoC,
+				"appHash", appHash,
+				"validationSlots", validationSlots,
+			)
+		} else {
+			am.LogWarn("updateConfirmationWeightsV2: Validation snapshot not found, falling back to O(N^2)", types.PoC,
+				"triggerHeight", event.TriggerHeight,
+			)
+		}
+	}
+
 	// Create WeightCalculator with store commits and distributions
 	calculator := NewWeightCalculator(
 		currentValidatorWeights,
@@ -533,6 +563,8 @@ func (am AppModule) updateConfirmationWeightsV2(
 		weightScaleFactor,
 		guardianEnabled,
 		guardianSet,
+		appHash,
+		validationSlots,
 	)
 
 	// Calculate confirmation weights

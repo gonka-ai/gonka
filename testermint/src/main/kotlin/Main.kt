@@ -495,6 +495,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[PocParams::modelId] = defaultModel
                 this[PocParams::seqLen] = 256L
                 this[PocParams::pocV2Enabled] = true
+                this[PocParams::validationSlots] = 2L
             }
         }
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {

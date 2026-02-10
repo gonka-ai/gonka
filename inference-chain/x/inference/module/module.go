@@ -1,9 +1,12 @@
 package inference
 
 import (
+	"cmp"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -427,6 +430,16 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
+	// Capture validation snapshot at poc_validation_start for deterministic sampling
+	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
+		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+		if found && upcomingEpoch != nil {
+			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
+		} else {
+			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
+		}
+	}
+
 	if currentEpochGroup.IsChanged(ctx) {
 		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight)
 		computeResult, err := currentEpochGroup.GetComputeResults(ctx)
@@ -625,6 +638,54 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
+
+	// Clean up validation snapshot after epoch transition
+	am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+}
+
+// captureValidationSnapshot stores validator weights and app_hash at validation phase start
+// for deterministic sampling synchronization between chain and DAPI.
+// Used by both regular PoC and confirmation PoC.
+func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
+	if err != nil {
+		am.LogError("captureValidationSnapshot: Failed to get validator weights", types.PoC,
+			"context", logContext, "error", err)
+		return
+	}
+
+	snapshot := types.PoCValidationSnapshot{
+		PocStageStartHeight: snapshotKey,
+		SnapshotHeight:      blockHeight,
+		AppHash:             hex.EncodeToString(sdkCtx.HeaderInfo().AppHash),
+		ValidatorWeights:    validatorWeightsMapToSlice(currentValidatorWeights),
+	}
+
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
+		am.LogError("captureValidationSnapshot: Failed to store snapshot", types.PoC,
+			"context", logContext, "error", err)
+		return
+	}
+
+	am.LogInfo("captureValidationSnapshot: Stored validation snapshot", types.PoC,
+		"context", logContext,
+		"snapshotKey", snapshotKey,
+		"snapshotHeight", blockHeight,
+		"numValidators", len(currentValidatorWeights),
+	)
+}
+
+func validatorWeightsMapToSlice(weights map[string]int64) []*types.ValidatorWeight {
+	result := make([]*types.ValidatorWeight, 0, len(weights))
+	for addr, w := range weights {
+		result = append(result, &types.ValidatorWeight{Address: addr, Weight: w})
+	}
+	slices.SortFunc(result, func(a, b *types.ValidatorWeight) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+	return result
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {

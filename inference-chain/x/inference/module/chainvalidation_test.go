@@ -38,6 +38,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	println(validatorAccAddress2)
 
 	// Create validators to be returned by the staking keeper
+	// validator2 has 201 tokens so a single valid vote exceeds 2/3 threshold (201 > 301*2/3 = 200.67)
 	validators := []stakingtypes.Validator{
 		{
 			OperatorAddress: validatorOperatorAddress1,
@@ -47,7 +48,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 		{
 			OperatorAddress: validatorOperatorAddress2,
 			ConsensusPubkey: &codectypes.Any{},
-			Tokens:          math.NewInt(200),
+			Tokens:          math.NewInt(201),
 		},
 	}
 
