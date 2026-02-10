@@ -16,10 +16,11 @@ const (
 	NormalizedParticipantsMaxSampleIterations = NormalizedParticipantsSampleSize * 3 / 2 // 10*1.5 = 15
 )
 
-// blockRef is a (blockHeight, blockHash) tuple for the FIFO eviction queue.
+// blockRef is a (blockHeight, blockHash, modelId) tuple for the FIFO eviction queue.
 type blockRef struct {
 	Height int64
 	Hash   []byte
+	Model  string
 }
 
 // ParticipantWeight is address and weight for building the normalized cache.
@@ -28,19 +29,25 @@ type ParticipantWeight struct {
 	Weight  int64
 }
 
-// normalizedWeightedParticipantsCache is an in-memory cache: blockHash -> BTree(cumulative normalized weight -> participant address).
-// A FIFO queue of (blockHeight, blockHash) drives eviction by height.
+// normalizedWeightedParticipantsCache is an in-memory cache:
+//   (blockHash, modelId) -> BTree(cumulative normalized weight -> participant address).
+// A FIFO queue of (blockHeight, blockHash, modelId) drives eviction by height.
 type normalizedWeightedParticipantsCache struct {
 	mu     sync.RWMutex
-	byHash map[string]*btree.Map[float64, string] // key = string(blockHash)
+	byKey  map[string]*btree.Map[float64, string] // key = string(blockHash) + "|" + modelId
 	queue  []blockRef
 }
 
 func newNormalizedWeightedParticipantsCache() *normalizedWeightedParticipantsCache {
 	return &normalizedWeightedParticipantsCache{
-		byHash: make(map[string]*btree.Map[float64, string]),
-		queue:  nil,
+		byKey: make(map[string]*btree.Map[float64, string]),
+		queue: nil,
 	}
+}
+
+// makeNormKey builds the cache key for (blockHash, modelId).
+func makeNormKey(blockHash []byte, modelId string) string {
+	return string(blockHash) + "|" + modelId
 }
 
 // BuildNormalizedTree returns a BTree of cumulative normalized weight -> participant address.
@@ -63,19 +70,23 @@ func (c *normalizedWeightedParticipantsCache) BuildNormalizedTree(participants [
 	return tree
 }
 
-// Add builds a normalized BTree from participant weights and stores it by blockHash.
-// (blockHeight, blockHash) is appended to the FIFO queue. Weights are normalized (weight/totalWeight),
+// Add builds a normalized BTree from participant weights and stores it by (blockHash, modelId).
+// (blockHeight, blockHash, modelId) is appended to the FIFO queue. Weights are normalized (weight/totalWeight),
 // participants with weight <= 0 are dropped, and the BTree keys are cumulative normalized weights.
-func (c *normalizedWeightedParticipantsCache) Add(blockHash []byte, blockHeight int64, participants []ParticipantWeight) {
+func (c *normalizedWeightedParticipantsCache) Add(blockHash []byte, blockHeight int64, modelId string, participants []ParticipantWeight) {
 	if len(blockHash) == 0 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	tree := c.BuildNormalizedTree(participants)
-	key := string(blockHash)
-	c.byHash[key] = tree
-	c.queue = append(c.queue, blockRef{Height: blockHeight, Hash: append([]byte(nil), blockHash...)})
+	key := makeNormKey(blockHash, modelId)
+	c.byKey[key] = tree
+	c.queue = append(c.queue, blockRef{
+		Height: blockHeight,
+		Hash:   append([]byte(nil), blockHash...),
+		Model:  modelId,
+	})
 }
 
 // ClearByHeight removes all entries with height < targetHeight from the cache (FIFO drain and delete by hash).
@@ -85,7 +96,7 @@ func (c *normalizedWeightedParticipantsCache) ClearByHeight(targetHeight int64) 
 	i := 0
 	for i < len(c.queue) && c.queue[i].Height < targetHeight {
 		ref := c.queue[i]
-		delete(c.byHash, string(ref.Hash))
+		delete(c.byKey, makeNormKey(ref.Hash, ref.Model))
 		i++
 	}
 	if i > 0 {
@@ -93,14 +104,14 @@ func (c *normalizedWeightedParticipantsCache) ClearByHeight(targetHeight int64) 
 	}
 }
 
-// Get returns the BTree for the given blockHash, or (nil, false) if not present.
+// Get returns the BTree for the given (blockHash, modelId), or (nil, false) if not present.
 // The tree maps cumulative normalized weight (float64) to participant address (string) for weighted sampling.
-func (c *normalizedWeightedParticipantsCache) Get(blockHash []byte) (*btree.Map[float64, string], bool) {
+func (c *normalizedWeightedParticipantsCache) Get(blockHash []byte, modelId string) (*btree.Map[float64, string], bool) {
 	if len(blockHash) == 0 {
 		return nil, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	tree, ok := c.byHash[string(blockHash)]
+	tree, ok := c.byKey[makeNormKey(blockHash, modelId)]
 	return tree, ok
 }

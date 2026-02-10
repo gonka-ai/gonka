@@ -22,12 +22,12 @@ func (k Keeper) OnInferenceValidationNeedsRevalidation(ctx context.Context, infe
 }
 
 // SampleNormalizedParticipantsForInference uses the normalized participants tree cached for the given
-// committed block (keyed by blockHash) and a deterministic pseudo-random sequence derived from
+// committed block and model (keyed by (blockHash, modelId)) and a deterministic pseudo-random sequence derived from
 // (blockHash, inferenceId) to pick up to NormalizedParticipantsSampleSize unique participants according to their weights.
 // It returns up to NormalizedParticipantsSampleSize distinct participant addresses (may be fewer if the tree is empty,
 // the cache is missing, or the tree has fewer unique participants than requested).
-func (k Keeper) SampleNormalizedParticipantsForInference(blockHash []byte, inferenceId string) []string {
-	tree, ok := k.GetNormalizedWeightedParticipants(blockHash)
+func (k Keeper) SampleNormalizedParticipantsForInference(blockHash []byte, modelId string, inferenceId string) []string {
+	tree, ok := k.GetNormalizedWeightedParticipants(blockHash, modelId)
 	if !ok || tree == nil {
 		return nil
 	}
@@ -134,25 +134,43 @@ func validationWeightsToParticipantWeights(vws []*types.ValidationWeight) []Part
 
 // SetNormalizedParticipantsForCommittedBlock computes normalized weighted participants for the
 // committed block from the current effective epoch group data (ValidationWeights -> ConfirmationWeight)
-// and adds them to the cache keyed by blockHash. Call once per commit from the Precommiter hook.
+// and adds them to the cache keyed by (blockHash, modelId). Call once per commit from the Precommiter hook.
 func (k *Keeper) SetNormalizedParticipantsForCommittedBlock(ctx context.Context, blockHeight int64, blockHash []byte) {
 	effEpoch, ok := k.GetEffectiveEpochIndex(ctx)
 	if !ok {
 		return
 	}
-	epochData, found := k.GetEpochGroupData(ctx, effEpoch, "")
+	// Parent epoch group (no modelId) — keep this entry for any global uses.
+	parentEpoch, found := k.GetEpochGroupData(ctx, effEpoch, "")
 	if !found {
 		return
 	}
-	weights := validationWeightsToParticipantWeights(epochData.GetValidationWeights())
-	k.normalizedWeightedParticipants.Add(blockHash, blockHeight, weights)
+	parentWeights := validationWeightsToParticipantWeights(parentEpoch.GetValidationWeights())
+	k.normalizedWeightedParticipants.Add(blockHash, blockHeight, "", parentWeights)
+
+	// Per-model epoch groups: build a separate normalized tree per model so revalidation/voting
+	// can select participants that actually support the inference's model.
+	for _, modelId := range parentEpoch.SubGroupModels {
+		if modelId == "" {
+			continue
+		}
+		subEpoch, found := k.GetEpochGroupData(ctx, effEpoch, modelId)
+		if !found {
+			continue
+		}
+		modelWeights := validationWeightsToParticipantWeights(subEpoch.GetValidationWeights())
+		if len(modelWeights) == 0 {
+			continue
+		}
+		k.normalizedWeightedParticipants.Add(blockHash, blockHeight, modelId, modelWeights)
+	}
 }
 
-// GetNormalizedWeightedParticipants returns the BTree for the given block hash if present in the cache.
+// GetNormalizedWeightedParticipants returns the BTree for the given (block hash, modelId) if present in the cache.
 // The tree maps cumulative normalized weight (float64) to participant address (string) for weighted sampling.
 // Cache holds the last NormalizedParticipantsCacheBlocks blocks.
-func (k Keeper) GetNormalizedWeightedParticipants(blockHash []byte) (*btree.Map[float64, string], bool) {
-	return k.normalizedWeightedParticipants.Get(blockHash)
+func (k Keeper) GetNormalizedWeightedParticipants(blockHash []byte, modelId string) (*btree.Map[float64, string], bool) {
+	return k.normalizedWeightedParticipants.Get(blockHash, modelId)
 }
 
 // IsParticipantEligibleToVoteOnRevalidation returns true if participantAddress is in the deterministic list
@@ -165,7 +183,8 @@ func (k Keeper) IsParticipantEligibleToVoteOnRevalidation(blockHeight int64, inf
 
 // ProcessPendingRevalidationEvents gets all inference_validation events with needs_revalidation=true
 // from the last finalized block, caches the list of participants selected to vote per (blockHeight, inferenceId),
-// and calls OnInferenceValidationNeedsRevalidation for each event.
+// and calls OnInferenceValidationNeedsRevalidation for each event. Participants are sampled from the
+// normalized tree for the specific model used by the inference.
 func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeight int64, blockHash []byte) {
 	var events []RevalidationEventInfo
 	if k.blockRevalidationEventsProvider != nil {
@@ -177,9 +196,17 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 			return
 		}
 	}
-	// Populate selected-to-vote cache for each inference (deterministic list from blockHash + inferenceId).
+	// Populate selected-to-vote cache for each inference (deterministic list from blockHash + inferenceId),
+	// using only participants that are in the epoch group for the inference's model.
 	for _, e := range events {
-		participants := k.SampleNormalizedParticipantsForInference(blockHash, e.InferenceId)
+		inference, found := k.GetInference(ctx, e.InferenceId)
+		if !found {
+			k.Logger().Error("ProcessPendingRevalidationEvents: inference not found for revalidation event",
+				"height", blockHeight, "inference_id", e.InferenceId)
+			continue
+		}
+		modelId := inference.Model
+		participants := k.SampleNormalizedParticipantsForInference(blockHash, modelId, e.InferenceId)
 		k.revalidationVoteParticipants.Add(blockHeight, e.InferenceId, participants)
 	}
 	for _, e := range events {

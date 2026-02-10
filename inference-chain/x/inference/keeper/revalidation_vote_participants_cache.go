@@ -4,23 +4,25 @@ import (
 	"sync"
 )
 
-// revalidationVoteCacheKey keys the "selected to vote" cache by block height and inference id.
+// revalidationVoteCacheKey tracks (blockHeight, inferenceId) for FIFO eviction by height.
 type revalidationVoteCacheKey struct {
 	Height     int64
 	InferenceId string
 }
 
 // revalidationVoteParticipantsCache holds the list of participant addresses selected to vote
-// on revalidation per (blockHeight, inferenceId). Evicted by height like the normalized participants cache.
+// on revalidation per inferenceId. Entries are evicted by height using the FIFO queue of
+// (blockHeight, inferenceId), but the primary lookup key is inferenceId so we don't need
+// to know the original event height at eligibility-check time.
 type revalidationVoteParticipantsCache struct {
 	mu     sync.RWMutex
-	byKey  map[revalidationVoteCacheKey][]string
+	byInf  map[string][]string
 	queue  []revalidationVoteCacheKey
 }
 
 func newRevalidationVoteParticipantsCache() *revalidationVoteParticipantsCache {
 	return &revalidationVoteParticipantsCache{
-		byKey: make(map[revalidationVoteCacheKey][]string),
+		byInf: make(map[string][]string),
 		queue: nil,
 	}
 }
@@ -36,7 +38,7 @@ func (c *revalidationVoteParticipantsCache) Add(blockHeight int64, inferenceId s
 	// Copy slice so caller can't mutate cache
 	list := make([]string, len(participants))
 	copy(list, participants)
-	c.byKey[key] = list
+	c.byInf[inferenceId] = list
 	c.queue = append(c.queue, key)
 }
 
@@ -46,7 +48,8 @@ func (c *revalidationVoteParticipantsCache) ClearByHeight(targetHeight int64) {
 	defer c.mu.Unlock()
 	i := 0
 	for i < len(c.queue) && c.queue[i].Height < targetHeight {
-		delete(c.byKey, c.queue[i])
+		ref := c.queue[i]
+		delete(c.byInf, ref.InferenceId)
 		i++
 	}
 	if i > 0 {
@@ -54,15 +57,14 @@ func (c *revalidationVoteParticipantsCache) ClearByHeight(targetHeight int64) {
 	}
 }
 
-// Get returns the list of participant addresses for the given (blockHeight, inferenceId), or (nil, false).
+// Get returns the list of participant addresses for the given inferenceId, or (nil, false).
 func (c *revalidationVoteParticipantsCache) Get(blockHeight int64, inferenceId string) ([]string, bool) {
 	if inferenceId == "" {
 		return nil, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	key := revalidationVoteCacheKey{Height: blockHeight, InferenceId: inferenceId}
-	list, ok := c.byKey[key]
+	list, ok := c.byInf[inferenceId]
 	return list, ok
 }
 

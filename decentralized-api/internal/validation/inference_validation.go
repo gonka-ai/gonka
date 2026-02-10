@@ -31,6 +31,7 @@ import (
 	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -171,20 +172,47 @@ func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, reco
 		ctxAtHeight = baseCtx
 	}
 
-	// Get effective epoch at that height, then EpochGroupData (ValidationWeights) at that height.
-	epochResp, err := queryClient.GetCurrentEpoch(ctxAtHeight, &types.QueryGetCurrentEpochRequest{})
-	if err != nil {
-		logging.Warn("Failed to query GetCurrentEpoch for revalidation.", types.Validation, "error", err)
+	// Run Inference and GetCurrentEpoch in parallel, both pinned to the event's block height.
+	// We need the inference's model to use model-specific EpochGroupData (same as chain: only participants
+	// that support this model are eligible to vote on revalidation), and the effective epoch at that height.
+	var (
+		inference  types.Inference
+		modelId    string
+		epochIndex uint64
+	)
+
+	g, gctx := errgroup.WithContext(ctxAtHeight)
+
+	g.Go(func() error {
+		resp, err := queryClient.Inference(gctx, &types.QueryGetInferenceRequest{Index: inferenceId})
+		if err != nil {
+			return err
+		}
+		inference = resp.Inference
+		modelId = inference.Model
+		return nil
+	})
+
+	g.Go(func() error {
+		resp, err := queryClient.GetCurrentEpoch(gctx, &types.QueryGetCurrentEpochRequest{})
+		if err != nil {
+			return err
+		}
+		epochIndex = resp.GetEpoch()
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		logging.Warn("Failed to query inference or current epoch for revalidation.", types.Validation, "error", err)
 		return
 	}
-	epochIndex := epochResp.GetEpoch()
 
 	epochDataResp, err := queryClient.EpochGroupData(ctxAtHeight, &types.QueryGetEpochGroupDataRequest{
 		EpochIndex: epochIndex,
-		ModelId:    "",
+		ModelId:    modelId,
 	})
 	if err != nil {
-		logging.Warn("Failed to query EpochGroupData for revalidation.", types.Validation, "error", err)
+		logging.Warn("Failed to query EpochGroupData for revalidation.", types.Validation, "error", err, "model", modelId)
 		return
 	}
 	epochData := epochDataResp.GetEpochGroupData()
@@ -208,15 +236,9 @@ func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, reco
 		return
 	}
 
-	r, err := queryClient.Inference(baseCtx, &types.QueryGetInferenceRequest{Index: inferenceId})
-	if err != nil {
-		logging.Warn("Failed to query Inference for revalidation.", types.Validation, "error", err)
-		return
-	}
-
 	logInferencesToValidate([]string{inferenceId})
 	go func() {
-		s.validateInferenceAndSendValMessage(r.Inference, recorder, true)
+		s.validateInferenceAndSendValMessage(inference, recorder, true)
 	}()
 }
 

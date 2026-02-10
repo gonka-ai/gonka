@@ -26,6 +26,21 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrValidationPayloadDeprecated
 	}
 
+	if msg.Revalidation {
+		// Revalidation path: only participants that were deterministically selected
+		// for this inference's revalidation vote are eligible to submit a vote.
+		blockHeight := ctx.BlockHeight()
+		if !k.IsParticipantEligibleToVoteOnRevalidation(blockHeight, msg.InferenceId, msg.Creator) {
+			k.LogError("Participant not eligible to vote on revalidation", types.Validation,
+				"participant", msg.Creator,
+				"inferenceId", msg.InferenceId,
+				"blockHeight", blockHeight)
+			return nil, types.ErrNotDesignatedValidator
+		}
+	} else {
+
+	}
+
 	creator, found := k.GetParticipant(ctx, msg.Creator)
 	if !found {
 		return nil, types.ErrParticipantNotFound
@@ -34,14 +49,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	if !found {
 		k.LogError("Inference not found", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, types.ErrInferenceNotFound
-	}
-
-	if !msg.Revalidation {
-		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
-		if err != nil {
-			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
-			return nil, err
-		}
 	}
 
 	if inference.Status == types.InferenceStatus_INVALIDATED {
