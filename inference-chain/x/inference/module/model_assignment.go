@@ -3,11 +3,11 @@ package inference
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"slices"
 
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -1054,12 +1054,11 @@ func (ma *ModelAssigner) sampleEligibleParticipantsWithHistory(
 		return []string{}
 	}
 
-	seed := fmt.Sprintf("filter_%d_%s_%s", upcomingEpoch.Index, allParticipantsHashStr, modelId)
-	hash := sha256.Sum256([]byte(seed))
-	seedInt := int64(binary.BigEndian.Uint64(hash[:8]))
+	seedStr := fmt.Sprintf("filter_%d_%s_%s", upcomingEpoch.Index, allParticipantsHashStr, modelId)
+	seedInt := calculations.SeedFromBytes([]byte(seedStr))
 	rng := rand.New(rand.NewSource(seedInt))
 
-	ma.LogInfo("Generated deterministic seed for participant selection", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "generate_filter_seed", "model_id", modelId, "seed_string", seed, "seed_int", seedInt)
+	ma.LogInfo("Generated deterministic seed for participant selection", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "generate_filter_seed", "model_id", modelId, "seed_string", seedStr, "seed_int", seedInt)
 
 	shuffledParticipants := make([]string, len(participantsWithHistory))
 	copy(shuffledParticipants, participantsWithHistory)

@@ -106,6 +106,8 @@ type (
 		randomSeedCache *randomSeedCache
 		// Normalized weighted participants per block: blockHash -> BTree(cumulative weight -> address). Last NormalizedParticipantsCacheBlocks blocks.
 		normalizedWeightedParticipants *normalizedWeightedParticipantsCache
+		// Selected-to-vote participants per (blockHeight, inferenceId); evicted after NormalizedParticipantsCacheBlocks blocks.
+		revalidationVoteParticipants *revalidationVoteParticipantsCache
 		// Optional: provides all inference_validation events with needs_revalidation=true for a block (e.g. from block results).
 		// When set, used in BeginBlock to get all events from the previous block; when nil, no revalidation hook is run.
 		blockRevalidationEventsProvider BlockRevalidationEventsProvider
@@ -300,6 +302,7 @@ func NewKeeper(
 		epochGroupCache:                &epochGroupCache{m: make(map[epochGroupCacheKey]types.EpochGroupData)},
 		randomSeedCache:                &randomSeedCache{m: make(map[randomSeedCacheKey]types.RandomSeed)},
 		normalizedWeightedParticipants: newNormalizedWeightedParticipantsCache(),
+		revalidationVoteParticipants:   newRevalidationVoteParticipantsCache(),
 		// Epoch collections wiring
 		Epochs: collections.NewMap(
 			sb,

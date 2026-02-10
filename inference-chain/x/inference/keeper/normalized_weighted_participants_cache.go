@@ -10,6 +10,10 @@ const (
 	// NormalizedParticipantsCacheBlocks is how many blocks to keep in the normalized weighted participants cache.
 	// Entries older than (currentHeight - NormalizedParticipantsCacheBlocks) are evicted in BeginBlock.
 	NormalizedParticipantsCacheBlocks = 300
+	// NormalizedParticipantsSampleSize is how many participants we pick per inference from the normalized tree.
+	NormalizedParticipantsSampleSize = 10
+	// NormalizedParticipantsMaxSampleIterations caps the sampling loop (avoid long spins when few unique participants).
+	NormalizedParticipantsMaxSampleIterations = NormalizedParticipantsSampleSize * 3 / 2 // 10*1.5 = 15
 )
 
 // blockRef is a (blockHeight, blockHash) tuple for the FIFO eviction queue.

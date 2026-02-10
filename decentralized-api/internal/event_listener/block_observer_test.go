@@ -50,6 +50,10 @@ func (m *mockTmHTTPClient) BlockResults(ctx context.Context, height *int64) (*co
 	return &coretypes.ResultBlockResults{TxsResults: txs}, nil
 }
 
+func (m *mockTmHTTPClient) Block(ctx context.Context, height *int64) (*coretypes.ResultBlock, error) {
+	return nil, nil
+}
+
 func (m *mockTmHTTPClient) Status(ctx context.Context) (*coretypes.ResultStatus, error) {
 	// Return a mock status with earliest block at 1 (full history available)
 	return &coretypes.ResultStatus{

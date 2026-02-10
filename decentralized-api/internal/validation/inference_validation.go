@@ -10,6 +10,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,15 +28,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/calculations"
+	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
 // ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
+
+// gRPC header for querying at a specific block height (same as chain).
+const grpcBlockHeightHeader = "x-cosmos-block-height"
 
 type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
@@ -56,7 +63,90 @@ func NewInferenceValidator(
 	}
 }
 
-func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient) {
+// cumulativeParticipant is a single entry in the normalized cumulative list (cumulative weight -> address).
+type cumulativeParticipant struct {
+	cum  float64
+	addr string
+}
+
+// buildNormalizedCumulativeList builds a slice of (cumulative normalized weight, address) from ValidationWeights
+// (using ConfirmationWeight), matching chain's validationWeightsToParticipantWeights + normalized tree order.
+func buildNormalizedCumulativeList(vws []*types.ValidationWeight) []cumulativeParticipant {
+	var total int64
+	for _, vw := range vws {
+		if vw != nil {
+			total += vw.GetConfirmationWeight()
+		}
+	}
+	if total <= 0 {
+		return nil
+	}
+	var out []cumulativeParticipant
+	var cum float64
+	for _, vw := range vws {
+		if vw == nil {
+			continue
+		}
+		w := vw.GetConfirmationWeight()
+		if w <= 0 {
+			continue
+		}
+		cum += float64(w) / float64(total)
+		out = append(out, cumulativeParticipant{cum: cum, addr: vw.GetMemberAddress()})
+	}
+	return out
+}
+
+// sampleRevalidationParticipants returns up to NormalizedParticipantsSampleSize unique participant addresses using
+// the same deterministic weighted sampling as the chain: seed from (blockHashBytes || inferenceId), then
+// for each random r in [0,1) pick the first participant whose cumulative weight >= r.
+func sampleRevalidationParticipants(blockHashHex, inferenceId string, cumulative []cumulativeParticipant) []string {
+	if len(cumulative) == 0 || inferenceId == "" {
+		return nil
+	}
+	blockHashBytes, err := hex.DecodeString(blockHashHex)
+	if err != nil {
+		return nil
+	}
+	seed := calculations.SeedFromBytes(append(append([]byte(nil), blockHashBytes...), []byte(inferenceId)...))
+	rng := rand.New(rand.NewSource(seed))
+
+	if len(cumulative) <= inferencekeeper.NormalizedParticipantsSampleSize {
+		out := make([]string, 0, len(cumulative))
+		for _, p := range cumulative {
+			out = append(out, p.addr)
+		}
+		return out
+	}
+
+	results := make([]string, 0, inferencekeeper.NormalizedParticipantsSampleSize)
+	seen := make(map[string]struct{})
+	iterations := 0
+	for len(results) < inferencekeeper.NormalizedParticipantsSampleSize && iterations < inferencekeeper.NormalizedParticipantsMaxSampleIterations {
+		iterations++
+		r := rng.Float64()
+		var chosen string
+		for _, p := range cumulative {
+			if p.cum >= r {
+				chosen = p.addr
+				break
+			}
+		}
+		if chosen == "" {
+			break
+		}
+		if _, already := seen[chosen]; !already {
+			seen[chosen] = struct{}{}
+			results = append(results, chosen)
+		}
+	}
+	return results
+}
+
+// VerifyInvalidation processes a revalidation event. blockHeight and blockHash are the height and hash of the block
+// where the event was emitted (from tx.height and tx.block_hash). We query EpochGroupData at that height, build
+// the normalized participants tree, and only run validation if this node is in the deterministic sampled set (same as chain).
+func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient, blockHeight int64, blockHash string) {
 	inferenceIds, ok := events["inference_validation.inference_id"]
 	if !ok || len(inferenceIds) == 0 {
 		logging.Error("No inference_id found in events", types.Validation)
@@ -64,13 +154,62 @@ func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, reco
 	}
 	inferenceId := inferenceIds[0]
 
-	logging.Debug("Verifying invalidation", types.Validation, "inference_id", inferenceId)
+	logging.Debug("Verifying invalidation", types.Validation, "inference_id", inferenceId, "block_hash", blockHash, "block_height", blockHeight)
+
+	if blockHeight <= 0 || blockHash == "" {
+		logging.Warn("Revalidation event missing block height or hash; skipping eligibility check.", types.Validation, "block_height", blockHeight, "block_hash", blockHash)
+	}
 
 	queryClient := recorder.NewInferenceQueryClient()
+	baseCtx := recorder.GetContext()
 
-	r, err := queryClient.Inference(recorder.GetContext(), &types.QueryGetInferenceRequest{Index: inferenceId})
+	// Pin queries to the event's block height so we use participants for the same height as the event.
+	var ctxAtHeight context.Context
+	if blockHeight > 0 {
+		ctxAtHeight = metadata.AppendToOutgoingContext(baseCtx, grpcBlockHeightHeader, strconv.FormatInt(blockHeight, 10))
+	} else {
+		ctxAtHeight = baseCtx
+	}
+
+	// Get effective epoch at that height, then EpochGroupData (ValidationWeights) at that height.
+	epochResp, err := queryClient.GetCurrentEpoch(ctxAtHeight, &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
-		// FIXME: what should we do with validating the transaction?
+		logging.Warn("Failed to query GetCurrentEpoch for revalidation.", types.Validation, "error", err)
+		return
+	}
+	epochIndex := epochResp.GetEpoch()
+
+	epochDataResp, err := queryClient.EpochGroupData(ctxAtHeight, &types.QueryGetEpochGroupDataRequest{
+		EpochIndex: epochIndex,
+		ModelId:    "",
+	})
+	if err != nil {
+		logging.Warn("Failed to query EpochGroupData for revalidation.", types.Validation, "error", err)
+		return
+	}
+	epochData := epochDataResp.GetEpochGroupData()
+	cumulative := buildNormalizedCumulativeList(epochData.ValidationWeights)
+	participants := sampleRevalidationParticipants(blockHash, inferenceId, cumulative)
+	if len(participants) == 0 {
+		logging.Debug("No revalidation participants sampled; skipping.", types.Validation, "inference_id", inferenceId)
+		return
+	}
+
+	ourAddress := recorder.GetAddress()
+	eligible := false
+	for _, addr := range participants {
+		if addr == ourAddress {
+			eligible = true
+			break
+		}
+	}
+	if !eligible {
+		logging.Debug("We are not in the revalidation sample; skipping validation.", types.Validation, "inference_id", inferenceId)
+		return
+	}
+
+	r, err := queryClient.Inference(baseCtx, &types.QueryGetInferenceRequest{Index: inferenceId})
+	if err != nil {
 		logging.Warn("Failed to query Inference for revalidation.", types.Validation, "error", err)
 		return
 	}
@@ -79,7 +218,6 @@ func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, reco
 	go func() {
 		s.validateInferenceAndSendValMessage(r.Inference, recorder, true)
 	}()
-
 }
 
 // shouldValidateInference determines if the current participant should validate a specific inference

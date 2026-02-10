@@ -447,7 +447,17 @@ func (e *InferenceValidationEventHandler) CanHandle(event *chainevents.JSONRPCRe
 
 func (e *InferenceValidationEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
 	if el.isNodeSynced() {
-		el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
+		var blockHash string
+		if hashes := event.Result.Events["tx.block_hash"]; len(hashes) > 0 {
+			blockHash = hashes[0]
+		}
+		var blockHeight int64
+		if heights := event.Result.Events["tx.height"]; len(heights) > 0 {
+			if h, err := strconv.ParseInt(heights[0], 10, 64); err == nil {
+				blockHeight = h
+			}
+		}
+		el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder, blockHeight, blockHash)
 	}
 	return nil
 }

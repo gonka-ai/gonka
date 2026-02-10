@@ -16,10 +16,109 @@ This document summarizes security findings, fixes, and performance optimizations
   - **Relevance:** Addresses the issue where repeated reads of epoch group data for the same epoch/model were hitting storage on every validation path.
 
 - **RandomSeed cache**  
+  We need a seed as we check if participant is eligable to validate the inference.
   A warm cache for participant seeds per epoch:
   - **Scope:** Current effective epoch only.
   - **Lifecycle:** Cleared and re-initialized when the effective epoch changes (`refreshRandomSeedCache`).
   - **Usage:** `GetRandomSeed` / `GetParticipantEpochSeed` use the cache so that `calculations.ShouldValidate` can be run without extra storage reads for seeds in the current epoch.
+
+- **Normalized participants tree cache (block hash/height bound)**  
+  In-memory cache keyed by **block hash**: each entry is a BTree mapping cumulative normalized weight → participant address, used for weighted sampling (e.g. revalidation). One entry is written per committed block when the Precommiter runs (`SetNormalizedParticipantsForCommittedBlock`), using the block’s height and hash. Lookup is via `GetNormalizedWeightedParticipants(blockHash)`. **Eviction:** Entries older than 300 blocks are dropped at block start: in `PrepareForBlock` we call `normalizedWeightedParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)` so only the last 300 blocks are kept. See `x/inference/keeper/normalized_weighted_participants_cache.go` (constant `NormalizedParticipantsCacheBlocks = 300`, `Add`, `ClearByHeight`, `Get`) and the eviction call in `x/inference/keeper/revalidation_init_hook.go` (`PrepareForBlock`).
+
+### Tx-bound draft for EpochGroupData (isolation during transaction)
+
+Cosmos SDK can revert a transaction on error (e.g. failed check, panic). Any in-memory cache updated during that tx would then reflect changes that never committed. To keep the shared EpochGroupData cache isolated per transaction we use a **tx-scoped draft** that is only merged into the real cache when the tx succeeds.
+
+**Implementation:**
+
+- **Context key:** A private type `ctxKeyEpochGroupDraft` is used as the context key. The value is a pointer to `map[epochGroupCacheKey]types.EpochGroupData` (the draft map).
+- **WithEpochGroupDraft(ctx):** Allocates a new draft map and attaches it to the context with `context.WithValue(ctx, ctxKeyEpochGroupDraft{}, &draft)`. Returns a new context; the draft is not shared across txs (works with parallel execution).
+- **getEpochGroupDraftFromContext(ctx):** Returns the draft map from the context, or `nil` if no draft is bound.
+
+**Flow:**
+
+1. **Tx start (AnteHandler)**  
+   `EpochGroupDraftDecorator.AnteHandle` runs before the tx is executed. It takes the SDK context’s underlying `context.Context`, calls `WithEpochGroupDraft(base)`, and re-attaches the new context to the SDK context via `ctx.WithContext(newBase)`. Every subsequent keeper call in this tx sees the same context and thus the same draft.
+
+2. **During tx execution**  
+   - **GetEpochGroupData:** If the context has a draft and the requested `(epochIndex, modelId)` is for the current or previous effective epoch, the keeper checks the **draft first**. If the key is in the draft, it returns that value (uncommitted writes visible within the tx). Otherwise it falls back to the real cache and then the store.  
+   - **SetEpochGroupData:** If the context has a draft and the epoch is current/previous, the write goes **only to the draft** (no update to the shared cache or store for current/previous). Other epochs still write through to the store.  
+   - **RemoveEpochGroupData:** If there is a draft, the key is removed from the draft so it is not re-applied on commit.
+
+3. **Tx success (PostHandler)**  
+   The app registers a PostHandler that runs after each tx. Only when the tx is **successful** it calls `keeper.CommitEpochGroupDraftFromContext(ctx)`. That reads the draft from the context and merges it into the keeper’s real `epochGroupCache` (for current/previous epoch keys); non-current epochs are written through to the store. After merge, the draft is no longer used.
+
+4. **Tx failure**  
+   If the tx fails or panics, the PostHandler does not run (or runs with `success == false`), so `CommitEpochGroupDraftFromContext` is never called. The draft is discarded when the context is released; the shared cache and store are unchanged.
+
+5. **Persistence**  
+   The real cache is still only in-memory. Current-epoch entries are flushed to the store in **EndBlock** via `FlushCurrentEpochGroupCache`. So: draft → (on success) real cache → (in EndBlock) store.
+
+**Result:** EpochGroupData updates for the current/previous epoch are isolated to the tx until it succeeds. Reverted txs never pollute the shared cache or the store.
+
+---
+
+### Revalidation events hook and block hash
+
+**Revalidation events** are `inference_validation` events emitted by the validation msg server with attribute `needs_revalidation=true`. The app hooks into them so that after a block is finalized we can run revalidation logic (e.g. weighted sampling) using the **block hash** of the block where the event was included.
+
+**How we hook to revalidation events:**
+
+1. **Event emission**  
+   In `msg_server_validation.go`, after processing a validation (or revalidation) message, the handler emits an event:
+
+   ```text
+   Event("inference_validation",
+     Attribute("inference_id", ...),
+     Attribute("validator", ...),
+     Attribute("needs_revalidation", "true"/"false"),
+     Attribute("passed", ...))
+   ```
+
+2. **Collection (PostHandler)**  
+   The app registers a **PostHandler** that runs after each **successful** tx. It reads `ctx.EventManager().Events()`, and for every event of type `inference_validation` with `needs_revalidation=true` (and non-empty `inference_id` and `validator`) it appends a `RevalidationEventInfo` to a **block-scoped collector**, keyed by **current block height** (`ctx.BlockHeight()`). So during block N we accumulate one list of revalidation events per height N.
+
+3. **Only committed execution**  
+   At **block start** (BeginBlock), `PrepareForBlock(currentBlockHeight)` is called. If the collector supports `ClearEventsForHeight`, we call `ClearEventsForHeight(currentBlockHeight)`. That clears the buffer for the **current** block height. So if the same block is re-executed (e.g. consensus round failed), we do not accumulate events from the failed run; only events from the execution that eventually commits remain when we process them.
+
+4. **Processing and block hash (Precommiter)**  
+   The app wires a **Precommiter** hook via `RevalidationCommitOption(keeper)`. When the block is **committed**, the SDK runs this hook. At that moment the block has been finalized, so:
+   - `height := ctx.BlockHeight()` is the height of the block we just committed.
+   - `hash := ctx.HeaderInfo().Hash` is that block’s **block hash** (from the header of the block being committed).
+
+   The Precommiter then:
+   - Calls `keeper.ProcessPendingRevalidationEvents(context.Background(), height, hash)`: the keeper uses `BlockRevalidationEventsProvider.GetInferenceValidationRevalidationEvents(ctx, height)` to get all revalidation events for that height (and removes them from the collector). For each event it calls `OnInferenceValidationNeedsRevalidation(ctx, inferenceId, validator, blockHeight, blockHash)` — so the block hash passed in is exactly the hash of the block where the event was included.
+   - Calls `keeper.SetNormalizedParticipantsForCommittedBlock(ctx, height, hash)` to build and cache the normalized weighted participants for this block, keyed by `blockHash`, for use in weighted sampling (e.g. revalidation).
+
+**Summary:** Revalidation events are collected per successful tx in the PostHandler (by block height). They are processed only once the block is committed, in the Precommiter, where we have the final **block hash** from `ctx.HeaderInfo().Hash`. That block hash is passed to `OnInferenceValidationNeedsRevalidation` and used to key the normalized-participants cache so downstream logic can use the correct block-bound randomness.
+
+### Deterministic revalidation participants (normalized tree cache)
+
+We use the normalized participants tree cache so that **which participants should vote on a given revalidation is deterministic and identical on every node**. It is fully determined by:
+
+- **Inference id** — the inference that needs revalidation (from the event).
+- **Block hash** — the hash of the block where the revalidation event was emitted (the committed block we get in the Precommiter).
+
+**How it works:**
+
+1. **Cache key:** The normalized tree is stored per **block hash**. For each committed block, the Precommiter calls `SetNormalizedParticipantsForCommittedBlock(ctx, height, hash)` so the tree for that block (cumulative normalized weight → participant address) is available via `GetNormalizedWeightedParticipants(blockHash)`.
+
+2. **Deterministic seed:** From `(blockHash, inferenceId)` we derive a single deterministic seed using the same method as elsewhere: `calculations.SeedFromBytes(blockHash || inferenceId)` (SHA-256, first 8 bytes as int64). No other inputs (time, node, etc.) are used.
+
+3. **Deterministic PRNG:** We instantiate `math/rand.New(rand.NewSource(seed))` with that seed. The sequence of random numbers (e.g. `Float64()`) is therefore fixed for that (blockHash, inferenceId) pair.
+
+4. **Weighted sampling:** We draw random values in [0, 1) from that PRNG and, for each value, find the participant whose cumulative normalized weight segment contains it (by ascending the tree and taking the first key ≥ the value). We collect up to `NormalizedParticipantsSampleSize` **unique** participants (re-drawing when we hit a duplicate, until we have enough or the tree is exhausted).
+
+**Result:** For a given revalidation event (inference_id + block hash where the event was emitted), every node computes the **same** set of participants who should vote. There is no per-node or per-call randomness; the same (blockHash, inferenceId) always yields the same ordered set of participants, weighted by their confirmation weight in that block’s epoch group. Implementation: `SampleNormalizedParticipantsForInference(blockHash, inferenceId)` in `x/inference/keeper/revalidation_init_hook.go`.
+
+**Performance characteristics:**
+
+- **Seed derivation:** O(len(blockHash) + len(inferenceId)) for SHA-256; one hash per (blockHash, inferenceId).
+- **Sampling:** Up to `NormalizedParticipantsSampleSize` (10) draws, each a `Float64()` plus a lower-bound lookup for the first key ≥ r. We use `Ascend(r, …)`, which seeks to the first key ≥ r in O(log P) and yields that element; we take only the first callback result. So per-draw cost is O(log P) where P = participants in tree, i.e. 10·log(P) total for the sampling loop.
+- **No storage reads:** Uses only the in-memory normalized tree (keyed by block hash) and in-memory PRNG; no KV or collections access.
+- **Cached vote list:** The resulting list of selected participants is cached in an in-memory map keyed by (blockHeight, inferenceId), populated when revalidation events are processed in the Precommiter (after the normalized tree for that block is set). Entries older than `NormalizedParticipantsCacheBlocks` (300) blocks are cleared in `PrepareForBlock`, in the same way as the normalized participants cache. Eligibility checks via `IsParticipantEligibleToVoteOnRevalidation(blockHeight, inferenceId, participantAddress)` are O(1) map lookup plus O(k) slice membership where k ≤ 10.
+
+---
 
 ### Planned extension
 

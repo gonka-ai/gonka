@@ -28,6 +28,7 @@ type BlockObserver struct {
 
 // TmHTTPClient abstracts the subset of RPC methods we need
 type TmHTTPClient interface {
+	Block(ctx context.Context, height *int64) (*coretypes.ResultBlock, error)
 	BlockResults(ctx context.Context, height *int64) (*coretypes.ResultBlockResults, error)
 	Status(ctx context.Context) (*coretypes.ResultStatus, error)
 }
@@ -187,17 +188,45 @@ func (bo *BlockObserver) processBlock(ctx context.Context, height int64) bool {
 		logging.Warn("BlockObserver tmClient is nil, skipping", types.EventProcessing)
 		return false
 	}
-	res, err := bo.tmClient.BlockResults(ctx, &height)
-	if err != nil || res == nil {
-		logging.Warn("Failed to fetch BlockResults", types.EventProcessing, "height", height, "error", err)
+	// Fetch BlockResults and Block in parallel (block hash is required for revalidation eligibility).
+	type blockResultsResult struct {
+		res *coretypes.ResultBlockResults
+		err error
+	}
+	type blockResult struct {
+		res *coretypes.ResultBlock
+		err error
+	}
+	chResults := make(chan blockResultsResult, 1)
+	chBlock := make(chan blockResult, 1)
+	go func() {
+		r, err := bo.tmClient.BlockResults(ctx, &height)
+		chResults <- blockResultsResult{r, err}
+	}()
+	go func() {
+		b, err := bo.tmClient.Block(ctx, &height)
+		chBlock <- blockResult{b, err}
+	}()
+
+	br := <-chResults
+	blockRes := <-chBlock
+	if br.err != nil || br.res == nil {
+		logging.Warn("Failed to fetch BlockResults", types.EventProcessing, "height", height, "error", br.err)
 		return false
 	}
+	if blockRes.err != nil || blockRes.res == nil || blockRes.res.Block == nil {
+		logging.Warn("Failed to fetch Block (block hash required)", types.EventProcessing, "height", height, "error", blockRes.err)
+		return false
+	}
+	res := br.res
+	blockHash := blockRes.res.Block.Hash().String()
 
 	// For each tx in the block, flatten events and enqueue as synthetic Tx events
 	for txIdx, txRes := range res.TxsResults {
 		events := make(map[string][]string)
-		// Include tx.height to satisfy waitForEventHeight
+		// Include tx.height and tx.block_hash (required for revalidation eligibility)
 		events["tx.height"] = []string{strconv.FormatInt(height, 10)}
+		events["tx.block_hash"] = []string{blockHash}
 
 		for _, ev := range txRes.Events {
 			evType := ev.Type

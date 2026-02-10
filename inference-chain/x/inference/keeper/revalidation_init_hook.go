@@ -2,7 +2,9 @@ package keeper
 
 import (
 	"context"
+	"math/rand"
 
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/tidwall/btree"
 )
@@ -17,6 +19,65 @@ func (k Keeper) OnInferenceValidationNeedsRevalidation(ctx context.Context, infe
 	_ = blockHeight
 	_ = blockHash
 	// Dummy: no-op. Replace with real logic (e.g. enqueue revalidation, log, metrics).
+}
+
+// SampleNormalizedParticipantsForInference uses the normalized participants tree cached for the given
+// committed block (keyed by blockHash) and a deterministic pseudo-random sequence derived from
+// (blockHash, inferenceId) to pick up to NormalizedParticipantsSampleSize unique participants according to their weights.
+// It returns up to NormalizedParticipantsSampleSize distinct participant addresses (may be fewer if the tree is empty,
+// the cache is missing, or the tree has fewer unique participants than requested).
+func (k Keeper) SampleNormalizedParticipantsForInference(blockHash []byte, inferenceId string) []string {
+	tree, ok := k.GetNormalizedWeightedParticipants(blockHash)
+	if !ok || tree == nil {
+		return nil
+	}
+	if inferenceId == "" {
+		return nil
+	}
+
+	n := tree.Len()
+	if n == 0 {
+		return nil
+	}
+	// If participants count <= sample size, take all (deterministic order: ascending by cumulative weight).
+	if n <= NormalizedParticipantsSampleSize {
+		all := make([]string, 0, n)
+		tree.Scan(func(weight float64, addr string) bool {
+			all = append(all, addr)
+			return true
+		})
+		return all
+	}
+
+	// Derive a deterministic seed from (blockHash || inferenceId) using the same random math as elsewhere.
+	seed := calculations.SeedFromBytes(append(append([]byte(nil), blockHash...), []byte(inferenceId)...))
+	rng := rand.New(rand.NewSource(seed))
+
+	results := make([]string, 0, NormalizedParticipantsSampleSize)
+	seen := make(map[string]struct{})
+	iterations := 0
+
+	for len(results) < NormalizedParticipantsSampleSize && iterations < NormalizedParticipantsMaxSampleIterations {
+		iterations++
+		r := rng.Float64() // in [0,1)
+		var chosen string
+
+		// Lower-bound seek: Ascend(r, ...) starts at first key >= r (O(log P) seek), then we take the first element only.
+		tree.Ascend(r, func(weight float64, addr string) bool {
+			chosen = addr
+			return false // take only the first (smallest key >= r)
+		})
+
+		if chosen == "" {
+			break
+		}
+		if _, already := seen[chosen]; !already {
+			seen[chosen] = struct{}{}
+			results = append(results, chosen)
+		}
+	}
+
+	return results
 }
 
 // BlockRevalidationEventsCollector is an optional extension of BlockRevalidationEventsProvider
@@ -45,6 +106,8 @@ func (k *Keeper) PrepareForBlock(ctx context.Context, currentBlockHeight int64) 
 
 	// Evict blocks older than (current - NormalizedParticipantsCacheBlocks) from the normalized participants cache.
 	k.normalizedWeightedParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
+	// Evict old entries from the selected-to-vote revalidation cache (same window).
+	k.revalidationVoteParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
 }
 
 // validationWeightsToParticipantWeights maps ValidationWeights to ParticipantWeight list (MemberAddress -> ConfirmationWeight).
@@ -92,10 +155,18 @@ func (k Keeper) GetNormalizedWeightedParticipants(blockHash []byte) (*btree.Map[
 	return k.normalizedWeightedParticipants.Get(blockHash)
 }
 
+// IsParticipantEligibleToVoteOnRevalidation returns true if participantAddress is in the deterministic list
+// of participants selected to vote on the revalidation for inferenceId that was emitted in the block at blockHeight.
+// The list is computed and cached when revalidation events are processed (Precommiter); cache is evicted
+// after NormalizedParticipantsCacheBlocks blocks. blockHeight is the height of the block where the revalidation event was emitted.
+func (k Keeper) IsParticipantEligibleToVoteOnRevalidation(blockHeight int64, inferenceId string, participantAddress string) bool {
+	return k.revalidationVoteParticipants.Contains(blockHeight, inferenceId, participantAddress)
+}
+
 // ProcessPendingRevalidationEvents gets all inference_validation events with needs_revalidation=true
-// from the last finalized block and calls OnInferenceValidationNeedsRevalidation for each.
-// When BlockRevalidationEventsProvider is set on the keeper, events are read from the provider
-func (k Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeight int64, blockHash []byte) {
+// from the last finalized block, caches the list of participants selected to vote per (blockHeight, inferenceId),
+// and calls OnInferenceValidationNeedsRevalidation for each event.
+func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeight int64, blockHash []byte) {
 	var events []RevalidationEventInfo
 	if k.blockRevalidationEventsProvider != nil {
 		var err error
@@ -105,6 +176,11 @@ func (k Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeigh
 			k.Logger().Error("BlockRevalidationEventsProvider failed", "height", blockHeight, "error", err)
 			return
 		}
+	}
+	// Populate selected-to-vote cache for each inference (deterministic list from blockHash + inferenceId).
+	for _, e := range events {
+		participants := k.SampleNormalizedParticipantsForInference(blockHash, e.InferenceId)
+		k.revalidationVoteParticipants.Add(blockHeight, e.InferenceId, participants)
 	}
 	for _, e := range events {
 		k.OnInferenceValidationNeedsRevalidation(ctx, e.InferenceId, e.Validator, blockHeight, blockHash)

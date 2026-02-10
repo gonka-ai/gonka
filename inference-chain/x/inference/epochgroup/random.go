@@ -12,7 +12,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// GetRandomMemberForModel gets a random member for a specific model
+// GetRandomMemberForModel gets a random member for a specific model.
+// Not blockchain-bound: returns a fresh random choice on each call (global RNG).
 func (eg *EpochGroup) GetRandomMemberForModel(
 	goCtx context.Context,
 	modelId string,
@@ -31,6 +32,8 @@ func (eg *EpochGroup) GetRandomMemberForModel(
 	return eg.GetRandomMember(goCtx, filterFn)
 }
 
+// GetRandomMember returns a random participant from the group.
+// Not blockchain-bound: returns a fresh random choice on each call (global RNG).
 func (eg *EpochGroup) GetRandomMember(
 	goCtx context.Context,
 	filterFn func([]*group.GroupMember) []*group.GroupMember,
@@ -67,14 +70,12 @@ func (eg *EpochGroup) GetRandomMember(
 
 func selectRandomParticipant(participants []*group.GroupMember) string {
 	cumulativeArray := computeCumulativeArray(participants)
-
 	randomNumber := rand.Int63n(cumulativeArray[len(cumulativeArray)-1])
 	for i, cumulativeWeight := range cumulativeArray {
 		if randomNumber < cumulativeWeight {
 			return participants[i].Member.Address
 		}
 	}
-
 	return participants[len(participants)-1].Member.Address
 }
 

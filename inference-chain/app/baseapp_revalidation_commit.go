@@ -18,9 +18,10 @@ func RevalidationCommitOption(keeper *inferencemodulekeeper.Keeper) func(*baseap
 		bapp.SetPrecommiter(func(ctx sdk.Context) {
 			height := ctx.BlockHeight()
 			hash := ctx.HeaderInfo().Hash
+			// Set normalized participants tree for this block first so ProcessPendingRevalidationEvents can sample and cache vote lists.
+			keeper.SetNormalizedParticipantsForCommittedBlock(ctx, height, hash)
 			//TODO: generalize events, process not only RevalidationEvents
 			keeper.ProcessPendingRevalidationEvents(context.Background(), height, hash)
-			keeper.SetNormalizedParticipantsForCommittedBlock(ctx, height, hash)
 		})
 	}
 }
