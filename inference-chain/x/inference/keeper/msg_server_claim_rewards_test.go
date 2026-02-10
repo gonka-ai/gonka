@@ -381,15 +381,15 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
-				Weight:        50, // Validator has 50 power
+				Weight:        80, // High validator weight keeps required validations above tiny-sample grace range
 			},
 			{
 				MemberAddress: testutil.Executor,
-				Weight:        30, // Executor1 has 30 power
+				Weight:        10, // Executor has low share, making this validator selected to validate more often
 			},
 			{
 				MemberAddress: testutil.Executor2,
-				Weight:        20, // Executor2 has 20 power
+				Weight:        10, // Executor has low share, making this validator selected to validate more often
 			},
 		},
 	}
@@ -427,7 +427,9 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		TrafficBasis:       1000,
 	}
 
-	// Add 7 more inferences to reach 10 total (critical value = 4, so missing 5+ will fail)
+	// Add 7 more inferences to reach 10 total.
+	// With the weight setup above, required validations are consistently >= 5,
+	// so missing all validations fails even with n<5 grace in stats table.
 	for i := 4; i <= 10; i++ {
 		executor := testutil.Executor
 		if i%2 == 0 {
@@ -469,7 +471,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
-	// With 10 inferences and critical value of 4, missing all 10 will exceed the threshold
+	// Missing all required validations should exceed the threshold.
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,
@@ -596,15 +598,15 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress: testutil.Creator,
-				Weight:        50, // Validator has 50 power
+				Weight:        80, // High validator weight keeps required validations above tiny-sample grace range
 			},
 			{
 				MemberAddress: testutil.Executor,
-				Weight:        30, // Executor1 has 30 power
+				Weight:        10, // Executor has low share, making this validator selected to validate more often
 			},
 			{
 				MemberAddress: testutil.Executor2,
-				Weight:        20, // Executor2 has 20 power
+				Weight:        10, // Executor has low share, making this validator selected to validate more often
 			},
 		},
 	}
@@ -642,7 +644,9 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		TrafficBasis:       1000,
 	}
 
-	// Add 7 more inferences to reach 10 total (critical value = 4, so missing 5+ will fail)
+	// Add 7 more inferences to reach 10 total.
+	// With the weight setup above, required validations are consistently >= 5,
+	// so missing all validations fails even with n<5 grace in stats table.
 	for i := 4; i <= 10; i++ {
 		executor := testutil.Executor
 		if i%2 == 0 {
@@ -684,7 +688,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
 	// Call ClaimRewards - this should fail because we haven't validated any inferences yet
-	// With 10 inferences, missing 4+ validations exceeds the critical value (4)
+	// Missing all required validations should exceed the threshold.
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
 		EpochIndex: epochIndex,

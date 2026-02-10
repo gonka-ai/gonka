@@ -72,7 +72,7 @@ class NodeDisableInferenceTests : TestermintTest() {
         
         assertThat(inferences).hasSize(requests)
         assertThat(inferences).allMatch { 
-            it.status == InferenceStatus.VALIDATED.value || it.status == InferenceStatus.FINISHED.value 
+            it.statusEnum == InferenceStatus.VALIDATED || it.statusEnum == InferenceStatus.FINISHED 
         }
         logSection("All 15 inferences succeeded")
 

@@ -392,12 +392,16 @@ fun GsonBuilder.registerCosmosTypes(): GsonBuilder {
         .registerTypeAdapter(Duration::class.java, DurationDeserializer())
         .registerTypeAdapter(Duration::class.java, DurationSerializer())
         .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
+        .registerTypeAdapter(Int::class.java, IntDeserializer())
+        .registerTypeAdapter(Integer::class.java, IntDeserializer())
         .registerTypeAdapter(Long::class.java, LongDeserializer())
         .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
         .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
         .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
         .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
         .registerTypeAdapter(ConfirmationPoCPhase::class.java, ConfirmationPoCPhaseDeserializer())
+        .registerTypeAdapter(InferenceStatus::class.java, InferenceStatusDeserializer())
+        .registerTypeAdapter(ProposalStatus::class.java, ProposalStatusDeserializer())
 }
 
 val cosmosJson: Gson = GsonBuilder()
