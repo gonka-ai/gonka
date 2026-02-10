@@ -70,7 +70,7 @@ func (k msgServer) refundInvalidatedInference(executor *types.Participant, infer
 
 	// Only deduct from executor after successful refund
 	executor.CoinBalance -= inference.ActualCost
-	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "inference_invalidated:"+inference.InferenceId)
+	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "invalidated_inference:"+inference.InferenceId)
 	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
 
 	return nil
