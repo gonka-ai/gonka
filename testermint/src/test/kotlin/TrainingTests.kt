@@ -75,13 +75,13 @@ class TrainingAllowListTests : TestermintTest() {
         genesis.runProposal(
             cluster, MsgSetTrainingAllowList(
                 addresses = listOf(),
-                role = ROLE_START,
+                role = NodeRole.START.value,
             )
         )
         genesis.runProposal(
             cluster, MsgSetTrainingAllowList(
                 addresses = listOf(genesis.node.getColdAddress()),
-                role = ROLE_EXEC
+                role = NodeRole.EXEC.value
             )
         )
         val genesisAddress = genesis.node.getColdAddress()
@@ -112,13 +112,13 @@ class TrainingAllowListTests : TestermintTest() {
         genesis.runProposal(
             cluster, MsgSetTrainingAllowList(
                 addresses = listOf(),
-                role = ROLE_EXEC,
+                role = NodeRole.EXEC.value,
             )
         )
         genesis.runProposal(
             cluster, MsgSetTrainingAllowList(
                 addresses = listOf(genesis.node.getColdAddress()),
-                role = ROLE_START
+                role = NodeRole.START.value
             )
         )
         val genesisAddress = genesis.node.getColdAddress()
@@ -146,8 +146,8 @@ class TrainingAllowListTests : TestermintTest() {
     @Order(2)
     fun `test exec allow list messages`() {
         val (cluster, genesis) = initCluster()
-        val role = ROLE_EXEC
-        val currentAllowList = genesis.node.getTrainingAllowList(role)
+        val role = NodeRole.EXEC.value
+        val currentAllowList = genesis.node.getTrainingAllowList(NodeRole.fromValue(role))
         assertThat(currentAllowList).isEmpty()
         logSection("Adding genesis address to allow list")
         genesis.runProposal(
@@ -156,7 +156,7 @@ class TrainingAllowListTests : TestermintTest() {
                 role = role
             )
         )
-        val newAllowList = genesis.node.getTrainingAllowList(role)
+        val newAllowList = genesis.node.getTrainingAllowList(NodeRole.fromValue(role))
         assertThat(newAllowList).hasSize(1)
         assertThat(newAllowList.first()).isEqualTo(genesis.node.getColdAddress())
         logSection("Replacing entire address list")
@@ -164,7 +164,7 @@ class TrainingAllowListTests : TestermintTest() {
             cluster,
             MsgSetTrainingAllowList(addresses = cluster.joinPairs.map { it.node.getColdAddress() }, role = role)
         )
-        val replacedAllowList = genesis.node.getTrainingAllowList(role)
+        val replacedAllowList = genesis.node.getTrainingAllowList(NodeRole.fromValue(role))
         assertThat(replacedAllowList).hasSize(cluster.joinPairs.size)
         assertThat(replacedAllowList).containsAll(cluster.joinPairs.map { it.node.getColdAddress() })
         logSection("Removing join address from allow list")
@@ -174,7 +174,7 @@ class TrainingAllowListTests : TestermintTest() {
                 role = role
             )
         )
-        val finalAllowList = genesis.node.getTrainingAllowList(role)
+        val finalAllowList = genesis.node.getTrainingAllowList(NodeRole.fromValue(role))
         assertThat(finalAllowList).doesNotContain(cluster.joinPairs.first().node.getColdAddress())
     }
 

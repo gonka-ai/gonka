@@ -2,9 +2,13 @@ package completionapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/types"
+
+	"decentralized-api/logging"
 )
 
 type ModifiedRequest struct {
@@ -38,11 +42,19 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 		requestMap["seed"] = defaultSeed
 	}
 
-	if doStream, ok := requestMap["stream"]; ok && doStream.(bool) {
-		if _, ok := requestMap["stream_options"]; !ok {
-			requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
-		} else {
-			requestMap["stream_options"].(map[string]interface{})["include_usage"] = true
+	// Use safe type assertion to avoid panic on malformed input
+	if doStream, ok := requestMap["stream"]; ok {
+		if doStreamBool, isBool := doStream.(bool); isBool && doStreamBool {
+			if streamOpts, exists := requestMap["stream_options"]; !exists {
+				requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
+			} else if streamOptsMap, isMap := streamOpts.(map[string]interface{}); isMap {
+				streamOptsMap["include_usage"] = true
+			} else {
+				// stream_options exists but is not a map - replace with valid map
+				logging.Warn("Malformed stream_options field received, replacing with defaults",
+					types.Inferences, "stream_options_value", fmt.Sprintf("%v", streamOpts))
+				requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
+			}
 		}
 	}
 

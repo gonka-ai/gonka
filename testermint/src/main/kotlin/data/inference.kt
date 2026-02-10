@@ -11,7 +11,7 @@ data class InferencePayload(
     val completionTokenCount: Int?,
     val requestedBy: String?,
     val executedBy: String?,
-    val status: Int,
+    val status: InferenceStatus,
     val startBlockHeight: Long,
     val endBlockHeight: Long?,
     val startBlockTimestamp: Long,
@@ -31,6 +31,9 @@ data class InferencePayload(
     @com.google.gson.annotations.SerializedName("epoch_id")
     val epochId: Long = 0,  // Phase 4: for offchain payload storage
 ) {
+    val statusEnum: InferenceStatus
+        get() = status
+
     companion object {
         fun empty() = InferencePayload(
             index = "",
@@ -43,7 +46,7 @@ data class InferencePayload(
             completionTokenCount = null,
             requestedBy = "",
             executedBy = null,
-            status = InferenceStatus.STARTED.value,
+            status = InferenceStatus.STARTED,
             startBlockHeight = 0L,
             endBlockHeight = null,
             startBlockTimestamp = 0L,
@@ -64,8 +67,9 @@ data class InferencePayload(
         !this.requestedBy.isNullOrEmpty() &&
                 !this.executedBy.isNullOrEmpty() &&
                 !this.model.isNullOrEmpty() &&
-                this.status > 0
+                this.statusEnum != InferenceStatus.STARTED
 }
+
 
 enum class InferenceStatus(val value: Int) {
     STARTED(0),
@@ -74,6 +78,27 @@ enum class InferenceStatus(val value: Int) {
     INVALIDATED(3),
     VOTING(4),
     EXPIRED(5),
+    UNSPECIFIED(6);
+
+    companion object {
+        fun fromValue(value: Int): InferenceStatus =
+            values().find { it.value == value } ?: UNSPECIFIED
+
+        fun fromAny(value: Any?): InferenceStatus {
+            return when (value) {
+                is String -> {
+                    if (value.isEmpty()) return UNSPECIFIED
+                    val normalized = value.removePrefix("INFERENCE_STATUS_")
+                    values().find { it.name == normalized } ?: run {
+                        val num = normalized.toIntOrNull()
+                        if (num != null) fromValue(num) else UNSPECIFIED
+                    }
+                }
+                is Number -> fromValue(value.toInt())
+                else -> UNSPECIFIED
+            }
+        }
+    }
 }
 
 data class InferencesWrapper(
