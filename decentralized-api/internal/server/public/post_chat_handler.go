@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -548,11 +549,15 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		var requestBody map[string]interface{}
-		if err := json.Unmarshal(modifiedRequestBody.NewBody, &requestBody); err != nil {
-			return nil, broker.NewApplicationActionError(fmt.Errorf("failed to unmarshal request body: %w", err))
+		req, err := http.NewRequest(http.MethodPost, completionsUrl, bytes.NewBuffer(modifiedRequestBody.NewBody))
+		if err != nil {
+			return nil, broker.NewApplicationActionError(fmt.Errorf("failed to create request: %w", err))
 		}
-		resp, postErr := utils.SendPostJsonRequestWithAuth(context.Background(), http.DefaultClient, completionsUrl, requestBody, node.AuthToken)
+		req.Header.Set("Content-Type", "application/json")
+		if strings.TrimSpace(node.AuthToken) != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", strings.TrimSpace(node.AuthToken)))
+		}
+		resp, postErr := s.httpClient.Do(req)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
