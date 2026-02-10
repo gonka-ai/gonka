@@ -5,7 +5,7 @@ import "sync"
 // revalidationVoteCacheKey tracks (blockHeight, inferenceId) for FIFO eviction by height.
 type revalidationVoteCacheKey struct {
 	Height      int64
-	InferenceId  string
+	InferenceId string
 }
 
 // revalidationVoteEntry holds the invalidator (first vote addr) and capped weights per participant for one inference.

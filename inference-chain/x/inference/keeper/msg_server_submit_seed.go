@@ -18,6 +18,7 @@ func (k msgServer) SubmitSeed(goCtx context.Context, msg *types.MsgSubmitSeed) (
 		Participant: msg.Creator,
 		EpochIndex:  msg.EpochIndex,
 		Signature:   msg.Signature,
+		Seed:        msg.Seed,
 	}
 
 	if err := k.SetRandomSeed(ctx, seed); err != nil {

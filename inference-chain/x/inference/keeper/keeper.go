@@ -108,7 +108,7 @@ type (
 		randomSeedCache *randomSeedCache
 		// Normalized weighted participants per block: blockHash -> BTree(cumulative weight -> address). Last NormalizedParticipantsCacheBlocks blocks.
 		normalizedWeightedParticipants *normalizedWeightedParticipantsCache
-	// Selected-to-vote participants per (blockHeight, inferenceId) with capped vote weights; evicted after NormalizedParticipantsCacheBlocks blocks.
+		// Selected-to-vote participants per (blockHeight, inferenceId) with capped vote weights; evicted after NormalizedParticipantsCacheBlocks blocks.
 		revalidationVoteParticipants *revalidationVoteParticipantsCache
 		// When true, revalidation votes are stored in InferenceRevalidations (keeper); when false, in ephemeralRevalidationVotes (cleared after 300 blocks).
 		storeRevalidationVotes bool
