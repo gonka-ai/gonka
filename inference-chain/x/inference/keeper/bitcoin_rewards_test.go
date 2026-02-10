@@ -2115,3 +2115,139 @@ func TestSettlementWithConfirmationCapping(t *testing.T) {
 	require.Less(t, effectiveWeight, vw.Weight,
 		"When confirmation PoC reveals lower capacity, effective weight should be capped")
 }
+
+func TestGetDynamicP0(t *testing.T) {
+	logger := createTestLogger(t)
+
+	t.Run("Healthy epoch uses governance p0", func(t *testing.T) {
+		minTotal := dynamicP0MinTotalRequests
+		p1 := minTotal / 5
+		p2 := minTotal / 5
+		p3 := minTotal / 5
+		p4 := minTotal / 5
+		p5 := minTotal - p1 - p2 - p3 - p4
+
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p1, MissedRequests: 0}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p2, MissedRequests: 0}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p3, MissedRequests: 0}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p4, MissedRequests: 0}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p5, MissedRequests: 0}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.NotNil(t, p0)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(100), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
+	t.Run("Degraded epoch selects 0.20", func(t *testing.T) {
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 220, MissedRequests: 30}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 220, MissedRequests: 30}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 176, MissedRequests: 24}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 132, MissedRequests: 18}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 132, MissedRequests: 18}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.NotNil(t, p0)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(200), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
+	t.Run("Snaps up to next supported table", func(t *testing.T) {
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 205, MissedRequests: 45}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 205, MissedRequests: 45}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 164, MissedRequests: 36}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 123, MissedRequests: 27}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 122, MissedRequests: 28}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.NotNil(t, p0)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(300), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
+	t.Run("Outage circuit breaker triggers at 0.50", func(t *testing.T) {
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 104, MissedRequests: 96}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 104, MissedRequests: 96}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 104, MissedRequests: 96}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 104, MissedRequests: 96}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 104, MissedRequests: 96}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.NotNil(t, p0)
+		require.True(t, skipPunishment)
+		require.Equal(t, int64(500), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
+	t.Run("Small sample falls back to governance", func(t *testing.T) {
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 50, MissedRequests: 50}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 50, MissedRequests: 50}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.NotNil(t, p0)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(100), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
+	t.Run("Never stricter than governance", func(t *testing.T) {
+		validationParams := &types.ValidationParams{BinomTestP0: permilleToP0Decimal(300)}
+
+		minTotal := dynamicP0MinTotalRequests
+		p1 := minTotal / 5
+		p2 := minTotal / 5
+		p3 := minTotal / 5
+		p4 := minTotal / 5
+		p5 := minTotal - p1 - p2 - p3 - p4
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p1, MissedRequests: 0}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p2, MissedRequests: 0}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p3, MissedRequests: 0}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p4, MissedRequests: 0}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p5, MissedRequests: 0}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, validationParams, 1, logger)
+		require.NotNil(t, p0)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(300), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
+	t.Run("Governance p0 snaps to supported table", func(t *testing.T) {
+		validationParams := &types.ValidationParams{BinomTestP0: &types.Decimal{Value: 12, Exponent: -2}}
+
+		minTotal := dynamicP0MinTotalRequests
+		p1 := minTotal / 5
+		p2 := minTotal / 5
+		p3 := minTotal / 5
+		p4 := minTotal / 5
+		p5 := minTotal - p1 - p2 - p3 - p4
+		participants := []types.Participant{
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p1, MissedRequests: 0}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p2, MissedRequests: 0}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p3, MissedRequests: 0}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p4, MissedRequests: 0}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: p5, MissedRequests: 0}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, validationParams, 1, logger)
+		require.NotNil(t, p0)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(200), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+}

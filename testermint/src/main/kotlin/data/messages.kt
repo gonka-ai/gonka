@@ -83,8 +83,19 @@ data class MsgRemoveUserFromTrainingAllowList(
     }
 }
 
+@Deprecated("Use NodeRole.EXEC.value instead")
 const val ROLE_EXEC = 0;
+@Deprecated("Use NodeRole.START.value instead")
 const val ROLE_START = 1;
+
+enum class NodeRole(val value: Int) {
+    EXEC(0),
+    START(1);
+
+    companion object {
+        fun fromValue(value: Int): NodeRole = values().find { it.value == value } ?: EXEC
+    }
+}
 
 data class MsgSetTrainingAllowList(
     val authority: String = "",
@@ -109,9 +120,36 @@ data class FinalTallyResult(
     val noWithVetoCount: Long
 )
 
+enum class ProposalStatus(val value: Int) {
+    UNSPECIFIED(0),
+    DEPOSIT_PERIOD(1),
+    VOTING_PERIOD(2),
+    PASSED(3),
+    REJECTED(4),
+    FAILED(5);
+
+    companion object {
+        fun fromValue(value: Int): ProposalStatus = values().find { it.value == value } ?: UNSPECIFIED
+
+        fun fromAny(value: Any?): ProposalStatus {
+            return when (value) {
+                is String -> {
+                    val normalized = value.removePrefix("PROPOSAL_STATUS_")
+                    values().find { it.name == normalized } ?: run {
+                        val num = normalized.toIntOrNull()
+                        if (num != null) values().find { it.value == num } ?: UNSPECIFIED else UNSPECIFIED
+                    }
+                }
+                is Number -> fromValue(value.toInt())
+                else -> UNSPECIFIED
+            }
+        }
+    }
+}
+
 data class GovernanceProposalResponse(
     val id: String,
-    val status: Int,
+    val status: ProposalStatus,
     val finalTallyResult: FinalTallyResult,
     val submitTime: Instant,
     val depositEndTime: Instant,
