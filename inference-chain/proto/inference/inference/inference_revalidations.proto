@@ -1,0 +1,22 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// RevalidationVote is a single participant's vote (used when returning a list; address comes from key).
+message RevalidationVote {
+  string address = 1;
+  int64 weight = 2;
+  bool pass = 3;
+}
+
+// RevalidationVoteRecord is the stored value for one vote; key is (inference_id, address).
+message RevalidationVoteRecord {
+  int64 weight = 1;
+  bool pass = 2;
+}
+
+// InferenceRevalidations holds all revalidation votes for one inference (return type only; storage uses composite key).
+message InferenceRevalidations {
+  repeated RevalidationVote votes = 1;
+}

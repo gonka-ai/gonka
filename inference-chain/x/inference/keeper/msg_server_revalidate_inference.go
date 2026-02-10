@@ -6,6 +6,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// Not needed anymore
 func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevalidateInference) (*types.MsgRevalidateInferenceResponse, error) {
 	inference, executor, err := k.validateDecisionMessage(ctx, msg)
 	if err != nil {

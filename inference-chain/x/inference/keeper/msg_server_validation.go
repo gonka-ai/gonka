@@ -37,8 +37,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 				"blockHeight", blockHeight)
 			return nil, types.ErrNotDesignatedValidator
 		}
-	} else {
-
 	}
 
 	creator, found := k.GetParticipant(ctx, msg.Creator)
@@ -162,7 +160,34 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	k.LogInfo("Validating inner loop", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
 	if msg.Revalidation {
-		return epochGroup.Revalidate(passed, inference, msg, ctx)
+		// Use capped revalidation vote weight from cache when available; fall back to confirmation weight.
+		voteWeight := participant.ConfirmationWeight
+		if w, ok := k.GetRevalidationVoteWeight(ctx.BlockHeight(), inference.InferenceId, msg.Creator); ok && w > 0 {
+			voteWeight = w
+		}
+		passTotal, noPassTotal, thresholdReached, invalidateWon, err := k.AddRevalidationVoteAndCheckThreshold(goCtx, inference.InferenceId, passed, msg.Creator, voteWeight, ctx.BlockHeight())
+		if err != nil {
+			k.LogError("Failed to add revalidation vote", types.Validation, "error", err)
+			return nil, err
+		}
+		k.LogInfo("Revalidation vote added", types.Validation, "inferenceId", inference.InferenceId, "participant", msg.Creator, "passed", passed, "weight", participant.ConfirmationWeight, "passTotal", passTotal, "noPassTotal", noPassTotal)
+		if thresholdReached {
+			if invalidateWon {
+				k.applyInvalidation(ctx, inference)
+			} else {
+				k.applyRevalidation(ctx, inference)
+			}
+		}
+		invalidator := k.GetRevalidationInvalidator(ctx, inference.InferenceId)
+		invalidatorAddr, err := sdk.AccAddressFromBech32(invalidator)
+		if err != nil {
+			return nil, err
+		}
+		err = k.ActiveInvalidations.Remove(ctx, collections.Join(invalidatorAddr, inference.InferenceId))
+		if err != nil {
+			k.LogError("Failed to remove active invalidation", types.Validation, "error", err)
+		}
+		return &types.MsgValidationResponse{}, nil
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
 		shouldShare, information := k.inferenceIsBeforeClaimsSet(ctx, inference, currentEpochIndex)
@@ -188,20 +213,11 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			return &types.MsgValidationResponse{}, nil
 		}
 		inference.Status = types.InferenceStatus_VOTING
-		proposalDetails, err := epochGroup.StartValidationVote(ctx, &inference, msg.Creator)
-		if err != nil {
-			return nil, err
-		}
 		msgCreatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
 		if err != nil {
 			return nil, err
 		}
-		err = k.ActiveInvalidations.Set(ctx, collections.Join(msgCreatorAddr, inference.InferenceId))
-		if err != nil {
-			k.LogError("Failed to set active invalidation", types.Validation, "error", err)
-		}
-
-		inference.ProposalDetails = proposalDetails
+		_ = k.ActiveInvalidations.Set(ctx, collections.Join(msgCreatorAddr, inference.InferenceId))
 		needsRevalidation = true
 	} else if currentEpochIndex != inference.EpochId {
 		k.LogWarn("Ignoring invalidation submitted after epoch changeover", types.Validation, "inferenceId", inference.InferenceId, "inferenceEpoch", inference.EpochId, "currentEpoch", currentEpochIndex)
@@ -408,4 +424,48 @@ func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *typ
 	}
 	k.LogInfo("Adding inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochPocStartBlockHeight)
 	return k.SetEpochGroupValidations(ctx, epochGroupValidations)
+}
+
+// applyInvalidation applies the outcome of an ephemeral revalidation vote (invalidate won).
+// Sets inference status to INVALIDATED, updates executor stats, and refunds if before claims set.
+func (k msgServer) applyInvalidation(ctx sdk.Context, inference types.Inference) {
+	if inference.Status == types.InferenceStatus_INVALIDATED {
+		return
+	}
+	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
+	if !found {
+		k.LogError("applyInvalidation: executor not found", types.Validation, "inferenceId", inference.InferenceId)
+		return
+	}
+	inference.Status = types.InferenceStatus_INVALIDATED
+	executor.CurrentEpochStats.InvalidatedInferences++
+	executor.ConsecutiveInvalidInferences++
+	epochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err == nil {
+		shouldRefund, _ := k.inferenceIsBeforeClaimsSet(ctx, inference, epochGroup.GroupData.EpochIndex)
+		if shouldRefund {
+			_ = k.refundInvalidatedInference(&executor, &inference, ctx)
+		}
+	}
+	_ = k.SetParticipant(ctx, executor)
+	_ = k.SetInference(ctx, inference)
+	k.LogInfo("Ephemeral revalidation: inference invalidated", types.Validation, "inferenceId", inference.InferenceId)
+}
+
+// applyRevalidation applies the outcome of an ephemeral revalidation vote (revalidate won).
+func (k msgServer) applyRevalidation(ctx sdk.Context, inference types.Inference) {
+	if inference.Status == types.InferenceStatus_VALIDATED {
+		return
+	}
+	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
+	if !found {
+		k.LogError("applyRevalidation: executor not found", types.Validation, "inferenceId", inference.InferenceId)
+		return
+	}
+	inference.Status = types.InferenceStatus_VALIDATED
+	executor.ConsecutiveInvalidInferences = 0
+	executor.CurrentEpochStats.ValidatedInferences++
+	_ = k.SetParticipant(ctx, executor)
+	_ = k.SetInference(ctx, inference)
+	k.LogInfo("Ephemeral revalidation: inference revalidated", types.Validation, "inferenceId", inference.InferenceId)
 }

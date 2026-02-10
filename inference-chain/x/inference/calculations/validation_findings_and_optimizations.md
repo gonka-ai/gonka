@@ -4,6 +4,18 @@ This document summarizes security findings, fixes, and performance optimizations
 
 ---
 
+## Important: Two-phase patch application
+
+**This validation patch should be applied in two phases.**
+
+- **Phase 1 (initial rollout):** Deploy with the designated-validator check (`ShouldValidate`) **skipped when the participant’s random seed is not found**. In `msg_server_validation.go`, when `GetParticipantEpochSeed` returns `!found`, the code currently sets `skipTheShouldValidateCheck = true` so validation/revalidation is still accepted. This is required because **seeds are only stored when the next epoch starts**; right after the patch, existing epochs may have no seeds in storage, and rejecting all validations would break the flow.
+
+- **Phase 2 (after seeds are populated):** Once the chain has run long enough that seeds are stored for the epochs that need validation (e.g. after the next epoch transition), **remove the skip** and enforce the designated-validator check: if the seed is not found, return an error (e.g. `types.ErrRandomSeedNotFound`) instead of allowing the message. See the TODO in `msg_server_validation.go` around the `skipTheShouldValidateCheck` block (lines 127–135).
+
+Do not remove the skip until seeds are reliably present for the epochs in use, or validators will be incorrectly rejected.
+
+---
+
 ## 1. Caching: EpochData and Seeds
 
 ### Implemented
@@ -120,10 +132,50 @@ We use the normalized participants tree cache so that **which participants shoul
 
 ---
 
+### Capped revalidation vote weights (20% with redistribution)
+
+Revalidation vote weights are **capped** so that no single participant can dominate the outcome. We apply a **hard cap of 20%** of the total eligible weight per participant. The cap is chosen so that **at least 3 validators** are required to reach a majority (50%): with each vote at most 20%, three votes sum to at most 60%, so reaching 50% still requires multiple participants.
+
+**How it works:**
+
+- When revalidation events are processed (`ProcessPendingRevalidationEvents`), we build the set of selected participants (invalidator + sampled participants) and their **raw** weights from the normalized block weights.
+- We compute **total eligible weight** as the sum of those participants’ raw weights.
+- **Cap limit** = 20% of total eligible weight. Each participant’s vote weight is then **min(raw weight, cap limit)**. No redistribution of “excess” weight is applied; the effective total used for threshold is the sum of these capped weights.
+- Capped weights are stored in the **revalidation vote participants cache** keyed by `(inferenceId, participant address)`, so when a participant submits a revalidation vote we use their **capped** weight (via `GetRevalidationVoteWeight`) rather than raw confirmation weight. The cache is evicted after `NormalizedParticipantsCacheBlocks` (300) blocks, together with the normalized participants tree.
+
+**Implementation:** `x/inference/keeper/revalidation_init_hook.go` (cap and cache population), `revalidation_vote_participants_cache.go` (storage and `GetWeight`), and `msg_server_validation.go` (use capped weight when adding a revalidation vote).
+
+---
+
+### Why we don't use x/group for revalidation voting
+
+Revalidation uses **small, randomly sampled groups** of participants (e.g. up to `NormalizedParticipantsSampleSize` per inference) chosen deterministically from the normalized tree. We **do not use Cosmos SDK x/group** for this voting because:
+
+- **Overhead of x/group:** Creating a group in x/group and running its proposal/voting flow involves significant on-chain work (group creation, proposal submission, vote tallying, execution). Doing that for every revalidation would mean a new group (or proposals on an existing group) per inference that needs revalidation.
+- **Small, ephemeral sets:** Our revalidation voters are a small, per-inference random subset that exists only for a short window (e.g. 300 blocks). Modeling each as an x/group group would be heavy and unnecessary.
+- **Keeper/cache path:** Instead, we use the **keeper path**: votes are either stored in keeper collections (`InferenceRevalidations`) or only in an in-memory cache, with a simple 50% weight threshold. This matches the small random groups and avoids x/group creation and voting overhead.
+
+So revalidation voting is implemented entirely in the inference module (keeper + optional ephemeral cache), not via x/group.
+
+---
+
+### Revalidation vote storage: `storeRevalidationVotes` (keeper vs cache only)
+
+The keeper has a flag **`storeRevalidationVotes`** that controls where revalidation votes are stored:
+
+- **`storeRevalidationVotes == false` (default)**  
+  Votes are kept **only in the in-memory ephemeral cache** (`ephemeralRevalidationVoteCache`). No revalidation votes are written to chain storage. The cache is evicted after `NormalizedParticipantsCacheBlocks` (300) blocks in `PrepareForBlock`. This avoids extra storage writes and keeps revalidation lightweight; suitable when the chain does not need to persist vote history.
+
+- **`storeRevalidationVotes == true`**  
+  Votes are stored in **keeper collections** (`InferenceRevalidations`, `InferenceRevalidationTotalEligibleWeight`). The same 50% threshold logic applies; totals are computed from stored votes. Use this when vote history or auditability is required.
+
+The app can set the mode after keeper construction via **`keeper.SetStoreRevalidationVotes(true)`** if persistence is desired; otherwise the default is cache-only.
+
+---
+
 ### Planned extension
 
-- **Revalidation vote weights**  
-  The cache layer will be extended with structures that hold revalidation vote weights. These structures will be scoped by a fixed **N blocks** (time-bound), not by epoch, and will be cleared after N blocks to avoid unbounded growth.
+- Any further extensions to revalidation vote weights or audit structures can build on the above (capped weights in cache and optional persistent storage).
 
 ---
 

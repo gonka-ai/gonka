@@ -9,6 +9,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// Not needed anymore
 func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvalidateInference) (*types.MsgInvalidateInferenceResponse, error) {
 	inference, executor, err := k.validateDecisionMessage(ctx, msg)
 	if err != nil {

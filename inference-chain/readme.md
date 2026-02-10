@@ -33,15 +33,18 @@ After changing `.proto` files, regenerate Go code using [Ignite CLI](https://ign
 **Important** Ignite 28.10.0 should be used!
 
 1. **Install Ignite CLI** (one-time):
+
    ```shell
    curl https://get.ignite.com/cli@v28.10.0 | bash
    ```
 
 2. **From the inference-chain directory**:
+
    ```shell
    cd inference-chain
    ignite generate proto-go
    ```
+
    Or use the Makefile: `make proto-gen` (same as `make proto-gen-ignite`).
 
 3. **From the repo root**: `make proto-gen` (runs Ignite in inference-chain).

@@ -94,20 +94,26 @@ type (
 		ModelCurrentPriceMap collections.Map[string, uint64]
 		ModelCapacityMap     collections.Map[string, uint64]
 		// Governance models
-		Models                        collections.Map[string, types.Model]
-		Inferences                    collections.Map[string, types.Inference]
-		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
-		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
-		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
-		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		Models                                   collections.Map[string, types.Model]
+		Inferences                               collections.Map[string, types.Inference]
+		InferenceTimeouts                        collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
+		InferenceValidationDetailsMap            collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
+		InferenceRevalidations                   collections.Map[collections.Pair[string, string], types.RevalidationVoteRecord]
+		InferenceRevalidationTotalEligibleWeight collections.Map[string, int64]
+		UnitOfComputePriceProposals              collections.Map[string, types.UnitOfComputePriceProposal]
+		EpochGroupDataMap                        collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 		// EpochGroupData hot cache: current and previous effective epoch only; inited on first Get, refreshed on SetEffectiveEpochIndex.
 		epochGroupCache *epochGroupCache
 		// RandomSeed warm cache: current effective epoch only; inited on first Get, refreshed on SetEffectiveEpochIndex.
 		randomSeedCache *randomSeedCache
 		// Normalized weighted participants per block: blockHash -> BTree(cumulative weight -> address). Last NormalizedParticipantsCacheBlocks blocks.
 		normalizedWeightedParticipants *normalizedWeightedParticipantsCache
-		// Selected-to-vote participants per (blockHeight, inferenceId); evicted after NormalizedParticipantsCacheBlocks blocks.
+	// Selected-to-vote participants per (blockHeight, inferenceId) with capped vote weights; evicted after NormalizedParticipantsCacheBlocks blocks.
 		revalidationVoteParticipants *revalidationVoteParticipantsCache
+		// When true, revalidation votes are stored in InferenceRevalidations (keeper); when false, in ephemeralRevalidationVotes (cleared after 300 blocks).
+		storeRevalidationVotes bool
+		// Ephemeral revalidation votes when storeRevalidationVotes is false; evicted after NormalizedParticipantsCacheBlocks blocks.
+		ephemeralRevalidationVotes *ephemeralRevalidationVoteCache
 		// Optional: provides all inference_validation events with needs_revalidation=true for a block (e.g. from block results).
 		// When set, used in BeginBlock to get all events from the previous block; when nil, no revalidation hook is run.
 		blockRevalidationEventsProvider BlockRevalidationEventsProvider
@@ -284,6 +290,20 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.InferenceValidationDetails](cdc),
 		),
+		InferenceRevalidations: collections.NewMap(
+			sb,
+			types.InferenceRevalidationsPrefix,
+			"inference_revalidations",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			codec.CollValue[types.RevalidationVoteRecord](cdc),
+		),
+		InferenceRevalidationTotalEligibleWeight: collections.NewMap(
+			sb,
+			types.InferenceRevalidationTotalWeightPrefix,
+			"inference_revalidation_total_eligible_weight",
+			collections.StringKey,
+			collections.Int64Value,
+		),
 		InferenceTimeouts: collections.NewMap(
 			sb,
 			types.InferenceTimeoutPrefix,
@@ -303,6 +323,8 @@ func NewKeeper(
 		randomSeedCache:                &randomSeedCache{m: make(map[randomSeedCacheKey]types.RandomSeed)},
 		normalizedWeightedParticipants: newNormalizedWeightedParticipantsCache(),
 		revalidationVoteParticipants:   newRevalidationVoteParticipantsCache(),
+		storeRevalidationVotes:         false,
+		ephemeralRevalidationVotes:     newEphemeralRevalidationVoteCache(),
 		// Epoch collections wiring
 		Epochs: collections.NewMap(
 			sb,
@@ -544,6 +566,12 @@ func (k Keeper) Codec() codec.BinaryCodec {
 // after creating the keeper to enable the revalidation hook with all events from the previous block.
 func (k *Keeper) SetBlockRevalidationEventsProvider(p BlockRevalidationEventsProvider) {
 	k.blockRevalidationEventsProvider = p
+}
+
+// SetStoreRevalidationVotes sets whether revalidation votes are persisted to keeper storage (true)
+// or only kept in the ephemeral cache cleared after NormalizedParticipantsCacheBlocks blocks (false).
+func (k *Keeper) SetStoreRevalidationVotes(store bool) {
+	k.storeRevalidationVotes = store
 }
 
 type EntryType int

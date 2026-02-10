@@ -4,22 +4,12 @@ import (
 	"context"
 	"math/rand"
 
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/tidwall/btree"
 )
-
-// OnInferenceValidationNeedsRevalidation is called in BeginBlock (of the next block) for each
-// inference_validation event from the previous block with needs_revalidation=true. At that time
-// the block is finalized and blockHeight/blockHash are known. Dummy implementation; override or extend as needed.
-func (k Keeper) OnInferenceValidationNeedsRevalidation(ctx context.Context, inferenceId, validator string, blockHeight int64, blockHash []byte) {
-	_ = ctx
-	_ = inferenceId
-	_ = validator
-	_ = blockHeight
-	_ = blockHash
-	// Dummy: no-op. Replace with real logic (e.g. enqueue revalidation, log, metrics).
-}
 
 // SampleNormalizedParticipantsForInference uses the normalized participants tree cached for the given
 // committed block and model (keyed by (blockHash, modelId)) and a deterministic pseudo-random sequence derived from
@@ -106,8 +96,21 @@ func (k *Keeper) PrepareForBlock(ctx context.Context, currentBlockHeight int64) 
 
 	// Evict blocks older than (current - NormalizedParticipantsCacheBlocks) from the normalized participants cache.
 	k.normalizedWeightedParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
-	// Evict old entries from the selected-to-vote revalidation cache (same window).
-	k.revalidationVoteParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
+	// Evict old entries from the selected-to-vote revalidation cache (same window) and remove
+	// corresponding ActiveInvalidations (invalidator, inferenceId) so they don't outlive the cache.
+	evicted := k.revalidationVoteParticipants.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
+	for _, e := range evicted {
+		if e.InferenceId == "" || e.Invalidator == "" {
+			continue
+		}
+		addr, err := sdk.AccAddressFromBech32(e.Invalidator)
+		if err != nil {
+			continue
+		}
+		_ = k.ActiveInvalidations.Remove(ctx, collections.Join(addr, e.InferenceId))
+	}
+	// Evict old entries from the ephemeral revalidation votes cache (same window).
+	k.ephemeralRevalidationVotes.ClearByHeight(currentBlockHeight - NormalizedParticipantsCacheBlocks)
 }
 
 // validationWeightsToParticipantWeights maps ValidationWeights to ParticipantWeight list (MemberAddress -> ConfirmationWeight).
@@ -181,10 +184,15 @@ func (k Keeper) IsParticipantEligibleToVoteOnRevalidation(blockHeight int64, inf
 	return k.revalidationVoteParticipants.Contains(blockHeight, inferenceId, participantAddress)
 }
 
+// GetRevalidationVoteWeight returns the capped vote weight for (inferenceId, participantAddress)
+// from the in-memory revalidationVoteParticipants cache, if present.
+func (k Keeper) GetRevalidationVoteWeight(blockHeight int64, inferenceId string, participantAddress string) (int64, bool) {
+	return k.revalidationVoteParticipants.GetWeight(blockHeight, inferenceId, participantAddress)
+}
+
 // ProcessPendingRevalidationEvents gets all inference_validation events with needs_revalidation=true
 // from the last finalized block, caches the list of participants selected to vote per (blockHeight, inferenceId),
-// and calls OnInferenceValidationNeedsRevalidation for each event. Participants are sampled from the
-// normalized tree for the specific model used by the inference.
+// Participants are sampled from the normalized tree for the specific model used by the inference.
 func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeight int64, blockHash []byte) {
 	var events []RevalidationEventInfo
 	if k.blockRevalidationEventsProvider != nil {
@@ -196,8 +204,8 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 			return
 		}
 	}
-	// Populate selected-to-vote cache for each inference (deterministic list from blockHash + inferenceId),
-	// using only participants that are in the epoch group for the inference's model.
+	// Populate selected-to-vote cache and start revalidation vote (keeper or ephemeral cache) per inference.
+	effEpoch, _ := k.GetEffectiveEpochIndex(ctx)
 	for _, e := range events {
 		inference, found := k.GetInference(ctx, e.InferenceId)
 		if !found {
@@ -207,9 +215,66 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 		}
 		modelId := inference.Model
 		participants := k.SampleNormalizedParticipantsForInference(blockHash, modelId, e.InferenceId)
-		k.revalidationVoteParticipants.Add(blockHeight, e.InferenceId, participants)
-	}
-	for _, e := range events {
-		k.OnInferenceValidationNeedsRevalidation(ctx, e.InferenceId, e.Validator, blockHeight, blockHash)
+
+		groupData, foundGroup := k.GetEpochGroupData(ctx, effEpoch, modelId)
+		if !foundGroup {
+			continue
+		}
+		weightMap := make(map[string]int64)
+		for _, w := range validationWeightsToParticipantWeights(groupData.GetValidationWeights()) {
+			weightMap[w.Address] = w.Weight
+		}
+		// Build selected participant -> raw weight map (including invalidator) for this inference.
+		selected := make(map[string]int64)
+		var totalEligibleWeight int64
+
+		if w := weightMap[e.Validator]; w > 0 {
+			selected[e.Validator] = w
+			totalEligibleWeight += w
+		}
+		for _, p := range participants {
+			if p == e.Validator {
+				continue
+			}
+			if w := weightMap[p]; w > 0 {
+				selected[p] = w
+				totalEligibleWeight += w
+			}
+		}
+		if totalEligibleWeight == 0 {
+			continue
+		}
+
+		// Apply hard 20% cap with redistribution effect: each participant's vote weight
+		// is capped at 20% of totalEligibleWeight; the new total is the sum of capped weights.
+		const capPercent int64 = 20
+		capLimit := (totalEligibleWeight * capPercent) / 100
+		if capLimit <= 0 {
+			continue
+		}
+
+		capped := make(map[string]int64, len(selected))
+		var cappedTotal int64
+		for addr, w := range selected {
+			if w > capLimit {
+				w = capLimit
+			}
+			capped[addr] = w
+			cappedTotal += w
+		}
+		if cappedTotal == 0 {
+			continue
+		}
+
+		// Store invalidator and capped weights in the revalidation vote participants cache so that
+		// revalidation voting can use the capped weights per (inferenceId, participant), and
+		// ActiveInvalidations can be cleaned up when the cache is evicted (same invalidator key).
+		k.revalidationVoteParticipants.Add(blockHeight, e.InferenceId, e.Validator, capped)
+
+		invalidatorWeight := capped[e.Validator]
+		// Initiate vote for the invalidator (first vote) with capped invalidator weight.
+		if err := k.StartRevalidationVote(ctx, e.InferenceId, e.Validator, invalidatorWeight, cappedTotal, blockHeight); err != nil {
+			k.Logger().Error("ProcessPendingRevalidationEvents: StartRevalidationVote failed", "inference_id", e.InferenceId, "error", err)
+		}
 	}
 }

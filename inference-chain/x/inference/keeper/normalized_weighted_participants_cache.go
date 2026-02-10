@@ -30,12 +30,14 @@ type ParticipantWeight struct {
 }
 
 // normalizedWeightedParticipantsCache is an in-memory cache:
-//   (blockHash, modelId) -> BTree(cumulative normalized weight -> participant address).
+//
+//	(blockHash, modelId) -> BTree(cumulative normalized weight -> participant address).
+//
 // A FIFO queue of (blockHeight, blockHash, modelId) drives eviction by height.
 type normalizedWeightedParticipantsCache struct {
-	mu     sync.RWMutex
-	byKey  map[string]*btree.Map[float64, string] // key = string(blockHash) + "|" + modelId
-	queue  []blockRef
+	mu    sync.RWMutex
+	byKey map[string]*btree.Map[float64, string] // key = string(blockHash) + "|" + modelId
+	queue []blockRef
 }
 
 func newNormalizedWeightedParticipantsCache() *normalizedWeightedParticipantsCache {
