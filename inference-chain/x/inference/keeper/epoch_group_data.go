@@ -137,8 +137,8 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// If cache is not yet initialized (e.g. during genesis) or not current epoch, write through immediately.
-	if !c.inited || epochIdx != c.current || epochIdx != c.previous {
+	// If cache is not yet initialized (e.g. during genesis) or epoch is neither current nor previous, write through only.
+	if !c.inited || (epochIdx != c.current && epochIdx != c.previous) {
 		k.EpochGroupDataMap.Set(ctx, collections.Join(epochIdx, modelId), epochGroupData)
 		return
 	}
