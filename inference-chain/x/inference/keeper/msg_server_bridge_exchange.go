@@ -34,6 +34,15 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"blockNumber", msg.BlockNumber,
 		"receiptIndex", msg.ReceiptIndex)
 
+	// Validate that the contract address is a registered bridge contract for this chain
+	normalizedChain := strings.ToLower(msg.OriginChain)
+	normalizedContract := strings.ToLower(msg.ContractAddress)
+	if !k.HasBridgeContractAddress(ctx, normalizedChain, normalizedContract) {
+		k.LogError("Bridge exchange: Unregistered bridge contract address", types.Messages,
+			"originChain", msg.OriginChain, "contractAddress", msg.ContractAddress)
+		return nil, fmt.Errorf("unregistered bridge contract address %s for chain %s", msg.ContractAddress, msg.OriginChain)
+	}
+
 	// Parse the amount to ensure it's valid
 	_, ok := new(big.Int).SetString(msg.Amount, 10)
 	if !ok {
@@ -59,9 +68,10 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	}
 
 	// Create transaction object with all the content for secure validation
+	// Use normalized chain/contract values to prevent case-variant duplicate transactions
 	proposedTx := &types.BridgeTransaction{
-		ChainId:         msg.OriginChain,
-		ContractAddress: msg.ContractAddress,
+		ChainId:         normalizedChain,
+		ContractAddress: normalizedContract,
 		OwnerAddress:    msg.OwnerAddress,
 		Amount:          msg.Amount,
 		BlockNumber:     msg.BlockNumber,

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
@@ -17,6 +18,9 @@ func (k Keeper) generateBridgeAddressKey(_ context.Context, chainId, address str
 
 // SetBridgeContractAddress stores a bridge contract address
 func (k Keeper) SetBridgeContractAddress(ctx context.Context, address types.BridgeContractAddress) {
+	// Normalize to lowercase for case-insensitive matching
+	address.ChainId = strings.ToLower(address.ChainId)
+	address.Address = strings.ToLower(address.Address)
 	address.Id = k.generateBridgeAddressKey(ctx, address.ChainId, address.Address)
 	if err := k.BridgeContractAddresses.Set(ctx, collections.Join(address.ChainId, address.Address), address); err != nil {
 		k.LogError("Bridge exchange: Failed to set bridge contract address",

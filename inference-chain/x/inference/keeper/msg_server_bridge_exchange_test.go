@@ -58,6 +58,12 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 		}, nil,
 	).AnyTimes()
 
+	// Register the bridge contract address
+	k.SetBridgeContractAddress(ctx, types.BridgeContractAddress{
+		ChainId: "ethereum",
+		Address: "0x123",
+	})
+
 	// First Vote (Lowercase)
 	msg1 := &types.MsgBridgeExchange{
 		OriginChain:     "ethereum",
@@ -91,4 +97,84 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 	if err != nil {
 		require.Contains(t, err.Error(), "validator has already validated this transaction")
 	}
+}
+
+func TestBridgeExchange_CaseInsensitiveContractAddress(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	// Register bridge contract with lowercase values
+	k.SetBridgeContractAddress(ctx, types.BridgeContractAddress{
+		ChainId: "ethereum",
+		Address: "0x123",
+	})
+
+	// Setup Validator
+	validatorAddr := "gonka13779rkgy6ke7cdj8f097pdvx34uvrlcqq8nq2w"
+
+	// Setup Epoch
+	epochIndex := uint64(1)
+	_ = k.SetEffectiveEpochIndex(ctx, epochIndex)
+
+	// Setup Epoch Group Data
+	epochGroupData := types.EpochGroupData{
+		EpochIndex:   epochIndex,
+		ModelId:      "",
+		EpochGroupId: 1,
+		TotalWeight:  20,
+	}
+	k.SetEpochGroupData(ctx, epochGroupData)
+
+	// Setup Mocks
+	accAddr, _ := sdk.AccAddressFromBech32(validatorAddr)
+
+	mocks.AccountKeeper.EXPECT().GetAccount(ctx, accAddr).Return(
+		&authtypes.BaseAccount{Address: validatorAddr},
+	).AnyTimes()
+
+	member := &group.GroupMember{
+		GroupId: 1,
+		Member: &group.Member{
+			Address: validatorAddr,
+			Weight:  "10",
+		},
+	}
+
+	mocks.GroupKeeper.EXPECT().GroupMembers(ctx, gomock.Any()).Return(
+		&group.QueryGroupMembersResponse{
+			Members: []*group.GroupMember{member},
+		}, nil,
+	).AnyTimes()
+
+	// Submit with MIXED CASE contract address and chain — should still match
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "Ethereum",  // uppercase E
+		ContractAddress: "0X123",     // uppercase X
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       validatorAddr,
+	}
+
+	_, err := ms.BridgeExchange(ctx, msg)
+	require.NoError(t, err, "Case-insensitive contract address should be accepted")
+}
+
+func TestBridgeExchange_UnregisteredContractAddress(t *testing.T) {
+	_, ms, ctx, _ := setupKeeperWithMocks(t)
+
+	// Submit a bridge exchange with an unregistered contract address
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "ethereum",
+		ContractAddress: "0xUnregistered",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       "gonka13779rkgy6ke7cdj8f097pdvx34uvrlcqq8nq2w",
+	}
+
+	_, err := ms.BridgeExchange(ctx, msg)
+	require.Error(t, err, "Should reject unregistered contract address")
+	require.Contains(t, err.Error(), "unregistered bridge contract address")
 }
