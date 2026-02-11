@@ -58,15 +58,21 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("account not found for validator")
 	}
 
+	// Normalize OwnerAddress and ReceiptsRoot to lowercase for case-insensitive matching.
+	// ReceiptsRoot is a hex-encoded Ethereum trie root that may vary in case across RPC
+	// providers. OwnerAddress is normalized as defense-in-depth to prevent vote-splitting.
+	normalizedOwner := strings.ToLower(msg.OwnerAddress)
+	normalizedReceiptsRoot := strings.ToLower(msg.ReceiptsRoot)
+
 	// Create transaction object with all the content for secure validation
 	proposedTx := &types.BridgeTransaction{
 		ChainId:         msg.OriginChain,
 		ContractAddress: msg.ContractAddress,
-		OwnerAddress:    msg.OwnerAddress,
+		OwnerAddress:    normalizedOwner,
 		Amount:          msg.Amount,
 		BlockNumber:     msg.BlockNumber,
 		ReceiptIndex:    msg.ReceiptIndex,
-		ReceiptsRoot:    msg.ReceiptsRoot,
+		ReceiptsRoot:    normalizedReceiptsRoot,
 		// Status and other fields will be set later
 	}
 

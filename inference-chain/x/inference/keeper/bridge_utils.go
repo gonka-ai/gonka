@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/types"
@@ -77,16 +78,18 @@ func amountToBytes32(amount string) []byte {
 // This ensures validators can only vote on identical transaction data
 // Format: chainId_blockNumber_contentHash (keeps block number for efficient cleanup)
 func generateSecureBridgeTransactionKey(tx *types.BridgeTransaction) string {
-	// Hash all the critical transaction data to ensure content integrity
+	// Hash all the critical transaction data to ensure content integrity.
+	// Normalize OwnerAddress and ReceiptsRoot to lowercase so that
+	// case-variant submissions produce the same content key.
 	contentData := fmt.Sprintf(
 		"%s|%s|%s|%s|%s|%s|%s",
 		tx.ChainId,
 		tx.BlockNumber,
 		tx.ReceiptIndex,
 		tx.ContractAddress,
-		tx.OwnerAddress,
+		strings.ToLower(tx.OwnerAddress),
 		tx.Amount,
-		tx.ReceiptsRoot,
+		strings.ToLower(tx.ReceiptsRoot),
 	)
 
 	contentHash := sha256.Sum256([]byte(contentData))
@@ -96,13 +99,15 @@ func generateSecureBridgeTransactionKey(tx *types.BridgeTransaction) string {
 	return fmt.Sprintf("%s_%s_%x", tx.ChainId, tx.BlockNumber, contentHash[:12]) // Use first 12 bytes of hash
 }
 
-// bridgeTransactionsEqual compares all critical fields of two bridge transactions
+// bridgeTransactionsEqual compares all critical fields of two bridge transactions.
+// OwnerAddress and ReceiptsRoot are compared case-insensitively because hex-encoded
+// values (such as receipts roots) may differ in casing across different RPC providers.
 func bridgeTransactionsEqual(tx1, tx2 *types.BridgeTransaction) bool {
 	return tx1.ChainId == tx2.ChainId &&
 		tx1.BlockNumber == tx2.BlockNumber &&
 		tx1.ReceiptIndex == tx2.ReceiptIndex &&
 		tx1.ContractAddress == tx2.ContractAddress &&
-		tx1.OwnerAddress == tx2.OwnerAddress &&
+		strings.EqualFold(tx1.OwnerAddress, tx2.OwnerAddress) &&
 		tx1.Amount == tx2.Amount &&
-		tx1.ReceiptsRoot == tx2.ReceiptsRoot
+		strings.EqualFold(tx1.ReceiptsRoot, tx2.ReceiptsRoot)
 }
