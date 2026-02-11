@@ -12,7 +12,6 @@ import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
 
 class StreamVestingTests : TestermintTest() {
-
     @Test
     fun `comprehensive vesting test with automatic reward system detection`() {
         // Configure genesis with 2-epoch vesting periods for fast testing
@@ -104,7 +103,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Waiting for inference to be processed and rewards calculated")
         participant.waitForStage(EpochStage.CLAIM_REWARDS)
-        participant.node.waitForNextBlock()
+        participant.node.waitForNextBlock(2)
 
         logSection("Verifying reward vesting: balance should NOT increase immediately")
         val balanceAfterReward = participant.getBalance(participantAddress)
@@ -127,7 +126,7 @@ class StreamVestingTests : TestermintTest() {
         logSection("=== SCENARIO 2: Test Epoch Unlocking ===")
         logHighlight("Waiting for first epoch to unlock vested tokens")
         participant.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        participant.node.waitForNextBlock()
+        participant.node.waitForNextBlock(2)
 
         val balanceAfterFirstEpoch = participant.getBalance(participantAddress)
         logHighlight("Balance after first epoch unlock: $balanceAfterFirstEpoch ngonka")
@@ -142,7 +141,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Waiting for second epoch to unlock remaining vested tokens")
         participant.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        participant.node.waitForNextBlock()
+        participant.node.waitForNextBlock(2)
 
         val balanceAfterSecondEpoch = participant.getBalance(participantAddress)
         logHighlight("Balance after second epoch unlock: $balanceAfterSecondEpoch ngonka")
@@ -178,7 +177,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Waiting for second reward to be processed")
         participant.waitForStage(EpochStage.CLAIM_REWARDS) 
-        participant.node.waitForNextBlock()
+        participant.node.waitForNextBlock(2)
 
         val balanceBeforeAggregation = participant.getBalance(participantAddress)
         logHighlight("Balance before aggregation test: $balanceBeforeAggregation ngonka")
@@ -207,7 +206,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Waiting for third reward to be processed and aggregated")
         participant.waitForStage(EpochStage.CLAIM_REWARDS)
-        participant.node.waitForNextBlock()
+        participant.node.waitForNextBlock(2)
 
         logSection("Verifying reward aggregation: should still be 2-epoch schedule")
         val aggregatedVestingSchedule = participant.node.queryVestingSchedule(participantAddress)
@@ -283,7 +282,7 @@ class StreamVestingTests : TestermintTest() {
 
         logSection("Waiting for next claim reward cycle to process rewards and vesting")
         participant.waitForStage(EpochStage.CLAIM_REWARDS)
-        participant.node.waitForNextBlock()
+        participant.node.waitForNextBlock(2)
 
         // Re-query all inferences to get their final settled status and accurate costs
         logSection("Re-querying all inferences to get final settled status")

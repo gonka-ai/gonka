@@ -62,7 +62,8 @@ class GovernanceTests : TestermintTest() {
 
         val (cluster, genesis) = initCluster(config = noCappingConfig, reboot = true)
         // genesis node is now powerful enough to pass on its own
-        genesis.changePoc(100)
+        genesis.setPocWeight(100)
+        genesis.waitForNextEpoch()
         genesis.markNeedsReboot()
         val params = genesis.getParams()
         val modifiedParams = params.copy(
@@ -103,9 +104,9 @@ class GovernanceTests : TestermintTest() {
         val join1 = cluster.joinPairs.first()
         val join2 = cluster.joinPairs.last()
         logSection("Setting ${join1.name} to 0 power")
-        genesis.mock?.setPocResponse(11)
-        join2.mock?.setPocResponse(12)
-        join1.mock?.setPocResponse(0)
+        genesis.setPocWeight(11)
+        join2.setPocWeight(12)
+        join1.setPocWeight(0)
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.node.waitForNextBlock(2)

@@ -14,7 +14,12 @@ data class InferenceNode(
     val nodeNum: Long? = null,
     val hardware: List<Hardware>? = null,
     val version: String? = null,
-)
+) {
+    val pocHost: String
+        get() = "$host:$pocPort"
+    val inferenceHost: String
+        get() = "$host:$inferencePort"
+}
 
 data class Hardware(
     val type: String,

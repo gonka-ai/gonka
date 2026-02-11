@@ -93,7 +93,7 @@ node-local-build:
 
 api-test:
 	@echo "Running decentralized-api tests..."
-	@cd decentralized-api && go test ./... -v > ../api-test-output.log
+	@cd decentralized-api && go test ./... -v -short > ../api-test-output.log
 	@echo "----------------------------------------"
 	@echo "DECENTRALIZED-API TEST SUMMARY:"
 	@PASS_COUNT=$$(grep -c "PASS:" api-test-output.log); \

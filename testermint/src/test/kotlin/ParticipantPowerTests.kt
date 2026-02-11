@@ -16,7 +16,10 @@ class ParticipantPowerTests : TestermintTest() {
         logSection("Setting ${zeroParticipant.name} to 0 power")
         val zeroParticipantKey = zeroParticipant.node.getValidatorInfo()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        zeroParticipant.changePoc(0, setNewValidatorsOffset = 3)
+
+        zeroParticipant.setPocWeight(0)
+        zeroParticipant.waitForNextEpoch()
+        zeroParticipant.node.waitForNextBlock(1)
         logSection("Confirming ${zeroParticipant.name} is removed from validators")
         val validatorsAfter = genesis.node.getValidators()
         val zeroValidator = validatorsAfter.validators.first {
@@ -45,7 +48,10 @@ class ParticipantPowerTests : TestermintTest() {
         // setNewValidators + 1 -- EndBlock: epoch group change is detected and a call to staking is made
         // setNewValidators + 2 -- staking module update validator update is visible
         // setNewValidators + 3 -- the staking update is propagated to comet
-        zeroParticipant.changePoc(0, setNewValidatorsOffset = 3)
+
+        zeroParticipant.setPocWeight(0)
+        zeroParticipant.waitForNextEpoch()
+        zeroParticipant.node.waitForNextBlock(1)
         logSection("Confirming ${zeroParticipant.name} is removed from validators")
         val validatorsAfter = genesis.node.getValidators()
         val zeroValidator = validatorsAfter.validators.first {
@@ -61,7 +67,9 @@ class ParticipantPowerTests : TestermintTest() {
         assertThat(cometValidators.validators).hasSize(2)
 
         logSection("Setting ${zeroParticipant.name} back to 15 power")
-        zeroParticipant.changePoc(10, setNewValidatorsOffset = 3)
+        zeroParticipant.setPocWeight(10)
+        zeroParticipant.waitForNextEpoch()
+        zeroParticipant.node.waitForNextBlock(1)
 
         logSection("Confirming ${zeroParticipant.name} is back in validators")
         val validatorsAfterRejoin = genesis.node.getValidators()
@@ -82,12 +90,17 @@ class ParticipantPowerTests : TestermintTest() {
     fun `change a participants power`() {
         val (_, genesis) = initCluster(reboot = true)
         logSection("Changing ${genesis.name} power to 11")
-        genesis.changePoc(11)
+        genesis.setPocWeight(11)
+        genesis.waitForNextEpoch()
+        genesis.node.waitForNextBlock(1)
+
         logSection("Verifying change")
         val tokensAfterChange = genesis.node.getStakeValidator().tokens
 
         logSection("Changing ${genesis.name} power back to 10")
-        genesis.changePoc(10)
+        genesis.setPocWeight(10)
+        genesis.waitForNextEpoch()
+        genesis.node.waitForNextBlock(1)
 
         logSection("Verifying change back")
         val updatedGenesisTokens = genesis.node.getStakeValidator().tokens

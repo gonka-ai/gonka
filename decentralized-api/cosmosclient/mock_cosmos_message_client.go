@@ -118,12 +118,31 @@ func (m *MockCosmosMessageClient) BankBalances(ctx context.Context, address stri
 	return args.Get(0).([]sdk.Coin), args.Error(1)
 }
 
+// PoC v1 mock methods
+
 func (m *MockCosmosMessageClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
 func (m *MockCosmosMessageClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+// PoC v2 mock methods
+
+func (m *MockCosmosMessageClient) SubmitPocValidationsV2(transaction *inference.MsgSubmitPocValidationsV2) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommit(transaction *inference.MsgPoCV2StoreCommit) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) SubmitMLNodeWeightDistribution(transaction *inference.MsgMLNodeWeightDistribution) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
@@ -163,7 +182,7 @@ func (m *MockCosmosMessageClient) GetBridgeAddresses(ctx context.Context, chainI
 	return args.Get(0).([]types.BridgeContractAddress), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
+func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
 	args := m.Called(msg)
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)
 }

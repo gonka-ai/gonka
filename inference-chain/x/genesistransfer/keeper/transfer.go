@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -461,6 +462,7 @@ func (k Keeper) getTransferredDenoms(ctx context.Context, recipientAddr sdk.AccA
 		denomSlice = append(denomSlice, denom)
 	}
 
+	slices.Sort(denomSlice)
 	return denomSlice
 }
 

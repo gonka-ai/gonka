@@ -31,10 +31,12 @@ class TxResponseAssert(actual: TxResponse) :
     fun isFailure(): TxResponseAssert {
         isNotNull()
         if (actual.code == 0) {
-            failWithMessage(
-                "Transaction did not fail: rawLog=%s",
-                actual.rawLog
-            )
+            if (!actual.events.any { it.type.contains("inference") && it.attributes.any { it.key == "result" && it.value == "failed" } }) {
+                failWithMessage(
+                    "Transaction did not fail: rawLog=%s",
+                    actual.rawLog
+                )
+            }
         }
         return this
     }

@@ -16,6 +16,10 @@ type BitcoinResult struct {
 	Amount       int64  // Total epoch reward amount minted
 	EpochNumber  uint64 // Current epoch number for tracking
 	DecayApplied bool   // Whether decay was applied this epoch
+	// GovernanceAmount is the portion of Amount that is NOT distributed to participants
+	// (e.g. due to downtime punishment or integer division truncation) and should be
+	// transferred to the governance module account by the caller.
+	GovernanceAmount int64
 }
 
 // GetBitcoinSettleAmounts is the main entry point for Bitcoin-style reward calculation.
@@ -24,6 +28,7 @@ func GetBitcoinSettleAmounts(
 	participants []types.Participant,
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
+	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string][]*types.MLNodeInfo,
 	logger log.Logger,
@@ -48,7 +53,7 @@ func GetBitcoinSettleAmounts(
 	// 3. Complete distribution with remainder handling
 	// 4. Invalid participant handling
 	// 5. Error management
-	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, participantMLNodes, logger)
+	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, validationParams, participantMLNodes, logger)
 	if err != nil {
 		logger.Error("Error calculating participant bitcoin rewards", "error", err)
 		return settleResults, bitcoinResult, err
@@ -58,6 +63,7 @@ func GetBitcoinSettleAmounts(
 	if settleParams.TotalSubsidyPaid >= settleParams.TotalSubsidySupply {
 		// Supply cap already reached - stop all minting
 		bitcoinResult.Amount = 0
+		bitcoinResult.GovernanceAmount = 0
 		// Zero out all participant reward amounts since no rewards can be minted
 		for _, amount := range settleResults {
 			if amount.Settle != nil {
@@ -71,30 +77,28 @@ func GetBitcoinSettleAmounts(
 
 		// Proportionally reduce all participant rewards with proper remainder handling
 		if originalAmount > 0 {
-			reductionRatio := float64(bitcoinResult.Amount) / float64(originalAmount)
 			var totalDistributed uint64 = 0
+			originalDecimalAmount := decimal.NewFromInt(originalAmount)
+			remainingSupply := decimal.NewFromInt(bitcoinResult.Amount)
 
 			// Apply proportional reduction to each participant
 			for _, amount := range settleResults {
 				if amount.Settle != nil && amount.Error == nil {
-					reducedReward := uint64(float64(amount.Settle.RewardCoins) * reductionRatio)
+					// This gives accurate response by not relying on a ratio before we need to
+					reducedReward := uint64(decimal.NewFromUint64(amount.Settle.RewardCoins).Mul(remainingSupply).Div(originalDecimalAmount).IntPart())
 					amount.Settle.RewardCoins = reducedReward
 					totalDistributed += reducedReward
 				}
 			}
 
-			// Distribute any remainder due to integer division truncation
-			// This ensures the exact available supply amount is distributed
+			// Any remainder due to integer division truncation (or downtime punishments already
+			// baked into settleResults) should go to governance.
 			remainder := uint64(bitcoinResult.Amount) - totalDistributed
-			if remainder > 0 && len(settleResults) > 0 {
-				// Assign undistributed coins to first participant with valid rewards
-				for i, result := range settleResults {
-					if result.Error == nil && result.Settle != nil && result.Settle.RewardCoins > 0 {
-						settleResults[i].Settle.RewardCoins += remainder
-						break
-					}
-				}
+			if uint64(bitcoinResult.Amount) < totalDistributed {
+				remainder = 0
 			}
+
+			bitcoinResult.GovernanceAmount = saturatingAddUint64Max(bitcoinResult.GovernanceAmount, remainder)
 		}
 	}
 	// If under cap, no adjustment needed - use full amount
@@ -102,57 +106,63 @@ func GetBitcoinSettleAmounts(
 	return settleResults, bitcoinResult, err
 }
 
+func saturatingAddUint64Max(a int64, b uint64) int64 {
+	if a >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+	headroom := uint64(math.MaxInt64 - a) // safe because a >= 0
+	if b >= headroom {
+		return math.MaxInt64
+	}
+	return a + int64(b) // safe because b < headroom <= MaxInt64
+}
+
 // CalculateFixedEpochReward implements the exponential decay reward calculation
 // Uses the formula: current_reward = initial_reward × exp(decay_rate × epochs_elapsed)
-func CalculateFixedEpochReward(epochsSinceGenesis uint64, initialReward uint64, decayRate *types.Decimal) uint64 {
+func CalculateFixedEpochReward(epochsSinceGenesis uint64, initialReward uint64, decayRate *types.Decimal) (uint64, error) {
 	// Parameter validation
 	if initialReward == 0 {
-		return 0
+		return 0, nil
 	}
 	if decayRate == nil {
-		return initialReward
+		return initialReward, nil
 	}
 
 	// If no epochs have passed since genesis, return initial reward
 	if epochsSinceGenesis == 0 {
-		return initialReward
+		return initialReward, nil
 	}
 
 	// Convert inputs to decimal for precise calculation
-	initialRewardDecimal := decimal.NewFromInt(int64(initialReward))
-	epochsDecimal := decimal.NewFromInt(int64(epochsSinceGenesis))
+	initialRewardDecimal := decimal.NewFromUint64(initialReward)
 
 	// Calculate decay exponent: decay_rate × epochs_elapsed
 	// Convert types.Decimal to shopspring decimal for mathematical operations
 	decayRateDecimal := decayRate.ToDecimal()
-	exponent := decayRateDecimal.Mul(epochsDecimal)
-
-	// Calculate exponential decay: exp(decay_rate × epochs_elapsed)
-	// Using math.Exp with float64 conversion for exponential calculation
-	expValue := math.Exp(exponent.InexactFloat64())
-
-	// Handle edge cases for exponential result
-	if math.IsInf(expValue, 0) || math.IsNaN(expValue) {
-		// If result is infinite or NaN, return 0 (complete decay)
-		return 0
+	exponent, err := types.GetExponent(decayRateDecimal)
+	if err != nil {
+		return 0, err
 	}
 
+	// Actual decay is exp(decay_rate)^epochsSinceGenesis
+	// This is identical to the previous exp(decay_rate*epochsSinceGenesis)
+	// but allows us to use fully safe math
+	if epochsSinceGenesis >= uint64(math.MaxInt32) {
+		// Something obviously very wrong if epochs are this high!
+		return 0, fmt.Errorf("exponent overflow: %d", epochsSinceGenesis)
+	}
+	expValue, err := exponent.PowInt32(int32(epochsSinceGenesis))
+	if err != nil {
+		return 0, err
+	}
 	// Convert back to decimal and multiply with initial reward
-	expDecimal := decimal.NewFromFloat(expValue)
-	currentReward := initialRewardDecimal.Mul(expDecimal)
+	currentReward := initialRewardDecimal.Mul(expValue)
 
-	// Ensure result is non-negative and convert to uint64
-	if currentReward.IsNegative() || currentReward.LessThan(decimal.NewFromInt(1)) {
-		return 0 // Minimum reward is 0
-	}
-
-	// Round down to nearest integer and return as uint64
 	result := currentReward.IntPart()
 	if result < 0 {
-		return 0
+		return 0, nil
 	}
-
-	return uint64(result)
+	return uint64(result), nil
 }
 
 // GetPreservedWeight calculates the weight of nodes with POC_SLOT=true
@@ -236,27 +246,27 @@ func GetParticipantPoCWeight(participant string, epochGroupData *types.EpochGrou
 	// Step 2: Apply utilization bonus (Phase 1: returns 1.0, Phase 2: actual utilization-based multiplier)
 	utilizationBonuses := CalculateUtilizationBonuses([]types.Participant{{Address: participant}}, epochGroupData)
 	utilizationMultiplier := utilizationBonuses[participant]
-	if utilizationMultiplier <= 0 {
-		utilizationMultiplier = 1.0 // Fallback to no change if invalid multiplier
+	if utilizationMultiplier.LessThanOrEqual(decimal.Zero) {
+		utilizationMultiplier = one // Fallback to no change if invalid multiplier
 	}
 
 	// Step 3: Apply coverage bonus (Phase 1: returns 1.0, Phase 2: actual coverage-based multiplier)
 	coverageBonuses := CalculateModelCoverageBonuses([]types.Participant{{Address: participant}}, epochGroupData)
 	coverageMultiplier := coverageBonuses[participant]
-	if coverageMultiplier <= 0 {
-		coverageMultiplier = 1.0 // Fallback to no change if invalid multiplier
+	if coverageMultiplier.LessThanOrEqual(decimal.Zero) {
+		coverageMultiplier = one // Fallback to no change if invalid multiplier
 	}
 
 	// Step 4: Calculate final weight with bonuses applied
 	// Formula: finalWeight = baseWeight * utilizationBonus * coverageBonus
-	finalWeight := float64(baseWeight) * utilizationMultiplier * coverageMultiplier
+	finalWeight := decimal.NewFromUint64(baseWeight).Mul(utilizationMultiplier).Mul(coverageMultiplier)
 
 	// Ensure result is non-negative and convert back to uint64
-	if finalWeight < 0 {
+	if finalWeight.IsNegative() {
 		return 0
 	}
 
-	return uint64(finalWeight)
+	return uint64(finalWeight.IntPart())
 }
 
 // ApplyPowerCappingForWeights applies 30% power capping to a list of participants
@@ -342,7 +352,7 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 
 			remainingParticipants := decimal.NewFromInt(int64(participantCount - k))
 			maxPercentageTimesRemaining := maxPercentageDecimal.Mul(remainingParticipants)
-			denominator := decimal.NewFromInt(1).Sub(maxPercentageTimesRemaining)
+			denominator := one.Sub(maxPercentageTimesRemaining)
 
 			if denominator.LessThanOrEqual(decimal.Zero) {
 				cap = currentPower
@@ -408,6 +418,7 @@ func CalculateParticipantBitcoinRewards(
 	participants []types.Participant,
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
+	validationParams *types.ValidationParams,
 	participantMLNodes map[string][]*types.MLNodeInfo,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
@@ -427,21 +438,20 @@ func CalculateParticipantBitcoinRewards(
 	epochsSinceGenesis := currentEpoch - bitcoinParams.GenesisEpoch
 
 	// 1. Calculate fixed epoch reward using exponential decay
-	fixedEpochReward := CalculateFixedEpochReward(epochsSinceGenesis, bitcoinParams.InitialEpochReward, bitcoinParams.DecayRate)
+	fixedEpochReward, err := CalculateFixedEpochReward(epochsSinceGenesis, bitcoinParams.InitialEpochReward, bitcoinParams.DecayRate)
+	if err != nil {
+		// In the event of any error, treat reward as 0 but continue otherwise to avoid chain halt and pay for work
+		logger.Error("failed to calculate fixed epoch reward", "error", err)
+		fixedEpochReward = 0
+	}
 
 	// 2. Calculate effective weights with confirmation capping
 	participantWeights := make(map[string]uint64)
+	participantFullWeights := make(map[string]uint64) // Track full weights for denominator (prevents redistribution)
 
 	// Calculate effectiveWeight for each participant using helper function
 	effectiveWeights := make([]*types.ActiveParticipant, 0, len(participants))
 	for _, participant := range participants {
-		// Skip invalid participants from PoC weight calculations
-		if participant.Status != types.ParticipantStatus_ACTIVE {
-			logger.Info("Invalid/inactive participant found in PoC weight calculations, skipping", "participant", participant.Address)
-			participantWeights[participant.Address] = 0
-			continue
-		}
-
 		// Find ValidationWeight for this participant
 		var vw *types.ValidationWeight
 		for _, validationWeight := range epochGroupData.ValidationWeights {
@@ -453,6 +463,25 @@ func CalculateParticipantBitcoinRewards(
 
 		if vw == nil || vw.Weight <= 0 {
 			logger.Info("Bitcoin Rewards: No valid weight found, skipping", "participant", participant.Address)
+			participantWeights[participant.Address] = 0
+			participantFullWeights[participant.Address] = 0
+			continue
+		}
+
+		// Store the FULL base weight (before CPoC capping) for denominator
+		// This ensures CPoC reductions and invalidated participants' shares go to governance, not redistributed
+		fullWeight := vw.Weight
+		if fullWeight < 0 {
+			fullWeight = 0
+		}
+		participantFullWeights[participant.Address] = uint64(fullWeight)
+
+		// Skip invalid participants from actual distribution
+		// BUT keep their fullWeight in the denominator to prevent redistribution
+		if participant.Status != types.ParticipantStatus_ACTIVE {
+			logger.Info("Invalid/inactive participant found, will not receive rewards but counts in denominator",
+				"participant", participant.Address,
+				"fullWeight", fullWeight)
 			participantWeights[participant.Address] = 0
 			continue
 		}
@@ -468,7 +497,8 @@ func CalculateParticipantBitcoinRewards(
 			"participant", participant.Address,
 			"baseWeight", vw.Weight,
 			"confirmationWeight", vw.ConfirmationWeight,
-			"effectiveWeight", effectiveWeight)
+			"effectiveWeight", effectiveWeight,
+			"fullWeight", fullWeight)
 
 		effectiveWeights = append(effectiveWeights, &types.ActiveParticipant{
 			Index:  participant.Address,
@@ -492,24 +522,37 @@ func CalculateParticipantBitcoinRewards(
 		"participantCount", len(effectiveWeights),
 		"wasCapped", wasCapped)
 
-	// Calculate total weight
+	// Calculate total weight using FULL weights (for denominator)
+	// This includes invalidated participants and pre-CPoC-capping weights
+	totalFullWeight := uint64(0)
+	for _, weight := range participantFullWeights {
+		totalFullWeight += weight
+	}
+
+	// Calculate actual distributed weight (for logging/comparison)
 	totalPoCWeight := uint64(0)
 	for _, weight := range participantWeights {
 		totalPoCWeight += weight
 	}
 
+	// Use totalFullWeight as the denominator to prevent redistribution of unclaimed shares
+	totalPoCWeightBeforeDowntime := totalFullWeight
+
+	logger.Info("Bitcoin Rewards: Weight calculations",
+		"totalFullWeight", totalFullWeight,
+		"totalActualWeight", totalPoCWeight,
+		"weightDifference", totalFullWeight-totalPoCWeight)
+
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
-	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, logger)
-	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
-
-	// Recalculate total weight after downtime punishment
-	// This ensures fair distribution based on actual eligible weights
-	totalPoCWeight = uint64(0)
-	for _, weight := range participantWeights {
-		totalPoCWeight += weight
+	p0 := types.DecimalFromFloat(0.10)
+	if validationParams != nil && validationParams.BinomTestP0 != nil {
+		p0 = validationParams.BinomTestP0
 	}
-	logger.Info("Bitcoin Rewards: total weight after downtime punishment", "totalPoCWeight", totalPoCWeight)
+	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
+	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
+	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeightBeforeDowntime after downtime punishment,
+	// invalidation, or CPoC reductions. Any "missed" share becomes undistributed and transferred to governance.
 
 	// 5. Create settle results for each participant
 	settleResults := make([]*SettleResult, 0, len(participants))
@@ -523,9 +566,6 @@ func CalculateParticipantBitcoinRewards(
 
 		// Handle error cases
 		var settleError error
-		if participant.CoinBalance < 0 {
-			settleError = types.ErrNegativeCoinBalance
-		}
 
 		// Calculate WorkCoins (UNCHANGED from current system - direct user fees)
 		workCoins := uint64(0)
@@ -536,16 +576,18 @@ func CalculateParticipantBitcoinRewards(
 
 		// Calculate RewardCoins (NEW Bitcoin-style distribution by PoC weight)
 		rewardCoins := uint64(0)
-		if participant.Status == types.ParticipantStatus_ACTIVE && totalPoCWeight > 0 {
+		if participant.Status == types.ParticipantStatus_ACTIVE && totalPoCWeightBeforeDowntime > 0 {
 			participantWeight := participantWeights[participant.Address]
 			if participantWeight > 0 {
 				// Use big.Int to prevent overflow with large numbers
-				// Proportional distribution: (participant_weight / total_weight) × fixed_epoch_reward
+				// Proportional distribution: (participant_weight / total_full_weight) × fixed_epoch_reward
+				// Using totalFullWeight as denominator ensures unclaimed shares (from invalid participants
+				// and CPoC reductions) become remainder and go to governance, not redistributed
 				participantBig := new(big.Int).SetUint64(participantWeight)
 				rewardBig := new(big.Int).SetUint64(fixedEpochReward)
-				totalWeightBig := new(big.Int).SetUint64(totalPoCWeight)
+				totalWeightBig := new(big.Int).SetUint64(totalPoCWeightBeforeDowntime)
 
-				// Calculate: (participantWeight * fixedEpochReward) / totalPoCWeight
+				// Calculate: (participantWeight * fixedEpochReward) / totalFullWeight
 				result := new(big.Int).Mul(participantBig, rewardBig)
 				result = result.Div(result, totalWeightBig)
 
@@ -560,6 +602,19 @@ func CalculateParticipantBitcoinRewards(
 			}
 		}
 		settleAmount.RewardCoins = rewardCoins
+		if participant.CoinBalance < 0 {
+			debt := uint64(-participant.CoinBalance)
+			if settleAmount.RewardCoins >= debt {
+				settleAmount.RewardCoins -= debt
+				// Debt recovered from reward goes to governance remainder
+				totalDistributed -= debt
+			} else {
+				// Partial debt recovery - all reward coins go to debt
+				totalDistributed -= settleAmount.RewardCoins
+				settleAmount.RewardCoins = 0
+				settleError = types.ErrNegativeCoinBalance
+			}
+		}
 
 		// Create SettleResult
 		settleResults = append(settleResults, &SettleResult{
@@ -568,25 +623,23 @@ func CalculateParticipantBitcoinRewards(
 		})
 	}
 
-	// 6. Distribute any remainder due to integer division truncation
-	// This ensures the complete fixed epoch reward is always distributed
+	// 6. Any remainder is undistributed and should be transferred to governance.
+	// Remainder includes: invalidated participants' shares, CPoC weight reductions,
+	// downtime punishments, and integer division truncation.
 	remainder := fixedEpochReward - totalDistributed
-	if remainder > 0 && len(settleResults) > 0 {
-		// Simple approach: assign undistributed coins to first participant
-		// This ensures complete distribution while keeping logic minimal
-		for i, result := range settleResults {
-			if result.Error == nil && result.Settle.RewardCoins > 0 {
-				settleResults[i].Settle.RewardCoins += remainder
-				break
-			}
-		}
+	if fixedEpochReward < totalDistributed {
+		remainder = 0
+	}
+	if remainder > math.MaxInt64 {
+		remainder = math.MaxInt64
 	}
 
 	// 7. Create BitcoinResult (similar to SubsidyResult)
 	bitcoinResult := BitcoinResult{
-		Amount:       int64(fixedEpochReward),
-		EpochNumber:  currentEpoch,
-		DecayApplied: epochsSinceGenesis > 0, // Decay applied if past genesis epoch
+		Amount:           int64(fixedEpochReward),
+		EpochNumber:      currentEpoch,
+		DecayApplied:     epochsSinceGenesis > 0, // Decay applied if past genesis epoch
+		GovernanceAmount: int64(remainder),
 	}
 
 	return settleResults, bitcoinResult, nil
@@ -596,28 +649,28 @@ func CalculateParticipantBitcoinRewards(
 
 // CalculateUtilizationBonuses calculates per-MLNode utilization bonuses
 // Returns 1.0 multiplier for Phase 1, will implement utilization-based bonuses in Phase 2
-func CalculateUtilizationBonuses(participants []types.Participant, epochGroupData *types.EpochGroupData) map[string]float64 {
+func CalculateUtilizationBonuses(participants []types.Participant, epochGroupData *types.EpochGroupData) map[string]decimal.Decimal {
 	// TODO: Phase 2 - Implement utilization bonus calculation
 	// Requires simple-schedule-v1 system with per-MLNode PoC weight tracking
 
 	// Phase 1 stub - return 1.0 (no change) for all participants
-	bonuses := make(map[string]float64)
+	bonuses := make(map[string]decimal.Decimal)
 	for _, participant := range participants {
-		bonuses[participant.Address] = 1.0
+		bonuses[participant.Address] = one
 	}
 	return bonuses
 }
 
 // CalculateModelCoverageBonuses calculates model diversity bonuses
 // Returns 1.0 multiplier for Phase 1, will implement coverage-based bonuses in Phase 2
-func CalculateModelCoverageBonuses(participants []types.Participant, epochGroupData *types.EpochGroupData) map[string]float64 {
+func CalculateModelCoverageBonuses(participants []types.Participant, epochGroupData *types.EpochGroupData) map[string]decimal.Decimal {
 	// TODO: Phase 2 - Implement model coverage bonus calculation
 	// Rewards participants who support all governance models
 
 	// Phase 1 stub - return 1.0 (no change) for all participants
-	bonuses := make(map[string]float64)
+	bonuses := make(map[string]decimal.Decimal)
 	for _, participant := range participants {
-		bonuses[participant.Address] = 1.0
+		bonuses[participant.Address] = one
 	}
 	return bonuses
 }
@@ -631,3 +684,7 @@ func GetMLNodeAssignments(participant string, epochGroupData *types.EpochGroupDa
 	// Phase 1 stub - return empty list
 	return []string{}
 }
+
+var (
+	one = decimal.NewFromInt(1)
+)

@@ -61,11 +61,15 @@ func (k Keeper) GetParticipant(
 func (k Keeper) RemoveParticipant(
 	ctx context.Context,
 	index string,
-
 ) {
-	err := k.Participants.Remove(ctx, sdk.MustAccAddressFromBech32(index))
+	addr, err := sdk.AccAddressFromBech32(index)
 	if err != nil {
-		k.LogError("Could not remove participant", types.Participants, "error", err, "index", index, "address", sdk.MustAccAddressFromBech32(index).String(), "")
+		k.LogError("Could not parse participant address for removal", types.Participants, "index", index, "error", err)
+		return
+	}
+	err = k.Participants.Remove(ctx, addr)
+	if err != nil {
+		k.LogError("Could not remove participant", types.Participants, "error", err, "index", index, "address", addr.String(), "")
 	}
 }
 

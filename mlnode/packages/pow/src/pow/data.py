@@ -210,8 +210,9 @@ class ValidatedBatch(ProofBatch):
         self.n_invalid = 0
         self.probability_honest = 1.0
         for received_dist, computed_dist in zip(self.received_dist, self.dist):
-            assert received_dist < self.r_target, \
-                "Received distance is greater than r_target"
+            if received_dist >= self.r_target:
+                self.n_invalid += 1
+                continue
             if computed_dist > self.r_target:
                 self.n_invalid += 1
 
@@ -242,17 +243,22 @@ class ValidatedBatch(ProofBatch):
         )
 
     def __str__(self) -> str:
+        # Convert numpy types to regular floats for cleaner display
+        dist_clean = [float(d) for d in self.dist[:5]]
+        received_dist_clean = [float(d) for d in self.received_dist[:5]]
+        
         return dedent(f"""\
         ValidatedBatch(
             public_key={self.public_key}, 
             block_hash={self.block_hash}, 
             block_height={self.block_height},
             nonces={self.nonces[:5]}..., 
-            dist={self.dist[:5]}..., 
-            received_dist={self.received_dist[:5]}..., 
-            r_target={self.r_target},
-            fraud_threshold={self.fraud_threshold},
+            dist={dist_clean}..., 
+            received_dist={received_dist_clean}..., 
             length={len(self.nonces)},
+            n_invalid={self.n_invalid},
             fraud_detected={self.fraud_detected},
+            p_honest={self.probability_honest:.6f},
+            r_target={self.r_target},
             node_id={self.node_id}
         )""")

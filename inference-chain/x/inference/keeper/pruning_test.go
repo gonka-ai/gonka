@@ -21,7 +21,10 @@ type PruningSettings struct {
 }
 
 func setPruningConfig(ctx context.Context, k keeper.Keeper, settings PruningSettings) {
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		panic(err)
+	}
 	if settings.InferenceThreshold > 0 {
 		params.EpochParams.InferencePruningEpochThreshold = uint64(settings.InferenceThreshold)
 	}
@@ -283,11 +286,12 @@ func TestPoCValidationsPruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testi
 	p := mkAddr(1)
 	for i := 0; i < 10; i++ {
 		v := mkAddr(100 + i)
-		k.SetPoCValidation(ctx, types.PoCValidation{
+		err := k.SetPoCValidation(ctx, types.PoCValidation{
 			ParticipantAddress:          p,
 			ValidatorParticipantAddress: v,
 			PocStageStartBlockHeight:    prunedEpochBlockHeight,
 		})
+		require.NoError(t, err)
 	}
 
 	// Configure pruning: PoC threshold 1, PoC max prune 4
@@ -339,11 +343,12 @@ func TestPoCBatchesPruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T
 	// Create 10 batches in epoch 2 (eligible when current=3, threshold=1, end=2)
 	p := mkAddr(2)
 	for i := 0; i < 10; i++ {
-		k.SetPocBatch(ctx, types.PoCBatch{
+		err := k.SetPocBatch(ctx, types.PoCBatch{
 			ParticipantAddress:       p,
 			PocStageStartBlockHeight: prunedEpochBlockHeight,
 			BatchId:                  fmt.Sprintf("b-%d", i),
 		})
+		require.NoError(t, err)
 	}
 
 	// Configure pruning: PoC threshold 1, PoC max prune 4

@@ -20,6 +20,10 @@ message Params {
   DynamicPricingParams dynamic_pricing_params = 7;
   BandwidthLimitsParams bandwidth_limits_params = 8;
   ConfirmationPoCParams confirmation_poc_params = 9;
+  GenesisGuardianParams genesis_guardian_params = 10;
+  DeveloperAccessParams developer_access_params = 11;
+  ParticipantAccessParams participant_access_params = 12;
+  TransferAgentAccessParams transfer_agent_access_params = 13;
 }
 
 message GenesisOnlyParams {
@@ -96,6 +100,31 @@ message ValidationParams {
   Decimal downtime_h_threshold = 21;
   Decimal downtime_reputation_preserve = 22; // How much reputation to keep after a downtime him (defaults to 0)
   Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
+  Decimal binom_test_p0 = 24; // The null hypothesis probability for the binomial test (default 0.10)
+}
+
+message PoCModelParams {
+  option (gogoproto.equal) = true;
+  int32 dim = 1;
+  int32 n_layers = 2;
+  int32 n_heads = 3;
+  int32 n_kv_heads = 4;
+  int32 vocab_size = 5;
+  Decimal ffn_dim_multiplier = 6;
+  int32 multiple_of = 7;
+  Decimal norm_eps = 8;
+  int32 rope_theta = 9;
+  bool use_scaled_rope = 10;
+  int32 seq_len = 11;
+  Decimal r_target = 12;
+}
+
+// PoCStatTestParams defines statistical test parameters for PoC V2 validation.
+message PoCStatTestParams {
+  option (gogoproto.equal) = true;
+  Decimal dist_threshold = 1;      // L2 distance above which vectors are mismatched (default: 0.4)
+  Decimal p_mismatch = 2;          // Null hypothesis probability - expected honest mismatch rate (default: 0.1)
+  Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
 }
 
 message PocParams {
@@ -103,6 +132,13 @@ message PocParams {
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
   uint64 poc_data_pruning_epoch_threshold = 3;
+  Decimal weight_scale_factor = 4;
+  PoCModelParams model_params = 5 [deprecated = true]; // V1 model architecture params, deprecated
+  string model_id = 6;  // Model identifier for PoC generation/validation
+  int64 seq_len = 7;    // Sequence length for PoC generation/validation
+  bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
+  bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
+  PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
 }
 
 message Decimal {
@@ -212,6 +248,9 @@ message BandwidthLimitsParams {
 
   // The least amount of concurrent invalidations
   uint32 minimum_concurrent_invalidations = 7;
+
+  // max_inferences_per_block is the chain-wide limit on inference requests per block
+  uint64 max_inferences_per_block = 8;
 }
 
 // ConfirmationPoCParams defines the parameters for confirmation PoC feature.
@@ -229,4 +268,57 @@ message ConfirmationPoCParams {
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
   int64 upgrade_protection_window = 4;
+}
+
+message GenesisGuardianParams {
+  option (gogoproto.equal) = true;
+  // network_maturity_threshold is the minimum total network power required for the network to be considered "mature".
+  int64 network_maturity_threshold = 1;
+  // network_maturity_min_height is the minimum block height required for the network to be considered "mature".
+  int64 network_maturity_min_height = 2;
+  // guardian_addresses are the validator operator addresses treated as genesis guardians.
+  repeated string guardian_addresses = 3;
+}
+
+message DeveloperAccessParams {
+  option (gogoproto.equal) = true;
+  // until_block_height limits inference requests to allowed_developer_addresses while current_height < until_block_height.
+  // Set to 0 to disable gating.
+  int64 until_block_height = 1;
+  // allowed_developer_addresses are the bech32 account addresses allowed to request inferences before until_block_height.
+  repeated string allowed_developer_addresses = 2;
+}
+
+// ParticipantAccessParams controls participant access via blocklist and allowlist mechanisms.
+//
+// Blocklist vs Allowlist interaction:
+// - Blocklist (blocked_participant_addresses): tx-level rejection; checked on every PoC tx submission.
+// - Allowlist (use_participant_allowlist + KVStore set): epoch-level filtering; checked during epoch formation.
+// - When both are active, blocklist wins: a blocklisted address is rejected at tx time regardless of allowlist.
+//
+// The allowlist is stored in KVStore (not in params) and managed via MsgAddParticipantsToAllowList/MsgRemoveParticipantsFromAllowList.
+// Max recommended addresses per Add/Remove message: 500 (to stay within tx size limits).
+message ParticipantAccessParams {
+  option (gogoproto.equal) = true;
+  // new_participant_registration_start_height blocks creation of NEW participants while current_height < new_participant_registration_start_height.
+  // (i.e. registration opens at new_participant_registration_start_height). Set to 0 to disable.
+  int64 new_participant_registration_start_height = 1;
+  // blocked_participant_addresses are bech32 account addresses that are not allowed to participate in PoC
+  // (submit PoC batches or validations). Checked at tx submission time.
+  repeated string blocked_participant_addresses = 2;
+  // use_participant_allowlist enables epoch-formation filtering by allowlist. Default false.
+  // When true, only addresses in the KVStore allowlist are included in epoch formation.
+  bool use_participant_allowlist = 3;
+  // participant_allowlist_until_block_height: allowlist is enforced while current_height < this value.
+  // Set to 0 to disable cutoff (allowlist stays active as long as use_participant_allowlist=true).
+  int64 participant_allowlist_until_block_height = 4;
+}
+
+// TransferAgentAccessParams controls which Transfer Agents are allowed to process inference requests.
+// If allowed_transfer_addresses is empty, all TAs are allowed (no restriction).
+message TransferAgentAccessParams {
+  option (gogoproto.equal) = true;
+  // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
+  // If empty, all TAs are allowed.
+  repeated string allowed_transfer_addresses = 1;
 }

@@ -37,10 +37,16 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 	}
 
 	// Get the current epoch from the collateral module's own state
-	currentEpoch := k.GetCurrentEpoch(ctx)
+	currentEpoch, err := k.GetCurrentEpoch(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get the unbonding period from params
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Calculate the completion epoch
 	completionEpoch := currentEpoch + params.UnbondingPeriodEpochs
@@ -53,14 +59,18 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 		"unbonding_period_epochs", params.UnbondingPeriodEpochs,
 	)
 	// Create the unbonding entry
-	k.AddUnbondingCollateral(ctx, participantAddr, completionEpoch, msg.Amount)
+	if err := k.AddUnbondingCollateral(ctx, participantAddr, completionEpoch, msg.Amount); err != nil {
+		return nil, err
+	}
 
 	// Reduce the active collateral
 	newCollateral := currentCollateral.Sub(msg.Amount)
 	if newCollateral.IsZero() {
 		k.RemoveCollateral(ctx, participantAddr)
 	} else {
-		k.SetCollateral(ctx, participantAddr, newCollateral)
+		if err := k.SetCollateral(ctx, participantAddr, newCollateral); err != nil {
+			return nil, err
+		}
 	}
 
 	k.bookkeepingBankKeeper.LogSubAccountTransaction(goCtx, msg.Participant, types.ModuleName, types.SubAccountCollateral, msg.Amount, "collateral to unbonding")

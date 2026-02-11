@@ -1,10 +1,12 @@
 package com.productscience.mockserver.routes
 
+import com.productscience.mockserver.getHost
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.http.*
 import com.productscience.mockserver.model.ModelState
+import com.productscience.mockserver.model.getModelState
 import org.slf4j.LoggerFactory
 
 /**
@@ -31,7 +33,7 @@ fun Route.healthRoutes() {
  */
 private suspend fun handleHealthCheck(call: ApplicationCall, logger: org.slf4j.Logger) {
     // This endpoint requires the state to be INFERENCE
-    if (ModelState.getCurrentState() != ModelState.INFERENCE) {
+    if (getModelState(call.getHost()) != ModelState.INFERENCE) {
         call.respond(HttpStatusCode.ServiceUnavailable)
         return
     }

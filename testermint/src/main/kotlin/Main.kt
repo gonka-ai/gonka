@@ -138,7 +138,7 @@ fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): In
     val inferenceId = response.id
 
     val inference = generateSequence {
-        highestFunded.node.waitForNextBlock()
+        highestFunded.node.waitForNextBlock(2)
         try {
             highestFunded.api.getInference(inferenceId)
         } catch (_: FuelError) {
@@ -201,7 +201,7 @@ private fun makeStreamingInferenceRequest(highestFunded: LocalInferencePair, pay
 
     // Wait for the inference to be logged in the chain
     val inference = generateSequence {
-        highestFunded.node.waitForNextBlock()
+        highestFunded.node.waitForNextBlock(2)
         try {
             highestFunded.api.getInference(inferenceId)
         } catch (_: FuelError) {
@@ -277,7 +277,7 @@ fun makeInterruptedStreamingInferenceRequest(
 
     // Wait for the inference to be logged in the chain
     val inference = generateSequence {
-        highestFunded.node.waitForNextBlock()
+        highestFunded.node.waitForNextBlock(2)
         try {
             highestFunded.api.getInference(inferenceId)
         } catch (_: FuelError) {
@@ -302,8 +302,19 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
             resetMlNodesToDefault(it)
         }
 
+        it.mock?.resetMocks()
         it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
-        it.getParams()
+        val params = it.getParams()
+        
+        // Sanity check: verify PoC v2 is enabled (model_id set in poc_params)
+        val pocParams = params.pocParams
+        if (pocParams.modelId.isNullOrEmpty()) {
+            Logger.warn("PoC v2 is NOT enabled! Chain params show poc_params.model_id is empty. " +
+                "Tests may be using old PoC v1 implementation. Check genesis spec configuration.")
+        } else {
+            Logger.info("PoC v2 enabled: modelId={}, seqLen={}", pocParams.modelId, pocParams.seqLen)
+        }
+        
         it.node.getColdAddress()
         it.node.getWarmAddress()
     }
@@ -327,7 +338,7 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
 //    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
 //    fundUnfunded(unfunded, highestFunded)
 
-    highestFunded.node.waitForNextBlock()
+    highestFunded.node.waitForNextBlock(2)
     pairs.forEach { pair ->
         pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt() + 2) {
             val address = pair.node.getColdAddress()
@@ -345,7 +356,8 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
 }
 
 private fun resetMlNodesToDefault(pair: LocalInferencePair) {
-    val defaultNode = validNode.copy(host = "${pair.name.trim('/')}-mock-server")
+    val pairName = pair.name.trim('/')
+    val defaultNode = validNode.copy(host = "ml-0000.$pairName.test")
 
     // We're not really supposed to change nodes in the middle of an epoch
     // This optimization might help avoid unnecessary changes
@@ -366,31 +378,6 @@ private fun resetMlNodesToDefault(pair: LocalInferencePair) {
     Logger.info { "Resetting ml nodes" }
     pair.waitForNextInferenceWindow(windowSizeInBlocks = 5)
     pair.api.setNodesTo(defaultNode)
-}
-
-private fun addUnfundedDirectly(
-    unfunded: List<LocalInferencePair>,
-    currentParticipants: List<Participant>,
-    highestFunded: LocalInferencePair,
-) {
-    for (pair in unfunded) {
-        if (currentParticipants.none { it.id == pair.node.getColdAddress() }) {
-            val selfKey = pair.node.getKeys()[0]
-            val status = pair.node.getStatus()
-            val validatorInfo = status.validatorInfo
-            val valPubKey: PubKey = validatorInfo.pubKey
-            Logger.debug("PubKey extracted pubkey={}", selfKey.pubkey)
-            highestFunded.api.addUnfundedInferenceParticipant(
-                UnfundedInferenceParticipant(
-                    url = "http://${pair.name}-api:8080",
-                    models = listOf(defaultModel),
-                    validatorKey = valPubKey.value,
-                    pubKey = selfKey.pubkey.key,
-                    address = selfKey.address,
-                )
-            )
-        }
-    }
 }
 
 private fun TxResponse.assertSuccess() {
@@ -495,6 +482,12 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[DynamicPricingParams::basePerTokenPrice] = 1000L // Set to match DEFAULT_TOKEN_COST
                 this[DynamicPricingParams::gracePeriodEndEpoch] = 0L   // Disable grace period
                 this[DynamicPricingParams::gracePeriodPerTokenPrice] = 0L
+            }
+            // Enable PoC v2 by setting model_id and seq_len in poc_params
+            this[InferenceParams::pocParams] = spec<PocParams> {
+                this[PocParams::modelId] = defaultModel
+                this[PocParams::seqLen] = 256L
+                this[PocParams::pocV2Enabled] = true
             }
         }
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {

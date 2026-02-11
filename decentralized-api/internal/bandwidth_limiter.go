@@ -24,6 +24,11 @@ type BandwidthLimiter struct {
 	kbPerInputToken  float64
 	kbPerOutputToken float64
 
+	// Inference count limiting
+	inferencesPerBlock    map[int64]int64
+	maxInferencesPerBlock uint64
+	defaultInferenceLimit uint64
+
 	recorder              cosmosclient.CosmosMessageClient
 	defaultLimit          uint64
 	epochCache            *EpochGroupDataCache
@@ -33,37 +38,47 @@ type BandwidthLimiter struct {
 	cachedWeightLimit     uint64
 }
 
+// CanAcceptRequest checks both bandwidth and inference count limits.
+// Returns (canAccept, estimatedKB) - estimatedKB is used for recording.
 func (bl *BandwidthLimiter) CanAcceptRequest(blockHeight int64, promptTokens, maxTokens int) (bool, float64) {
 	bl.maybeUpdateLimits()
 
 	bl.mu.RLock()
 	defer bl.mu.RUnlock()
 
-	estimatedKB := float64(promptTokens)*bl.kbPerInputToken + float64(maxTokens)*bl.kbPerOutputToken
-
-	totalUsage := 0.0
 	windowSize := bl.requestLifespanBlocks + 1
+
+	// Check bandwidth limit
+	estimatedKB := float64(promptTokens)*bl.kbPerInputToken + float64(maxTokens)*bl.kbPerOutputToken
+	totalUsage := 0.0
 	for i := blockHeight; i <= blockHeight+bl.requestLifespanBlocks; i++ {
 		totalUsage += bl.usagePerBlock[i]
 	}
-
 	avgUsage := totalUsage / float64(windowSize)
 	estimatedKBPerBlock := estimatedKB / float64(windowSize)
-	canAccept := avgUsage+estimatedKBPerBlock <= float64(bl.limitsPerBlockKB)
 
-	logging.Debug("CanAcceptRequest", types.Config,
-		"avgUsage", avgUsage,
-		"estimatedKB", estimatedKBPerBlock,
-		"limitsPerBlockKB", bl.limitsPerBlockKB,
-		"requestLifespanBlocks", bl.requestLifespanBlocks,
-		"totalUsage", totalUsage)
-
-	if !canAccept {
+	if avgUsage+estimatedKBPerBlock > float64(bl.limitsPerBlockKB) {
 		logging.Info("Bandwidth limit exceeded", types.Config,
 			"avgUsage", avgUsage, "estimatedKB", estimatedKBPerBlock, "limit", bl.limitsPerBlockKB)
+		return false, estimatedKB
 	}
 
-	return canAccept, estimatedKB
+	// Check inference count limit (if enabled)
+	if bl.maxInferencesPerBlock > 0 {
+		var totalInferences int64
+		for i := blockHeight; i <= blockHeight+bl.requestLifespanBlocks; i++ {
+			totalInferences += bl.inferencesPerBlock[i]
+		}
+		avgInferences := float64(totalInferences) / float64(windowSize)
+
+		if avgInferences+1.0/float64(windowSize) > float64(bl.maxInferencesPerBlock) {
+			logging.Info("Inference count limit exceeded", types.Config,
+				"avgInferences", avgInferences, "limit", bl.maxInferencesPerBlock)
+			return false, estimatedKB
+		}
+	}
+
+	return true, estimatedKB
 }
 
 func (bl *BandwidthLimiter) maybeUpdateLimits() {
@@ -77,18 +92,28 @@ func (bl *BandwidthLimiter) maybeUpdateLimits() {
 	}
 
 	currentEpochIndex := epochState.LatestEpoch.EpochIndex
-	if bl.cachedLimitEpochIndex == currentEpochIndex {
-		return
-	}
+	bl.mu.RLock()
+	cachedEpochIndex := bl.cachedLimitEpochIndex
+	bl.mu.RUnlock()
 
 	if bl.configManager != nil {
-		bl.updateParametersFromConfig()
+		updated := bl.updateParametersFromConfig()
+		if updated {
+			// Force limit recalculation for the current epoch when config changes.
+			// This allows toggling inference limits (including to 0) without waiting for epoch transition.
+			bl.mu.Lock()
+			bl.cachedLimitEpochIndex = 0
+			bl.mu.Unlock()
+		}
 	}
 
+	if cachedEpochIndex == currentEpochIndex {
+		return
+	}
 	bl.updateWeightBasedLimit(currentEpochIndex)
 }
 
-func (bl *BandwidthLimiter) updateParametersFromConfig() {
+func (bl *BandwidthLimiter) updateParametersFromConfig() bool {
 	validationParams := bl.configManager.GetValidationParams()
 	bandwidthParams := bl.configManager.GetBandwidthParams()
 
@@ -117,13 +142,21 @@ func (bl *BandwidthLimiter) updateParametersFromConfig() {
 		updated = true
 	}
 
+	// 0 is meaningful: it disables inference count limiting.
+	if bl.defaultInferenceLimit != bandwidthParams.MaxInferencesPerBlock {
+		bl.defaultInferenceLimit = bandwidthParams.MaxInferencesPerBlock
+		updated = true
+	}
+
 	if updated {
 		logging.Info("Updated bandwidth parameters from config", types.Config,
 			"lifespanBlocks", bl.requestLifespanBlocks,
 			"kbPerInputToken", bl.kbPerInputToken,
 			"kbPerOutputToken", bl.kbPerOutputToken,
-			"defaultLimit", bl.defaultLimit)
+			"defaultLimit", bl.defaultLimit,
+			"defaultInferenceLimit", bl.defaultInferenceLimit)
 	}
+	return updated
 }
 
 func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
@@ -132,76 +165,58 @@ func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
 		return
 	}
 
+	bl.mu.RLock()
 	if bl.cachedLimitEpochIndex == currentEpochIndex && bl.cachedWeightLimit > 0 {
+		bl.mu.RUnlock()
 		return
 	}
+	bl.mu.RUnlock()
 
-	newLimit := bl.calculateUniformLimit(currentEpochIndex)
+	newKBLimit, newInferenceLimit := bl.calculateUniformLimits(currentEpochIndex)
 
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
 
-	if bl.limitsPerBlockKB != newLimit {
-		bl.limitsPerBlockKB = newLimit
+	if bl.limitsPerBlockKB != newKBLimit {
+		bl.limitsPerBlockKB = newKBLimit
 		logging.Info("Updated bandwidth limit", types.Config,
-			"newLimit", newLimit, "epoch", currentEpochIndex)
-	}
-}
-
-func (bl *BandwidthLimiter) calculateUniformLimit(currentEpochIndex uint64) uint64 {
-	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
-	if err != nil {
-		logging.Warn("Failed to get epoch data, using default limit", types.Config, "error", err)
-		return bl.defaultLimit
+			"newLimit", newKBLimit, "epoch", currentEpochIndex)
 	}
 
-	return bl.defaultLimit / uint64(len(epochGroupData.ValidationWeights))
-}
-
-// Weigh based limits. We ignore it for now
-func (bl *BandwidthLimiter) calculateWeightBasedLimit(currentEpochIndex uint64) uint64 {
-	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
-	if err != nil {
-		logging.Warn("Failed to get epoch data, using default limit", types.Config, "error", err)
-		return bl.defaultLimit
+	if bl.maxInferencesPerBlock != newInferenceLimit {
+		bl.maxInferencesPerBlock = newInferenceLimit
+		logging.Info("Updated inference count limit", types.Config,
+			"newLimit", newInferenceLimit, "epoch", currentEpochIndex)
 	}
-
-	if len(epochGroupData.ValidationWeights) == 0 {
-		return bl.defaultLimit
-	}
-
-	nodeAddress := bl.recorder.GetAccountAddress()
-	nodeWeight, totalWeight := bl.calculateWeights(epochGroupData.ValidationWeights, nodeAddress)
-
-	if totalWeight <= 0 || nodeWeight <= 0 {
-		logging.Warn("Invalid weights, using default limit", types.Config,
-			"nodeWeight", nodeWeight, "totalWeight", totalWeight)
-		return bl.defaultLimit
-	}
-
-	adjustedLimit := uint64(float64(bl.defaultLimit) * float64(nodeWeight) / float64(totalWeight))
 
 	bl.cachedLimitEpochIndex = currentEpochIndex
-	bl.cachedWeightLimit = adjustedLimit
-
-	logging.Info("Calculated weight-based limit", types.Config,
-		"nodeWeight", nodeWeight, "totalWeight", totalWeight,
-		"adjustedLimit", adjustedLimit, "participants", len(epochGroupData.ValidationWeights))
-
-	return adjustedLimit
 }
 
-func (bl *BandwidthLimiter) calculateWeights(weights []*types.ValidationWeight, nodeAddress string) (int64, int64) {
-	var nodeWeight, totalWeight int64
-
-	for _, weight := range weights {
-		totalWeight += weight.Weight
-		if weight.MemberAddress == nodeAddress {
-			nodeWeight = weight.Weight
-		}
+func (bl *BandwidthLimiter) calculateUniformLimits(currentEpochIndex uint64) (uint64, uint64) {
+	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
+	if err != nil {
+		logging.Warn("Failed to get epoch data, using default limits", types.Config, "error", err)
+		return bl.defaultLimit, bl.defaultInferenceLimit
 	}
 
-	return nodeWeight, totalWeight
+	participantCount := uint64(len(epochGroupData.ValidationWeights))
+	if participantCount == 0 {
+		return bl.defaultLimit, bl.defaultInferenceLimit
+	}
+
+	kbLimit := bl.defaultLimit / participantCount
+	inferenceLimit := bl.defaultInferenceLimit / participantCount
+	if inferenceLimit == 0 && bl.defaultInferenceLimit > 0 {
+		inferenceLimit = 1 // Minimum of 1 inference per block per node
+	}
+
+	return kbLimit, inferenceLimit
+}
+
+// calculateUniformLimit is kept for backward compatibility
+func (bl *BandwidthLimiter) calculateUniformLimit(currentEpochIndex uint64) uint64 {
+	kbLimit, _ := bl.calculateUniformLimits(currentEpochIndex)
+	return kbLimit
 }
 
 func (bl *BandwidthLimiter) RecordRequest(startBlockHeight int64, estimatedKB float64) {
@@ -210,6 +225,7 @@ func (bl *BandwidthLimiter) RecordRequest(startBlockHeight int64, estimatedKB fl
 
 	completionBlock := startBlockHeight + bl.requestLifespanBlocks
 	bl.usagePerBlock[completionBlock] += estimatedKB
+	bl.inferencesPerBlock[completionBlock]++
 }
 
 func (bl *BandwidthLimiter) ReleaseRequest(startBlockHeight int64, estimatedKB float64) {
@@ -218,9 +234,13 @@ func (bl *BandwidthLimiter) ReleaseRequest(startBlockHeight int64, estimatedKB f
 
 	completionBlock := startBlockHeight + bl.requestLifespanBlocks
 	bl.usagePerBlock[completionBlock] -= estimatedKB
+	bl.inferencesPerBlock[completionBlock]--
 
 	if bl.usagePerBlock[completionBlock] <= 0 {
 		delete(bl.usagePerBlock, completionBlock)
+	}
+	if bl.inferencesPerBlock[completionBlock] <= 0 {
+		delete(bl.inferencesPerBlock, completionBlock)
 	}
 }
 
@@ -237,21 +257,36 @@ func (bl *BandwidthLimiter) cleanupOldEntries() {
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
 
-	if len(bl.usagePerBlock) == 0 {
-		return
-	}
-
+	// Find newest block across both maps
 	var newestBlock int64
 	for block := range bl.usagePerBlock {
 		if block > newestBlock {
 			newestBlock = block
 		}
 	}
+	for block := range bl.inferencesPerBlock {
+		if block > newestBlock {
+			newestBlock = block
+		}
+	}
+
+	if newestBlock == 0 {
+		return
+	}
 
 	cutoffBlock := newestBlock - bl.requestLifespanBlocks*2 // Keep some buffer
+
+	// Cleanup KB usage map
 	for block := range bl.usagePerBlock {
 		if block < cutoffBlock {
 			delete(bl.usagePerBlock, block)
+		}
+	}
+
+	// Cleanup inference count map
+	for block := range bl.inferencesPerBlock {
+		if block < cutoffBlock {
+			delete(bl.inferencesPerBlock, block)
 		}
 	}
 }
@@ -280,6 +315,8 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 		kbPerOutputToken = 0.64
 	}
 
+	maxInferencesPerBlock := bandwidthParams.MaxInferencesPerBlock
+
 	bl := &BandwidthLimiter{
 		limitsPerBlockKB:      limitsPerBlockKB,
 		usagePerBlock:         make(map[int64]float64),
@@ -287,6 +324,9 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 		requestLifespanBlocks: requestLifespanBlocks,
 		kbPerInputToken:       kbPerInputToken,
 		kbPerOutputToken:      kbPerOutputToken,
+		inferencesPerBlock:    make(map[int64]int64),
+		maxInferencesPerBlock: maxInferencesPerBlock,
+		defaultInferenceLimit: maxInferencesPerBlock,
 		recorder:              recorder,
 		defaultLimit:          limitsPerBlockKB,
 		phaseTracker:          phaseTracker,
@@ -299,6 +339,7 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 
 	logging.Info("Bandwidth limiter initialized", types.Config,
 		"limit", limitsPerBlockKB, "lifespan", requestLifespanBlocks,
+		"maxInferences", maxInferencesPerBlock,
 		"weightBased", recorder != nil && phaseTracker != nil)
 
 	go bl.startCleanupRoutine()

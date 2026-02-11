@@ -77,7 +77,7 @@ data class NodeVersions(
 )
 
 data class NodeConfig(
-    val hardware: List<String>,
+    val hardware: List<HardwareConfig>,
     val host: String,
     val id: String,
     val inferencePort: Int,
@@ -87,6 +87,11 @@ data class NodeConfig(
     val pocPort: Int,
     val pocSegment: String,
     val version: String? = null
+)
+
+data class HardwareConfig(
+    val type: String,
+    val count: Int,
 )
 
 data class ApiModelConfig(

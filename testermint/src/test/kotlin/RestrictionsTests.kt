@@ -191,7 +191,7 @@ class RestrictionsTests : TestermintTest() {
         }
         
         assertThat(inferenceResult.isSuccess).isTrue()
-        genesis.node.waitForNextBlock()
+        genesis.node.waitForNextBlock(2)
         
         val afterInferenceBalance = genesis.getBalance(genesis.node.getColdAddress())
         val inferenceCost = beforeInferenceBalance - afterInferenceBalance
@@ -395,7 +395,7 @@ class RestrictionsTests : TestermintTest() {
                     )
                     
                     if (transferResult.code == 0) {
-                        genesis.node.waitForNextBlock()
+                        genesis.node.waitForNextBlock(2)
                         
                         val finalFromBalance = genesis.getBalance(fromAddress)
                         val finalToBalance = genesis.getBalance(toAddress)

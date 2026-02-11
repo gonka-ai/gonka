@@ -146,12 +146,13 @@ class Worker(multiprocessing.Process):
     def _prepare_next_batch(
         self,
         q: Queue,
-        max_wait_time: float = 1.
+        max_wait_time: float = 1.,
+        max_batches: int = 10
     ):
         start_time = time.time()
 
         batches_to_process = []
-        while (time.time() - start_time) < max_wait_time:
+        while (time.time() - start_time) < max_wait_time and len(batches_to_process) < max_batches:
             try:
                 batch = q.get_nowait()
                 batches_to_process.append(batch)
@@ -178,7 +179,6 @@ class Worker(multiprocessing.Process):
                 logger.info(f"[{self.id}] Validating batch {idx} / {len(merged_batches)}")
                 try:
                     validated_batch = self.compute.validate(batch)
-                    logger.info(f"[{self.id}] Validated batch: {validated_batch}")
                     self.validated_batch_queue.put(validated_batch, timeout=10)
                 except Exception as e:
                     logger.error(f"[{self.id}] Validation failed: {e}\n{batch}")

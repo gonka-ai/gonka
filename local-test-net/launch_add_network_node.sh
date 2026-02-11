@@ -44,7 +44,7 @@ fi
 project_name="$KEY_NAME"
 
 docker compose -p "$project_name" down -v
-rm -r ./prod-local/"$project_name" || true
+docker run --rm -v "$(pwd):/workdir" -w /workdir alpine:3.19 rm -rf "prod-local/$project_name" 2>/dev/null || true
 
 echo "project_name=$project_name"
 
@@ -67,9 +67,7 @@ if [ "${PROXY_ACTIVE}" = "true" ]; then
   echo "Starting with proxy support"
 fi
 if [ "${BRIDGE_ACTIVE}" = "true" ]; then
-  COMPOSE_FILES="$COMPOSE_FILES \
-  -f docker-compose.bridge.yml \
-  -f docker-compose.contracts.yml"
+  COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.bridge.yml"
   echo "Starting with bridge support"
 fi
 

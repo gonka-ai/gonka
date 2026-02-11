@@ -9,5 +9,6 @@ message SettleAmount {
   uint64 work_coins = 3;
   uint64 epoch_index = 4;
   string seed_signature = 5;
+  int64 last_claim_attempt = 6;
 }
 

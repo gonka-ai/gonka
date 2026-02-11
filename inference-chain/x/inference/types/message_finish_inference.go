@@ -28,6 +28,12 @@ func (msg *MsgFinishInference) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
+	if msg.PromptTokenCount > MaxAllowedTokens {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, MaxAllowedTokens)
+	}
+	if msg.CompletionTokenCount > MaxAllowedTokens {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "completion_token_count exceeds limit (%d > %d)", msg.CompletionTokenCount, MaxAllowedTokens)
+	}
 	// required addresses
 	if _, err := sdk.AccAddressFromBech32(strings.TrimSpace(msg.ExecutedBy)); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid executed_by address (%s)", err)
@@ -42,14 +48,14 @@ func (msg *MsgFinishInference) ValidateBasic() error {
 	if strings.TrimSpace(msg.ResponseHash) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_hash is required")
 	}
-	if strings.TrimSpace(msg.ResponsePayload) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "response_payload is required")
+	if strings.TrimSpace(msg.PromptHash) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "prompt_hash is required")
+	}
+	if strings.TrimSpace(msg.OriginalPromptHash) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "original_prompt_hash is required")
 	}
 	if strings.TrimSpace(msg.Model) == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "model is required")
-	}
-	if strings.TrimSpace(msg.OriginalPrompt) == "" {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "original_prompt is required")
 	}
 	// request_timestamp must be > 0
 	if msg.RequestTimestamp <= 0 {

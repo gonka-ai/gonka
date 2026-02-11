@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:18.1-bookworm
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-payloads}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-payloads}
+    volumes:
+      - ./postgres:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:5432:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "min_wal_size=${POSTGRES_MIN_WAL_SIZE:-4GB}"
+      - "-c"
+      - "max_wal_size=${POSTGRES_MAX_WAL_SIZE:-16GB}"
+      - "-c"
+      - "checkpoint_timeout=${POSTGRES_CHECKPOINT_TIMEOUT:-15min}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-payloads} -d ${POSTGRES_DB:-payloads}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local
+    container_name: postgres-backup
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-payloads}
+      - POSTGRES_USER=${POSTGRES_USER:-payloads}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - SCHEDULE=0 */4 * * *
+      - BACKUP_KEEP_DAYS=2
+      - BACKUP_KEEP_WEEKS=0
+      - BACKUP_KEEP_MONTHS=0

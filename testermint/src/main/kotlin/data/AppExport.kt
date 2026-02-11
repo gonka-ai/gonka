@@ -74,6 +74,8 @@ data class InferenceParams(
     val bandwidthLimitsParams: BandwidthLimitsParams? = null,
     @SerializedName("confirmation_poc_params")
     val confirmationPocParams: ConfirmationPoCParams? = null,
+    @SerializedName("transfer_agent_access_params")
+    val transferAgentAccessParams: TransferAgentAccessParams? = null,
 )
 
 data class TokenomicsParams(
@@ -205,6 +207,8 @@ data class ValidationParams(
     val downtimeReputationPreserve: Decimal?,
     @SerializedName("quick_failure_threshold")
     val quickFailureThreshold: Decimal?,
+    @SerializedName("binom_test_p0")
+    val binomTestP0: Decimal?,
 )
 
 data class BandwidthLimitsParams(
@@ -222,6 +226,8 @@ data class BandwidthLimitsParams(
     val invalidationsLimitCurve: Long,
     @SerializedName("minimum_concurrent_invalidations")
     val minimumConcurrentInvalidations: Long,
+    @SerializedName("max_inferences_per_block")
+    val maxInferencesPerBlock: Long? = null,
 )
 
 data class ConfirmationPoCParams(
@@ -235,11 +241,54 @@ data class ConfirmationPoCParams(
     val upgradeProtectionWindow: Long = 2,  // Default: 500 blocks
 )
 
+data class TransferAgentAccessParams(
+    @SerializedName("allowed_transfer_addresses")
+    val allowedTransferAddresses: List<String> = emptyList(),
+)
+
 data class PocParams(
     val defaultDifficulty: Int,
     val validationSampleSize: Int,
     @SerializedName("poc_data_pruning_epoch_threshold")
     val pocDataPruningEpochThreshold: Long,
+    @SerializedName("weight_scale_factor")
+    val weightScaleFactor: Decimal? = null,
+    @SerializedName("model_params")
+    val modelParams: PoCModelParams? = null,
+    @SerializedName("model_id")
+    val modelId: String? = null,
+    @SerializedName("seq_len")
+    val seqLen: Long? = null,
+    @SerializedName("poc_v2_enabled")
+    val pocV2Enabled: Boolean = true,  // V2 enabled by default
+    @SerializedName("confirmation_poc_v2_enabled")
+    val confirmationPocV2Enabled: Boolean = true,  // V2 for confirmation PoC, enables migration mode
+)
+
+data class PoCModelParams(
+    val dim: Int,
+    @SerializedName("n_layers")
+    val nLayers: Int,
+    @SerializedName("n_heads")
+    val nHeads: Int,
+    @SerializedName("n_kv_heads")
+    val nKvHeads: Int,
+    @SerializedName("vocab_size")
+    val vocabSize: Int,
+    @SerializedName("ffn_dim_multiplier")
+    val ffnDimMultiplier: Decimal,
+    @SerializedName("multiple_of")
+    val multipleOf: Int,
+    @SerializedName("norm_eps")
+    val normEps: Decimal,
+    @SerializedName("rope_theta")
+    val ropeTheta: Int,
+    @SerializedName("use_scaled_rope")
+    val useScaledRope: Boolean,
+    @SerializedName("seq_len")
+    val seqLen: Int,
+    @SerializedName("r_target")
+    val rTarget: Decimal,
 )
 
 data class GovState(

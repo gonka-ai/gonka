@@ -45,11 +45,11 @@ func (m *mockKeeperForModelAssigner) GetEpochGroupData(ctx context.Context, epoc
 	return types.EpochGroupData{}, false
 }
 
-func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) types.Params {
+func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Params, error) {
 	if m.params != nil {
-		return *m.params
+		return *m.params, nil
 	}
-	return types.DefaultParams()
+	return types.DefaultParams(), nil
 }
 
 // Mock Logger

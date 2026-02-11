@@ -1,12 +1,13 @@
 package com.productscience.mockserver.routes
 
+import com.productscience.mockserver.getHost
+import com.productscience.mockserver.model.*
+import com.productscience.mockserver.service.HostName
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.request.*
 import io.ktor.http.*
-import com.productscience.mockserver.model.ModelState
-import com.productscience.mockserver.model.PowState
 import com.productscience.mockserver.service.WebhookService
 import org.slf4j.LoggerFactory
 
@@ -71,17 +72,18 @@ private suspend fun handleInitGenerate(call: ApplicationCall, webhookService: We
     logger.info("Received POW init/generate request")
     
     // Update the state to POW
-    if (ModelState.getCurrentState() != ModelState.STOPPED ||
-        PowState.getCurrentState() != PowState.POW_STOPPED) {
-        logger.warn("Invalid state for POW init/generate. Current state: ${ModelState.getCurrentState()}, POW state: ${PowState.getCurrentState()}")
+    val host = call.getHost()
+    if (getModelState(host) != ModelState.STOPPED ||
+        getPowState(host) != PowState.POW_STOPPED) {
+        logger.warn("Invalid state for POW init/generate. Current state: ${getModelState(host)}, POW state: ${getPowState(host)}")
         call.respond(HttpStatusCode.BadRequest, mapOf(
             "error" to "Invalid state for validation. state = ${ModelState.POW}. powState = ${PowState.POW_GENERATING}"
         ))
         return
     }
 
-    ModelState.updateState(ModelState.POW)
-    PowState.updateState(PowState.POW_GENERATING)
+    setModelState(host, ModelState.POW)
+    setPowState(host, PowState.POW_GENERATING)
     logger.info("State updated to POW with POW_GENERATING substate")
 
     // Get the request body
@@ -89,7 +91,7 @@ private suspend fun handleInitGenerate(call: ApplicationCall, webhookService: We
     logger.debug("Processing generate POC webhook with request body: $requestBody")
 
     // Process the webhook asynchronously
-    webhookService.processGeneratePocWebhook(requestBody)
+    webhookService.processGeneratePocWebhook(requestBody, HostName(call.getHost()))
 
     // Respond with 200 OK
     call.respond(HttpStatusCode.OK)
@@ -100,18 +102,19 @@ private suspend fun handleInitGenerate(call: ApplicationCall, webhookService: We
  */
 private suspend fun handleInitValidate(call: ApplicationCall, logger: org.slf4j.Logger) {
     logger.info("Received POW init/validate request")
-    
+
+    val host = call.getHost()
     // This endpoint requires the state to be POW
-    if (ModelState.getCurrentState() != ModelState.POW ||
-        PowState.getCurrentState() != PowState.POW_GENERATING) {
-        logger.warn("Invalid state for POW init/validate. Current state: ${ModelState.getCurrentState()}, POW state: ${PowState.getCurrentState()}")
+    if (getModelState(host) != ModelState.POW ||
+        getPowState(host) != PowState.POW_GENERATING) {
+        logger.warn("Invalid state for POW init/validate. Current state: ${getModelState(host)}, POW state: ${getPowState(host)}")
         call.respond(HttpStatusCode.BadRequest, mapOf(
             "error" to "Invalid state for validation. state = ${ModelState.POW}. powState = ${PowState.POW_GENERATING}"
         ))
         return
     }
 
-    PowState.updateState(PowState.POW_VALIDATING)
+    setPowState(host, PowState.POW_VALIDATING)
     logger.info("POW state updated to POW_VALIDATING")
 
     call.receiveText()
@@ -125,11 +128,12 @@ private suspend fun handleInitValidate(call: ApplicationCall, logger: org.slf4j.
  */
 private suspend fun handleValidateBatch(call: ApplicationCall, webhookService: WebhookService, logger: org.slf4j.Logger) {
     logger.info("Received POW validate batch request")
-    
+
+    val host = call.getHost()
     // This endpoint requires the state to be POW
-    if (ModelState.getCurrentState() != ModelState.POW ||
-        PowState.getCurrentState() != PowState.POW_VALIDATING) {
-        logger.warn("Invalid state for POW validate batch. Current state: ${ModelState.getCurrentState()}, POW state: ${PowState.getCurrentState()}")
+    if (getModelState(host) != ModelState.POW ||
+        getPowState(host) != PowState.POW_VALIDATING) {
+        logger.warn("Invalid state for POW validate batch. Current state: ${getModelState(host)}, POW state: ${getPowState(host)}")
         call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid state for batch validation"))
         return
     }
@@ -154,7 +158,7 @@ private suspend fun handlePowStatus(call: ApplicationCall, logger: org.slf4j.Log
     call.respond(
         HttpStatusCode.OK,
         mapOf(
-            "status" to PowState.getCurrentState(),
+            "status" to getPowState(call.getHost()),
             "is_model_initialized" to false // FIXME: hardcoded for now, should be replaced with actual logic
         )
     )

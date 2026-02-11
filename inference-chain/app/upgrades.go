@@ -16,6 +16,10 @@ import (
 	v0_2_3 "github.com/productscience/inference/app/upgrades/v0_2_3"
 	"github.com/productscience/inference/app/upgrades/v0_2_4"
 	"github.com/productscience/inference/app/upgrades/v0_2_5"
+	"github.com/productscience/inference/app/upgrades/v0_2_6"
+	"github.com/productscience/inference/app/upgrades/v0_2_7"
+	"github.com/productscience/inference/app/upgrades/v0_2_8"
+	"github.com/productscience/inference/app/upgrades/v0_2_9"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -51,6 +55,10 @@ func (app *App) setupUpgradeHandlers() {
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_3.UpgradeName, v0_2_3.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_4.UpgradeName, v0_2_4.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_5.UpgradeName, v0_2_5.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.BlsKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_6.UpgradeName, v0_2_6.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_7.UpgradeName, v0_2_7.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_8.UpgradeName, v0_2_8.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.BlsKeeper, app.DistrKeeper, app.AuthzKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_9.UpgradeName, v0_2_9.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 }
 
 func (app *App) registerMigrations() {
@@ -74,6 +82,22 @@ func (app *App) registerMigrations() {
 		return app.InferenceKeeper.MigrateConfirmationWeights(ctx)
 	})
 
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 8, func(ctx sdk.Context) error {
+		return nil
+	})
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 9, func(ctx sdk.Context) error {
+		return nil
+	})
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 10, func(ctx sdk.Context) error {
+		return nil
+	})
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 11, func(ctx sdk.Context) error {
+		return nil
+	})
+
 	app.Configurator().RegisterMigration(districutiontypes.ModuleName, 3, func(ctx sdk.Context) error {
 		return nil
 	})
@@ -83,6 +107,10 @@ func (app *App) registerMigrations() {
 	})
 
 	app.Configurator().RegisterMigration(stakingtypes.ModuleName, 5, func(ctx sdk.Context) error {
+		return nil
+	})
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 11, func(ctx sdk.Context) error {
 		return nil
 	})
 }

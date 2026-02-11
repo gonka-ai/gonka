@@ -68,7 +68,7 @@ func TestSubmitGroupKeyValidationSignature_AlreadySigned(t *testing.T) {
 	require.NotNil(t, resp)
 
 	// Verify epoch is still in SIGNED phase (unchanged)
-	storedData, found := k.GetEpochBLSData(ctx, epochID)
-	require.True(t, found)
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_SIGNED, storedData.DkgPhase)
 }

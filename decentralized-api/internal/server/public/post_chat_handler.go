@@ -39,8 +39,6 @@ const (
 	BothContexts = TransferContext | ExecutorContext
 )
 
-// (unused) sentinel was replaced by broker.ActionError classification
-
 // Package-level variables for AuthKey reuse prevention
 var (
 	// Map for O(1) lookup of existing AuthKeys and their contexts
@@ -58,6 +56,65 @@ var (
 	// Reference to the config manager for accessing validation parameters
 	configManagerRef *apiconfig.ConfigManager
 )
+
+func NewNoRedirectClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// emptyButParseableResponsePayload returns a deterministic "empty" response payload that:
+// - is valid JSON parseable by older validators
+// - yields no logits (so validator re-execution cannot meaningfully compare)
+// - produces a stable response hash (hash is over these exact bytes)
+//
+// IMPORTANT: This payload is committed via `ResponseHash` on-chain and served to validators.
+func emptyButParseableResponsePayload(inferenceId, model string, promptTokens uint64) *completionapi.JsonCompletionResponse {
+	choice := completionapi.Choice{
+		Index:        0,
+		Message:      &completionapi.Message{Role: "assistant", Content: ""},
+		FinishReason: "error",
+		StopReason:   "",
+	}
+	// Provide a minimal synthetic logprob entry so older validators won't end up with:
+	// - EnforcedTokens.Tokens == nil (marshals to {"tokens":null})
+	// - or an error due to missing enforced tokens
+	//
+	// This must have TopLogprobs != nil AND len(TopLogprobs) > 0 to pass GetEnforcedTokens().
+	choice.Logprobs.Content = []completionapi.Logprob{
+		{
+			Token:   "<EMPTY>",
+			Logprob: 0,
+			Bytes:   []int{},
+			TopLogprobs: []completionapi.TopLogprobs{
+				{Token: "<EMPTY>", Logprob: 0, Bytes: []int{}},
+			},
+		},
+	}
+
+	resp := completionapi.Response{
+		ID:      inferenceId,
+		Object:  "chat.completion",
+		Created: 0,
+		Model:   model,
+		Choices: []completionapi.Choice{choice},
+		Usage: completionapi.Usage{
+			// Must be non-zero so `completionapi.JsonCompletionResponse.GetUsage()` won't error.
+			// We set it to the best-effort prompt token count so MsgFinishInference can still charge.
+			PromptTokens:     promptTokens,
+			CompletionTokens: 0,
+		},
+	}
+
+	b, err := json.Marshal(resp)
+	if err != nil {
+		// If marshaling fails, return error instead of generating a fallback response
+		return nil
+	}
+	return &completionapi.JsonCompletionResponse{Bytes: b, Resp: resp}
+}
 
 // checkAndRecordAuthKey checks if an AuthKey has been used before and records it if not
 // Returns true if the key has been used before in the specified context, false otherwise
@@ -155,9 +212,27 @@ func (s *Server) postChat(ctx echo.Context) error {
 		return err
 	}
 
+	// Early TA whitelist check - covers both transfer and executor paths:
+	// - Transfer requests: TransferAddress = this node's address (set by readRequest)
+	// - Executor requests: TransferAddress = forwarding TA's address (from X-Transfer-Address header)
+	if err := s.enforceTransferAgentAccess(chatRequest.TransferAddress); err != nil {
+		return err
+	}
+
 	if chatRequest.AuthKey == "" {
 		logging.Warn("Request without authorization", types.Server, "path", ctx.Request().URL.Path)
 		return ErrRequestAuth
+	}
+
+	if chatRequest.OpenAiRequest.Model == "" {
+		logging.Warn("Request without model", types.Server, "path", ctx.Request().URL.Path)
+		return ErrNoModelSpecified
+	}
+
+	// Developer access gating: before a configured cutoff height, only allowlisted developers may use the public API
+	// for both transfer-agent and executor request paths.
+	if err := s.enforceDeveloperAccessGate(ctx.Request().Context(), chatRequest.RequesterAddress); err != nil {
+		return err
 	}
 
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
@@ -167,6 +242,49 @@ func (s *Server) postChat(ctx echo.Context) error {
 		logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
 		return s.handleTransferRequest(ctx, chatRequest)
 	}
+}
+
+func (s *Server) enforceDeveloperAccessGate(ctx context.Context, requesterAddress string) error {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	paramsResp, err := queryClient.Params(ctx, &types.QueryParamsRequest{})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch chain params")
+	}
+	p := paramsResp.Params.DeveloperAccessParams
+	if p == nil || p.UntilBlockHeight == 0 {
+		return nil
+	}
+
+	status, err := s.recorder.Status(ctx)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch chain status")
+	}
+	currentHeight := status.SyncInfo.LatestBlockHeight
+	if currentHeight >= p.UntilBlockHeight {
+		return nil
+	}
+
+	for _, a := range p.AllowedDeveloperAddresses {
+		if a == requesterAddress {
+			return nil
+		}
+	}
+
+	return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("inference requests are restricted until block height %d", p.UntilBlockHeight))
+}
+
+// enforceTransferAgentAccess checks if the given TA address is in the whitelist.
+// Returns nil if allowed, or a Forbidden error if not allowed.
+func (s *Server) enforceTransferAgentAccess(taAddress string) error {
+	cache := s.configManager.GetTransferAgentAccessCache()
+	if !cache.IsEnabled {
+		return nil // no restriction
+	}
+	if _, ok := cache.AllowedAddresses[taAddress]; ok {
+		return nil
+	}
+	logging.Warn("Transfer Agent not in whitelist", types.Inferences, "address", taAddress)
+	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
@@ -210,7 +328,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	requestBlockHeight := status.SyncInfo.LatestBlockHeight
 	can, estimatedKB := s.bandwidthLimiter.CanAcceptRequest(requestBlockHeight, int(promptTokenCount), int(request.OpenAiRequest.MaxTokens))
 	if !can {
-		logging.Warn("Bandwidth limit exceeded", types.Inferences, "address", request.RequesterAddress)
+		logging.Warn("Capacity limit exceeded", types.Inferences, "address", request.RequesterAddress)
 		url := s.configManager.GetApiConfig().PublicUrl
 		return echo.NewHTTPError(http.StatusTooManyRequests, "Transfer Agent capacity reached. Try another TA from "+url+"/v1/epochs/current/participants")
 	}
@@ -256,6 +374,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		request.Seed = strconv.Itoa(int(seed))
 		request.TransferAddress = s.recorder.GetAccountAddress()
 		request.TransferSignature = inferenceRequest.TransferSignature
+		request.PromptHash = inferenceRequest.PromptHash
 
 		logging.Info("Execute request on same node, fill request with extra data", types.Inferences, "inferenceId", request.InferenceId, "seed", request.Seed)
 		return s.handleExecutorRequest(ctx, request, ctx.Response().Writer)
@@ -275,9 +394,10 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	req.Header.Set(utils.XTransferAddressHeader, request.TransferAddress)
 	req.Header.Set(utils.XRequesterAddressHeader, request.RequesterAddress)
 	req.Header.Set(utils.XTASignatureHeader, inferenceRequest.TransferSignature)
+	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewNoRedirectClient().Do(req)
 	if err != nil {
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
@@ -410,6 +530,17 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return err
 	}
 
+	computedPromptHash, promptPayload, err := getModifiedPromptHash(modifiedRequestBody.NewBody)
+	if err != nil {
+		logging.Error("Failed to compute prompt hash", types.Inferences, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, "Failed to compute prompt hash")
+	}
+	if request.PromptHash != "" && computedPromptHash != request.PromptHash {
+		logging.Error("Prompt hash mismatch", types.Inferences,
+			"expected", request.PromptHash, "computed", computedPromptHash)
+		return echo.NewHTTPError(http.StatusBadRequest, "Prompt hash mismatch")
+	}
+
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
@@ -442,6 +573,24 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := getInferenceErrorMessage(resp)
 		logging.Warn("Inference node response with an error", types.Inferences, "code", resp.StatusCode, "msg", msg)
+		// If vLLM rejects the payload (400/422), still record a FinishInference with an empty response
+		// so the inference lifecycle is closed on-chain.
+		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+			logging.Warn("Recording FinishInference with empty response due to inference node payload error", types.Inferences,
+				"inferenceId", inferenceId, "code", resp.StatusCode)
+			// Provide a parseable synthetic response payload so older validators can still unmarshal it.
+			promptTokens := uint64(1)
+			synthetic := emptyButParseableResponsePayload(inferenceId, request.OpenAiRequest.Model, promptTokens)
+			if synthetic == nil {
+				logging.Error("Failed to create synthetic response payload", types.Inferences, "inferenceId", inferenceId)
+				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create synthetic response payload")
+			}
+			if txErr := s.sendInferenceTransaction(request.InferenceId, synthetic, request.Body, s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
+				logging.Error("Failed to record FinishInference after inference node payload error", types.Inferences,
+					"inferenceId", inferenceId, "error", txErr)
+			}
+			return echo.NewHTTPError(resp.StatusCode, msg)
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, msg)
 	}
 
@@ -457,7 +606,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request)
+	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request, promptPayload)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
@@ -467,28 +616,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 }
 
 func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	grantees, err := queryClient.GranteesByMessageType(ctx.Request().Context(), &types.QueryGranteesByMessageTypeRequest{
-		GranterAddress: granterAddress,
-		MessageTypeUrl: "/inference.inference.MsgStartInference",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get grantees to sign inference: %w", err)
-	}
-	granteesPubkeys := make([]string, len(grantees.Grantees)+1)
-	for i, grantee := range grantees.Grantees {
-		granteesPubkeys[i] = grantee.PubKey
-	}
-
-	granterAccount, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: granterAddress})
-	if err != nil {
-		logging.Error("Failed to get granter account", types.Inferences, "address", granterAddress, "error", err)
-		return nil, err
-	}
-	granterPubKey := granterAccount.Pubkey
-
-	granteesPubkeys[len(granteesPubkeys)-1] = granterPubKey
-	return granteesPubkeys, nil
+	return s.authzCache.GetPubKeys(ctx.Request().Context(), granterAddress, "/inference.inference.MsgStartInference")
 }
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
@@ -563,7 +691,8 @@ func (s *Server) validateTimestampNonce(request *ChatRequest) error {
 		logging.Warn("Request timestamp is in the future", types.Inferences,
 			"inferenceId", request.InferenceId,
 			"offset", time.Duration(requestOffset).String())
-		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
+		// For now, we do NOT return an error here. This is solely harmful to EA with the current
+		// scheme, and is happening during chain-slow periods regularly
 	}
 
 	if checkAndRecordAuthKey(request.AuthKey, currentBlockHeight, ExecutorContext) {
@@ -618,7 +747,7 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 	return signature, nil
 }
 
-func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.CompletionResponse, requestBody []byte, executorAddress string, request *ChatRequest) error {
+func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.CompletionResponse, requestBody []byte, executorAddress string, request *ChatRequest, promptPayload []byte) error {
 	responseHash, err := response.GetHash()
 	if err != nil || responseHash == "" {
 		logging.Error("Failed to get responseHash from response", types.Inferences, "error", err)
@@ -666,8 +795,10 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 	}
 
 	if s.recorder != nil {
-		// Calculate executor signature
-		executorSignature, err := s.calculateSignature(string(request.Body), request.Timestamp, request.TransferAddress, executorAddress, calculations.ExecutorAgent)
+		promptHash := utils.GenerateSHA256HashBytes(promptPayload)
+		originalPromptHash := utils.GenerateSHA256HashBytes(request.Body)
+
+		executorSignature, err := s.calculateSignature(promptHash, request.Timestamp, request.TransferAddress, executorAddress, calculations.ExecutorAgent)
 		if err != nil {
 			return err
 		}
@@ -676,7 +807,6 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 			Creator:              executorAddress,
 			InferenceId:          inferenceId,
 			ResponseHash:         responseHash,
-			ResponsePayload:      string(bodyBytes),
 			PromptTokenCount:     usage.PromptTokens,
 			CompletionTokenCount: usage.CompletionTokens,
 			ExecutedBy:           executorAddress,
@@ -685,9 +815,14 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 			ExecutorSignature:    executorSignature,
 			RequestTimestamp:     request.Timestamp,
 			RequestedBy:          request.RequesterAddress,
-			OriginalPrompt:       string(request.Body),
 			Model:                model,
+			PromptHash:           promptHash,
+			OriginalPromptHash:   originalPromptHash,
 		}
+
+		// Store payloads before broadcasting transaction
+		// If storage fails, we still proceed with broadcast (but log error)
+		s.storePayloadsToStorage(request.Request.Context(), inferenceId, promptPayload, bodyBytes)
 
 		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
 		err = s.recorder.FinishInference(message)
@@ -700,22 +835,48 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 	return nil
 }
 
-func getPromptHash(requestBytes []byte) (string, string, error) {
+func (s *Server) storePayloadsToStorage(ctx context.Context, inferenceId string, promptPayload, responsePayload []byte) {
+	if s.payloadStorage == nil {
+		logging.Warn("Cannot store payload: payloadStorage is nil", types.Inferences, "inferenceId", inferenceId)
+		return
+	}
+	if s.phaseTracker == nil {
+		logging.Warn("Cannot store payload: phaseTracker is nil", types.Inferences, "inferenceId", inferenceId)
+		return
+	}
+
+	epochState := s.phaseTracker.GetCurrentEpochState()
+	if epochState == nil {
+		logging.Warn("Cannot store payload: epoch state is nil", types.Inferences, "inferenceId", inferenceId)
+		return
+	}
+	epochId := epochState.LatestEpoch.EpochIndex
+
+	err := s.payloadStorage.Store(ctx, inferenceId, epochId, promptPayload, responsePayload)
+	if err != nil {
+		logging.Error("Failed to store payloads locally", types.Inferences, "inferenceId", inferenceId, "epochId", epochId, "error", err)
+		return
+	}
+	logging.Debug("Stored payloads locally", types.Inferences, "inferenceId", inferenceId, "epochId", epochId)
+}
+
+func getModifiedPromptHash(requestBytes []byte) (string, []byte, error) {
 	canonicalJSON, err := utils.CanonicalizeJSON(requestBytes)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 
 	promptHash := utils.GenerateSHA256Hash(canonicalJSON)
-	return promptHash, canonicalJSON, nil
+	// By definition, canonicalize will only accept UTF-8, so straight conversion is safe
+	return promptHash, []byte(canonicalJSON), nil
 }
 
 func createInferenceStartRequest(s *Server, request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string, promptTokenCount int) (*inference.MsgStartInference, error) {
-	finalRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
+	modifiedRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
 	if err != nil {
 		return nil, err
 	}
-	promptHash, promptPayload, err := getPromptHash(finalRequest.NewBody)
+	modifiedPromptHash, _, err := getModifiedPromptHash(modifiedRequest.NewBody)
 	if err != nil {
 		return nil, err
 	}
@@ -725,21 +886,23 @@ func createInferenceStartRequest(s *Server, request *ChatRequest, seed int32, in
 	} else if request.OpenAiRequest.MaxTokens > 0 {
 		maxTokens = int(request.OpenAiRequest.MaxTokens)
 	}
+
+	originalPromptHash := utils.GenerateSHA256HashBytes(request.Body)
+
 	transaction := &inference.MsgStartInference{
-		InferenceId:      inferenceId,
-		PromptHash:       promptHash,
-		PromptPayload:    promptPayload,
-		RequestedBy:      request.RequesterAddress,
-		Model:            request.OpenAiRequest.Model,
-		AssignedTo:       executor.Address,
-		NodeVersion:      nodeVersion,
-		MaxTokens:        uint64(maxTokens),
-		PromptTokenCount: uint64(promptTokenCount),
-		RequestTimestamp: request.Timestamp,
-		OriginalPrompt:   string(request.Body),
+		InferenceId:        inferenceId,
+		PromptHash:         modifiedPromptHash,
+		RequestedBy:        request.RequesterAddress,
+		Model:              request.OpenAiRequest.Model,
+		AssignedTo:         executor.Address,
+		NodeVersion:        nodeVersion,
+		MaxTokens:          uint64(maxTokens),
+		PromptTokenCount:   uint64(promptTokenCount),
+		RequestTimestamp:   request.Timestamp,
+		OriginalPromptHash: originalPromptHash,
 	}
 
-	signature, err := s.calculateSignature(string(request.Body), request.Timestamp, request.TransferAddress, executor.Address, calculations.TransferAgent)
+	signature, err := s.calculateSignature(modifiedPromptHash, request.Timestamp, request.TransferAddress, executor.Address, calculations.TransferAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -791,6 +954,7 @@ func readRequest(request *http.Request, transferAddress string) (*ChatRequest, e
 		Timestamp:         timestamp,
 		TransferAddress:   transferAddress,
 		TransferSignature: request.Header.Get(utils.XTASignatureHeader),
+		PromptHash:        request.Header.Get(utils.XPromptHashHeader),
 	}, nil
 }
 

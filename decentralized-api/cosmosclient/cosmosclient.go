@@ -38,10 +38,12 @@ import (
 )
 
 type InferenceCosmosClient struct {
-	ctx        context.Context
-	apiAccount *apiconfig.ApiAccount
-	Address    string
-	manager    tx_manager.TxManager
+	ctx             context.Context
+	apiAccount      *apiconfig.ApiAccount
+	Address         string
+	manager         tx_manager.TxManager
+	batchConsumer   *tx_manager.BatchConsumer
+	batchingEnabled bool
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -149,17 +151,53 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
-	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress)
+	// Ensure natsConn is closed on any error to unbind consumers
+	var success bool
+	defer func() {
+		if !success {
+			natsConn.Close()
+		}
+	}()
+
+	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, config.GetHeight)
 	if err != nil {
 		return nil, err
 	}
 
-	return &InferenceCosmosClient{
+	client := &InferenceCosmosClient{
 		ctx:        ctx,
 		Address:    accAddress,
 		apiAccount: apiAccount,
 		manager:    mn,
-	}, nil
+	}
+
+	batchingCfg := config.GetTxBatchingConfig()
+	if !batchingCfg.Disabled {
+		batchConfig := tx_manager.BatchConfig{
+			FlushSize:                batchingCfg.FlushSize,
+			FlushTimeout:             time.Duration(batchingCfg.FlushTimeoutSeconds) * time.Second,
+			ValidationV2FlushSize:    batchingCfg.ValidationV2FlushSize,
+			ValidationV2FlushTimeout: time.Duration(batchingCfg.ValidationV2FlushTimeoutSeconds) * time.Second,
+		}
+		batchConsumer := tx_manager.NewBatchConsumer(
+			mn.GetJetStream(),
+			cosmoclient.Context().Codec,
+			mn,
+			batchConfig,
+		)
+		if err := batchConsumer.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start batch consumer: %w", err)
+		}
+		client.batchConsumer = batchConsumer
+		client.batchingEnabled = true
+		logging.Info("Transaction batching enabled", types.Messages,
+			"flushSize", batchingCfg.FlushSize,
+			"flushTimeoutSeconds", batchingCfg.FlushTimeoutSeconds,
+			"validationV2FlushTimeoutSeconds", batchingCfg.ValidationV2FlushTimeoutSeconds)
+	}
+
+	success = true
+	return client, nil
 }
 
 type CosmosMessageClient interface {
@@ -170,8 +208,13 @@ type CosmosMessageClient interface {
 	FinishInference(transaction *inference.MsgFinishInference) error
 	ReportValidation(transaction *inference.MsgValidation) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
+	// PoC V1 methods (on-chain batches, used when poc_v2_enabled=false)
 	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
+	// PoC V2 methods (off-chain commits, used when poc_v2_enabled=true)
+	SubmitPocValidationsV2(transaction *inference.MsgSubmitPocValidationsV2) error
+	SubmitPoCV2StoreCommit(transaction *inference.MsgPoCV2StoreCommit) error
+	SubmitMLNodeWeightDistribution(transaction *inference.MsgMLNodeWeightDistribution) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
@@ -183,7 +226,7 @@ type CosmosMessageClient interface {
 	NewInferenceQueryClient() types.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error)
 	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error
 	Status(ctx context.Context) (*ctypes.ResultStatus, error)
@@ -283,6 +326,9 @@ func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error)
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.Address
+	if icc.batchingEnabled {
+		return icc.batchConsumer.PublishStartInference(transaction)
+	}
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
 	return err
 }
@@ -290,6 +336,9 @@ func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStart
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
 	transaction.Creator = icc.Address
 	transaction.ExecutedBy = icc.Address
+	if icc.batchingEnabled {
+		return icc.batchConsumer.PublishFinishInference(transaction)
+	}
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
 	return err
 }
@@ -318,13 +367,22 @@ func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address stri
 	return icc.manager.BankBalances(ctx, address)
 }
 
-func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
+func (icc *InferenceCosmosClient) SubmitPocValidationsV2(transaction *inference.MsgSubmitPocValidationsV2) error {
 	transaction.Creator = icc.Address
+	if icc.batchingEnabled {
+		return icc.batchConsumer.PublishPocValidationV2(transaction)
+	}
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
 	return err
 }
 
-func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
+func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommit(transaction *inference.MsgPoCV2StoreCommit) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitMLNodeWeightDistribution(transaction *inference.MsgMLNodeWeightDistribution) error {
 	transaction.Creator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
 	return err
@@ -398,8 +456,8 @@ func (icc *InferenceCosmosClient) GetBridgeAddresses(ctx context.Context, chainI
 	return resp.Addresses, nil
 }
 
-func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
-	return icc.manager.SendTransactionAsyncWithRetry(msg)
+func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
+	return icc.manager.SendTransactionAsyncWithRetry(msg, deadlineBlock...)
 }
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {

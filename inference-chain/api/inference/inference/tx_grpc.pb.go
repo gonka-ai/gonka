@@ -30,6 +30,9 @@ const (
 	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
 	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
 	Msg_SubmitPocValidation_FullMethodName              = "/inference.inference.Msg/SubmitPocValidation"
+	Msg_SubmitPocValidationsV2_FullMethodName           = "/inference.inference.Msg/SubmitPocValidationsV2"
+	Msg_PoCV2StoreCommit_FullMethodName                 = "/inference.inference.Msg/PoCV2StoreCommit"
+	Msg_MLNodeWeightDistribution_FullMethodName         = "/inference.inference.Msg/MLNodeWeightDistribution"
 	Msg_SubmitSeed_FullMethodName                       = "/inference.inference.Msg/SubmitSeed"
 	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
 	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
@@ -56,6 +59,8 @@ const (
 	Msg_AddUserToTrainingAllowList_FullMethodName       = "/inference.inference.Msg/AddUserToTrainingAllowList"
 	Msg_RemoveUserFromTrainingAllowList_FullMethodName  = "/inference.inference.Msg/RemoveUserFromTrainingAllowList"
 	Msg_SetTrainingAllowList_FullMethodName             = "/inference.inference.Msg/SetTrainingAllowList"
+	Msg_AddParticipantsToAllowList_FullMethodName       = "/inference.inference.Msg/AddParticipantsToAllowList"
+	Msg_RemoveParticipantsFromAllowList_FullMethodName  = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
 )
 
 // MsgClient is the client API for Msg service.
@@ -75,6 +80,11 @@ type MsgClient interface {
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
 	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
+	// PoC v2 validation messages
+	SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error)
+	// PoC v2 off-chain commit messages
+	PoCV2StoreCommit(ctx context.Context, in *MsgPoCV2StoreCommit, opts ...grpc.CallOption) (*MsgPoCV2StoreCommitResponse, error)
+	MLNodeWeightDistribution(ctx context.Context, in *MsgMLNodeWeightDistribution, opts ...grpc.CallOption) (*MsgMLNodeWeightDistributionResponse, error)
 	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
@@ -101,6 +111,8 @@ type MsgClient interface {
 	AddUserToTrainingAllowList(ctx context.Context, in *MsgAddUserToTrainingAllowList, opts ...grpc.CallOption) (*MsgAddUserToTrainingAllowListResponse, error)
 	RemoveUserFromTrainingAllowList(ctx context.Context, in *MsgRemoveUserFromTrainingAllowList, opts ...grpc.CallOption) (*MsgRemoveUserFromTrainingAllowListResponse, error)
 	SetTrainingAllowList(ctx context.Context, in *MsgSetTrainingAllowList, opts ...grpc.CallOption) (*MsgSetTrainingAllowListResponse, error)
+	AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error)
+	RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error)
 }
 
 type msgClient struct {
@@ -204,6 +216,33 @@ func (c *msgClient) SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, o
 func (c *msgClient) SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error) {
 	out := new(MsgSubmitPocValidationResponse)
 	err := c.cc.Invoke(ctx, Msg_SubmitPocValidation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error) {
+	out := new(MsgSubmitPocValidationsV2Response)
+	err := c.cc.Invoke(ctx, Msg_SubmitPocValidationsV2_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) PoCV2StoreCommit(ctx context.Context, in *MsgPoCV2StoreCommit, opts ...grpc.CallOption) (*MsgPoCV2StoreCommitResponse, error) {
+	out := new(MsgPoCV2StoreCommitResponse)
+	err := c.cc.Invoke(ctx, Msg_PoCV2StoreCommit_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) MLNodeWeightDistribution(ctx context.Context, in *MsgMLNodeWeightDistribution, opts ...grpc.CallOption) (*MsgMLNodeWeightDistributionResponse, error) {
+	out := new(MsgMLNodeWeightDistributionResponse)
+	err := c.cc.Invoke(ctx, Msg_MLNodeWeightDistribution_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -444,6 +483,24 @@ func (c *msgClient) SetTrainingAllowList(ctx context.Context, in *MsgSetTraining
 	return out, nil
 }
 
+func (c *msgClient) AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error) {
+	out := new(MsgAddParticipantsToAllowListResponse)
+	err := c.cc.Invoke(ctx, Msg_AddParticipantsToAllowList_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error) {
+	out := new(MsgRemoveParticipantsFromAllowListResponse)
+	err := c.cc.Invoke(ctx, Msg_RemoveParticipantsFromAllowList_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -461,6 +518,11 @@ type MsgServer interface {
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
 	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
+	// PoC v2 validation messages
+	SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error)
+	// PoC v2 off-chain commit messages
+	PoCV2StoreCommit(context.Context, *MsgPoCV2StoreCommit) (*MsgPoCV2StoreCommitResponse, error)
+	MLNodeWeightDistribution(context.Context, *MsgMLNodeWeightDistribution) (*MsgMLNodeWeightDistributionResponse, error)
 	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
@@ -487,6 +549,8 @@ type MsgServer interface {
 	AddUserToTrainingAllowList(context.Context, *MsgAddUserToTrainingAllowList) (*MsgAddUserToTrainingAllowListResponse, error)
 	RemoveUserFromTrainingAllowList(context.Context, *MsgRemoveUserFromTrainingAllowList) (*MsgRemoveUserFromTrainingAllowListResponse, error)
 	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
+	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
+	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -526,6 +590,15 @@ func (UnimplementedMsgServer) SubmitPocBatch(context.Context, *MsgSubmitPocBatch
 }
 func (UnimplementedMsgServer) SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidation not implemented")
+}
+func (UnimplementedMsgServer) SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidationsV2 not implemented")
+}
+func (UnimplementedMsgServer) PoCV2StoreCommit(context.Context, *MsgPoCV2StoreCommit) (*MsgPoCV2StoreCommitResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PoCV2StoreCommit not implemented")
+}
+func (UnimplementedMsgServer) MLNodeWeightDistribution(context.Context, *MsgMLNodeWeightDistribution) (*MsgMLNodeWeightDistributionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MLNodeWeightDistribution not implemented")
 }
 func (UnimplementedMsgServer) SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitSeed not implemented")
@@ -604,6 +677,12 @@ func (UnimplementedMsgServer) RemoveUserFromTrainingAllowList(context.Context, *
 }
 func (UnimplementedMsgServer) SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetTrainingAllowList not implemented")
+}
+func (UnimplementedMsgServer) AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddParticipantsToAllowList not implemented")
+}
+func (UnimplementedMsgServer) RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveParticipantsFromAllowList not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -812,6 +891,60 @@ func _Msg_SubmitPocValidation_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SubmitPocValidation(ctx, req.(*MsgSubmitPocValidation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SubmitPocValidationsV2_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitPocValidationsV2)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitPocValidationsV2(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitPocValidationsV2_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitPocValidationsV2(ctx, req.(*MsgSubmitPocValidationsV2))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_PoCV2StoreCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgPoCV2StoreCommit)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).PoCV2StoreCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_PoCV2StoreCommit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).PoCV2StoreCommit(ctx, req.(*MsgPoCV2StoreCommit))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_MLNodeWeightDistribution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgMLNodeWeightDistribution)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).MLNodeWeightDistribution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_MLNodeWeightDistribution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).MLNodeWeightDistribution(ctx, req.(*MsgMLNodeWeightDistribution))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1284,6 +1417,42 @@ func _Msg_SetTrainingAllowList_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_AddParticipantsToAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAddParticipantsToAllowList)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AddParticipantsToAllowList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AddParticipantsToAllowList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AddParticipantsToAllowList(ctx, req.(*MsgAddParticipantsToAllowList))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RemoveParticipantsFromAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRemoveParticipantsFromAllowList)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RemoveParticipantsFromAllowList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RemoveParticipantsFromAllowList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RemoveParticipantsFromAllowList(ctx, req.(*MsgRemoveParticipantsFromAllowList))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1334,6 +1503,18 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPocValidation",
 			Handler:    _Msg_SubmitPocValidation_Handler,
+		},
+		{
+			MethodName: "SubmitPocValidationsV2",
+			Handler:    _Msg_SubmitPocValidationsV2_Handler,
+		},
+		{
+			MethodName: "PoCV2StoreCommit",
+			Handler:    _Msg_PoCV2StoreCommit_Handler,
+		},
+		{
+			MethodName: "MLNodeWeightDistribution",
+			Handler:    _Msg_MLNodeWeightDistribution_Handler,
 		},
 		{
 			MethodName: "SubmitSeed",
@@ -1438,6 +1619,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetTrainingAllowList",
 			Handler:    _Msg_SetTrainingAllowList_Handler,
+		},
+		{
+			MethodName: "AddParticipantsToAllowList",
+			Handler:    _Msg_AddParticipantsToAllowList_Handler,
+		},
+		{
+			MethodName: "RemoveParticipantsFromAllowList",
+			Handler:    _Msg_RemoveParticipantsFromAllowList_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

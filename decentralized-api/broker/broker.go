@@ -41,6 +41,7 @@ type BrokerChainBridge interface {
 	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
+	GetParams() (*types.QueryParamsResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -100,6 +101,11 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, mo
 	return queryClient.EpochGroupData(b.client.GetContext(), req)
 }
 
+func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
+}
+
 type Broker struct {
 	highPriorityCommands chan Command
 	lowPriorityCommands  chan Command
@@ -119,18 +125,64 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 }
 
-const (
-	PoCBatchesPath = "/v1/poc-batches"
-)
-
-func GetPocBatchesCallbackUrl(callbackUrl string) string {
-	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
+// GetParticipantAddress returns the current participant's address if available.
+func (b *Broker) GetParticipantAddress() string {
+	if b == nil || b.participantInfo == nil {
+		return ""
+	}
+	return b.participantInfo.GetAddress()
 }
 
-func GetPocValidateCallbackUrl(callbackUrl string) string {
-	// For now the URl is the same, the node inference server appends "/validated" to the URL
-	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
+// IsPoCv2Enabled returns whether PoC V2 (off-chain artifacts) is enabled.
+// Returns true by default if phaseTracker is not available.
+func (b *Broker) IsPoCv2Enabled() bool {
+	if b == nil || b.phaseTracker == nil {
+		return true // default V2
+	}
+	return b.phaseTracker.IsPoCv2Enabled()
+}
+
+// IsV2EndpointsEnabled returns whether V2 endpoints should be enabled.
+// True when poc_v2_enabled=true OR confirmation_poc_v2_enabled=true (migration mode).
+func (b *Broker) IsV2EndpointsEnabled() bool {
+	if b == nil || b.phaseTracker == nil {
+		return true
+	}
+	return b.phaseTracker.IsPoCv2Enabled() || b.phaseTracker.IsConfirmationPoCv2Enabled()
+}
+
+// IsMigrationMode returns whether we're in migration mode.
+// Migration mode: poc_v2_enabled=false, confirmation_poc_v2_enabled=true.
+func (b *Broker) IsMigrationMode() bool {
+	if b == nil || b.phaseTracker == nil {
+		return false
+	}
+	return !b.phaseTracker.IsPoCv2Enabled() && b.phaseTracker.IsConfirmationPoCv2Enabled()
+}
+
+// shouldUseV2ForPoC determines if V2 should be used for PoC based on mode and event.
+// - Full V2 mode: always V2
+// - Migration mode + confirmation PoC event_sequence == 0: V2
+// - Otherwise: V1
+func (b *Broker) shouldUseV2ForPoC(confirmationEvent *types.ConfirmationPoCEvent) bool {
+	if b.IsPoCv2Enabled() {
+		return true
+	}
+	if b.IsMigrationMode() && confirmationEvent != nil && confirmationEvent.EventSequence == 0 {
+		return true
+	}
+	return false
+}
+
+const PoCBatchesBasePathV2 = "/v2/poc-batches"
+const PoCBatchesBasePathV1 = "/v1/poc-batches"
+
+func GetPoCCallbackBaseURLV2(callbackUrl string) string {
+	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV2)
+}
+
+func GetPoCCallbackBaseURLV1(callbackUrl string) string {
+	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV1)
 }
 
 type ModelArgs struct {
@@ -337,6 +389,10 @@ func (b *Broker) TriggerStatusQuery(bypassDebounce bool) {
 
 func (b *Broker) GetChainBridge() BrokerChainBridge {
 	return b.chainBridge
+}
+
+func (b *Broker) GetPhaseTracker() *chainphase.ChainPhaseTracker {
+	return b.phaseTracker
 }
 
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan NodeCommandResponse {
@@ -790,6 +846,8 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 type pocParams struct {
 	startPoCBlockHeight int64
 	startPoCBlockHash   string
+	modelId             string
+	seqLen              int64
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -937,8 +995,79 @@ func (b *Broker) reconcileIfSynced(triggerMsg string) {
 		return
 	}
 
+	b.enforceSingleModelOnAllNodes()
+
 	logging.Info(triggerMsg, types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
 	b.reconcile(*epochPhaseInfo)
+}
+
+func (b *Broker) enforceSingleModelOnAllNodes() {
+	modelId, args := getEnforcedModel()
+	if modelId == "" {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, node := range b.nodes {
+		if existingArgs, ok := node.Node.Models[modelId]; ok {
+			if len(node.Node.Models) == 1 {
+				continue
+			}
+			node.Node.Models = map[string]ModelArgs{
+				modelId: existingArgs,
+			}
+		} else {
+			node.Node.Models = map[string]ModelArgs{
+				modelId: {Args: args},
+			}
+		}
+		logging.Info("Enforced model on node", types.Nodes, "node_id", id)
+	}
+}
+
+// enforceModelToEpochStates enforces the configured model to all nodes' EpochModels.
+// Called after populating from chain to ensure correct model is used.
+// queryNodeStatus will detect model mismatch and trigger redeploy.
+func (b *Broker) enforceModelToEpochStates() {
+	enforcedModelId, enforcedArgs := getEnforcedModel()
+	if enforcedModelId == "" {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for id, node := range b.nodes {
+		if _, hasModel := node.State.EpochModels[enforcedModelId]; !hasModel {
+			node.State.EpochModels = map[string]types.Model{
+				enforcedModelId: {Id: enforcedModelId, ModelArgs: enforcedArgs},
+			}
+			logging.Info("Enforced model to node state", types.Upgrades, "node_id", id)
+		}
+	}
+}
+
+// enforceModelToSingleNode enforces the configured model to a single node's EpochModels.
+// Called after populating a single node from chain.
+// queryNodeStatus will detect model mismatch and trigger redeploy.
+func (b *Broker) enforceModelToSingleNode(nodeId string) {
+	enforcedModelId, enforcedArgs := getEnforcedModel()
+	if enforcedModelId == "" {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if node, ok := b.nodes[nodeId]; ok {
+		if _, hasModel := node.State.EpochModels[enforcedModelId]; !hasModel {
+			node.State.EpochModels = map[string]types.Model{
+				enforcedModelId: {Id: enforcedModelId, ModelArgs: enforcedArgs},
+			}
+			logging.Info("Enforced model to node state", types.Upgrades, "node_id", nodeId)
+		}
+	}
 }
 
 func (b *Broker) reconcile(epochState chainphase.EpochState) {
@@ -1025,7 +1154,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		// TODO: we should make reindexing as some indexes might be skipped
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
 		// Create and dispatch the command
-		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, int(totalNumNodes))
+		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, int(totalNumNodes), epochState.ActiveConfirmationPoCEvent)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
@@ -1066,10 +1195,12 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 		// CONFIRMATION PoC - use hash from event (populated by chain at generation_start_height)
 		if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
 			event := epochState.ActiveConfirmationPoCEvent
-			return &pocParams{
+			params := &pocParams{
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
-			}, nil
+			}
+			b.enrichWithPocParams(params)
+			return params, nil
 		}
 
 		// REGULAR PoC - query hash as usual
@@ -1083,7 +1214,23 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 }
 
-func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int) NodeWorkerCommand {
+// enrichWithPocParams fetches PoC params from chain and enriches pocParams.
+func (b *Broker) enrichWithPocParams(params *pocParams) {
+	paramsResp, err := b.chainBridge.GetParams()
+	if err != nil {
+		logging.Warn("Failed to query chain params", types.Nodes, "error", err)
+		return
+	}
+
+	if paramsResp.Params.PocParams != nil {
+		params.modelId = paramsResp.Params.PocParams.ModelId
+		params.seqLen = paramsResp.Params.PocParams.SeqLen
+		logging.Info("Using PoC params", types.PoC,
+			"model_id", params.modelId, "seq_len", params.seqLen)
+	}
+}
+
+func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int, confirmationEvent *types.ConfirmationPoCEvent) NodeWorkerCommand {
 	switch nodeState.IntendedStatus {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
@@ -1091,24 +1238,42 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 		switch nodeState.PocIntendedStatus {
 		case PocStatusGenerating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
-				return StartPoCNodeCommand{
+				// Dispatch V1 or V2 based on governance parameter and migration mode
+				if b.shouldUseV2ForPoC(confirmationEvent) {
+					return StartPoCNodeCommandV2{
+						BlockHeight: pocGenParams.startPoCBlockHeight,
+						BlockHash:   pocGenParams.startPoCBlockHash,
+						PubKey:      b.participantInfo.GetPubKey(),
+						CallbackUrl: GetPoCCallbackBaseURLV2(b.callbackUrl),
+						TotalNodes:  totalNodes,
+						Model:       pocGenParams.modelId,
+						SeqLen:      pocGenParams.seqLen,
+					}
+				}
+				return StartPoCNodeCommandV1{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
 					BlockHash:   pocGenParams.startPoCBlockHash,
 					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
+					CallbackUrl: GetPoCCallbackBaseURLV1(b.callbackUrl),
 					TotalNodes:  totalNodes,
+					ModelParams: nil, // V1 uses chain-stored model params
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
 			return nil
 		case PocStatusValidating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
-				return InitValidateNodeCommand{
+				// Dispatch V1 or V2 based on governance parameter and migration mode
+				if b.shouldUseV2ForPoC(confirmationEvent) {
+					return TransitionPoCToValidatingCommandV2{}
+				}
+				return InitValidateNodeCommandV1{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
 					BlockHash:   pocGenParams.startPoCBlockHash,
 					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPocValidateCallbackUrl(b.callbackUrl),
+					CallbackUrl: GetPoCCallbackBaseURLV1(b.callbackUrl),
 					TotalNodes:  totalNodes,
+					ModelParams: nil, // V1 uses chain-stored model params
 				}
 			}
 			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1143,10 +1308,14 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		logging.Error("Failed to query PoC start block hash", types.Nodes, "height", epochPoCStartHeight, "error", err)
 		return nil, err
 	}
-	return &pocParams{
+
+	params := &pocParams{
 		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
-	}, nil
+	}
+
+	b.enrichWithPocParams(params)
+	return params, nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
@@ -1258,19 +1427,46 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
 
 	if currentStatus == types.HardwareNodeStatus_INFERENCE {
-		hctx, hcancel := context.WithTimeout(context.Background(), inferenceHealthRequestTimeout)
-		defer hcancel()
-		ok, err := client.InferenceHealth(hctx)
-		if !ok || err != nil {
-			currentStatus = types.HardwareNodeStatus_FAILED
-			logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
+		// Check if PoC V2 is running inside inference (V2 runs within vLLM)
+		pctx, pcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
+		defer pcancel()
+		if pocStatus, err := client.GetPowStatusV2(pctx); err != nil {
+			logging.Debug("queryNodeStatus. GetPowStatusV2 failed", types.Nodes, "nodeId", nodeId, "error", err)
+		} else if pocStatus != nil && (pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING") {
+			logging.Debug("queryNodeStatus. PoC V2 running inside inference, reporting POC status",
+				types.Nodes, "nodeId", nodeId, "pocStatus", pocStatus.Status)
+			currentStatus = types.HardwareNodeStatus_POC
+		}
+		// Health check only if still INFERENCE (not overridden to POC)
+		if currentStatus == types.HardwareNodeStatus_INFERENCE {
+			hctx, hcancel := context.WithTimeout(context.Background(), inferenceHealthRequestTimeout)
+			defer hcancel()
+			ok, err := client.InferenceHealth(hctx)
+			if !ok || err != nil {
+				currentStatus = types.HardwareNodeStatus_FAILED
+				logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
+			}
+		}
+		// Model check only if still INFERENCE (healthy)
+		if currentStatus == types.HardwareNodeStatus_INFERENCE {
+			var expectedModel string
+			for modelId := range state.EpochModels {
+				expectedModel = modelId
+				break
+			}
+			if expectedModel != "" {
+				mctx, mcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
+				defer mcancel()
+				if loadedModels, err := client.GetLoadedModels(mctx); err != nil {
+					logging.Debug("queryNodeStatus. GetLoadedModels failed", types.Nodes, "nodeId", nodeId, "error", err)
+				} else if len(loadedModels) > 0 && loadedModels[0] != expectedModel {
+					currentStatus = types.HardwareNodeStatus_FAILED
+					logging.Info("queryNodeStatus. Model mismatch detected", types.Nodes,
+						"nodeId", nodeId, "loaded", loadedModels[0], "expected", expectedModel)
+				}
+			}
 		}
 	}
-
-	// TODO: probably should also check PoC sub status here
-	//  but before implementing it, need to check we treat them correctly during reconciliation
-	//  for example I think we expect IDLE instead of STOPPED for PoC nodes
-	//  which is actually wrong
 
 	return &statusQueryResult{
 		PrevStatus:    prevStatus,
@@ -1328,7 +1524,10 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	b.clearNodeEpochData()
 
-	// 2. Iterate through each model subgroup
+	// 2. Track which nodes are found in epoch data
+	nodesInEpoch := make(map[string]bool)
+
+	// 3. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
 		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
 		if err != nil {
@@ -1346,15 +1545,38 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 			continue
 		}
 
-		// 3. Iterate through participants in the subgroup
+		// 4. Iterate through participants in the subgroup
 		for _, weightInfo := range subgroup.ValidationWeights {
 			// Check if the participant is the one this broker is managing
 			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
-				// 4. Iterate through the ML nodes for this participant in the epoch data
+				// 5. Iterate through the ML nodes for this participant in the epoch data
 				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
+				// Mark these nodes as found in epoch
+				for _, mlNodeInfo := range weightInfo.MlNodes {
+					nodesInEpoch[mlNodeInfo.NodeId] = true
+				}
 			}
 		}
 	}
+
+	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
+	b.mu.RLock()
+	nodeIds := make([]string, 0, len(b.nodes))
+	for nodeId := range b.nodes {
+		if !nodesInEpoch[nodeId] {
+			nodeIds = append(nodeIds, nodeId)
+		}
+	}
+	b.mu.RUnlock()
+
+	for _, nodeId := range nodeIds {
+		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
+			logging.Warn("Failed to populate governance models for node not in epoch", types.Nodes, "node_id", nodeId, "error", err)
+		}
+	}
+
+	// Enforce model on all node states after populating from chain
+	b.enforceModelToEpochStates()
 
 	return nil
 }
@@ -1381,6 +1603,134 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
 		}
 	}
+}
+
+// PopulateSingleNodeEpochData populates epoch data for a specific node.
+// If the node is found in current epoch data, it uses that data.
+// If not found (new node not yet assigned), it populates with governance model snapshots.
+func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
+	if b.phaseTracker == nil {
+		logging.Warn("Cannot populate node epoch data: phase tracker not initialized", types.Nodes, "node_id", nodeId)
+		return fmt.Errorf("phase tracker not initialized")
+	}
+	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState == nil || epochState.IsNilOrNotSynced() {
+		logging.Warn("Cannot populate node epoch data: epoch state not synced", types.Nodes, "node_id", nodeId)
+		return fmt.Errorf("epoch state not synced")
+	}
+
+	// Get the parent epoch group to find all subgroup models
+	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(epochState.LatestEpoch.EpochIndex, "")
+	if err != nil {
+		logging.Error("Failed to get parent epoch group for node", types.Nodes, "node_id", nodeId, "error", err)
+		return err
+	}
+	if parentGroupResp == nil || len(parentGroupResp.EpochGroupData.SubGroupModels) == 0 {
+		logging.Warn("Parent epoch group data is empty, will use governance models", types.Nodes, "node_id", nodeId)
+		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
+			return err
+		}
+		b.enforceModelToSingleNode(nodeId)
+		return nil
+	}
+
+	parentEpochData := parentGroupResp.GetEpochGroupData()
+	foundInEpoch := false
+
+	// Iterate through each model subgroup to find this node
+	for _, modelId := range parentEpochData.SubGroupModels {
+		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
+		if err != nil {
+			logging.Error("Failed to get subgroup epoch data for node", types.Nodes, "node_id", nodeId, "model_id", modelId, "error", err)
+			continue
+		}
+		if subgroupResp == nil || subgroupResp.EpochGroupData.ModelSnapshot == nil {
+			continue
+		}
+
+		subgroup := subgroupResp.EpochGroupData
+
+		// Iterate through participants in the subgroup
+		for _, weightInfo := range subgroup.ValidationWeights {
+			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+				// Find ML nodes matching this specific node ID
+				for _, mlNodeInfo := range weightInfo.MlNodes {
+					if mlNodeInfo.NodeId == nodeId {
+						b.mu.Lock()
+						if node, ok := b.nodes[nodeId]; ok {
+							node.State.EpochModels[modelId] = *subgroup.ModelSnapshot
+							node.State.EpochMLNodes[modelId] = *mlNodeInfo
+							logging.Info("Populated epoch data for node from epoch group", types.Nodes, "node_id", nodeId, "model_id", modelId)
+							foundInEpoch = true
+						}
+						b.mu.Unlock()
+					}
+				}
+			}
+		}
+	}
+
+	// If node not found in epoch data, populate with governance models
+	if !foundInEpoch {
+		logging.Info("Node not found in current epoch data, populating with governance models", types.Nodes, "node_id", nodeId)
+		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
+			return err
+		}
+	}
+
+	// Enforce model on this node's state
+	b.enforceModelToSingleNode(nodeId)
+
+	return nil
+}
+
+// populateNodeWithGovernanceModels populates a node's EpochModels with governance model snapshots
+// for all models the node registered with. This is used for new nodes not yet in epoch data.
+func (b *Broker) populateNodeWithGovernanceModels(nodeId string) error {
+	b.mu.RLock()
+	node, exists := b.nodes[nodeId]
+	if !exists {
+		b.mu.RUnlock()
+		return fmt.Errorf("node not found: %s", nodeId)
+	}
+	nodeModelIds := make([]string, 0, len(node.Node.Models))
+	for modelId := range node.Node.Models {
+		nodeModelIds = append(nodeModelIds, modelId)
+	}
+	b.mu.RUnlock()
+
+	// Get governance models
+	govModels, err := b.chainBridge.GetGovernanceModels()
+	if err != nil {
+		logging.Error("Failed to get governance models for node", types.Nodes, "node_id", nodeId, "error", err)
+		return err
+	}
+
+	// Create a map of governance models for quick lookup
+	govModelMap := make(map[string]types.Model)
+	for _, model := range govModels.Model {
+		govModelMap[model.Id] = model
+	}
+
+	// Populate EpochModels with governance model snapshots
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	node, exists = b.nodes[nodeId]
+	if !exists {
+		return fmt.Errorf("node not found: %s", nodeId)
+	}
+
+	for _, modelId := range nodeModelIds {
+		if govModel, ok := govModelMap[modelId]; ok {
+			node.State.EpochModels[modelId] = govModel
+			logging.Info("Populated node with governance model", types.Nodes, "node_id", nodeId, "model_id", modelId)
+		} else {
+			logging.Warn("Model not found in governance models", types.Nodes, "node_id", nodeId, "model_id", modelId)
+		}
+	}
+
+	return nil
 }
 
 // MergeModelArgs combines model arguments from the epoch snapshot with locally

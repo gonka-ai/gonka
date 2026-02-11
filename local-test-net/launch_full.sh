@@ -8,13 +8,14 @@ export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
 export ML_GRPC_SERVER_PORT=9003
 export KEY_NAME=genesis
-export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
-rm -r "prod-local" || true
+export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
+docker run --rm -v "$(pwd):/workdir" -w /workdir alpine:3.19 rm -rf prod-local 2>/dev/null || true
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
 export PROXY_PORT=80
+export API_SSL_PORT=443
 export DASHBOARD_PORT=5173  # Enable dashboard for proxy
 # Unique internal bridge ports per node (no host exposure)
 export GETH_HTTP_PORT=8545
@@ -38,7 +39,6 @@ docker compose -p genesis \
   -f docker-compose.explorer.yml \
   -f docker-compose.proxy.yml \
   -f docker-compose.bridge.yml \
-  -f docker-compose.contracts.yml \
   up -d
 sleep 40
 
@@ -50,7 +50,7 @@ export IS_GENESIS=false
 
 # join node 'join1' with proxy
 export KEY_NAME=join1
-export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
 export PUBLIC_IP="join1-api"
 export PUBLIC_SERVER_PORT=9010
 export ML_SERVER_PORT=9011
@@ -60,6 +60,7 @@ export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
 export PROXY_PORT=81
+export API_SSL_PORT=444
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
@@ -78,7 +79,7 @@ unset DASHBOARD_PORT
 
 # join node 'join2' with proxy
 export KEY_NAME=join2
-export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
 export ML_SERVER_PORT=9021
 export ADMIN_SERVER_PORT=9022
@@ -87,6 +88,7 @@ export WIREMOCK_PORT=8092
 export RPC_PORT=8102
 export P2P_PORT=8202
 export PROXY_PORT=82
+export API_SSL_PORT=445
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"

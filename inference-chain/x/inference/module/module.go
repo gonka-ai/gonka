@@ -85,6 +85,7 @@ func (a AppModuleBasic) RegisterInterfaces(reg cdctypes.InterfaceRegistry) {
 // DefaultGenesis returns a default GenesisState for the module, marshalled to json.RawMessage.
 // The default GenesisState need to be defined by the module developer and is primarily used for testing.
 func (AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
+	//nolint:forbidigo // Genesis code
 	return cdc.MustMarshalJSON(types.DefaultGenesis())
 }
 
@@ -100,6 +101,7 @@ func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, config client.TxEncod
 // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the module.
 func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *runtime.ServeMux) {
 	if err := types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx)); err != nil {
+		//nolint:forbidigo // init code
 		panic(err)
 	}
 }
@@ -150,6 +152,7 @@ func (am AppModule) RegisterInvariants(_ sdk.InvariantRegistry) {}
 func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, gs json.RawMessage) {
 	var genState types.GenesisState
 	// Initialize global index to index in genesis state
+	//nolint:forbidigo // Genesis code
 	cdc.MustUnmarshalJSON(gs, &genState)
 
 	InitGenesis(ctx, am.keeper, genState)
@@ -158,12 +161,13 @@ func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, gs json.Ra
 // ExportGenesis returns the module's exported genesis state as raw JSON bytes.
 func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.RawMessage {
 	genState := ExportGenesis(ctx, am.keeper)
+	//nolint:forbidigo // Genesis code
 	return cdc.MustMarshalJSON(genState)
 }
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 8 }
+func (AppModule) ConsensusVersion() uint64 { return 12 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -178,38 +182,123 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	return nil
 }
 
-func (am AppModule) expireInferences(ctx context.Context, timeouts []types.InferenceTimeout) error {
+func (am AppModule) expireInferences(
+	ctx context.Context,
+	timeouts []types.InferenceTimeout,
+	blockHeight int64,
+	currentEpoch *types.Epoch,
+	params *types.Params,
+) error {
+	if len(timeouts) == 0 {
+		return nil
+	}
+
+	// Create expiry context once for efficiency (reuse already-loaded params and epoch data)
+	expiryCtx, err := am.NewInferenceExpiryContextWithEpoch(ctx, blockHeight, currentEpoch, params)
+	if err != nil {
+		am.LogError("Failed to create inference expiry context", types.Inferences, "error", err)
+		return err
+	}
+
 	for _, i := range timeouts {
 		inference, found := am.keeper.GetInference(ctx, i.InferenceId)
 		if !found {
 			continue
 		}
 		if inference.Status == types.InferenceStatus_STARTED {
-			am.handleExpiredInference(ctx, inference)
+			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx)
 		}
 	}
 	return nil
 }
 
-func (am AppModule) handleExpiredInference(ctx context.Context, inference types.Inference) {
+// expireInferenceAndIssueRefund marks an inference as expired and issues a refund
+// Returns the updated inference
+func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference types.Inference) types.Inference {
+	inference.Status = types.InferenceStatus_EXPIRED
+	inference.ActualCost = 0
+
+	err := am.keeper.IssueRefund(ctx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
+	if err != nil {
+		am.LogError("Error issuing refund", types.Inferences, "error", err)
+	}
+
+	err = am.keeper.SetInference(ctx, inference)
+	if err != nil {
+		am.LogError("Error updating inference", types.Inferences, "error", err)
+	}
+
+	return inference
+}
+
+func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext) {
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
 		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
 		return
 	}
-	am.LogInfo("Inference expired, not finished. Issuing refund", types.Inferences, "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
-	inference.Status = types.InferenceStatus_EXPIRED
-	inference.ActualCost = 0
-	err := am.keeper.IssueRefund(ctx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
-	if err != nil {
-		am.LogError("Error issuing refund", types.Inferences, "error", err)
+
+	// Determine which epoch to check based on timing
+	// This may lazy-load previous epoch data if the inference started before current epoch
+	epochToCheck := expiryCtx.GetEpochForInference(ctx, am.keeper, inference)
+	if epochToCheck == nil {
+		am.LogWarn("No epoch available for expired inference check", types.Inferences, "inferenceId", inference.InferenceId)
+		am.expireInferenceAndIssueRefund(ctx, inference)
+		return
 	}
-	err = am.keeper.SetInference(ctx, inference)
-	if err != nil {
-		am.LogError("Error updating inference", types.Inferences, "error", err)
+
+	// Get the cached active participants for the appropriate epoch
+	var activeParticipants *types.ActiveParticipants
+	if expiryCtx.CurrentEpoch != nil && epochToCheck.Index == expiryCtx.CurrentEpoch.Index {
+		activeParticipants = expiryCtx.CurrentActiveParticipants
+	} else if expiryCtx.PreviousEpoch != nil && epochToCheck.Index == expiryCtx.PreviousEpoch.Index {
+		activeParticipants = expiryCtx.PreviousActiveParticipants
 	}
+
+	if activeParticipants == nil {
+		am.LogWarn("No active participants available for expired inference check", types.Inferences,
+			"inferenceId", inference.InferenceId, "epochIndex", epochToCheck.Index)
+		am.expireInferenceAndIssueRefund(ctx, inference)
+		return
+	}
+
+	// Determine whether to check preserve nodes or regular mlnodes
+	checkPreserveNode := expiryCtx.ShouldCheckPreserveNode(inference)
+
+	// Check if executor has the required node for the model (using cached active participants)
+	hasNode := am.HasNodeForModel(inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants)
+
+	if !hasNode {
+		nodeType := "mlnode"
+		if checkPreserveNode {
+			nodeType = "preserve node"
+		}
+		am.LogWarn("Executor doesn't have required node for expired inference, skipping penalty",
+			types.Inferences,
+			"inferenceId", inference.InferenceId,
+			"executor", inference.AssignedTo,
+			"model", inference.Model,
+			"nodeType", nodeType,
+			"epochIndex", epochToCheck.Index,
+			"inPoCRange", expiryCtx.IsBlockInPoCRange(inference.StartBlockHeight) || expiryCtx.IsBlockInPoCRange(expiryCtx.CurrentBlockHeight))
+
+		// Still issue refund and mark as expired, but don't penalize executor
+		am.expireInferenceAndIssueRefund(ctx, inference)
+		return
+	}
+
+	// Executor has the required node, proceed with normal expiry handling (with penalty)
+	am.LogInfo("Inference expired, not finished. Issuing refund and penalizing executor",
+		types.Inferences,
+		"inferenceId", inference.InferenceId,
+		"executor", inference.AssignedTo,
+		"model", inference.Model,
+		"epochIndex", epochToCheck.Index)
+
+	inference = am.expireInferenceAndIssueRefund(ctx, inference)
+
 	executor.CurrentEpochStats.MissedRequests++
-	err = am.keeper.SetParticipant(ctx, executor)
+	err := am.keeper.SetParticipant(ctx, executor)
 	if err != nil {
 		am.LogError("Error updating participant for expired inference", types.Participants, "error", err)
 	}
@@ -228,7 +317,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		// Don't return error - allow block processing to continue
 	}
 
-	params, err := am.keeper.GetParamsSafe(ctx)
+	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
 		return err
@@ -252,7 +341,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
-	err = am.expireInferences(ctx, timeouts)
+	err = am.expireInferences(ctx, timeouts, blockHeight, currentEpoch, &params)
 	if err != nil {
 		am.LogError("Error expiring inferences", types.Inferences)
 	}
@@ -312,7 +401,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("StartStage:onSetNewValidatorsStage", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
-		am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch))
+		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
+			return err
+		}
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
@@ -390,7 +481,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
 		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
-		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
+		if err := am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
+			am.LogError("onEndOfPoCValidationStage: Unable to advance collateral epoch", types.Tokenomics, "error", err.Error())
+		}
 	} else {
 		am.LogError("collateral keeper is null", types.Tokenomics)
 	}
@@ -398,8 +491,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// Signal to the streamvesting module that the epoch has advanced.
 	// This will trigger vested token unlocking for the completed epoch.
 	if am.keeper.GetStreamVestingKeeper() != nil {
-		err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
-		if err != nil {
+		if err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
 		}
 	}
@@ -421,7 +513,18 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
+	// Dispatch to V1 or V2 weight calculation based on poc_v2_enabled flag
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err.Error())
+		return
+	}
+	var activeParticipants []*types.ActiveParticipant
+	if params.PocParams.PocV2Enabled {
+		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
+	} else {
+		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
+	}
 	if activeParticipants == nil {
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
@@ -525,7 +628,12 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {
-	validationParams := am.keeper.GetParams(ctx).ValidationParams
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("addEpochMembers: Unable to get params", types.EpochGroup, "error", err.Error())
+		return
+	}
+	validationParams := params.ValidationParams
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -558,7 +666,12 @@ func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch,
 		}
 		defaultPrice = currentEg.GroupData.UnitOfComputePrice
 	} else {
-		defaultPrice = am.keeper.GetParams(ctx).EpochParams.DefaultUnitOfComputePrice
+		params, err := am.keeper.GetParams(ctx)
+		if err != nil {
+			am.LogError("computePrice: Unable to get params", types.Pricing, "error", err.Error())
+			return 0, err
+		}
+		defaultPrice = params.EpochParams.DefaultUnitOfComputePrice
 	}
 
 	proposals, err := am.keeper.AllUnitOfComputePriceProposals(ctx)
@@ -630,7 +743,11 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousEpochIndex", previousEpochIndex)
 		return
 	}
-	params := am.keeper.GetParams(ctx)
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get params", types.EpochGroup, "blockHeight", blockHeight, "error", err.Error())
+		return
+	}
 	newGroupData.EffectiveBlockHeight = blockHeight
 	newGroupData.UnitOfComputePrice = int64(unitOfComputePrice)
 	newGroupData.PreviousEpochRequests = previousGroupData.NumberOfRequests
@@ -664,7 +781,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	}
 
 	// At this point, clear all active invalidations in case of any hanging invalidations
-	err := am.keeper.ActiveInvalidations.Clear(ctx, nil)
+	err = am.keeper.ActiveInvalidations.Clear(ctx, nil)
 	if err != nil {
 		am.LogError("Unable to clear active invalidations", types.EpochGroup, "error", err.Error())
 	}

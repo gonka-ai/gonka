@@ -40,10 +40,7 @@ func GetResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 		return "", nil, err
 	}
 
-	var content string
-	for _, choice := range response.Choices {
-		content += choice.Message.Content
-	}
-	hash := utils.GenerateSHA256Hash(content)
+	// Hash full bytes to include logprobs, preventing manipulation attacks
+	hash := utils.GenerateSHA256Hash(string(bodyBytes))
 	return hash, &response, nil
 }

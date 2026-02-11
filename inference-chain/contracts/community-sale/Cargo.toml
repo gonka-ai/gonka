@@ -1,0 +1,39 @@
+[package]
+name = "community-sale"
+version = "0.1.0"
+authors = ["Inference Team"]
+edition = "2021"
+resolver = "2"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
+
+[features]
+# use library feature to disable all instantiate/execute/query exports
+library = []
+
+[dependencies]
+cosmwasm-schema = "3.0.1"
+cosmwasm-std = { version = "3.0.1", features = ["staking", "cosmwasm_2_0"] }
+cw-storage-plus = "3.0.0"
+cw2 = "3.0.0"
+schemars = "0.8.12"
+serde = { version = "1.0.184", default-features = false, features = ["derive"] }
+thiserror = "1.0.44"
+base64ct = "=1.6.0"
+prost = "0.12"
+prost-derive = "0.12"
+
+[dev-dependencies]
+cw-multi-test = "3.0.1" 

@@ -23,29 +23,29 @@ func TestEpochPerformanceSummaryQuerySingle(t *testing.T) {
 	msgs := createNEpochPerformanceSummary(keeper, ctx, 2)
 	tests := []struct {
 		desc     string
-		request  *types.QueryGetEpochPerformanceSummaryRequest
-		response *types.QueryGetEpochPerformanceSummaryResponse
+		request  *types.QueryEpochPerformanceSummaryByParticipantRequest
+		response *types.QueryEpochPerformanceSummaryByParticipantResponse
 		err      error
 	}{
 		{
 			desc: "First",
-			request: &types.QueryGetEpochPerformanceSummaryRequest{
+			request: &types.QueryEpochPerformanceSummaryByParticipantRequest{
 				EpochIndex:    msgs[0].EpochIndex,
 				ParticipantId: msgs[0].ParticipantId,
 			},
-			response: &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: msgs[0]},
+			response: &types.QueryEpochPerformanceSummaryByParticipantResponse{EpochPerformanceSummary: msgs[0]},
 		},
 		{
 			desc: "Second",
-			request: &types.QueryGetEpochPerformanceSummaryRequest{
+			request: &types.QueryEpochPerformanceSummaryByParticipantRequest{
 				EpochIndex:    msgs[1].EpochIndex,
 				ParticipantId: msgs[1].ParticipantId,
 			},
-			response: &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: msgs[1]},
+			response: &types.QueryEpochPerformanceSummaryByParticipantResponse{EpochPerformanceSummary: msgs[1]},
 		},
 		{
 			desc: "KeyNotFound",
-			request: &types.QueryGetEpochPerformanceSummaryRequest{
+			request: &types.QueryEpochPerformanceSummaryByParticipantRequest{
 				EpochIndex:    100000,
 				ParticipantId: testutil.Bech32Addr(100000),
 			},
@@ -58,7 +58,7 @@ func TestEpochPerformanceSummaryQuerySingle(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
-			response, err := keeper.EpochPerformanceSummary(ctx, tc.request)
+			response, err := keeper.EpochPerformanceSummaryByParticipant(ctx, tc.request)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
 			} else {

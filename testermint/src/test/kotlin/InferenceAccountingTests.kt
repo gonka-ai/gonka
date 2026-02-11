@@ -84,7 +84,8 @@ class InferenceAccountingTests : TestermintTest() {
         val payload = inference.copy(seed = seed).toJson()
         val timestamp = Instant.now().toEpochNanos()
         val address = genesis.node.getColdAddress()
-        val signature = genesis.node.signPayload(payload, address, timestamp, endpointAccount = address)
+        // Phase 3: Dev signs hash of original_prompt
+        val signature = genesis.node.signRequest(payload, address, timestamp, endpointAccount = address)
 
 
         CoroutineScope(Dispatchers.Default).launch {
@@ -181,7 +182,7 @@ class InferenceAccountingTests : TestermintTest() {
         logSection("Clearing Claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inferences")
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForNextInferenceWindow(15)
         val startLastRewardedEpoch = getRewardCalculationEpochIndex(genesis)
         val participants = genesis.api.getParticipants()
         participants.forEach {
@@ -231,14 +232,14 @@ class InferenceAccountingTests : TestermintTest() {
                     requester,
                     taAddress = requestingNode.node.getColdAddress()
                 )
-                cluster.genesis.node.waitForNextBlock()
+                cluster.genesis.node.waitForNextBlock(2)
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {
                 Logger.warn(e.toString())
                 var foundInference: InferencePayload? = null
                 var tries = 0
                 while (foundInference == null) {
-                    cluster.genesis.node.waitForNextBlock()
+                    cluster.genesis.node.waitForNextBlock(2)
                     val inferences = cluster.genesis.node.getInferences()
                     foundInference =
                         inferences.inference

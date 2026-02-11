@@ -67,6 +67,9 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
+	// Enforce model if configured
+	EnforceModel(&c.Node)
+
 	// Validate node configuration
 	if err := b.validateInferenceNode(c.Node, ""); err != nil {
 		logging.Error("RegisterNode. Node validation failed", types.Nodes, "node_id", c.Node.Id, "error", err)
@@ -156,6 +159,11 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
+	// Populate epoch data for the newly registered node
+	if err := b.PopulateSingleNodeEpochData(c.Node.Id); err != nil {
+		logging.Warn("RegisterNode. Failed to populate epoch data", types.Nodes, "node_id", c.Node.Id, "error", err)
+	}
+
 	// Trigger a status check for the newly added node.
 	b.TriggerStatusQuery(true)
 
@@ -196,6 +204,8 @@ func (c UpdateNode) Execute(b *Broker) {
 		c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("node not found: %s", c.Node.Id)}
 		return
 	}
+
+	EnforceModel(&c.Node)
 
 	// Validate node configuration (exclude current node from duplicate checks)
 	if err := b.validateInferenceNode(c.Node, c.Node.Id); err != nil {

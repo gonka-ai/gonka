@@ -1,0 +1,21 @@
+# DNS server configuration for wildcard ML-node hostname resolution
+# This compose file adds a CoreDNS server to resolve ml-*.{KEY_NAME}.test hostnames
+# to the appropriate mock-server container for each stack.
+#
+# Usage: Include this file when starting test environments that need multiple ML-node hosts
+# Example: docker compose -f docker-compose-base.yml -f docker-compose.dns.yml up
+
+services:
+  test-dns:
+    container_name: test-dns
+    image: coredns/coredns:1.11.1
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./local-test-net/dns/Corefile:/etc/coredns/Corefile:ro
+    networks:
+      chain-public:
+        ipv4_address: 172.25.0.10
+    restart: unless-stopped
+
+networks:
+  chain-public:

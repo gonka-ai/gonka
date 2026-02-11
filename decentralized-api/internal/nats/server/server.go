@@ -3,18 +3,28 @@ package server
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
+	"time"
+
 	natssrv "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/pkg/errors"
 	types2 "github.com/productscience/inference/x/inference/types"
-	"time"
 )
 
 const (
-	TxsToSendStream    = "txs_to_send"
-	TxsToObserveStream = "txs_to_observe"
+	TxsToSendStream            = "txs_to_send"
+	TxsToObserveStream         = "txs_to_observe"
+	TxsBatchStartStream        = "txs_batch_start"
+	TxsBatchFinishStream       = "txs_batch_finish"
+	TxsBatchValidationV2Stream = "txs_batch_validation_v2"
 
-	storageDir  = "/root/.dapi/.nats"
+	// V1 PoC batching streams
+	TxsBatchPocBatchStream      = "txs_batch_poc_batch"
+	TxsBatchPocValidationStream = "txs_batch_poc_validation"
+
+	storageDir    = "/root/.dapi/.nats"
+	defaultMaxAge = 24 * 60 * 60 // 24 hours
+
 	DefaultPort = 4222
 	DefaultHost = "0.0.0.0"
 )
@@ -41,6 +51,10 @@ func (s *server) Start() error {
 
 	if s.conf.Port == 0 {
 		s.conf.Port = DefaultPort
+	}
+
+	if s.conf.MaxMessagesAgeSeconds == 0 {
+		s.conf.MaxMessagesAgeSeconds = defaultMaxAge
 	}
 
 	logging.Info("starting nats server", types2.Messages, "port", s.conf.Port, "host", s.conf.Host)
@@ -70,7 +84,15 @@ func (s *server) Start() error {
 		}
 	}
 
-	return s.createJetStreamTopics([]string{TxsToSendStream, TxsToObserveStream})
+	return s.createJetStreamTopics([]string{
+		TxsToSendStream,
+		TxsToObserveStream,
+		TxsBatchStartStream,
+		TxsBatchFinishStream,
+		TxsBatchValidationV2Stream,
+		TxsBatchPocBatchStream,
+		TxsBatchPocValidationStream,
+	})
 }
 
 func (s *server) createJetStreamTopics(topicNames []string) error {
@@ -87,6 +109,7 @@ func (s *server) createJetStreamTopics(topicNames []string) error {
 		_, err = js.AddStream(&nats.StreamConfig{
 			Name:     topic,
 			Subjects: []string{topic},
+			MaxAge:   time.Duration(s.conf.MaxMessagesAgeSeconds) * time.Second,
 			Storage:  nats.FileStorage,
 		})
 

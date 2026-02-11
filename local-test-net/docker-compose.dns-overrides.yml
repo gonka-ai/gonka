@@ -1,0 +1,24 @@
+# DNS override configuration for all services
+# This compose file configures all containers to use the test-dns server (172.25.0.10)
+# for DNS resolution, enabling wildcard ML-node hostname resolution.
+#
+# Usage: Include this file AFTER docker-compose-base.yml and docker-compose.dns.yml
+# Example: docker compose -f docker-compose-base.yml -f docker-compose.dns.yml -f docker-compose.dns-overrides.yml up
+
+services:
+  chain-node:
+    dns:
+      - 172.25.0.10
+      - 127.0.0.11  # Docker's embedded DNS for container name resolution
+
+  api:
+    dns:
+      - 172.25.0.10
+      - 127.0.0.11
+    dns_search:
+      - .
+
+  mock-server:
+    dns:
+      - 172.25.0.10
+      - 127.0.0.11

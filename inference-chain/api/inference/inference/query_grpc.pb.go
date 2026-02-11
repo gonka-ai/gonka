@@ -34,6 +34,11 @@ const (
 	Query_EpochGroupValidationsAll_FullMethodName                  = "/inference.inference.Query/EpochGroupValidationsAll"
 	Query_PocBatchesForStage_FullMethodName                        = "/inference.inference.Query/PocBatchesForStage"
 	Query_PocValidationsForStage_FullMethodName                    = "/inference.inference.Query/PocValidationsForStage"
+	Query_PocV2ValidationsForStage_FullMethodName                  = "/inference.inference.Query/PocV2ValidationsForStage"
+	Query_PoCV2StoreCommit_FullMethodName                          = "/inference.inference.Query/PoCV2StoreCommit"
+	Query_MLNodeWeightDistribution_FullMethodName                  = "/inference.inference.Query/MLNodeWeightDistribution"
+	Query_AllPoCV2StoreCommitsForStage_FullMethodName              = "/inference.inference.Query/AllPoCV2StoreCommitsForStage"
+	Query_AllMLNodeWeightDistributionsForStage_FullMethodName      = "/inference.inference.Query/AllMLNodeWeightDistributionsForStage"
 	Query_GetCurrentEpoch_FullMethodName                           = "/inference.inference.Query/GetCurrentEpoch"
 	Query_TokenomicsData_FullMethodName                            = "/inference.inference.Query/TokenomicsData"
 	Query_GetUnitOfComputePriceProposal_FullMethodName             = "/inference.inference.Query/GetUnitOfComputePriceProposal"
@@ -47,6 +52,7 @@ const (
 	Query_InferenceValidationDetailsAll_FullMethodName             = "/inference.inference.Query/InferenceValidationDetailsAll"
 	Query_GetInferenceValidationParameters_FullMethodName          = "/inference.inference.Query/GetInferenceValidationParameters"
 	Query_EpochPerformanceSummary_FullMethodName                   = "/inference.inference.Query/EpochPerformanceSummary"
+	Query_EpochPerformanceSummaryByParticipant_FullMethodName      = "/inference.inference.Query/EpochPerformanceSummaryByParticipant"
 	Query_EpochPerformanceSummaryAll_FullMethodName                = "/inference.inference.Query/EpochPerformanceSummaryAll"
 	Query_TrainingTask_FullMethodName                              = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                             = "/inference.inference.Query/HardwareNodes"
@@ -88,8 +94,11 @@ const (
 	Query_GranteesByMessageType_FullMethodName                     = "/inference.inference.Query/GranteesByMessageType"
 	Query_MLNodeVersion_FullMethodName                             = "/inference.inference.Query/MLNodeVersion"
 	Query_TrainingAllowList_FullMethodName                         = "/inference.inference.Query/TrainingAllowList"
+	Query_ParticipantAllowList_FullMethodName                      = "/inference.inference.Query/ParticipantAllowList"
 	Query_ExcludedParticipants_FullMethodName                      = "/inference.inference.Query/ExcludedParticipants"
 	Query_ActiveConfirmationPoCEvent_FullMethodName                = "/inference.inference.Query/ActiveConfirmationPoCEvent"
+	Query_ListConfirmationPoCEvents_FullMethodName                 = "/inference.inference.Query/ListConfirmationPoCEvents"
+	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
 )
 
 // QueryClient is the client API for Query service.
@@ -121,6 +130,13 @@ type QueryClient interface {
 	PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error)
 	// Queries a list of PocValidationsForStage items.
 	PocValidationsForStage(ctx context.Context, in *QueryPocValidationsForStageRequest, opts ...grpc.CallOption) (*QueryPocValidationsForStageResponse, error)
+	// PoC v2 validation queries
+	PocV2ValidationsForStage(ctx context.Context, in *QueryPocV2ValidationsForStageRequest, opts ...grpc.CallOption) (*QueryPocV2ValidationsForStageResponse, error)
+	// PoC v2 off-chain commit queries
+	PoCV2StoreCommit(ctx context.Context, in *QueryPoCV2StoreCommitRequest, opts ...grpc.CallOption) (*QueryPoCV2StoreCommitResponse, error)
+	MLNodeWeightDistribution(ctx context.Context, in *QueryMLNodeWeightDistributionRequest, opts ...grpc.CallOption) (*QueryMLNodeWeightDistributionResponse, error)
+	AllPoCV2StoreCommitsForStage(ctx context.Context, in *QueryAllPoCV2StoreCommitsForStageRequest, opts ...grpc.CallOption) (*QueryAllPoCV2StoreCommitsForStageResponse, error)
+	AllMLNodeWeightDistributionsForStage(ctx context.Context, in *QueryAllMLNodeWeightDistributionsForStageRequest, opts ...grpc.CallOption) (*QueryAllMLNodeWeightDistributionsForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
 	// Queries a TokenomicsData by index.
@@ -144,7 +160,10 @@ type QueryClient interface {
 	// Queries a list of GetInferenceValidationParameters items.
 	GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error)
 	// Queries a list of EpochPerformanceSummary items.
-	EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error)
+	// Returns all EpochPerformanceSummary records for a specific epoch index.
+	EpochPerformanceSummary(ctx context.Context, in *QueryEpochPerformanceSummaryByEpochRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByEpochResponse, error)
+	// Returns a single EpochPerformanceSummary record for a specific epoch index and participant.
+	EpochPerformanceSummaryByParticipant(ctx context.Context, in *QueryEpochPerformanceSummaryByParticipantRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByParticipantResponse, error)
 	EpochPerformanceSummaryAll(ctx context.Context, in *QueryAllEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryAllEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
@@ -214,10 +233,15 @@ type QueryClient interface {
 	MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*QueryGetMLNodeVersionResponse, error)
 	// Queries a list of TrainingAllowList items.
 	TrainingAllowList(ctx context.Context, in *QueryTrainingAllowListRequest, opts ...grpc.CallOption) (*QueryTrainingAllowListResponse, error)
+	// Queries the participant allowlist.
+	ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
 	ExcludedParticipants(ctx context.Context, in *QueryExcludedParticipantsRequest, opts ...grpc.CallOption) (*QueryExcludedParticipantsResponse, error)
 	// Queries the currently active confirmation PoC event.
 	ActiveConfirmationPoCEvent(ctx context.Context, in *QueryActiveConfirmationPoCEventRequest, opts ...grpc.CallOption) (*QueryActiveConfirmationPoCEventResponse, error)
+	// Queries confirmation PoC events for a specific epoch.
+	ListConfirmationPoCEvents(ctx context.Context, in *QueryConfirmationPoCEventsRequest, opts ...grpc.CallOption) (*QueryConfirmationPoCEventsResponse, error)
+	ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error)
 }
 
 type queryClient struct {
@@ -363,6 +387,51 @@ func (c *queryClient) PocValidationsForStage(ctx context.Context, in *QueryPocVa
 	return out, nil
 }
 
+func (c *queryClient) PocV2ValidationsForStage(ctx context.Context, in *QueryPocV2ValidationsForStageRequest, opts ...grpc.CallOption) (*QueryPocV2ValidationsForStageResponse, error) {
+	out := new(QueryPocV2ValidationsForStageResponse)
+	err := c.cc.Invoke(ctx, Query_PocV2ValidationsForStage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) PoCV2StoreCommit(ctx context.Context, in *QueryPoCV2StoreCommitRequest, opts ...grpc.CallOption) (*QueryPoCV2StoreCommitResponse, error) {
+	out := new(QueryPoCV2StoreCommitResponse)
+	err := c.cc.Invoke(ctx, Query_PoCV2StoreCommit_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MLNodeWeightDistribution(ctx context.Context, in *QueryMLNodeWeightDistributionRequest, opts ...grpc.CallOption) (*QueryMLNodeWeightDistributionResponse, error) {
+	out := new(QueryMLNodeWeightDistributionResponse)
+	err := c.cc.Invoke(ctx, Query_MLNodeWeightDistribution_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) AllPoCV2StoreCommitsForStage(ctx context.Context, in *QueryAllPoCV2StoreCommitsForStageRequest, opts ...grpc.CallOption) (*QueryAllPoCV2StoreCommitsForStageResponse, error) {
+	out := new(QueryAllPoCV2StoreCommitsForStageResponse)
+	err := c.cc.Invoke(ctx, Query_AllPoCV2StoreCommitsForStage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) AllMLNodeWeightDistributionsForStage(ctx context.Context, in *QueryAllMLNodeWeightDistributionsForStageRequest, opts ...grpc.CallOption) (*QueryAllMLNodeWeightDistributionsForStageResponse, error) {
+	out := new(QueryAllMLNodeWeightDistributionsForStageResponse)
+	err := c.cc.Invoke(ctx, Query_AllMLNodeWeightDistributionsForStage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error) {
 	out := new(QueryGetCurrentEpochResponse)
 	err := c.cc.Invoke(ctx, Query_GetCurrentEpoch_FullMethodName, in, out, opts...)
@@ -471,9 +540,18 @@ func (c *queryClient) GetInferenceValidationParameters(ctx context.Context, in *
 	return out, nil
 }
 
-func (c *queryClient) EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error) {
-	out := new(QueryGetEpochPerformanceSummaryResponse)
+func (c *queryClient) EpochPerformanceSummary(ctx context.Context, in *QueryEpochPerformanceSummaryByEpochRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByEpochResponse, error) {
+	out := new(QueryEpochPerformanceSummaryByEpochResponse)
 	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummary_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochPerformanceSummaryByParticipant(ctx context.Context, in *QueryEpochPerformanceSummaryByParticipantRequest, opts ...grpc.CallOption) (*QueryEpochPerformanceSummaryByParticipantResponse, error) {
+	out := new(QueryEpochPerformanceSummaryByParticipantResponse)
+	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummaryByParticipant_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -849,6 +927,15 @@ func (c *queryClient) TrainingAllowList(ctx context.Context, in *QueryTrainingAl
 	return out, nil
 }
 
+func (c *queryClient) ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error) {
+	out := new(QueryParticipantAllowListResponse)
+	err := c.cc.Invoke(ctx, Query_ParticipantAllowList_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ExcludedParticipants(ctx context.Context, in *QueryExcludedParticipantsRequest, opts ...grpc.CallOption) (*QueryExcludedParticipantsResponse, error) {
 	out := new(QueryExcludedParticipantsResponse)
 	err := c.cc.Invoke(ctx, Query_ExcludedParticipants_FullMethodName, in, out, opts...)
@@ -861,6 +948,24 @@ func (c *queryClient) ExcludedParticipants(ctx context.Context, in *QueryExclude
 func (c *queryClient) ActiveConfirmationPoCEvent(ctx context.Context, in *QueryActiveConfirmationPoCEventRequest, opts ...grpc.CallOption) (*QueryActiveConfirmationPoCEventResponse, error) {
 	out := new(QueryActiveConfirmationPoCEventResponse)
 	err := c.cc.Invoke(ctx, Query_ActiveConfirmationPoCEvent_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ListConfirmationPoCEvents(ctx context.Context, in *QueryConfirmationPoCEventsRequest, opts ...grpc.CallOption) (*QueryConfirmationPoCEventsResponse, error) {
+	out := new(QueryConfirmationPoCEventsResponse)
+	err := c.cc.Invoke(ctx, Query_ListConfirmationPoCEvents_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error) {
+	out := new(QueryParticipantsWithBalancesResponse)
+	err := c.cc.Invoke(ctx, Query_ParticipantsWithBalances_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -896,6 +1001,13 @@ type QueryServer interface {
 	PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error)
 	// Queries a list of PocValidationsForStage items.
 	PocValidationsForStage(context.Context, *QueryPocValidationsForStageRequest) (*QueryPocValidationsForStageResponse, error)
+	// PoC v2 validation queries
+	PocV2ValidationsForStage(context.Context, *QueryPocV2ValidationsForStageRequest) (*QueryPocV2ValidationsForStageResponse, error)
+	// PoC v2 off-chain commit queries
+	PoCV2StoreCommit(context.Context, *QueryPoCV2StoreCommitRequest) (*QueryPoCV2StoreCommitResponse, error)
+	MLNodeWeightDistribution(context.Context, *QueryMLNodeWeightDistributionRequest) (*QueryMLNodeWeightDistributionResponse, error)
+	AllPoCV2StoreCommitsForStage(context.Context, *QueryAllPoCV2StoreCommitsForStageRequest) (*QueryAllPoCV2StoreCommitsForStageResponse, error)
+	AllMLNodeWeightDistributionsForStage(context.Context, *QueryAllMLNodeWeightDistributionsForStageRequest) (*QueryAllMLNodeWeightDistributionsForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
 	// Queries a TokenomicsData by index.
@@ -919,7 +1031,10 @@ type QueryServer interface {
 	// Queries a list of GetInferenceValidationParameters items.
 	GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error)
 	// Queries a list of EpochPerformanceSummary items.
-	EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error)
+	// Returns all EpochPerformanceSummary records for a specific epoch index.
+	EpochPerformanceSummary(context.Context, *QueryEpochPerformanceSummaryByEpochRequest) (*QueryEpochPerformanceSummaryByEpochResponse, error)
+	// Returns a single EpochPerformanceSummary record for a specific epoch index and participant.
+	EpochPerformanceSummaryByParticipant(context.Context, *QueryEpochPerformanceSummaryByParticipantRequest) (*QueryEpochPerformanceSummaryByParticipantResponse, error)
 	EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
@@ -989,10 +1104,15 @@ type QueryServer interface {
 	MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error)
 	// Queries a list of TrainingAllowList items.
 	TrainingAllowList(context.Context, *QueryTrainingAllowListRequest) (*QueryTrainingAllowListResponse, error)
+	// Queries the participant allowlist.
+	ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
 	ExcludedParticipants(context.Context, *QueryExcludedParticipantsRequest) (*QueryExcludedParticipantsResponse, error)
 	// Queries the currently active confirmation PoC event.
 	ActiveConfirmationPoCEvent(context.Context, *QueryActiveConfirmationPoCEventRequest) (*QueryActiveConfirmationPoCEventResponse, error)
+	// Queries confirmation PoC events for a specific epoch.
+	ListConfirmationPoCEvents(context.Context, *QueryConfirmationPoCEventsRequest) (*QueryConfirmationPoCEventsResponse, error)
+	ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1045,6 +1165,21 @@ func (UnimplementedQueryServer) PocBatchesForStage(context.Context, *QueryPocBat
 func (UnimplementedQueryServer) PocValidationsForStage(context.Context, *QueryPocValidationsForStageRequest) (*QueryPocValidationsForStageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PocValidationsForStage not implemented")
 }
+func (UnimplementedQueryServer) PocV2ValidationsForStage(context.Context, *QueryPocV2ValidationsForStageRequest) (*QueryPocV2ValidationsForStageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PocV2ValidationsForStage not implemented")
+}
+func (UnimplementedQueryServer) PoCV2StoreCommit(context.Context, *QueryPoCV2StoreCommitRequest) (*QueryPoCV2StoreCommitResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PoCV2StoreCommit not implemented")
+}
+func (UnimplementedQueryServer) MLNodeWeightDistribution(context.Context, *QueryMLNodeWeightDistributionRequest) (*QueryMLNodeWeightDistributionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MLNodeWeightDistribution not implemented")
+}
+func (UnimplementedQueryServer) AllPoCV2StoreCommitsForStage(context.Context, *QueryAllPoCV2StoreCommitsForStageRequest) (*QueryAllPoCV2StoreCommitsForStageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AllPoCV2StoreCommitsForStage not implemented")
+}
+func (UnimplementedQueryServer) AllMLNodeWeightDistributionsForStage(context.Context, *QueryAllMLNodeWeightDistributionsForStageRequest) (*QueryAllMLNodeWeightDistributionsForStageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AllMLNodeWeightDistributionsForStage not implemented")
+}
 func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentEpoch not implemented")
 }
@@ -1081,8 +1216,11 @@ func (UnimplementedQueryServer) InferenceValidationDetailsAll(context.Context, *
 func (UnimplementedQueryServer) GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetInferenceValidationParameters not implemented")
 }
-func (UnimplementedQueryServer) EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error) {
+func (UnimplementedQueryServer) EpochPerformanceSummary(context.Context, *QueryEpochPerformanceSummaryByEpochRequest) (*QueryEpochPerformanceSummaryByEpochResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummary not implemented")
+}
+func (UnimplementedQueryServer) EpochPerformanceSummaryByParticipant(context.Context, *QueryEpochPerformanceSummaryByParticipantRequest) (*QueryEpochPerformanceSummaryByParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryByParticipant not implemented")
 }
 func (UnimplementedQueryServer) EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryAll not implemented")
@@ -1207,11 +1345,20 @@ func (UnimplementedQueryServer) MLNodeVersion(context.Context, *QueryGetMLNodeVe
 func (UnimplementedQueryServer) TrainingAllowList(context.Context, *QueryTrainingAllowListRequest) (*QueryTrainingAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingAllowList not implemented")
 }
+func (UnimplementedQueryServer) ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAllowList not implemented")
+}
 func (UnimplementedQueryServer) ExcludedParticipants(context.Context, *QueryExcludedParticipantsRequest) (*QueryExcludedParticipantsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExcludedParticipants not implemented")
 }
 func (UnimplementedQueryServer) ActiveConfirmationPoCEvent(context.Context, *QueryActiveConfirmationPoCEventRequest) (*QueryActiveConfirmationPoCEventResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ActiveConfirmationPoCEvent not implemented")
+}
+func (UnimplementedQueryServer) ListConfirmationPoCEvents(context.Context, *QueryConfirmationPoCEventsRequest) (*QueryConfirmationPoCEventsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListConfirmationPoCEvents not implemented")
+}
+func (UnimplementedQueryServer) ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ParticipantsWithBalances not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1496,6 +1643,96 @@ func _Query_PocValidationsForStage_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PocV2ValidationsForStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPocV2ValidationsForStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PocV2ValidationsForStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PocV2ValidationsForStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PocV2ValidationsForStage(ctx, req.(*QueryPocV2ValidationsForStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_PoCV2StoreCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPoCV2StoreCommitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PoCV2StoreCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PoCV2StoreCommit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PoCV2StoreCommit(ctx, req.(*QueryPoCV2StoreCommitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MLNodeWeightDistribution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMLNodeWeightDistributionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MLNodeWeightDistribution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MLNodeWeightDistribution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MLNodeWeightDistribution(ctx, req.(*QueryMLNodeWeightDistributionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_AllPoCV2StoreCommitsForStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllPoCV2StoreCommitsForStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).AllPoCV2StoreCommitsForStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_AllPoCV2StoreCommitsForStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).AllPoCV2StoreCommitsForStage(ctx, req.(*QueryAllPoCV2StoreCommitsForStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_AllMLNodeWeightDistributionsForStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllMLNodeWeightDistributionsForStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).AllMLNodeWeightDistributionsForStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_AllMLNodeWeightDistributionsForStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).AllMLNodeWeightDistributionsForStage(ctx, req.(*QueryAllMLNodeWeightDistributionsForStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_GetCurrentEpoch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetCurrentEpochRequest)
 	if err := dec(in); err != nil {
@@ -1713,7 +1950,7 @@ func _Query_GetInferenceValidationParameters_Handler(srv interface{}, ctx contex
 }
 
 func _Query_EpochPerformanceSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetEpochPerformanceSummaryRequest)
+	in := new(QueryEpochPerformanceSummaryByEpochRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1725,7 +1962,25 @@ func _Query_EpochPerformanceSummary_Handler(srv interface{}, ctx context.Context
 		FullMethod: Query_EpochPerformanceSummary_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).EpochPerformanceSummary(ctx, req.(*QueryGetEpochPerformanceSummaryRequest))
+		return srv.(QueryServer).EpochPerformanceSummary(ctx, req.(*QueryEpochPerformanceSummaryByEpochRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochPerformanceSummaryByParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryEpochPerformanceSummaryByParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochPerformanceSummaryByParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochPerformanceSummaryByParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochPerformanceSummaryByParticipant(ctx, req.(*QueryEpochPerformanceSummaryByParticipantRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2468,6 +2723,24 @@ func _Query_TrainingAllowList_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_ParticipantAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryParticipantAllowListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ParticipantAllowList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ParticipantAllowList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ParticipantAllowList(ctx, req.(*QueryParticipantAllowListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ExcludedParticipants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryExcludedParticipantsRequest)
 	if err := dec(in); err != nil {
@@ -2500,6 +2773,42 @@ func _Query_ActiveConfirmationPoCEvent_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).ActiveConfirmationPoCEvent(ctx, req.(*QueryActiveConfirmationPoCEventRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ListConfirmationPoCEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryConfirmationPoCEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ListConfirmationPoCEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ListConfirmationPoCEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ListConfirmationPoCEvents(ctx, req.(*QueryConfirmationPoCEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ParticipantsWithBalances_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryParticipantsWithBalancesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ParticipantsWithBalances(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ParticipantsWithBalances_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ParticipantsWithBalances(ctx, req.(*QueryParticipantsWithBalancesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2572,6 +2881,26 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_PocValidationsForStage_Handler,
 		},
 		{
+			MethodName: "PocV2ValidationsForStage",
+			Handler:    _Query_PocV2ValidationsForStage_Handler,
+		},
+		{
+			MethodName: "PoCV2StoreCommit",
+			Handler:    _Query_PoCV2StoreCommit_Handler,
+		},
+		{
+			MethodName: "MLNodeWeightDistribution",
+			Handler:    _Query_MLNodeWeightDistribution_Handler,
+		},
+		{
+			MethodName: "AllPoCV2StoreCommitsForStage",
+			Handler:    _Query_AllPoCV2StoreCommitsForStage_Handler,
+		},
+		{
+			MethodName: "AllMLNodeWeightDistributionsForStage",
+			Handler:    _Query_AllMLNodeWeightDistributionsForStage_Handler,
+		},
+		{
 			MethodName: "GetCurrentEpoch",
 			Handler:    _Query_GetCurrentEpoch_Handler,
 		},
@@ -2622,6 +2951,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochPerformanceSummary",
 			Handler:    _Query_EpochPerformanceSummary_Handler,
+		},
+		{
+			MethodName: "EpochPerformanceSummaryByParticipant",
+			Handler:    _Query_EpochPerformanceSummaryByParticipant_Handler,
 		},
 		{
 			MethodName: "EpochPerformanceSummaryAll",
@@ -2788,12 +3121,24 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_TrainingAllowList_Handler,
 		},
 		{
+			MethodName: "ParticipantAllowList",
+			Handler:    _Query_ParticipantAllowList_Handler,
+		},
+		{
 			MethodName: "ExcludedParticipants",
 			Handler:    _Query_ExcludedParticipants_Handler,
 		},
 		{
 			MethodName: "ActiveConfirmationPoCEvent",
 			Handler:    _Query_ActiveConfirmationPoCEvent_Handler,
+		},
+		{
+			MethodName: "ListConfirmationPoCEvents",
+			Handler:    _Query_ListConfirmationPoCEvents_Handler,
+		},
+		{
+			MethodName: "ParticipantsWithBalances",
+			Handler:    _Query_ParticipantsWithBalances_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

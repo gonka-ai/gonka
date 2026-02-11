@@ -2,16 +2,11 @@ package com.productscience
 
 import com.github.tomakehurst.wiremock.client.MappingBuilder
 import com.github.tomakehurst.wiremock.client.WireMock
-import com.github.tomakehurst.wiremock.client.WireMock.aResponse
-import com.github.tomakehurst.wiremock.client.WireMock.equalToJson
-import com.github.tomakehurst.wiremock.client.WireMock.post
-import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
+import com.github.tomakehurst.wiremock.client.WireMock.*
 import com.github.tomakehurst.wiremock.http.RequestMethod
-import com.github.tomakehurst.wiremock.http.Response.response
 import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder
 import com.github.tomakehurst.wiremock.stubbing.StubMapping
 import com.productscience.data.OpenAIResponse
-import org.apache.tuweni.bytes.Bytes.segment
 import java.time.Duration
 
 interface IInferenceMock {
@@ -20,14 +15,17 @@ interface IInferenceMock {
         delay: Duration = Duration.ZERO,
         streamDelay: Duration = Duration.ZERO,
         segment: String = "v3.0.8",
-        model: String? = null
+        model: String? = null,
+        hostName: String? = null,
     ): StubMapping?
+
     fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
         delay: Duration = Duration.ZERO,
         streamDelay: Duration = Duration.ZERO,
         segment: String = "v3.0.8",
-        model: String? = null
+        model: String? = null,
+        hostName: String? = null,
     ): StubMapping?
 
     fun setInferenceErrorResponse(
@@ -37,19 +35,25 @@ interface IInferenceMock {
         delay: Duration = Duration.ZERO,
         streamDelay: Duration = Duration.ZERO,
         segment: String = "v3.0.8",
-        model: String? = null
+        model: String? = null,
+        hostName: String? = null,
     ): StubMapping?
 
-    fun setPocResponse(weight: Long, scenarioName: String = "ModelState")
+    fun setPocResponse(weight: Long, hostName: String? = null, scenarioName: String = "ModelState")
     fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState")
+    // PoC v2 (artifact-based) methods
+    fun setPocV2Response(weight: Long, hostName: String? = null, scenarioName: String = "ModelState")
+    fun setPocV2ValidationResponse(weight: Long, scenarioName: String = "ModelState")
     fun getLastInferenceRequest(): InferenceRequestPayload?
     fun hasRequestsToVersionedEndpoint(segment: String): Boolean
+    fun resetMocks()
 }
 
 class InferenceMock(port: Int, val name: String) : IInferenceMock {
     private val mockClient = WireMock(port)
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
+
     override fun getLastInferenceRequest(): InferenceRequestPayload? {
         val requests = mockClient.find(RequestPatternBuilder(RequestMethod.POST, urlEqualTo("/v1/chat/completions")))
         if (requests.isEmpty()) {
@@ -58,7 +62,15 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
         val lastRequest = requests.last()
         return openAiJson.fromJson(lastRequest.bodyAsString, InferenceRequestPayload::class.java)
     }
-    override fun setInferenceResponse(response: String, delay: Duration, streamDelay: Duration, segment: String, model: String?): StubMapping? {
+
+    override fun setInferenceResponse(
+        response: String,
+        delay: Duration,
+        streamDelay: Duration,
+        segment: String,
+        model: String?,
+        hostName: String?
+    ): StubMapping? {
         val cleanedSegment = segment.trim('/').takeIf { it.isNotEmpty() }
         val segmentPath = if (cleanedSegment != null) "/$cleanedSegment" else ""
         return this.givenThat(
@@ -82,10 +94,12 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
         delay: Duration,
         streamDelay: Duration,
         segment: String,
-        model: String?
+        model: String?,
+        hostName: String?
     ): StubMapping? =
         this.setInferenceResponse(
-            openAiJson.toJson(openAIResponse), delay, streamDelay, segment, model)
+            openAiJson.toJson(openAIResponse), delay, streamDelay, segment, model, hostName
+        )
 
     override fun setInferenceErrorResponse(
         statusCode: Int,
@@ -94,12 +108,13 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
         delay: Duration,
         streamDelay: Duration,
         segment: String,
-        model: String?
+        model: String?,
+        hostName: String?
     ): StubMapping? {
         // Generate error response body similar to the mock server's ErrorResponse
         val message = errorMessage ?: getDefaultErrorMessage(statusCode)
         val type = errorType ?: getDefaultErrorType(statusCode)
-        
+
         val errorResponseBody = """
             {
               "error": {
@@ -109,7 +124,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
               }
             }
         """.trimIndent()
-        
+
         return this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
                 .apply {
@@ -126,7 +141,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
                 )
         )
     }
-    
+
     private fun getDefaultErrorMessage(code: Int): String {
         return when (code) {
             400 -> "Bad Request"
@@ -140,7 +155,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
             else -> "Error"
         }
     }
-    
+
     private fun getDefaultErrorType(code: Int): String {
         return when {
             code in 400..499 -> "invalid_request_error"
@@ -149,7 +164,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
         }
     }
 
-    override fun setPocResponse(weight: Long, scenarioName: String) {
+    override fun setPocResponse(weight: Long, hostName: String?, scenarioName: String) {
         // Generate 'weight' number of nonces
         val nonces = (1..weight).toList()
         // Generate distribution values evenly spaced from 0.0 to 1.0
@@ -233,10 +248,99 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
         )
     }
 
+    // ======== PoC v2 (artifact-based) WireMock stubs ========
+
+    override fun setPocV2Response(weight: Long, hostName: String?, scenarioName: String) {
+        // Generate 'weight' artifacts with deterministic vectors (base64-encoded)
+        val artifacts = (1..weight).joinToString(", ") { nonce ->
+            // Simple deterministic vector: 24 bytes (12 fp16 values), all based on nonce
+            val vectorBytes = ByteArray(24) { i -> ((nonce * 2 + i) % 256).toByte() }
+            val vectorB64 = java.util.Base64.getEncoder().encodeToString(vectorBytes)
+            """{"nonce": $nonce, "vector_b64": "$vectorB64"}"""
+        }
+
+        val body = """
+            {
+              "public_key": "{{jsonPath originalRequest.body '$.public_key'}}",
+              "node_id": {{jsonPath originalRequest.body '$.node_id'}},
+              "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
+              "block_height": {{jsonPath originalRequest.body '$.block_height'}},
+              "artifacts": [$artifacts],
+              "encoding": {"dtype": "f16", "k_dim": 12, "endian": "le"}
+            }
+        """.trimIndent()
+
+        this.givenThat(
+            post(urlEqualTo("/api/v1/inference/pow/init/generate"))
+                .inScenario(scenarioName)
+                .willSetStateTo("POW_V2")
+                .willReturn(
+                    aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""{"status": "OK", "backends": 1, "n_groups": 1}""")
+                )
+                .withPostServeAction(
+                    "webhook",
+                    mapOf(
+                        "method" to "POST",
+                        "url" to "{{jsonPath originalRequest.body '$.url'}}/v2/poc-artifacts/generated",
+                        "headers" to mapOf("Content-Type" to "application/json"),
+                        "delay" to mapOf("type" to "fixed", "milliseconds" to 1000),
+                        "body" to body
+                    )
+                )
+        )
+    }
+
+    override fun setPocV2ValidationResponse(weight: Long, scenarioName: String) {
+        val callbackBody = """
+            {
+              "public_key": "{{jsonPath originalRequest.body '$.public_key'}}",
+              "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
+              "block_height": {{jsonPath originalRequest.body '$.block_height'}},
+              "node_id": {{jsonPath originalRequest.body '$.node_id'}},
+              "n_total": $weight,
+              "n_mismatch": 0,
+              "mismatch_nonces": [],
+              "p_value": 1.0,
+              "fraud_detected": false
+            }
+        """.trimIndent()
+
+        this.givenThat(
+            post(urlEqualTo("/api/v1/inference/pow/generate"))
+                .inScenario(scenarioName)
+                .whenScenarioStateIs("POW_V2")
+                .willSetStateTo("POW_V2_VALIDATE")
+                .willReturn(
+                    aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""{"status": "completed", "request_id": "mock-validation-request-id"}""")
+                )
+                .withPostServeAction(
+                    "webhook",
+                    mapOf(
+                        "method" to "POST",
+                        "url" to "{{jsonPath originalRequest.body '$.url'}}/v2/poc-artifacts/validated",
+                        "headers" to mapOf("Content-Type" to "application/json"),
+                        "delay" to mapOf("type" to "fixed", "milliseconds" to 5000),
+                        "body" to callbackBody
+                    )
+                )
+        )
+    }
+
     override fun hasRequestsToVersionedEndpoint(segment: String): Boolean {
         val cleanedSegment = segment.trim('/').takeIf { it.isNotEmpty() }
         val segmentPath = if (cleanedSegment != null) "/$cleanedSegment" else ""
-        val requests = mockClient.find(RequestPatternBuilder(RequestMethod.POST, urlEqualTo("${segmentPath}/v1/chat/completions")))
+        val requests =
+            mockClient.find(RequestPatternBuilder(RequestMethod.POST, urlEqualTo("${segmentPath}/v1/chat/completions")))
         return requests.isNotEmpty()
+    }
+
+    override fun resetMocks() {
+
     }
 }

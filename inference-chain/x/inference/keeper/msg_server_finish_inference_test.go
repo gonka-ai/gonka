@@ -2,7 +2,9 @@ package keeper_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -21,6 +23,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// sha256Hash computes SHA256 hash and returns hex string
+func sha256Hash(input string) string {
+	hash := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(hash[:])
+}
+
 func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMocks, blockHeight int64, epochGroupId uint64) (sdk.Context, error) {
 	ctx = ctx.WithBlockHeight(blockHeight)
 	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(10 * 60 * 1000 * 1000)) // 10 minutes later
@@ -32,7 +40,7 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 	// The genesis groups have already been created
 	newEpoch := types.Epoch{Index: epochIndex + 1, PocStartBlockHeight: blockHeight}
 	k.SetEpoch(ctx, &newEpoch)
-	k.SetEffectiveEpochIndex(ctx, newEpoch.Index)
+	_ = k.SetEffectiveEpochIndex(ctx, newEpoch.Index)
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochGroupId)
 
 	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight), epochIndex+1)
@@ -62,6 +70,32 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	)
 
 	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+
+	// Developer access gating should apply to FinishInference as well (gated by RequestedBy).
+	t.Run("DeveloperAccessRestricted", func(t *testing.T) {
+		originalParams, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = k.SetParams(ctx, originalParams)
+		})
+
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.DeveloperAccessParams = &types.DeveloperAccessParams{
+			UntilBlockHeight:          9999999,
+			AllowedDeveloperAddresses: []string{"gonka1someotherxxxxxxxxxxxxxxxxxxxxxx"},
+		}
+		k.SetParams(ctx, params)
+
+		resp, err := inferenceHelper.MessageServer.FinishInference(ctx, &types.MsgFinishInference{
+			InferenceId: "dummy",
+			RequestedBy: testutil.Requester,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Contains(t, resp.ErrorMessage, types.ErrDeveloperNotAllowlisted.Error())
+	})
+
 	requestTimestamp := inferenceHelper.context.BlockTime().UnixNano()
 	initialBlockTime := ctx.BlockTime().UnixMilli()
 	initialBlockHeight := int64(10)
@@ -135,7 +169,7 @@ func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, m
 
 func TestMsgServer_FinishInference_InferenceNotFound(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
-	_, err := ms.FinishInference(ctx, &types.MsgFinishInference{
+	response, err := ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
@@ -143,7 +177,8 @@ func TestMsgServer_FinishInference_InferenceNotFound(t *testing.T) {
 		CompletionTokenCount: 1,
 		ExecutedBy:           testutil.Executor,
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.NotEmpty(t, response.ErrorMessage)
 	_, found := k.GetInference(ctx, "inferenceId")
 	require.False(t, found)
 }
@@ -186,6 +221,7 @@ type MockInferenceHelper struct {
 	keeper            *keeper.Keeper
 	context           sdk.Context
 	previousInference *types.Inference
+	promptPayload     string // Phase 6: Store prompt for hash computation (not stored on-chain)
 }
 
 func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, sdk.Context) {
@@ -195,7 +231,8 @@ func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, 
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
 	// Disable grace period for tests so we get actual pricing instead of 0
-	params := k.GetParams(ctx)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
 	params.DynamicPricingParams.GracePeriodEndEpoch = 0
 	k.SetParams(ctx, params)
 
@@ -225,41 +262,56 @@ func (h *MockInferenceHelper) StartInference(
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockTransferAgent.GetBechAddress()).Return(h.MockTransferAgent).AnyTimes()
 	h.Mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
-	components := calculations.SignatureComponents{
-		Payload:         promptPayload,
+	// Phase 3: Compute hashes for signatures
+	originalPromptHash := sha256Hash(promptPayload)
+	promptHash := sha256Hash(promptPayload) // In real flow, this would be sha256(modified request with seed)
+
+	// Phase 3: Dev signs original_prompt_hash (no executor address)
+	devComponents := calculations.SignatureComponents{
+		Payload:         originalPromptHash,
+		Timestamp:       requestTimestamp,
+		TransferAddress: h.MockTransferAgent.address,
+		ExecutorAddress: "", // Dev doesn't include executor
+	}
+	inferenceId, err := calculations.Sign(h.MockRequester, devComponents, calculations.Developer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 3: TA signs prompt_hash (with executor address)
+	taComponents := calculations.SignatureComponents{
+		Payload:         promptHash,
 		Timestamp:       requestTimestamp,
 		TransferAddress: h.MockTransferAgent.address,
 		ExecutorAddress: h.MockExecutor.address,
 	}
-	inferenceId, err := calculations.Sign(h.MockRequester, components, calculations.Developer)
-	if err != nil {
-		return nil, err
-	}
-	taSignature, err := calculations.Sign(h.MockTransferAgent, components, calculations.TransferAgent)
+	taSignature, err := calculations.Sign(h.MockTransferAgent, taComponents, calculations.TransferAgent)
 	if err != nil {
 		return nil, err
 	}
 	startInferenceMsg := &types.MsgStartInference{
-		InferenceId:       inferenceId,
-		PromptHash:        "promptHash",
-		PromptPayload:     promptPayload,
-		RequestedBy:       h.MockRequester.address,
-		Creator:           h.MockTransferAgent.address,
-		Model:             model,
-		OriginalPrompt:    promptPayload,
-		RequestTimestamp:  requestTimestamp,
-		TransferSignature: taSignature,
-		AssignedTo:        h.MockExecutor.address,
+		InferenceId:        inferenceId,
+		PromptHash:         promptHash,
+		PromptPayload:      promptPayload,
+		RequestedBy:        h.MockRequester.address,
+		Creator:            h.MockTransferAgent.address,
+		Model:              model,
+		OriginalPrompt:     promptPayload,
+		OriginalPromptHash: originalPromptHash,
+		RequestTimestamp:   requestTimestamp,
+		TransferSignature:  taSignature,
+		AssignedTo:         h.MockExecutor.address,
 	}
 	if maxTokens != calculations.DefaultMaxTokens {
 		startInferenceMsg.MaxTokens = maxTokens
 	}
 	_, err = h.MessageServer.StartInference(h.context, startInferenceMsg)
+	h.promptPayload = promptPayload // Phase 6: Store for hash computation in FinishInference
 	h.previousInference = &types.Inference{
 		Index:               inferenceId,
 		InferenceId:         inferenceId,
-		PromptHash:          "promptHash",
-		PromptPayload:       promptPayload,
+		PromptHash:          promptHash,
+		PromptPayload:       "", // Phase 6: Stored offchain
 		RequestedBy:         h.MockRequester.address,
 		Status:              types.InferenceStatus_STARTED,
 		Model:               model,
@@ -271,7 +323,7 @@ func (h *MockInferenceHelper) StartInference(
 		TransferredBy:       h.MockTransferAgent.address,
 		TransferSignature:   taSignature,
 		RequestTimestamp:    requestTimestamp,
-		OriginalPrompt:      promptPayload,
+		OriginalPrompt:      "",                        // Phase 6: Stored offchain
 		PerTokenPrice:       calculations.PerTokenCost, // Set expected dynamic pricing value
 	}
 	return h.previousInference, nil
@@ -286,22 +338,36 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockRequester.GetBechAddress()).Return(h.MockRequester).AnyTimes()
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockTransferAgent.GetBechAddress()).Return(h.MockTransferAgent).AnyTimes()
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockExecutor.GetBechAddress()).Return(h.MockExecutor).AnyTimes()
-	components := calculations.SignatureComponents{
-		Payload:         h.previousInference.PromptPayload,
+
+	// Phase 3: Compute hashes for signatures
+	// Phase 6: Use stored promptPayload (not from inference struct, which is now empty)
+	originalPromptHash := sha256Hash(h.promptPayload)
+	promptHash := h.previousInference.PromptHash // Already computed in StartInference
+
+	// Phase 3: Dev signs original_prompt_hash (no executor address)
+	devComponents := calculations.SignatureComponents{
+		Payload:         originalPromptHash,
+		Timestamp:       h.previousInference.RequestTimestamp,
+		TransferAddress: h.MockTransferAgent.address,
+		ExecutorAddress: "", // Dev doesn't include executor
+	}
+	inferenceId, err := calculations.Sign(h.MockRequester, devComponents, calculations.Developer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 3: TA and Executor sign prompt_hash (with executor address)
+	taComponents := calculations.SignatureComponents{
+		Payload:         promptHash,
 		Timestamp:       h.previousInference.RequestTimestamp,
 		TransferAddress: h.MockTransferAgent.address,
 		ExecutorAddress: h.MockExecutor.address,
 	}
-
-	inferenceId, err := calculations.Sign(h.MockRequester, components, calculations.Developer)
+	taSignature, err := calculations.Sign(h.MockTransferAgent, taComponents, calculations.TransferAgent)
 	if err != nil {
 		return nil, err
 	}
-	taSignature, err := calculations.Sign(h.MockTransferAgent, components, calculations.TransferAgent)
-	if err != nil {
-		return nil, err
-	}
-	eaSignature, err := calculations.Sign(h.MockExecutor, components, calculations.ExecutorAgent)
+	eaSignature, err := calculations.Sign(h.MockExecutor, taComponents, calculations.ExecutorAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -318,8 +384,10 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		TransferSignature:    taSignature,
 		ExecutorSignature:    eaSignature,
 		RequestedBy:          h.MockRequester.address,
-		OriginalPrompt:       h.previousInference.OriginalPrompt,
+		OriginalPrompt:       h.promptPayload, // Phase 6: Use stored prompt (not from inference struct)
 		Model:                h.previousInference.Model,
+		PromptHash:           promptHash,
+		OriginalPromptHash:   originalPromptHash,
 	})
 	if err != nil {
 		return nil, err
@@ -328,11 +396,11 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		Index:                    inferenceId,
 		InferenceId:              inferenceId,
 		PromptHash:               h.previousInference.PromptHash,
-		PromptPayload:            h.previousInference.PromptPayload,
+		PromptPayload:            "", // Phase 6: Stored offchain
 		RequestedBy:              h.MockRequester.address,
 		Status:                   types.InferenceStatus_FINISHED,
 		ResponseHash:             "responseHash",
-		ResponsePayload:          "responsePayload",
+		ResponsePayload:          "", // Phase 6: Stored offchain
 		PromptTokenCount:         10,
 		CompletionTokenCount:     20,
 		EpochPocStartBlockHeight: h.previousInference.EpochPocStartBlockHeight,
@@ -350,7 +418,7 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		TransferredBy:            h.previousInference.TransferredBy,
 		TransferSignature:        h.previousInference.TransferSignature,
 		RequestTimestamp:         h.previousInference.RequestTimestamp,
-		OriginalPrompt:           h.previousInference.OriginalPrompt,
+		OriginalPrompt:           "", // Phase 6: Stored offchain
 		ExecutionSignature:       eaSignature,
 		PerTokenPrice:            calculations.PerTokenCost, // Set expected dynamic pricing value
 	}, nil

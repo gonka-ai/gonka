@@ -1,7 +1,7 @@
 services:
   mlnode-308:
-    # ghcr.io/product-science/mlnode:3.0.11-blackwell for Blackwell GPU (CUDA 12.8+)
-    image: ghcr.io/product-science/mlnode:3.0.11
+    # ghcr.io/product-science/mlnode:3.0.12-post2-blackwell
+    image: ghcr.io/product-science/mlnode:3.0.12-post2
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache

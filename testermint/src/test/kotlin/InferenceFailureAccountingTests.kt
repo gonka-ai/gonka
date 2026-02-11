@@ -24,7 +24,7 @@ class InferenceFailureAccountingTests : TestermintTest() {
             failure = e
         }
         assertThat(failure).isNotNull
-        genesis.node.waitForNextBlock()
+        genesis.node.waitForNextBlock(2)
         logSection("Waiting for inference to expire")
         val balanceBeforeSettle = genesis.node.getSelfBalance()
         val timeouts = genesis.node.getInferenceTimeouts()

@@ -739,6 +739,320 @@ func local_request_Query_PocValidationsForStage_0(ctx context.Context, marshaler
 
 }
 
+func request_Query_PocV2ValidationsForStage_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryPocV2ValidationsForStageRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "block_height")
+	}
+
+	protoReq.BlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "block_height", err)
+	}
+
+	msg, err := client.PocV2ValidationsForStage(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_PocV2ValidationsForStage_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryPocV2ValidationsForStageRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "block_height")
+	}
+
+	protoReq.BlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "block_height", err)
+	}
+
+	msg, err := server.PocV2ValidationsForStage(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_Query_PoCV2StoreCommit_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryPoCV2StoreCommitRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	val, ok = pathParams["participant_address"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant_address")
+	}
+
+	protoReq.ParticipantAddress, err = runtime.String(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant_address", err)
+	}
+
+	msg, err := client.PoCV2StoreCommit(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_PoCV2StoreCommit_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryPoCV2StoreCommitRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	val, ok = pathParams["participant_address"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant_address")
+	}
+
+	protoReq.ParticipantAddress, err = runtime.String(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant_address", err)
+	}
+
+	msg, err := server.PoCV2StoreCommit(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_Query_MLNodeWeightDistribution_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryMLNodeWeightDistributionRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	val, ok = pathParams["participant_address"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant_address")
+	}
+
+	protoReq.ParticipantAddress, err = runtime.String(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant_address", err)
+	}
+
+	msg, err := client.MLNodeWeightDistribution(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_MLNodeWeightDistribution_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryMLNodeWeightDistributionRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	val, ok = pathParams["participant_address"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant_address")
+	}
+
+	protoReq.ParticipantAddress, err = runtime.String(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant_address", err)
+	}
+
+	msg, err := server.MLNodeWeightDistribution(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_Query_AllPoCV2StoreCommitsForStage_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryAllPoCV2StoreCommitsForStageRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	msg, err := client.AllPoCV2StoreCommitsForStage(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_AllPoCV2StoreCommitsForStage_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryAllPoCV2StoreCommitsForStageRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	msg, err := server.AllPoCV2StoreCommitsForStage(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_Query_AllMLNodeWeightDistributionsForStage_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryAllMLNodeWeightDistributionsForStageRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	msg, err := client.AllMLNodeWeightDistributionsForStage(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_AllMLNodeWeightDistributionsForStage_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryAllMLNodeWeightDistributionsForStageRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["poc_stage_start_block_height"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_stage_start_block_height")
+	}
+
+	protoReq.PocStageStartBlockHeight, err = runtime.Int64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_stage_start_block_height", err)
+	}
+
+	msg, err := server.AllMLNodeWeightDistributionsForStage(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
 func request_Query_GetCurrentEpoch_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryGetCurrentEpochRequest
 	var metadata runtime.ServerMetadata
@@ -1256,7 +1570,7 @@ func local_request_Query_GetInferenceValidationParameters_0(ctx context.Context,
 }
 
 func request_Query_EpochPerformanceSummary_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq QueryGetEpochPerformanceSummaryRequest
+	var protoReq QueryEpochPerformanceSummaryByEpochRequest
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -1275,17 +1589,6 @@ func request_Query_EpochPerformanceSummary_0(ctx context.Context, marshaler runt
 
 	if err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
-	}
-
-	val, ok = pathParams["participantId"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participantId")
-	}
-
-	protoReq.ParticipantId, err = runtime.String(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participantId", err)
 	}
 
 	msg, err := client.EpochPerformanceSummary(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
@@ -1294,7 +1597,34 @@ func request_Query_EpochPerformanceSummary_0(ctx context.Context, marshaler runt
 }
 
 func local_request_Query_EpochPerformanceSummary_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq QueryGetEpochPerformanceSummaryRequest
+	var protoReq QueryEpochPerformanceSummaryByEpochRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["epoch_index"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
+	}
+
+	protoReq.EpochIndex, err = runtime.Uint64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
+	}
+
+	msg, err := server.EpochPerformanceSummary(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_Query_EpochPerformanceSummaryByParticipant_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryEpochPerformanceSummaryByParticipantRequest
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -1326,7 +1656,45 @@ func local_request_Query_EpochPerformanceSummary_0(ctx context.Context, marshale
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participantId", err)
 	}
 
-	msg, err := server.EpochPerformanceSummary(ctx, &protoReq)
+	msg, err := client.EpochPerformanceSummaryByParticipant(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_EpochPerformanceSummaryByParticipant_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryEpochPerformanceSummaryByParticipantRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["epoch_index"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
+	}
+
+	protoReq.EpochIndex, err = runtime.Uint64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
+	}
+
+	val, ok = pathParams["participantId"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participantId")
+	}
+
+	protoReq.ParticipantId, err = runtime.String(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participantId", err)
+	}
+
+	msg, err := server.EpochPerformanceSummaryByParticipant(ctx, &protoReq)
 	return msg, metadata, err
 
 }
@@ -2949,6 +3317,24 @@ func local_request_Query_TrainingAllowList_0(ctx context.Context, marshaler runt
 
 }
 
+func request_Query_ParticipantAllowList_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryParticipantAllowListRequest
+	var metadata runtime.ServerMetadata
+
+	msg, err := client.ParticipantAllowList(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_ParticipantAllowList_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryParticipantAllowListRequest
+	var metadata runtime.ServerMetadata
+
+	msg, err := server.ParticipantAllowList(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
 func request_Query_ExcludedParticipants_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryExcludedParticipantsRequest
 	var metadata runtime.ServerMetadata
@@ -3017,6 +3403,96 @@ func local_request_Query_ActiveConfirmationPoCEvent_0(ctx context.Context, marsh
 	var metadata runtime.ServerMetadata
 
 	msg, err := server.ActiveConfirmationPoCEvent(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_Query_ListConfirmationPoCEvents_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryConfirmationPoCEventsRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["epoch_index"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
+	}
+
+	protoReq.EpochIndex, err = runtime.Uint64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
+	}
+
+	msg, err := client.ListConfirmationPoCEvents(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_ListConfirmationPoCEvents_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryConfirmationPoCEventsRequest
+	var metadata runtime.ServerMetadata
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["epoch_index"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
+	}
+
+	protoReq.EpochIndex, err = runtime.Uint64(val)
+
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
+	}
+
+	msg, err := server.ListConfirmationPoCEvents(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+var (
+	filter_Query_ParticipantsWithBalances_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
+)
+
+func request_Query_ParticipantsWithBalances_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryParticipantsWithBalancesRequest
+	var metadata runtime.ServerMetadata
+
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_Query_ParticipantsWithBalances_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	msg, err := client.ParticipantsWithBalances(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_Query_ParticipantsWithBalances_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq QueryParticipantsWithBalancesRequest
+	var metadata runtime.ServerMetadata
+
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_Query_ParticipantsWithBalances_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	msg, err := server.ParticipantsWithBalances(ctx, &protoReq)
 	return msg, metadata, err
 
 }
@@ -3372,6 +3848,121 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 
 	})
 
+	mux.Handle("GET", pattern_Query_PocV2ValidationsForStage_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_PocV2ValidationsForStage_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_PocV2ValidationsForStage_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_PoCV2StoreCommit_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_PoCV2StoreCommit_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_PoCV2StoreCommit_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_MLNodeWeightDistribution_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_MLNodeWeightDistribution_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_MLNodeWeightDistribution_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_AllPoCV2StoreCommitsForStage_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_AllPoCV2StoreCommitsForStage_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_AllPoCV2StoreCommitsForStage_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_AllMLNodeWeightDistributionsForStage_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_AllMLNodeWeightDistributionsForStage_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_AllMLNodeWeightDistributionsForStage_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Query_GetCurrentEpoch_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -3668,6 +4259,29 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 		}
 
 		forward_Query_EpochPerformanceSummary_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_EpochPerformanceSummaryByParticipant_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_EpochPerformanceSummaryByParticipant_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_EpochPerformanceSummaryByParticipant_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -4614,6 +5228,29 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 
 	})
 
+	mux.Handle("GET", pattern_Query_ParticipantAllowList_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_ParticipantAllowList_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_ParticipantAllowList_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Query_ExcludedParticipants_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -4657,6 +5294,52 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 		}
 
 		forward_Query_ActiveConfirmationPoCEvent_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_ListConfirmationPoCEvents_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_ListConfirmationPoCEvents_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_ListConfirmationPoCEvents_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_ParticipantsWithBalances_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Query_ParticipantsWithBalances_0(rctx, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_ParticipantsWithBalances_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -5001,6 +5684,106 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 
 	})
 
+	mux.Handle("GET", pattern_Query_PocV2ValidationsForStage_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_PocV2ValidationsForStage_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_PocV2ValidationsForStage_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_PoCV2StoreCommit_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_PoCV2StoreCommit_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_PoCV2StoreCommit_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_MLNodeWeightDistribution_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_MLNodeWeightDistribution_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_MLNodeWeightDistribution_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_AllPoCV2StoreCommitsForStage_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_AllPoCV2StoreCommitsForStage_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_AllPoCV2StoreCommitsForStage_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_AllMLNodeWeightDistributionsForStage_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_AllMLNodeWeightDistributionsForStage_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_AllMLNodeWeightDistributionsForStage_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Query_GetCurrentEpoch_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -5258,6 +6041,26 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 		}
 
 		forward_Query_EpochPerformanceSummary_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_EpochPerformanceSummaryByParticipant_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_EpochPerformanceSummaryByParticipant_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_EpochPerformanceSummaryByParticipant_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -6081,6 +6884,26 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 
 	})
 
+	mux.Handle("GET", pattern_Query_ParticipantAllowList_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_ParticipantAllowList_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_ParticipantAllowList_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Query_ExcludedParticipants_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -6121,151 +6944,209 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 
 	})
 
+	mux.Handle("GET", pattern_Query_ListConfirmationPoCEvents_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_ListConfirmationPoCEvents_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_ListConfirmationPoCEvents_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Query_ParticipantsWithBalances_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Query_ParticipantsWithBalances_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Query_ParticipantsWithBalances_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	return nil
 }
 
 var (
-	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "params"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "params"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_Inference_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 1, 1, 0, 4, 1, 5, 2}, []string{"productscience", "inference", "index"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Inference_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 1, 1, 0, 4, 1, 5, 2}, []string{"productscience", "inference", "index"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferenceAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 1}, []string{"productscience", "inference"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferenceAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 1}, []string{"productscience", "inference"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_Participant_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "participant", "index"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Participant_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "participant", "index"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ParticipantAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "participant"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ParticipantAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferenceParticipant_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "inference_participant", "address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferenceParticipant_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "inference_participant", "address"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetRandomExecutor_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_random_executor"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetRandomExecutor_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_random_executor"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochGroupData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "epoch_group_data", "epoch_index"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "epoch_group_data", "epoch_index"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochGroupDataAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_data"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupDataAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_data"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_SettleAmount_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "settle_amount", "participant"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_SettleAmount_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "settle_amount", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_SettleAmountAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "settle_amount"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_SettleAmountAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "settle_amount"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "epoch_index"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "epoch_index"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochGroupValidationsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_validations"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupValidationsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_validations"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_PocBatchesForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_batches_for_stage", "block_height"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PocBatchesForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_batches_for_stage", "block_height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_PocValidationsForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_validations_for_stage", "block_height"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PocValidationsForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_validations_for_stage", "block_height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetCurrentEpoch_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_current_epoch"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PocV2ValidationsForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_v2_validations_for_stage", "block_height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TokenomicsData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "tokenomics_data"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PoCV2StoreCommit_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "poc_v2_store_commit", "poc_stage_start_block_height", "participant_address"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetUnitOfComputePriceProposal_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_unit_of_compute_price_proposal"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_MLNodeWeightDistribution_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "mlnode_weight_distribution", "poc_stage_start_block_height", "participant_address"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_CurrentEpochGroupData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "current_epoch_group_data"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_AllPoCV2StoreCommitsForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "all_poc_v2_store_commits", "poc_stage_start_block_height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ModelsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "models_all"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_AllMLNodeWeightDistributionsForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "all_mlnode_weight_distributions", "poc_stage_start_block_height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TopMiner_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "top_miner", "address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetCurrentEpoch_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_current_epoch"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TopMinerAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "top_miner"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TokenomicsData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "tokenomics_data"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferenceTimeout_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "inference_timeout", "expirationHeight", "inferenceId"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetUnitOfComputePriceProposal_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_unit_of_compute_price_proposal"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferenceTimeoutAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "inference_timeout"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_CurrentEpochGroupData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "current_epoch_group_data"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferenceValidationDetails_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "inference_validation_details", "epochId", "inferenceId"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ModelsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "models_all"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferenceValidationDetailsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "inference_validation_details"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TopMiner_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "top_miner", "address"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetInferenceValidationParameters_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "get_inference_validation_parameters", "ids", "requester"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TopMinerAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "top_miner"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochPerformanceSummary_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_performance_summary", "epoch_index", "participantId"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferenceTimeout_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "inference_timeout", "expirationHeight", "inferenceId"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochPerformanceSummaryAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_performance_summary"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferenceTimeoutAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "inference_timeout"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TrainingTask_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_task"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferenceValidationDetails_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "inference_validation_details", "epochId", "inferenceId"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_HardwareNodes_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "hardware_nodes", "participant"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferenceValidationDetailsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "inference_validation_details"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_HardwareNodesAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "hardware_nodes_all"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetInferenceValidationParameters_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "get_inference_validation_parameters", "ids", "requester"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_QueuedTrainingTasks_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "queued_training_tasks"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochPerformanceSummary_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "epoch_performance_summary", "epoch_index"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TrainingTaskAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_task_all"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochPerformanceSummaryByParticipant_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_performance_summary", "epoch_index", "participantId"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetParticipantCurrentStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "get_participant_current_stats", "participantId"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochPerformanceSummaryAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_performance_summary"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetAllParticipantCurrentStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_all_participant_current_stats"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TrainingTask_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_task"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetParticipantsFullStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "participants_stats"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_HardwareNodes_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "hardware_nodes", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_StatsByTimePeriodByDeveloper_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"productscience", "inference", "developer", "stats_by_time"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_HardwareNodesAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "hardware_nodes_all"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_StatsByDeveloperAndEpochsBackwards_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"productscience", "inference", "developer", "stats_by_epochs_backwards"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_QueuedTrainingTasks_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "queued_training_tasks"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_CountParticipants_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "participants", "count"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TrainingTaskAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_task_all"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_DebugStatsDeveloperStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"productscience", "inference", "debug", "developer", "all_stats"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetParticipantCurrentStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "get_participant_current_stats", "participantId"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferencesAndTokensStatsByEpochsBackwards_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "developer", "stats_by_epochs_backwards"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetAllParticipantCurrentStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_all_participant_current_stats"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferencesAndTokensStatsByTimePeriod_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "all_stats_by_time"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetParticipantsFullStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "participants_stats"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InferencesAndTokensStatsByModels_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "models_stats_by_time"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_StatsByTimePeriodByDeveloper_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"productscience", "inference", "developer", "stats_by_time"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetMinimumValidationAverage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_minimum_validation_average"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_StatsByDeveloperAndEpochsBackwards_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"productscience", "inference", "developer", "stats_by_epochs_backwards"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_InProgressTrainingTasks_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "in_progress_training_tasks"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_CountParticipants_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "participants", "count"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_PartialUpgrade_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "partial_upgrade", "height"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_DebugStatsDeveloperStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"productscience", "inference", "debug", "developer", "all_stats"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_PartialUpgradeAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "partial_upgrade"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferencesAndTokensStatsByEpochsBackwards_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 2, 3}, []string{"productscience", "inference", "developer", "stats_by_epochs_backwards"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_BridgeTransaction_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"productscience", "inference", "bridge_transaction", "origin_chain", "block_number", "receipt_index"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferencesAndTokensStatsByTimePeriod_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "all_stats_by_time"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_BridgeTransactions_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "bridge_transactions"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InferencesAndTokensStatsByModels_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "models_stats_by_time"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_BridgeAddressesByChain_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "bridge_addresses", "chain_id"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetMinimumValidationAverage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_minimum_validation_average"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_LiquidityPool_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "liquidity_pool"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_InProgressTrainingTasks_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "in_progress_training_tasks"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_WrappedTokenBalances_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "wrapped_token_balances", "address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PartialUpgrade_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "partial_upgrade", "height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ValidateWrappedTokenForTrade_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "validate_wrapped_token_for_trade", "contract_address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PartialUpgradeAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "partial_upgrade"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ApprovedTokensForTrade_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "approved_tokens_for_trade"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_BridgeTransaction_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"productscience", "inference", "bridge_transaction", "origin_chain", "block_number", "receipt_index"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TrainingKvRecord_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "training_kv_record", "taskId", "key"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_BridgeTransactions_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "bridge_transactions"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ListTrainingKvRecordKeys_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "list_training_kv_record_keys", "taskId"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_BridgeAddressesByChain_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "bridge_addresses", "chain_id"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TrainingBarrier_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_barrier"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_LiquidityPool_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "liquidity_pool"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TrainingAliveNodes_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_alive_nodes"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_WrappedTokenBalances_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "wrapped_token_balances", "address"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EpochInfo_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_info"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ValidateWrappedTokenForTrade_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "validate_wrapped_token_for_trade", "contract_address"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_CountPoCbatchesAtHeight_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "count_po_c_batches_at_height", "blockHeight"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ApprovedTokensForTrade_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "approved_tokens_for_trade"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_CountPoCvalidationsAtHeight_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "count_po_c_validations_at_height", "blockHeight"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TrainingKvRecord_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "training_kv_record", "taskId", "key"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetModelPerTokenPrice_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "model_per_token_price", "model_id"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ListTrainingKvRecordKeys_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "list_training_kv_record_keys", "taskId"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetAllModelPerTokenPrices_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "all_model_per_token_prices"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TrainingBarrier_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_barrier"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetModelCapacity_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "model_capacity", "model_id"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TrainingAliveNodes_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_alive_nodes"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GetAllModelCapacities_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "all_model_capacities"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochInfo_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_info"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_GranteesByMessageType_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "grantees_by_message_type", "granter_address", "message_type_url"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_CountPoCbatchesAtHeight_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "count_po_c_batches_at_height", "blockHeight"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_MLNodeVersion_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "mlnode_version"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_CountPoCvalidationsAtHeight_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "count_po_c_validations_at_height", "blockHeight"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_TrainingAllowList_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_allow_list"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetModelPerTokenPrice_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "model_per_token_price", "model_id"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ExcludedParticipants_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "excluded_participants", "epoch_index"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetAllModelPerTokenPrices_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "all_model_per_token_prices"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_ActiveConfirmationPoCEvent_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "active_confirmation_poc_event"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetModelCapacity_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "model_capacity", "model_id"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_GetAllModelCapacities_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "all_model_capacities"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_GranteesByMessageType_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "grantees_by_message_type", "granter_address", "message_type_url"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_MLNodeVersion_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "mlnode_version"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_TrainingAllowList_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_allow_list"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_ParticipantAllowList_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "participant_allow_list"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_ExcludedParticipants_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "excluded_participants", "epoch_index"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_ActiveConfirmationPoCEvent_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "active_confirmation_poc_event"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_ListConfirmationPoCEvents_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "confirmation_poc_events", "epoch_index"}, "", runtime.AssumeColonVerbOpt(true)))
+
+	pattern_Query_ParticipantsWithBalances_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "participants_with_balances"}, "", runtime.AssumeColonVerbOpt(true)))
 )
 
 var (
@@ -6299,6 +7180,16 @@ var (
 
 	forward_Query_PocValidationsForStage_0 = runtime.ForwardResponseMessage
 
+	forward_Query_PocV2ValidationsForStage_0 = runtime.ForwardResponseMessage
+
+	forward_Query_PoCV2StoreCommit_0 = runtime.ForwardResponseMessage
+
+	forward_Query_MLNodeWeightDistribution_0 = runtime.ForwardResponseMessage
+
+	forward_Query_AllPoCV2StoreCommitsForStage_0 = runtime.ForwardResponseMessage
+
+	forward_Query_AllMLNodeWeightDistributionsForStage_0 = runtime.ForwardResponseMessage
+
 	forward_Query_GetCurrentEpoch_0 = runtime.ForwardResponseMessage
 
 	forward_Query_TokenomicsData_0 = runtime.ForwardResponseMessage
@@ -6324,6 +7215,8 @@ var (
 	forward_Query_GetInferenceValidationParameters_0 = runtime.ForwardResponseMessage
 
 	forward_Query_EpochPerformanceSummary_0 = runtime.ForwardResponseMessage
+
+	forward_Query_EpochPerformanceSummaryByParticipant_0 = runtime.ForwardResponseMessage
 
 	forward_Query_EpochPerformanceSummaryAll_0 = runtime.ForwardResponseMessage
 
@@ -6407,7 +7300,13 @@ var (
 
 	forward_Query_TrainingAllowList_0 = runtime.ForwardResponseMessage
 
+	forward_Query_ParticipantAllowList_0 = runtime.ForwardResponseMessage
+
 	forward_Query_ExcludedParticipants_0 = runtime.ForwardResponseMessage
 
 	forward_Query_ActiveConfirmationPoCEvent_0 = runtime.ForwardResponseMessage
+
+	forward_Query_ListConfirmationPoCEvents_0 = runtime.ForwardResponseMessage
+
+	forward_Query_ParticipantsWithBalances_0 = runtime.ForwardResponseMessage
 )

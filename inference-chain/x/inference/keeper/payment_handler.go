@@ -23,7 +23,7 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 	if err != nil {
 		k.LogError("Error sending coins to escrow", types.Payments, "error", err)
 		return 0,
-			sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
+			sdkerrors.Wrap(err, types.ErrRequesterCannotPay.Error())
 	}
 	k.LogInfo("Sent coins to escrow", types.Payments, "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
 	return cost, nil
@@ -80,7 +80,7 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 		if err != nil {
 			return err
 		}
-		err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
+		return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
 	}
 	return err
 }
