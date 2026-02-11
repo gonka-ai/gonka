@@ -111,7 +111,7 @@ Hosts not in the group and not delegating effectively vote against approval. Del
 
 **TODO**: Mechanism to revoke delegation mid-epoch if delegate votes maliciously.
 
-### Mandatory Group Participation
+### Mandatory Group Participation & Incentive
 
 Every host with consensus weight must actively participate in every governance-approved group. For each group, the host chooses one of:
 
