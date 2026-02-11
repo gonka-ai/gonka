@@ -66,6 +66,12 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $delegation_S(group_i, p_{from}, p_{to})$ — consensus weight delegated from host $p_{from}$ to host $p_{to}$ for validation in $group_i$ at epoch $S$. Host $p_{from} \notin members(group_i)$; host $p_{to} \in members(group_i)$. Delegation is set before epoch start; changes during an epoch take effect from the next epoch.
 
+- $r_{delegation}$ — fraction of bitcoin-style reward delegator shares with delegate (governance parameter, e.g., 1%, per each group??)
+
+- $r_{refusal}$ — fraction of bitcoin-style reward sent to governance when host explicitly refuses to participate in a group; must be > $r_{delegation}$ (governance parameter, e.g., 5%, per each group??)
+
+- $r_{penalty}$ — fraction of bitcoin-style reward lost when host fails to make a participation choice for any governance-approved group (governance parameter, target 100%)
+
 - $votingPower_S(group_i, p) = consensusWeight_S(p) + \sum_{p_{from}} delegation_S(group_i, p_{from}, p)$ — total validation voting power of host $p$ in $group_i$
 
   Delegation constraints: $delegation_S(group_i, p_{from}, p_{to}) \ge 0$ and, for each $(group_i, p_{from})$, $\sum_{p_{to}} delegation_S(group_i, p_{from}, p_{to}) \le consensusWeight_S(p_{from})$.
@@ -104,6 +110,18 @@ Hosts not in the group and not delegating effectively vote against approval. Del
 **Trust model**: Delegator trusts the delegate to vote correctly.
 
 **TODO**: Mechanism to revoke delegation mid-epoch if delegate votes maliciously.
+
+### Mandatory Group Participation
+
+Every host with consensus weight must actively participate in every governance-approved group. For each group, the host chooses one of:
+
+1. Join group — deploy hardware and participate directly in the group
+2. Delegate — delegate voting power to a group member; delegator shares $r_{delegation}$ with delegate, incentivizing group members to build trust
+3. Explicit refusal — decline to delegate or join; costs $r_{refusal}$. Must be renewed each epoch
+
+If a host does not make a choice for any governance-approved group, the host loses $r_{penalty}$ of their bitcoin-style reward. This ensures >50% of total consensus weight participates in PoC validation for every governance-approved group.
+
+Q6: How to activate mandatory participation for a new group? If activated immediately upon governance approval, there is no time to establish participants with hardware in that group. Needs grace period or eligibility threshold before enforcement starts.
 
 ### Non-Eligible Groups
 
