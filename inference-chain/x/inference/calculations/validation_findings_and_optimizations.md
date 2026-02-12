@@ -132,18 +132,30 @@ We use the normalized participants tree cache so that **which participants shoul
 
 ---
 
-### Capped revalidation vote weights (20% with redistribution)
+### Capped revalidation vote weights (participant-count–dependent cap)
 
-Revalidation vote weights are **capped** so that no single participant can dominate the outcome. We apply a **hard cap of 20%** of the total eligible weight per participant. The cap is chosen so that **at least 3 validators** are required to reach a majority (50%): with each vote at most 20%, three votes sum to at most 60%, so reaching 50% still requires multiple participants.
+Revalidation vote weights are **capped** so that no single participant can dominate the outcome. The cap is applied to **ConfirmationWeight** (the same weights used for the normalized tree and sampling). The **cap limit depends on how many participants** are in the selected set (invalidator + sampled participants), so that with few participants a single actor cannot hold a majority:
+
+| Participants | Cap | Rationale |
+|-------------|-----|-----------|
+| **≤ 2** | **No cap** | With 2 or fewer, each participant’s weight is used as-is; no per-participant limit. |
+| **3–4** | **49%** of total eligible weight | At least 2 participants are required to reach a majority (50%); one at 49% cannot alone decide. |
+| **5+** | **24%** of total eligible weight | At least 3 participants are required to reach a majority; one at 24% cannot alone decide. |
+
+**Edge cases:**
+
+- **1–2 participants:** No cap is applied. Total eligible weight is the sum of their ConfirmationWeights; each keeps their full weight. Useful when the model has very few eligible participants.
+- **3–4 participants:** Cap = 49% of total. A single participant with e.g. 60% of the weight is reduced to 49%; the rest keep their weights. Threshold (50% of capped total) still requires at least two participants to agree.
+- **5 or more participants:** Cap = 24% of total. With many participants, no one can hold more than 24%; reaching 50% requires at least three participants.
 
 **How it works:**
 
-- When revalidation events are processed (`ProcessPendingRevalidationEvents`), we build the set of selected participants (invalidator + sampled participants) and their **raw** weights from the normalized block weights.
-- We compute **total eligible weight** as the sum of those participants’ raw weights.
-- **Cap limit** = 20% of total eligible weight. Each participant’s vote weight is then **min(raw weight, cap limit)**. No redistribution of “excess” weight is applied; the effective total used for threshold is the sum of these capped weights.
-- Capped weights are stored in the **revalidation vote participants cache** keyed by `(inferenceId, participant address)`, so when a participant submits a revalidation vote we use their **capped** weight (via `GetRevalidationVoteWeight`) rather than raw confirmation weight. The cache is evicted after `NormalizedParticipantsCacheBlocks` (300) blocks, together with the normalized participants tree.
+- When revalidation events are processed (`ProcessPendingRevalidationEvents`), we build the set of selected participants (invalidator + sampled participants) and their **ConfirmationWeights** from the epoch group data for that model.
+- We compute **total eligible weight** as the sum of those participants’ ConfirmationWeights.
+- **Cap limit** = `RevalidationCapLimitForParticipantCount(len(selected), totalEligibleWeight)` (≤2 → no cap, 3–4 → 49%, 5+ → 24%). Each participant’s vote weight is then **min(ConfirmationWeight, cap limit)**. No redistribution of “excess” weight is applied; the effective total used for threshold is the sum of these capped weights.
+- Capped weights are stored in the **revalidation vote participants cache** keyed by `(blockHeight, inferenceId, participant address)`, so when a participant submits a revalidation vote we use their **capped** weight (via `GetRevalidationVoteWeight`) rather than raw ConfirmationWeight. The cache is evicted after `NormalizedParticipantsCacheBlocks` (300) blocks, together with the normalized participants tree.
 
-**Implementation:** `x/inference/keeper/revalidation_init_hook.go` (cap and cache population), `revalidation_vote_participants_cache.go` (storage and `GetWeight`), and `msg_server_validation.go` (use capped weight when adding a revalidation vote).
+**Implementation:** `x/inference/keeper/revalidation_init_hook.go` (`RevalidationCapLimitForParticipantCount`, `ApplyRevalidationCap`, cap and cache population), `revalidation_vote_participants_cache.go` (storage and `GetWeight`), and `msg_server_validation.go` (use capped weight when adding a revalidation vote).
 
 ---
 

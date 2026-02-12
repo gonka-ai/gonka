@@ -73,8 +73,7 @@ func (c *normalizedWeightedParticipantsCache) BuildNormalizedTree(participants [
 }
 
 // Add builds a normalized BTree from participant weights and stores it by (blockHash, modelId).
-// (blockHeight, blockHash, modelId) is appended to the FIFO queue. Weights are normalized (weight/totalWeight),
-// participants with weight <= 0 are dropped, and the BTree keys are cumulative normalized weights.
+// (blockHeight, blockHash, modelId) is appended to the FIFO queue.
 func (c *normalizedWeightedParticipantsCache) Add(blockHash []byte, blockHeight int64, modelId string, participants []ParticipantWeight) {
 	if len(blockHash) == 0 {
 		return

@@ -227,9 +227,12 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 		if !foundGroup {
 			continue
 		}
+		// Cap is applied to validation Weight (not ConfirmationWeight).
 		weightMap := make(map[string]int64)
-		for _, w := range validationWeightsToParticipantWeights(groupData.GetValidationWeights()) {
-			weightMap[w.Address] = w.Weight
+		for _, vw := range groupData.GetValidationWeights() {
+			if vw != nil && vw.Weight > 0 {
+				weightMap[vw.GetMemberAddress()] = vw.Weight
+			}
 		}
 		// Build selected participant -> raw weight map (including invalidator) for this inference.
 		selected := make(map[string]int64)
@@ -252,21 +255,14 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 			continue
 		}
 
-		// Apply hard 20% cap with redistribution effect: each participant's vote weight
-		// is capped at 20% of totalEligibleWeight; the new total is the sum of capped weights.
-		const capPercent int64 = 20
-		capLimit := (totalEligibleWeight * capPercent) / 100
+		capLimit := RevalidationCapLimitForParticipantCount(int64(len(selected)), totalEligibleWeight)
 		if capLimit <= 0 {
 			continue
 		}
 
-		capped := make(map[string]int64, len(selected))
+		capped := ApplyRevalidationCap(selected, capLimit)
 		var cappedTotal int64
-		for addr, w := range selected {
-			if w > capLimit {
-				w = capLimit
-			}
-			capped[addr] = w
+		for _, w := range capped {
 			cappedTotal += w
 		}
 		if cappedTotal == 0 {
@@ -284,4 +280,29 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 			k.Logger().Error("ProcessPendingRevalidationEvents: StartRevalidationVote failed", "inference_id", e.InferenceId, "error", err)
 		}
 	}
+}
+
+// RevalidationCapLimitForParticipantCount returns the per-participant cap limit for revalidation voting.
+// ≤2 participants: no cap (returns totalEligibleWeight so no one is capped). 3–4: 49%. 5+: 24%.
+func RevalidationCapLimitForParticipantCount(n int64, totalEligibleWeight int64) int64 {
+	switch {
+	case n <= 2:
+		return totalEligibleWeight
+	case n <= 4:
+		return (totalEligibleWeight * 49) / 100
+	default:
+		return (totalEligibleWeight * 24) / 100
+	}
+}
+
+// ApplyRevalidationCap applies the cap limit to each participant's weight and returns the capped map.
+func ApplyRevalidationCap(selected map[string]int64, capLimit int64) map[string]int64 {
+	capped := make(map[string]int64, len(selected))
+	for addr, w := range selected {
+		if w > capLimit {
+			w = capLimit
+		}
+		capped[addr] = w
+	}
+	return capped
 }

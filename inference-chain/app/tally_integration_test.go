@@ -48,7 +48,9 @@ func TestTallyBugReproduction(t *testing.T) {
 	// Setup app
 	testApp := createTestApp(t)
 	ctx := testApp.BaseApp.NewUncachedContext(false, cmtproto.Header{ChainID: TallyTestChainID, Height: 1000000})
-	// Attach HeaderInfo so code paths (e.g. Gov Tally, Staking) that call HeaderInfo() get a non-nil value and avoid "interface conversion: interface {} is nil, not types.Context".
+	// Attach HeaderInfo so code paths (e.g. Gov Tally, Staking) that call HeaderInfo()
+	// get a non-nil value and avoid "interface conversion: interface {} is nil, not types.Context".
+	// It's better to have a valid header info to test the code that uses ctx: tx-binded caches and precommiter hooks.
 	ctx = ctx.WithHeaderInfo(header.Info{
 		Height:  1000000,
 		ChainID: TallyTestChainID,
