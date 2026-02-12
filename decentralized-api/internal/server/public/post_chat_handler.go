@@ -244,6 +244,10 @@ func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash st
 		return err
 	}
 
+	if err := validateMessages(chatRequest.OpenAiRequest.Messages); err != nil {
+		return err
+	}
+
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
 		logging.Info("Executor request", types.Inferences, "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed)
 		return s.handleExecutorRequest(ctx, chatRequest, ctx.Response().Writer)
@@ -294,6 +298,45 @@ func (s *Server) enforceTransferAgentAccess(taAddress string) error {
 	}
 	logging.Warn("Transfer Agent not in whitelist", types.Inferences, "address", taAddress)
 	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
+}
+
+func validateMessages(messages []Message) error {
+	for i, message := range messages {
+		if err := validateMessageContent(message); err != nil {
+			logging.Warn("Unsupported message content", types.Inferences, "index", i, "role", message.Role, "error", err)
+			return ErrUnsupportedMessageContent
+		}
+	}
+	return nil
+}
+
+func validateMessageContent(message Message) error {
+	trimmed := bytes.TrimSpace(message.Content)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return errors.New("empty message content")
+	}
+
+	var s string
+	if json.Unmarshal(message.Content, &s) == nil {
+		return nil
+	}
+
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(message.Content, &parts); err != nil {
+		return err
+	}
+	if len(parts) == 0 {
+		return errors.New("empty message content")
+	}
+	for _, part := range parts {
+		if part.Type != "text" {
+			return fmt.Errorf("unsupported content type: %s", part.Type)
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
@@ -987,6 +1030,29 @@ func readRequestBody(r *http.Request, writer http.ResponseWriter) ([]byte, error
 	return buf.Bytes(), nil
 }
 
+func (s *Server) validateModelSupported(model string) error {
+	if model == "" {
+		return ErrNoModelSpecified
+	}
+	if s.phaseTracker == nil || s.epochGroupDataCache == nil {
+		return nil
+	}
+	epochState := s.phaseTracker.GetCurrentEpochState()
+	if epochState == nil {
+		return nil
+	}
+	epochGroupData, err := s.epochGroupDataCache.GetCurrentEpochGroupData(epochState.LatestEpoch.EpochIndex)
+	if err != nil {
+		return err
+	}
+	for _, m := range epochGroupData.SubGroupModels {
+		if m == model {
+			return nil
+		}
+	}
+	return echo.NewHTTPError(http.StatusNotFound, "model not found")
+}
+
 // validateRequester validates requester with dynamic pricing fallback to legacy
 func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, requester *types.QueryAccountByAddressResponse, promptTokenCount int) error {
 	if requester == nil {
@@ -998,6 +1064,10 @@ func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, re
 	if err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
+	}
+
+	if err := s.validateModelSupported(request.OpenAiRequest.Model); err != nil {
+		return err
 	}
 
 	if request.OpenAiRequest.MaxTokens == 0 {

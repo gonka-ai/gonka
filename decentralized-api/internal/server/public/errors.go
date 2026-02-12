@@ -7,9 +7,10 @@ import (
 )
 
 var (
-	ErrRequestAuth         = echo.NewHTTPError(http.StatusUnauthorized, "Authorization is required")
-	ErrAccountNotFound     = echo.NewHTTPError(http.StatusNotFound, "Account not found")
-	ErrInsufficientBalance = echo.NewHTTPError(http.StatusPaymentRequired, "Insufficient balance")
+	ErrRequestAuth                  = echo.NewHTTPError(http.StatusUnauthorized, "Authorization is required")
+	ErrAccountNotFound              = echo.NewHTTPError(http.StatusNotFound, "Account not found")
+	ErrInsufficientBalance          = echo.NewHTTPError(http.StatusPaymentRequired, "Insufficient balance")
+	ErrUnsupportedMessageContent    = echo.NewHTTPError(http.StatusBadRequest, "Unsupported message content")
 
 	ErrIdRequired        = echo.NewHTTPError(http.StatusBadRequest, "Id is required")
 	ErrAddressRequired   = echo.NewHTTPError(http.StatusBadRequest, "Address is required")
