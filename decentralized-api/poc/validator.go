@@ -22,6 +22,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const (
+	POC_VALIDATE_GET_NODES_RETRIES     = 30
+	POC_VALIDATE_GET_NODES_RETRY_DELAY = 5 * time.Second
+)
+
 // OffChainValidator handles off-chain PoC validation using MMR proofs.
 type OffChainValidator struct {
 	recorder         cosmosclient.CosmosMessageClient

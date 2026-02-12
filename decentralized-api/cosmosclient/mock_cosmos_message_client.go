@@ -118,20 +118,6 @@ func (m *MockCosmosMessageClient) BankBalances(ctx context.Context, address stri
 	return args.Get(0).([]sdk.Coin), args.Error(1)
 }
 
-// PoC v1 mock methods
-
-func (m *MockCosmosMessageClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-// PoC v2 mock methods
-
 func (m *MockCosmosMessageClient) SubmitPocValidationsV2(transaction *inference.MsgSubmitPocValidationsV2) error {
 	args := m.Called(transaction)
 	return args.Error(0)

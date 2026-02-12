@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"encoding/base64"
 	"encoding/binary"
@@ -108,10 +107,6 @@ type PocArtifactsStateResponse struct {
 func (s *Server) postPocProofs(ctx echo.Context) error {
 	if s.artifactStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
-	}
-
-	if s.phaseTracker != nil && !poc.ShouldUseV2FromEpochState(s.phaseTracker.GetCurrentEpochState()) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "proof API requires V2 mode")
 	}
 
 	var req PocProofsRequest
@@ -289,10 +284,6 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 	if s.artifactStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
-	}
-
-	if s.phaseTracker != nil && !poc.ShouldUseV2FromEpochState(s.phaseTracker.GetCurrentEpochState()) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact state API requires V2 mode")
 	}
 
 	heightParam := ctx.QueryParam("height")

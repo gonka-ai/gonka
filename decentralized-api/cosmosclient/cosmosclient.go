@@ -208,10 +208,6 @@ type CosmosMessageClient interface {
 	FinishInference(transaction *inference.MsgFinishInference) error
 	ReportValidation(transaction *inference.MsgValidation) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
-	// PoC V1 methods (on-chain batches, used when poc_v2_enabled=false)
-	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
-	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
-	// PoC V2 methods (off-chain commits, used when poc_v2_enabled=true)
 	SubmitPocValidationsV2(transaction *inference.MsgSubmitPocValidationsV2) error
 	SubmitPoCV2StoreCommit(transaction *inference.MsgPoCV2StoreCommit) error
 	SubmitMLNodeWeightDistribution(transaction *inference.MsgMLNodeWeightDistribution) error
