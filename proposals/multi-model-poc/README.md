@@ -72,13 +72,13 @@ Let epoch $S$ be completed. The following defines weight computation for epoch $
 
 - $r_{penalty}$ — fraction of bitcoin-style reward lost when host fails to make a participation choice for any governance-approved group (governance parameter, target 100%)
 
+- $T_{grace}$ — grace window duration after governance approval before penalties apply (governance parameter, e.g., 3 epochs)
+
 - $votingPower_S(group_i, p) = consensusWeight_S(p) + \sum_{p_{from}} delegation_S(group_i, p_{from}, p)$ — total validation voting power of host $p$ in $group_i$
 
   Delegation constraints: $delegation_S(group_i, p_{from}, p_{to}) \ge 0$ and, for each $(group_i, p_{from})$, $\sum_{p_{to}} delegation_S(group_i, p_{from}, p_{to}) \le consensusWeight_S(p_{from})$.
 
 **Q1: Can a host split delegation across multiple hosts in the same group?**
-
-**Q2: Any punishment if host does not delegate when not present in a group? (if there is explicit option to refuse delegation if no hosts in group are trusted)**
 
 ### Eligible Groups
 
@@ -117,35 +117,34 @@ Every host with consensus weight must actively participate in every governance-a
 
 1. Join group — deploy hardware and participate directly in the group
 2. Delegate — delegate voting power to a group member; delegator shares $r_{delegation}$ with delegate, incentivizing group members to build trust
-3. Explicit refusal — decline to delegate or join; costs $r_{refusal}$. Must be renewed each epoch
+3. Explicit refusal — decline to delegate or join; costs $r_{refusal}$; must be renewed each epoch
 
-If a host does not make a choice for any governance-approved group, the host loses $r_{penalty}$ of their bitcoin-style reward. This ensures >50% of total consensus weight participates in PoC validation for every governance-approved group.
+During the grace window ($T_{grace}$ epochs after governance approval), hosts must make a participation choice but there is no penalty for any choice. After the grace window ends, penalties apply: hosts who didn't make a choice lose $r_{penalty}$ of their bitcoin-style reward.
 
-Q6: How to activate mandatory participation for a new group? If activated immediately upon governance approval, there is no time to establish participants with hardware in that group. Needs grace period or eligibility threshold before enforcement starts.
+This incentivizes >50% of total consensus weight to participate in PoC validation for every governance-approved group.
 
-### Non-Eligible Groups
+### Unregistered Models
 
-If a group is not eligible, PoC validation uses only the group's members as validators. A host $p$'s result is accepted if >50% of $\sum_{v \in members(group_i)} consensusWeight_S(v)$ votes valid. Validators use their consensus weight from other eligible groups; validated hosts receive $pocWeight$ in this group.
+Any host can add a model to the chain and serve inference without governance approval (there is some fee for that).
 
-Non-eligible groups can still serve inference requests. Tasks are distributed proportionally to $pocWeight_S(group_i, p)$.
+Properties:
+- No inference validation by other hosts
+- Price set directly by host (no dynamic pricing)
+- Requests sent directly to host
+- Host stores payload locally but no cross-validation
+- Each GNK payment has fee sent to governance
+- No bitcoin-style rewards
 
-Non-eligible groups cannot:
-- Affect consensus weight
-- Participate in governance decisions
-- Receive bitcoin-style rewards
+Purpose: build demo-case for governance proposal to show demand for the model.
 
-Hosts in non-eligible groups only receive payment for inference.
+### Model Lifecycle
 
-**Q3: Should non-eligible groups have higher dynamic pricing floor since hardware is not subsidized by bitcoin-style rewards?**
+1. Unregistered phase — host adds model, serves inference directly to users, builds demo-case for governance proposal
+2. Governance proposal — model approved with defined $consensusKoeff_i$, group created
+3. Grace window ($T_{grace}$ epochs) — mandatory participation rules apply but without penalties; hosts make participation choices (join/delegate/refuse); PoC runs for the group
+4. After grace window — penalties apply ($r_{penalty}$, $r_{delegation}$, $r_{refusal}$); eligibility still depends on meeting conditions ($W_{threshold}$, $V_{min}$, passing PoC validation)
 
-### New Group Onboarding
-
-1. Governance proposal to add new model and create new group (defines $consensusKoeff_i$)
-2. Early adopters join the group with minimal hardware and serve inferences (group is non-eligible at this stage)
-3. Once the group meets conditions 1-3 (sufficient hosts and consensus weight), group becomes pre-eligible ($group_i \in PreE_{S+1}$)
-4. Pre-eligible group's PoC is validated by total network (>50% of $votingPower$); if at least $V_{min}$ hosts pass, group becomes eligible ($group_i \in E_{S+1}$) and affects consensus
-
-**Q4: Should participating in non-eligible group be replaceable with commitment (with deposit) to participate in PoC if group becomes eligible >= N blocks before epoch start?** N blocks gives time to deploy the model. If host fails to participate after commitment, deposit is burned. This helps collect sufficient weight without hosts losing consensus weight during non-eligible epochs.
+A governance-approved group may or may not be eligible in any given epoch depending on whether it meets eligibility conditions.
 
 ## Implementation
 
