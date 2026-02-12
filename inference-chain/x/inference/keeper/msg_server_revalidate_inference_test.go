@@ -6,12 +6,10 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 )
 
 // These tests mirror msg_server_validation_test.go setup and assertions
@@ -31,10 +29,8 @@ func setupInferenceInVoting(t *testing.T) (*MockInferenceHelper, *types.Inferenc
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
 
-	// Cause an invalidation vote by submitting a below-threshold validation
-	mocks := inferenceHelper.Mocks
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
+	// Cause an invalidation vote by submitting a below-threshold validation.
+	// The Validation handler sets status to VOTING but does not call SubmitProposal or set ProposalDetails.
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Validator,
@@ -42,12 +38,18 @@ func setupInferenceInVoting(t *testing.T) (*MockInferenceHelper, *types.Inferenc
 	})
 	require.NoError(t, err)
 
-	// Fetch updated inference to get policy address
+	// Fetch updated inference; set ProposalDetails so RevalidateInference tests can use the policy address.
 	saved, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VOTING, saved.Status)
-
-	return inferenceHelper, &saved, saved.ProposalDetails.PolicyAddress
+	policyAddr := "group-policy-address" // matches StubModelSubgroup / ExpectAnyCreateGroupWithPolicyCall
+	if saved.ProposalDetails == nil {
+		saved.ProposalDetails = &types.ProposalDetails{PolicyAddress: policyAddr}
+		k.SetInference(ctx, saved)
+	} else {
+		policyAddr = saved.ProposalDetails.PolicyAddress
+	}
+	return inferenceHelper, &saved, policyAddr
 }
 
 func TestRevalidate_FailsWithWrongPolicyAddress(t *testing.T) {

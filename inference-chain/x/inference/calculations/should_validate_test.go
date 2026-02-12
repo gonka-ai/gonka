@@ -312,3 +312,42 @@ func TestDeterministicFloat(t *testing.T) {
 		})
 	}
 }
+
+// TestDeterministicFloatConsistency asserts that (seed, inferenceId) always yields the same float and that ShouldValidate is deterministic for the same inputs.
+func TestDeterministicFloatConsistency(t *testing.T) {
+	seed := int64(6669939700021626378)
+	id := "inferenceId"
+	a := DeterministicFloat(seed, id)
+	b := DeterministicFloat(seed, id)
+	require.True(t, a.Equal(b), "DeterministicFloat(seed, id) must be identical when called twice")
+
+	otherSeed := int64(2925341513999858939)
+	c := DeterministicFloat(otherSeed, id)
+	require.False(t, a.Equal(c), "different seed must yield different DeterministicFloat for same id")
+
+	otherId := "otherId"
+	d := DeterministicFloat(seed, otherId)
+	require.False(t, a.Equal(d), "different id must yield different DeterministicFloat for same seed")
+}
+
+// TestShouldValidate_Consistency asserts that ShouldValidate returns the same result for the same inputs.
+func TestShouldValidate_Consistency(t *testing.T) {
+	details := &types.InferenceValidationDetails{
+		InferenceId:        fixedInferenceId,
+		TrafficBasis:       defaultTrafficCutoff,
+		ExecutorReputation: 50,
+	}
+	params := &types.ValidationParams{
+		MinValidationAverage: types.DecimalFromFloat(0.1), MaxValidationAverage: types.DecimalFromFloat(1.0),
+		FullValidationTrafficCutoff: defaultTrafficCutoff, MinValidationTrafficCutoff: 100,
+		MinValidationHalfway: types.DecimalFromFloat(0.05), EpochsToMax: defaultEpochsToMax,
+	}
+	seed := fiftyPercentSeed
+	totalPower := uint32(100)
+	validatorPower := uint32(50)
+	executorPower := uint32(20)
+
+	r1, _ := ShouldValidate(seed, details, totalPower, validatorPower, executorPower, params, false)
+	r2, _ := ShouldValidate(seed, details, totalPower, validatorPower, executorPower, params, false)
+	require.Equal(t, r1, r2, "ShouldValidate must return the same result for the same inputs")
+}

@@ -184,6 +184,13 @@ func (k Keeper) IsParticipantEligibleToVoteOnRevalidation(blockHeight int64, inf
 	return k.revalidationVoteParticipants.Contains(blockHeight, inferenceId, participantAddress)
 }
 
+// AddRevalidationEligibleParticipantForTest seeds the revalidation vote participants cache so that
+// participant is eligible to vote on revalidation for inferenceId at blockHeight. Used only in tests
+// (e.g. TestMsgServer_Validation_Invalidate) where ProcessPendingRevalidationEvents is not run.
+func (k Keeper) AddRevalidationEligibleParticipantForTest(blockHeight int64, inferenceId, invalidator, participant string, weight int64) {
+	k.revalidationVoteParticipants.Add(blockHeight, inferenceId, invalidator, map[string]int64{participant: weight})
+}
+
 // GetRevalidationVoteWeight returns the capped vote weight for (inferenceId, participantAddress)
 // from the in-memory revalidationVoteParticipants cache, if present.
 func (k Keeper) GetRevalidationVoteWeight(blockHeight int64, inferenceId string, participantAddress string) (int64, bool) {
