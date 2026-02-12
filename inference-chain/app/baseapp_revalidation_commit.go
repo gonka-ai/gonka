@@ -1,8 +1,6 @@
 package app
 
 import (
-	"context"
-
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
@@ -21,7 +19,7 @@ func RevalidationCommitOption(keeper *inferencemodulekeeper.Keeper) func(*baseap
 			// Set normalized participants tree for this block first so ProcessPendingRevalidationEvents can sample and cache vote lists.
 			keeper.SetNormalizedParticipantsForCommittedBlock(ctx, height, hash)
 			//TODO: generalize events, process not only RevalidationEvents
-			keeper.ProcessPendingRevalidationEvents(context.Background(), height, hash)
+			keeper.ProcessPendingRevalidationEvents(ctx, height, hash)
 		})
 	}
 }

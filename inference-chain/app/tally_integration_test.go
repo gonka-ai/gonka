@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"cosmossdk.io/core/header"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
@@ -47,6 +48,13 @@ func TestTallyBugReproduction(t *testing.T) {
 	// Setup app
 	testApp := createTestApp(t)
 	ctx := testApp.BaseApp.NewUncachedContext(false, cmtproto.Header{ChainID: TallyTestChainID, Height: 1000000})
+	// Attach HeaderInfo so code paths (e.g. Gov Tally, Staking) that call HeaderInfo() get a non-nil value and avoid "interface conversion: interface {} is nil, not types.Context".
+	ctx = ctx.WithHeaderInfo(header.Info{
+		Height:  1000000,
+		ChainID: TallyTestChainID,
+		Hash:    make([]byte, 32),
+		Time:    time.Now(),
+	})
 
 	// Configuration matching mainnet behavior:
 	// - maxValidators = 100 (standard cosmos-sdk setting)
