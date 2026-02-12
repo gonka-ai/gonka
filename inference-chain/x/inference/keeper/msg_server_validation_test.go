@@ -19,11 +19,15 @@ import (
 const INFERENCE_ID = "inferenceId"
 const MODEL_ID = "Qwen/QwQ-32B"
 
-// Seeds that produce predictable ShouldValidate outcomes for fixed inference id (from calculations/reputation_test.go).
+// Seeds chosen for inference id INFERENCE_ID ("inferenceId"): with test params (ExecutorReputation 50,
+// equal validator/executor power 50, MinVal 0.1, MaxVal 1.0) designatedSeedTwoParticipantsTest yields
+// ShouldValidate true and notDesignatedSeedTwoParticipantsTest false. Other tests use fiftyPercentSeed/ninetyPercentSeed by approximate float for "inferenceId".
 const (
-	fiftyPercentSeed  = int64(6669939700021626378)
-	ninetyPercentSeed = int64(5798067479865859744)
-	defaultTrafficBasis = uint64(10_000)
+	designatedSeedTwoParticipantsTest   = int64(6669939700021626378)
+	notDesignatedSeedTwoParticipantsTest = int64(5798067479865859744)
+	fiftyPercentSeed                   = int64(6669939700021626378)
+	ninetyPercentSeed                  = int64(5798067479865859744)
+	defaultTrafficBasis                 = uint64(10_000)
 )
 
 func TestMsgServer_Validation(t *testing.T) {
@@ -439,7 +443,7 @@ func TestMsgServer_Validation_SeedAndShouldValidate_Designated_Succeeds(t *testi
 }
 
 // TestMsgServer_Validation_TwoParticipants_OnlyDesignatedSucceeds asserts that with two participants, only the one for whom ShouldValidate is true can validate; the other gets ErrNotDesignatedValidator.
-// Seeds are assigned based on the actual inference id so the test is deterministic regardless of inference id.
+// Uses hardcoded inference id INFERENCE_ID and seeds chosen so that for that id one participant is designated and the other is not.
 func TestMsgServer_Validation_TwoParticipants_OnlyDesignatedSucceeds(t *testing.T) {
 	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
 	createParticipants(t, inferenceHelper.MessageServer, ctx)
@@ -448,13 +452,20 @@ func TestMsgServer_Validation_TwoParticipants_OnlyDesignatedSucceeds(t *testing.
 	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
 	addMembersToGroupDataWithWeights(k, ctx, 50, 50, 100, 100)
 
-	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
-	require.NoError(t, err)
-	_, err = inferenceHelper.FinishInference()
+	// Use hardcoded inference id so designation is deterministic (seeds are chosen for this id).
+	err := k.SetInference(ctx, types.Inference{
+		Index:       INFERENCE_ID,
+		InferenceId: INFERENCE_ID,
+		Status:      types.InferenceStatus_FINISHED,
+		Model:       model.Id,
+		EpochId:     0,
+		ExecutedBy:  testutil.Executor,
+		RequestedBy: testutil.Requester,
+	})
 	require.NoError(t, err)
 
 	details := types.InferenceValidationDetails{
-		InferenceId:        expected.InferenceId,
+		InferenceId:        INFERENCE_ID,
 		EpochId:            0,
 		ExecutorId:         testutil.Executor,
 		ExecutorReputation: 50,
@@ -473,36 +484,26 @@ func TestMsgServer_Validation_TwoParticipants_OnlyDesignatedSucceeds(t *testing.
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
 	k.SetParams(ctx, params)
 
-	// Assign seeds so Validator is designated and Requester is not (DeterministicFloat depends on inference id)
-	totalPower := uint32(100)
-	validatorPower := uint32(50)
-	executorPower := uint32(50)
-	shouldValFifty, _ := calculations.ShouldValidate(fiftyPercentSeed, &details, totalPower, validatorPower, executorPower, params.ValidationParams, false)
-	shouldValNinety, _ := calculations.ShouldValidate(ninetyPercentSeed, &details, totalPower, validatorPower, executorPower, params.ValidationParams, false)
-	require.NotEqual(t, shouldValFifty, shouldValNinety, "seeds must yield different designation for this test; adjust params if needed")
-	validatorSeed, requesterSeed := fiftyPercentSeed, ninetyPercentSeed
-	if !shouldValFifty {
-		validatorSeed, requesterSeed = ninetyPercentSeed, fiftyPercentSeed
-	}
-	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Validator, EpochIndex: 0, Signature: "sig", Seed: validatorSeed})
+	// Seeds chosen for INFERENCE_ID: Validator designated, Requester not (see designatedSeedTwoParticipantsTest / notDesignatedSeedTwoParticipantsTest).
+	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Validator, EpochIndex: 0, Signature: "sig", Seed: designatedSeedTwoParticipantsTest})
 	require.NoError(t, err)
-	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Requester, EpochIndex: 0, Signature: "sig", Seed: requesterSeed})
+	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Requester, EpochIndex: 0, Signature: "sig", Seed: notDesignatedSeedTwoParticipantsTest})
 	require.NoError(t, err)
 
 	// Validator is designated -> succeeds
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId:  expected.InferenceId,
+		InferenceId:  INFERENCE_ID,
 		Creator:      testutil.Validator,
 		ValueDecimal: types.DecimalFromFloat(0.9999),
 	})
 	require.NoError(t, err)
-	inference, found := k.GetInference(ctx, expected.InferenceId)
+	inference, found := k.GetInference(ctx, INFERENCE_ID)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VALIDATED, inference.Status)
 
 	// Requester is not designated -> ErrNotDesignatedValidator (revalidation path still checks ShouldValidate)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
-		InferenceId:  expected.InferenceId,
+		InferenceId:  INFERENCE_ID,
 		Creator:      testutil.Requester,
 		ValueDecimal: types.DecimalFromFloat(0.9999),
 		Revalidation: true,
