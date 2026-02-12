@@ -227,11 +227,11 @@ func (k *Keeper) ProcessPendingRevalidationEvents(ctx context.Context, blockHeig
 		if !foundGroup {
 			continue
 		}
-		// Cap is applied to validation Weight (not ConfirmationWeight).
+		// Cap is applied to ConfirmationWeight.
 		weightMap := make(map[string]int64)
 		for _, vw := range groupData.GetValidationWeights() {
-			if vw != nil && vw.Weight > 0 {
-				weightMap[vw.GetMemberAddress()] = vw.Weight
+			if vw != nil && vw.ConfirmationWeight > 0 {
+				weightMap[vw.GetMemberAddress()] = vw.ConfirmationWeight
 			}
 		}
 		// Build selected participant -> raw weight map (including invalidator) for this inference.

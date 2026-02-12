@@ -23,11 +23,9 @@ const MODEL_ID = "Qwen/QwQ-32B"
 // equal validator/executor power 50, MinVal 0.1, MaxVal 1.0) designatedSeedTwoParticipantsTest yields
 // ShouldValidate true and notDesignatedSeedTwoParticipantsTest false. Other tests use fiftyPercentSeed/ninetyPercentSeed by approximate float for "inferenceId".
 const (
-	designatedSeedTwoParticipantsTest   = int64(6669939700021626378)
+	designatedSeedTwoParticipantsTest    = int64(6669939700021626378)
 	notDesignatedSeedTwoParticipantsTest = int64(5798067479865859744)
-	fiftyPercentSeed                   = int64(6669939700021626378)
-	ninetyPercentSeed                  = int64(5798067479865859744)
-	defaultTrafficBasis                 = uint64(10_000)
+	defaultTrafficBasis                  = uint64(10_000)
 )
 
 func TestMsgServer_Validation(t *testing.T) {
@@ -119,9 +117,9 @@ func addMembersToGroupDataWithWeights(k keeper.Keeper, ctx sdk.Context, weightVa
 	groupData.ValidationWeights = []*types.ValidationWeight{
 		{
 			MemberAddress:      testutil.Validator,
-			Weight:              weightValidator,
-			Reputation:          50,
-			ConfirmationWeight:  confirmationWeightValidator,
+			Weight:             weightValidator,
+			Reputation:         50,
+			ConfirmationWeight: confirmationWeightValidator,
 		},
 		{
 			MemberAddress:      testutil.Requester,
@@ -366,15 +364,15 @@ func TestMsgServer_Validation_SeedAndShouldValidate_NotDesignated(t *testing.T) 
 		InferenceId:        expected.InferenceId,
 		EpochId:            0,
 		ExecutorId:         testutil.Executor,
-		ExecutorReputation:  100,
-		TrafficBasis:        defaultTrafficBasis,
+		ExecutorReputation: 100,
+		TrafficBasis:       defaultTrafficBasis,
 		ExecutorPower:      50,
 		TotalPower:         150,
-		Model:               model.Id,
+		Model:              model.Id,
 	}
 	k.SetInferenceValidationDetails(ctx, details)
 	// Seed that yields randFloat such that randFloat >= ourProbability -> shouldValidate false
-	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Validator, EpochIndex: 0, Signature: "sig", Seed: fiftyPercentSeed})
+	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Validator, EpochIndex: 0, Signature: "sig", Seed: designatedSeedTwoParticipantsTest})
 	require.NoError(t, err)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -408,19 +406,19 @@ func TestMsgServer_Validation_SeedAndShouldValidate_Designated_Succeeds(t *testi
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
 
-	// Details: total 100, executor 50, rep 0 -> ourProbability 1.0; ninetyPercentSeed still < 1.0 -> shouldValidate true
+	// Details: total 100, executor 50, rep 0 -> ourProbability 1.0; notDesignatedSeedTwoParticipantsTest still < 1.0 -> shouldValidate true
 	details := types.InferenceValidationDetails{
 		InferenceId:        expected.InferenceId,
 		EpochId:            0,
 		ExecutorId:         testutil.Executor,
-		ExecutorReputation:  0,
-		TrafficBasis:        defaultTrafficBasis,
+		ExecutorReputation: 0,
+		TrafficBasis:       defaultTrafficBasis,
 		ExecutorPower:      50,
 		TotalPower:         100,
-		Model:               model.Id,
+		Model:              model.Id,
 	}
 	k.SetInferenceValidationDetails(ctx, details)
-	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Validator, EpochIndex: 0, Signature: "sig", Seed: ninetyPercentSeed})
+	err = k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Validator, EpochIndex: 0, Signature: "sig", Seed: notDesignatedSeedTwoParticipantsTest})
 	require.NoError(t, err)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
