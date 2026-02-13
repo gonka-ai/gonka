@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/server/public"
+	"decentralized-api/internal/apitypes"
 	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	apiutils "decentralized-api/utils"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -65,7 +66,7 @@ func NewNodePinger(cosmosClient cosmosclient.CosmosMessageClient, config NodePin
 // PingResult contains the result of pinging a node for payload.
 type PingResult struct {
 	// Payload contains the retrieved payload data (if successful).
-	Payload *public.PayloadResponse
+	Payload *apitypes.PayloadResponse
 	// PromptHash is the computed hash of the prompt payload.
 	PromptHash string
 	// Error contains any error that occurred.
@@ -94,7 +95,7 @@ type VerificationResponse struct {
 	DataFound bool `json:"data_found"`
 	// Payload contains the actual payload data retrieved from respondent (if found).
 	// Returned synchronously to challenger in the same response.
-	Payload *public.PayloadResponse `json:"payload,omitempty"`
+	Payload *apitypes.PayloadResponse `json:"payload,omitempty"`
 	// PromptHash is the hash of payload found (if any)
 	PromptHash string `json:"prompt_hash,omitempty"`
 	// Error message if verification failed
@@ -184,7 +185,7 @@ func (np *NodePinger) PingRespondentForPayload(
 	}
 
 	// Parse response
-	var payloadResp public.PayloadResponse
+	var payloadResp apitypes.PayloadResponse
 	if err := json.Unmarshal(body, &payloadResp); err != nil {
 		return &PingResult{Error: fmt.Errorf("failed to decode response: %w", err)}, err
 	}
@@ -333,7 +334,7 @@ func (np *NodePinger) PostChat(
 	executorAddress string,
 	payloadBytes []byte,
 ) error {
-	var chatRequest public.ChatRequest
+	var chatRequest apitypes.ChatRequest
 	err := json.Unmarshal(payloadBytes, &chatRequest)
 	if err != nil {
 		logging.Error("Failed to unmarshal chat request", types.Voting, "error", err)
@@ -399,6 +400,156 @@ func (np *NodePinger) GetAddressUrl(ctx context.Context, address string) (string
 		return "", err
 	}
 	return participantResp.Participant.InferenceUrl, nil
+}
+
+// GetVoterURLs returns the inference URLs of all active participants except the given excluded
+// addresses (typically the TA and executor). Used by the challenger to find voter candidates.
+func (np *NodePinger) GetVoterURLs(ctx context.Context, excludeAddresses ...string) ([]string, error) {
+	excludeSet := make(map[string]bool, len(excludeAddresses))
+	for _, addr := range excludeAddresses {
+		excludeSet[addr] = true
+	}
+
+	queryClient := np.cosmosClient.NewInferenceQueryClient()
+	var voterURLs []string
+	var nextKey []byte
+
+	for {
+		resp, err := queryClient.ParticipantsWithBalances(ctx, &types.QueryParticipantsWithBalancesRequest{
+			Pagination: &query.PageRequest{Key: nextKey, Limit: 100},
+		})
+		if err != nil {
+			logging.Error("Failed to query participants for voter selection", types.Voting, "error", err)
+			return nil, err
+		}
+
+		for _, pwb := range resp.Participants {
+			addr := pwb.Participant.Address
+			if excludeSet[addr] || pwb.Participant.InferenceUrl == "" {
+				continue
+			}
+			voterURLs = append(voterURLs, pwb.Participant.InferenceUrl)
+		}
+
+		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
+			break
+		}
+		nextKey = resp.Pagination.NextKey
+	}
+
+	logging.Debug("Selected voter candidates", types.Voting,
+		"count", len(voterURLs), "excluded", excludeAddresses)
+	return voterURLs, nil
+}
+
+// VoterFallback is called when the executor's direct payload retrieval from the TA fails.
+// It samples voters from active participants and requests verification.
+// If a voter finds the payload on the TA, the voter returns it and the executor uses it.
+func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) error {
+	queryClient := np.cosmosClient.NewInferenceQueryClient()
+	inferenceResp, err := queryClient.Inference(ctx, &types.QueryGetInferenceRequest{Index: inferenceId})
+	if err != nil {
+		logging.Error("VoterFallback: failed to query inference", types.Voting,
+			"inferenceId", inferenceId, "error", err)
+		return err
+	}
+
+	executorAddress := inferenceResp.Inference.AssignedTo
+	currentAddress := np.cosmosClient.GetAccountAddress()
+	if executorAddress != currentAddress {
+		// Not our inference
+		return nil
+	}
+
+	transferAddress := inferenceResp.Inference.TransferredBy
+	epochId := inferenceResp.Inference.EpochId
+
+	logging.Info("VoterFallback: initiating voter verification", types.Voting,
+		"inferenceId", inferenceId,
+		"executorAddress", executorAddress,
+		"transferAddress", transferAddress,
+		"epochId", epochId)
+
+	// Get TA URL for the verification request
+	transferURL, err := np.GetAddressUrl(ctx, transferAddress)
+	if err != nil {
+		logging.Error("VoterFallback: failed to get TA URL", types.Voting, "error", err)
+		return err
+	}
+
+	// Get voter URLs (exclude TA and executor)
+	voterURLs, err := np.GetVoterURLs(ctx, transferAddress, executorAddress)
+	if err != nil {
+		logging.Error("VoterFallback: failed to get voter URLs", types.Voting, "error", err)
+		return err
+	}
+
+	if len(voterURLs) == 0 {
+		logging.Warn("VoterFallback: no voters available", types.Voting,
+			"inferenceId", inferenceId)
+		return fmt.Errorf("no voters available for inference %s", inferenceId)
+	}
+
+	// Create verification request.
+	// Note: PromptHash is left empty intentionally. The on-chain hash is computed from the
+	// canonicalized request body, but prompt storage stores the full ChatRequest (with auth keys,
+	// timestamps, etc.). Comparing hashes here would always mismatch. The voter's job is to
+	// check payload availability, not hash correctness.
+	verificationRequest := &VerificationRequest{
+		InferenceId:       inferenceId,
+		RespondentAddress: transferAddress,
+		RespondentURL:     transferURL,
+		EpochId:           epochId,
+	}
+
+	votingCfg := VotingConfig{
+		MaxNumNodes: len(voterURLs),
+		VoteTimeout: int(np.timeout.Milliseconds()),
+		MaxRetries:  2,
+	}
+
+	// Request verification from voters
+	result, err := np.RequestVerificationFromVoters(ctx, voterURLs, verificationRequest, votingCfg)
+	if err != nil {
+		logging.Error("VoterFallback: verification request failed", types.Voting,
+			"inferenceId", inferenceId, "error", err)
+		return err
+	}
+
+	// Check result: if we got a positive vote with payload, use it
+	if result.FirstPositive != nil && result.FirstPositive.Response != nil &&
+		result.FirstPositive.Response.Payload != nil {
+		logging.Info("VoterFallback: received payload from voter", types.Voting,
+			"inferenceId", inferenceId,
+			"voterURL", result.FirstPositive.VoterURL,
+			"vote", result.FirstPositive.Response.Vote)
+
+		// Forward the payload to ourselves (the executor) via PostChat
+		executorURL, err := np.GetAddressUrl(ctx, executorAddress)
+		if err != nil {
+			logging.Error("VoterFallback: failed to get executor URL", types.Voting, "error", err)
+			return err
+		}
+
+		err = np.PostChat(executorURL, executorAddress, result.FirstPositive.Response.Payload.PromptPayload)
+		if err != nil {
+			logging.Error("VoterFallback: failed to post chat to executor", types.Voting,
+				"inferenceId", inferenceId, "error", err)
+			return err
+		}
+
+		logging.Info("VoterFallback: successfully forwarded payload to executor", types.Voting,
+			"inferenceId", inferenceId)
+		return nil
+	}
+
+	// All voters returned negative — payload doesn't exist
+	logging.Warn("VoterFallback: all voters returned negative votes", types.Voting,
+		"inferenceId", inferenceId,
+		"totalVoters", len(result.VoterResults),
+		"negativeVotes", result.NegativeVotes)
+	return fmt.Errorf("voter fallback failed: all %d voters returned negative for inference %s",
+		result.NegativeVotes, inferenceId)
 }
 
 // Challenger Functions: Request Verification from Voters

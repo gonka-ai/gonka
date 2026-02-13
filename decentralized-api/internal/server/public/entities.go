@@ -1,36 +1,17 @@
 package public
 
 import (
+	"decentralized-api/internal/apitypes"
+
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-type ChatRequest struct {
-	Body              []byte        `json:"body"`
-	ContentType       string        `json:"content_type"`
-	OpenAiRequest     OpenAiRequest `json:"open_ai_request"`
-	AuthKey           string        `json:"auth_key"` // signature signing inference request
-	Seed              string        `json:"seed"`
-	InferenceId       string        `json:"inference_id"`
-	RequesterAddress  string        `json:"requester_address"` // address of participant, who signed inference request
-	TransferAddress   string        `json:"transfer_address"`
-	Timestamp         int64         `json:"timestamp"` // timestamp of the request
-	TransferSignature string        `json:"transfer_signature"` // signature of the transfer address
-	PromptHash        string        `json:"prompt_hash"`
-}
-
-type OpenAiRequest struct {
-	Model               string    `json:"model"`
-	Seed                int32     `json:"seed"`
-	MaxTokens           int32     `json:"max_tokens"`
-	MaxCompletionTokens int32     `json:"max_completion_tokens"`
-	Messages            []Message `json:"messages"`
-}
-
-type Message struct {
-	Content string `json:"content"` // The content of the message
-}
+// Type aliases for shared types — canonical definitions live in apitypes to avoid import cycles.
+type ChatRequest = apitypes.ChatRequest
+type OpenAiRequest = apitypes.OpenAiRequest
+type Message = apitypes.Message
 
 type ExecutorDestination struct {
 	Url     string `json:"url"`
