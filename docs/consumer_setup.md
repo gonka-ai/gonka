@@ -2,7 +2,7 @@
 
 ---
 
-### **Step-by-Step Guide for Local Setup, Account Registration, and Sending Inference Requests**
+### **Step-by-Step Guide for Local Setup, Account Funding, and Sending Inference Requests**
 
 ---
 
@@ -44,29 +44,18 @@ To participate in the network, you need to create a local account. This will gen
 
 ---
 
-### **Step 3: Register Your Account and Get Test Tokens**
+### **Step 3: Fund Your Account (No Participant Registration Needed)**
 
-Now that you have your account address and public key, you'll need to submit these to the API to get your account registered and receive some initial coins for making inference requests.
+To send inference requests you only need a funded account. You do **not** need to register as a Participant unless you plan to host inference.
 
-1. Submit your public key and account address via the provided faucet API. Here’s an example using `curl`:
-
-   ```bash
-   curl -X POST https://api.yourchain.com/v1/participants \
-   -H "Content-Type: application/json" \
-   -d '{
-         "pub_key": "{{your_public_key}}",
-         "address": "{{your_account_address}}"
-       }'
-   ```
-
-   Replace `{{your_public_key}}` and `{{your_account_address}}` with the values generated in Step 2.
-
-1. The API will register your account and mint some initial tokens for you, which can be used for submitting inference requests. You’ll get a response confirming the successful registration and coin minting.
-2. You can verify you have been added and the amount of coin available by another request
+1. Obtain test tokens via your faucet or a transfer from a funded account. (Ask your team for the faucet endpoint if it’s not documented.)
+2. Verify your balance using the account endpoint:
 
 ```bash
-curl -X GET https://api.yourchain.com/v1/participants/{{your_account_address}}
+curl -X GET https://api.yourchain.com/v2/accounts/{{your_account_address}}
 ```
+
+The response includes your `pubkey`, `balance`, and `denom`.
 
 
 ---
@@ -155,7 +144,7 @@ Here are some additional commands you can use for managing your keys locally:
 
 ### **Conclusion**
 
-These steps allow you to create and manage your account keys locally, register your account with the network, receive tokens, and sign inference request payloads. Once signed, you can submit those requests to the network for processing.
+These steps allow you to create and manage your account keys locally, fund your account, and sign inference request payloads. Once signed, you can submit those requests to the network for processing.
 
 This flow works entirely with the `inferenced` binary running locally and requires no direct interaction with the chain from the user’s local machine.
 
