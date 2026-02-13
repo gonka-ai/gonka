@@ -74,6 +74,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
+		Creator:              mockExecutor.address,
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",

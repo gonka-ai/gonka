@@ -15,6 +15,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
+	// FinishInference signer (creator) must be the executor.
+	if msg.Creator != msg.ExecutedBy {
+		k.LogError("FinishInference: signer/executor mismatch", types.Inferences, "creator", msg.Creator, "executed_by", msg.ExecutedBy, "inferenceId", msg.InferenceId)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSigner, "creator must equal executed_by"), msg), nil
+	}
+
 	if msg.PromptTokenCount > types.MaxAllowedTokens {
 		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
 	}
@@ -36,8 +42,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrTransferAgentNotAllowlisted, msg.TransferredBy), msg), nil
 	}
 
-	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
-	if !found {
+	if _, found := k.GetParticipant(ctx, msg.ExecutedBy); !found {
 		k.LogError("FinishInference: executor not found", types.Inferences, "executed_by", msg.ExecutedBy)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy), msg), nil
 	}
@@ -48,16 +53,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy), msg), nil
 	}
 
-	transferAgent, found := k.GetParticipant(ctx, msg.TransferredBy)
-	if !found {
+	if _, found := k.GetParticipant(ctx, msg.TransferredBy); !found {
 		k.LogError("FinishInference: transfer agent not found", types.Inferences, "transferred_by", msg.TransferredBy)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
-	}
-
-	err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor)
-	if err != nil {
-		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
-		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
@@ -73,6 +71,20 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			"currentStatus", existingInference.Status,
 			"executedBy", msg.ExecutedBy)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired"), msg), nil
+	}
+
+	if found && existingInference.StartProcessed() && existingInference.TransferredBy != msg.TransferredBy {
+		k.LogError("FinishInference: transfer agent mismatch with existing inference", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"existingTransferredBy", existingInference.TransferredBy,
+			"finishTransferredBy", msg.TransferredBy)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrIllegalState, "transfer agent mismatch with existing inference"), msg), nil
+	}
+
+	err := k.verifyFinishKeys(ctx, msg, &requestor)
+	if err != nil {
+		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
 	}
 
 	// Record the current price only if this is the first message (StartInference not processed yet)
@@ -129,13 +141,9 @@ func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *ty
 	}
 }
 
-func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant) error {
-	// Hash-based signature verification (post-upgrade flow)
-	// Dev signs: original_prompt_hash + timestamp + ta_address
-	// TA signs: prompt_hash + timestamp + ta_address + executor_address
-	// Executor signs: prompt_hash + timestamp + ta_address + executor_address
+func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, requestor *types.Participant) error {
+	// Dev signs: original_prompt_hash + timestamp + ta_address.
 	devComponents := getFinishDevSignatureComponents(msg)
-	taComponents := getFinishTASignatureComponents(msg)
 
 	// Extra seconds for long-running inferences; deduping via inferenceId is primary replay defense
 	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60*60); err != nil {
@@ -150,48 +158,6 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 		return err
 	}
 
-	// Verify TA signature (prompt_hash)
-	if err := k.verifyTASignature(ctx, msg, taComponents, transferAgent); err != nil {
-		return err
-	}
-
-	// Verify Executor signature (prompt_hash)
-	if err := calculations.VerifyKeys(ctx, taComponents, calculations.SignatureData{
-		ExecutorSignature: msg.ExecutorSignature, Executor: executor,
-	}, k); err != nil {
-		k.LogError("FinishInference: Executor signature failed", types.Inferences, "error", err)
-		return err
-	}
-
-	return nil
-}
-
-// verifyTASignature verifies TA signature using prompt_hash.
-// Includes upgrade-epoch fallback for inferences started before hash-based signing.
-func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInference, taComponents calculations.SignatureComponents, transferAgent *types.Participant) error {
-	err := calculations.VerifyKeys(ctx, taComponents, calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: transferAgent,
-	}, k)
-	if err == nil {
-		return nil
-	}
-
-	// Upgrade-epoch fallback: inferences started before hash-based signing use original_prompt_hash
-	// This path will be removed after upgrade epoch completes
-	directComponents := calculations.SignatureComponents{
-		Payload:         msg.OriginalPromptHash,
-		Timestamp:       msg.RequestTimestamp,
-		TransferAddress: msg.TransferredBy,
-		ExecutorAddress: msg.ExecutedBy,
-	}
-	if fallbackErr := calculations.VerifyKeys(ctx, directComponents, calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: transferAgent,
-	}, k); fallbackErr != nil {
-		k.LogError("FinishInference: TA signature failed", types.Inferences, "promptHashErr", err, "fallbackErr", fallbackErr)
-		return err
-	}
-
-	k.LogDebug("FinishInference: Using upgrade-epoch fallback for TA signature", types.Inferences, "inferenceId", msg.InferenceId)
 	return nil
 }
 
@@ -203,17 +169,6 @@ func getFinishDevSignatureComponents(msg *types.MsgFinishInference) calculations
 		Timestamp:       msg.RequestTimestamp,
 		TransferAddress: msg.TransferredBy,
 		ExecutorAddress: "", // Dev doesn't include executor address
-	}
-}
-
-// getFinishTASignatureComponents returns components for TA/Executor signature verification
-// TA/Executor sign: prompt_hash + timestamp + ta_address + executor_address
-func getFinishTASignatureComponents(msg *types.MsgFinishInference) calculations.SignatureComponents {
-	return calculations.SignatureComponents{
-		Payload:         msg.PromptHash,
-		Timestamp:       msg.RequestTimestamp,
-		TransferAddress: msg.TransferredBy,
-		ExecutorAddress: msg.ExecutedBy,
 	}
 }
 

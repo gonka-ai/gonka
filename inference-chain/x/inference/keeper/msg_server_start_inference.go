@@ -16,6 +16,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
+	// StartInference signer (creator) must be the transfer agent.
+	if msg.Creator == "" {
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSigner, "creator must be the transfer agent signer"), msg), nil
+	}
+
 	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
 	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrDeveloperNotAllowlisted, msg.RequestedBy), msg), nil
@@ -35,8 +40,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
 	}
 
-	transferAgent, found := k.GetParticipant(ctx, msg.Creator)
-	if !found {
+	if _, found := k.GetParticipant(ctx, msg.Creator); !found {
 		k.LogError("Creator not found", types.Inferences, "creator", msg.Creator, "msg", "StartInference")
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator), msg), nil
 	}
@@ -47,19 +51,34 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 
 	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
-	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
-
-	err := k.verifyKeys(ctx, msg, transferAgent, dev)
-	if err != nil {
-		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
-		return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
-	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 
 	if found && existingInference.StartProcessed() {
 		k.LogError("StartInference: inference already started", types.Inferences, "inferenceId", msg.InferenceId)
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrInferenceStartProcessed, "inference has already start processed"), msg), nil
+	}
+
+	if found && existingInference.FinishedProcessed() && existingInference.ExecutedBy != msg.AssignedTo {
+		k.LogError("StartInference: executor mismatch with existing inference", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"existingExecutor", existingInference.ExecutedBy,
+			"startAssignedTo", msg.AssignedTo)
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrIllegalState, "executor mismatch with existing inference"), msg), nil
+	}
+
+	if found && existingInference.FinishedProcessed() && existingInference.TransferredBy != "" && existingInference.TransferredBy != msg.Creator {
+		k.LogError("StartInference: transfer agent signer mismatch with existing inference", types.Inferences,
+			"inferenceId", msg.InferenceId,
+			"existingTransferredBy", existingInference.TransferredBy,
+			"startCreator", msg.Creator)
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrIllegalState, "transfer agent mismatch with existing inference"), msg), nil
+	}
+
+	err := k.verifyKeys(ctx, msg, dev)
+	if err != nil {
+		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
+		return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
 	}
 
 	// Record the current price only if this is the first message (FinishInference not processed yet)
@@ -111,7 +130,7 @@ func failedStart(ctx sdk.Context, error error, message *types.MsgStartInference)
 	}
 }
 
-func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, agent types.Participant, dev types.Participant) error {
+func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, dev types.Participant) error {
 	devComponents := getDevSignatureComponents(msg)
 
 	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60); err != nil {
@@ -123,14 +142,6 @@ func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, age
 		DevSignature: msg.InferenceId, Dev: &dev,
 	}, k); err != nil {
 		k.LogError("StartInference: dev signature failed", types.Inferences, "error", err)
-		return err
-	}
-
-	// Verify TA signature (prompt_hash)
-	if err := calculations.VerifyKeys(ctx, getTASignatureComponents(msg), calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: &agent,
-	}, k); err != nil {
-		k.LogError("StartInference: TA signature failed", types.Inferences, "error", err)
 		return err
 	}
 
@@ -242,17 +253,6 @@ func getDevSignatureComponents(msg *types.MsgStartInference) calculations.Signat
 		Timestamp:       msg.RequestTimestamp,
 		TransferAddress: msg.Creator,
 		ExecutorAddress: "", // Dev doesn't include executor address
-	}
-}
-
-// getTASignatureComponents returns components for TA signature verification
-// TA signs: prompt_hash + timestamp + ta_address + executor_address
-func getTASignatureComponents(msg *types.MsgStartInference) calculations.SignatureComponents {
-	return calculations.SignatureComponents{
-		Payload:         msg.PromptHash,
-		Timestamp:       msg.RequestTimestamp,
-		TransferAddress: msg.Creator,
-		ExecutorAddress: msg.AssignedTo,
 	}
 }
 

@@ -88,6 +88,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		k.SetParams(ctx, params)
 
 		resp, err := inferenceHelper.MessageServer.FinishInference(ctx, &types.MsgFinishInference{
+			Creator:     testutil.Executor,
 			InferenceId: "dummy",
 			RequestedBy: testutil.Requester,
 		})
@@ -170,6 +171,7 @@ func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, m
 func TestMsgServer_FinishInference_InferenceNotFound(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	response, err := ms.FinishInference(ctx, &types.MsgFinishInference{
+		Creator:              testutil.Executor,
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
@@ -373,6 +375,7 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 	}
 
 	_, err = h.MessageServer.FinishInference(h.context, &types.MsgFinishInference{
+		Creator:              h.MockExecutor.address,
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
