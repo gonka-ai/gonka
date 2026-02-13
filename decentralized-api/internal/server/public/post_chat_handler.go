@@ -44,7 +44,34 @@ type TestScenarioSeed int32
 const (
 	DelaySeed          TestScenarioSeed = 8675309
 	MissingPayloadSeed TestScenarioSeed = 2856185
+	// VoterRecoverySeed: TA stores payload and sends MsgStartInference, but does NOT forward
+	// to executor. The executor's direct retrieval from TA is also blocked, forcing voter fallback.
+	// Voters can still retrieve the payload from TA's storage.
+	VoterRecoverySeed TestScenarioSeed = 3141592
+	// VoterNegativeSeed: TA sends MsgStartInference but does NOT store payload and does NOT
+	// forward to executor. Both executor's direct retrieval and voter pings will fail (no payload).
+	VoterNegativeSeed TestScenarioSeed = 2718281
 )
+
+// voterTestBlockedInferences tracks inferences where the executor's direct payload retrieval
+// should be blocked (for VoterRecoverySeed test scenarios). Thread-safe via mutex.
+var (
+	voterTestBlockedInferences = make(map[string]bool)
+	voterTestBlockedMutex      sync.RWMutex
+)
+
+func addVoterTestBlocked(inferenceId string) {
+	voterTestBlockedMutex.Lock()
+	defer voterTestBlockedMutex.Unlock()
+	voterTestBlockedInferences[inferenceId] = true
+}
+
+// IsVoterTestBlocked checks if an inference is blocked for direct executor retrieval.
+func IsVoterTestBlocked(inferenceId string) bool {
+	voterTestBlockedMutex.RLock()
+	defer voterTestBlockedMutex.RUnlock()
+	return voterTestBlockedInferences[inferenceId]
+}
 
 // Package-level variables for AuthKey reuse prevention
 var (
@@ -369,7 +396,12 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		logging.Error("Failed to marshal chat request", types.Inferences, "error", err)
 		return err
 	}
-	s.storePromptToStorage(ctx.Request().Context(), inferenceUUID, requestBytes)
+	// VoterNegativeSeed: skip storing prompt so voters also can't find it
+	if !(s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterNegativeSeed))) {
+		s.storePromptToStorage(ctx.Request().Context(), inferenceUUID, requestBytes)
+	} else {
+		logging.Debug("VoterNegativeSeed: skipping prompt storage", types.Inferences, "inferenceId", inferenceUUID)
+	}
 
 	go func() {
 		logging.Debug("Starting inference", types.Inferences, "id", inferenceRequest.InferenceId)
@@ -384,8 +416,17 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		}
 	}()
 
-	// In this test scenario, we don't send the request to the executor
-	if s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(MissingPayloadSeed)) {
+	// VoterRecoverySeed: mark inference as blocked for direct executor retrieval
+	if s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterRecoverySeed)) {
+		addVoterTestBlocked(inferenceUUID)
+		logging.Debug("VoterRecoverySeed: blocked direct retrieval for executor", types.Inferences, "inferenceId", inferenceUUID)
+	}
+
+	// In these test scenarios, we don't send the request to the executor
+	isMissingPayload := s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(MissingPayloadSeed))
+	isVoterRecovery := s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterRecoverySeed))
+	isVoterNegative := s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterNegativeSeed))
+	if isMissingPayload || isVoterRecovery || isVoterNegative {
 		logging.Debug("Skipping sending request to executor due to test scenario configuration", types.Inferences)
 
 		mockOpenAiResponse := completionapi.Response{
