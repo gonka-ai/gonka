@@ -58,17 +58,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy), msg), nil
 	}
 
-	requestor, found := k.GetParticipant(ctx, msg.RequestedBy)
-	if !found {
-		k.LogError("FinishInference: requestor not found", types.Inferences, "requested_by", msg.RequestedBy)
-		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy), msg), nil
-	}
-
 	transferAgent, found := k.GetParticipant(ctx, msg.TransferredBy)
 	if !found {
 		k.LogError("FinishInference: transfer agent not found", types.Inferences, "transferred_by", msg.TransferredBy)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
 	}
+	devAddress := msg.RequestedBy
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 
@@ -104,7 +99,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		}
 		k.LogDebug("FinishInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
 	} else {
-		err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor)
+		err := k.verifyFinishKeys(ctx, msg, transferAgent.Address, devAddress)
 		if err != nil {
 			k.LogError("FinishInference: verifyFinishKeys failed", types.Inferences, "error", err)
 			return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -169,7 +164,7 @@ func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *ty
 	}
 }
 
-func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant) error {
+func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, taAddress string, devAddress string) error {
 	// Hash-based signature verification (post-upgrade flow)
 	// Dev signs: original_prompt_hash + timestamp + ta_address
 	// TA signs: prompt_hash + timestamp + ta_address + executor_address
@@ -183,14 +178,14 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 
 	// Verify dev signature (original_prompt_hash)
 	if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
-		DevSignature: msg.InferenceId, Dev: requestor,
+		DevSignature: msg.InferenceId, Dev: devAddress,
 	}, k); err != nil {
 		k.LogError("FinishInference: dev signature failed", types.Inferences, "error", err)
 		return err
 	}
 
 	// Verify TA signature (prompt_hash)
-	if err := k.verifyTASignature(ctx, msg, taComponents, transferAgent); err != nil {
+	if err := k.verifyTASignature(ctx, msg, taComponents, taAddress); err != nil {
 		return err
 	}
 
@@ -199,9 +194,9 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 
 // verifyTASignature verifies TA signature using prompt_hash.
 // Includes upgrade-epoch fallback for inferences started before hash-based signing.
-func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInference, taComponents calculations.SignatureComponents, transferAgent *types.Participant) error {
+func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInference, taComponents calculations.SignatureComponents, taAddress string) error {
 	err := calculations.VerifyKeys(ctx, taComponents, calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: transferAgent,
+		TransferSignature: msg.TransferSignature, TransferAgent: taAddress,
 	}, k)
 	if err == nil {
 		return nil
@@ -216,7 +211,7 @@ func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInfere
 		ExecutorAddress: msg.ExecutedBy,
 	}
 	if fallbackErr := calculations.VerifyKeys(ctx, directComponents, calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: transferAgent,
+		TransferSignature: msg.TransferSignature, TransferAgent: taAddress,
 	}, k); fallbackErr != nil {
 		k.LogError("FinishInference: TA signature failed", types.Inferences, "promptHashErr", err, "fallbackErr", fallbackErr)
 		return err
