@@ -18,6 +18,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	// FinishInference signer (creator) must be the executor.
 	if msg.Creator != msg.ExecutedBy {
 		k.LogError("FinishInference: signer/executor mismatch", types.Inferences, "creator", msg.Creator, "executed_by", msg.ExecutedBy, "inferenceId", msg.InferenceId)
+		// TODO: not sure if it's the right thing to emit failed event here
+		//  since anyone can call FinishInference with a mismatching signer,
+		//  but it does provide more visibility into failed attempts which could be useful for monitoring and debugging.
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSigner, "creator must equal executed_by"), msg), nil
 	}
 
