@@ -69,7 +69,7 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 			return err
 		}
 		// Vesting keeper should move funds and create vesting schedule
-		err = k.GetStreamVestingKeeper().AddVestedRewards(ctx, address, types.ModuleName, vestingAmount, vestingEpochs, memo+"_vested")
+		err = k.GetStreamVestingKeeper().AddVestedRewards(ctx, address, moduleName, vestingAmount, vestingEpochs, memo+"_vested")
 		if err != nil {
 			k.LogError("Error adding vested payment", types.Payments, "error", err, "amount", vestingAmount)
 			return err
