@@ -1,35 +1,39 @@
 # Proposal: Multi-Model PoC
 
-> **Warning**: This proposal assumes the O(N^2) validation model (>50% weight threshold). Slot-based validation is out of scope.
-
-## Goal / Problem
-
-POC procedure is short term benchmark to compare how much compute each host has. It happens 1 time per epoch to define weight per each host which then used as consensus weight to produce blocks and for distributing tasks between nodes. Additionally there is Confirmation (random) POC which is used to confirm weight when network is underloaded by inference (to make sure hardware it still there).
+POC procedure is short term benchmark to compare how much compute each host has. It happens 1 time per epoch to define weight per each host which then used as consensus weight to produce blocks and for distributing tasks between hosts. Additionally there is Confirmation (random) POC which is used to confirm weight when network is underloaded by inference (to make sure hardware it still there).
 
 POC phases:
 - GENERATION (blocks equal to 1-5 min)
 - VALIDATION (blocks equal to 2-10 min)
 - INFERENCE PHASE (no POC but sometime might be interrupted to Confirmation POC)
 
-Validation and inference theoretically can be done in parallel.
+> Validation and inference theoretically can be done in parallel.
 
-### Security Model
 
-Required >50% of **total network consensus weight** to vote "valid". Without delegation, an attacker needs >50% of total network weight to corrupt any host's validation. Delegation adds an additional trust assumption (see "Delegation" and Appendix A).
+Current security model required >50% of **total network consensus weight** to vote "valid". Without delegation, an attacker needs >50% of total network weight to corrupt any (and all) host's validation.
 
 The bitcoin-style part of reward distributed proportionally to this weight. On early phase it's main motivation as inference is much cheaper. 
 
----
+## Problem
 
+The chain must support multiple models
 Currently, there is single model used for PoC (Qwen3-235B-FP8). Therefore, chain also can't support another models for inference as it'd required to re-deploy model for POC (which is essentially impossible as it requires time and open network for attack when attacker deploy hardware only for POC phase).
 
 => option with re-deploy must not be used
 
 ## Proposal
 
+Let's try to build system which support several models simulationosly and POC procedure happens without re-deploy, for every model independenly. 
+
+Delegation adds an additional trust assumption (see "Delegation" and Appendix A).
+
+> **Warning**: This proposal assumes the O(N^2) validation model (>50% weight threshold). Slot-based validation is out of scope. Most probably slot-based approach will work the same way, with independent slot assigning in each group. But it must be double-checked whether to use $votingPower$ or $consensusWeight$ for hosts in group.
+
+
 ### Terms
 
-Let epoch $S$ be completed. The following defines weight computation for epoch $S+1$. Pre-eligibility ($PreE_{S+1}$) is determined $N$ blocks before epoch $S+1$ PoC starts. In this section, $*_S$ denotes values finalized in epoch $S$ and used as inputs for epoch $S+1$; for epoch $S+1$, group membership and delegation are evaluated at the pre-eligibility cutoff and treated as fixed for the epoch.
+Let epoch $S$ be current. The following defines weight computation for epoch $S+1$. Pre-eligibility ($PreE_{S+1}$) is determined $N$ blocks before epoch $S+1$ PoC starts. In this section, $*_S$ denotes values from epoch $S$ and used as inputs for epoch $S+1$.
+Group membership and delegation are evaluated at the pre-eligibility cutoff and treated as fixed for the epoch.
 
 - $group_i$ — model group for model $i$ (members are hosts with MLNodes serving model $i$). Network supports $M$ models on-chain.
 
