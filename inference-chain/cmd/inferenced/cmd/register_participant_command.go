@@ -40,6 +40,7 @@ type ParticipantResponse struct {
 type AccountResponse struct {
 	Pubkey  string `json:"pubkey"`
 	Balance int64  `json:"balance"`
+	Denom   string `json:"denom"`
 }
 
 // extractAddressFromPubKey derives a cosmos address from a base64-encoded public key

@@ -24,26 +24,26 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
+func (s *Server) getAccountByAddressV1(c echo.Context) error {
 	address := c.Param("address")
 	if address == "" {
 		return ErrAddressRequired
 	}
 
-	logging.Debug("GET inference participant", types.Inferences, "address", address)
+	logging.Debug("GET account by address", types.Inferences, "address", address)
 
 	queryClient := s.recorder.NewInferenceQueryClient()
-	response, err := queryClient.InferenceParticipant(c.Request().Context(), &types.QueryInferenceParticipantRequest{
+	response, err := queryClient.AccountByAddress(c.Request().Context(), &types.QueryAccountByAddressRequest{
 		Address: address,
 	})
 	if err != nil {
-		logging.Error("Failed to get inference participant", types.Inferences, "address", address, "error", err)
+		logging.Error("Failed to get account", types.Inferences, "address", address, "error", err)
 		return err
 	}
 
 	if response == nil {
-		logging.Error("Inference participant not found", types.Inferences, "address", address)
-		return ErrInferenceParticipantNotFound
+		logging.Error("Account not found", types.Inferences, "address", address)
+		return ErrAccountNotFound
 	}
 
 	return c.JSON(http.StatusOK, response)
@@ -74,7 +74,7 @@ func (s *Server) getAccountByAddress(c echo.Context) error {
 	}
 
 	queryClient := s.recorder.NewInferenceQueryClient()
-	response, err := queryClient.InferenceParticipant(c.Request().Context(), &types.QueryInferenceParticipantRequest{
+	response, err := queryClient.AccountByAddress(c.Request().Context(), &types.QueryAccountByAddressRequest{
 		Address: address,
 	})
 	if err != nil {
@@ -83,7 +83,7 @@ func (s *Server) getAccountByAddress(c echo.Context) error {
 	}
 
 	if response == nil {
-		return ErrInferenceParticipantNotFound
+		return ErrAccountNotFound
 	}
 
 	return c.JSON(http.StatusOK, response)

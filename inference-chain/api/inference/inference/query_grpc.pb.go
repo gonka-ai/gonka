@@ -24,7 +24,7 @@ const (
 	Query_InferenceAll_FullMethodName                              = "/inference.inference.Query/InferenceAll"
 	Query_Participant_FullMethodName                               = "/inference.inference.Query/Participant"
 	Query_ParticipantAll_FullMethodName                            = "/inference.inference.Query/ParticipantAll"
-	Query_InferenceParticipant_FullMethodName                      = "/inference.inference.Query/InferenceParticipant"
+	Query_AccountByAddress_FullMethodName                          = "/inference.inference.Query/AccountByAddress"
 	Query_GetRandomExecutor_FullMethodName                         = "/inference.inference.Query/GetRandomExecutor"
 	Query_EpochGroupData_FullMethodName                            = "/inference.inference.Query/EpochGroupData"
 	Query_EpochGroupDataAll_FullMethodName                         = "/inference.inference.Query/EpochGroupDataAll"
@@ -118,8 +118,8 @@ type QueryClient interface {
 	// Queries a list of Participant items.
 	Participant(ctx context.Context, in *QueryGetParticipantRequest, opts ...grpc.CallOption) (*QueryGetParticipantResponse, error)
 	ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error)
-	// Queries a list of InferenceParticipant items.
-	InferenceParticipant(ctx context.Context, in *QueryInferenceParticipantRequest, opts ...grpc.CallOption) (*QueryInferenceParticipantResponse, error)
+	// Queries account public key and balance by address.
+	AccountByAddress(ctx context.Context, in *QueryAccountByAddressRequest, opts ...grpc.CallOption) (*QueryAccountByAddressResponse, error)
 	// Queries a list of GetRandomExecutor items.
 	GetRandomExecutor(ctx context.Context, in *QueryGetRandomExecutorRequest, opts ...grpc.CallOption) (*QueryGetRandomExecutorResponse, error)
 	// Queries a list of EpochGroupData items.
@@ -310,9 +310,9 @@ func (c *queryClient) ParticipantAll(ctx context.Context, in *QueryAllParticipan
 	return out, nil
 }
 
-func (c *queryClient) InferenceParticipant(ctx context.Context, in *QueryInferenceParticipantRequest, opts ...grpc.CallOption) (*QueryInferenceParticipantResponse, error) {
-	out := new(QueryInferenceParticipantResponse)
-	err := c.cc.Invoke(ctx, Query_InferenceParticipant_FullMethodName, in, out, opts...)
+func (c *queryClient) AccountByAddress(ctx context.Context, in *QueryAccountByAddressRequest, opts ...grpc.CallOption) (*QueryAccountByAddressResponse, error) {
+	out := new(QueryAccountByAddressResponse)
+	err := c.cc.Invoke(ctx, Query_AccountByAddress_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1042,8 +1042,8 @@ type QueryServer interface {
 	// Queries a list of Participant items.
 	Participant(context.Context, *QueryGetParticipantRequest) (*QueryGetParticipantResponse, error)
 	ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
-	// Queries a list of InferenceParticipant items.
-	InferenceParticipant(context.Context, *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error)
+	// Queries account public key and balance by address.
+	AccountByAddress(context.Context, *QueryAccountByAddressRequest) (*QueryAccountByAddressResponse, error)
 	// Queries a list of GetRandomExecutor items.
 	GetRandomExecutor(context.Context, *QueryGetRandomExecutorRequest) (*QueryGetRandomExecutorResponse, error)
 	// Queries a list of EpochGroupData items.
@@ -1201,8 +1201,8 @@ func (UnimplementedQueryServer) Participant(context.Context, *QueryGetParticipan
 func (UnimplementedQueryServer) ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAll not implemented")
 }
-func (UnimplementedQueryServer) InferenceParticipant(context.Context, *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method InferenceParticipant not implemented")
+func (UnimplementedQueryServer) AccountByAddress(context.Context, *QueryAccountByAddressRequest) (*QueryAccountByAddressResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AccountByAddress not implemented")
 }
 func (UnimplementedQueryServer) GetRandomExecutor(context.Context, *QueryGetRandomExecutorRequest) (*QueryGetRandomExecutorResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRandomExecutor not implemented")
@@ -1544,20 +1544,20 @@ func _Query_ParticipantAll_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_InferenceParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryInferenceParticipantRequest)
+func _Query_AccountByAddress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAccountByAddressRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).InferenceParticipant(ctx, in)
+		return srv.(QueryServer).AccountByAddress(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Query_InferenceParticipant_FullMethodName,
+		FullMethod: Query_AccountByAddress_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).InferenceParticipant(ctx, req.(*QueryInferenceParticipantRequest))
+		return srv.(QueryServer).AccountByAddress(ctx, req.(*QueryAccountByAddressRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3012,8 +3012,8 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_ParticipantAll_Handler,
 		},
 		{
-			MethodName: "InferenceParticipant",
-			Handler:    _Query_InferenceParticipant_Handler,
+			MethodName: "AccountByAddress",
+			Handler:    _Query_AccountByAddress_Handler,
 		},
 		{
 			MethodName: "GetRandomExecutor",

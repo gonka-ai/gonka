@@ -288,7 +288,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	logging.Debug("GET inference requester for transfer", types.Inferences, "address", request.RequesterAddress)
 
 	queryClient := s.recorder.NewInferenceQueryClient()
-	requester, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+	requester, err := queryClient.AccountByAddress(ctx.Request().Context(), &types.QueryAccountByAddressRequest{Address: request.RequesterAddress})
 	if err != nil {
 		logging.Error("Failed to get inference requester", types.Inferences, "address", request.RequesterAddress, "error", err)
 		return err
@@ -622,7 +622,7 @@ func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]s
 
 func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	dev, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+	dev, err := queryClient.AccountByAddress(ctx.Request().Context(), &types.QueryAccountByAddressRequest{Address: request.RequesterAddress})
 	if err != nil {
 		logging.Error("Failed to get inference requester", types.Inferences, "address", request.RequesterAddress, "error", err)
 		return err
@@ -972,10 +972,10 @@ func readRequestBody(r *http.Request, writer http.ResponseWriter) ([]byte, error
 }
 
 // validateRequester validates requester with dynamic pricing fallback to legacy
-func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
+func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, requester *types.QueryAccountByAddressResponse, promptTokenCount int) error {
 	if requester == nil {
-		logging.Error("Inference participant not found", types.Inferences, "address", request.RequesterAddress)
-		return ErrInferenceParticipantNotFound
+		logging.Error("Account not found", types.Inferences, "address", request.RequesterAddress)
+		return ErrAccountNotFound
 	}
 
 	err := validateTransferRequest(request, requester.Pubkey)

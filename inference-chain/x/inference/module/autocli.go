@@ -46,12 +46,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 
-				{
-					RpcMethod:      "InferenceParticipant",
-					Use:            "inference-participant [address]",
-					Short:          "Query inference-participant",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
-				},
+			{
+				RpcMethod:      "AccountByAddress",
+				Use:            "account-by-address [address]",
+				Short:          "Query account public key and balance by address",
+				PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
+			},
 
 				{
 					RpcMethod: "EpochGroupDataAll",

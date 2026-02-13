@@ -204,7 +204,8 @@ func RetrievePayloadsFromExecutor(
 	for _, g := range grantees.Grantees {
 		executorPubkeys = append(executorPubkeys, g.PubKey)
 	}
-	executorParticipant, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{
+	// Get executor's own pubkey
+	executorParticipant, err := queryClient.AccountByAddress(ctx, &types.QueryAccountByAddressRequest{
 		Address: executorAddress,
 	})
 	if err != nil {
