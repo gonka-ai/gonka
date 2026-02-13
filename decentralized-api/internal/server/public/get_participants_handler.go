@@ -116,7 +116,12 @@ func (s *Server) getAccountByAddress(c echo.Context) error {
 		return ErrAccountNotFound
 	}
 
-	return c.JSON(http.StatusOK, response)
+	// Proto JSON skips balance when it is 0, so we return DTO.
+	return c.JSON(http.StatusOK, AccountDto{
+		Pubkey:  response.Pubkey,
+		Balance: response.Balance,
+		Denom:   response.Denom,
+	})
 }
 
 func (s *Server) getParticipantsByEpoch(c echo.Context) error {
