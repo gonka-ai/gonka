@@ -30,7 +30,7 @@ func TestMsgServer_Validation(t *testing.T) {
 	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
 	addMembersToGroupData(k, ctx)
 
-	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens, 0)
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 
 	addMembersToGroupData(k, ctx)
 
-	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens, 0)
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestMsgServer_NoInference(t *testing.T) {
 func TestMsgServer_NotFinished(t *testing.T) {
 	inferenceHelper, _, ctx := NewMockInferenceHelper(t)
 	requestTimestamp := time.Now().UnixNano()
-	expected, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp, calculations.DefaultMaxTokens)
+	expected, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp, calculations.DefaultMaxTokens, 0)
 	require.NoError(t, err)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
@@ -235,7 +235,7 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	require.NoError(t, err)
 
 	// Create and finish an inference
-	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens, 0)
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
@@ -276,7 +276,7 @@ func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(
 	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
 	addMembersToGroupData(k, ctx)
 
-	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens, 0)
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)

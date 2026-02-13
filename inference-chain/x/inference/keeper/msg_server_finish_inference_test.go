@@ -114,7 +114,9 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		"promptPayload",
 		modelId,
 		requestTimestamp,
-		calculations.DefaultMaxTokens)
+		calculations.DefaultMaxTokens,
+		epochId,
+	)
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
@@ -256,7 +258,8 @@ func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, 
 }
 
 func (h *MockInferenceHelper) StartInference(
-	promptPayload string, model string, requestTimestamp int64, maxTokens uint64) (*types.Inference, error) {
+	promptPayload string, model string, requestTimestamp int64, maxTokens uint64, epochId uint64,
+) (*types.Inference, error) {
 	h.Mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockRequester.GetBechAddress()).Return(h.MockRequester)
 	h.Mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), h.MockTransferAgent.GetBechAddress()).Return(h.MockTransferAgent).AnyTimes()
@@ -325,6 +328,7 @@ func (h *MockInferenceHelper) StartInference(
 		RequestTimestamp:    requestTimestamp,
 		OriginalPrompt:      "",                        // Phase 6: Stored offchain
 		PerTokenPrice:       calculations.PerTokenCost, // Set expected dynamic pricing value
+		EpochId:             epochId,
 	}
 	return h.previousInference, nil
 }

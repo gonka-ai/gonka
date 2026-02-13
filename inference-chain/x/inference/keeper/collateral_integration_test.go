@@ -198,7 +198,8 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 
 	// --- Test Setup ---
 	// Set the epoch, which is critical for many keeper functions
-	ee := setEffectiveEpoch(ctx, k, 1, mocks)
+	epochId := uint64(1)
+	ee := setEffectiveEpoch(ctx, k, epochId, mocks)
 	require.NoError(t, ee)
 
 	// Set parameters for slashing and validation
@@ -260,6 +261,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 		Status:          types.InferenceStatus_FINISHED,
 		ActualCost:      0,
 		ProposalDetails: &types.ProposalDetails{PolicyAddress: authority},
+		EpochId:         epochId,
 	})
 
 	// Get initial collateral (will use our mock)
@@ -312,7 +314,8 @@ func TestDoubleJeopardy_DowntimeThenInvalidSlash(t *testing.T) {
 		Amount:      sdk.NewCoin(types.BaseCoin, initialCollateralAmount),
 	})
 	require.NoError(t, err)
-	ee := setEffectiveEpoch(ctx, k, 1, mocks)
+	epochId := uint64(1)
+	ee := setEffectiveEpoch(ctx, k, epochId, mocks)
 	require.NoError(t, ee)
 
 	// --- 1. First Jeopardy: Downtime Slash ---
@@ -367,6 +370,7 @@ func TestDoubleJeopardy_DowntimeThenInvalidSlash(t *testing.T) {
 		ProposalDetails: &types.ProposalDetails{
 			PolicyAddress: authority,
 		},
+		EpochId:     epochId,
 	})
 
 	mocks.GroupKeeper.EXPECT().UpdateGroupMembers(gomock.Any(), gomock.Any())

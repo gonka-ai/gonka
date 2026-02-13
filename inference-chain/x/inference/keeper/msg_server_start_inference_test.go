@@ -61,7 +61,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 	require.Equal(t, initialBlockHeight, ctx.BlockHeight())
 
 	expected, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp,
-		calculations.DefaultMaxTokens)
+		calculations.DefaultMaxTokens, epochId)
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
@@ -88,7 +88,7 @@ func TestMsgServer_StartInferenceWithMaxTokens(t *testing.T) {
 	require.Equal(t, initialBlockHeight, ctx.BlockHeight())
 
 	expected, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp,
-		2000) // Using a custom max tokens value
+		2000, epochId) // Using a custom max tokens value
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
