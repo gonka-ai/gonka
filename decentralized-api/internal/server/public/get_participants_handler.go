@@ -49,6 +49,46 @@ func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
+func (s *Server) getParticipantByAddress(c echo.Context) error {
+	address := c.Param("address")
+	if address == "" {
+		return ErrAddressRequired
+	}
+
+	queryClient := s.recorder.NewInferenceQueryClient()
+	response, err := queryClient.Participant(c.Request().Context(), &types.QueryGetParticipantRequest{
+		Index: address,
+	})
+	if err != nil {
+		logging.Error("Failed to get participant", types.Participants, "address", address, "error", err)
+		return err
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+func (s *Server) getAccountByAddress(c echo.Context) error {
+	address := c.Param("address")
+	if address == "" {
+		return ErrAddressRequired
+	}
+
+	queryClient := s.recorder.NewInferenceQueryClient()
+	response, err := queryClient.InferenceParticipant(c.Request().Context(), &types.QueryInferenceParticipantRequest{
+		Address: address,
+	})
+	if err != nil {
+		logging.Error("Failed to get account", types.Participants, "address", address, "error", err)
+		return err
+	}
+
+	if response == nil {
+		return ErrInferenceParticipantNotFound
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
 func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 	epoch, err := s.resolveEpochFromContext(c)
 	if err != nil {
