@@ -33,9 +33,16 @@ func (k Keeper) AccountByAddress(goCtx context.Context, req *types.QueryAccountB
 	k.LogDebug("AccountByAddress account found", types.Participants, "address", req.Address)
 
 	k.LogDebug("AccountByAddress balance", types.Participants, "balance", balance)
-	k.LogDebug("AccountByAddress pubkey", types.Participants, "pubkey", acc.GetPubKey().Bytes())
+
+	pubKey := acc.GetPubKey()
+	if pubKey == nil {
+		k.LogError("AccountByAddress: PubKey not found", types.Participants, "address", req.Address)
+		return nil, status.Error(codes.NotFound, types.ErrPubKeyUnavailable.Error())
+	}
+
+	k.LogDebug("AccountByAddress pubkey", types.Participants, "pubkey", pubKey.Bytes())
 	return &types.QueryAccountByAddressResponse{
-		Pubkey:  base64.StdEncoding.EncodeToString(acc.GetPubKey().Bytes()),
+		Pubkey:  base64.StdEncoding.EncodeToString(pubKey.Bytes()),
 		Balance: balance.Amount.Int64(),
 		Denom:   types.BaseCoin,
 	}, nil
