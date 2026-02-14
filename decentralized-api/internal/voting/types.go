@@ -3,6 +3,10 @@
 // by initiating a vote among sampled nodes.
 package voting
 
+import (
+	"github.com/productscience/inference/x/inference/types"
+)
+
 // DefaultMaxVoters is the default number of voters to sample for fallback verification.
 const DefaultMaxVoters = 5
 
@@ -164,93 +168,11 @@ func (v VerificationType) IsValid() bool {
 	}
 }
 
-// VoteType represents the outcome of a node's verification of Respondent behavior.
-type VoteType uint16
+type VoteType = types.VoteType
 
-const (
-	// VotePositive indicates the Respondent responded honestly with valid data.
-	VotePositive VoteType = iota
-	// VoteNegative indicates the Respondent did not respond or was dishonest.
-	VoteNegative
-	// VoteInvalid indicates the vote could not be determined (error case).
-	VoteInvalid
-)
+type VotingOutcome = types.VotingOutcome
 
-// Returns a string representation of the VoteType.
-func (v VoteType) String() string {
-	switch v {
-	case VotePositive:
-		return "positive"
-	case VoteNegative:
-		return "negative"
-	case VoteInvalid:
-		return "invalid"
-	default:
-		return "unknown"
-	}
-}
-
-// IsValid returns true if the VoteType is a recognized value.
-func (v VoteType) IsValid() bool {
-	return v == VotePositive || v == VoteNegative || v == VoteInvalid
-}
-
-// VotingOutcome represents the final result of all votes.
-type VotingOutcome int
-
-const (
-	// OutcomePositive indicates that at least one node voted positively for the inference and got the payload.
-	OutcomePositive VotingOutcome = iota
-	// OutcomeNegative indicates that at all nodes voted negatively for the inference and did not get the payload.
-	OutcomeNegative
-	// OutcomeInconclusive for cases, when the voting went wrong
-	OutcomeInconclusive
-)
-
-// Returns a string representation of the VotingOutcome.
-func (o VotingOutcome) String() string {
-	switch o {
-	case OutcomePositive:
-		return "positive"
-	case OutcomeNegative:
-		return "negative"
-	case OutcomeInconclusive:
-		return "inconclusive"
-	default:
-		return "unknown"
-	}
-}
-
-// IsValid returns true if the VotingOutcome is a recognized value.
-func (o VotingOutcome) IsValid() bool {
-	return o == OutcomePositive || o == OutcomeNegative || o == OutcomeInconclusive
-}
-
-// SignedVote contains a node's vote with cryptographic proof.
-// Each vote is signed by the voting node to ensure authenticity and prevent tampering.
-type SignedVote struct {
-	// ID of the inference being disputed.
-	InferenceId string `json:"inference_id"`
-
-	// VoterAddress is the blockchain address of the node casting the vote.
-	// Will be used to verify the signature of the vote.
-	VoterAddress string `json:"voter_address"`
-
-	// VoteType indicates the node's assessment of the Respondent's behavior.
-	VoteType VoteType `json:"vote_type"`
-
-	// RespondentDataHash is the signed hash of data the Respondent provided (if any).
-	// Empty if the Respondent did not respond.
-	RespondentDataHash string `json:"respondent_data_hash,omitempty"`
-
-	// Timestamp is the Unix timestamp when the vote was cast.
-	Timestamp int64 `json:"timestamp"`
-
-	// VoterSignature is the cryptographic signature of the vote.
-	// Signs: inference_id + voter_address + vote_type + respondent_data_hash + timestamp
-	// Used for on-chain verification of vote authenticity.
-	VoterSignature string `json:"voter_signature"`
-}
+type SignedVote = types.SignedVote
 
 // VoteResponse represents a node's response to a verification request.
 type VoteResponse struct {
@@ -300,27 +222,7 @@ type VotingInitiateRequest struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
-// VotingResult represents the aggregated result of a voting session.
-// TODO! Use this for negative or failed voting cases.
-type VotingResult struct {
-	// ID of the inference that was disputed.
-	InferenceId string `json:"inference_id"`
-
-	// Votes contains all the signed votes collected.
-	Votes []SignedVote `json:"votes"`
-
-	// Outcome is the aggregated voting outcome.
-	Outcome VotingOutcome `json:"outcome"`
-
-	// NegativeCount is the number of negative votes.
-	NegativeCount int `json:"negative_count"`
-
-	// InvalidCount is the number of invalid votes (Respondent served invalid data).
-	InvalidCount int `json:"invalid_count"`
-
-	// CompletedAt is the timestamp when voting completed.
-	CompletedAt int64 `json:"completed_at"`
-}
+type VotingResult = types.VotingResult
 
 // VoteRequest represents a request sent to a node by a voting coordinator to verify Respondent behavior.
 type VoteRequest struct {

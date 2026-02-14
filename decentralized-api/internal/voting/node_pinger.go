@@ -223,7 +223,7 @@ func (np *NodePinger) VerifyRespondent(
 	response := &VerificationResponse{
 		InferenceId:  inferenceId,
 		VoterAddress: voterAddress,
-		Vote:         VoteInvalid, // Default to invalid until we determine
+		Vote:         types.VoteType_VoteInvalid, // Default to invalid until we determine
 	}
 
 	// Step 1: Ping respondent for payload
@@ -235,7 +235,7 @@ func (np *NodePinger) VerifyRespondent(
 
 	if pingResult.Error != nil || pingResult.Payload == nil {
 		// Respondent doesn't have payload - negative vote
-		response.Vote = VoteNegative
+		response.Vote = types.VoteType_VoteNegative
 		response.DataFound = false
 		logging.Info("Voter verification: respondent does not have payload", types.Voting,
 			"inferenceId", inferenceId, "voterAddress", voterAddress)
@@ -248,7 +248,7 @@ func (np *NodePinger) VerifyRespondent(
 	response.Payload = pingResult.Payload // Include payload in response for challenger
 
 	// Respondent has correct payload - positive vote
-	response.Vote = VotePositive
+	response.Vote = types.VoteType_VotePositive
 	logging.Info("Voter verification: respondent has correct payload", types.Voting,
 		"inferenceId", inferenceId, "voterAddress", voterAddress)
 
@@ -653,7 +653,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 
 		if voterResult.Response != nil {
 			switch voterResult.Response.Vote {
-			case VotePositive:
+			case types.VoteType_VotePositive:
 				// Capture the first positive vote and stop further work.
 				resultCopy := voterResult
 				result.FirstPositive = &resultCopy
@@ -666,7 +666,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 				// Cancel the shared context so in-flight requests can be aborted.
 				cancel()
 
-			case VoteNegative:
+			case types.VoteType_VoteNegative:
 				result.NegativeVotes++
 
 			default:

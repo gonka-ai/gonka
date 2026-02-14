@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// VoteType represents the outcome of a node's verification of Respondent behavior.
+enum VoteType {
+	VoteInvalid  = 0; // VoteInvalid indicates the vote could not be determined (error case).
+	VotePositive = 1; // VotePositive indicates the Respondent responded honestly with valid data.
+	VoteNegative = 2; // VoteNegative indicates the Respondent did not respond or was dishonest.
+}
+
+// SignedVote contains a node's vote with cryptographic proof.
+// Each vote is signed by the voting node to ensure authenticity and prevent tampering.
+message SignedVote {
+	// ID of the inference being disputed.
+	string inference_id = 1;
+
+	// VoterAddress is the blockchain address of the node casting the vote.
+	// Will be used to verify the signature of the vote.
+	string voter_address = 2;
+
+	// VoteType indicates the node's assessment of the Respondent's behavior.
+	VoteType vote_type = 3;
+
+	// RespondentDataHash is the signed hash of data the Respondent provided (if any).
+	// Empty if the Respondent did not respond.
+	string respondent_data_hash = 4;
+
+	// Timestamp is the Unix timestamp when the vote was cast.
+	int64 timestamp = 5;
+
+	// VoterSignature is the cryptographic signature of the vote.
+	// Signs: inference_id + voter_address + vote_type + respondent_data_hash + timestamp
+	// Used for on-chain verification of vote authenticity.
+	string voter_signature = 6;
+}
+
+// VotingResult represents the aggregated result of a voting session.
+message VotingResult {
+	// ID of the inference that was disputed.
+	string inference_id = 1;
+
+	// Votes contains all the signed votes collected.
+	repeated SignedVote votes = 2;
+
+	// CompletedAt is the timestamp when voting completed.
+	int64 completed_at = 3;
+
+	// RequesterAddress is the address of the node requesting the verification (voting coordinator).
+	string requester_address = 4;
+
+	// RequesterSignature proves this request is from a legitimate voting coordinator.
+	// Signs: inference_id + hash256(votes) + requester_address + completed_at
+	string requester_signature = 5;
+}

@@ -13,6 +13,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
+import "inference/inference/voting_result.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -25,6 +26,7 @@ service Msg {
   rpc UpdateParams                     (MsgUpdateParams) returns (MsgUpdateParamsResponse);
   rpc StartInference                   (MsgStartInference) returns (MsgStartInferenceResponse);
   rpc FinishInference                  (MsgFinishInference) returns (MsgFinishInferenceResponse);
+  rpc FinishInferenceWithMissingPayload(MsgFinishInferenceWithMissingPayload) returns (MsgFinishInferenceWithMissingPayloadResponse);
   rpc SubmitNewParticipant             (MsgSubmitNewParticipant) returns (MsgSubmitNewParticipantResponse);
   rpc Validation                       (MsgValidation) returns (MsgValidationResponse);
   rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
@@ -128,7 +130,19 @@ message MsgFinishInference {
   string original_prompt_hash = 16;                 // Phase 3: for dev signature verification
 }
 
+message MsgFinishInferenceWithMissingPayload {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  MsgFinishInference msg_finish_inference = 2;
+  VotingResult voting_result = 3;
+}
+
 message MsgFinishInferenceResponse {
+  string inference_index = 1;
+  string error_message = 2;
+}
+
+message MsgFinishInferenceWithMissingPayloadResponse {
   string inference_index = 1;
   string error_message = 2;
 }

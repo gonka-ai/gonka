@@ -19,48 +19,49 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_UpdateParams_FullMethodName                     = "/inference.inference.Msg/UpdateParams"
-	Msg_StartInference_FullMethodName                   = "/inference.inference.Msg/StartInference"
-	Msg_FinishInference_FullMethodName                  = "/inference.inference.Msg/FinishInference"
-	Msg_SubmitNewParticipant_FullMethodName             = "/inference.inference.Msg/SubmitNewParticipant"
-	Msg_Validation_FullMethodName                       = "/inference.inference.Msg/Validation"
-	Msg_SubmitNewUnfundedParticipant_FullMethodName     = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
-	Msg_InvalidateInference_FullMethodName              = "/inference.inference.Msg/InvalidateInference"
-	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
-	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
-	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
-	Msg_SubmitPocValidation_FullMethodName              = "/inference.inference.Msg/SubmitPocValidation"
-	Msg_SubmitPocValidationsV2_FullMethodName           = "/inference.inference.Msg/SubmitPocValidationsV2"
-	Msg_PoCV2StoreCommit_FullMethodName                 = "/inference.inference.Msg/PoCV2StoreCommit"
-	Msg_MLNodeWeightDistribution_FullMethodName         = "/inference.inference.Msg/MLNodeWeightDistribution"
-	Msg_SubmitSeed_FullMethodName                       = "/inference.inference.Msg/SubmitSeed"
-	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
-	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
-	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
-	Msg_SubmitHardwareDiff_FullMethodName               = "/inference.inference.Msg/SubmitHardwareDiff"
-	Msg_CreatePartialUpgrade_FullMethodName             = "/inference.inference.Msg/CreatePartialUpgrade"
-	Msg_ClaimTrainingTaskForAssignment_FullMethodName   = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
-	Msg_AssignTrainingTask_FullMethodName               = "/inference.inference.Msg/AssignTrainingTask"
-	Msg_SubmitTrainingKvRecord_FullMethodName           = "/inference.inference.Msg/SubmitTrainingKvRecord"
-	Msg_JoinTraining_FullMethodName                     = "/inference.inference.Msg/JoinTraining"
-	Msg_TrainingHeartbeat_FullMethodName                = "/inference.inference.Msg/TrainingHeartbeat"
-	Msg_SetBarrier_FullMethodName                       = "/inference.inference.Msg/SetBarrier"
-	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
-	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
-	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
-	Msg_RegisterBridgeAddresses_FullMethodName          = "/inference.inference.Msg/RegisterBridgeAddresses"
-	Msg_RegisterLiquidityPool_FullMethodName            = "/inference.inference.Msg/RegisterLiquidityPool"
-	Msg_RegisterTokenMetadata_FullMethodName            = "/inference.inference.Msg/RegisterTokenMetadata"
-	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
-	Msg_RequestBridgeWithdrawal_FullMethodName          = "/inference.inference.Msg/RequestBridgeWithdrawal"
-	Msg_RequestBridgeMint_FullMethodName                = "/inference.inference.Msg/RequestBridgeMint"
-	Msg_RegisterWrappedTokenContract_FullMethodName     = "/inference.inference.Msg/RegisterWrappedTokenContract"
-	Msg_MigrateAllWrappedTokens_FullMethodName          = "/inference.inference.Msg/MigrateAllWrappedTokens"
-	Msg_AddUserToTrainingAllowList_FullMethodName       = "/inference.inference.Msg/AddUserToTrainingAllowList"
-	Msg_RemoveUserFromTrainingAllowList_FullMethodName  = "/inference.inference.Msg/RemoveUserFromTrainingAllowList"
-	Msg_SetTrainingAllowList_FullMethodName             = "/inference.inference.Msg/SetTrainingAllowList"
-	Msg_AddParticipantsToAllowList_FullMethodName       = "/inference.inference.Msg/AddParticipantsToAllowList"
-	Msg_RemoveParticipantsFromAllowList_FullMethodName  = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
+	Msg_UpdateParams_FullMethodName                      = "/inference.inference.Msg/UpdateParams"
+	Msg_StartInference_FullMethodName                    = "/inference.inference.Msg/StartInference"
+	Msg_FinishInference_FullMethodName                   = "/inference.inference.Msg/FinishInference"
+	Msg_FinishInferenceWithMissingPayload_FullMethodName = "/inference.inference.Msg/FinishInferenceWithMissingPayload"
+	Msg_SubmitNewParticipant_FullMethodName              = "/inference.inference.Msg/SubmitNewParticipant"
+	Msg_Validation_FullMethodName                        = "/inference.inference.Msg/Validation"
+	Msg_SubmitNewUnfundedParticipant_FullMethodName      = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
+	Msg_InvalidateInference_FullMethodName               = "/inference.inference.Msg/InvalidateInference"
+	Msg_RevalidateInference_FullMethodName               = "/inference.inference.Msg/RevalidateInference"
+	Msg_ClaimRewards_FullMethodName                      = "/inference.inference.Msg/ClaimRewards"
+	Msg_SubmitPocBatch_FullMethodName                    = "/inference.inference.Msg/SubmitPocBatch"
+	Msg_SubmitPocValidation_FullMethodName               = "/inference.inference.Msg/SubmitPocValidation"
+	Msg_SubmitPocValidationsV2_FullMethodName            = "/inference.inference.Msg/SubmitPocValidationsV2"
+	Msg_PoCV2StoreCommit_FullMethodName                  = "/inference.inference.Msg/PoCV2StoreCommit"
+	Msg_MLNodeWeightDistribution_FullMethodName          = "/inference.inference.Msg/MLNodeWeightDistribution"
+	Msg_SubmitSeed_FullMethodName                        = "/inference.inference.Msg/SubmitSeed"
+	Msg_SubmitUnitOfComputePriceProposal_FullMethodName  = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
+	Msg_RegisterModel_FullMethodName                     = "/inference.inference.Msg/RegisterModel"
+	Msg_CreateTrainingTask_FullMethodName                = "/inference.inference.Msg/CreateTrainingTask"
+	Msg_SubmitHardwareDiff_FullMethodName                = "/inference.inference.Msg/SubmitHardwareDiff"
+	Msg_CreatePartialUpgrade_FullMethodName              = "/inference.inference.Msg/CreatePartialUpgrade"
+	Msg_ClaimTrainingTaskForAssignment_FullMethodName    = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
+	Msg_AssignTrainingTask_FullMethodName                = "/inference.inference.Msg/AssignTrainingTask"
+	Msg_SubmitTrainingKvRecord_FullMethodName            = "/inference.inference.Msg/SubmitTrainingKvRecord"
+	Msg_JoinTraining_FullMethodName                      = "/inference.inference.Msg/JoinTraining"
+	Msg_TrainingHeartbeat_FullMethodName                 = "/inference.inference.Msg/TrainingHeartbeat"
+	Msg_SetBarrier_FullMethodName                        = "/inference.inference.Msg/SetBarrier"
+	Msg_JoinTrainingStatus_FullMethodName                = "/inference.inference.Msg/JoinTrainingStatus"
+	Msg_CreateDummyTrainingTask_FullMethodName           = "/inference.inference.Msg/CreateDummyTrainingTask"
+	Msg_BridgeExchange_FullMethodName                    = "/inference.inference.Msg/BridgeExchange"
+	Msg_RegisterBridgeAddresses_FullMethodName           = "/inference.inference.Msg/RegisterBridgeAddresses"
+	Msg_RegisterLiquidityPool_FullMethodName             = "/inference.inference.Msg/RegisterLiquidityPool"
+	Msg_RegisterTokenMetadata_FullMethodName             = "/inference.inference.Msg/RegisterTokenMetadata"
+	Msg_ApproveBridgeTokenForTrading_FullMethodName      = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
+	Msg_RequestBridgeWithdrawal_FullMethodName           = "/inference.inference.Msg/RequestBridgeWithdrawal"
+	Msg_RequestBridgeMint_FullMethodName                 = "/inference.inference.Msg/RequestBridgeMint"
+	Msg_RegisterWrappedTokenContract_FullMethodName      = "/inference.inference.Msg/RegisterWrappedTokenContract"
+	Msg_MigrateAllWrappedTokens_FullMethodName           = "/inference.inference.Msg/MigrateAllWrappedTokens"
+	Msg_AddUserToTrainingAllowList_FullMethodName        = "/inference.inference.Msg/AddUserToTrainingAllowList"
+	Msg_RemoveUserFromTrainingAllowList_FullMethodName   = "/inference.inference.Msg/RemoveUserFromTrainingAllowList"
+	Msg_SetTrainingAllowList_FullMethodName              = "/inference.inference.Msg/SetTrainingAllowList"
+	Msg_AddParticipantsToAllowList_FullMethodName        = "/inference.inference.Msg/AddParticipantsToAllowList"
+	Msg_RemoveParticipantsFromAllowList_FullMethodName   = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
 )
 
 // MsgClient is the client API for Msg service.
@@ -72,6 +73,7 @@ type MsgClient interface {
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
 	StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error)
 	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
+	FinishInferenceWithMissingPayload(ctx context.Context, in *MsgFinishInferenceWithMissingPayload, opts ...grpc.CallOption) (*MsgFinishInferenceWithMissingPayloadResponse, error)
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
 	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
@@ -144,6 +146,15 @@ func (c *msgClient) StartInference(ctx context.Context, in *MsgStartInference, o
 func (c *msgClient) FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error) {
 	out := new(MsgFinishInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_FinishInference_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) FinishInferenceWithMissingPayload(ctx context.Context, in *MsgFinishInferenceWithMissingPayload, opts ...grpc.CallOption) (*MsgFinishInferenceWithMissingPayloadResponse, error) {
+	out := new(MsgFinishInferenceWithMissingPayloadResponse)
+	err := c.cc.Invoke(ctx, Msg_FinishInferenceWithMissingPayload_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -510,6 +521,7 @@ type MsgServer interface {
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
 	StartInference(context.Context, *MsgStartInference) (*MsgStartInferenceResponse, error)
 	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
+	FinishInferenceWithMissingPayload(context.Context, *MsgFinishInferenceWithMissingPayload) (*MsgFinishInferenceWithMissingPayloadResponse, error)
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
 	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
@@ -566,6 +578,9 @@ func (UnimplementedMsgServer) StartInference(context.Context, *MsgStartInference
 }
 func (UnimplementedMsgServer) FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FinishInference not implemented")
+}
+func (UnimplementedMsgServer) FinishInferenceWithMissingPayload(context.Context, *MsgFinishInferenceWithMissingPayload) (*MsgFinishInferenceWithMissingPayloadResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FinishInferenceWithMissingPayload not implemented")
 }
 func (UnimplementedMsgServer) SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitNewParticipant not implemented")
@@ -747,6 +762,24 @@ func _Msg_FinishInference_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).FinishInference(ctx, req.(*MsgFinishInference))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_FinishInferenceWithMissingPayload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgFinishInferenceWithMissingPayload)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).FinishInferenceWithMissingPayload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_FinishInferenceWithMissingPayload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).FinishInferenceWithMissingPayload(ctx, req.(*MsgFinishInferenceWithMissingPayload))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1471,6 +1504,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinishInference",
 			Handler:    _Msg_FinishInference_Handler,
+		},
+		{
+			MethodName: "FinishInferenceWithMissingPayload",
+			Handler:    _Msg_FinishInferenceWithMissingPayload_Handler,
 		},
 		{
 			MethodName: "SubmitNewParticipant",

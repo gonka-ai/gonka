@@ -264,13 +264,13 @@ func (cv *ChainVerifier) ValidateVotes(
 		)
 
 		switch vote.VoteType {
-		case VotePositive:
+		case types.VoteType_VotePositive:
 			if hasPositiveVote {
 				slog.Error("got more than one positive vote")
 				return ErrDuplicatePositiveVote
 			}
 			hasPositiveVote = true
-		case VoteNegative:
+		case types.VoteType_VoteNegative:
 			negativeVotesCounter++
 			if hasPositiveVote {
 				slog.Error("got a negative vote after a positive vote was received")
@@ -280,7 +280,7 @@ func (cv *ChainVerifier) ValidateVotes(
 				slog.Error("too many negative votes")
 				return ErrExceededMaximumNegativeVotes
 			}
-		case VoteInvalid:
+		case types.VoteType_VoteInvalid:
 			slog.Error("vote type is invalid")
 			return ErrInvalidVoteType
 		default:
@@ -308,59 +308,59 @@ func (cv *ChainVerifier) DetermineVerificationOutcomeAndDeliverPayload(
 	switch verificationType {
 	case VerifyPayloadFromTA:
 		if actualDataHash == "" {
-			return VoteNegative
+			return types.VoteType_VoteNegative
 		}
 		if onChain.ExpectedPromptHash != "" && actualDataHash != onChain.ExpectedPromptHash {
-			return VoteNegative
+			return types.VoteType_VoteNegative
 		}
 		if onChain.FinishExists {
-			return VoteNegative
+			return types.VoteType_VoteNegative
 		}
-		return VotePositive
+		return types.VoteType_VotePositive
 	// TODO: Implement other verification types when needed
 	// case VerifyMsgStartExists:
 	// 	// Check if MsgStartInference exists
 	// 	if onChain.InferenceExists {
-	// 		return VotePositive // TA posted the message
+	// 		return types.VoteType_VotePositive // TA posted the message
 	// 	}
-	// 	return VoteNegative // TA didn't post
+	// 	return types.VoteType_VoteNegative // TA didn't post
 	//
 	// case VerifyMsgFinishExists:
 	// 	// Check if MsgFinishInference exists
 	// 	if onChain.FinishExists {
-	// 		return VotePositive // Executor completed
+	// 		return types.VoteType_VotePositive // Executor completed
 	// 	}
-	// 	return VoteNegative // Executor didn't complete
+	// 	return types.VoteType_VoteNegative // Executor didn't complete
 	//
 	// case VerifyPromptHashMatch:
 	// 	// Compare actual payload hash with on-chain prompt_hash
 	// 	if actualDataHash == onChain.ExpectedPromptHash {
-	// 		return VotePositive // Hash matches
+	// 		return types.VoteType_VotePositive // Hash matches
 	// 	}
-	// 	return VoteNegative // Hash mismatch
+	// 	return types.VoteType_VoteNegative // Hash mismatch
 	//
 	// case VerifyResponseHashMatch:
 	// 	// Compare actual payload hash with on-chain response_hash
 	// 	if actualDataHash == onChain.ExpectedResponseHash {
-	// 		return VotePositive // Hash matches
+	// 		return types.VoteType_VotePositive // Hash matches
 	// 	}
 	// 	return VoteNegative // Hash mismatch
 	//
 	// case VerifyPayloadFromExecutor:
 	// 	// TA challenges executor: verify executor has the payload
 	// 	if actualDataHash != "" {
-	// 		return VotePositive // Got payload
+	// 		return types.VoteType_VotePositive // Got payload
 	// 	}
-	// 	return VoteNegative // No payload
+	// 	return types.VoteType_VoteNegative // No payload
 	//
 	// case VerifyResponseDeliveryToTA:
 	// 	// TA claims they didn't receive response from executor.
 	// 	// We verify: Did executor complete their job?
 	// 	if onChain.FinishExists && actualDataHash != "" {
-	// 		return VotePositive // Executor completed and has payload - not at fault
+	// 		return types.VoteType_VotePositive // Executor completed and has payload - not at fault
 	// 	}
-	// 	return VoteNegative // Executor didn't complete or doesn't have payload
+	// 	return types.VoteType_VoteNegative // Executor didn't complete or doesn't have payload
 	default:
-		return VoteInvalid
+		return types.VoteType_VoteInvalid
 	}
 }
