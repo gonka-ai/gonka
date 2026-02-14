@@ -91,6 +91,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 			Creator:     testutil.Executor,
 			InferenceId: "dummy",
 			RequestedBy: testutil.Requester,
+			ExecutedBy:  testutil.Executor,
 		})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
