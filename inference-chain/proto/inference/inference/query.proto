@@ -34,6 +34,7 @@ import "inference/inference/excluded_participant.proto";
 import "inference/inference/confirmation_poc_event.proto";
 import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
+import "inference/inference/random_seed.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -467,6 +468,11 @@ service Query {
   // Queries confirmation PoC events for a specific epoch.
   rpc ListConfirmationPoCEvents (QueryConfirmationPoCEventsRequest) returns (QueryConfirmationPoCEventsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/confirmation_poc_events/{epoch_index}";
+  }
+
+  // Queries random seeds for a specific epoch.
+  rpc ListRandomSeeds (QueryRandomSeedsRequest) returns (QueryRandomSeedsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/random_seeds/{epoch_index}";
   }
 
   rpc ParticipantsWithBalances (QueryParticipantsWithBalancesRequest) returns (QueryParticipantsWithBalancesResponse) {
@@ -1241,4 +1247,14 @@ message QueryParticipantsWithBalancesResponse {
   repeated ParticipantWithBalance               participants = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination   = 2;
            int64                                  block_height = 3;
+}
+
+// QueryRandomSeedsRequest is request type for the Query/RandomSeeds RPC method.
+message QueryRandomSeedsRequest {
+  uint64 epoch_index = 1;
+}
+
+// QueryRandomSeedsResponse is response type for the Query/RandomSeeds RPC method.
+message QueryRandomSeedsResponse {
+  repeated RandomSeed seeds = 1;
 }

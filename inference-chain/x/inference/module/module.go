@@ -520,42 +520,65 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 	var activeParticipants []*types.ActiveParticipant
-	if params.PocParams.PocV2Enabled {
-		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
+
+	if upcomingEpoch.Index == 170 {
+		currentActiveParticipants, found := am.keeper.GetActiveParticipants(ctx, 169)
+		if !found {
+			am.LogError("onEndOfPoCValidationStage: Unable to get active participants", types.EpochGroup)
+			panic("Unable to get active participants")
+		}
+		previousActiveParticipants := currentActiveParticipants.Participants
+		activeParticipants = make([]*types.ActiveParticipant, 0)
+		for _, participant := range previousActiveParticipants {
+			am.LogInfo("onEndOfPoCValidationStage: participant", types.EpochGroup, "participant.Index", participant.Index, "participant.Weight", participant.Weight)
+
+			seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participant.Index)
+			if !found {
+				am.LogError("onEndOfPoCValidationStage: Unable to get seed", types.EpochGroup, "participant.Index", participant.Index)
+				continue
+			}
+			participant.Seed = &seed
+			activeParticipants = append(activeParticipants, participant)
+			am.LogInfo("onEndOfPoCValidationStage: seed", types.EpochGroup, "seed.EpochIndex", seed.EpochIndex, "seed.Participant", seed.Participant, "seed.Signature", seed.Signature)
+		}
 	} else {
-		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
+		if params.PocParams.PocV2Enabled {
+			activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
+		} else {
+			activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
+		}
+		if activeParticipants == nil {
+			am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
+			return
+		}
+
+		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+		modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
+
+		// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
+		if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
+			am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
+			// Depending on chain policy, we might want to halt on error. For now, we log and continue,
+			// which means participants will proceed with their unadjusted PotentialWeight.
+		}
+
+		// Apply universal power capping to epoch powers
+		activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
+
+		modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
+		am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
+
+		err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
+		if err != nil {
+			am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
+			return
+		}
+
+		am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"len(activeParticipants)", len(activeParticipants))
 	}
-	if activeParticipants == nil {
-		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
-		return
-	}
-
-	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
-	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
-
-	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
-	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
-		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
-		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
-		// which means participants will proceed with their unadjusted PotentialWeight.
-	}
-
-	// Apply universal power capping to epoch powers
-	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
-
-	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
-	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
-
-	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
-		return
-	}
-
-	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"len(activeParticipants)", len(activeParticipants))
 
 	err = am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:        activeParticipants,

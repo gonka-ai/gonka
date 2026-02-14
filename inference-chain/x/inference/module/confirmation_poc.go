@@ -16,6 +16,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const safetyWindow = 50
+
 // handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions
 func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -127,7 +129,9 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	confirmationWindowDuration := epochParams.PocStageDuration +
 		epochParams.PocExchangeDuration +
 		epochParams.PocValidationDelay +
-		epochParams.PocValidationDuration
+		epochParams.PocValidationDuration +
+		epochParams.SetNewValidatorsDelay +
+		safetyWindow
 	triggerWindowEnd := nextPoCStart - epochParams.InferenceValidationCutoff - confirmationWindowDuration
 
 	if blockHeight < setNewValidatorsHeight || blockHeight > triggerWindowEnd {
