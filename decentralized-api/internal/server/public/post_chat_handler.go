@@ -396,8 +396,14 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		logging.Error("Failed to marshal chat request", types.Inferences, "error", err)
 		return err
 	}
+	// Compute test scenario flags once
+	isTestMode := s.configManager.GetApiConfig().TestMode
+	isMissingPayload := isTestMode && originalSeed == strconv.Itoa(int(MissingPayloadSeed))
+	isVoterRecovery := isTestMode && originalSeed == strconv.Itoa(int(VoterRecoverySeed))
+	isVoterNegative := isTestMode && originalSeed == strconv.Itoa(int(VoterNegativeSeed))
+
 	// VoterNegativeSeed: skip storing prompt so voters also can't find it
-	if !(s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterNegativeSeed))) {
+	if !isVoterNegative {
 		s.storePromptToStorage(ctx.Request().Context(), inferenceUUID, requestBytes)
 	} else {
 		logging.Debug("VoterNegativeSeed: skipping prompt storage", types.Inferences, "inferenceId", inferenceUUID)
@@ -405,7 +411,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	go func() {
 		logging.Debug("Starting inference", types.Inferences, "id", inferenceRequest.InferenceId)
-		if s.configManager.GetApiConfig().TestMode && request.OpenAiRequest.Seed == int32(DelaySeed) {
+		if isTestMode && request.OpenAiRequest.Seed == int32(DelaySeed) {
 			time.Sleep(10 * time.Second)
 		}
 		err := s.recorder.StartInference(inferenceRequest)
@@ -417,15 +423,12 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}()
 
 	// VoterRecoverySeed: mark inference as blocked for direct executor retrieval
-	if s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterRecoverySeed)) {
+	if isVoterRecovery {
 		addVoterTestBlocked(inferenceUUID)
 		logging.Debug("VoterRecoverySeed: blocked direct retrieval for executor", types.Inferences, "inferenceId", inferenceUUID)
 	}
 
 	// In these test scenarios, we don't send the request to the executor
-	isMissingPayload := s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(MissingPayloadSeed))
-	isVoterRecovery := s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterRecoverySeed))
-	isVoterNegative := s.configManager.GetApiConfig().TestMode && originalSeed == strconv.Itoa(int(VoterNegativeSeed))
 	if isMissingPayload || isVoterRecovery || isVoterNegative {
 		logging.Debug("Skipping sending request to executor due to test scenario configuration", types.Inferences)
 
