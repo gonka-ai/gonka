@@ -138,7 +138,7 @@ Any host can add a model to the chain and serve inference without governance app
 
 Properties:
 - No inference validation by other hosts
-- Price set directly by host (no dynamic pricing)
+- Price set directly by host
 - Requests sent directly to host
 - Host stores payload locally but no cross-validation
 - Each GNK payment has fee sent to governance
