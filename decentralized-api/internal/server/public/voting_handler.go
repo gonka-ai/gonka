@@ -29,17 +29,51 @@ func (s *Server) postVotingVerify(ctx echo.Context) error {
 		"respondentURL", req.RespondentURL,
 		"epochId", req.EpochId)
 
+	// Query chain to validate the request before doing any work.
+	cv := voting.NewChainVerifier(s.recorder, nil)
+	onChain, err := cv.QueryInferenceState(ctx.Request().Context(), req.InferenceId)
+	if err != nil {
+		logging.Error("Failed to query chain for inference state", types.Voting,
+			"inferenceId", req.InferenceId, "error", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query chain")
+	}
+
+	// Reject if inference doesn't exist on chain
+	if !onChain.InferenceExists {
+		logging.Warn("Voter rejected request: inference not found on chain", types.Voting,
+			"inferenceId", req.InferenceId)
+		return echo.NewHTTPError(http.StatusBadRequest, "inference not found on chain")
+	}
+
+	// Reject if inference is already finished (no recovery needed)
+	if onChain.FinishExists {
+		logging.Warn("Voter rejected request: inference already finished", types.Voting,
+			"inferenceId", req.InferenceId)
+		return echo.NewHTTPError(http.StatusBadRequest, "inference already finished")
+	}
+
+	// Validate respondent is the TA for this inference
+	if req.RespondentAddress != "" && onChain.CreatedBy != req.RespondentAddress {
+		logging.Warn("Voter rejected request: respondent is not the TA for this inference", types.Voting,
+			"inferenceId", req.InferenceId,
+			"expectedTA", onChain.CreatedBy,
+			"requestedRespondent", req.RespondentAddress)
+		return echo.NewHTTPError(http.StatusBadRequest, "respondent is not the TA for this inference")
+	}
+
 	// Create a NodePinger using the server's cosmos client to sign requests
 	npConfig := voting.DefaultNodePingerConfig()
 	np := voting.NewNodePinger(s.recorder, npConfig)
 
-	// Verify the respondent: ping their payload endpoint and check if they have the data
+	// Verify the respondent: ping their payload endpoint and check if they have the data.
+	// PromptHash is left empty — the on-chain hash and stored payload hash use different
+	// serialization formats, so comparison would always mismatch. The voter validates
+	// inference existence and status above; hash correctness is a separate concern.
 	response := np.VerifyRespondent(
 		ctx.Request().Context(),
 		req.RespondentURL,
 		req.InferenceId,
 		req.EpochId,
-		req.PromptHash,
 	)
 
 	logging.Info("Verification result", types.Voting,

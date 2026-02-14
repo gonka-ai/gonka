@@ -110,6 +110,37 @@ class VoterTests : TestermintTest() {
         assertThat(inference.status).isEqualTo(InferenceStatus.STARTED.value)
     }
 
+    /**
+     * Case #3: Voter rejects verification request when MsgStartInference does not exist.
+     *
+     * Flow:
+     * 1. A challenger sends a POST /v1/voting/verify with a fabricated inference ID
+     *    that has no corresponding MsgStartInference on chain.
+     * 2. The voter queries the chain, finds no inference, and rejects the request
+     *    with HTTP 400 "inference not found on chain".
+     */
+    @Test
+    fun `voter rejects verification when MsgStartInference does not exist`() {
+        // Pick any node as the voter target (use a join node so it's not the TA)
+        val voter = cluster.joinPairs.first()
+
+        // Use a completely fabricated inference ID that doesn't exist on chain
+        val fakeInferenceId = "nonexistent-inference-id-12345"
+        val genesisAddress = genesis.node.getColdAddress()
+        val genesisUrl = genesis.api.getPublicUrl()
+
+        val (_, response, _) = voter.api.makeVotingVerifyRequest(
+            inferenceId = fakeInferenceId,
+            respondentAddress = genesisAddress,
+            respondentUrl = genesisUrl,
+        )
+
+        // The voter should reject this with 400 because no MsgStartInference exists
+        assertThat(response.statusCode).isEqualTo(400)
+        val body = String(response.data)
+        assertThat(body).contains("inference not found on chain")
+    }
+
     companion object {
         // Must match VoterRecoverySeed in post_chat_handler.go
         const val VOTER_RECOVERY_SEED = 3141592

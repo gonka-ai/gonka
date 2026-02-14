@@ -485,6 +485,35 @@ data class ApplicationAPI(
         get<ApiConfig>(url, "admin/v1/config")
     }
 
+    /**
+     * Sends a voting verification request to this node's /v1/voting/verify endpoint.
+     * Returns the raw HTTP status code and response body.
+     */
+    fun makeVotingVerifyRequest(
+        inferenceId: String,
+        respondentAddress: String,
+        respondentUrl: String,
+        epochId: Long = 0,
+    ): Triple<Request, Response, Result<String, FuelError>> =
+        wrapLog("MakeVotingVerifyRequest", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            val jsonBody = """
+                {
+                    "inference_id": "$inferenceId",
+                    "respondent_address": "$respondentAddress",
+                    "respondent_url": "$respondentUrl",
+                    "epoch_id": $epochId
+                }
+            """.trimIndent()
+            val response = Fuel.post("$url/v1/voting/verify")
+                .jsonBody(jsonBody)
+                .timeout(1000 * 30)
+                .timeoutRead(1000 * 30)
+                .responseString()
+            logResponse(response)
+            response
+        }
+
 }
 
 

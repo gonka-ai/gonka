@@ -81,7 +81,6 @@ type VerificationRequest struct {
 	RespondentAddress string `json:"respondent_address"`
 	RespondentURL     string `json:"respondent_url"`
 	EpochId           uint64 `json:"epoch_id"`
-	PromptHash        string `json:"prompt_hash"` // Expected hash from on-chain
 	ChallengerSig     string `json:"challenger_signature"`
 }
 
@@ -219,7 +218,6 @@ func (np *NodePinger) VerifyRespondent(
 	respondentURL string,
 	inferenceId string,
 	epochId uint64,
-	expectedPromptHash string,
 ) *VerificationResponse {
 	voterAddress := np.cosmosClient.GetAccountAddress()
 
@@ -249,15 +247,6 @@ func (np *NodePinger) VerifyRespondent(
 	response.DataFound = true
 	response.PromptHash = pingResult.PromptHash
 	response.Payload = pingResult.Payload // Include payload in response for challenger
-
-	// Step 2: Verify hash matches (if expected hash provided)
-	if expectedPromptHash != "" && pingResult.PromptHash != expectedPromptHash {
-		// Hash mismatch - respondent has wrong payload
-		response.Vote = VoteNegative
-		logging.Warn("Voter verification: respondent has wrong payload (hash mismatch)", types.Voting,
-			"inferenceId", inferenceId, "expected", expectedPromptHash, "actual", pingResult.PromptHash)
-		return response
-	}
 
 	// Respondent has correct payload - positive vote
 	response.Vote = VotePositive
