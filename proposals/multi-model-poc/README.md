@@ -134,7 +134,7 @@ This incentivizes >50% of total consensus weight to participate in PoC validatio
 
 ### Unregistered Models
 
-Any host can add a model to the chain and serve inference without governance approval (there is some fee for that).
+Any host can add a model to the chain and serve inference without governance approval (with additional fees).
 
 Properties:
 - No inference validation by other hosts
