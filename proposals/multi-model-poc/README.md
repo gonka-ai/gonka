@@ -23,9 +23,14 @@ Currently, there is single model used for PoC (Qwen3-235B-FP8). Therefore, chain
 
 ## Proposal
 
-Let's try to build system which support several models simulationosly and POC procedure happens without re-deploy, for every model independenly. 
+Let's try to build a system which supports several models simultaneously where POC procedure happens without re-deploy, for every model independently. Such different POCs correspond to quite different compute power (essentially they would measure not raw compute power but how "optimal" the configuration is for specific hardware).
+As POC is not only a source of the weight for task distribution across a specific model but also a way to define the consensus weight, we need to define how to aggregate weights from different POCs and how to validate each POC's results.
 
-Delegation adds an additional trust assumption (see "Delegation" and Appendix A).
+For aggregation, the chain would have to define how *valuable* each POC's weight is to the chain. Coefficients converting POC weight to consensus weight can be defined as governance parameters by direct voting. They can be defined in a way that bigger, more powerful and more popular models would bring more weight. As the newest hardware is also optimized for serving top-tier models (a lot of VRAM, fast cross-gpu connection, FP4/FP8 support, etc.), it would naturally incentivize hosts to switch newer GPUs to the most powerful models, to get more weight per \$. It's important for the chain's growth to make serving best models (which require most optimized GPUs) most profitable.
+
+This proposal sets the goal to maintain same style of POC validation - every host validates every other host (or its probabilistic analogy for case of slots). One approach to achieve that would be to enforce each host to participate (have hardware) in each model. But such approach is impractical and would raise the hardware requirements too much. To avoid that, the proposal introduces *PoC delegation* from a host to another host it trusts. Such delegation allows to maintain the property of validation by majority of consensus power (but for sure introduces new security assumption, more about it in Appendix A).
+
+To define the process of adding new models to the chain, this proposal allows serving models which are not approved by governance, without inference validation and without gaining consensus power from serving such models. It also defines the process how a model approved by governance becomes eligible for consensus weight.  
 
 > **Warning**: This proposal assumes the O(N^2) validation model (>50% weight threshold). Slot-based validation is out of scope. Most probably slot-based approach will work the same way, with independent slot assigning in each group. But it must be double-checked whether to use $votingPower$ or $consensusWeight$ for hosts in group.
 
