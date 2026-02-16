@@ -19,7 +19,6 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -303,6 +302,11 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 
 	logging.Debug("Got payload", types.Voting, "payload", payload)
 
+	if payload.Payload == nil {
+		logging.Error("Payload response is empty", types.Voting, "inferenceId", inferenceId)
+		return fmt.Errorf("received empty payload for inference %s", inferenceId)
+	}
+
 	executorURL, err := np.GetAddressUrl(ctx, executorAddress)
 	if err != nil {
 		logging.Error("Failed to get executor URL", types.Voting, "error", err)
@@ -391,46 +395,6 @@ func (np *NodePinger) GetAddressUrl(ctx context.Context, address string) (string
 	return participantResp.Participant.InferenceUrl, nil
 }
 
-// GetVoterURLs returns the inference URLs of all active participants except the given excluded
-// addresses (typically the TA and executor). Used by the challenger to find voter candidates.
-func (np *NodePinger) GetVoterURLs(ctx context.Context, excludeAddresses ...string) ([]string, error) {
-	excludeSet := make(map[string]bool, len(excludeAddresses))
-	for _, addr := range excludeAddresses {
-		excludeSet[addr] = true
-	}
-
-	queryClient := np.cosmosClient.NewInferenceQueryClient()
-	var voterURLs []string
-	var nextKey []byte
-
-	for {
-		resp, err := queryClient.ParticipantsWithBalances(ctx, &types.QueryParticipantsWithBalancesRequest{
-			Pagination: &query.PageRequest{Key: nextKey, Limit: 100},
-		})
-		if err != nil {
-			logging.Error("Failed to query participants for voter selection", types.Voting, "error", err)
-			return nil, err
-		}
-
-		for _, pwb := range resp.Participants {
-			addr := pwb.Participant.Address
-			if excludeSet[addr] || pwb.Participant.InferenceUrl == "" {
-				continue
-			}
-			voterURLs = append(voterURLs, pwb.Participant.InferenceUrl)
-		}
-
-		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
-			break
-		}
-		nextKey = resp.Pagination.NextKey
-	}
-
-	logging.Debug("Selected voter candidates", types.Voting,
-		"count", len(voterURLs), "excluded", excludeAddresses)
-	return voterURLs, nil
-}
-
 // VoterFallback is called when the executor's direct payload retrieval from the TA fails.
 // It samples voters from active participants and requests verification.
 // If a voter finds the payload on the TA, the voter returns it and the executor uses it.
@@ -466,11 +430,19 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		return err
 	}
 
-	// Get voter URLs (exclude TA and executor)
-	voterURLs, err := np.GetVoterURLs(ctx, transferAddress, executorAddress)
+	// Sample voters using replayable random (exclude TA and executor).
+	sampledVoters, err := SampleVotersForInference(
+		ctx, np.cosmosClient, &inferenceResp.Inference,
+		DefaultMaxVoters, transferAddress, executorAddress,
+	)
 	if err != nil {
-		logging.Error("VoterFallback: failed to get voter URLs", types.Voting, "error", err)
+		logging.Error("VoterFallback: failed to sample voters", types.Voting, "error", err)
 		return err
+	}
+
+	voterURLs := make([]string, len(sampledVoters))
+	for i, v := range sampledVoters {
+		voterURLs[i] = v.InferenceURL
 	}
 
 	if len(voterURLs) == 0 {
