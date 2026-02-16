@@ -1,150 +1,189 @@
+# Consumer Setup Guide
 
-
----
-
-### **Step-by-Step Guide for Local Setup, Account Funding, and Sending Inference Requests**
+Step-by-step guide for creating a developer account and sending inference requests to the Gonka network.
 
 ---
 
-### **Step 1: Install the `inferenced` Binary**
+## 1. Define Variables
 
-Before starting, ensure you have the `inferenced` binary installed on your local machine. If you haven’t installed it yet, follow these steps:
-1. **Download the binary** from our official repository or website (link provided by your team).
-2. Make the binary executable by running:
-   ```bash
-   chmod +x inferenced
-   ```
-3. **Move it** to your path or use it from its current location:
-   ```bash
-   sudo mv inferenced /usr/local/bin/
-   ```
-
-Now, you should be ready to use `inferenced` from your terminal.
-
----
-
-### **Step 2: Create a New Account Locally**
-
-To participate in the network, you need to create a local account. This will generate a public/private keypair and an account address.
-
-1. Run the following command to create a new account:
-   ```bash
-   inferenced keys add {{account_name}}
-   ```
-
-    - This will generate and display your **private key**, **public key**, and **account address**.
-    - **IMPORTANT:** Safely back up your private key (this is the only way to access your account and sign requests).
-
-2. You can verify your keys at any time using:
-   ```bash
-   inferenced keys list
-   ```
-
-3. Copy down your **public key** and **account address** from the output, as you’ll need them for the next step.
-
----
-
-### **Step 3: Fund Your Account (No Participant Registration Needed)**
-
-To send inference requests you only need a funded account. You do **not** need to register as a Participant unless you plan to host inference.
-
-1. Obtain test tokens via your faucet or a transfer from a funded account. (Ask your team for the faucet endpoint if it’s not documented.)
-2. Verify your balance using the account endpoint:
+Before starting, set the required environment variables:
 
 ```bash
-curl -X GET https://api.yourchain.com/v2/accounts/{{your_account_address}}
+export ACCOUNT_NAME="myaccount"
+export NODE_URL="http://node2.gonka.ai:8000"
 ```
 
-The response includes your `pubkey`, `balance`, and `denom`.
+| Variable | Description |
+|---|---|
+| `ACCOUNT_NAME` | Local keyring name for your account. Exists only on your machine — not recorded on-chain. |
+| `NODE_URL` | URL of any Gonka node. Used for account queries, inference requests, and on-chain operations. |
 
+Replace `myaccount` with any name you like and pick a node URL from the list below.
 
----
+<details>
+<summary><b>Genesis nodes</b></summary>
 
-### **Step 4: Prepare and Sign an Inference Request**
+```
+http://node1.gonka.ai:8000
+http://node2.gonka.ai:8000
+http://node3.gonka.ai:8000
+http://185.216.21.98:8000
+http://36.189.234.197:18026
+http://36.189.234.237:17241
+http://47.236.26.199:8000
+http://47.236.19.22:18000
+http://gonka.spv.re:8000
+```
 
-Once your account is set up and funded, you can prepare an inference request, sign it locally using your private key, and then submit it to the inference API.
+</details>
 
-1. **Prepare your request payload**. Save your request data to a file, for example `request_payload.json`. Here’s a sample of what the payload might look like:
+<details>
+<summary><b>How to pick a random active node instead</b></summary>
 
-   ```json
-   {
-     "model": "your_model_name",
-     "data": "input_data_for_inference",
-     "parameters": {
-       "param1": "value1",
-       "param2": "value2"
-     }
-   }
-   ```
+Fetch the current list of active participants and pick any `inference_url`:
 
-2. **Sign the payload** using your private key:
-   ```bash
-   inferenced signature create --account-address {{your_account_address}} --file request_payload.json
-   ```
+```bash
+curl "$NODE_URL/v1/epochs/current/participants"
+```
 
-    - Replace `{{your_account_address}}` with the address generated in Step 2.
-    - The `--file` flag should point to the file containing your request payload.
-    - This command will generate a **signature** based on the payload, which you will include in the next step.
+Using a random node improves network decentralization and load distribution.
 
-3. **Copy the output signature** from the command. This will be used when submitting your inference request to the API.
-
----
-
-### **Step 5: Submit the Inference Request to the API**
-
-Now that you have signed your payload, you’re ready to submit the inference request to the API.
-
-1. Use the following `curl` command to submit your signed inference request:
-   ```bash
-   curl -X POST https://api.yourchain.com/v1/chat/completions \
-   -H "Content-Type: application/json" \
-   -H "Authorization: {{your_signature}}" \
-   -H "X-Requester-Address: {{your_account_address}}" \
-   --data-binary @request_payload.json
-   ```
-
-    - Replace `{{your_signature}}` with the signature you generated in Step 4.
-    - Replace `{{your_account_address}}` with the account address generated in Step 2.
-    - The `request_payload.json` file should contain your inference request data.
-
-2. The API will process the inference request, debit the necessary coins from your account, and return the inference result once complete.
+</details>
 
 ---
 
-### **Additional Commands for Key Management**
+## 2. Install the `inferenced` CLI
 
-Here are some additional commands you can use for managing your keys locally:
+Download the latest `inferenced` binary for your system from the [official repository](https://github.com/gonka-ai/gonka).
 
-- **List your keys**:
-   ```bash
-   inferenced keys list
-   ```
+```bash
+chmod +x inferenced
+sudo mv inferenced /usr/local/bin/
+inferenced version
+```
 
-- **Export your account’s public key**:
-   ```bash
-   inferenced keys show {{account_name}} --pubkey
-   ```
-
-- **Import an existing account**:
-   ```bash
-   inferenced keys add {{account_name}} --recover
-   ```
-
-- **Delete an account** (use with caution):
-   ```bash
-   inferenced keys delete {{account_name}}
-   ```
-  
-- **Export your account’s private key** (use carefully!):
-   ```bash
-   inferenced keys export {{account_name}}
-   ```
+**macOS:** if you see a security warning, go to **System Settings → Privacy & Security** and click "Allow Anyway".
 
 ---
 
-### **Conclusion**
+## 3. Create an Account
 
-These steps allow you to create and manage your account keys locally, fund your account, and sign inference request payloads. Once signed, you can submit those requests to the network for processing.
+Create a local keypair that will be used to sign inference requests.
 
-This flow works entirely with the `inferenced` binary running locally and requires no direct interaction with the chain from the user’s local machine.
+```bash
+inferenced keys add "$ACCOUNT_NAME"
+```
 
+The output contains your **address**, **public key**, and **mnemonic phrase**.
+
+> **Important:** Back up the mnemonic phrase and private key securely — they are the only way to recover the account and sign requests.
+
+Save the address for later steps:
+
+```bash
+export GONKA_ADDRESS="<address from the output>"
+```
+
+You will also need your private key in Step 5 to configure the client connector. How you store and supply it (environment variable, secrets manager, `.env` file, etc.) is up to you.
+
+---
+
+## 4. Fund the Account and Publish Your Public Key
+
+To send inference requests, your account must have a positive balance and its public key must be published on-chain.
+You do **not** need to register as a Participant — that is only required for inference hosting.
+
+### 4.1 Fund the account
+
+Your account needs a positive balance to pay for inference. For a full guide on wallets, balances, and transfers see the [Wallet & Transfer Guide](https://gonka.ai/wallet/wallet-and-transfer-guide/).
+
+You can check your current balance at any time:
+
+```bash
+inferenced query bank balances "$GONKA_ADDRESS" --node "$NODE_URL/chain-rpc"
+```
+
+To fund the account, send any amount of `ngonka` from another wallet:
+
+```bash
+inferenced tx bank send <sender-key-name> "$GONKA_ADDRESS" 1000000ngonka \
+  --chain-id gonka-mainnet \
+  --node "$NODE_URL/chain-rpc"
+```
+
+You can also transfer funds using [Keplr](https://gonka.ai/wallet/wallet-and-transfer-guide/#send-coins) or [Leap](https://gonka.ai/wallet/wallet-and-transfer-guide/#send-coins) wallets.
+
+### 4.2 Publish the public key on-chain
+
+Once the account is funded, publish your public key:
+
+```bash
+inferenced publish-pubkey \
+  --from "$ACCOUNT_NAME" \
+  --node "$NODE_URL/chain-rpc" \
+  --yes
+```
+
+This performs a minimal self-transfer (`1ngonka`) that registers your public key on the blockchain.
+
+> If you get `rpc error: code = NotFound ... account ... not found`, your account has not received tokens yet — complete step 4.1 first.
+
+### 4.3 Verify the account
+
+```bash
+curl -s "$NODE_URL/v2/accounts/$GONKA_ADDRESS" | jq .
+```
+
+The response should include `pubkey`, `balance`, and `denom`.
+
+---
+
+## 5. Send an Inference Request
+
+Gonka uses a modified OpenAI SDK that automatically signs every request with your private key. Full documentation and examples for all supported languages are in the [gonka-openai repository](https://github.com/gonka-ai/gonka-openai/).
+
+### Minimal Python example
+
+```bash
+pip install gonka-openai
+```
+
+```python
+from gonka_openai import GonkaOpenAI
+
+client = GonkaOpenAI(
+    gonka_private_key="<your-private-key>",  # hex-encoded private key from Step 3
+    source_url="<NODE_URL>",                 # same node URL from Step 1
+)
+
+response = client.chat.completions.create(
+    model="Qwen/Qwen2.5-7B-Instruct",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=128,
+)
+
+print(response.choices[0].message.content)
+```
+
+> If you get `Insufficient balance`, fund the account with more tokens or lower `max_tokens`.
+
+---
+
+## Key Management Reference
+
+```bash
+# List all accounts
+inferenced keys list
+
+# Show public key
+inferenced keys show "$ACCOUNT_NAME" --pubkey
+
+# Recover an account from mnemonic
+inferenced keys add "$ACCOUNT_NAME" --recover
+
+# Delete an account (use with caution)
+inferenced keys delete "$ACCOUNT_NAME"
+
+# Export private key (use carefully)
+inferenced keys export "$ACCOUNT_NAME" --unarmored-hex --unsafe
+```
