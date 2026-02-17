@@ -18,6 +18,7 @@ import (
 var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgStartInference{},
 	&types.MsgFinishInference{},
+	&types.MsgFinishInferenceWithMissingPayload{},
 	&types.MsgClaimRewards{},
 	&types.MsgValidation{},
 	&types.MsgSubmitPocBatch{},

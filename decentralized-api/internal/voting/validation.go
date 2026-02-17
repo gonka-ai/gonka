@@ -3,7 +3,9 @@ package voting
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"strconv"
 	"time"
 	"log/slog"
 
@@ -363,4 +365,46 @@ func (cv *ChainVerifier) DetermineVerificationOutcomeAndDeliverPayload(
 	default:
 		return types.VoteType_VoteInvalid
 	}
+}
+
+// Returns inference_id + hash256(votes) + requester_address + completed_at
+func votingResultBytesToSign(inferenceId string, votes []*inference.SignedVote) []byte {
+	votesHash := sha256.New()
+	for _, vote := range votes {
+		votesFields := [6]string{
+			vote.InferenceId,
+			vote.VoterAddress,
+			strconv.FormatInt(int64(vote.VoteType), 10),
+			vote.RespondentDataHash,
+			strconv.FormatInt(vote.Timestamp, 10),
+			vote.VoterSignature,
+		}
+		for _, field := range votesFields {
+			// According to the docs for hash.Hash, Write never returns an error.
+			votesHash.Write([]byte(field))
+		}
+	}
+
+	payloadBytes := append([]byte(inferenceId), votesHash.Sum([]byte{})...)
+	return payloadBytes
+}
+
+// ValidateVotingResultSignature validates the requester signature against inference_id
+// Signs: inference_id + hash256(votes) + requester_address + completed_at
+func ValidateVotingResultSignature(result *inference.VotingResult, requesterPubkey string) error {
+	payloadBytes := votingResultBytesToSign(result.InferenceId, result.Votes)
+
+	components := calculations.SignatureComponents{
+		Payload:         string(payloadBytes),
+		EpochId:         0,
+		Timestamp:       result.CompletedAt,
+		TransferAddress: result.RequesterAddress,
+		ExecutorAddress: "",
+	}
+	return calculations.ValidateSignature(
+		components,
+		calculations.Developer,
+		requesterPubkey,
+		result.RequesterSignature,
+	)
 }

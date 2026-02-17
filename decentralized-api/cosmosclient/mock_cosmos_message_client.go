@@ -98,6 +98,13 @@ func (m *MockCosmosMessageClient) FinishInference(transaction *inference.MsgFini
 	return args.Error(0)
 }
 
+func (m *MockCosmosMessageClient) FinishInferenceWithMissingPayload(
+	transaction *inference.MsgFinishInferenceWithMissingPayload,
+) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
 func (m *MockCosmosMessageClient) ReportValidation(transaction *inference.MsgValidation) error {
 	args := m.Called(transaction)
 	return args.Error(0)

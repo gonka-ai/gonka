@@ -1112,6 +1112,15 @@
           "grantee": "gonka18hpy9tjeqavj9w66zchdh4w9axaqwdzrd8cedz",
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
+          },
+          "expiration": "2026-08-22T06:31:44Z"
+        },
+        {
+          "granter": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+          "grantee": "gonka18hpy9tjeqavj9w66zchdh4w9axaqwdzrd8cedz",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgClaimRewards"
           },
           "expiration": "2026-08-22T06:31:44Z"
@@ -1329,6 +1338,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:57:49Z"
+        },
+        {
+          "granter": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "grantee": "gonka1rpxwqfv42uysslavpeudh8p855nv80pmnj6sxs",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:57:49Z"
         },
@@ -1556,6 +1574,15 @@
             "msg": "/inference.inference.MsgFinishInference"
           },
           "expiration": "2026-08-22T06:35:18Z"
+        },
+        {
+          "granter": "gonka1d7p03cu2y2yt3vytq9wlfm6tlz0lfhlgv9h82p",
+          "grantee": "gonka1rpxwqfv42uysslavpeudh8p855nv80pmnj6sxs",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
+          },
+          "expiration": "2026-08-22T06:57:49Z"
         },
         {
           "granter": "gonka1r90m7wlp95zz92eqltys77xyyqkcmz72rc0kv5",
@@ -1779,6 +1806,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:33:56Z"
+        },
+        {
+          "granter": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+          "grantee": "gonka1dkfx2wl3d5a8qs85yuh8eymf4qz4n0khf7uyej",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:33:56Z"
         },
@@ -2004,6 +2040,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:32:32Z"
+        },
+        {
+          "granter": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+          "grantee": "gonka17t3qfgyddzlucyv7jgvp0pezqcxntutw3rtxy5",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:32:32Z"
         },
@@ -2229,6 +2274,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:28:04Z"
+        },
+        {
+          "granter": "gonka19fpma3577v3fnk8nxjkvg442ss8hvglxwqgzz6",
+          "grantee": "gonka1pe7uukfqzgkce8g2hlczzh4zug9wt7mdffhk8t",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:28:04Z"
         },
@@ -2454,6 +2508,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:31:51Z"
+        },
+        {
+          "granter": "gonka1ktl3kkn9l68c9amanu8u4868mcjmtsr5tgzmjk",
+          "grantee": "gonka1fcfw2mfw7x803dzr8ss2xldfhvkg22wllr0nyt",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:31:51Z"
         },
@@ -2679,6 +2742,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:56:11Z"
+        },
+        {
+          "granter": "gonka15p7s7w2hx0y8095lddd4ummm2y0kwpwljk00aq",
+          "grantee": "gonka1s2xr5m98696099cplagcalpcjt4mkr79n6764d",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:56:11Z"
         },
@@ -2904,6 +2976,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:51:05Z"
+        },
+        {
+          "granter": "gonka1vhprg9epy683xghp8ddtdlw2y9cycecmm64tje",
+          "grantee": "gonka1qpnut0ta7dj4ll3g2x0jxmdh26uc7ws5zqnpzc",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:51:05Z"
         },
@@ -3129,6 +3210,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T07:21:13Z"
+        },
+        {
+          "granter": "gonka1n7njfqnq7z64efe7xma23zu78xex93e04lm52u",
+          "grantee": "gonka1p6aqe3cy6ksthvq4n9v7ffjtdqej4pm32djm2p",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T07:21:13Z"
         },
@@ -3354,6 +3444,15 @@
           "authorization": {
             "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
             "msg": "/inference.inference.MsgFinishInference"
+          },
+          "expiration": "2026-08-22T06:59:50Z"
+        },
+        {
+          "granter": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+          "grantee": "gonka1f9ky6gznukjd9k29k3wq9d0yc6uv6sfhg9xr4z",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgFinishInferenceWithMissingPayload"
           },
           "expiration": "2026-08-22T06:59:50Z"
         },

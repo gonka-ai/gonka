@@ -170,8 +170,6 @@ func (v VerificationType) IsValid() bool {
 
 type VoteType = types.VoteType
 
-type VotingOutcome = types.VotingOutcome
-
 type SignedVote = types.SignedVote
 
 // VoteResponse represents a node's response to a verification request.

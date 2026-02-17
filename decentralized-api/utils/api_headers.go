@@ -11,6 +11,7 @@ const (
 	XTASignatureHeader      = "X-TA-Signature"
 	XPromptHashHeader       = "X-Prompt-Hash"
 	XValidatorAddressHeader = "X-Validator-Address"
+	XVotingResult           = "X-Voting-Result"
 	XEpochIdHeader          = "X-Epoch-Id"
 )
 
