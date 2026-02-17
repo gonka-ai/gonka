@@ -68,7 +68,16 @@ func CreateUpgradeHandler(
 		enablePocV2(ctx, k)
 		removeFromParticipantAllowlist(ctx, k)
 		resetPocSlotsForEffectiveEpoch(ctx, k)
-		resetPocSlotsInEpochGroupData(ctx, k)
+		// NOTE: resetPocSlotsInEpochGroupData was removed here.
+		// It incorrectly reset TimeslotAllocation[1] in EpochGroupData, which is read
+		// by RecomputeEffectiveWeightFromMLNodes during reward settlement.
+		// This caused preservedWeight to drop to zero for all participants in epoch 158,
+		// meaning validators with ML nodes in preserved inference slot (POC_SLOT) were
+		// not paid. See issue #764.
+		// Only ActiveParticipants should be reset (done by resetPocSlotsForEffectiveEpoch
+		// above), since that controls NEXT epoch's POC scheduling.
+		// EpochGroupData must NOT be modified because it holds the settlement data for
+		// the CURRENT epoch.
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -286,80 +295,19 @@ func resetPocSlotsForEffectiveEpoch(ctx context.Context, k keeper.Keeper) {
 	}
 }
 
-// resetPocSlotsInEpochGroupData resets POC_SLOT=true allocations in EpochGroupData for all model subgroups.
+// resetPocSlotsInEpochGroupData was removed in fix for #764.
 //
-// # Why This is Needed
+// This function previously reset TimeslotAllocation[1] (POC_SLOT) in EpochGroupData
+// for all model subgroups. This was incorrect because EpochGroupData is used by
+// RecomputeEffectiveWeightFromMLNodes() during reward settlement:
 //
-// The broker reads TimeslotAllocation from EpochGroupData (not ActiveParticipants) to determine
-// which nodes should continue serving inference during POC via ShouldContinueInference().
-// EpochGroupData is created at EndOfPoCValidationStage BEFORE the upgrade runs, so we must
-// also reset it here to ensure the broker sees the correct values.
+//   effectiveWeight = preservedWeight + confirmationWeight
 //
-// # Data Structures
+// Where preservedWeight sums PocWeight of nodes with TimeslotAllocation[1]==true.
+// Resetting it to false zeroed preservedWeight for ALL participants, causing
+// validators with ML nodes in the preserved inference slot to receive no rewards
+// during epoch 158 settlement.
 //
-//	EpochGroupData (stored per epoch + model):
-//	  └── ValidationWeights []*ValidationWeight
-//	        └── MlNodes []*MLNodeInfo
-//	              └── TimeslotAllocation []bool  <-- We reset index [1] to false
-//
-// Note: The parent EpochGroupData (modelId="") has no MlNodes, only model subgroups do.
-func resetPocSlotsInEpochGroupData(ctx context.Context, k keeper.Keeper) {
-	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
-	if !found {
-		k.LogWarn("resetPocSlotsInEpochGroupData: no effective epoch found, skipping", types.Upgrades)
-		return
-	}
-
-	// Get parent EpochGroupData to find all model subgroups
-	parentData, found := k.GetEpochGroupData(ctx, effectiveEpochIndex, "")
-	if !found {
-		k.LogWarn("resetPocSlotsInEpochGroupData: parent epoch group data not found", types.Upgrades,
-			"epoch", effectiveEpochIndex)
-		return
-	}
-
-	totalResetCount := 0
-
-	// Reset each model subgroup (parent has no MlNodes, only subgroups do)
-	for _, modelId := range parentData.SubGroupModels {
-		subgroupData, found := k.GetEpochGroupData(ctx, effectiveEpochIndex, modelId)
-		if !found {
-			k.LogWarn("resetPocSlotsInEpochGroupData: subgroup not found", types.Upgrades,
-				"epoch", effectiveEpochIndex, "model", modelId)
-			continue
-		}
-
-		resetCount := 0
-		for _, vw := range subgroupData.ValidationWeights {
-			if vw == nil {
-				continue
-			}
-			for _, mlNode := range vw.MlNodes {
-				if mlNode == nil {
-					continue
-				}
-				// TimeslotAllocation[1] is POC_SLOT: true means node serves inference during POC
-				// We set it to false so all nodes participate in POC
-				if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] {
-					mlNode.TimeslotAllocation[1] = false
-					resetCount++
-				}
-			}
-		}
-
-		if resetCount > 0 {
-			k.SetEpochGroupData(ctx, subgroupData)
-			totalResetCount += resetCount
-			k.LogInfo("resetPocSlotsInEpochGroupData: reset POC_SLOT in subgroup", types.Upgrades,
-				"epoch", effectiveEpochIndex, "model", modelId, "nodes_reset", resetCount)
-		}
-	}
-
-	if totalResetCount > 0 {
-		k.LogInfo("resetPocSlotsInEpochGroupData: reset POC_SLOT in EpochGroupData complete", types.Upgrades,
-			"epoch", effectiveEpochIndex, "total_nodes_reset", totalResetCount)
-	} else {
-		k.LogInfo("resetPocSlotsInEpochGroupData: no POC_SLOT allocations to reset in EpochGroupData", types.Upgrades,
-			"epoch", effectiveEpochIndex)
-	}
-}
+// Only ActiveParticipants should be reset (via resetPocSlotsForEffectiveEpoch),
+// since it controls NEXT epoch's POC scheduling. EpochGroupData must not be
+// modified because it holds the settlement data for the CURRENT epoch.
