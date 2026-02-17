@@ -150,7 +150,7 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
+		AddVestedRewards(ctx, participantAddrStr, types.TopRewardPoolAccName, expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from top reward pool module
@@ -278,7 +278,7 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
+		AddVestedRewards(ctx, participantAddrStr, types.TopRewardPoolAccName, expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	err = k.PayParticipantFromModule(ctx, participantAddrStr, rewardAmount, types.TopRewardPoolAccName, "reward-payment", &rewardVestingPeriod)
@@ -300,7 +300,7 @@ func TestVestingIntegration_TopMinerRewards(t *testing.T) {
 	expectedCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedCoins, &topMinerVestingPeriod, gomock.Any()).
+		AddVestedRewards(ctx, participantAddrStr, types.TopRewardPoolAccName, expectedCoins, &topMinerVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute top miner reward payment
@@ -340,7 +340,7 @@ func TestVestingIntegration_ErrorHandling(t *testing.T) {
 
 	// Test case 2: Vesting keeper failure should be handled
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
+		AddVestedRewards(ctx, participantAddrStr, types.TopRewardPoolAccName, expectedCoins, &vestingPeriod, gomock.Any()).
 		Return(fmt.Errorf("invalid request"))
 
 	err := k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "vesting-error-test", &vestingPeriod)
