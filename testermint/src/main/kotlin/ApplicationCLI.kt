@@ -831,8 +831,8 @@ data class ApplicationCLI(
         val addresses: List<String> = emptyList()
     )
 
-    fun getTrainingAllowList(role: Int): List<String> = wrapLog("getTrainingAllowList", true ) {
-        execAndParse<AllowList>(listOf("query", "inference","training-allow-list", role.toString())).addresses
+    fun getTrainingAllowList(role: NodeRole): List<String> = wrapLog("getTrainingAllowList", true ) {
+        execAndParse<AllowList>(listOf("query", "inference","training-allow-list", role.value.toString())).addresses
     }
 
     data class Count(

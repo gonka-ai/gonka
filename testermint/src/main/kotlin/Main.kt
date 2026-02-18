@@ -387,18 +387,26 @@ private fun TxResponse.assertSuccess() {
 }
 
 val defaultFunding = 20_000_000L
+fun GsonBuilder.registerCosmosTypes(): GsonBuilder {
+    return this.registerTypeAdapter(Instant::class.java, InstantDeserializer())
+        .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+        .registerTypeAdapter(Duration::class.java, DurationSerializer())
+        .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
+        .registerTypeAdapter(Int::class.java, IntDeserializer())
+        .registerTypeAdapter(Integer::class.java, IntDeserializer())
+        .registerTypeAdapter(Long::class.java, LongDeserializer())
+        .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
+        .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
+        .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
+        .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
+        .registerTypeAdapter(ConfirmationPoCPhase::class.java, ConfirmationPoCPhaseDeserializer())
+        .registerTypeAdapter(InferenceStatus::class.java, InferenceStatusDeserializer())
+        .registerTypeAdapter(ProposalStatus::class.java, ProposalStatusDeserializer())
+}
+
 val cosmosJson: Gson = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
-    .registerTypeAdapter(Instant::class.java, InstantDeserializer())
-    .registerTypeAdapter(Duration::class.java, DurationDeserializer())
-    .registerTypeAdapter(Duration::class.java, DurationSerializer())
-    .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
-    .registerTypeAdapter(Long::class.java, LongDeserializer())
-    .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
-    .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
-    .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
-    .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
-    .registerTypeAdapter(ConfirmationPoCPhase::class.java, ConfirmationPoCPhaseDeserializer())
+    .registerCosmosTypes()
     .registerMessages("com.productscience.data", FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .create()
 
@@ -413,8 +421,7 @@ val gsonCamelCase = createGsonWithTxMessageSerializers("com.productscience.data"
 fun createGsonWithTxMessageSerializers(packageName: String): Gson {
     return GsonBuilder()
         .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
-        .registerTypeAdapter(Instant::class.java, InstantDeserializer())
-        .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+        .registerCosmosTypes()
         .registerMessages(packageName, FieldNamingPolicy.IDENTITY)
         .create()
 }
@@ -488,6 +495,8 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[PocParams::modelId] = defaultModel
                 this[PocParams::seqLen] = 256L
                 this[PocParams::pocV2Enabled] = true
+                this[PocParams::validationSlots] = 2L
+                this[PocParams::pocNormalizationEnabled] = false
             }
         }
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {

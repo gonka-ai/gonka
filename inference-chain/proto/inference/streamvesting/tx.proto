@@ -5,6 +5,7 @@ import "amino/amino.proto";
 import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
 import "inference/streamvesting/params.proto";
 
 option go_package = "github.com/productscience/inference/x/streamvesting/types";
@@ -16,6 +17,10 @@ service Msg {
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // TransferWithVesting transfers tokens from sender to recipient with a vesting schedule.
+  // The tokens will vest over the specified number of epochs (default: 180).
+  rpc TransferWithVesting(MsgTransferWithVesting) returns (MsgTransferWithVestingResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -38,3 +43,29 @@ message MsgUpdateParams {
 // MsgUpdateParamsResponse defines the response structure for executing a
 // MsgUpdateParams message.
 message MsgUpdateParamsResponse {}
+
+// MsgTransferWithVesting is the request type for transferring tokens with vesting.
+message MsgTransferWithVesting {
+  option (cosmos.msg.v1.signer) = "sender";
+  option (amino.name) = "inference/x/streamvesting/MsgTransferWithVesting";
+
+  // sender is the address of the account sending the tokens.
+  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // recipient is the address of the account receiving the vesting tokens.
+  string recipient = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // amount is the coins to transfer with vesting.
+  repeated cosmos.base.v1beta1.Coin amount = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // vesting_epochs is the number of epochs over which the tokens will vest.
+  // If not specified or 0, defaults to 180 epochs.
+  uint64 vesting_epochs = 4;
+}
+
+// MsgTransferWithVestingResponse defines the response for MsgTransferWithVesting.
+message MsgTransferWithVestingResponse {}

@@ -69,6 +69,11 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 	chainStatus, err := a.tendermintClient.Status()
 	if err != nil {
 		slog.Error(logTag+"Failed to query chain status", "err", err)
+		return
+	}
+	if chainStatus == nil {
+		slog.Error(logTag + "Failed to query chain status: empty response")
+		return
 	}
 
 	if chainStatus.SyncInfo.CatchingUp {

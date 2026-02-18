@@ -129,6 +129,7 @@ func main() {
 	// Create v2 orchestrator for artifact-based PoC
 	pocOrchestrator := poc.NewOrchestrator(
 		participantInfo.GetPubKey(),
+		participantInfo.GetAddress(),
 		nodeBroker,
 		config.GetApiConfig().PoCCallbackUrl,
 		config.GetChainNodeConfig().Url,

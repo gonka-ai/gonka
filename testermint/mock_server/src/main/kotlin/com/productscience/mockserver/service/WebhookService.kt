@@ -184,7 +184,15 @@ class WebhookService(private val responseService: ResponseService) {
                 val start = latestNonce.getAndAdd(weight) + (nodeId * 1_000_000L)
                 val artifacts = (0 until weight.toInt()).map { i ->
                     val nonce = start + i
-                    val vectorBytes = ByteArray(24) { j -> ((nonce * 2 + j) % 256).toByte() }
+                    // Generate valid FP16 vectors (24 bytes = 12 FP16 values)
+                    // FP16 NaN/Inf have exponent bits = 31 (0x7C00-0x7FFF, 0xFC00-0xFFFF)
+                    // To avoid these, we mask the high byte to keep exponent < 31
+                    val vectorBytes = ByteArray(24) { j ->
+                        val rawByte = ((nonce * 2 + j) % 256).toByte()
+                        // For odd indices (high byte of FP16), mask to avoid exp=31
+                        // exp bits are in bits 2-6 of high byte; masking with 0x7B ensures exp <= 30
+                        if (j % 2 == 1) (rawByte.toInt() and 0x7B).toByte() else rawByte
+                    }
                     val vectorB64 = java.util.Base64.getEncoder().encodeToString(vectorBytes)
                     """{"nonce": $nonce, "vector_b64": "$vectorB64"}"""
                 }.joinToString(", ")

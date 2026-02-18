@@ -21,6 +21,7 @@ type orchestratorImpl struct {
 
 func NewOrchestrator(
 	pubKey string,
+	validatorAddress string,
 	nodeBroker *broker.Broker,
 	callbackUrl string,
 	chainNodeUrl string,
@@ -35,6 +36,7 @@ func NewOrchestrator(
 		phaseTracker,
 		callbackUrl,
 		pubKey,
+		validatorAddress,
 		chainNodeUrl,
 		config,
 	)
@@ -45,6 +47,7 @@ func NewOrchestrator(
 		phaseTracker,
 		callbackUrl,
 		pubKey,
+		validatorAddress,
 		chainNodeUrl,
 		config,
 	)

@@ -35,6 +35,7 @@ import "inference/inference/confirmation_poc_event.proto";
 import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
+import "inference/inference/poc_validation_snapshot.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -478,6 +479,11 @@ service Query {
   rpc ParticipantsWithBalances (QueryParticipantsWithBalancesRequest) returns (QueryParticipantsWithBalancesResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participants_with_balances";
 
+  }
+
+  // Queries PoC validation snapshot for deterministic sampling synchronization.
+  rpc PoCValidationSnapshot (QueryPoCValidationSnapshotRequest) returns (QueryPoCValidationSnapshotResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1257,4 +1263,13 @@ message QueryRandomSeedsRequest {
 // QueryRandomSeedsResponse is response type for the Query/RandomSeeds RPC method.
 message QueryRandomSeedsResponse {
   repeated RandomSeed seeds = 1;
+}
+
+message QueryPoCValidationSnapshotRequest {
+  int64 poc_stage_start_height = 1;
+}
+
+message QueryPoCValidationSnapshotResponse {
+  PoCValidationSnapshot snapshot = 1;
+  bool found = 2;
 }

@@ -3,6 +3,7 @@ package keeper
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"math/big"
 
 	"cosmossdk.io/log"
@@ -412,6 +413,142 @@ func getSmallNetworkLimit(participantCount int) *types.Decimal {
 	}
 }
 
+const (
+	dynamicP0MarginPermille           uint64 = 20
+	dynamicP0MinTotalRequests         uint64 = 1000
+	dynamicP0MinParticipantsWithTotal        = 5
+)
+
+func permilleToP0Decimal(permille uint64) *types.Decimal {
+	return &types.Decimal{Value: int64(permille), Exponent: -3}
+}
+
+func ceilToSupportedP0Permille(targetPermille uint64) uint64 {
+	switch {
+	case targetPermille <= 50:
+		return 50
+	case targetPermille <= 100:
+		return 100
+	case targetPermille <= 200:
+		return 200
+	case targetPermille <= 300:
+		return 300
+	case targetPermille <= 400:
+		return 400
+	default:
+		return 500
+	}
+}
+
+func decimalToPermilleCeil(p0 *types.Decimal) uint64 {
+	if p0 == nil {
+		return 0
+	}
+	permilleFloor := p0.ToDecimal().Mul(decimal.NewFromInt(1000)).IntPart()
+	if permilleFloor <= 0 {
+		return 0
+	}
+	permille := uint64(permilleFloor)
+	if p0.ToDecimal().GreaterThan(decimal.New(permilleFloor, -3)) {
+		permille++
+	}
+	return permille
+}
+
+func getDynamicP0(participants []types.Participant, validationParams *types.ValidationParams, epoch uint64, logger log.Logger) (*types.Decimal, bool) {
+	governanceP0Permille := uint64(100)
+	if validationParams != nil && validationParams.BinomTestP0 != nil {
+		govCeil := decimalToPermilleCeil(validationParams.BinomTestP0)
+		if govCeil > 500 {
+			logger.Info("Bitcoin Rewards: Governance BinomTestP0 unsupported for lookup tables; using governance value directly",
+				"epoch", epoch,
+				"binomTestP0", validationParams.BinomTestP0.ToDecimal().String(),
+			)
+			return validationParams.BinomTestP0, false
+		}
+		if govCeil > 0 {
+			governanceP0Permille = ceilToSupportedP0Permille(govCeil)
+		}
+	}
+
+	var totalRequests uint64
+	var missedRequests uint64
+	participantsUsed := 0
+
+	for _, participant := range participants {
+		if participant.CurrentEpochStats == nil {
+			continue
+		}
+		inferenceCount := participant.CurrentEpochStats.InferenceCount
+		missed := participant.CurrentEpochStats.MissedRequests
+		total, carry := bits.Add64(inferenceCount, missed, 0)
+		if carry != 0 {
+			total = ^uint64(0)
+		}
+		if total == 0 {
+			continue
+		}
+
+		sumTotal, carry := bits.Add64(totalRequests, total, 0)
+		if carry != 0 {
+			sumTotal = ^uint64(0)
+		}
+		totalRequests = sumTotal
+
+		sumMissed, carry := bits.Add64(missedRequests, missed, 0)
+		if carry != 0 {
+			sumMissed = ^uint64(0)
+		}
+		missedRequests = sumMissed
+		participantsUsed++
+	}
+
+	if totalRequests < dynamicP0MinTotalRequests || participantsUsed < dynamicP0MinParticipantsWithTotal {
+		logger.Info("Bitcoin Rewards: Dynamic p0 selection fallback to governance (sample gate)",
+			"epoch", epoch,
+			"totalRequests", totalRequests,
+			"missedRequests", missedRequests,
+			"participantCountUsed", participantsUsed,
+			"minTotalRequests", dynamicP0MinTotalRequests,
+			"minParticipantsWithTotal", dynamicP0MinParticipantsWithTotal,
+			"finalPermille", governanceP0Permille,
+		)
+		return permilleToP0Decimal(governanceP0Permille), false
+	}
+
+	hi, lo := bits.Mul64(missedRequests, 1000)
+	baselinePermille, _ := bits.Div64(hi, lo, totalRequests)
+
+	targetPermille := baselinePermille + dynamicP0MarginPermille
+	if targetPermille > 500 {
+		targetPermille = 500
+	}
+	selectedTablePermille := ceilToSupportedP0Permille(targetPermille)
+
+	finalPermille := selectedTablePermille
+	if governanceP0Permille > finalPermille {
+		finalPermille = governanceP0Permille
+	}
+
+	skipPunishment := selectedTablePermille == 500
+
+	logger.Info("Bitcoin Rewards: Dynamic p0 selection",
+		"epoch", epoch,
+		"totalRequests", totalRequests,
+		"missedRequests", missedRequests,
+		"participantCountUsed", participantsUsed,
+		"baselinePermille", baselinePermille,
+		"marginPermille", dynamicP0MarginPermille,
+		"targetPermille", targetPermille,
+		"selectedTablePermille", selectedTablePermille,
+		"governancePermille", governanceP0Permille,
+		"finalPermille", finalPermille,
+		"skipPunishment", skipPunishment,
+	)
+
+	return permilleToP0Decimal(finalPermille), skipPunishment
+}
+
 // CalculateParticipantBitcoinRewards implements the main Bitcoin reward distribution logic
 // Preserves WorkCoins distribution while implementing fixed RewardCoins based on PoC weight
 func CalculateParticipantBitcoinRewards(
@@ -545,11 +682,12 @@ func CalculateParticipantBitcoinRewards(
 
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
-	p0 := types.DecimalFromFloat(0.10)
-	if validationParams != nil && validationParams.BinomTestP0 != nil {
-		p0 = validationParams.BinomTestP0
+	p0, skipPunishment := getDynamicP0(participants, validationParams, currentEpoch, logger)
+	if !skipPunishment {
+		CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
+	} else {
+		logger.Info("Bitcoin Rewards: Skipping downtime punishment (outage circuit breaker)", "epoch", currentEpoch)
 	}
-	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
 	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
 	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeightBeforeDowntime after downtime punishment,
 	// invalidation, or CPoC reductions. Any "missed" share becomes undistributed and transferred to governance.

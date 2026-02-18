@@ -228,6 +228,21 @@ func TestShouldValidate(t *testing.T) {
 
 }
 
+func TestShouldValidate_DivisionByZeroGuard(t *testing.T) {
+	details := &types.InferenceValidationDetails{InferenceId: fixedInferenceId, TrafficBasis: defaultTrafficCutoff}
+	params := &types.ValidationParams{
+		MinValidationAverage: types.DecimalFromFloat(0.1), MaxValidationAverage: types.DecimalFromFloat(1.0),
+		FullValidationTrafficCutoff: defaultTrafficCutoff, MinValidationTrafficCutoff: 100,
+		MinValidationHalfway: types.DecimalFromFloat(0.05), EpochsToMax: defaultEpochsToMax,
+	}
+
+	result, _ := ShouldValidate(0, details, 100, 50, 100, params, false)
+	require.False(t, result)
+
+	result, _ = ShouldValidate(0, details, 50, 25, 100, params, false)
+	require.False(t, result)
+}
+
 func TestShouldValidatePerformance(t *testing.T) {
 	inferenceDetails := &types.InferenceValidationDetails{
 		InferenceId:        fixedInferenceId,

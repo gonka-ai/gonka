@@ -189,6 +189,8 @@ func (s *ArtifactStore) Add(nonce int32, vector []byte) error {
 
 // AddWithNode appends an artifact and tracks which node contributed it.
 func (s *ArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId string) error {
+	leafHash := hashLeaf(encodeLeaf(nonce, vector))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -204,16 +206,9 @@ func (s *ArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId string) e
 		return ErrDuplicateNonce
 	}
 
-	for _, b := range s.buffer {
-		if b.nonce == nonce {
-			return ErrDuplicateNonce
-		}
-	}
-
 	s.nonceToLeafIndex[nonce] = s.nextLeafIndex
 	s.buffer = append(s.buffer, bufferedArtifact{nonce: nonce, vector: vector, nodeId: nodeId})
 
-	leafHash := hashLeaf(encodeLeaf(nonce, vector))
 	appendToMMR(&s.mmrNodes, leafHash, s.nextLeafIndex)
 	s.nextLeafIndex++
 

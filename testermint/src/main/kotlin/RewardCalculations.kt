@@ -187,13 +187,13 @@ fun calculateBalanceChanges(
 ): Map<String, Long> {
     val payouts: MutableMap<String, Long> = mutableMapOf()
     inferences.forEach { inference ->
-        when (inference.status) {
-            InferenceStatus.STARTED.value -> {
+        when (inference.statusEnum) {
+            InferenceStatus.STARTED -> {
                 require(inference.escrowAmount != null) { "Escrow amount is null for started inference" }
                 payouts.add(inference.requestedBy!!, inference.escrowAmount!!, "initial escrow")
             }
             // no payouts
-            InferenceStatus.FINISHED.value -> {
+            InferenceStatus.FINISHED -> {
                 require(inference.actualCost != null) { "Actual cost is null for finished inference" }
                 require(inference.assignedTo != null) { "Assigned to is null for finished inference" }
                 require(inference.escrowAmount != null) { "Escrow amount is null for finished inference" }
@@ -207,7 +207,7 @@ fun calculateBalanceChanges(
                 )
             }
 
-            InferenceStatus.VALIDATED.value -> {
+            InferenceStatus.VALIDATED -> {
                 require(inference.actualCost != null) { "Actual cost is null for validated inference" }
                 require(inference.assignedTo != null) { "Assigned to is null for validated inference" }
                 // ValidatedBy can be empty if the validation was done post-settle
@@ -243,9 +243,13 @@ fun calculateBalanceChanges(
                 payouts.add(inference.requestedBy!!, -inference.actualCost!!, "actual cost")
             }
 
-            InferenceStatus.EXPIRED.value, InferenceStatus.INVALIDATED.value -> {
+            InferenceStatus.EXPIRED, InferenceStatus.INVALIDATED -> {
                 // full refund
                 payouts.add(inference.requestedBy!!, 0, "full refund of expired or invalidated")
+            }
+            
+            else -> {
+                Logger.warn("Unknown inference status: ${inference.statusEnum}")
             }
         }
     }
@@ -281,16 +285,16 @@ fun MutableMap<String, Long>.add(key: String, amount: Long, reason: String) {
 fun expectedCoinBalanceChanges(inferences: List<InferencePayload>): Map<String, Long> {
     val payouts: MutableMap<String, Long> = mutableMapOf()
     inferences.forEach { inference ->
-        when (inference.status) {
-            InferenceStatus.STARTED.value -> {}
+        when (inference.statusEnum) {
+            InferenceStatus.STARTED -> {}
             // no payouts
-            InferenceStatus.FINISHED.value -> {
+            InferenceStatus.FINISHED -> {
                 require(inference.actualCost != null) { "Actual cost is null for finished inference" }
                 require(inference.assignedTo != null) { "Assigned to is null for finished inference" }
                 payouts.add(inference.assignedTo!!, inference.actualCost!!, "Full Inference (WorkCoins)")
             }
 
-            InferenceStatus.VALIDATED.value -> {
+            InferenceStatus.VALIDATED -> {
                 require(inference.actualCost != null) { "Actual cost is null for validated inference" }
                 require(inference.assignedTo != null) { "Assigned to is null for validated inference" }
                 val validators = listOf(inference.assignedTo) + (inference.validatedBy ?: listOf())
@@ -299,6 +303,7 @@ fun expectedCoinBalanceChanges(inferences: List<InferencePayload>): Map<String, 
                 }
                 payouts.add(inference.assignedTo!!, inference.actualCost!! % validators.size, "Validator remainder (WorkCoins)")
             }
+            else -> {}
         }
     }
     return payouts
@@ -338,13 +343,13 @@ fun calculateVestingScheduleChanges(
     
     // Process each inference following the same logic as calculateBalanceChanges
     inferences.forEach { inference ->
-        when (inference.status) {
-            InferenceStatus.STARTED.value -> {
+        when (inference.statusEnum) {
+            InferenceStatus.STARTED -> {
                 require(inference.escrowAmount != null) { "Escrow amount is null for started inference" }
                 costs.add(inference.requestedBy!!, inference.escrowAmount!!)
             }
             
-            InferenceStatus.FINISHED.value -> {
+            InferenceStatus.FINISHED -> {
                 require(inference.actualCost != null) { "Actual cost is null for finished inference" }
                 require(inference.assignedTo != null) { "Assigned to is null for finished inference" }
                 require(inference.escrowAmount != null) { "Escrow amount is null for finished inference" }
@@ -358,7 +363,7 @@ fun calculateVestingScheduleChanges(
                 rewardCoins.add(inference.assignedTo!!, rewardAmount)
             }
 
-            InferenceStatus.VALIDATED.value -> {
+            InferenceStatus.VALIDATED -> {
                 require(inference.actualCost != null) { "Actual cost is null for validated inference" }
                 require(inference.assignedTo != null) { "Assigned to is null for validated inference" }
                 require(inference.escrowAmount != null) { "Escrow amount is null for validated inference" }
@@ -382,9 +387,10 @@ fun calculateVestingScheduleChanges(
                 }
             }
 
-            InferenceStatus.EXPIRED.value, InferenceStatus.INVALIDATED.value -> {
+            InferenceStatus.EXPIRED, InferenceStatus.INVALIDATED -> {
                 // No costs or rewards for expired/invalidated inferences
             }
+            else -> {}
         }
     }
     

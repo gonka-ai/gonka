@@ -41,7 +41,7 @@ class InferenceFailureAccountingTests : TestermintTest() {
         Logger.info { "QUERIED ALL INFERENCES 2 (again):\n" + queryResp2.joinToString("\n") }
         val canceledInference =
             cluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
-        assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
+        assertThat(canceledInference.statusEnum).isEqualTo(InferenceStatus.EXPIRED)
         assertThat(canceledInference.executedBy).isNull()
         val afterTimeouts = genesis.node.getInferenceTimeouts()
         assertThat(afterTimeouts.inferenceTimeout).hasSize(0)

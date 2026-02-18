@@ -115,7 +115,7 @@ data class RawParticipant(
     val joinTime: Long,
     val joinHeight: Long,
     val inferenceUrl: String,
-    val status: Int,
+    val status: String,
     val epochsCompleted: Long,
 ) : ParticipantInfo {
     override fun getParticipantAddress(): String = index

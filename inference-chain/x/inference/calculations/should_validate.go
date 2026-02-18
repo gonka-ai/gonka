@@ -20,6 +20,9 @@ func ShouldValidate(
 	validationParams *types.ValidationParams,
 	debug bool,
 ) (bool, string) {
+	if totalPower <= executorPower {
+		return false, "ShouldValidate:false totalPower <= executorPower"
+	}
 	// Creating with exponent vs dividing
 	executorReputation := decimal.New(int64(inferenceDetails.ExecutorReputation), -2)
 	maxValidationAverage := validationParams.MaxValidationAverage.ToDecimal()

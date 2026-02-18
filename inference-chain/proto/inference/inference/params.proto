@@ -64,7 +64,7 @@ message EpochParams {
   int64 epoch_shift = 3;
   int64 default_unit_of_compute_price = 4;
   int64 poc_stage_duration = 5;
-  int64 poc_exchange_duration = 6;
+  int64 poc_exchange_duration = 6 [deprecated = true];
   int64 poc_validation_delay = 7;
   int64 poc_validation_duration = 8;
   int64 set_new_validators_delay = 9;
@@ -139,6 +139,8 @@ message PocParams {
   bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
   bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
   PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
+  uint32 validation_slots = 11;  // Number of slots sampled per participant (0 = disabled)
+  bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
 }
 
 message Decimal {

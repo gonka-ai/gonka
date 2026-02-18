@@ -247,3 +247,29 @@ nodes:
 	require.Contains(t, ids, "json-node", string(b))
 	require.NotContains(t, ids, "yaml-node2", string(b))
 }
+
+func TestConfigNotRewrittenOnSecondLoad(t *testing.T) {
+	tmp := t.TempDir()
+	yaml := `api:
+  port: 8080
+chain_node:
+  url: http://localhost:26657
+  signer_key_name: test`
+	cfgPath := writeTempFile(t, tmp, "config.yaml", yaml)
+	dbPath := filepath.Join(tmp, "test.db")
+
+	mgr1, err := apiconfig.LoadConfigManagerWithPaths(cfgPath, dbPath, "")
+	require.NoError(t, err)
+	require.NoError(t, mgr1.FlushNow(context.Background()))
+
+	stat1, err := os.Stat(cfgPath)
+	require.NoError(t, err)
+
+	mgr2, err := apiconfig.LoadConfigManagerWithPaths(cfgPath, dbPath, "")
+	require.NoError(t, err)
+	require.NoError(t, mgr2.FlushNow(context.Background()))
+
+	stat2, err := os.Stat(cfgPath)
+	require.NoError(t, err)
+	require.Equal(t, stat1.ModTime(), stat2.ModTime())
+}

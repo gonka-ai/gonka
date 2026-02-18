@@ -18,6 +18,8 @@ import (
 	echomw "github.com/labstack/echo/v4/middleware"
 )
 
+const httpClientTimeout = 5 * time.Minute
+
 type Server struct {
 	e                   *echo.Echo
 	nodeBroker          *broker.Broker
@@ -32,6 +34,7 @@ type Server struct {
 	epochGroupDataCache *internal.EpochGroupDataCache
 	artifactStore       *artifacts.ManagedArtifactStore
 	authzCache          *authzcache.AuthzCache
+	httpClient          *http.Client
 }
 
 // ServerOption configures optional Server dependencies.
@@ -71,6 +74,7 @@ func NewServer(
 		phaseTracker:        phaseTracker,
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
+		httpClient:          NewNoRedirectClient(httpClientTimeout),
 	}
 
 	for _, opt := range opts {

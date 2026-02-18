@@ -9,7 +9,7 @@ data class EpochBLSDataWrapper(
 
 data class SigningStatusWrapper(
     @SerializedName("signing_request")
-    val signingRequest: ThresholdSigningRequest
+    val signingRequest: ThresholdSigningRequest?
 )
 
 data class EpochBLSData(

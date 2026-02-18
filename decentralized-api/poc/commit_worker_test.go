@@ -65,20 +65,22 @@ func TestCommitWorker_ShouldAcceptStoreCommit_RegularPoC(t *testing.T) {
 
 func TestCommitWorker_ShouldHaveDistributedWeights(t *testing.T) {
 	tests := []struct {
-		name   string
-		phase  types.EpochPhase
-		expect bool
+		name        string
+		phase       types.EpochPhase
+		blockHeight int64
+		expect      bool
 	}{
-		{"validate phase", types.PoCValidatePhase, true},
-		{"validate wind down", types.PoCValidateWindDownPhase, true},
-		{"generate wind down", types.PoCGenerateWindDownPhase, true},
-		{"generate phase", types.PoCGeneratePhase, false},
-		{"inference phase", types.InferencePhase, false},
+		{"validate phase", types.PoCValidatePhase, 300, true},
+		{"validate wind down", types.PoCValidateWindDownPhase, 350, true},
+		{"wind down after generation end", types.PoCGenerateWindDownPhase, 210, true},
+		{"wind down before generation end", types.PoCGenerateWindDownPhase, 180, false},
+		{"generate phase", types.PoCGeneratePhase, 120, false},
+		{"inference phase", types.InferencePhase, 500, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			epochState := createCommitWorkerTestEpochState(tt.phase, 100, 50)
+			epochState := createCommitWorkerTestEpochState(tt.phase, tt.blockHeight, 100)
 			result := ShouldHaveDistributedWeights(epochState)
 			assert.Equal(t, tt.expect, result)
 		})

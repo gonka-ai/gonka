@@ -16,6 +16,7 @@ type mockKeeperForModelAssigner struct {
 	hardwareNodes    map[string]*types.HardwareNodes
 	governanceModels []types.Model
 	epochGroupData   map[string]map[uint64]types.EpochGroupData // modelId -> epochIndex -> data
+	settleAmounts    map[string]types.SettleAmount              // participant -> settle (optional; when set, participants count as rewarded for previous epoch)
 	params           *types.Params
 }
 
@@ -43,6 +44,15 @@ func (m *mockKeeperForModelAssigner) GetEpochGroupData(ctx context.Context, epoc
 		}
 	}
 	return types.EpochGroupData{}, false
+}
+
+func (m *mockKeeperForModelAssigner) GetSettleAmount(ctx context.Context, participant string) (val types.SettleAmount, found bool) {
+	if m.settleAmounts != nil {
+		if s, ok := m.settleAmounts[participant]; ok {
+			return s, true
+		}
+	}
+	return types.SettleAmount{}, false
 }
 
 func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Params, error) {
@@ -1055,11 +1065,24 @@ func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
 		0: {ValidationWeights: previousValidationWeights},
 	}
 
+	// Settle amounts for previous epoch (epoch 0): all participants rewarded so they are eligible for POC_SLOT allocation
+	previousEpochIndex := uint64(0)
+	settleAmounts := make(map[string]types.SettleAmount, numParticipants)
+	for i := 0; i < numParticipants; i++ {
+		participantID := formatParticipantID(i)
+		settleAmounts[participantID] = types.SettleAmount{
+			Participant: participantID,
+			EpochIndex:  previousEpochIndex,
+			RewardCoins: 1,
+		}
+	}
+
 	// Setup mock keeper
 	mockKeeper := &mockKeeperForModelAssigner{
 		governanceModels: []types.Model{{Id: modelID}},
 		hardwareNodes:    hardwareNodesMap,
 		epochGroupData:   previousEpochGroupData,
+		settleAmounts:    settleAmounts,
 		params: &types.Params{
 			EpochParams: &types.EpochParams{
 				PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}, // 0.5
@@ -1250,6 +1273,148 @@ func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
 				"Distribution among eligible participants should be relatively fair")
 		}
 	}
+}
+
+// TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants verifies that when no participants
+// have a reward for the previous epoch, none are added to previousEpochData, so there are no
+// eligible participants and no POC_SLOT allocation. It covers three ways to be ineligible:
+// - no settle amount at all (participant not in settleAmounts)
+// - settle amount with RewardCoins == 0 (slashed / no reward)
+// - settle amount with reward but for a different epoch (EpochIndex != previousEpoch)
+func TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants(t *testing.T) {
+	const (
+		numParticipants     = 20
+		nodesPerParticipant = 10
+		baseWeight          = 10
+		modelID             = "model-no-reward"
+		previousEpochIndex  = uint64(0) // upcomingEpoch.Index will be 1
+	)
+
+	// Partition participants into three ineligible groups (upcoming epoch = 1, previous = 0):
+	// - No settle: participants 0-6  -> not in settleAmounts map (GetSettleAmount returns not found)
+	// - Zero reward: 7-13           -> in map with EpochIndex=0, RewardCoins=0
+	// - Wrong epoch: 14-19          -> in map with EpochIndex=2, RewardCoins=1 (reward for wrong epoch)
+	const (
+		noSettleEnd     = 7  // 0..6
+		zeroRewardEnd   = 14 // 7..13
+		wrongEpochStart = 14 // 14..19
+	)
+
+	ctx := context.Background()
+
+	var participants []*types.ActiveParticipant
+	hardwareNodesMap := make(map[string]*types.HardwareNodes)
+	previousEpochGroupData := make(map[string]map[uint64]types.EpochGroupData)
+	previousValidationWeights := make([]*types.ValidationWeight, 0, numParticipants)
+
+	for i := 0; i < numParticipants; i++ {
+		participantID := formatParticipantID(i)
+
+		hardwareNodes := make([]*types.HardwareNode, nodesPerParticipant)
+		mlNodes := make([]*types.MLNodeInfo, nodesPerParticipant)
+		previousMLNodes := make([]*types.MLNodeInfo, nodesPerParticipant)
+
+		for j := 0; j < nodesPerParticipant; j++ {
+			nodeID := formatNodeID(i, j)
+			weight := int64(baseWeight)
+			if j%2 == 0 {
+				weight = int64(baseWeight * 2)
+			}
+
+			hardwareNodes[j] = &types.HardwareNode{LocalId: nodeID, Models: []string{modelID}}
+			mlNodes[j] = &types.MLNodeInfo{NodeId: nodeID, PocWeight: weight, TimeslotAllocation: []bool{true, false}}
+			previousMLNodes[j] = &types.MLNodeInfo{NodeId: nodeID, PocWeight: weight}
+		}
+
+		participantWeight := int64(nodesPerParticipant * baseWeight * 3 / 2)
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   participantID,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: mlNodes}},
+			Weight:  participantWeight,
+		})
+
+		hardwareNodesMap[participantID] = &types.HardwareNodes{Participant: participantID, HardwareNodes: hardwareNodes}
+		previousValidationWeights = append(previousValidationWeights, &types.ValidationWeight{
+			MemberAddress: participantID,
+			MlNodes:       previousMLNodes,
+		})
+	}
+
+	previousEpochGroupData[modelID] = map[uint64]types.EpochGroupData{
+		0: {ValidationWeights: previousValidationWeights},
+	}
+
+	// settleAmounts is non-nil but only contains entries that still make everyone ineligible:
+	// - participants 0-6: omitted (no settle) -> GetSettleAmount returns not found
+	// - participants 7-13: EpochIndex=previousEpoch, RewardCoins=0 -> skipped (zero reward)
+	// - participants 14-19: EpochIndex=2, RewardCoins=1 -> skipped (wrong epoch)
+	settleAmounts := make(map[string]types.SettleAmount)
+	for i := noSettleEnd; i < zeroRewardEnd; i++ {
+		participantID := formatParticipantID(i)
+		settleAmounts[participantID] = types.SettleAmount{
+			Participant: participantID,
+			EpochIndex:  previousEpochIndex,
+			RewardCoins: 0, // zero reward => ineligible
+		}
+	}
+	for i := wrongEpochStart; i < numParticipants; i++ {
+		participantID := formatParticipantID(i)
+		settleAmounts[participantID] = types.SettleAmount{
+			Participant: participantID,
+			EpochIndex:  previousEpochIndex + 2, // wrong epoch (e.g. 2 when previous is 0)
+			RewardCoins: 1,
+		}
+	}
+
+	t.Logf("Ineligible groups: no settle (0..%d), zero reward (%d..%d), wrong epoch (%d..%d)",
+		noSettleEnd-1, noSettleEnd, zeroRewardEnd-1, wrongEpochStart, numParticipants-1)
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: []types.Model{{Id: modelID}},
+		hardwareNodes:    hardwareNodesMap,
+		epochGroupData:   previousEpochGroupData,
+		settleAmounts:    settleAmounts,
+		params: &types.Params{
+			EpochParams: &types.EpochParams{
+				PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1},
+			},
+		},
+	}
+
+	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
+	upcomingEpoch := types.Epoch{Index: 1}
+
+	modelAssigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
+	modelAssigner.AllocateMLNodesForPoC(ctx, upcomingEpoch, participants)
+
+	var globalTotalNodes int
+	var globalAllocatedNodes int
+	var globalAllocatedWeight int64
+	participantsWithAllocation := 0
+
+	for _, participant := range participants {
+		require.Len(t, participant.MlNodes, 1)
+		participantHasAllocation := false
+		for _, node := range participant.MlNodes[0].MlNodes {
+			globalTotalNodes++
+			if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+				globalAllocatedNodes++
+				globalAllocatedWeight += node.PocWeight
+				participantHasAllocation = true
+			}
+		}
+		if participantHasAllocation {
+			participantsWithAllocation++
+		}
+	}
+
+	t.Logf("No-reward scenario: total nodes=%d, allocated nodes=%d, allocated weight=%d, participants with allocation=%d",
+		globalTotalNodes, globalAllocatedNodes, globalAllocatedWeight, participantsWithAllocation)
+
+	require.Equal(t, 0, globalAllocatedNodes, "No nodes should have POC_SLOT=true when no participants have reward")
+	require.Equal(t, int64(0), globalAllocatedWeight, "Allocated weight should be 0 when no participants have reward")
+	require.Equal(t, 0, participantsWithAllocation, "No participant should have any POC_SLOT allocation")
 }
 
 // Helper functions for test
@@ -1776,6 +1941,12 @@ func TestAllocateMLNodesForPoC_MixedUniformAndHeterogeneous(t *testing.T) {
 					},
 				},
 			},
+		},
+		// All participants rewarded in previous epoch (epoch 0) so they are eligible for POC_SLOT allocation
+		settleAmounts: map[string]types.SettleAmount{
+			"participant1": {Participant: "participant1", EpochIndex: 0, RewardCoins: 1},
+			"participant2": {Participant: "participant2", EpochIndex: 0, RewardCoins: 1},
+			"participant3": {Participant: "participant3", EpochIndex: 0, RewardCoins: 1},
 		},
 		params: &types.Params{
 			EpochParams: &types.EpochParams{

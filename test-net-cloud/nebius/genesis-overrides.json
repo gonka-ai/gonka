@@ -103,7 +103,8 @@
             "dist_threshold": { "value": "4", "exponent": -1 },
             "p_mismatch": { "value": "1", "exponent": -1 },
             "p_value_threshold": { "value": "5", "exponent": -2 }
-          }
+          },
+          "poc_normalization_enabled": true
         },
         "confirmation_poc_params": {
           "expected_confirmations_per_epoch": "4"

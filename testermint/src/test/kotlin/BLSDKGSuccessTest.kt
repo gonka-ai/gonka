@@ -268,12 +268,14 @@ class BLSDKGSuccessTest : TestermintTest() {
         val signingStatus = genesis.api.queryBLSSigningStatus(requestIdHex)
         
         if (signingStatus.signingRequest == null) {
-            Logger.error("Signing request not found! This suggests the request was never created, expired, or has a different ID")
+            Logger.error("Signing request not found for request ID: $requestId (hex: $requestIdHex)")
+            return
         }
         
-        val statusCode = signingStatus.signingRequest.status.toString().toInt()
-        val statusEnum = ThresholdSigningStatus.fromValue(statusCode)
-        Logger.info("Found signing request with status: $statusEnum ($statusCode)")
+        val statusStr = signingStatus.signingRequest!!.status
+        val statusEnum = ThresholdSigningStatus.fromAny(statusStr)
+        
+        Logger.info("Found signing request with status: $statusEnum ($statusStr)")
         assertThat(statusEnum).isEqualTo(ThresholdSigningStatus.COMPLETED)
         assertThat(signingStatus.signingRequest.finalSignature).isNotNull()
         val sigBytes = Base64.getDecoder().decode(signingStatus.signingRequest.finalSignature)
@@ -528,7 +530,23 @@ enum class DKGPhase(val value: Int) {
     VERIFYING(2), 
     COMPLETED(3),
     FAILED(4),
-    SIGNED(5)
+    SIGNED(5);
+
+    companion object {
+        fun fromAny(value: Any?): DKGPhase {
+            return when (value) {
+                is String -> {
+                    val normalized = value.removePrefix("DKG_PHASE_")
+                    values().find { it.name == normalized } ?: run {
+                        val num = normalized.toIntOrNull()
+                        if (num != null) values().find { it.value == num } ?: UNDEFINED else UNDEFINED
+                    }
+                }
+                is Number -> values().find { it.value == value.toInt() } ?: UNDEFINED
+                else -> UNDEFINED
+            }
+        }
+    }
 }
 
 enum class ThresholdSigningStatus(val value: Int) {
@@ -541,6 +559,20 @@ enum class ThresholdSigningStatus(val value: Int) {
     companion object {
         fun fromValue(value: Int): ThresholdSigningStatus =
             values().firstOrNull { it.value == value } ?: UNSPECIFIED
+
+        fun fromAny(value: Any?): ThresholdSigningStatus {
+            return when (value) {
+                is String -> {
+                    val cleanName = value.replace("THRESHOLD_SIGNING_STATUS_", "")
+                    values().find { it.name == cleanName } ?: run {
+                        val num = cleanName.toIntOrNull()
+                        if (num != null) fromValue(num) else UNSPECIFIED
+                    }
+                }
+                is Number -> fromValue(value.toInt())
+                else -> UNSPECIFIED
+            }
+        }
     }
 }
 
@@ -620,64 +652,92 @@ fun com.productscience.ApplicationCLI.queryEpochBLSData(epochId: Long): EpochBLS
 
 /**
  * Helper function to parse query results into EpochBLSData
- * Parses the JSON response from the CLI query
  */
 private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? {
     return try {
-        // The CLI response structure is: { "epoch_data": { ... } }
+        // The CLI response structure might use snake_case or camelCase
         @Suppress("UNCHECKED_CAST")
-        val epochData = (result["epoch_data"] as? Map<String, Any>) ?: return null
+        val epochData = (result["epoch_data"] as? Map<String, Any>) 
+            ?: (result["epochData"] as? Map<String, Any>)
+            ?: return null
+        
+        fun getValue(vararg keys: String): Any? {
+            for (key in keys) {
+                val v = epochData[key]
+                if (v != null) return v
+            }
+            return null
+        }
         
         // Parse basic fields
-        val epochId = when (val value = epochData["epoch_id"]) {
+        val epochId = when (val value = getValue("epoch_id", "epochId")) {
             is String -> value.toLongOrNull() ?: 0L
             is Number -> value.toLong()
             else -> 0L
         }
-        val iTotalSlots = when (val value = epochData["i_total_slots"]) {
+        val iTotalSlots = when (val value = getValue("i_total_slots", "iTotalSlots")) {
             is String -> value.toIntOrNull() ?: 0
             is Number -> value.toInt()
             else -> 0
         }
-        val tSlotsDegree = when (val value = epochData["t_slots_degree"]) {
+        val tSlotsDegree = when (val value = getValue("t_slots_degree", "tSlotsDegree")) {
             is String -> value.toIntOrNull() ?: 0
             is Number -> value.toInt()
             else -> 0
         }
-        val dealingDeadline = when (val value = epochData["dealing_phase_deadline_block"]) {
+        val dealingDeadline = when (val value = getValue("dealing_phase_deadline_block", "dealingPhaseDeadlineBlock")) {
             is String -> value.toLongOrNull() ?: 0L
             is Number -> value.toLong()
             else -> 0L
         }
-        val verifyingDeadline = when (val value = epochData["verifying_phase_deadline_block"]) {
+        val verifyingDeadline = when (val value = getValue("verifying_phase_deadline_block", "verifyingPhaseDeadlineBlock")) {
             is String -> value.toLongOrNull() ?: 0L
             is Number -> value.toLong()
             else -> 0L
         }
         
-        // Parse DKG phase (server returns numeric values like "dkg_phase": 1)
-        val dkgPhaseNum = when (val phase = epochData["dkg_phase"]) {
-            is Number -> phase.toInt()
-            is String -> phase.toIntOrNull() ?: 0
-            else -> 0
+        // Parse DKG phase
+        val dkgPhase = when (val phase = getValue("dkg_phase", "dkgPhase")) {
+            is String -> {
+                // Try to parse as enum name first
+                try {
+                    val cleanName = phase.replace("DKG_PHASE_", "")
+                    DKGPhase.valueOf(cleanName)
+                } catch (e: IllegalArgumentException) {
+                    // Fallback to integer parsing if string is numeric (legacy)
+                    val num = phase.toIntOrNull() ?: 0
+                    DKGPhase.values().find { it.value == num } ?: DKGPhase.UNDEFINED
+                }
+            }
+            is Number -> {
+                val num = phase.toInt()
+                DKGPhase.values().find { it.value == num } ?: DKGPhase.UNDEFINED
+            }
+            else -> DKGPhase.UNDEFINED
         }
-        val dkgPhase = DKGPhase.values().find { it.value == dkgPhaseNum } 
-            ?: DKGPhase.UNDEFINED
         
         // Parse participants
         @Suppress("UNCHECKED_CAST")
-        val participantsList = (epochData["participants"] as? List<Map<String, Any>>) ?: emptyList()
+        val participantsList = (getValue("participants") as? List<Map<String, Any>>) ?: emptyList()
         val participants = participantsList.map { participantMap ->
+            fun getPartValue(vararg keys: String): Any? {
+                for (key in keys) {
+                    val v = participantMap[key]
+                    if (v != null) return v
+                }
+                return null
+            }
+
             BLSParticipantInfo(
-                address = participantMap["address"] as? String ?: "",
-                percentageWeight = (participantMap["percentage_weight"] as? String ?: "0").toDouble(),  // Already in percentage format (0-100)
-                secp256k1PublicKey = parseByteArrayFromChain(participantMap["secp256k1_public_key"]),
-                slotStartIndex = when (val value = participantMap["slot_start_index"]) {
+                address = getPartValue("address") as? String ?: "",
+                percentageWeight = (getPartValue("percentage_weight", "percentageWeight") as? String ?: "0").toDouble(),
+                secp256k1PublicKey = parseByteArrayFromChain(getPartValue("secp256k1_public_key", "secp256k1PublicKey")),
+                slotStartIndex = when (val value = getPartValue("slot_start_index", "slotStartIndex")) {
                     is String -> value.toIntOrNull() ?: 0
                     is Number -> value.toInt()
                     else -> 0
                 },
-                slotEndIndex = when (val value = participantMap["slot_end_index"]) {
+                slotEndIndex = when (val value = getPartValue("slot_end_index", "slotEndIndex")) {
                     is String -> value.toIntOrNull() ?: 0
                     is Number -> value.toInt()
                     else -> 0
@@ -686,27 +746,31 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? 
         }
         
         // Parse group public key
-        val groupPublicKey = parseByteArrayFromChain(epochData["group_public_key"])
+        val groupPublicKey = parseByteArrayFromChain(getValue("group_public_key", "groupPublicKey"))
         
         // Parse dealer parts
         @Suppress("UNCHECKED_CAST")
-        val dealerPartsList = (epochData["dealer_parts"] as? List<Map<String, Any>>) ?: emptyList()
+        val dealerPartsList = (getValue("dealer_parts", "dealerParts") as? List<Map<String, Any>>) ?: emptyList()
         val dealerParts = dealerPartsList.mapNotNull { dealerMap ->
-            val dealerAddress = dealerMap["dealer_address"] as? String ?: ""
-            if (dealerAddress.isEmpty()) return@mapNotNull null // Skip empty entries (participants who haven't submitted dealer parts)
+            fun getDealerValue(vararg keys: String): Any? {
+                for (key in keys) {
+                    val v = dealerMap[key]
+                    if (v != null) return v
+                }
+                return null
+            }
+            val dealerAddress = getDealerValue("dealer_address", "dealerAddress") as? String ?: ""
+            if (dealerAddress.isEmpty()) return@mapNotNull null
             
             @Suppress("UNCHECKED_CAST")
-            val commitmentsList = (dealerMap["commitments"] as? List<Any>) ?: emptyList()
-            Logger.debug("Raw commitments from chain: ${commitmentsList.take(1)} (type: ${commitmentsList.firstOrNull()?.javaClass?.simpleName})")
+            val commitmentsList = (getDealerValue("commitments") as? List<Any>) ?: emptyList()
             val commitments = commitmentsList.map { parseByteArrayFromChain(it) }
-            Logger.debug("Parsed commitments sizes: ${commitments.map { it.size }}")
             
             @Suppress("UNCHECKED_CAST")
-            val participantSharesList = (dealerMap["participant_shares"] as? List<Map<String, Any>>) ?: emptyList()
+            val participantSharesList = (getDealerValue("participant_shares", "participantShares") as? List<Map<String, Any>>) ?: emptyList()
             val participantShares = participantSharesList.map { sharesMap ->
                 @Suppress("UNCHECKED_CAST")
-                val encryptedSharesList = (sharesMap["encrypted_shares"] as? List<Any>) ?: emptyList()
-                Logger.debug("Raw encrypted shares from chain: ${encryptedSharesList.take(1).map { it?.javaClass?.simpleName }}") // Log first share type
+                val encryptedSharesList = (sharesMap["encrypted_shares"] ?: sharesMap["encryptedShares"]) as? List<Any> ?: emptyList()
                 val encryptedShares = encryptedSharesList.map { parseByteArrayFromChain(it) }
                 EncryptedSharesForParticipant(encryptedShares)
             }
@@ -720,21 +784,21 @@ private fun parseEpochBLSDataFromQuery(result: Map<String, Any>): EpochBLSData? 
         
         // Parse verification submissions
         @Suppress("UNCHECKED_CAST")
-        val verificationSubmissionsList = (epochData["verification_submissions"] as? List<Map<String, Any>>) ?: emptyList()
+        val verificationSubmissionsList = (getValue("verification_submissions", "verificationSubmissions") as? List<Map<String, Any>>) ?: emptyList()
         val verificationSubmissions = verificationSubmissionsList.mapNotNull { submissionMap ->
             @Suppress("UNCHECKED_CAST")
-            val dealerValidityList = (submissionMap["dealer_validity"] as? List<Boolean>) ?: emptyList()
-            if (dealerValidityList.isEmpty()) return@mapNotNull null // Skip empty entries (participants who haven't submitted verification vectors)
+            val dealerValidityList = (submissionMap["dealer_validity"] ?: submissionMap["dealerValidity"]) as? List<Boolean> ?: emptyList()
+            if (dealerValidityList.isEmpty()) return@mapNotNull null
             
             VerificationVectorSubmission(dealerValidityList)
         }
         
         // Parse valid dealers
         @Suppress("UNCHECKED_CAST")
-        val validDealersList = (epochData["valid_dealers"] as? List<Boolean>) ?: emptyList()
+        val validDealersList = (getValue("valid_dealers", "validDealers") as? List<Boolean>) ?: emptyList()
         
         // Parse validation signature
-        val validationSignature = parseByteArrayFromChain(epochData["validation_signature"])
+        val validationSignature = parseByteArrayFromChain(getValue("validation_signature", "validationSignature"))
         
         EpochBLSData(
             epochId = epochId,

@@ -38,20 +38,22 @@ func createTestEpochState(phase types.EpochPhase, blockHeight, pocStartHeight in
 
 func TestShouldAcceptGeneratedArtifacts_RegularPoC(t *testing.T) {
 	tests := []struct {
-		name   string
-		phase  types.EpochPhase
-		expect bool
+		name        string
+		phase       types.EpochPhase
+		blockHeight int64
+		expect      bool
 	}{
-		{"generate phase accepts", types.PoCGeneratePhase, true},
-		{"generate wind down rejects", types.PoCGenerateWindDownPhase, false},
-		{"validate phase rejects", types.PoCValidatePhase, false},
-		{"validate wind down rejects", types.PoCValidateWindDownPhase, false},
-		{"inference phase rejects", types.InferencePhase, false},
+		{"generate phase accepts", types.PoCGeneratePhase, 110, true},
+		{"wind down accepts in exchange window", types.PoCGenerateWindDownPhase, 190, true},
+		{"wind down rejects after exchange window", types.PoCGenerateWindDownPhase, 260, false},
+		{"validate phase rejects", types.PoCValidatePhase, 300, false},
+		{"validate wind down rejects", types.PoCValidateWindDownPhase, 350, false},
+		{"inference phase rejects", types.InferencePhase, 500, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			epochState := createTestEpochState(tt.phase, 110, 100)
+			epochState := createTestEpochState(tt.phase, tt.blockHeight, 100)
 			result := ShouldAcceptGeneratedArtifacts(epochState)
 			assert.Equal(t, tt.expect, result)
 		})
@@ -60,22 +62,26 @@ func TestShouldAcceptGeneratedArtifacts_RegularPoC(t *testing.T) {
 
 func TestShouldAcceptGeneratedArtifacts_ConfirmationPoC(t *testing.T) {
 	tests := []struct {
-		name       string
-		eventPhase types.ConfirmationPoCPhase
-		expect     bool
+		name        string
+		eventPhase  types.ConfirmationPoCPhase
+		blockHeight int64
+		genStart    int64
+		expect      bool
 	}{
-		{"confirmation generation accepts", types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION, true},
-		{"confirmation validation rejects", types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION, false},
-		{"confirmation grace period rejects", types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD, false},
-		{"confirmation completed rejects", types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED, false},
+		{"generation accepts in window", types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION, 500, 450, true},
+		{"generation rejects after window", types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION, 700, 450, false},
+		{"validation rejects", types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION, 600, 450, false},
+		{"grace period rejects", types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD, 440, 450, false},
+		{"completed rejects", types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED, 800, 450, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			epochState := createTestEpochState(types.InferencePhase, 500, 100)
+			epochState := createTestEpochState(types.InferencePhase, tt.blockHeight, 100)
 			epochState.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
-				TriggerHeight: 450,
-				Phase:         tt.eventPhase,
+				TriggerHeight:         tt.genStart - 10,
+				GenerationStartHeight: tt.genStart,
+				Phase:                 tt.eventPhase,
 			}
 			result := ShouldAcceptGeneratedArtifacts(epochState)
 			assert.Equal(t, tt.expect, result)
@@ -261,20 +267,22 @@ func TestShouldAcceptStoreCommit_NilOrNotSynced(t *testing.T) {
 
 func TestShouldHaveDistributedWeights_AllPhases(t *testing.T) {
 	tests := []struct {
-		name   string
-		phase  types.EpochPhase
-		expect bool
+		name        string
+		phase       types.EpochPhase
+		blockHeight int64
+		expect      bool
 	}{
-		{"validate phase", types.PoCValidatePhase, true},
-		{"validate wind down", types.PoCValidateWindDownPhase, true},
-		{"generate wind down", types.PoCGenerateWindDownPhase, true},
-		{"generate phase", types.PoCGeneratePhase, false},
-		{"inference phase", types.InferencePhase, false},
+		{"validate phase", types.PoCValidatePhase, 300, true},
+		{"validate wind down", types.PoCValidateWindDownPhase, 350, true},
+		{"wind down after generation end", types.PoCGenerateWindDownPhase, 210, true},
+		{"wind down before generation end", types.PoCGenerateWindDownPhase, 180, false},
+		{"generate phase", types.PoCGeneratePhase, 120, false},
+		{"inference phase", types.InferencePhase, 500, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			epochState := createTestEpochState(tt.phase, 100, 50)
+			epochState := createTestEpochState(tt.phase, tt.blockHeight, 100)
 			result := ShouldHaveDistributedWeights(epochState)
 			assert.Equal(t, tt.expect, result)
 		})

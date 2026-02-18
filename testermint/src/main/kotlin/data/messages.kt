@@ -15,6 +15,29 @@ data class MsgSubmitNewParticipant(
     val workerKey: String = "",
 ) : TxMessage
 
+data class MsgSend(
+    override val type: String = "/cosmos.bank.v1beta1.MsgSend",
+    val fromAddress: String = "",
+    val toAddress: String = "",
+    val amount: List<Coin> = listOf(),
+) : TxMessage, GovernanceMessage {
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(fromAddress = authority)
+    }
+}
+
+data class MsgTransferWithVesting(
+    override val type: String = "/inference.streamvesting.MsgTransferWithVesting",
+    val sender: String = "",
+    val recipient: String = "",
+    val amount: List<Coin> = listOf(),
+    val vestingEpochs: Long,
+) : TxMessage, GovernanceMessage {
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(sender = authority)
+    }
+}
+
 interface GovernanceMessage : TxMessage {
     override val type: String
     fun withAuthority(authority: String): GovernanceMessage
@@ -83,8 +106,19 @@ data class MsgRemoveUserFromTrainingAllowList(
     }
 }
 
+@Deprecated("Use NodeRole.EXEC.value instead")
 const val ROLE_EXEC = 0;
+@Deprecated("Use NodeRole.START.value instead")
 const val ROLE_START = 1;
+
+enum class NodeRole(val value: Int) {
+    EXEC(0),
+    START(1);
+
+    companion object {
+        fun fromValue(value: Int): NodeRole = values().find { it.value == value } ?: EXEC
+    }
+}
 
 data class MsgSetTrainingAllowList(
     val authority: String = "",
@@ -109,9 +143,36 @@ data class FinalTallyResult(
     val noWithVetoCount: Long
 )
 
+enum class ProposalStatus(val value: Int) {
+    UNSPECIFIED(0),
+    DEPOSIT_PERIOD(1),
+    VOTING_PERIOD(2),
+    PASSED(3),
+    REJECTED(4),
+    FAILED(5);
+
+    companion object {
+        fun fromValue(value: Int): ProposalStatus = values().find { it.value == value } ?: UNSPECIFIED
+
+        fun fromAny(value: Any?): ProposalStatus {
+            return when (value) {
+                is String -> {
+                    val normalized = value.removePrefix("PROPOSAL_STATUS_")
+                    values().find { it.name == normalized } ?: run {
+                        val num = normalized.toIntOrNull()
+                        if (num != null) values().find { it.value == num } ?: UNSPECIFIED else UNSPECIFIED
+                    }
+                }
+                is Number -> fromValue(value.toInt())
+                else -> UNSPECIFIED
+            }
+        }
+    }
+}
+
 data class GovernanceProposalResponse(
     val id: String,
-    val status: Int,
+    val status: ProposalStatus,
     val finalTallyResult: FinalTallyResult,
     val submitTime: Instant,
     val depositEndTime: Instant,

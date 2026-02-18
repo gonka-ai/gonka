@@ -53,19 +53,26 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 }
 
 func (k msgServer) refundInvalidatedInference(executor *types.Participant, inference *types.Inference, ctx context.Context) error {
-	executor.CoinBalance -= inference.ActualCost
-	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "inference_invalidated:"+inference.InferenceId)
-	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
-	// We need to refund the cost, so we have to lookup the person who paid
+	// Lookup the payer first
 	payer, found := k.GetParticipant(ctx, inference.RequestedBy)
 	if !found {
 		k.LogError("Payer not found", types.Validation, "address", inference.RequestedBy)
 		return types.ErrParticipantNotFound
 	}
+
+	// Attempt refund BEFORE modifying executor balance
+	// If refund fails (e.g. underfunded escrow), don't corrupt state
 	err := k.IssueRefund(ctx, inference.ActualCost, payer.Address, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
+		return err
 	}
+
+	// Only deduct from executor after successful refund
+	executor.CoinBalance -= inference.ActualCost
+	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "invalidated_inference:"+inference.InferenceId)
+	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
+
 	return nil
 }
 

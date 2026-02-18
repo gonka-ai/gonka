@@ -7,6 +7,7 @@ FROM golang:1.24.2-alpine3.20 AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64
+ARG BLST_PORTABLE=0
 
 ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
@@ -14,9 +15,10 @@ ENV GOOS=${GOOS} \
     GO111MODULE=on \
     GOCACHE=/root/.cache/go-build \
     GOMODCACHE=/go/pkg/mod \
-    CGO_CFLAGS="-I/lib" \
+    CGO_CFLAGS="-I/lib -O2" \
+    CGO_CFLAGS_ALLOW=".*" \
     CGO_LDFLAGS="-L/lib" \
-    # Override the wasmvm library path to use our musl version
+    BLST_PORTABLE=${BLST_PORTABLE} \
     LD_LIBRARY_PATH=/lib
 
 RUN apk add --no-cache make gcc musl-dev git patchelf
@@ -51,6 +53,7 @@ ARG LDFLAGS
 ARG TAGS=""
 RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     --mount=type=cache,id=go-mod-cache,target=/go/pkg/mod \
+    if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -tags="muslc ${TAGS}" -ldflags "${LDFLAGS}" \
     -o ./build/inferenced \

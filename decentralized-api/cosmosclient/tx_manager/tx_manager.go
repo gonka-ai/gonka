@@ -37,6 +37,7 @@ import (
 	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/types"
 	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 )
 
 const (
@@ -110,6 +111,7 @@ func StartTxManager(
 	collateraltypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	streamvestingtypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 
 	m := &manager{
 		ctx:              ctx,

@@ -26,12 +26,13 @@ const (
 )
 
 type OnChainValidator struct {
-	recorder     cosmosclient.CosmosMessageClient
-	nodeBroker   *broker.Broker
-	phaseTracker *chainphase.ChainPhaseTracker
-	callbackUrl  string
-	pubKey       string
-	chainNodeUrl string
+	recorder         cosmosclient.CosmosMessageClient
+	nodeBroker       *broker.Broker
+	phaseTracker     *chainphase.ChainPhaseTracker
+	callbackUrl      string
+	pubKey           string
+	validatorAddress string
+	chainNodeUrl     string
 
 	config ValidationConfig
 }
@@ -42,17 +43,19 @@ func NewOnChainValidator(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	callbackUrl string,
 	pubKey string,
+	validatorAddress string,
 	chainNodeUrl string,
 	config ValidationConfig,
 ) *OnChainValidator {
 	return &OnChainValidator{
-		recorder:     recorder,
-		nodeBroker:   nodeBroker,
-		phaseTracker: phaseTracker,
-		callbackUrl:  callbackUrl,
-		pubKey:       pubKey,
-		chainNodeUrl: chainNodeUrl,
-		config:       config,
+		recorder:         recorder,
+		nodeBroker:       nodeBroker,
+		phaseTracker:     phaseTracker,
+		callbackUrl:      callbackUrl,
+		pubKey:           pubKey,
+		validatorAddress: validatorAddress,
+		chainNodeUrl:     chainNodeUrl,
+		config:           config,
 	}
 }
 
