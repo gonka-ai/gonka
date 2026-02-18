@@ -130,6 +130,7 @@ func ProcessFinishInference(
 	finishMessage *types.MsgFinishInference,
 	blockContext BlockContext,
 	logger types.InferenceLogger,
+	isMissingPayload bool,
 ) (*types.Inference, *Payments, error) {
 	payments := Payments{}
 	logger.LogInfo("FinishInference being processed", types.Inferences)
@@ -149,7 +150,11 @@ func ProcessFinishInference(
 			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
-	currentInference.Status = types.InferenceStatus_FINISHED
+	if isMissingPayload {
+		currentInference.Status = types.InferenceStatus_FINISHED_WITH_MISSING_PAYLOAD
+	} else {
+		currentInference.Status = types.InferenceStatus_FINISHED
+	}
 	currentInference.ResponseHash = finishMessage.ResponseHash
 	// PromptTokenCount for Finish can be set to 0 if the inference was streamed and interrupted
 	// before the end of the response. Then we should default to the value set in StartInference.

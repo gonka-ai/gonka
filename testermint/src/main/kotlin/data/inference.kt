@@ -74,6 +74,7 @@ enum class InferenceStatus(val value: Int) {
     INVALIDATED(3),
     VOTING(4),
     EXPIRED(5),
+    FINISHED_WITH_MISSING_PAYLOAD(6),
 }
 
 data class InferencesWrapper(

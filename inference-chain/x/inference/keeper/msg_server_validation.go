@@ -44,13 +44,16 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		}
 	}
 
-	if inference.Status == types.InferenceStatus_INVALIDATED {
+	switch inference.Status {
+	case types.InferenceStatus_INVALIDATED:
 		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
 		return &types.MsgValidationResponse{}, nil
-	}
-	if inference.Status == types.InferenceStatus_STARTED {
+	case types.InferenceStatus_STARTED:
 		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
+	case types.InferenceStatus_FINISHED_WITH_MISSING_PAYLOAD:
+		k.LogError("Inference finished with missing payload", types.Validation, "status", inference.Status, "inference", inference)
+		return nil, types.ErrInferenceFinishedWithMissingPayload
 	}
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)

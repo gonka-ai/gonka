@@ -1,4 +1,5 @@
 import com.productscience.*
+import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeAll
@@ -51,17 +52,22 @@ class VoterTests : TestermintTest() {
         // Wait for the voter fallback and inference execution to complete.
         // The flow is: executor detects MsgStart → direct retrieval fails →
         // voter fallback → voter gets payload from TA → forwards to executor → executor finishes.
-        genesis.node.waitForNextBlock(4)
-        val inference = genesis.node.getInference(inferenceResponse.id)?.inference
+        var inference: InferencePayload? = waitInferenceUntilStatus(InferenceStatus.FINISHED, inferenceResponse.id)
         assertNotNull(inference)
 
         assertThat(inference.inferenceId).isEqualTo(inferenceSignature)
         assertThat(inference.requestTimestamp).isEqualTo(inferenceTimestamp)
         assertThat(inference.transferredBy).isEqualTo(genesisAddress)
-        // The inference should be at least FINISHED — the voter successfully recovered the payload.
-        // It may have already progressed to VALIDATED by the time we check.
-        assertThat(inference.status).isGreaterThanOrEqualTo(InferenceStatus.FINISHED.value)
+        assertThat(inference.status).isEqualTo(InferenceStatus.FINISHED.value)
         assertThat(inference.executedBy).isEqualTo(inference.assignedTo)
+        // No refund given
+        //assertThat(inference.escrowAmount).isLessThan(inference.actualCost)
+
+        // Wait until validated
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        inference = waitInferenceUntilStatus(InferenceStatus.VALIDATED, inferenceResponse.id)
+        assertNotNull(inference)
+        assertThat(inference.status).isEqualTo(InferenceStatus.VALIDATED.value)
     }
 
     /**
@@ -99,15 +105,23 @@ class VoterTests : TestermintTest() {
 
         // Wait enough blocks for the voter fallback to complete.
         // All voters should fail to find the payload and cast negative votes.
-        genesis.node.waitForNextBlock(4)
-        val inference = genesis.node.getInference(inferenceResponse.id)?.inference
+        var inference: InferencePayload? = waitInferenceUntilStatus(
+            InferenceStatus.FINISHED_WITH_MISSING_PAYLOAD,
+            inferenceResponse.id,
+        )
         assertNotNull(inference)
 
         assertThat(inference.inferenceId).isEqualTo(inferenceSignature)
         assertThat(inference.requestTimestamp).isEqualTo(inferenceTimestamp)
         assertThat(inference.transferredBy).isEqualTo(genesisAddress)
-        // The inference should still be STARTED — no one could execute it
-        assertThat(inference.status).isEqualTo(InferenceStatus.STARTED.value)
+        assertThat(inference.status).isEqualTo(InferenceStatus.FINISHED_WITH_MISSING_PAYLOAD.value)
+        // Refund given
+        //assertThat(inference.escrowAmount).isGreaterThan(inference.actualCost)
+
+        // Ensure we remain finished with missing payload
+        inference = waitInferenceUntilStatus(InferenceStatus.VALIDATED, inferenceResponse.id)
+        assertNotNull(inference)
+        assertThat(inference.status).isEqualTo(InferenceStatus.FINISHED_WITH_MISSING_PAYLOAD.value)
     }
 
     /**
@@ -139,6 +153,31 @@ class VoterTests : TestermintTest() {
         assertThat(response.statusCode).isEqualTo(400)
         val body = String(response.data)
         assertThat(body).contains("inference not found on chain")
+    }
+
+    fun waitInferenceUntilStatus(expectedStatus: InferenceStatus, inferenceId: String): InferencePayload? {
+        return waitUntilStatus(expectedStatus) {
+            val inference = genesis.node.getInference(inferenceId)?.inference
+            if (inference != null) {
+                Pair(inference, InferenceStatus.values()[inference.status])
+            } else {
+                null
+            }
+        }
+    }
+
+    fun <T> waitUntilStatus(
+        expectedStatus: InferenceStatus,
+        getStatus: () -> Pair<T, InferenceStatus>?,
+    ): T? {
+        var tries = 5
+        var newStatus: Pair<T, InferenceStatus>?
+        do {
+            logSection("Trying to get inference with status. Tries left: $tries.")
+            genesis.node.waitForNextBlock(1)
+            newStatus = getStatus()
+        } while (newStatus?.second != expectedStatus && tries-- > 0)
+        return newStatus?.first
     }
 
     companion object {

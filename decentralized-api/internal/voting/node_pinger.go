@@ -317,7 +317,7 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 		return err
 	}
 
-	err = np.PostChat(executorURL, executorAddress, payload.Payload.PromptPayload, nil)
+	err = np.PostChat(executorURL, payload.Payload.PromptPayload, nil)
 	if err != nil {
 		logging.Error("Failed to post chat request to executor", types.Voting, "inferenceId", inferenceId, "executorURL", executorURL, "executorAddress", executorAddress, "error", err)
 		return err
@@ -328,7 +328,6 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 
 func (np *NodePinger) PostChat(
 	executorURL string,
-	executorAddress string,
 	payloadBytes []byte,
 	votingResult *inference.VotingResult,
 ) error {
@@ -513,7 +512,7 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 			return err
 		}
 
-		err = np.PostChat(executorURL, executorAddress, result.FirstPositive.Response.Payload.PromptPayload, votingResult)
+		err = np.PostChat(executorURL, result.FirstPositive.Response.Payload.PromptPayload, votingResult)
 		if err != nil {
 			logging.Error("VoterFallback: failed to post chat to executor", types.Voting,
 				"inferenceId", inferenceId, "error", err)
@@ -526,10 +525,10 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 	} else {
 		executorSignature, err := np.signMsgFinishInference(
 			inferenceResp.Inference.PromptHash,
-			votingResult.CompletedAt,
+			inferenceResp.Inference.RequestTimestamp,
 			transferAddress,
 			executorAddress,
-			epochId,
+			0,
 		)
 		if err != nil {
 			logging.Error(
@@ -898,7 +897,7 @@ func (np *NodePinger) signPayloadRequest(
 		ExecutorAddress: "",
 	}
 
-	return np.sign(components)
+	return np.sign(components, calculations.Developer)
 }
 
 // signVerificationRequest signs a verification request from challenger to voter.
@@ -915,7 +914,7 @@ func (np *NodePinger) signVerificationRequest(
 		ExecutorAddress: "",
 	}
 
-	return np.sign(components)
+	return np.sign(components, calculations.Developer)
 }
 
 // signVerificationRequest signs a verification request from challenger to voter.
@@ -934,7 +933,7 @@ func (np *NodePinger) signMsgFinishInference(
 		ExecutorAddress: executorAddress,
 	}
 
-	return np.sign(components)
+	return np.sign(components, calculations.ExecutorAgent)
 }
 
 func (np *NodePinger) signVotingResult(
@@ -952,11 +951,14 @@ func (np *NodePinger) signVotingResult(
 		ExecutorAddress: "",
 	}
 
-	return np.sign(components)
+	return np.sign(components, calculations.Developer)
 }
 
 // sign is a helper to sign with the cosmos client's keyring.
-func (np *NodePinger) sign(components calculations.SignatureComponents) (string, error) {
+func (np *NodePinger) sign(
+	components calculations.SignatureComponents,
+	signatureType calculations.SignatureType,
+) (string, error) {
 	signerAddressStr := np.cosmosClient.GetSignerAddress()
 	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
 	if err != nil {
@@ -968,5 +970,5 @@ func (np *NodePinger) sign(components calculations.SignatureComponents) (string,
 		Keyring: np.cosmosClient.GetKeyring(),
 	}
 
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(accountSigner, components, signatureType)
 }

@@ -10,6 +10,7 @@ enum InferenceStatus {
   INVALIDATED = 3;
   VOTING = 4;
   EXPIRED = 5;
+  FINISHED_WITH_MISSING_PAYLOAD = 6;
 }
 
 message ProposalDetails {
