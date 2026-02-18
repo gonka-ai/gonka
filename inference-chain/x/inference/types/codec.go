@@ -57,6 +57,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgRegisterModel{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgDeleteGovernanceModel{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgCreateTrainingTask{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),

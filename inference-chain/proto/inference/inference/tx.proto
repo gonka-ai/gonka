@@ -41,6 +41,7 @@ service Msg {
   rpc SubmitSeed                       (MsgSubmitSeed) returns (MsgSubmitSeedResponse);
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel) returns (MsgRegisterModelResponse);
+  rpc DeleteGovernanceModel            (MsgDeleteGovernanceModel) returns (MsgDeleteGovernanceModelResponse);
   rpc CreateTrainingTask               (MsgCreateTrainingTask) returns (MsgCreateTrainingTaskResponse);
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff) returns (MsgSubmitHardwareDiffResponse);
   rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade) returns (MsgCreatePartialUpgradeResponse);
@@ -294,6 +295,14 @@ message MsgRegisterModel {
 }
 
 message MsgRegisterModelResponse {}
+
+message MsgDeleteGovernanceModel {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string id = 2;
+}
+
+message MsgDeleteGovernanceModelResponse {}
 
 message MsgCreateTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";

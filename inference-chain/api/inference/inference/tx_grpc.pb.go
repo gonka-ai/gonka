@@ -36,6 +36,7 @@ const (
 	Msg_SubmitSeed_FullMethodName                       = "/inference.inference.Msg/SubmitSeed"
 	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
 	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
+	Msg_DeleteGovernanceModel_FullMethodName            = "/inference.inference.Msg/DeleteGovernanceModel"
 	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
 	Msg_SubmitHardwareDiff_FullMethodName               = "/inference.inference.Msg/SubmitHardwareDiff"
 	Msg_CreatePartialUpgrade_FullMethodName             = "/inference.inference.Msg/CreatePartialUpgrade"
@@ -88,6 +89,7 @@ type MsgClient interface {
 	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
+	DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGovernanceModel, opts ...grpc.CallOption) (*MsgDeleteGovernanceModelResponse, error)
 	CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error)
 	SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwareDiff, opts ...grpc.CallOption) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(ctx context.Context, in *MsgCreatePartialUpgrade, opts ...grpc.CallOption) (*MsgCreatePartialUpgradeResponse, error)
@@ -270,6 +272,15 @@ func (c *msgClient) SubmitUnitOfComputePriceProposal(ctx context.Context, in *Ms
 func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error) {
 	out := new(MsgRegisterModelResponse)
 	err := c.cc.Invoke(ctx, Msg_RegisterModel_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGovernanceModel, opts ...grpc.CallOption) (*MsgDeleteGovernanceModelResponse, error) {
+	out := new(MsgDeleteGovernanceModelResponse)
+	err := c.cc.Invoke(ctx, Msg_DeleteGovernanceModel_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -526,6 +537,7 @@ type MsgServer interface {
 	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
+	DeleteGovernanceModel(context.Context, *MsgDeleteGovernanceModel) (*MsgDeleteGovernanceModelResponse, error)
 	CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error)
 	SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error)
@@ -608,6 +620,9 @@ func (UnimplementedMsgServer) SubmitUnitOfComputePriceProposal(context.Context, 
 }
 func (UnimplementedMsgServer) RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterModel not implemented")
+}
+func (UnimplementedMsgServer) DeleteGovernanceModel(context.Context, *MsgDeleteGovernanceModel) (*MsgDeleteGovernanceModelResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteGovernanceModel not implemented")
 }
 func (UnimplementedMsgServer) CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateTrainingTask not implemented")
@@ -999,6 +1014,24 @@ func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).RegisterModel(ctx, req.(*MsgRegisterModel))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_DeleteGovernanceModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgDeleteGovernanceModel)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).DeleteGovernanceModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_DeleteGovernanceModel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).DeleteGovernanceModel(ctx, req.(*MsgDeleteGovernanceModel))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1527,6 +1560,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterModel",
 			Handler:    _Msg_RegisterModel_Handler,
+		},
+		{
+			MethodName: "DeleteGovernanceModel",
+			Handler:    _Msg_DeleteGovernanceModel_Handler,
 		},
 		{
 			MethodName: "CreateTrainingTask",
