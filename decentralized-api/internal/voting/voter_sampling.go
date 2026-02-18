@@ -15,10 +15,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// DefaultMaxVoters is the default number of voters to sample for fallback verification.
-// TODO: move this to config?
-const DefaultMaxVoters = 5
-
 // SampledVoter contains a voter's address and inference URL.
 type SampledVoter struct {
 	Address      string

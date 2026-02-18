@@ -463,11 +463,10 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		EpochId:           epochId,
 	}
 
-	votingCfg := VotingConfig{
-		MaxNumNodes: len(voterURLs),
-		VoteTimeout: int(np.timeout.Milliseconds()),
-		MaxRetries:  2,
-	}
+	votingCfg := DefaultVotingConfig()
+	// Override defaults with NodePinger-specific settings.
+	votingCfg.VoteTimeout = int(np.timeout.Milliseconds())
+	votingCfg.MaxRetries = 2
 
 	// Request verification from voters
 	result, err := np.RequestVerificationFromVoters(ctx, voterURLs, verificationRequest, votingCfg)
@@ -559,7 +558,14 @@ func (np *NodePinger) RequestVerificationFromVoters(
 	}
 
 	// Apply sane defaults from config.
-	if cfg.MaxNumNodes <= 0 || cfg.MaxNumNodes > len(voterURLs) {
+	// By default, we cap the number of voters to DefaultMaxVoters (or fewer if not enough URLs).
+	if cfg.MaxNumNodes <= 0 {
+		if len(voterURLs) < DefaultMaxVoters {
+			cfg.MaxNumNodes = len(voterURLs)
+		} else {
+			cfg.MaxNumNodes = DefaultMaxVoters
+		}
+	} else if cfg.MaxNumNodes > len(voterURLs) {
 		cfg.MaxNumNodes = len(voterURLs)
 	}
 	if cfg.MaxRetries <= 0 {
