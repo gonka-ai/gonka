@@ -7,6 +7,7 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"go.uber.org/mock/gomock"
 )
 
@@ -29,11 +30,12 @@ func (s *KeeperTestSuite) TestSlashing_Proportional() {
 	totalCollateral := activeAmount + unbondingAmount
 	expectedSlashedAmount := math.NewInt(totalCollateral).ToLegacyDec().Mul(slashFraction).TruncateInt()
 
-	// Expect the total slashed amount to be burned from the module account
+	// Expect the total slashed amount to be redirected to governance
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
-			s.Require().Equal(types.ModuleName, moduleName)
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
 			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
@@ -71,10 +73,12 @@ func (s *KeeperTestSuite) TestSlashing_ActiveOnly() {
 	slashFraction := math.LegacyNewDecWithPrec(20, 2) // 20%
 	expectedSlashedAmount := math.NewInt(activeAmount).ToLegacyDec().Mul(slashFraction).TruncateInt()
 
-	// Expect the total slashed amount to be burned
+	// Expect the total slashed amount to be redirected to governance
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
 			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
@@ -111,10 +115,12 @@ func (s *KeeperTestSuite) TestSlashing_UnbondingOnly() {
 	slashFraction := math.LegacyNewDecWithPrec(50, 2) // 50%
 	expectedSlashedAmount := math.NewInt(unbondingAmount).ToLegacyDec().Mul(slashFraction).TruncateInt()
 
-	// Expect the total slashed amount to be burned
+	// Expect the total slashed amount to be redirected to governance
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
 			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
