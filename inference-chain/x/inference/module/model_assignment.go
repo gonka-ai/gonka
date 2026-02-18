@@ -475,7 +475,7 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 
 	for _, modelId := range sortedModelIds {
 		ma.LogInfo("Processing model for PoC allocation", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_loop_start", "model_id", modelId)
-		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
+		ma.allocateMLNodePerPoCForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction, upcomingEpoch)
 	}
 }
 
@@ -679,6 +679,7 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 	currentEpochData *EpochMLNodeData,
 	eligibleNodesData *EpochMLNodeData,
 	fraction *types.Decimal,
+	upcomingEpoch types.Epoch,
 ) {
 	ma.LogInfo("Starting allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_start", "model_id", modelId)
 
@@ -692,6 +693,19 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 
 	eligibleModelNodes := eligibleNodesData.GetForModel(modelId)
 	eligibleParticipantAddrs := sortedKeys(eligibleModelNodes)
+
+	// Deterministic shuffle to prevent alphabetical bias in PoC slot allocation (issue #700).
+	// Seed is derived from SHA256(EpochIndex + ModelID) so all validators produce the same
+	// order for the same epoch+model, while the order rotates across epochs and models.
+	if len(eligibleParticipantAddrs) > 1 {
+		seed := fmt.Sprintf("poc_alloc_%d_%s", upcomingEpoch.Index, modelId)
+		hash := sha256.Sum256([]byte(seed))
+		seedInt := int64(binary.BigEndian.Uint64(hash[:8]))
+		rng := rand.New(rand.NewSource(seedInt))
+		rng.Shuffle(len(eligibleParticipantAddrs), func(i, j int) {
+			eligibleParticipantAddrs[i], eligibleParticipantAddrs[j] = eligibleParticipantAddrs[j], eligibleParticipantAddrs[i]
+		})
+	}
 
 	ma.LogInfo("Built participant list", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_participants", "model_id", modelId, "num_participants", len(eligibleParticipantAddrs))
 
