@@ -73,8 +73,7 @@ func SampleVotersForInference(
 	}
 	blockHash := bytes.HexBytes(blockResp.BlockId.Hash)
 
-	// Build an EpochGroup backed by gRPC adapters so we can call
-	// MakeRandomMemberReplayableFn with the exact same algorithm the chain uses.
+	// Build an EpochGroup backed by gRPC adapters
 	eg := epochgroup.NewEpochGroup(
 		&grpcGroupKeeper{client: group.NewQueryClient(cosmosClient.GetClientContext())},
 		&grpcParticipantKeeper{queryClient: queryClient},
@@ -120,13 +119,12 @@ func SampleVotersForInference(
 	return voters, nil
 }
 
-// 
+//
 // gRPC-backed keeper adapters for epochgroup.EpochGroup
-// 
+//
 // MakeRandomMemberReplayableFn lives on *epochgroup.EpochGroup, which expects
 // on-chain keeper interfaces. The adapters below implement those interfaces by
-// delegating to gRPC query clients, so the off-chain decentralized-api can
-// reuse the same deterministic sampling algorithm the chain uses.
+// delegating to gRPC query clients.
 //
 // Only the methods actually called by the random-sampling path are implemented:
 //   - grpcGroupKeeper.GroupMembers       (used by EpochGroup.GetGroupMembers)
@@ -194,7 +192,15 @@ func (p *grpcParticipantKeeper) ParticipantAll(context.Context, *types.QueryAllP
 // loggingAdapter implements types.InferenceLogger for off-chain use.
 type loggingAdapter struct{}
 
-func (l *loggingAdapter) LogInfo(msg string, s types.SubSystem, kv ...interface{})  { logging.Info(msg, s, kv...) }
-func (l *loggingAdapter) LogError(msg string, s types.SubSystem, kv ...interface{}) { logging.Error(msg, s, kv...) }
-func (l *loggingAdapter) LogWarn(msg string, s types.SubSystem, kv ...interface{})  { logging.Warn(msg, s, kv...) }
-func (l *loggingAdapter) LogDebug(msg string, s types.SubSystem, kv ...interface{}) { logging.Debug(msg, s, kv...) }
+func (l *loggingAdapter) LogInfo(msg string, s types.SubSystem, kv ...interface{}) {
+	logging.Info(msg, s, kv...)
+}
+func (l *loggingAdapter) LogError(msg string, s types.SubSystem, kv ...interface{}) {
+	logging.Error(msg, s, kv...)
+}
+func (l *loggingAdapter) LogWarn(msg string, s types.SubSystem, kv ...interface{}) {
+	logging.Warn(msg, s, kv...)
+}
+func (l *loggingAdapter) LogDebug(msg string, s types.SubSystem, kv ...interface{}) {
+	logging.Debug(msg, s, kv...)
+}
