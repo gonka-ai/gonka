@@ -1,17 +1,21 @@
 package voting
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"strconv"
 
 	"github.com/cometbft/cometbft/libs/bytes"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/cosmos-sdk/x/group"
 
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 
-	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -21,9 +25,17 @@ type SampledVoter struct {
 	InferenceURL string
 }
 
-// SampleVotersForInference uses epochgroup.MakeRandomMemberReplayableFn to
-// deterministically sample voter candidates for a given inference. The sampling
-// is seeded by the block hash at StartBlockHeight and uses the epoch group's
+// replayableRandomContext holds state for deterministic weighted random sampling.
+// This matches the algorithm used by epochgroup.EpochGroup for consistency.
+type replayableRandomContext struct {
+	participants    []*group.GroupMember
+	seed            [32]byte
+	seenIndices     map[int]bool
+	cumulativeArray []int64
+}
+
+// SampleVotersForInference deterministically samples voter candidates for a given inference.
+// The sampling is seeded by the block hash at StartBlockHeight and uses the epoch group's
 // member list, so results are replayable by on-chain validators.
 //
 // The inference's EpochGroupId is not set at MsgStartInference time, so we look
@@ -73,28 +85,46 @@ func SampleVotersForInference(
 	}
 	blockHash := bytes.HexBytes(blockResp.BlockId.Hash)
 
-	// Build an EpochGroup backed by gRPC adapters
-	eg := epochgroup.NewEpochGroup(
-		&grpcGroupKeeper{client: group.NewQueryClient(cosmosClient.GetClientContext())},
-		&grpcParticipantKeeper{queryClient: queryClient},
-		nil, // ModelKeeper — unused for random sampling
-		nil, // HardwareNodeKeeper — unused for random sampling
-		"",  // Authority — unused for random sampling
-		&loggingAdapter{},
-		nil, // GroupDataKeeper — unused for random sampling
-		&epochGroupData,
-	)
+	// Fetch all group members via gRPC
+	groupClient := group.NewQueryClient(cosmosClient.GetClientContext())
+	members, err := getAllGroupMembersPaginated(ctx, groupClient, epochGroupData.EpochGroupId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group members: %w", err)
+	}
+	if len(members) == 0 {
+		return nil, fmt.Errorf("no group members found for epoch group %d", epochGroupData.EpochGroupId)
+	}
 
-	nextMember := eg.MakeRandomMemberReplayableFn(ctx, blockHash)
+	// Initialize replayable random context with deterministic seed
+	seed := initialSeed(blockHash)
+	cumulativeArray := computeCumulativeArray(members)
+	randomCtx := &replayableRandomContext{
+		participants:    members,
+		seed:            seed,
+		seenIndices:     make(map[int]bool),
+		cumulativeArray: cumulativeArray,
+	}
 
+	// Sample voters using deterministic weighted random selection
 	var voters []SampledVoter
 	for len(voters) < maxVoters {
-		participant, err := nextMember()
+		participantAddress, err := selectRandomParticipantReplayable(randomCtx)
 		if err != nil {
 			logging.Debug("Voter sampling exhausted participants", types.Voting,
 				"error", err, "sampled", len(voters))
 			break
 		}
+
+		// Fetch participant details to get inference URL
+		participantResp, err := queryClient.Participant(ctx, &types.QueryGetParticipantRequest{
+			Index: participantAddress,
+		})
+		if err != nil {
+			logging.Debug("Failed to get participant details", types.Voting,
+				"address", participantAddress, "error", err)
+			continue
+		}
+		participant := participantResp.Participant
 
 		if excludeSet[participant.Address] {
 			continue
@@ -119,88 +149,105 @@ func SampleVotersForInference(
 	return voters, nil
 }
 
-//
-// gRPC-backed keeper adapters for epochgroup.EpochGroup
-//
-// MakeRandomMemberReplayableFn lives on *epochgroup.EpochGroup, which expects
-// on-chain keeper interfaces. The adapters below implement those interfaces by
-// delegating to gRPC query clients.
-//
-// Only the methods actually called by the random-sampling path are implemented:
-//   - grpcGroupKeeper.GroupMembers       (used by EpochGroup.GetGroupMembers)
-//   - grpcParticipantKeeper.GetParticipant (used by EpochGroup.GetRandomMemberReplayable)
-//
-// The remaining methods satisfy the interface but are never called; they panic
-// to surface accidental misuse immediately.
+// getAllGroupMembersPaginated fetches all group members using pagination via gRPC.
+func getAllGroupMembersPaginated(ctx context.Context, groupClient group.QueryClient, groupId uint64) ([]*group.GroupMember, error) {
+	var allMembers []*group.GroupMember
+	var nextKey []byte
 
-// grpcGroupKeeper implements types.GroupMessageKeeper via gRPC.
-type grpcGroupKeeper struct{ client group.QueryClient }
+	for {
+		resp, err := groupClient.GroupMembers(ctx, &group.QueryGroupMembersRequest{
+			GroupId: groupId,
+			Pagination: &query.PageRequest{
+				Key:   nextKey,
+				Limit: 100,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
 
-func (g *grpcGroupKeeper) GroupMembers(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
-	return g.client.GroupMembers(ctx, req)
-}
+		allMembers = append(allMembers, resp.Members...)
 
-// Unused — required by types.GroupMessageKeeper interface.
-func (g *grpcGroupKeeper) CreateGroup(context.Context, *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) CreateGroupWithPolicy(context.Context, *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) UpdateGroupMembers(context.Context, *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) UpdateGroupMetadata(context.Context, *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) SubmitProposal(context.Context, *group.MsgSubmitProposal) (*group.MsgSubmitProposalResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) Vote(context.Context, *group.MsgVote) (*group.MsgVoteResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) GroupInfo(context.Context, *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error) {
-	panic("not implemented")
-}
-func (g *grpcGroupKeeper) ProposalsByGroupPolicy(context.Context, *group.QueryProposalsByGroupPolicyRequest) (*group.QueryProposalsByGroupPolicyResponse, error) {
-	panic("not implemented")
-}
-
-// grpcParticipantKeeper implements types.ParticipantKeeper via gRPC.
-type grpcParticipantKeeper struct{ queryClient types.QueryClient }
-
-func (p *grpcParticipantKeeper) GetParticipant(ctx context.Context, index string) (types.Participant, bool) {
-	resp, err := p.queryClient.Participant(ctx, &types.QueryGetParticipantRequest{Index: index})
-	if err != nil {
-		return types.Participant{}, false
+		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
+			break
+		}
+		nextKey = resp.Pagination.NextKey
 	}
-	return resp.Participant, true
+
+	return allMembers, nil
 }
 
-// Unused — required by types.ParticipantKeeper interface.
-func (p *grpcParticipantKeeper) SetParticipant(context.Context, types.Participant) error {
-	panic("not implemented")
-}
-func (p *grpcParticipantKeeper) RemoveParticipant(context.Context, string) { panic("not implemented") }
-func (p *grpcParticipantKeeper) GetAllParticipant(context.Context) []types.Participant {
-	panic("not implemented")
-}
-func (p *grpcParticipantKeeper) ParticipantAll(context.Context, *types.QueryAllParticipantRequest) (*types.QueryAllParticipantResponse, error) {
-	panic("not implemented")
+// initialSeed creates a deterministic seed from the block hash.
+// This matches epochgroup.InitialSeed for consistency.
+func initialSeed(blockHash bytes.HexBytes) [32]byte {
+	hashBytes := blockHash.Bytes()
+	return sha256.Sum256(hashBytes)
 }
 
-// loggingAdapter implements types.InferenceLogger for off-chain use.
-type loggingAdapter struct{}
+// computeCumulativeArray computes cumulative weights for weighted random selection.
+func computeCumulativeArray(participants []*group.GroupMember) []int64 {
+	cumulativeArray := make([]int64, len(participants))
+	if len(participants) == 0 {
+		return cumulativeArray
+	}
+	cumulativeArray[0] = getWeight(participants[0])
+	for i := 1; i < len(participants); i++ {
+		cumulativeArray[i] = cumulativeArray[i-1] + getWeight(participants[i])
+	}
+	return cumulativeArray
+}
 
-func (l *loggingAdapter) LogInfo(msg string, s types.SubSystem, kv ...interface{}) {
-	logging.Info(msg, s, kv...)
+// getWeight extracts the weight from a group member.
+func getWeight(participant *group.GroupMember) int64 {
+	weight, err := strconv.Atoi(participant.Member.Weight)
+	if err != nil {
+		return 0
+	}
+	return int64(weight)
 }
-func (l *loggingAdapter) LogError(msg string, s types.SubSystem, kv ...interface{}) {
-	logging.Error(msg, s, kv...)
+
+// selectRandomParticipantReplayable performs deterministic weighted random selection
+// without replacement. This matches epochgroup.selectRandomParticipantReplayable.
+func selectRandomParticipantReplayable(ctx *replayableRandomContext) (string, error) {
+	participantsCnt := len(ctx.participants)
+	if len(ctx.seenIndices) >= participantsCnt {
+		return "", fmt.Errorf("no participants to sample")
+	}
+
+	weightSum := ctx.cumulativeArray[participantsCnt-1]
+	if weightSum == 0 {
+		return "", fmt.Errorf("total weight is zero")
+	}
+
+	for {
+		currentSeed := ctx.seed[:]
+		randomWeight := int64(binary.LittleEndian.Uint64(currentSeed)) % weightSum
+
+		index := upperBound(randomWeight, ctx.cumulativeArray)
+		if index >= participantsCnt {
+			index = participantsCnt - 1
+		}
+
+		ctx.seed = sha256.Sum256(currentSeed)
+		if !ctx.seenIndices[index] {
+			ctx.seenIndices[index] = true
+			return ctx.participants[index].Member.Address, nil
+		}
+	}
 }
-func (l *loggingAdapter) LogWarn(msg string, s types.SubSystem, kv ...interface{}) {
-	logging.Warn(msg, s, kv...)
+
+// upperBound performs a binary search for the lowest value greater than the needle.
+// Assumes the input array is already sorted. Matches epochgroup.UpperBound.
+func upperBound[T cmp.Ordered](needle T, haystack []T) int {
+	low, high := 0, len(haystack)
+	for low < high {
+		middle := low + (high-low)/2
+		if needle < haystack[middle] {
+			high = middle
+		} else {
+			low = middle + 1
+		}
+	}
+	return low
 }
-func (l *loggingAdapter) LogDebug(msg string, s types.SubSystem, kv ...interface{}) {
-	logging.Debug(msg, s, kv...)
-}
+
