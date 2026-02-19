@@ -15,7 +15,6 @@ import kotlin.test.assertNotNull
  * the executor's behalf.
  */
 class VoterTests : TestermintTest() {
-
     /**
      * Case #1: TA stores payload but executor's direct retrieval is blocked.
      *
@@ -32,6 +31,8 @@ class VoterTests : TestermintTest() {
     fun `voter recovers payload from TA when executor direct retrieval fails`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
+
+        val initialBalance = genesis.node.getSelfBalance()
 
         val inferenceTimestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
@@ -55,13 +56,16 @@ class VoterTests : TestermintTest() {
         var inference: InferencePayload? = waitInferenceUntilStatus(InferenceStatus.FINISHED, inferenceResponse.id)
         assertNotNull(inference)
 
+        val finalBalance = genesis.node.getSelfBalance()
+
         assertThat(inference.inferenceId).isEqualTo(inferenceSignature)
         assertThat(inference.requestTimestamp).isEqualTo(inferenceTimestamp)
         assertThat(inference.transferredBy).isEqualTo(genesisAddress)
         assertThat(inference.status).isEqualTo(InferenceStatus.FINISHED.value)
         assertThat(inference.executedBy).isEqualTo(inference.assignedTo)
         // No refund given
-        //assertThat(inference.escrowAmount).isLessThan(inference.actualCost)
+        assertThat(inference.actualCost).isGreaterThan(0)
+        assertThat(initialBalance - finalBalance).isEqualTo(inference.actualCost)
 
         // Wait until validated (although it might not have completed by then)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
@@ -87,6 +91,8 @@ class VoterTests : TestermintTest() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
 
+        val initialBalance = genesis.node.getSelfBalance()
+
         val inferenceTimestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         val inferenceSignature = genesis.node.signRequest(
@@ -111,12 +117,15 @@ class VoterTests : TestermintTest() {
         )
         assertNotNull(inference)
 
+        val finalBalance = genesis.node.getSelfBalance()
+
         assertThat(inference.inferenceId).isEqualTo(inferenceSignature)
         assertThat(inference.requestTimestamp).isEqualTo(inferenceTimestamp)
         assertThat(inference.transferredBy).isEqualTo(genesisAddress)
         assertThat(inference.status).isEqualTo(InferenceStatus.FINISHED_WITH_MISSING_PAYLOAD.value)
         // Refund given
-        //assertThat(inference.escrowAmount).isGreaterThan(inference.actualCost)
+        assertThat(inference.actualCost).isNull()
+        assertThat(finalBalance).isEqualTo(initialBalance)
 
         // Ensure we remain finished with missing payload
         inference = waitInferenceUntilStatus(InferenceStatus.VALIDATED, inferenceResponse.id)

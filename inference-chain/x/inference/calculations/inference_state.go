@@ -174,22 +174,32 @@ func ProcessFinishInference(
 	if currentInference.PromptTokenCount == 0 {
 		logger.LogWarn("PromptTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
 	}
-	if currentInference.CompletionTokenCount == 0 {
-		logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+	if isMissingPayload {
+		currentInference.ActualCost = 0
+	} else {
+		if currentInference.CompletionTokenCount == 0 {
+			logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+		}
+		actualCost, err := CalculateCost(currentInference)
+		if err != nil {
+			return nil, nil, err
+		}
+		currentInference.ActualCost = actualCost
 	}
-	actualCost, err := CalculateCost(currentInference)
-	if err != nil {
-		return nil, nil, err
-	}
-	currentInference.ActualCost = actualCost
 	if startProcessed(currentInference) {
 		escrowAmount := currentInference.EscrowAmount
-		if currentInference.ActualCost >= escrowAmount {
-			payments.ExecutorPayment = escrowAmount
+		if isMissingPayload {
+			// Fully refund the user
+			payments.ExecutorPayment = 0
+			payments.EscrowAmount = -currentInference.EscrowAmount
 		} else {
-			payments.ExecutorPayment = currentInference.ActualCost
-			// Will be a negative number, meaning a refund
-			payments.EscrowAmount = currentInference.ActualCost - escrowAmount
+			if currentInference.ActualCost >= escrowAmount {
+				payments.ExecutorPayment = escrowAmount
+			} else {
+				payments.ExecutorPayment = currentInference.ActualCost
+				// Will be a negative number, meaning a refund
+				payments.EscrowAmount = currentInference.ActualCost - escrowAmount
+			}
 		}
 	}
 	return currentInference, &payments, nil
