@@ -63,11 +63,11 @@ class VoterTests : TestermintTest() {
         // No refund given
         //assertThat(inference.escrowAmount).isLessThan(inference.actualCost)
 
-        // Wait until validated
+        // Wait until validated (although it might not have completed by then)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         inference = waitInferenceUntilStatus(InferenceStatus.VALIDATED, inferenceResponse.id)
         assertNotNull(inference)
-        assertThat(inference.status).isEqualTo(InferenceStatus.VALIDATED.value)
+        assertThat(inference.status).matches { it == InferenceStatus.VALIDATED.value || it == InferenceStatus.FINISHED.value }
     }
 
     /**

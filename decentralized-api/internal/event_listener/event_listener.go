@@ -53,6 +53,7 @@ type EventListener struct {
 	dispatcher            *OnNewBlockDispatcher
 	cancelFunc            context.CancelFunc
 	rewardRecoveryChecker *startup.RewardRecoveryChecker
+	inferenceIdTracker    *voting.InferenceIdTracker
 
 	eventHandlers []EventHandler
 
@@ -70,6 +71,7 @@ func NewEventListener(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
 	blsManager *bls.BlsManager,
+	inferenceIdTracker *voting.InferenceIdTracker,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
@@ -106,6 +108,7 @@ func NewEventListener(
 		eventHandlers:         eventHandlers,
 		blockObserver:         bo,
 		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, validator, configManager),
+		inferenceIdTracker:    inferenceIdTracker,
 	}
 }
 
@@ -433,7 +436,7 @@ func (e *InferenceStartedEventHandler) Handle(event *chainevents.JSONRPCResponse
 	if el.isNodeSynced() {
 		inferenceIdKey := getMsgStartAttributeKey(inferencekeeper.EventAttributeInferenceId)
 		npConfig := voting.DefaultNodePingerConfig()
-		np := voting.NewNodePinger(&el.transactionRecorder, npConfig)
+		np := voting.NewNodePinger(&el.transactionRecorder, el.inferenceIdTracker, npConfig)
 
 		ctx := context.Background()
 		for _, inferenceId := range event.Result.Events[inferenceIdKey] {

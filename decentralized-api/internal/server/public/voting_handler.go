@@ -63,7 +63,7 @@ func (s *Server) postVotingVerify(ctx echo.Context) error {
 
 	// Create a NodePinger using the server's cosmos client to sign requests
 	npConfig := voting.DefaultNodePingerConfig()
-	np := voting.NewNodePinger(s.recorder, npConfig)
+	np := voting.NewNodePinger(s.recorder, s.inferenceIdTracker, npConfig)
 
 	// Verify the respondent: ping their payload endpoint and check if they have the data.
 	// PromptHash is left empty — the on-chain hash and stored payload hash use different

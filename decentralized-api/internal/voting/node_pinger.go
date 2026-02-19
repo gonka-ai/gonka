@@ -30,9 +30,10 @@ import (
 // - Voters: to ping respondent and verify payload exists, return payload in vote response
 // - Challengers: to request verification from pre-sampled voters
 type NodePinger struct {
-	httpClient   *http.Client
-	cosmosClient cosmosclient.CosmosMessageClient
-	timeout      time.Duration
+	httpClient         *http.Client
+	cosmosClient       cosmosclient.CosmosMessageClient
+	timeout            time.Duration
+	inferenceIdTracker *InferenceIdTracker
 }
 
 // NodePingerConfig holds configuration for NodePinger.
@@ -49,15 +50,20 @@ func DefaultNodePingerConfig() NodePingerConfig {
 }
 
 // NewNodePinger creates a new NodePinger instance.
-func NewNodePinger(cosmosClient cosmosclient.CosmosMessageClient, config NodePingerConfig) *NodePinger {
+func NewNodePinger(
+	cosmosClient cosmosclient.CosmosMessageClient,
+	inferenceIdTracker *InferenceIdTracker,
+	config NodePingerConfig,
+) *NodePinger {
 	if config.Timeout == 0 {
 		config.Timeout = DefaultNodePingerConfig().Timeout
 	}
 
 	return &NodePinger{
-		httpClient:   apiutils.NewHttpClient(config.Timeout),
-		cosmosClient: cosmosClient,
-		timeout:      config.Timeout,
+		httpClient:         apiutils.NewHttpClient(config.Timeout),
+		cosmosClient:       cosmosClient,
+		timeout:            config.Timeout,
+		inferenceIdTracker: inferenceIdTracker,
 	}
 }
 
@@ -101,6 +107,52 @@ type VerificationResponse struct {
 	ErrorMsg string `json:"error,omitempty"`
 	// Timestamp when the vote was cast
 	Timestamp int64 `json:"timestamp,omitempty"`
+}
+
+type InferenceIdRegisterType uint
+
+const (
+	Unregistered InferenceIdRegisterType = iota
+	RegisteredByTARequest
+	RegisteredByNodePinger
+	RegisteredByNodePingerWithVotes
+)
+
+// Tracks which inference IDs have begun processing
+type InferenceIdTracker struct {
+	tracker map[string]InferenceIdRegisterType
+	mutex   sync.Mutex
+}
+
+func NewInferenceIdTracker() *InferenceIdTracker {
+	return &InferenceIdTracker {
+		tracker: map[string]InferenceIdRegisterType{},
+		mutex:   sync.Mutex{},
+	}
+}
+
+// Tries to register the given register type with the given inference ID.
+// If it's unregistered, doesn't do anything.
+// Returns the previous register type.
+func (tracker *InferenceIdTracker) TryRegisterInferenceId(
+	inferenceId string,
+	registerType InferenceIdRegisterType,
+) InferenceIdRegisterType {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	if registerType := tracker.tracker[inferenceId]; registerType != Unregistered {
+		return registerType
+	}
+
+	tracker.tracker[inferenceId] = registerType
+	return Unregistered
+}
+
+// Deletes the register type for the given inference ID.
+func (tracker *InferenceIdTracker) UnregisterInferenceId(inferenceId string) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	delete(tracker.tracker, inferenceId)
 }
 
 // Voter Functions: Ping Respondent and Relay to Challenger
@@ -276,12 +328,10 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 		return nil
 	}
 
-	// TODO: Consider adding a mechanism to check whether the request started so the TA is not pinged
-	// For now, this should act like a basic barrier
-	if inferenceResp.Inference.Status != types.InferenceStatus_STARTED {
-		logging.Debug("Inference status is not started; skipping", types.Voting, "inferenceId", inferenceId, "status", inferenceResp.Inference.Status)
+	if !np.registerInitiatePostChat(inferenceId, inferenceResp.Inference.Status, false) {
 		return nil
 	}
+	defer np.inferenceIdTracker.UnregisterInferenceId(inferenceId)
 
 	transferAddress := inferenceResp.Inference.TransferredBy
 	logging.Info(
@@ -317,7 +367,22 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 		return err
 	}
 
-	err = np.PostChat(executorURL, payload.Payload.PromptPayload, nil)
+	// Make a voting result, used only for validation.
+	// This will be removed from the request before being broadcast on-chain.
+	completedAt := time.Now().UnixNano()
+	votes := []*inference.SignedVote{}
+	signature, err := np.signVotingResult(inferenceId, votes, completedAt, executorAddress)
+	if err != nil {
+		return err
+	}
+	votingResult := &inference.VotingResult{
+		InferenceId: inferenceId,
+		Votes: votes,
+		CompletedAt: completedAt,
+		RequesterAddress: executorAddress,
+		RequesterSignature: signature,
+	}
+	err = np.PostChat(executorURL, payload.Payload.PromptPayload, votingResult)
 	if err != nil {
 		logging.Error("Failed to post chat request to executor", types.Voting, "inferenceId", inferenceId, "executorURL", executorURL, "executorAddress", executorAddress, "error", err)
 		return err
@@ -408,6 +473,32 @@ func (np *NodePinger) GetAddressUrl(ctx context.Context, address string) (string
 	return participantResp.Participant.InferenceUrl, nil
 }
 
+func (np *NodePinger) registerInitiatePostChat(inferenceId string, status types.InferenceStatus, isVoting bool) bool {
+	if status != types.InferenceStatus_STARTED {
+		logging.Debug("Inference status is not started; skipping", types.Voting, "inferenceId", inferenceId, "status", status)
+		return false
+	}
+
+	var registerType InferenceIdRegisterType
+	if isVoting {
+		registerType = RegisteredByNodePingerWithVotes
+	} else {
+		registerType = RegisteredByNodePinger
+	}
+
+	if oldRegisterType := np.inferenceIdTracker.TryRegisterInferenceId(inferenceId, registerType); oldRegisterType != Unregistered {
+		logging.Debug(
+			"Inference has already begun processing; skipping", types.Voting,
+			"inferenceId", inferenceId,
+			"registerType", registerType,
+			"oldRegisterType", oldRegisterType,
+		)
+		return false
+	}
+
+	return true
+}
+
 // VoterFallback is called when the executor's direct payload retrieval from the TA fails.
 // It samples voters from active participants and requests verification.
 // If a voter finds the payload on the TA, the voter returns it and the executor uses it.
@@ -426,6 +517,11 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		// Not our inference
 		return nil
 	}
+
+	if !np.registerInitiatePostChat(inferenceId, inferenceResp.Inference.Status, true) {
+		return nil
+	}
+	defer np.inferenceIdTracker.UnregisterInferenceId(inferenceId)
 
 	transferAddress := inferenceResp.Inference.TransferredBy
 	epochId := inferenceResp.Inference.EpochId
