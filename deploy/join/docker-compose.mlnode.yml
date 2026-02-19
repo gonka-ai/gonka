@@ -1,7 +1,7 @@
 services:
   mlnode-308:
-    # ghcr.io/product-science/mlnode:3.0.12-post2-blackwell
-    image: ghcr.io/product-science/mlnode:3.0.12-post2
+    # ghcr.io/product-science/mlnode:3.0.12-post4-blackwell
+    image: ghcr.io/product-science/mlnode:3.0.12-post4
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache

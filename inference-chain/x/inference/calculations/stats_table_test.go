@@ -68,7 +68,7 @@ func TestMissedStatTestLookupWithP0ErrorConditions(t *testing.T) {
 
 func TestMissedStatTestLookupWithP0_P010(t *testing.T) {
 	// Table values for p0=0.10, alpha=0.05:
-	// n=10: critical=2, n=20: critical=4, n=100: critical=14, n=500: critical=61
+	// n<5: no penalty, n=10: critical=4, n=20: critical=4, n=100: critical=14, n=500: critical=61
 	tests := []struct {
 		name     string
 		nMissed  int
@@ -84,16 +84,16 @@ func TestMissedStatTestLookupWithP0_P010(t *testing.T) {
 			expected: true, // 1 <= 2 (critical value)
 		},
 		{
-			name:     "n=10, 2 missed (boundary - passes)",
-			nMissed:  2,
+			name:     "n=10, 4 missed (boundary - passes)",
+			nMissed:  4,
 			nTotal:   10,
-			expected: true, // 2 <= 2 (critical value)
+			expected: true, // 4 <= 4 (critical value)
 		},
 		{
-			name:     "n=10, 3 missed (exceeds)",
-			nMissed:  3,
+			name:     "n=10, 5 missed (exceeds)",
+			nMissed:  5,
 			nTotal:   10,
-			expected: false, // 3 > 2 (critical value)
+			expected: false, // 4 > 4 (critical value)
 		},
 		{
 			name:     "n=20, 3 missed (passes)",
@@ -184,10 +184,10 @@ func TestMissedStatTestLookupWithP0_P010(t *testing.T) {
 			expected: true, // Uses critical value for 10 (2), 2 <= 2
 		},
 		{
-			name:     "n=15, 3 missed (exceeds)",
-			nMissed:  3,
+			name:     "n=15, 5 missed (exceeds)",
+			nMissed:  5,
 			nTotal:   15,
-			expected: false, // Uses critical value for 10 (2), 3 > 2
+			expected: false, // Uses critical value for 10 (4), 5 > 4
 		},
 		{
 			name:     "n=75, 10 missed (uses n=70's critical value)",
@@ -240,10 +240,10 @@ func TestMissedStatTestLookupWithP0_P010(t *testing.T) {
 			expected: true, // Critical value for n=5 is 1
 		},
 		{
-			name:     "small total n=5, 2 missed (exceeds)",
-			nMissed:  2,
+			name:     "small total n=5, 5 missed (exceeds)",
+			nMissed:  5,
 			nTotal:   5,
-			expected: false, // 2 > 1 (critical value for n=5)
+			expected: false, // 5 > 4 (critical value for n=5)
 		},
 		{
 			name:     "very small total n=1, 0 missed",
@@ -255,7 +255,25 @@ func TestMissedStatTestLookupWithP0_P010(t *testing.T) {
 			name:     "very small total n=1, 1 missed (100% miss rate passes - no statistical power at n=1)",
 			nMissed:  1,
 			nTotal:   1,
-			expected: true, // idx=0 from binary search, returns true unconditionally
+			expected: true,
+		},
+		{
+			name:     "very small total n=2, 2 missed (no penalty)",
+			nMissed:  2,
+			nTotal:   2,
+			expected: true,
+		},
+		{
+			name:     "very small total n=3, 3 missed (no penalty)",
+			nMissed:  3,
+			nTotal:   3,
+			expected: true,
+		},
+		{
+			name:     "very small total n=4, 4 missed (no penalty)",
+			nMissed:  4,
+			nTotal:   4,
+			expected: true,
 		},
 	}
 

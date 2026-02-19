@@ -1,9 +1,12 @@
 package inference
 
 import (
+	"cmp"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -425,6 +428,18 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+
+		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
+	}
+
+	// Capture validation snapshot at poc_validation_start for deterministic sampling
+	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
+		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+		if found && upcomingEpoch != nil {
+			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
+		} else {
+			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
+		}
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
@@ -520,65 +535,42 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 	var activeParticipants []*types.ActiveParticipant
-
-	if upcomingEpoch.Index == 170 {
-		currentActiveParticipants, found := am.keeper.GetActiveParticipants(ctx, 169)
-		if !found {
-			am.LogError("onEndOfPoCValidationStage: Unable to get active participants", types.EpochGroup)
-			panic("Unable to get active participants")
-		}
-		previousActiveParticipants := currentActiveParticipants.Participants
-		activeParticipants = make([]*types.ActiveParticipant, 0)
-		for _, participant := range previousActiveParticipants {
-			am.LogInfo("onEndOfPoCValidationStage: participant", types.EpochGroup, "participant.Index", participant.Index, "participant.Weight", participant.Weight)
-
-			seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participant.Index)
-			if !found {
-				am.LogError("onEndOfPoCValidationStage: Unable to get seed", types.EpochGroup, "participant.Index", participant.Index)
-				continue
-			}
-			participant.Seed = &seed
-			activeParticipants = append(activeParticipants, participant)
-			am.LogInfo("onEndOfPoCValidationStage: seed", types.EpochGroup, "seed.EpochIndex", seed.EpochIndex, "seed.Participant", seed.Participant, "seed.Signature", seed.Signature)
-		}
+	if params.PocParams.PocV2Enabled {
+		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
 	} else {
-		if params.PocParams.PocV2Enabled {
-			activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
-		} else {
-			activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
-		}
-		if activeParticipants == nil {
-			am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
-			return
-		}
-
-		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
-		modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
-
-		// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
-		if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
-			am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
-			// Depending on chain policy, we might want to halt on error. For now, we log and continue,
-			// which means participants will proceed with their unadjusted PotentialWeight.
-		}
-
-		// Apply universal power capping to epoch powers
-		activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
-
-		modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
-		am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
-
-		err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
-		if err != nil {
-			am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
-			return
-		}
-
-		am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"len(activeParticipants)", len(activeParticipants))
+		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
 	}
+	if activeParticipants == nil {
+		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
+		return
+	}
+
+	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
+
+	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
+	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
+		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
+		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
+		// which means participants will proceed with their unadjusted PotentialWeight.
+	}
+
+	// Apply universal power capping to epoch powers
+	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
+
+	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
+	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
+
+	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
+		return
+	}
+
+	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(activeParticipants)", len(activeParticipants))
 
 	err = am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:        activeParticipants,
@@ -648,6 +640,79 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
+
+	// Clean up validation snapshot after epoch transition
+	am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+}
+
+func (am AppModule) captureGenerationStartTimestamp(ctx context.Context, blockTime, pocStartBlockHeight int64) {
+	snapshot := types.PoCValidationSnapshot{
+		PocStageStartHeight:      pocStartBlockHeight,
+		GenerationStartTimestamp: blockTime,
+	}
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store", types.PoC, "error", err)
+		return
+	}
+	am.LogInfo("captureGenerationStartTimestamp: Stored", types.PoC,
+		"pocStartBlockHeight", pocStartBlockHeight,
+		"generationStartTimestamp", blockTime)
+}
+
+// captureValidationSnapshot stores validator weights and app_hash at validation phase start
+// for deterministic sampling synchronization between chain and DAPI.
+// Used by both regular PoC and confirmation PoC.
+func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	blockTime := sdkCtx.BlockTime().Unix()
+
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
+	if err != nil {
+		am.LogError("captureValidationSnapshot: Failed to get validator weights", types.PoC,
+			"context", logContext, "error", err)
+		return
+	}
+
+	var generationStartTimestamp int64
+	existingSnapshot, found, _ := am.keeper.GetPoCValidationSnapshot(ctx, snapshotKey)
+	if found {
+		generationStartTimestamp = existingSnapshot.GenerationStartTimestamp
+	}
+
+	snapshot := types.PoCValidationSnapshot{
+		PocStageStartHeight:      snapshotKey,
+		SnapshotHeight:           blockHeight,
+		AppHash:                  hex.EncodeToString(sdkCtx.HeaderInfo().AppHash),
+		ValidatorWeights:         validatorWeightsMapToSlice(currentValidatorWeights),
+		GenerationStartTimestamp: generationStartTimestamp,
+		ExchangeEndTimestamp:     blockTime,
+	}
+
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
+		am.LogError("captureValidationSnapshot: Failed to store snapshot", types.PoC,
+			"context", logContext, "error", err)
+		return
+	}
+
+	am.LogInfo("captureValidationSnapshot: Stored validation snapshot", types.PoC,
+		"context", logContext,
+		"snapshotKey", snapshotKey,
+		"snapshotHeight", blockHeight,
+		"numValidators", len(currentValidatorWeights),
+		"generationStartTimestamp", generationStartTimestamp,
+		"exchangeEndTimestamp", blockTime,
+	)
+}
+
+func validatorWeightsMapToSlice(weights map[string]int64) []*types.ValidatorWeight {
+	result := make([]*types.ValidatorWeight, 0, len(weights))
+	for addr, w := range weights {
+		result = append(result, &types.ValidatorWeight{Address: addr, Weight: w})
+	}
+	slices.SortFunc(result, func(a, b *types.ValidatorWeight) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+	return result
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {

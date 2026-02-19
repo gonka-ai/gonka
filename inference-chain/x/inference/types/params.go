@@ -325,8 +325,8 @@ func (p *EpochParams) Validate() error {
 	if p.PocStageDuration <= 0 {
 		return fmt.Errorf("poc stage duration must be positive")
 	}
-	if p.PocExchangeDuration <= 0 {
-		return fmt.Errorf("poc exchange duration must be positive")
+	if p.PocExchangeDuration < 0 {
+		return fmt.Errorf("poc exchange duration cannot be negative")
 	}
 	if p.PocValidationDelay < 0 {
 		return fmt.Errorf("poc validation delay cannot be negative")

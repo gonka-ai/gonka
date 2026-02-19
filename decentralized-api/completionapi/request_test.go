@@ -2,7 +2,6 @@ package completionapi
 
 import (
 	"encoding/json"
-	"log"
 	"testing"
 
 	"github.com/productscience/inference/x/inference/calculations"
@@ -83,18 +82,11 @@ const (
     }`
 )
 
-func Test(t *testing.T) {
+func TestModifyRequestBody_NullLogprobsPreserved(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyNullLogprobs), 7)
-	if err != nil {
-		panic(err)
-	}
-	if r.OriginalLogprobsValue != nil {
-		t.Fatalf("expected nil, got %v", r.OriginalLogprobsValue)
-	}
-	if r.OriginalTopLogprobsValue != nil {
-		t.Fatalf("expected nil, got %v", r.OriginalTopLogprobsValue)
-	}
-	log.Print(string(r.NewBody))
+	require.NoError(t, err)
+	require.Nil(t, r.OriginalLogprobsValue)
+	require.Nil(t, r.OriginalTopLogprobsValue)
 }
 
 func TestStreamOptions_NoOptions(t *testing.T) {
@@ -102,13 +94,10 @@ func TestStreamOptions_NoOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal(r.NewBody, &requestMap); err != nil {
-		require.NoError(t, err, "failed to unmarshal request body")
-	}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap), "failed to unmarshal request body")
 
 	require.NotNil(t, requestMap["stream_options"])
 	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
-	log.Print(string(r.NewBody))
 }
 
 func TestStreamOptions_WithOptions(t *testing.T) {
@@ -116,13 +105,129 @@ func TestStreamOptions_WithOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal(r.NewBody, &requestMap); err != nil {
-		require.NoError(t, err, "failed to unmarshal request body")
-	}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap), "failed to unmarshal request body")
 
 	require.NotNil(t, requestMap["stream_options"])
 	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
-	log.Print(string(r.NewBody))
+}
+
+// TestStreamOptions_MalformedStreamValue tests that malformed "stream" field doesn't cause panic
+func TestStreamOptions_MalformedStreamValue(t *testing.T) {
+	// Test case 1: stream is a string instead of bool
+	jsonBodyStreamString := `{
+        "model": "test",
+        "stream": "true",
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err := ModifyRequestBody([]byte(jsonBodyStreamString), 7)
+	require.NoError(t, err, "Should not panic or error on string stream value")
+	require.NotNil(t, r)
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	_, exists := requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
+
+	// Test case 2: stream is a number
+	jsonBodyStreamNumber := `{
+        "model": "test",
+        "stream": 1,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamNumber), 7)
+	require.NoError(t, err, "Should not panic or error on number stream value")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	_, exists = requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
+
+	// Test case 3: stream is null
+	jsonBodyStreamNull := `{
+        "model": "test",
+        "stream": null,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamNull), 7)
+	require.NoError(t, err, "Should not panic or error on null stream value")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	_, exists = requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
+}
+
+// TestStreamOptions_MalformedStreamOptions tests that malformed "stream_options" field doesn't cause panic
+func TestStreamOptions_MalformedStreamOptions(t *testing.T) {
+	// Test case 1: stream_options is a string instead of object
+	jsonBodyStreamOptionsString := `{
+        "model": "test",
+        "stream": true,
+        "stream_options": "invalid",
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err := ModifyRequestBody([]byte(jsonBodyStreamOptionsString), 7)
+	require.NoError(t, err, "Should not panic or error on string stream_options")
+	require.NotNil(t, r)
+
+	// Verify that stream_options was replaced with a valid map
+	var requestMap map[string]interface{}
+	err = json.Unmarshal(r.NewBody, &requestMap)
+	require.NoError(t, err)
+	streamOpts, ok := requestMap["stream_options"].(map[string]interface{})
+	require.True(t, ok, "stream_options should be a map after processing")
+	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
+
+	// Test case 2: stream_options is an array
+	jsonBodyStreamOptionsArray := `{
+        "model": "test",
+        "stream": true,
+        "stream_options": [1, 2, 3],
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamOptionsArray), 7)
+	require.NoError(t, err, "Should not panic or error on array stream_options")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	streamOpts, ok = requestMap["stream_options"].(map[string]interface{})
+	require.True(t, ok, "stream_options should be a map after processing")
+	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
+
+	// Test case 3: stream_options is a number
+	jsonBodyStreamOptionsNumber := `{
+        "model": "test",
+        "stream": true,
+        "stream_options": 123,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamOptionsNumber), 7)
+	require.NoError(t, err, "Should not panic or error on number stream_options")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	streamOpts, ok = requestMap["stream_options"].(map[string]interface{})
+	require.True(t, ok, "stream_options should be a map after processing")
+	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
+}
+
+// TestStreamFalse tests that stream=false doesn't modify stream_options
+func TestStreamFalse(t *testing.T) {
+	jsonBodyStreamFalse := `{
+        "model": "test",
+        "stream": false,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err := ModifyRequestBody([]byte(jsonBodyStreamFalse), 7)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	var requestMap map[string]interface{}
+	err = json.Unmarshal(r.NewBody, &requestMap)
+	require.NoError(t, err)
+
+	// stream_options should not exist since stream is false
+	_, exists := requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is false")
 }
 
 func TestMaxTokens(t *testing.T) {

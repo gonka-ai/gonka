@@ -253,8 +253,14 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
     override fun setPocV2Response(weight: Long, hostName: String?, scenarioName: String) {
         // Generate 'weight' artifacts with deterministic vectors (base64-encoded)
         val artifacts = (1..weight).joinToString(", ") { nonce ->
-            // Simple deterministic vector: 24 bytes (12 fp16 values), all based on nonce
-            val vectorBytes = ByteArray(24) { i -> ((nonce * 2 + i) % 256).toByte() }
+            // Generate valid FP16 vectors (24 bytes = 12 FP16 values)
+            // FP16 NaN/Inf have exponent bits = 31 (0x7C00-0x7FFF, 0xFC00-0xFFFF)
+            // To avoid these, we mask the high byte to keep exponent < 31
+            val vectorBytes = ByteArray(24) { i ->
+                val rawByte = ((nonce * 2 + i) % 256).toByte()
+                // For odd indices (high byte of FP16), mask to avoid exp=31
+                if (i % 2 == 1) (rawByte.toInt() and 0x7B).toByte() else rawByte
+            }
             val vectorB64 = java.util.Base64.getEncoder().encodeToString(vectorBytes)
             """{"nonce": $nonce, "vector_b64": "$vectorB64"}"""
         }

@@ -28,6 +28,7 @@ var (
 	ErrProofVerificationFailed = errors.New("proof verification failed")
 	ErrDuplicateNonces         = errors.New("duplicate nonces detected")
 	ErrIncompleteCoverage      = errors.New("response does not cover all requested leaf indices")
+	ErrInvalidVectorData       = errors.New("invalid vector data detected")
 )
 
 // ProofClient fetches and verifies MMR proofs from participant APIs.
@@ -182,6 +183,13 @@ func (c *ProofClient) FetchAndVerifyProofs(
 			return nil, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
 		}
 
+		// Validate FP16 vector content - reject NaN/Infinity
+		if err := ValidateFP16Vector(vectorBytes); err != nil {
+			logging.Warn("Invalid FP16 vector data", types.PoC,
+				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "error", err)
+			return nil, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)
+		}
+
 		// Decode proof hashes
 		proofHashes := make([][]byte, len(item.Proof))
 		for i, hashB64 := range item.Proof {
@@ -297,4 +305,27 @@ func buildLeafData(nonce int32, vector []byte) []byte {
 	binary.LittleEndian.PutUint32(buf[:4], uint32(nonce))
 	copy(buf[4:], vector)
 	return buf
+}
+
+// ValidateFP16Vector checks that all FP16 values in the vector are valid finite numbers.
+// Returns error if any value is NaN, Infinity, or other invalid representation.
+func ValidateFP16Vector(vectorBytes []byte) error {
+	if len(vectorBytes)%2 != 0 {
+		return fmt.Errorf("invalid vector length: %d bytes (must be even)", len(vectorBytes))
+	}
+
+	for i := 0; i < len(vectorBytes); i += 2 {
+		h := binary.LittleEndian.Uint16(vectorBytes[i : i+2])
+		exp := (h >> 10) & 0x1f
+
+		// Exponent 31 = special values (NaN or Infinity)
+		if exp == 31 {
+			frac := h & 0x3ff
+			if frac != 0 {
+				return fmt.Errorf("NaN detected at byte offset %d (value 0x%04x)", i, h)
+			}
+			return fmt.Errorf("Infinity detected at byte offset %d (value 0x%04x)", i, h)
+		}
+	}
+	return nil
 }
