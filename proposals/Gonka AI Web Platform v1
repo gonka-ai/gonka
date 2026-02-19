@@ -1,0 +1,62 @@
+# Proposal: Deploy Gonka AI Web Platform v1 to Production (app.gonka.ai)
+
+**Repository:** [ZpokenWeb3/Gonka-AI-web-application](https://github.com/ZpokenWeb3/Gonka-AI-web-application)
+
+---
+
+## Summary
+
+This proposal requests community approval to deploy the fully developed Gonka AI Web Platform v1 to production at the **app.gonka.ai** domain. The platform v1 has been designed, developed, and tested by the ZpokenWeb3 team and is ready for production deployment. It provides users with a complete interface for interacting with the Gonka AI network — including chat, wallet-based authentication, GNK balance management, developer API access, and analytics.
+
+## Motivation
+
+Gonka currently lacks a user-facing web interface for its decentralized AI inference network. Users and developers need a polished, production-ready application to interact with Gonka AI models, manage funds, and integrate via API. Without a web platform, adoption is limited to CLI-only users and developers comfortable with raw API calls.
+
+A production deployment on Gonka.ai would significantly lower the barrier to entry, expand the user base, and provide a foundation for ecosystem growth.
+
+## What Has Been Delivered
+
+The full web platform has been built and is available for review at [https://gonka-app.zpoken.dev/] [github.com/ZpokenWeb3/Gonka-AI-web-application](https://github.com/ZpokenWeb3/Gonka-AI-web-application). The codebase includes a TypeScript monorepo (Turborepo + pnpm) with Next.js frontend and Node.js backend.
+
+### Completed Features
+
+**Chat Interface**
+- Real-time streaming AI responses (SSE) via Gonka API integration
+- Markdown and code block rendering with token and cost display
+- Full chat management: create, rename, pin, archive, search, and delete conversations
+
+**Wallet-Based Authentication**
+- Multi-wallet login via Leap and Keplr
+- Signature-based authentication (no email/password), JWT sessions
+- Support for GNK on Gonka chain
+
+**Balance & Payment System**
+- Custodial GNK balance per user
+
+**Developer API Dashboard**
+- API key generation and management (limits, allowed models/IPs)
+- Usage analytics: requests, tokens, cost, error rate
+- Interactive API documentation
+
+**Security & Privacy**
+- End-to-end encryption: client derives AES-256-GCM key from wallet signature (PBKDF2); messages stored encrypted-only — backend cannot decrypt
+
+**Analytics Dashboard**
+- Usage statistics, user activity, and performance metrics
+
+**Landing Page**
+- Product overview, core features, and clear onboarding flow
+- Quick-start chat experience for new users
+
+### Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 14, React 18, TypeScript, Tailwind CSS |
+| Backend | Node.js 20, Express, TypeScript, Prisma ORM |
+| Database | PostgreSQL (users, balances, chats, usage) |
+| Cache | Redis (sessions, rate limits) |
+| Storage | S3/R2 (attachments) |
+| Blockchain | CosmJS (Cosmos/Gonka) |
+| Monorepo | Turborepo + pnpm workspace |
+| CI/CD | GitHub Actions workflows |
