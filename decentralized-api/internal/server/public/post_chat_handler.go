@@ -807,7 +807,7 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 			)
 			return echo.NewHTTPError(
 				http.StatusUnauthorized,
-				fmt.Sprintf("Unable to validate voting result against executor key: %w", err.Error()),
+				fmt.Sprintf("Unable to validate voting result against executor key: %s", err.Error()),
 			)
 		}
 	}

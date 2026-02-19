@@ -30,7 +30,7 @@ func (s *Server) postVotingVerify(ctx echo.Context) error {
 		"epochId", req.EpochId)
 
 	// Query chain to validate the request before doing any work.
-	cv := voting.NewChainVerifier(s.recorder, nil)
+	cv := voting.NewChainVerifier(s.recorder)
 	onChain, err := cv.QueryInferenceState(ctx.Request().Context(), req.InferenceId)
 	if err != nil {
 		logging.Error("Failed to query chain for inference state", types.Voting,

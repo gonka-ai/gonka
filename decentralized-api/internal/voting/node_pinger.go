@@ -1038,7 +1038,18 @@ func (np *NodePinger) signVotingResult(
 	completedAt int64,
 	requesterAddress string,
 ) (string, error) {
-	resultBytes := votingResultBytesToSign(inferenceId, votes)
+	voteFields := make([]calculations.VoteFields, len(votes))
+	for i, v := range votes {
+		voteFields[i] = calculations.VoteFields{
+			InferenceId:        v.InferenceId,
+			VoterAddress:       v.VoterAddress,
+			VoteType:           int32(v.VoteType),
+			RespondentDataHash: v.RespondentDataHash,
+			Timestamp:          v.Timestamp,
+			VoterSignature:     v.VoterSignature,
+		}
+	}
+	resultBytes := calculations.VotingResultBytesToSign(inferenceId, voteFields)
 	components := calculations.SignatureComponents{
 		Payload:         string(resultBytes),
 		EpochId:         0,
