@@ -82,4 +82,5 @@ var (
 	ErrVoterNotFound                         = sdkerrors.Register(ModuleName, 1176, "voter participant not found")
 	ErrInvalidNegativeOutcome                = sdkerrors.Register(ModuleName, 1177, "negative outcome requires exactly max voter negative votes")
 	ErrVoteInferenceIdMismatch               = sdkerrors.Register(ModuleName, 1178, "vote inference ID does not match voting result")
+	ErrInvalidVotingResult                   = sdkerrors.Register(ModuleName, 1179, "invalid voting result")
 )

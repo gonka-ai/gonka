@@ -105,8 +105,10 @@ type VerificationResponse struct {
 	PromptHash string `json:"prompt_hash,omitempty"`
 	// Error message if verification failed
 	ErrorMsg string `json:"error,omitempty"`
-	// Timestamp when the vote was cast
-	Timestamp int64 `json:"timestamp,omitempty"`
+	// Timestamp when the vote was cast (nanoseconds).
+	// Uses json:",string" to preserve int64 precision over JSON (number loses precision above 2^53).
+	// Must not use omitempty: chain validates signature over exact bytes; corrupted timestamp = invalid sig.
+	Timestamp int64 `json:"timestamp,string"`
 }
 
 type InferenceIdRegisterType uint
@@ -293,6 +295,7 @@ func (np *NodePinger) VerifyRespondent(
 		// Respondent doesn't have payload - negative vote
 		response.Vote = types.VoteType_VoteNegative
 		response.DataFound = false
+		np.signVote(response)
 		logging.Info("Voter verification: respondent does not have payload", types.Voting,
 			"inferenceId", inferenceId, "voterAddress", voterAddress)
 		return response
@@ -305,6 +308,7 @@ func (np *NodePinger) VerifyRespondent(
 
 	// Respondent has correct payload - positive vote
 	response.Vote = types.VoteType_VotePositive
+	np.signVote(response)
 	logging.Info("Voter verification: respondent has correct payload", types.Voting,
 		"inferenceId", inferenceId, "voterAddress", voterAddress)
 
@@ -1078,4 +1082,34 @@ func (np *NodePinger) sign(
 	}
 
 	return calculations.Sign(accountSigner, components, signatureType)
+}
+
+// signVote signs the voter's vote and populates VoterSignature on the response.
+// Must use the same address for signing as VoterAddress: the chain verifies the
+// signature using the pubkey for vote.VoterAddress (the participant in the epoch group).
+func (np *NodePinger) signVote(response *VerificationResponse) {
+	voterAddressStr := np.cosmosClient.GetAccountAddress()
+	voterAddress, err := sdk.AccAddressFromBech32(voterAddressStr)
+	if err != nil {
+		logging.Error("signVote: invalid voter address", types.Voting, "error", err)
+		return
+	}
+	accountSigner := &cmd.AccountSigner{
+		Addr:    voterAddress,
+		Keyring: np.cosmosClient.GetKeyring(),
+	}
+	sig, err := calculations.SignVote(
+		accountSigner,
+		response.InferenceId,
+		response.VoterAddress,
+		int32(response.Vote),
+		response.PromptHash,
+		response.Timestamp,
+	)
+	if err != nil {
+		logging.Error("signVote: failed to sign vote", types.Voting,
+			"inferenceId", response.InferenceId, "error", err)
+		return
+	}
+	response.VoterSignature = sig
 }

@@ -153,6 +153,31 @@ func (k msgServer) validateVotingResult(
 				"vote[%d] voter %s", i, vote.VoterAddress)
 		}
 
+		// Validate voter signature on their vote.
+		if vote.VoterSignature == "" {
+			return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+				"vote[%d] missing voter signature", i)
+		}
+		voterPubKey, err := k.GetAccountPubKey(goCtx, vote.VoterAddress)
+		if err != nil {
+			return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+				"vote[%d] cannot get voter pubkey: %v", i, err)
+		}
+		if sigErr := calculations.ValidateVoteSignature(
+			vote.InferenceId,
+			vote.VoterAddress,
+			int32(vote.VoteType),
+			vote.RespondentDataHash,
+			vote.Timestamp,
+			voterPubKey,
+			vote.VoterSignature,
+		); sigErr != nil {
+			k.LogError("Invalid voter signature", types.Inferences,
+				"inferenceId", result.InferenceId, "voteIndex", i, "voterAddress", vote.VoterAddress, "error", sigErr)
+			return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+				"vote[%d] invalid voter signature: %v", i, sigErr)
+		}
+
 		switch vote.VoteType {
 		case types.VoteType_VotePositive:
 			if hasPositiveVote {
@@ -170,8 +195,6 @@ func (k msgServer) validateVotingResult(
 				"vote[%d] type %d", i, vote.VoteType)
 		}
 
-		// TODO: Validate individual vote signatures once voters start signing their votes.
-		// Currently voters don't populate VoterSignature, so we skip per-vote sig checks.
 	}
 
 	return hasPositiveVote, nil
