@@ -476,6 +476,7 @@ func TestProcessFinishInference(t *testing.T) {
 				tt.finishMessage,
 				tt.blockContext,
 				mockLogger,
+				false, // isMissingPayload
 			)
 			assert.NoError(t, err)
 

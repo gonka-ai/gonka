@@ -562,6 +562,103 @@ data class ApplicationCLI(
         return signPayload(payload, requesterAddress, timestamp = null, endpointAccount = null)
     }
 
+    /**
+     * Signs a single vote as the voter. Must match Go calculations.VoteBytesToSign.
+     * Signs: inference_id + voter_address + vote_type + respondent_data_hash + timestamp
+     */
+    fun signVote(
+        inferenceId: String,
+        voterAddress: String,
+        voteType: Int,
+        respondentDataHash: String,
+        timestamp: Long,
+        accountAddress: String? = null,
+    ): String {
+        val payloadBytes = voteBytesToSign(inferenceId, voterAddress, voteType, respondentDataHash, timestamp)
+        val base64Payload = java.util.Base64.getEncoder().encodeToString(payloadBytes)
+        val keychainArgs = config.keychainParams.joinToString(" ")
+        val addrArg = accountAddress?.let { "--account-address $it" } ?: ""
+        val signCmd = "${config.execName} signature create --file /tmp/vote_payload.bin $addrArg $keychainArgs"
+        val script = when (val pw = passwordInjection) {
+            null -> "echo '$base64Payload' | base64 -d > /tmp/vote_payload.bin && $signCmd"
+            else -> {
+                val pwEscaped = pw.replace("\n", "").replace("'", "'\"'\"'")
+                "echo '$base64Payload' | base64 -d > /tmp/vote_payload.bin && printf '%s\\n' '$pwEscaped' | $signCmd"
+            }
+        }
+        return wrapLog("signVote", true) {
+            val response = exec(listOf("sh", "-c", script))
+            extractSignature(response).also {
+                Logger.info("Vote signature created, signature={}", it)
+            }
+        }
+    }
+
+    private fun voteBytesToSign(
+        inferenceId: String,
+        voterAddress: String,
+        voteType: Int,
+        respondentDataHash: String,
+        timestamp: Long,
+    ): ByteArray {
+        return (
+            inferenceId.toByteArray() +
+                voterAddress.toByteArray() +
+                voteType.toString().toByteArray() +
+                respondentDataHash.toByteArray() +
+                timestamp.toString().toByteArray()
+            )
+    }
+
+    /**
+     * Signs a VotingResult as the executor (requester).
+     * Must match calculations.VotingResultBytesToSign + Developer signature in Go.
+     * Payload: inference_id + sha256(votes), then getDevBytes: payload + timestamp + requesterAddress.
+     */
+    fun signVotingResult(
+        inferenceId: String,
+        votes: List<SignedVote>,
+        completedAt: Long,
+        requesterAddress: String,
+    ): String {
+        val payloadBytes = votingResultBytesToSign(inferenceId, votes)
+        val base64Payload = java.util.Base64.getEncoder().encodeToString(payloadBytes)
+        val keychainArgs = config.keychainParams.joinToString(" ")
+        val signCmd = "${config.execName} signature create --file /tmp/vr_payload.bin --timestamp $completedAt --endpoint-account $requesterAddress --account-address $requesterAddress $keychainArgs"
+        val script = when (val pw = passwordInjection) {
+            null -> "echo '$base64Payload' | base64 -d > /tmp/vr_payload.bin && $signCmd"
+            else -> {
+                val pwEscaped = pw.replace("\n", "").replace("'", "'\"'\"'")
+                "echo '$base64Payload' | base64 -d > /tmp/vr_payload.bin && printf '%s\\n' '$pwEscaped' | $signCmd"
+            }
+        }
+        return wrapLog("signVotingResult", true) {
+            val response = exec(listOf("sh", "-c", script))
+            extractSignature(response).also {
+                Logger.info("VotingResult signature created, signature={}", it)
+            }
+        }
+    }
+
+    private fun votingResultBytesToSign(inferenceId: String, votes: List<SignedVote>): ByteArray {
+        val sha256 = MessageDigest.getInstance("SHA-256")
+        for (vote in votes) {
+            val fields = listOf(
+                vote.inferenceId,
+                vote.voterAddress,
+                vote.voteType.toString(),
+                vote.respondentDataHash,
+                vote.timestamp.toString(),
+                vote.voterSignature,
+            )
+            for (field in fields) {
+                sha256.update(field.toByteArray())
+            }
+        }
+        val votesHash = sha256.digest()
+        return inferenceId.toByteArray() + votesHash
+    }
+
     fun getTxStatus(txHash: String): TxResponse = wrapLog("getTxStatus", false) {
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
