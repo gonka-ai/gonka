@@ -3,6 +3,9 @@
 // by initiating a vote among sampled nodes.
 package voting
 
+// DefaultMaxVoters is the default number of voters to sample for fallback verification.
+const DefaultMaxVoters = 5
+
 // ChallengerRole identifies who is initiating the dispute.
 // The role determines what proof is required and what verification voters perform.
 type ChallengerRole int
@@ -393,4 +396,14 @@ type VotingConfig struct {
 
 	// MaxNumSkips is the maximum number of nodes that may be skipped during a vote
 	MaxNumSkips uint8 `json:"max_num_skips"`
+}
+
+// DefaultVotingConfig returns a VotingConfig populated with defaults.
+func DefaultVotingConfig() VotingConfig {
+	return VotingConfig{
+		MaxNumNodes: DefaultMaxVoters,
+		VoteTimeout: 0,
+		MaxRetries:  1,
+		MaxNumSkips: 0,
+	}
 }

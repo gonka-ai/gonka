@@ -438,7 +438,12 @@ func (e *InferenceStartedEventHandler) Handle(event *chainevents.JSONRPCResponse
 		ctx := context.Background()
 		for _, inferenceId := range event.Result.Events[inferenceIdKey] {
 			if err := np.RetrievePayloadToRequester(ctx, inferenceId); err != nil {
-				// TODO: Initiate votes with node pinger
+				logging.Info("Direct payload retrieval failed, initiating voter fallback", types.Voting,
+					"inferenceId", inferenceId, "error", err)
+				if voterErr := np.VoterFallback(ctx, inferenceId); voterErr != nil {
+					logging.Error("Voter fallback also failed", types.Voting,
+						"inferenceId", inferenceId, "error", voterErr)
+				}
 				continue
 			}
 		}

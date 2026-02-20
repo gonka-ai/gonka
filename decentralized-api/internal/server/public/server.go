@@ -93,6 +93,9 @@ func NewServer(
 	g.GET("inference/payloads", s.getInferencePayloads)
 	g.GET("inference/prompt", s.getInferencePrompt)
 
+	// Voting endpoint: voters verify respondent behavior on behalf of challengers
+	g.POST("voting/verify", s.postVotingVerify)
+
 	g.GET("participants/:address", s.getInferenceParticipantByAddress)
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)

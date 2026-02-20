@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"decentralized-api/internal/apitypes"
 	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/utils"
@@ -17,13 +18,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// PayloadResponse is returned by getInferencePayloads
-type PayloadResponse struct {
-	InferenceId       string `json:"inference_id"`
-	PromptPayload     []byte `json:"prompt_payload"`
-	ResponsePayload   []byte `json:"response_payload"`
-	ExecutorSignature string `json:"executor_signature"`
-}
+// PayloadResponse is an alias for the shared type to avoid import cycles.
+type PayloadResponse = apitypes.PayloadResponse
 
 // getInferencePayloads serves payloads to validators for validation
 func (s *Server) getInferencePayloads(ctx echo.Context) error {
@@ -40,6 +36,19 @@ func (s *Server) getInferencePrompt(ctx echo.Context) error {
 	requesterAddress := ctx.Request().Header.Get(utils.XRequesterAddressHeader)
 	if requesterAddress == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "X-Requester-Address header required")
+	}
+
+	// Test mode: block direct retrieval for VoterRecoverySeed inferences when requester is the executor.
+	// Voters (non-executor addresses) can still retrieve the payload.
+	inferenceId := ctx.QueryParam("inference_id")
+	if s.configManager.GetApiConfig().TestMode && inferenceId != "" && IsVoterTestBlocked(inferenceId) {
+		queryClient := s.recorder.NewInferenceQueryClient()
+		inferenceResp, err := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: inferenceId})
+		if err == nil && inferenceResp.Inference.AssignedTo == requesterAddress {
+			logging.Debug("VoterRecoverySeed: blocking direct retrieval for executor", types.Voting,
+				"inferenceId", inferenceId, "executorAddress", requesterAddress)
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "simulated failure for voter recovery test")
+		}
 	}
 
 	return s.getInferencePayloadsImpl(ctx, requesterAddress, s.promptStorage, "promptStorage")
