@@ -9,6 +9,25 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// postVotingValidateVote is a test-only endpoint (TestMode) that validates a VerificationResponse.
+// Returns 200 if valid, 400 if invalid (forged, wrong inference ID, bad signature).
+func (s *Server) postVotingValidateVote(ctx echo.Context) error {
+	var resp voting.VerificationResponse
+	if err := ctx.Bind(&resp); err != nil {
+		logging.Error("Failed to bind verification response", types.Voting, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid verification response")
+	}
+	inferenceId := ctx.QueryParam("inference_id")
+	if inferenceId == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "inference_id query param required")
+	}
+	if err := voting.ValidateVoteForTest(inferenceId, &resp); err != nil {
+		logging.Info("ValidateVote rejected", types.Voting, "inferenceId", inferenceId, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "valid"})
+}
+
 // postVotingVerify handles verification requests from challengers.
 // When a challenger (executor) asks this node (voter) to verify a respondent (TA),
 // the voter pings the respondent's payload endpoint and returns the result.

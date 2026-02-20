@@ -99,6 +99,9 @@ func NewServer(
 
 	// Voting endpoint: voters verify respondent behavior on behalf of challengers
 	g.POST("voting/verify", s.postVotingVerify)
+	if configManager.GetApiConfig().TestMode {
+		g.POST("voting/validate-vote", s.postVotingValidateVote)
+	}
 
 	g.GET("participants/:address", s.getInferenceParticipantByAddress)
 	g.GET("participants", s.getAllParticipants)

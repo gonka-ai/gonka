@@ -319,6 +319,12 @@ func (np *NodePinger) VerifyRespondent(
 	return response
 }
 
+// ValidateVoteForTest exposes validateVote for the test-only /v1/voting/validate-vote endpoint.
+// Only used when TestMode is true; production code uses validateVote directly.
+func ValidateVoteForTest(inferenceId string, vote *VerificationResponse) error {
+	return validateVote(inferenceId, vote)
+}
+
 // validateVote checks that a received vote is valid: inference ID matches, vote type is valid,
 // and the voter's signature verifies using the pubkey from the response.
 // Invalid votes should be skipped by the challenger.

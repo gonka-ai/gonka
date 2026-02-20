@@ -235,6 +235,7 @@ data class DockerGroup(
             put("NODE_HOST", "$pairName-node")
             put("DAPI_API__POC_CALLBACK_URL", pocCallbackUrl)
             put("DAPI_API__PUBLIC_URL", publicUrl)
+            put("DAPI_API__TEST_MODE", "true")
             put("DAPI_API__PUBLIC_SERVER_PORT", "9000")
             put("DAPI_API__ML_SERVER_PORT", "9100")
             put("DAPI_API__ADMIN_SERVER_PORT", "9200")

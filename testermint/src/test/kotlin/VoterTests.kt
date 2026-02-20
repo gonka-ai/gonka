@@ -138,6 +138,40 @@ class VoterTests : TestermintTest() {
     }
 
     /**
+     * Case #3a: Executor rejects invalid forged votes at receipt.
+     *
+     * The executor validates each VerificationResponse when received from voters.
+     * Forged votes (wrong signature, wrong pubkey, invalid vote type) are rejected.
+     * Uses the test-only /v1/voting/validate-vote endpoint (TestMode).
+     */
+    @Test
+    fun `executor rejects invalid forged votes`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
+        val node = cluster.joinPairs.first()
+        val inferenceId = "test-inference-forged"
+        val voterAddress = node.node.getColdAddress()
+
+        // Forged response: valid structure but signature does not verify
+        val forgedResponse = """
+            {
+                "inference_id": "$inferenceId",
+                "vote": 2,
+                "voter_address": "$voterAddress",
+                "voter_pubkey": "ZmFrZS1wdWJrZXktMzMtYnl0ZXMtbG9uZyEhISEhISEhISEhISEhISE=",
+                "voter_signature": "Zm9yZ2VkLXNpZ25hdHVyZS1ub3QtdmFsaWQ=",
+                "data_found": false,
+                "timestamp": "1700000000000000000"
+            }
+        """.trimIndent()
+
+        val (_, response, _) = node.api.makeVotingValidateVoteRequest(inferenceId, forgedResponse)
+
+        assertThat(response.statusCode).isEqualTo(400)
+        val body = String(response.data)
+        assertThat(body).containsIgnoringCase("invalid")
+    }
+
+    /**
      * Case #3: Voter rejects verification request when MsgStartInference does not exist.
      *
      * Flow:
