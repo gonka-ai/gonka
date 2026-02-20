@@ -9,6 +9,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	apiutils "decentralized-api/utils"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	inferenceutils "github.com/productscience/inference/x/inference/utils"
 )
 
 // NodePinger handles HTTP communication with nodes for payload verification.
@@ -95,6 +97,7 @@ type VerificationResponse struct {
 	InferenceId    string   `json:"inference_id"`
 	Vote           VoteType `json:"vote"`
 	VoterAddress   string   `json:"voter_address"`
+	VoterPubKey    string   `json:"voter_pubkey"`
 	VoterSignature string   `json:"voter_signature"`
 	// DataFound indicates if respondent had the payload
 	DataFound bool `json:"data_found"`
@@ -280,6 +283,7 @@ func (np *NodePinger) VerifyRespondent(
 	response := &VerificationResponse{
 		InferenceId:  inferenceId,
 		VoterAddress: voterAddress,
+		VoterPubKey:  inferenceutils.PubKeyToString(np.cosmosClient.GetAccountPubKey()),
 		Vote:         types.VoteType_VoteInvalid, // Default to invalid until we determine
 	}
 
@@ -313,6 +317,36 @@ func (np *NodePinger) VerifyRespondent(
 		"inferenceId", inferenceId, "voterAddress", voterAddress)
 
 	return response
+}
+
+// validateVote checks that a received vote is valid: inference ID matches, vote type is valid,
+// and the voter's signature verifies using the pubkey from the response.
+// Invalid votes should be skipped by the challenger.
+func validateVote(inferenceId string, vote *VerificationResponse) error {
+	if vote == nil {
+		return fmt.Errorf("vote is nil")
+	}
+	if vote.InferenceId != inferenceId {
+		return fmt.Errorf("inference ID mismatch: expected %s, got %s", inferenceId, vote.InferenceId)
+	}
+	if !types.VoteType(vote.Vote).IsValid() {
+		return fmt.Errorf("invalid vote type: %d", vote.Vote)
+	}
+	if vote.VoterPubKey == "" {
+		return fmt.Errorf("missing voter pubkey")
+	}
+	if vote.VoterSignature == "" {
+		return fmt.Errorf("missing voter signature")
+	}
+	return calculations.ValidateVoteSignature(
+		vote.InferenceId,
+		vote.VoterAddress,
+		int32(vote.Vote),
+		vote.PromptHash,
+		vote.Timestamp,
+		vote.VoterPubKey,
+		vote.VoterSignature,
+	)
 }
 
 // Pinging from executor to TA
@@ -660,6 +694,14 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 			VotingResult: votingResult,
 		}
 
+		// Validate before direct chain submit (executor validates when receiving via HTTP).
+		executorPubKey := base64.StdEncoding.EncodeToString(np.cosmosClient.GetAccountPubKey().Bytes())
+		if err = ValidateVotingResultFull(ctx, queryClient, np.cosmosClient, &inferenceResp.Inference, votingResult, executorPubKey); err != nil {
+			logging.Error("VoterFallback: voting result failed validation before direct submit", types.Voting,
+				"inferenceId", inferenceId, "error", err)
+			return err
+		}
+
 		logging.Warn(
 			"VoterFallback: posting MsgFinishInferenceWithMissingPayload with negative voting outcome", types.Voting,
 			"inferenceId", inferenceId,
@@ -683,6 +725,9 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		result.NegativeVotes, inferenceId)
 }
 
+// createVotingResult builds a VotingResult from challenger responses.
+// Validation is done by the executor when it receives the result (HTTP path) or
+// by ValidateVotingResultFull before direct chain submit (negative-vote path).
 func (np *NodePinger) createVotingResult(result *ChallengerVotingResult) (*inference.VotingResult, error) {
 	votes := []*inference.SignedVote{}
 	for _, vote := range result.VoterResults {
@@ -691,17 +736,22 @@ func (np *NodePinger) createVotingResult(result *ChallengerVotingResult) (*infer
 			continue
 		}
 
+		resp := vote.Response
 		votes = append(
 			votes,
-			&inference.SignedVote {
-				InferenceId: vote.Response.InferenceId,
-				VoterAddress: vote.Response.VoterAddress,
-				VoteType: inference.VoteType(vote.Response.Vote),
-				RespondentDataHash: vote.Response.PromptHash, // TODO: use response hash instead?
-				Timestamp: vote.Response.Timestamp,
-				VoterSignature: vote.Response.VoterSignature,
+			&inference.SignedVote{
+				InferenceId:        resp.InferenceId,
+				VoterAddress:       resp.VoterAddress,
+				VoteType:           inference.VoteType(resp.Vote),
+				RespondentDataHash: resp.PromptHash,
+				Timestamp:          resp.Timestamp,
+				VoterSignature:     resp.VoterSignature,
 			},
 		)
+	}
+
+	if len(votes) == 0 {
+		return nil, fmt.Errorf("no votes to include in voting result")
 	}
 
 	completedAt := time.Now().UnixNano()
@@ -711,11 +761,11 @@ func (np *NodePinger) createVotingResult(result *ChallengerVotingResult) (*infer
 		return nil, err
 	}
 
-	votingResult := &inference.VotingResult {
-		InferenceId: result.InferenceId,
-		Votes: votes,
-		CompletedAt: completedAt,
-		RequesterAddress: requesterAddress,
+	votingResult := &inference.VotingResult{
+		InferenceId:        result.InferenceId,
+		Votes:              votes,
+		CompletedAt:        completedAt,
+		RequesterAddress:   requesterAddress,
 		RequesterSignature: signature,
 	}
 
@@ -848,6 +898,16 @@ func (np *NodePinger) RequestVerificationFromVoters(
 
 	for jobRes := range resultsCh {
 		voterResult := jobRes.result
+
+		// Validate vote at receipt; skip invalid votes (forged, wrong inference, bad signature).
+		if voterResult.Response != nil && voterResult.Reachable {
+			if err := validateVote(request.InferenceId, voterResult.Response); err != nil {
+				logging.Warn("Skipping invalid vote from voter", types.Voting,
+					"inferenceId", request.InferenceId, "voterURL", jobRes.voterURL, "error", err)
+				continue
+			}
+		}
+
 		result.VoterResults = append(result.VoterResults, voterResult)
 
 		// If we already stopped early due to a positive vote, just record results without

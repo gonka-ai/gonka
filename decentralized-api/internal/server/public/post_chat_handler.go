@@ -810,6 +810,33 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 				fmt.Sprintf("Unable to validate voting result against executor key: %s", err.Error()),
 			)
 		}
+
+		// Full validation matching inference-chain keeper to avoid submitting forged/invalid votes.
+		infResp, infErr := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: request.InferenceId})
+		if infErr != nil {
+			logging.Error("Failed to query inference for voting result validation", types.Inferences,
+				"inferenceId", request.InferenceId, "error", infErr)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to validate voting result")
+		}
+		if infResp != nil {
+			if err = voting.ValidateVotingResultFull(
+				ctx.Request().Context(),
+				queryClient,
+				s.recorder,
+				&infResp.Inference,
+				request.VotingResult,
+				executorPubKey,
+			); err != nil {
+				logging.Error(
+					"Voting result failed full validation (keeper-equivalent checks)", types.Inferences,
+					"inferenceId", request.InferenceId, "error", err,
+				)
+				return echo.NewHTTPError(
+					http.StatusUnauthorized,
+					fmt.Sprintf("Invalid voting result: %s", err.Error()),
+				)
+			}
+		}
 	}
 
 	err = s.validateTimestampNonce(request)

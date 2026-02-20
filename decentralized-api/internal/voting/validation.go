@@ -3,12 +3,15 @@ package voting
 
 import (
 	"context"
+	"fmt"
 
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/validation"
 )
 
 // ChainVerifier queries the chain for inference state and validates challenger claims.
@@ -78,4 +81,25 @@ func ValidateVotingResultSignature(result *inference.VotingResult, requesterPubk
 		requesterPubkey,
 		result.RequesterSignature,
 	)
+}
+
+// ValidateVotingResultFull validates a VotingResult using the shared inference-chain validation.
+// Call this before submitting MsgFinishInferenceWithMissingPayload.
+func ValidateVotingResultFull(
+	ctx context.Context,
+	queryClient types.QueryClient,
+	cosmosClient cosmosclient.CosmosMessageClient,
+	_ *types.Inference,
+	result *inference.VotingResult,
+	requesterPubkey string,
+) error {
+	backend := NewQueryBackend(queryClient, cosmosClient, []string{requesterPubkey})
+	typesResult := toTypesVotingResult(result)
+	_, _, err := validation.ValidateVotingResult(ctx, backend, typesResult)
+	if err != nil {
+		logging.Error("Voting result validation failed", types.Voting,
+			"inferenceId", result.InferenceId, "error", err)
+		return fmt.Errorf("invalid voting result: %w", err)
+	}
+	return nil
 }
