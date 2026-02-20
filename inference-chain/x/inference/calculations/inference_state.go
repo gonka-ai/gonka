@@ -190,18 +190,12 @@ func ProcessFinishInference(
 	}
 	if startProcessed(currentInference) {
 		escrowAmount := currentInference.EscrowAmount
-		if isMissingPayload {
-			// Fully refund the user
-			payments.ExecutorPayment = 0
-			payments.EscrowAmount = -currentInference.EscrowAmount
+		if currentInference.ActualCost >= escrowAmount {
+			payments.ExecutorPayment = escrowAmount
 		} else {
-			if currentInference.ActualCost >= escrowAmount {
-				payments.ExecutorPayment = escrowAmount
-			} else {
-				payments.ExecutorPayment = currentInference.ActualCost
-				// Will be a negative number, meaning a refund
-				payments.EscrowAmount = currentInference.ActualCost - escrowAmount
-			}
+			payments.ExecutorPayment = currentInference.ActualCost
+			// Will be a negative number, meaning a refund
+			payments.EscrowAmount = currentInference.ActualCost - escrowAmount
 		}
 	}
 	return currentInference, &payments, nil

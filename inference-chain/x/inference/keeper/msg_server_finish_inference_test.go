@@ -412,7 +412,7 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		EpochId:                  h.previousInference.EpochId + 1,
 		ExecutedBy:               h.MockExecutor.address,
 		Model:                    h.previousInference.Model,
-		StartBlockTimestamp:     h.previousInference.StartBlockTimestamp,
+		StartBlockTimestamp:      h.previousInference.StartBlockTimestamp,
 		StartBlockHeight:         h.previousInference.StartBlockHeight,
 		StartBlockHash:           h.previousInference.StartBlockHash,
 		EndBlockTimestamp:        h.context.BlockTime().UnixMilli(),

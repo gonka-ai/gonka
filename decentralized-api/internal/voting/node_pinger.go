@@ -686,8 +686,8 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 func (np *NodePinger) createVotingResult(result *ChallengerVotingResult) (*inference.VotingResult, error) {
 	votes := []*inference.SignedVote{}
 	for _, vote := range result.VoterResults {
-		if vote.Error != nil {
-			logging.Warn("Found error in vote", types.Voting, "error", vote.Error)
+		if vote.Response == nil {
+			logging.Warn("Vote response is nil", types.Voting, "error", vote.Error)
 			continue
 		}
 
@@ -827,7 +827,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 				lastResult = res
 
 				// If the voter was reachable and responded, no need to retry.
-				if res.Error == nil || !res.Reachable {
+				if res.Error == nil && res.Reachable {
 					break
 				}
 			}
