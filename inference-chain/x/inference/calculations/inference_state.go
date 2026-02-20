@@ -23,6 +23,7 @@ const maxInt64Uint64 = uint64(math.MaxInt64)
 type BlockContext struct {
 	BlockHeight    int64
 	BlockTimestamp int64
+	BlockHash      []byte // Hash of the block at BlockHeight, for voter sampling replay
 }
 
 type Payments struct {
@@ -85,6 +86,7 @@ func ProcessStartInference(
 	currentInference.Model = startMessage.Model
 	currentInference.StartBlockHeight = blockContext.BlockHeight
 	currentInference.StartBlockTimestamp = blockContext.BlockTimestamp
+	currentInference.StartBlockHash = blockContext.BlockHash
 	currentInference.MaxTokens = getMaxTokens(startMessage)
 	currentInference.AssignedTo = startMessage.AssignedTo
 	currentInference.NodeVersion = startMessage.NodeVersion

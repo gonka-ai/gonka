@@ -4,6 +4,7 @@ import (
 	"context"
 
 	sdkerrors "cosmossdk.io/errors"
+	"github.com/cometbft/cometbft/libs/bytes"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -140,6 +141,31 @@ func (k msgServer) validateVotingResult(
 		return false, sdkerrors.Wrap(types.ErrInvalidVotingResultSignature, sigErr.Error())
 	}
 
+	// Validate that voters in the result match the replayable sampling (block hash + epoch group).
+	inference, infFound := k.GetInference(goCtx, result.InferenceId)
+	if !infFound {
+		return false, sdkerrors.Wrap(types.ErrInferenceNotFound, result.InferenceId)
+	}
+	if len(inference.StartBlockHash) > 0 {
+		allowedVoters, err := k.sampleAllowedVoters(goCtx, &inference, 10)
+		if err != nil {
+			k.LogError("Voter sampling replay failed", types.Inferences,
+				"inferenceId", result.InferenceId, "error", err)
+			return false, sdkerrors.Wrap(types.ErrInvalidVotingResult, err.Error())
+		}
+		for i, vote := range result.Votes {
+			if !allowedVoters[vote.VoterAddress] {
+				k.LogError("Voter not in sampled set", types.Inferences,
+					"inferenceId", result.InferenceId, "voteIndex", i, "voterAddress", vote.VoterAddress)
+				return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+					"vote[%d] voter %s not in replayable sampled set", i, vote.VoterAddress)
+			}
+		}
+	} else {
+		k.LogWarn("Skipping voter sampling check: inference has no StartBlockHash (pre-upgrade)", types.Inferences,
+			"inferenceId", result.InferenceId)
+	}
+
 	hasPositiveVote := false
 	for i, vote := range result.Votes {
 		if vote.InferenceId != result.InferenceId {
@@ -198,6 +224,44 @@ func (k msgServer) validateVotingResult(
 	}
 
 	return hasPositiveVote, nil
+}
+
+// sampleAllowedVoters replays the voter sampling algorithm for the given inference
+// and returns the set of addresses that would have been sampled (excluding TA and executor).
+// Used to validate that VotingResult signers are legitimate sampled voters.
+func (k msgServer) sampleAllowedVoters(
+	goCtx context.Context,
+	inf *types.Inference,
+	maxVoters int,
+) (map[string]bool, error) {
+	eg, err := k.GetEpochGroup(goCtx, inf.EpochId, "")
+	if err != nil {
+		return nil, err
+	}
+
+	blockHash := bytes.HexBytes(inf.StartBlockHash)
+	nextMember := eg.MakeRandomMemberReplayableFn(goCtx, blockHash)
+
+	exclude := map[string]bool{
+		inf.TransferredBy: true,
+		inf.AssignedTo:    true,
+	}
+
+	allowed := make(map[string]bool)
+	for len(allowed) < maxVoters {
+		participant, err := nextMember()
+		if err != nil {
+			break
+		}
+		if exclude[participant.Address] {
+			continue
+		}
+		if participant.InferenceUrl == "" {
+			continue
+		}
+		allowed[participant.Address] = true
+	}
+	return allowed, nil
 }
 
 func failedFinishWithMissingPayload(

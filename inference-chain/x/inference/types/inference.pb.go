@@ -156,6 +156,7 @@ type Inference struct {
 	OriginalPrompt           string           `protobuf:"bytes,31,opt,name=original_prompt,json=originalPrompt,proto3" json:"original_prompt,omitempty"` // Deprecated: Do not use.
 	PerTokenPrice            uint64           `protobuf:"varint,32,opt,name=per_token_price,json=perTokenPrice,proto3" json:"per_token_price,omitempty"`
 	OriginalPromptHash       string           `protobuf:"bytes,33,opt,name=original_prompt_hash,json=originalPromptHash,proto3" json:"original_prompt_hash,omitempty"`
+	StartBlockHash           []byte           `protobuf:"bytes,34,opt,name=start_block_hash,json=startBlockHash,proto3" json:"start_block_hash,omitempty"`
 }
 
 func (m *Inference) Reset()         { *m = Inference{} }
@@ -425,6 +426,13 @@ func (m *Inference) GetOriginalPromptHash() string {
 	return ""
 }
 
+func (m *Inference) GetStartBlockHash() []byte {
+	if m != nil {
+		return m.StartBlockHash
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterEnum("inference.inference.InferenceStatus", InferenceStatus_name, InferenceStatus_value)
 	proto.RegisterType((*ProposalDetails)(nil), "inference.inference.ProposalDetails")
@@ -559,6 +567,15 @@ func (m *Inference) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.StartBlockHash) > 0 {
+		i -= len(m.StartBlockHash)
+		copy(dAtA[i:], m.StartBlockHash)
+		i = encodeVarintInference(dAtA, i, uint64(len(m.StartBlockHash)))
+		i--
+		dAtA[i] = 0x02
+		i--
+		dAtA[i] = 0x92
+	}
 	if len(m.OriginalPromptHash) > 0 {
 		i -= len(m.OriginalPromptHash)
 		copy(dAtA[i:], m.OriginalPromptHash)
@@ -958,6 +975,10 @@ func (m *Inference) Size() (n int) {
 		n += 2 + sovInference(uint64(m.PerTokenPrice))
 	}
 	l = len(m.OriginalPromptHash)
+	if l > 0 {
+		n += 2 + l + sovInference(uint64(l))
+	}
+	l = len(m.StartBlockHash)
 	if l > 0 {
 		n += 2 + l + sovInference(uint64(l))
 	}
@@ -1983,6 +2004,40 @@ func (m *Inference) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.OriginalPromptHash = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 34:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartBlockHash", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowInference
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthInference
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthInference
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.StartBlockHash = append(m.StartBlockHash[:0], dAtA[iNdEx:postIndex]...)
+			if m.StartBlockHash == nil {
+				m.StartBlockHash = []byte{}
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
