@@ -11,13 +11,13 @@ import (
 )
 
 func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishInference) (*types.MsgFinishInferenceResponse, error) {
-	return k.finishInferenceImpl(goCtx, msg, false)
+	return k.finishInferenceImpl(goCtx, msg, calculations.FinishSuccessfully)
 }
 
 func (k msgServer) finishInferenceImpl(
 	goCtx context.Context,
 	msg *types.MsgFinishInference,
-	isMissingPayload bool,
+	outcome calculations.FinishInferenceOutcome,
 ) (*types.MsgFinishInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
@@ -62,7 +62,7 @@ func (k msgServer) finishInferenceImpl(
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
 	}
 
-	err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor, isMissingPayload)
+	err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor, outcome)
 	if err != nil {
 		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -102,6 +102,7 @@ func (k msgServer) finishInferenceImpl(
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
+		BlockHash:      ctx.HeaderInfo().Hash,
 	}
 
 	inference, payments, err := calculations.ProcessFinishInference(
@@ -109,7 +110,7 @@ func (k msgServer) finishInferenceImpl(
 		msg,
 		blockContext,
 		k,
-		isMissingPayload,
+		outcome,
 	)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
@@ -133,10 +134,14 @@ func (k msgServer) finishInferenceImpl(
 	return &types.MsgFinishInferenceResponse{InferenceIndex: msg.InferenceId}, nil
 }
 
-func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *types.MsgFinishInferenceResponse {
+func emitFailedFinishEvent(ctx sdk.Context) {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent("finish_inference",
 			sdk.NewAttribute("result", "failed")))
+}
+
+func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *types.MsgFinishInferenceResponse {
+	emitFailedFinishEvent(ctx)
 	return &types.MsgFinishInferenceResponse{
 		InferenceIndex: msg.InferenceId,
 		ErrorMessage:   err.Error(),
@@ -149,7 +154,7 @@ func (k msgServer) verifyFinishKeys(
 	transferAgent *types.Participant,
 	requestor *types.Participant,
 	executor *types.Participant,
-	isMissingPayload bool,
+	outcome calculations.FinishInferenceOutcome,
 ) error {
 	// Hash-based signature verification (post-upgrade flow)
 	// Dev signs: original_prompt_hash + timestamp + ta_address
@@ -164,7 +169,7 @@ func (k msgServer) verifyFinishKeys(
 	}
 
 	// We don't have the body to calculate the original prompt hash if the payload is missing
-	if !isMissingPayload {
+	if outcome == calculations.FinishSuccessfully {
 		// Verify dev signature (original_prompt_hash)
 		if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
 			DevSignature: msg.InferenceId, Dev: requestor,

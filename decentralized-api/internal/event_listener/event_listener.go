@@ -447,7 +447,6 @@ func (e *InferenceStartedEventHandler) Handle(event *chainevents.JSONRPCResponse
 					logging.Error("Voter fallback also failed", types.Voting,
 						"inferenceId", inferenceId, "error", voterErr)
 				}
-				continue
 			}
 		}
 	}

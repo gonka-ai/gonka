@@ -127,12 +127,20 @@ func setEscrowForFinished(currentInference *types.Inference, escrowAmount int64,
 	return nil
 }
 
+type FinishInferenceOutcome int
+
+const (
+	FinishSuccessfully FinishInferenceOutcome = iota
+	FinishWithMissingPayload
+	FinishWithInvalidVote
+)
+
 func ProcessFinishInference(
 	currentInference *types.Inference,
 	finishMessage *types.MsgFinishInference,
 	blockContext BlockContext,
 	logger types.InferenceLogger,
-	isMissingPayload bool,
+	outcome FinishInferenceOutcome,
 ) (*types.Inference, *Payments, error) {
 	payments := Payments{}
 	logger.LogInfo("FinishInference being processed", types.Inferences)
@@ -152,7 +160,7 @@ func ProcessFinishInference(
 			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
-	if isMissingPayload {
+	if outcome != FinishSuccessfully {
 		currentInference.Status = types.InferenceStatus_FINISHED_WITH_MISSING_PAYLOAD
 	} else {
 		currentInference.Status = types.InferenceStatus_FINISHED
@@ -176,7 +184,7 @@ func ProcessFinishInference(
 	if currentInference.PromptTokenCount == 0 {
 		logger.LogWarn("PromptTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
 	}
-	if isMissingPayload {
+	if outcome != FinishSuccessfully {
 		currentInference.ActualCost = 0
 	} else {
 		if currentInference.CompletionTokenCount == 0 {

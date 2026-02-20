@@ -210,6 +210,7 @@ class VoterTests : TestermintTest() {
      */
     @Test
     fun `chain rejects finish with missing payload when votes are empty`() {
+        val initialBalance = genesis.node.getSelfBalance()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         val originalPromptHash = sha256(inferenceRequest)
@@ -255,6 +256,10 @@ class VoterTests : TestermintTest() {
         val response = genesis.submitMessage(message)
         assertTxThat(response).isFailure()
         assertThat(response.rawLog).contains("invalid vote count")
+
+        // Refund given
+        val finalBalance = genesis.node.getSelfBalance()
+        assertThat(finalBalance).isEqualTo(initialBalance)
     }
 
     /**
@@ -265,6 +270,7 @@ class VoterTests : TestermintTest() {
      */
     @Test
     fun `chain rejects finish with missing payload when requester signature is forged`() {
+        val initialBalance = genesis.node.getSelfBalance()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         val originalPromptHash = sha256(inferenceRequest)
@@ -327,6 +333,10 @@ class VoterTests : TestermintTest() {
         val response = genesis.submitMessage(message)
         assertTxThat(response).isFailure()
         assertThat(response.rawLog).contains("invalid voting result signature")
+
+        // Refund given
+        val finalBalance = genesis.node.getSelfBalance()
+        assertThat(finalBalance).isEqualTo(initialBalance)
     }
 
     /**
@@ -336,6 +346,7 @@ class VoterTests : TestermintTest() {
      */
     @Test
     fun `chain rejects finish with missing payload when inference IDs mismatch`() {
+        val initialBalance = genesis.node.getSelfBalance()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         val originalPromptHash = sha256(inferenceRequest)
@@ -405,6 +416,10 @@ class VoterTests : TestermintTest() {
         val response = genesis.submitMessage(message)
         assertTxThat(response).isFailure()
         assertThat(response.rawLog).contains("inference IDs are different")
+
+        // Refund given
+        val finalBalance = genesis.node.getSelfBalance()
+        assertThat(finalBalance).isEqualTo(initialBalance)
     }
 
     /**
@@ -426,6 +441,8 @@ class VoterTests : TestermintTest() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
 
+        val initialBalance = genesis.node.getSelfBalance()
+
         val inferenceTimestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         val inferenceSignature = genesis.node.signRequest(
@@ -445,7 +462,7 @@ class VoterTests : TestermintTest() {
         // Wait for MsgStartInference to be on chain (STARTED status with assignedTo).
         var inference: InferencePayload? = waitInferenceUntilStatus(InferenceStatus.STARTED, inferenceResponse.id, maxTries = 15)
         assertNotNull(inference)
-        val assignedTo = inference!!.assignedTo
+        val assignedTo = inference.assignedTo
         assertNotNull(assignedTo) { "Inference should have assignedTo (executor)" }
         val transferredBy = inference.transferredBy
         assertNotNull(transferredBy) { "Inference should have transferredBy (TA)" }
@@ -517,6 +534,11 @@ class VoterTests : TestermintTest() {
         assertThat(
             response.events.any { it.type.contains("finish_inference") && it.attributes.any { it.key == "result" && it.value == "failed" } }
         ).isTrue()
+
+        // Refund given
+        val finalBalance = genesis.node.getSelfBalance()
+        assertThat(inference.actualCost).isNull()
+        assertThat(finalBalance).isEqualTo(initialBalance)
     }
 
     /**
@@ -537,8 +559,9 @@ class VoterTests : TestermintTest() {
     @Test
     fun `chain rejects finish with missing payload when executor forges voter signature`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.waitForNextInferenceWindow()
+
+        val initialBalance = genesis.node.getSelfBalance()
 
         val inferenceTimestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
@@ -558,7 +581,7 @@ class VoterTests : TestermintTest() {
 
         var inference: InferencePayload? = waitInferenceUntilStatus(InferenceStatus.STARTED, inferenceResponse.id, maxTries = 15)
         assertNotNull(inference)
-        val assignedTo = inference!!.assignedTo
+        val assignedTo = inference.assignedTo
         assertNotNull(assignedTo) { "Inference should have assignedTo (executor)" }
         val transferredBy = inference.transferredBy
         assertNotNull(transferredBy) { "Inference should have transferredBy (TA)" }
@@ -637,6 +660,11 @@ class VoterTests : TestermintTest() {
         assertThat(
             response.events.any { it.type.contains("finish_inference") && it.attributes.any { it.key == "result" && it.value == "failed" } }
         ).isTrue()
+
+        // Refund given
+        val finalBalance = genesis.node.getSelfBalance()
+        assertThat(inference.actualCost).isNull()
+        assertThat(finalBalance).isEqualTo(initialBalance)
     }
 
     /**
@@ -656,8 +684,9 @@ class VoterTests : TestermintTest() {
     @Test
     fun `executor is slashed when submitting forged voter signature`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.waitForNextInferenceWindow()
+
+        val initialBalance = genesis.node.getSelfBalance()
 
         val inferenceTimestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
@@ -677,7 +706,7 @@ class VoterTests : TestermintTest() {
 
         var inference: InferencePayload? = waitInferenceUntilStatus(InferenceStatus.STARTED, inferenceResponse.id, maxTries = 15)
         assertNotNull(inference)
-        val assignedTo = inference!!.assignedTo
+        val assignedTo = inference.assignedTo
         assertNotNull(assignedTo) { "Inference should have assignedTo (executor)" }
         val transferredBy = inference.transferredBy
         assertNotNull(transferredBy) { "Inference should have transferredBy (TA)" }
@@ -769,6 +798,11 @@ class VoterTests : TestermintTest() {
 
         val finalCollateral = executorPair.queryCollateral(assignedTo)
         assertThat(finalCollateral.amount?.amount).isEqualTo(expectedFinalActive)
+
+        // Refund given
+        val finalBalance = genesis.node.getSelfBalance()
+        assertThat(inference.actualCost).isNull()
+        assertThat(finalBalance).isEqualTo(initialBalance)
     }
 
     fun waitInferenceUntilStatus(

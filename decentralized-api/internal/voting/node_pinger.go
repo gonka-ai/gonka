@@ -1083,7 +1083,7 @@ func (np *NodePinger) signVerificationRequest(
 	return np.sign(components, calculations.Developer)
 }
 
-// signVerificationRequest signs a verification request from challenger to voter.
+// signMsgFinishInference signs an inference request from.
 func (np *NodePinger) signMsgFinishInference(
 	promptHash string,
 	timestamp int64,

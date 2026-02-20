@@ -5,6 +5,7 @@ import (
 
 	"github.com/cometbft/cometbft/libs/bytes"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/validation"
 )
@@ -53,10 +54,27 @@ func (k msgServer) FinishInferenceWithMissingPayload(
 	backend := NewVotingResultBackend(k)
 	hasPositiveVote, requesterSigPassed, err := validation.ValidateVotingResult(goCtx, backend, msg.VotingResult)
 	if err != nil {
-		k.LogError("FinishInferenceWithMissingPayload: voting validation failed", types.Inferences,
+		k.LogError("FinishInferenceWithMissingPayload: voting validation failed, refunding user", types.Inferences,
 			"inferenceId", msg.MsgFinishInference.InferenceId, "error", err)
-		resp := failedFinish(ctx, err, msg.MsgFinishInference)
+
+		resp, finishInfErr := k.finishInferenceImpl(goCtx, msg.MsgFinishInference, calculations.FinishWithInvalidVote)
+		if finishInfErr != nil {
+			k.LogError(
+				"FinishInferenceWithMissingPayload: failed to finish inference with invalid vote", types.Inferences,
+				"inferenceId", msg.MsgFinishInference.InferenceId,
+				"finishInfError", finishInfErr,
+				"error", err,
+			)
+			return failedFinishWithMissingPayload(resp, finishInfErr)
+		}
+
+		emitFailedFinishEvent(ctx)
 		if requesterSigPassed {
+			k.LogDebug(
+				"FinishInferenceWithMissingPayload: requester sig is valid, trying to slash", types.Inferences,
+				"inferenceId", msg.MsgFinishInference.InferenceId,
+				"error", err,
+			)
 			params, paramsErr := k.GetParams(ctx)
 			if paramsErr == nil {
 				requesterAddr, addrErr := sdk.AccAddressFromBech32(msg.VotingResult.RequesterAddress)
@@ -70,6 +88,11 @@ func (k msgServer) FinishInferenceWithMissingPayload(
 				ErrorMessage:   err.Error(),
 			}, nil
 		}
+		k.LogDebug(
+			"FinishInferenceWithMissingPayload: requester sig didn't pass", types.Inferences,
+			"inferenceId", msg.MsgFinishInference.InferenceId,
+			"error", err,
+		)
 		return failedFinishWithMissingPayload(resp, err)
 	}
 
@@ -79,22 +102,23 @@ func (k msgServer) FinishInferenceWithMissingPayload(
 			"inferenceId", msg.MsgFinishInference.InferenceId,
 		)
 
-		resp, err := k.finishInferenceImpl(goCtx, msg.MsgFinishInference, true)
+		resp, err := k.finishInferenceImpl(goCtx, msg.MsgFinishInference, calculations.FinishWithMissingPayload)
 		if err != nil {
 			k.LogError(
-				"FinishInferenceWithMissingPayload: failed to finish inference", types.Inferences,
+				"FinishInferenceWithMissingPayload: failed to finish inference with missing payload", types.Inferences,
 				"inferenceId", msg.MsgFinishInference.InferenceId,
 				"error", err,
 			)
 			return failedFinishWithMissingPayload(resp, err)
 		}
 
+		emitFailedFinishEvent(ctx)
 		return &types.MsgFinishInferenceWithMissingPayloadResponse{
 			InferenceIndex: resp.InferenceIndex,
 		}, nil
 	}
 
-	resp, err := k.finishInferenceImpl(goCtx, msg.MsgFinishInference, false)
+	resp, err := k.finishInferenceImpl(goCtx, msg.MsgFinishInference, calculations.FinishSuccessfully)
 	if err != nil {
 		k.LogError(
 			"FinishInferenceWithMissingPayload: failed to finish inference", types.Inferences,
