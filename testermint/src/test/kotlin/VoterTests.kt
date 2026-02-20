@@ -30,6 +30,7 @@ class VoterTests : TestermintTest() {
     @Test
     fun `voter recovers payload from TA when executor direct retrieval fails`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.waitForNextInferenceWindow()
 
         val initialBalance = genesis.node.getSelfBalance()
@@ -480,8 +481,10 @@ class VoterTests : TestermintTest() {
         )
 
         val response = executorPair.submitMessage(message)
-        assertTxThat(response).isFailure()
-        assertThat(response.rawLog).contains("not in replayable sampled set")
+        assertTxThat(response).isSuccess()
+        assertThat(
+            response.events.any { it.type.contains("finish_inference") && it.attributes.any { it.key == "result" && it.value == "failed" } }
+        ).isTrue()
     }
 
     /**
@@ -489,14 +492,15 @@ class VoterTests : TestermintTest() {
      *
      * The executor submits a vote claiming it's from a legitimate sampled voter, but the signature
      * is forged (signed by the executor's key instead of the voter's). The chain validates each
-     * voter signature against the voter's pubkey and rejects with "invalid voter signature".
+     * voter signature against the voter's pubkey. The tx succeeds (so the slash is committed) but
+     * the response contains "invalid voter signature" and the executor is penalized (see Case #9).
      *
      * Flow:
      * 1. TA sends MsgStartInference via API (VOTER_NEGATIVE_SEED - payload not stored).
      * 2. Wait for inference to appear on chain in STARTED status.
      * 3. Executor maliciously submits MsgFinishInferenceWithMissingPayload with a vote that
      *    claims to be from a legitimate voter but uses executor's signature (forged).
-     * 4. Chain rejects with "invalid voter signature".
+     * 4. Chain accepts tx (to commit slash), response indicates "invalid voter signature".
      */
     @Test
     fun `chain rejects finish with missing payload when executor forges voter signature`() {
@@ -597,8 +601,142 @@ class VoterTests : TestermintTest() {
         )
 
         val response = executorPair.submitMessage(message)
-        assertTxThat(response).isFailure()
-        assertThat(response.rawLog).contains("invalid voter signature")
+        assertTxThat(response).isSuccess()
+        assertThat(
+            response.events.any { it.type.contains("finish_inference") && it.attributes.any { it.key == "result" && it.value == "failed" } }
+        ).isTrue()
+    }
+
+    /**
+     * Case #9: Executor is slashed when submitting forged voter signature.
+     *
+     * When the executor submits MsgFinishInferenceWithMissingPayload with a forged voter signature
+     * (requester signature passes, but voter signature fails), the chain applies a penalty:
+     * the executor's collateral is slashed by slashFractionInvalid.
+     *
+     * Flow:
+     * 1. TA sends MsgStartInference via API (VOTER_NEGATIVE_SEED - payload not stored).
+     * 2. Wait for inference STARTED, executor deposits collateral.
+     * 3. Executor submits forged VotingResult (vote signed by executor, not voter).
+     * 4. Chain accepts the tx (to commit the slash), returns error in response.
+     * 5. Executor collateral is slashed.
+     */
+    @Test
+    fun `executor is slashed when submitting forged voter signature`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForNextInferenceWindow()
+
+        val inferenceTimestamp = Instant.now().toEpochNanos()
+        val genesisAddress = genesis.node.getColdAddress()
+        val inferenceSignature = genesis.node.signRequest(
+            inferenceRequest,
+            accountAddress = null,
+            timestamp = inferenceTimestamp,
+            endpointAccount = genesisAddress,
+        )
+        val inferenceResponse = genesis.api.makeInferenceRequest(
+            inferenceRequest,
+            genesisAddress,
+            inferenceSignature,
+            inferenceTimestamp,
+            seed = VOTER_NEGATIVE_SEED,
+        )
+
+        var inference: InferencePayload? = waitInferenceUntilStatus(InferenceStatus.STARTED, inferenceResponse.id, maxTries = 15)
+        assertNotNull(inference)
+        val assignedTo = inference!!.assignedTo
+        assertNotNull(assignedTo) { "Inference should have assignedTo (executor)" }
+        val transferredBy = inference.transferredBy
+        assertNotNull(transferredBy) { "Inference should have transferredBy (TA)" }
+
+        val executorPair = cluster.allPairs.firstOrNull { it.node.getColdAddress() == assignedTo }
+            ?: error("Executor pair not found for address $assignedTo")
+
+        val voterPair = cluster.allPairs.firstOrNull {
+            val addr = it.node.getColdAddress()
+            addr != assignedTo && addr != transferredBy
+        } ?: error("No voter pair found (need at least 3 nodes)")
+
+        val voterAddress = voterPair.node.getColdAddress()
+        val completedAt = Instant.now().toEpochNanos()
+
+        logSection("Executor deposits collateral before submitting forged result")
+        val depositAmount = 1000L
+        executorPair.depositCollateral(depositAmount)
+        genesis.node.waitForNextBlock(2)
+
+        val initialCollateral = executorPair.queryCollateral(assignedTo)
+        assertThat(initialCollateral.amount?.amount).isEqualTo(depositAmount)
+
+        val forgedVotes = listOf(
+            SignedVote(
+                inferenceId = inference.inferenceId,
+                voterAddress = voterAddress,
+                voteType = 2,
+                respondentDataHash = "",
+                timestamp = completedAt,
+                voterSignature = executorPair.node.signVote(
+                    inference.inferenceId,
+                    voterAddress,
+                    2,
+                    "",
+                    completedAt,
+                    assignedTo,
+                ),
+            ),
+        )
+
+        val requesterSignature = executorPair.node.signVotingResult(
+            inferenceId = inference.inferenceId,
+            votes = forgedVotes,
+            completedAt = completedAt,
+            requesterAddress = assignedTo,
+        )
+
+        val forgedVotingResult = VotingResult(
+            inferenceId = inference.inferenceId,
+            votes = forgedVotes,
+            completedAt = completedAt,
+            requesterAddress = assignedTo,
+            requesterSignature = requesterSignature,
+        )
+
+        val finishMsg = FinishInferenceData(
+            creator = assignedTo,
+            inferenceId = inference.inferenceId,
+            promptTokenCount = 10,
+            completionTokenCount = 100,
+            requestTimestamp = inference.requestTimestamp ?: inferenceTimestamp,
+            transferSignature = inference.transferSignature ?: "",
+            executorSignature = inference.executionSignature ?: "",
+            responseHash = "fake-response-hash",
+            executedBy = assignedTo,
+            transferredBy = transferredBy,
+            requestedBy = inference.requestedBy ?: genesisAddress,
+            model = inference.model ?: defaultModel,
+            promptHash = inference.promptHash,
+            originalPromptHash = inference.originalPromptHash ?: inference.promptHash,
+        )
+
+        val message = MsgFinishInferenceWithMissingPayload(
+            creator = assignedTo,
+            msgFinishInference = finishMsg,
+            votingResult = forgedVotingResult,
+        )
+
+        val response = executorPair.submitMessage(message)
+        assertTxThat(response).isSuccess()
+
+        genesis.node.waitForNextBlock(2)
+
+        val inferenceParams = executorPair.node.getInferenceParams().params
+        val slashFraction = inferenceParams.collateralParams.slashFractionInvalid
+        val expectedSlashed = (depositAmount * slashFraction.toDouble()).toLong()
+        val expectedFinalActive = depositAmount - expectedSlashed
+
+        val finalCollateral = executorPair.queryCollateral(assignedTo)
+        assertThat(finalCollateral.amount?.amount).isEqualTo(expectedFinalActive)
     }
 
     fun waitInferenceUntilStatus(

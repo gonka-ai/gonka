@@ -51,11 +51,26 @@ func (k msgServer) FinishInferenceWithMissingPayload(
 		return failedFinishWithMissingPayload(failedFinish(ctx, err, msg.MsgFinishInference), err)
 	}
 
-	hasPositiveVote, err := k.validateVotingResult(goCtx, msg.VotingResult)
+	hasPositiveVote, requesterSigPassed, err := k.validateVotingResult(goCtx, msg.VotingResult)
 	if err != nil {
 		k.LogError("FinishInferenceWithMissingPayload: voting validation failed", types.Inferences,
 			"inferenceId", msg.MsgFinishInference.InferenceId, "error", err)
-		return failedFinishWithMissingPayload(failedFinish(ctx, err, msg.MsgFinishInference), err)
+		resp := failedFinish(ctx, err, msg.MsgFinishInference)
+		if requesterSigPassed {
+			params, paramsErr := k.GetParams(ctx)
+			if paramsErr == nil {
+				requesterAddr, addrErr := sdk.AccAddressFromBech32(msg.VotingResult.RequesterAddress)
+				if addrErr == nil {
+					k.SlashForForgedVotingResult(goCtx, requesterAddr, params)
+				}
+			}
+			// Return success so the slash is committed; client gets error via ErrorMessage.
+			return &types.MsgFinishInferenceWithMissingPayloadResponse{
+				InferenceIndex: resp.InferenceIndex,
+				ErrorMessage:   err.Error(),
+			}, nil
+		}
+		return failedFinishWithMissingPayload(resp, err)
 	}
 
 	if !hasPositiveVote {
@@ -99,13 +114,13 @@ func (k msgServer) FinishInferenceWithMissingPayload(
 }
 
 // validateVotingResult validates the VotingResult attached to a FinishInferenceWithMissingPayload.
-// Returns whether a positive vote was found and any validation error.
+// Returns: hasPositiveVote, requesterSigPassed (true if requester signature validated before any failure), error.
 func (k msgServer) validateVotingResult(
 	goCtx context.Context,
 	result *types.VotingResult,
-) (bool, error) {
+) (hasPositiveVote bool, requesterSigPassed bool, err error) {
 	if len(result.Votes) == 0 {
-		return false, sdkerrors.Wrap(types.ErrInvalidVoteCount, "no votes provided")
+		return false, false, sdkerrors.Wrap(types.ErrInvalidVoteCount, "no votes provided")
 	}
 
 	// Validate requester signature on the voting result.
@@ -113,7 +128,7 @@ func (k msgServer) validateVotingResult(
 	// Use grantee-aware lookup because the executor may sign with a warm/grantee key.
 	requesterPubKeys, err := k.GetAccountPubKeysWithGrantees(goCtx, result.RequesterAddress)
 	if err != nil {
-		return false, sdkerrors.Wrap(types.ErrParticipantNotFound, result.RequesterAddress)
+		return false, false, sdkerrors.Wrap(types.ErrParticipantNotFound, result.RequesterAddress)
 	}
 
 	voteFields := make([]calculations.VoteFields, len(result.Votes))
@@ -138,26 +153,27 @@ func (k msgServer) validateVotingResult(
 	if sigErr := calculations.ValidateSignatureWithGrantees(components, calculations.Developer, requesterPubKeys, result.RequesterSignature); sigErr != nil {
 		k.LogError("Invalid voting result requester signature", types.Inferences,
 			"requesterAddress", result.RequesterAddress, "error", sigErr)
-		return false, sdkerrors.Wrap(types.ErrInvalidVotingResultSignature, sigErr.Error())
+		return false, false, sdkerrors.Wrap(types.ErrInvalidVotingResultSignature, sigErr.Error())
 	}
+	requesterSigPassed = true
 
 	// Validate that voters in the result match the replayable sampling (block hash + epoch group).
 	inference, infFound := k.GetInference(goCtx, result.InferenceId)
 	if !infFound {
-		return false, sdkerrors.Wrap(types.ErrInferenceNotFound, result.InferenceId)
+		return false, requesterSigPassed, sdkerrors.Wrap(types.ErrInferenceNotFound, result.InferenceId)
 	}
 	if len(inference.StartBlockHash) > 0 {
 		allowedVoters, err := k.sampleAllowedVoters(goCtx, &inference, 10)
 		if err != nil {
 			k.LogError("Voter sampling replay failed", types.Inferences,
 				"inferenceId", result.InferenceId, "error", err)
-			return false, sdkerrors.Wrap(types.ErrInvalidVotingResult, err.Error())
+			return false, requesterSigPassed, sdkerrors.Wrap(types.ErrInvalidVotingResult, err.Error())
 		}
 		for i, vote := range result.Votes {
 			if !allowedVoters[vote.VoterAddress] {
 				k.LogError("Voter not in sampled set", types.Inferences,
 					"inferenceId", result.InferenceId, "voteIndex", i, "voterAddress", vote.VoterAddress)
-				return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+				return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
 					"vote[%d] voter %s not in replayable sampled set", i, vote.VoterAddress)
 			}
 		}
@@ -166,27 +182,27 @@ func (k msgServer) validateVotingResult(
 			"inferenceId", result.InferenceId)
 	}
 
-	hasPositiveVote := false
+	hasPositiveVote = false
 	for i, vote := range result.Votes {
 		if vote.InferenceId != result.InferenceId {
-			return false, sdkerrors.Wrapf(types.ErrVoteInferenceIdMismatch,
+			return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrVoteInferenceIdMismatch,
 				"vote[%d] inference_id %s != %s", i, vote.InferenceId, result.InferenceId)
 		}
 
 		_, voterFound := k.GetParticipant(goCtx, vote.VoterAddress)
 		if !voterFound {
-			return false, sdkerrors.Wrapf(types.ErrVoterNotFound,
+			return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrVoterNotFound,
 				"vote[%d] voter %s", i, vote.VoterAddress)
 		}
 
 		// Validate voter signature on their vote.
 		if vote.VoterSignature == "" {
-			return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+			return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
 				"vote[%d] missing voter signature", i)
 		}
 		voterPubKey, err := k.GetAccountPubKey(goCtx, vote.VoterAddress)
 		if err != nil {
-			return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+			return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
 				"vote[%d] cannot get voter pubkey: %v", i, err)
 		}
 		if sigErr := calculations.ValidateVoteSignature(
@@ -200,30 +216,30 @@ func (k msgServer) validateVotingResult(
 		); sigErr != nil {
 			k.LogError("Invalid voter signature", types.Inferences,
 				"inferenceId", result.InferenceId, "voteIndex", i, "voterAddress", vote.VoterAddress, "error", sigErr)
-			return false, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
+			return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrInvalidVotingResult,
 				"vote[%d] invalid voter signature: %v", i, sigErr)
 		}
 
 		switch vote.VoteType {
 		case types.VoteType_VotePositive:
 			if hasPositiveVote {
-				return false, sdkerrors.Wrapf(types.ErrDuplicatePositiveVote,
+				return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrDuplicatePositiveVote,
 					"vote[%d] second positive vote", i)
 			}
 			hasPositiveVote = true
 		case types.VoteType_VoteNegative:
 			if hasPositiveVote {
-				return false, sdkerrors.Wrapf(types.ErrNegativeVoteAfterPositive,
+				return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrNegativeVoteAfterPositive,
 					"vote[%d] negative vote after positive", i)
 			}
 		default:
-			return false, sdkerrors.Wrapf(types.ErrInvalidVoteType,
+			return false, requesterSigPassed, sdkerrors.Wrapf(types.ErrInvalidVoteType,
 				"vote[%d] type %d", i, vote.VoteType)
 		}
 
 	}
 
-	return hasPositiveVote, nil
+	return hasPositiveVote, requesterSigPassed, nil
 }
 
 // sampleAllowedVoters replays the voter sampling algorithm for the given inference
