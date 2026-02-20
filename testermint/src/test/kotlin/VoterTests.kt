@@ -30,7 +30,6 @@ class VoterTests : TestermintTest() {
     @Test
     fun `voter recovers payload from TA when executor direct retrieval fails`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.waitForNextInferenceWindow()
 
         val initialBalance = genesis.node.getSelfBalance()
@@ -92,7 +91,6 @@ class VoterTests : TestermintTest() {
     @Test
     fun `all voters cast negative votes when payload does not exist`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.waitForNextInferenceWindow()
 
         val initialBalance = genesis.node.getSelfBalance()
