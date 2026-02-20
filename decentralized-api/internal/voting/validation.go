@@ -54,7 +54,8 @@ func (cv *ChainVerifier) QueryInferenceState(ctx context.Context, inferenceId st
 
 // ValidateVotingResultSignature verifies the requester's signature on a VotingResult.
 // Used as an off-chain fail-fast pre-check before submitting to the chain.
-func ValidateVotingResultSignature(result *inference.VotingResult, requesterPubkey string) error {
+// Uses ValidateSignatureWithGrantees for consistency with the keeper (supports grantee keys).
+func ValidateVotingResultSignature(result *inference.VotingResult, requesterPubKeys []string) error {
 	voteFields := make([]calculations.VoteFields, len(result.Votes))
 	for i, vote := range result.Votes {
 		voteFields[i] = calculations.VoteFields{
@@ -75,10 +76,10 @@ func ValidateVotingResultSignature(result *inference.VotingResult, requesterPubk
 		TransferAddress: result.RequesterAddress,
 		ExecutorAddress: "",
 	}
-	return calculations.ValidateSignature(
+	return calculations.ValidateSignatureWithGrantees(
 		components,
 		calculations.Developer,
-		requesterPubkey,
+		requesterPubKeys,
 		result.RequesterSignature,
 	)
 }

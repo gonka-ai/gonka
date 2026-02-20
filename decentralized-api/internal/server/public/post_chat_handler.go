@@ -799,7 +799,7 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 		}
 
 		executorPubKey := base64.StdEncoding.EncodeToString(executorPubKeySdk.Bytes())
-		if err = voting.ValidateVotingResultSignature(request.VotingResult, executorPubKey); err != nil {
+		if err = voting.ValidateVotingResultSignature(request.VotingResult, []string{executorPubKey}); err != nil {
 			logging.Error(
 				"Unable to validate voting result against executor key", types.Inferences,
 				"executorPubKey", executorPubKey,
