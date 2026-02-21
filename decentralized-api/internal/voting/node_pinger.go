@@ -829,7 +829,6 @@ func (np *NodePinger) RequestVerificationFromVoters(
 	}
 
 	// Apply sane defaults from config.
-	// By default, we cap the number of voters to DefaultMaxVoters (or fewer if not enough URLs).
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = 1
 	}
@@ -838,7 +837,10 @@ func (np *NodePinger) RequestVerificationFromVoters(
 		cfg.VoteTimeout = np.timeout.Milliseconds()
 	}
 
-	maxVoters := min(int(types.DefaultMaxVoters), len(voterURLs))
+	// Ping up to DefaultMaxVotersToSample voters (2x DefaultMaxVoters) so that if the first
+	// batch has invalid voters (unreachable, timeout, bad signature), we can still reach
+	// DefaultMaxVoters valid votes.
+	maxVoters := min(int(types.DefaultMaxVotersToSample), len(voterURLs))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -898,6 +900,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 		close(resultsCh)
 	}()
 
+	validVoteCount := 0
 	for jobRes := range resultsCh {
 		voterResult := jobRes.result
 
@@ -926,6 +929,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 		if voterResult.Response != nil {
 			switch voterResult.Response.Vote {
 			case types.VoteType_VotePositive:
+				validVoteCount++
 				// Capture the first positive vote and stop further work.
 				resultCopy := voterResult
 				result.FirstPositive = &resultCopy
@@ -939,7 +943,14 @@ func (np *NodePinger) RequestVerificationFromVoters(
 				cancel()
 
 			case types.VoteType_VoteNegative:
+				validVoteCount++
 				result.NegativeVotes++
+				// Stop once we have enough valid votes (positive or negative).
+				if validVoteCount >= int(types.DefaultMaxVoters) {
+					logging.Info("Reached required valid vote count, stopping verification", types.Voting,
+						"inferenceId", request.InferenceId, "validVoteCount", validVoteCount)
+					cancel()
+				}
 
 			default:
 				// Invalid or unknown vote - treat as negative for aggregation.
