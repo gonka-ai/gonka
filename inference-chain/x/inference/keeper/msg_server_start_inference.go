@@ -15,6 +15,10 @@ import (
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return failedStart(ctx, err, msg), nil
+	}
 
 	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
 	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
@@ -49,7 +53,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
 	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
 
-	err := k.verifyKeys(ctx, msg, transferAgent, dev)
+	err = k.verifyKeys(ctx, msg, transferAgent, dev, params)
 	if err != nil {
 		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -79,7 +83,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, false)
+	finalInference, updatedExecutor, err := k.processInferencePayments(ctx, inference, payments, false, params)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
@@ -87,10 +91,10 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
-	k.addTimeout(ctx, inference)
+	k.addTimeout(ctx, inference, params)
 
 	if inference.IsCompleted() {
-		err := k.handleInferenceCompleted(ctx, inference)
+		err := k.handleInferenceCompleted(ctx, inference, updatedExecutor, params)
 		if err != nil {
 			return failedStart(ctx, err, msg), nil
 		}
@@ -111,10 +115,10 @@ func failedStart(ctx sdk.Context, error error, message *types.MsgStartInference)
 	}
 }
 
-func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, agent types.Participant, dev types.Participant) error {
+func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, agent types.Participant, dev types.Participant, params types.Params) error {
 	devComponents := getDevSignatureComponents(msg)
 
-	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60); err != nil {
+	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60, params); err != nil {
 		return err
 	}
 
@@ -142,12 +146,8 @@ func (k msgServer) validateTimestamp(
 	components calculations.SignatureComponents,
 	inferenceId string,
 	extraSeconds int64,
+	params types.Params,
 ) error {
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		k.LogError("StartInference: validateTimestamp failed to get params", types.Inferences, "error", err)
-		return err
-	}
 	k.LogInfo("Validating timestamp for StartInference:", types.Inferences,
 		"timestamp", components.Timestamp,
 		"inferenceId", inferenceId,
@@ -155,7 +155,7 @@ func (k msgServer) validateTimestamp(
 		"timestampExpiration", params.ValidationParams.TimestampExpiration,
 		"timestampAdvance", params.ValidationParams.TimestampAdvance,
 	)
-	err = calculations.ValidateTimestamp(
+	err := calculations.ValidateTimestamp(
 		components.Timestamp,
 		ctx.BlockTime().UnixNano(),
 		params.ValidationParams.TimestampExpiration,
@@ -168,18 +168,13 @@ func (k msgServer) validateTimestamp(
 		k.LogError("StartInference: validateTimestamp failed", types.Inferences, "error", err)
 		return err
 	}
-	return err
+	return nil
 }
 
-func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		k.LogError("Unable to get params for inference timeout", types.Inferences, "error", err)
-		return
-	}
+func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference, params types.Params) {
 	expirationBlocks := params.ValidationParams.ExpirationBlocks
 	expirationHeight := uint64(inference.StartBlockHeight + expirationBlocks)
-	err = k.SetInferenceTimeout(ctx, types.InferenceTimeout{
+	err := k.SetInferenceTimeout(ctx, types.InferenceTimeout{
 		ExpirationHeight: expirationHeight,
 		InferenceId:      inference.InferenceId,
 	})
@@ -199,17 +194,18 @@ func (k msgServer) processInferencePayments(
 	inference *types.Inference,
 	payments *calculations.Payments,
 	allowRefund bool,
-) (*types.Inference, error) {
+	params types.Params,
+) (*types.Inference, *types.Participant, error) {
 	if payments.EscrowAmount > 0 {
 		escrowAmount, err := k.PutPaymentInEscrow(ctx, inference, payments.EscrowAmount)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		inference.EscrowAmount = escrowAmount
 	}
 	if payments.EscrowAmount < 0 {
 		if !allowRefund {
-			return nil, sdkerrors.Wrapf(types.ErrInvalidEscrowAmount, "escrow amount cannot be negative here: %d", payments.EscrowAmount)
+			return nil, nil, sdkerrors.Wrapf(types.ErrInvalidEscrowAmount, "escrow amount cannot be negative here: %d", payments.EscrowAmount)
 		}
 		err := k.IssueRefund(ctx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
 		if err != nil {
@@ -220,17 +216,20 @@ func (k msgServer) processInferencePayments(
 		executedBy := inference.ExecutedBy
 		executor, found := k.GetParticipant(ctx, executedBy)
 		if !found {
-			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, executedBy)
+			return nil, nil, sdkerrors.Wrap(types.ErrParticipantNotFound, executedBy)
 		}
 		executor.CoinBalance += payments.ExecutorPayment
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
 		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
-		err := k.SetParticipant(ctx, executor)
+		if inference.IsCompleted() {
+			return inference, &executor, nil
+		}
+		err := k.setParticipantWithParams(ctx, executor, params)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return inference, nil
+	return inference, nil, nil
 
 }
 

@@ -9,19 +9,29 @@ import (
 
 // SetParticipant set a specific participant in the store from its index
 func (k Keeper) SetParticipant(ctx context.Context, participant types.Participant) error {
-	// Compute new status and delegate transition handling to a unified method.
-	err := k.UpdateParticipantStatus(ctx, &participant)
+	params, err := k.GetParams(ctx)
 	if err != nil {
+		k.LogError("Failed to get params for participant update", types.Validation, "error", err)
+		return err
+	}
+	return k.setParticipantWithParams(ctx, participant, params)
+}
+
+func (k Keeper) setParticipantWithParams(ctx context.Context, participant types.Participant, params types.Params) error {
+	// Compute new status and delegate transition handling to a unified method.
+	if err := k.updateParticipantStatusWithParams(ctx, &participant, params); err != nil {
 		k.LogError("Failed to update participant status", types.Validation, "error", err)
 		return err
 	}
+	return k.storeParticipant(ctx, participant)
+}
 
+func (k Keeper) storeParticipant(ctx context.Context, participant types.Participant) error {
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Index)
 	if err != nil {
 		return err
 	}
-	err = k.Participants.Set(ctx, participantAddress, participant)
-	if err != nil {
+	if err := k.Participants.Set(ctx, participantAddress, participant); err != nil {
 		return err
 	}
 	k.LogDebug("Saved Participant", types.Participants, "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)

@@ -18,6 +18,19 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 	if participant == nil {
 		return nil
 	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("UpdateParticipantStatus: failed to get params", types.Validation, "error", err)
+		return err
+	}
+	return k.updateParticipantStatusWithParams(ctx, participant, params)
+}
+
+func (k Keeper) updateParticipantStatusWithParams(ctx context.Context, participant *types.Participant, params types.Params) error {
+	if participant == nil {
+		return nil
+	}
 	if participant.CurrentEpochStats == nil {
 		participant.CurrentEpochStats = &types.CurrentEpochStats{}
 	}
@@ -27,11 +40,6 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 		oldParticipant = *participant
 	}
 
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		k.LogError("UpdateParticipantStatus: failed to get params", types.Validation, "error", err)
-		return err
-	}
 	originalStatus := participant.Status
 	newStatus, reason, newStats := calculations.ComputeStatus(
 		params.ValidationParams,
@@ -41,11 +49,10 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 	)
 	participant.CurrentEpochStats = &newStats
 
-	k.LogInfo("Participant status updated", types.Validation, "address", participant.Address, "original", originalStatus, "new", newStatus, "reason", reason, "stats", participant.CurrentEpochStats)
-
 	if originalStatus == newStatus {
 		return nil
 	}
+	k.LogInfo("Participant status changed", types.Validation, "address", participant.Address, "original", originalStatus, "new", newStatus, "reason", reason)
 
 	// This should be the ONLY place status is set
 	participant.Status = newStatus

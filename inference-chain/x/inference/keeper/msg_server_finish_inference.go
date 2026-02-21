@@ -14,6 +14,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return failedFinish(ctx, err, msg), nil
+	}
 
 	if msg.PromptTokenCount > types.MaxAllowedTokens {
 		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
@@ -54,7 +58,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
 	}
 
-	err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor)
+	err = k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor, params)
 	if err != nil {
 		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -101,7 +105,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, true)
+	finalInference, updatedExecutor, err := k.processInferencePayments(ctx, inference, payments, true, params)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
@@ -110,7 +114,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, err, msg), nil
 	}
 	if existingInference.IsCompleted() {
-		err := k.handleInferenceCompleted(ctx, finalInference)
+		err := k.handleInferenceCompleted(ctx, finalInference, updatedExecutor, params)
 		if err != nil {
 			return failedFinish(ctx, err, msg), nil
 		}
@@ -129,7 +133,7 @@ func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *ty
 	}
 }
 
-func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant) error {
+func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant, params types.Params) error {
 	// Hash-based signature verification (post-upgrade flow)
 	// Dev signs: original_prompt_hash + timestamp + ta_address
 	// TA signs: prompt_hash + timestamp + ta_address + executor_address
@@ -138,7 +142,7 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 	taComponents := getFinishTASignatureComponents(msg)
 
 	// Extra seconds for long-running inferences; deduping via inferenceId is primary replay defense
-	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60*60); err != nil {
+	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60*60, params); err != nil {
 		return err
 	}
 
@@ -217,7 +221,12 @@ func getFinishTASignatureComponents(msg *types.MsgFinishInference) calculations.
 	}
 }
 
-func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *types.Inference) error {
+func (k msgServer) handleInferenceCompleted(
+	ctx sdk.Context,
+	existingInference *types.Inference,
+	updatedExecutor *types.Participant,
+	params types.Params,
+) error {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			"inference_finished",
@@ -226,13 +235,22 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	)
 
 	executedBy := existingInference.ExecutedBy
-	executor, found := k.GetParticipant(ctx, executedBy)
+	var (
+		executor types.Participant
+		found    bool
+	)
+	if updatedExecutor != nil {
+		executor = *updatedExecutor
+		found = true
+	} else {
+		executor, found = k.GetParticipant(ctx, executedBy)
+	}
 	if !found {
 		k.LogError("handleInferenceCompleted: executor not found", types.Inferences, "executed_by", executedBy)
 	} else {
 		executor.CurrentEpochStats.InferenceCount++
 		executor.LastInferenceTime = existingInference.EndBlockTimestamp
-		if err := k.SetParticipant(ctx, executor); err != nil {
+		if err := k.setParticipantWithParams(ctx, executor, params); err != nil {
 			return err
 		}
 
