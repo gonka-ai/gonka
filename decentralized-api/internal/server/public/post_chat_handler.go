@@ -6,7 +6,6 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
-	"decentralized-api/internal"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
@@ -624,18 +623,15 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	return nil
 }
 
-func (s *Server) getAllowedPubKeys(ctx echo.Context, granterAddress string) ([]string, error) {
-	return s.authzCache.GetPubKeys(ctx.Request().Context(), granterAddress, "/inference.inference.MsgStartInference")
-}
-
-func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) bool {
+func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) (bool, error) {
 	// Request for EA always comes from a TA (granterAddress), that is required to be active validator in the current epoch
 	// First we check if the granterAddress is not active in the current epoch
 	// This will reduce the number of queries to the chain to filter non-participants.
-	epochGroupDataCache := internal.NewEpochGroupDataCache(s.recorder)
-	isActive, err := epochGroupDataCache.IsActiveParticipant(context.Background(), s.phaseTracker.GetCurrentEpochState().LatestEpoch.EpochIndex, address)
-	if err == nil && !isActive {
-		return false
+	isActive, err := s.epochGroupDataCache.IsActiveParticipant(context.Background(), s.phaseTracker.GetCurrentEpochState().LatestEpoch.EpochIndex, address)
+	if err != nil {
+		return false, err
+	} else if !isActive {
+		return false, nil
 	}
 
 	// Even if the validator is active in cached epoch group data that is updated once per epoch,
@@ -646,7 +642,7 @@ func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) bool {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	resp, err := queryClient.CurrentEpochGroupData(context.Background(), &types.QueryCurrentEpochGroupDataRequest{})
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, vw := range resp.EpochGroupData.ValidationWeights {
 		if vw.MemberAddress == address {
@@ -661,7 +657,11 @@ func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) bool {
 
 func (s *Server) getAllowedPubKeysForTAsAndValidators(ctx echo.Context, granterAddress string) ([]string, error) {
 	// Only active participants are allowed to sign inference requests
-	if !s.isAddressActiveParticipantInCurrentEpoch(granterAddress) {
+	isActive, err := s.isAddressActiveParticipantInCurrentEpoch(granterAddress)
+	if err != nil {
+		return nil, err
+	}
+	if !isActive {
 		return nil, fmt.Errorf("granter is not active in the current epoch")
 	}
 
