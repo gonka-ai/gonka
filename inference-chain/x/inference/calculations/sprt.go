@@ -2,6 +2,7 @@ package calculations
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/shopspring/decimal"
 )
@@ -13,6 +14,13 @@ const (
 	Pass
 	Fail
 	Error
+)
+
+const maxLnCacheEntries = 8
+
+var (
+	lnCacheMu sync.RWMutex
+	lnCache   = make(map[string]struct{ logFail, logPass decimal.Decimal })
 )
 
 type SPRT struct {
@@ -27,6 +35,44 @@ type SPRT struct {
 	logPass decimal.Decimal
 }
 
+func lnCacheKey(p0, p1 decimal.Decimal) string {
+	return p0.String() + "|" + p1.String()
+}
+
+func getOrComputeLn(p0, p1 decimal.Decimal, prec int32) (logFail, logPass decimal.Decimal, err error) {
+	key := lnCacheKey(p0, p1)
+	lnCacheMu.RLock()
+	if c, ok := lnCache[key]; ok {
+		logFail, logPass = c.logFail, c.logPass
+		lnCacheMu.RUnlock()
+		return logFail, logPass, nil
+	}
+	lnCacheMu.RUnlock()
+
+	rFail := p1.Div(p0)
+	logFail, err = rFail.Ln(prec)
+	if err != nil {
+		return decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("ln(P1/P0): %w", err)
+	}
+	rPass := one.Sub(p1).Div(one.Sub(p0))
+	logPass, err = rPass.Ln(prec)
+	if err != nil {
+		return decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("ln((1-P1)/(1-P0)): %w", err)
+	}
+
+	lnCacheMu.Lock()
+	if len(lnCache) >= maxLnCacheEntries {
+		// Evict one arbitrary entry to avoid unbounded growth
+		for k := range lnCache {
+			delete(lnCache, k)
+			break
+		}
+	}
+	lnCache[key] = struct{ logFail, logPass decimal.Decimal }{logFail: logFail, logPass: logPass}
+	lnCacheMu.Unlock()
+	return logFail, logPass, nil
+}
+
 func NewSPRT(p0, p1, h, llr decimal.Decimal, prec int32) (*SPRT, error) {
 
 	// Basic sanity: keep probs in (0,1)
@@ -35,16 +81,9 @@ func NewSPRT(p0, p1, h, llr decimal.Decimal, prec int32) (*SPRT, error) {
 		return nil, fmt.Errorf("P0 and P1 must be in (0,1)")
 	}
 
-	rFail := p1.Div(p0)
-	logFail, err := rFail.Ln(prec)
+	logFail, logPass, err := getOrComputeLn(p0, p1, prec)
 	if err != nil {
-		return nil, fmt.Errorf("ln(P1/P0): %w", err)
-	}
-
-	rPass := one.Sub(p1).Div(one.Sub(p0))
-	logPass, err := rPass.Ln(prec)
-	if err != nil {
-		return nil, fmt.Errorf("ln((1-P1)/(1-P0)): %w", err)
+		return nil, err
 	}
 
 	return &SPRT{
