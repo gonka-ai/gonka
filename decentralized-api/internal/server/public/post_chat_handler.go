@@ -647,12 +647,12 @@ func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) (bool,
 	for _, vw := range resp.EpochGroupData.ValidationWeights {
 		if vw.MemberAddress == address {
 			if vw.ConfirmationWeight > 0 {
-				return true
+				return true, nil
 			}
-			return false
+			return false, nil
 		}
 	}
-	return false // participant is not active in the current epoch
+	return false, nil // participant is not active in the current epoch
 }
 
 func (s *Server) getAllowedPubKeysForTAsAndValidators(ctx echo.Context, granterAddress string) ([]string, error) {
