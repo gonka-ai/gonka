@@ -44,7 +44,7 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 		return nil, err
 	}
 
-	err = k.SetInference(ctx, *inference)
+	err = k.SetInferenceWithoutDevStatComputation(ctx, *inference)
 	if err != nil {
 		return nil, err
 	}

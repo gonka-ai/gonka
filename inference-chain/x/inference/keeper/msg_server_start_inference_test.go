@@ -66,12 +66,8 @@ func TestMsgServer_StartInference(t *testing.T) {
 	savedInference, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
 	require.Equal(t, expected, &savedInference)
-	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
-	require.True(t, found)
-	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId:      epochId,
-		InferenceIds: []string{expected.InferenceId},
-	}, devStat)
+	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
+	require.False(t, found)
 }
 
 func TestMsgServer_StartInferenceWithMaxTokens(t *testing.T) {
@@ -93,12 +89,8 @@ func TestMsgServer_StartInferenceWithMaxTokens(t *testing.T) {
 	savedInference, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
 	require.Equal(t, expected, &savedInference)
-	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
-	require.True(t, found)
-	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId:      epochId,
-		InferenceIds: []string{expected.InferenceId},
-	}, devStat)
+	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
+	require.False(t, found)
 }
 
 // TODO: Need a way to test that blockheight is set to newer values, but can't figure out how to change the

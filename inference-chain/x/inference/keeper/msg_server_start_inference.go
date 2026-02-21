@@ -83,17 +83,17 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
-	err = k.SetInference(ctx, *finalInference)
-	if err != nil {
-		return failedStart(ctx, err, msg), nil
-	}
-	k.addTimeout(ctx, inference)
+	k.addTimeout(ctx, finalInference)
 
-	if inference.IsCompleted() {
-		err := k.handleInferenceCompleted(ctx, inference)
+	if finalInference.IsCompleted() {
+		err := k.handleInferenceCompleted(ctx, finalInference)
 		if err != nil {
 			return failedStart(ctx, err, msg), nil
 		}
+	}
+	err = k.SetInferenceWithoutDevStatComputation(ctx, *finalInference)
+	if err != nil {
+		return failedStart(ctx, err, msg), nil
 	}
 
 	return &types.MsgStartInferenceResponse{

@@ -27,7 +27,7 @@ func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevali
 	}
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "authority", inference.ProposalDetails.PolicyAddress)
-	err = k.SetInference(ctx, *inference)
+	err = k.SetInferenceWithoutDevStatComputation(ctx, *inference)
 	if err != nil {
 		return nil, err
 	}
