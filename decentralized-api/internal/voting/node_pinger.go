@@ -586,7 +586,7 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 	// Sample voters using replayable random (exclude TA and executor).
 	sampledVoters, err := SampleVotersForInference(
 		ctx, np.cosmosClient, &inferenceResp.Inference,
-		DefaultMaxVoters, transferAddress, executorAddress,
+		transferAddress, executorAddress,
 	)
 	if err != nil {
 		logging.Error("VoterFallback: failed to sample voters", types.Voting, "error", err)
@@ -618,7 +618,7 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 
 	votingCfg := DefaultVotingConfig()
 	// Override defaults with NodePinger-specific settings.
-	votingCfg.VoteTimeout = int(np.timeout.Milliseconds())
+	votingCfg.VoteTimeout = np.timeout.Milliseconds()
 	votingCfg.MaxRetries = 2
 
 	// Request verification from voters
@@ -830,23 +830,15 @@ func (np *NodePinger) RequestVerificationFromVoters(
 
 	// Apply sane defaults from config.
 	// By default, we cap the number of voters to DefaultMaxVoters (or fewer if not enough URLs).
-	if cfg.MaxNumNodes <= 0 {
-		if len(voterURLs) < DefaultMaxVoters {
-			cfg.MaxNumNodes = len(voterURLs)
-		} else {
-			cfg.MaxNumNodes = DefaultMaxVoters
-		}
-	} else if cfg.MaxNumNodes > len(voterURLs) {
-		cfg.MaxNumNodes = len(voterURLs)
-	}
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = 1
 	}
 	if cfg.VoteTimeout <= 0 {
 		// Fall back to NodePinger's HTTP client timeout if not specified.
-		cfg.VoteTimeout = int(np.timeout.Milliseconds())
+		cfg.VoteTimeout = np.timeout.Milliseconds()
 	}
 
+	maxVoters := min(int(types.DefaultMaxVoters), len(voterURLs))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -855,10 +847,9 @@ func (np *NodePinger) RequestVerificationFromVoters(
 		result   VoterVerificationResult
 	}
 
-	resultsCh := make(chan voterJobResult, cfg.MaxNumNodes)
+	resultsCh := make(chan voterJobResult, maxVoters)
 
 	var wg sync.WaitGroup
-	maxVoters := cfg.MaxNumNodes
 
 	for i := 0; i < maxVoters; i++ {
 		voterURL := voterURLs[i]
@@ -869,7 +860,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 
 			var lastResult VoterVerificationResult
 
-			for attempt := 0; attempt < cfg.MaxRetries; attempt++ {
+			for attempt := 0; attempt < int(cfg.MaxRetries); attempt++ {
 				select {
 				case <-ctx.Done():
 					return

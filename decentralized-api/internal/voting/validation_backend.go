@@ -43,8 +43,8 @@ func (b *queryBackend) GetInference(ctx context.Context, inferenceId string) (*t
 	return &resp.Inference, nil
 }
 
-func (b *queryBackend) GetAllowedVoters(ctx context.Context, inf *types.Inference, maxVoters int) (map[string]bool, error) {
-	allowed, err := SampleVotersForInference(ctx, b.cosmosClient, inf, maxVoters,
+func (b *queryBackend) GetAllowedVoters(ctx context.Context, inf *types.Inference) (map[string]bool, error) {
+	allowed, err := SampleVotersForInference(ctx, b.cosmosClient, inf,
 		inf.TransferredBy, inf.AssignedTo)
 	if err != nil {
 		return nil, err

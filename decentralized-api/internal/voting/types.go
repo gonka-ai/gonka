@@ -7,9 +7,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// DefaultMaxVoters is the default number of voters to sample for fallback verification.
-const DefaultMaxVoters = 5
-
 // ChallengerRole identifies who is initiating the dispute.
 // The role determines what proof is required and what verification voters perform.
 type ChallengerRole int
@@ -81,7 +78,7 @@ type AssignmentProof struct {
 // 1. If data is missing, voter tries to fetch it from the respondent
 // 2. If successful, voter relays the data to the challenger (giving them a chance to receive it)
 // 3. Only if data is still unavailable after retries, cast a negative vote
-type VerificationType int
+type VerificationType uint32
 
 const (
 
@@ -284,26 +281,17 @@ type OnChainProof struct {
 
 // VotingConfig holds configuration parameters for the voting mechanism.
 type VotingConfig struct {
-	// MaxNumNodes is the maximum number of nodes to select for voting until one of them votes positively
-	// or all of them vote negatively.
-	MaxNumNodes int `json:"max_num_nodes"`
-
 	// VoteTimeout is the maximum time to wait for a node's vote (in ms).
-	VoteTimeout int `json:"vote_timeout"`
+	VoteTimeout int64 `json:"vote_timeout"`
 
 	// MaxRetries is the maximum number of times to retry contacting a node.
-	MaxRetries int `json:"max_retries"`
-
-	// MaxNumSkips is the maximum number of nodes that may be skipped during a vote
-	MaxNumSkips uint8 `json:"max_num_skips"`
+	MaxRetries uint32 `json:"max_retries"`
 }
 
 // DefaultVotingConfig returns a VotingConfig populated with defaults.
 func DefaultVotingConfig() VotingConfig {
 	return VotingConfig{
-		MaxNumNodes: DefaultMaxVoters,
 		VoteTimeout: 0,
 		MaxRetries:  1,
-		MaxNumSkips: 0,
 	}
 }

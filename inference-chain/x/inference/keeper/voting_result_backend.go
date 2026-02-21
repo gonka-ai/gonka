@@ -25,8 +25,8 @@ func (a *votingResultBackendAdapter) GetInference(ctx context.Context, inference
 	return &inf, nil
 }
 
-func (a *votingResultBackendAdapter) GetAllowedVoters(ctx context.Context, inf *types.Inference, maxVoters int) (map[string]bool, error) {
-	return a.sampleAllowedVoters(ctx, inf, maxVoters)
+func (a *votingResultBackendAdapter) GetAllowedVoters(ctx context.Context, inf *types.Inference) (map[string]bool, error) {
+	return a.sampleAllowedVoters(ctx, inf)
 }
 
 func (a *votingResultBackendAdapter) GetRequesterPubKeys(ctx context.Context, requesterAddress string) ([]string, error) {

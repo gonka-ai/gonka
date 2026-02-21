@@ -143,7 +143,6 @@ func (k msgServer) FinishInferenceWithMissingPayload(
 func (k msgServer) sampleAllowedVoters(
 	goCtx context.Context,
 	inf *types.Inference,
-	maxVoters int,
 ) (map[string]bool, error) {
 	eg, err := k.GetEpochGroup(goCtx, inf.EpochId, "")
 	if err != nil {
@@ -159,7 +158,7 @@ func (k msgServer) sampleAllowedVoters(
 	}
 
 	allowed := make(map[string]bool)
-	for len(allowed) < maxVoters {
+	for uint32(len(allowed)) < types.DefaultMaxVotersToSample {
 		participant, err := nextMember()
 		if err != nil {
 			break

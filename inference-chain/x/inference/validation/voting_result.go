@@ -14,7 +14,7 @@ import (
 type VotingResultBackend interface {
 	GetRequesterPubKeys(ctx context.Context, requesterAddress string) ([]string, error)
 	GetInference(ctx context.Context, inferenceId string) (*types.Inference, error)
-	GetAllowedVoters(ctx context.Context, inf *types.Inference, maxVoters int) (map[string]bool, error)
+	GetAllowedVoters(ctx context.Context, inf *types.Inference) (map[string]bool, error)
 	GetVoterPubKey(ctx context.Context, voterAddress string) (string, error)
 }
 
@@ -64,7 +64,7 @@ func ValidateVotingResult(
 	}
 
 	if len(inf.StartBlockHash) > 0 {
-		allowedVoters, err := backend.GetAllowedVoters(ctx, inf, 10)
+		allowedVoters, err := backend.GetAllowedVoters(ctx, inf)
 		if err != nil {
 			return false, requesterSigPassed, sdkerrors.Wrap(types.ErrInvalidVotingResult, err.Error())
 		}
