@@ -105,7 +105,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, err, msg), nil
 	}
 
-	finalInference, updatedExecutor, err := k.processInferencePayments(ctx, inference, payments, true, params)
+	finalInference, updatedExecutor, err := k.processInferencePayments(ctx, inference, payments, true)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}

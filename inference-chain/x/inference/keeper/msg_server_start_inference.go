@@ -83,7 +83,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, err, msg), nil
 	}
 
-	finalInference, updatedExecutor, err := k.processInferencePayments(ctx, inference, payments, false, params)
+	finalInference, updatedExecutor, err := k.processInferencePayments(ctx, inference, payments, false)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
@@ -194,7 +194,6 @@ func (k msgServer) processInferencePayments(
 	inference *types.Inference,
 	payments *calculations.Payments,
 	allowRefund bool,
-	params types.Params,
 ) (*types.Inference, *types.Participant, error) {
 	if payments.EscrowAmount > 0 {
 		escrowAmount, err := k.PutPaymentInEscrow(ctx, inference, payments.EscrowAmount)
@@ -224,7 +223,9 @@ func (k msgServer) processInferencePayments(
 		if inference.IsCompleted() {
 			return inference, &executor, nil
 		}
-		err := k.setParticipantWithParams(ctx, executor, params)
+		// Payment-only updates mutate balance counters; status-related fields are unchanged.
+		// Persist directly to avoid an unnecessary status recomputation in the hot path.
+		err := k.storeParticipant(ctx, executor)
 		if err != nil {
 			return nil, nil, err
 		}
