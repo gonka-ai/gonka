@@ -701,7 +701,12 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		}
 
 		// Validate before direct chain submit (executor validates when receiving via HTTP).
-		executorPubKey := base64.StdEncoding.EncodeToString(np.cosmosClient.GetAccountPubKey().Bytes())
+		executorPubKeySdk, err := np.cosmosClient.GetApiAccount().SignerAccount.Record.GetPubKey()
+		if err != nil {
+			logging.Error("Failed to get executor public key", types.Voting, "error", err)
+			return err
+		}
+		executorPubKey := base64.StdEncoding.EncodeToString(executorPubKeySdk.Bytes())
 		if err = ValidateVotingResultFull(ctx, queryClient, np.cosmosClient, &inferenceResp.Inference, votingResult, executorPubKey); err != nil {
 			logging.Error("VoterFallback: voting result failed validation before direct submit", types.Voting,
 				"inferenceId", inferenceId, "error", err)
