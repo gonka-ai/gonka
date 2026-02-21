@@ -2,6 +2,8 @@ package calculations
 
 import (
 	"fmt"
+	"strconv"
+	"sync"
 
 	"github.com/shopspring/decimal"
 )
@@ -27,6 +29,19 @@ type SPRT struct {
 	logPass decimal.Decimal
 }
 
+type sprtLogKey struct {
+	p0   string
+	p1   string
+	prec int32
+}
+
+type sprtLogCoefficients struct {
+	logFail decimal.Decimal
+	logPass decimal.Decimal
+}
+
+var sprtLogCache sync.Map
+
 func NewSPRT(p0, p1, h, llr decimal.Decimal, prec int32) (*SPRT, error) {
 
 	// Basic sanity: keep probs in (0,1)
@@ -35,16 +50,9 @@ func NewSPRT(p0, p1, h, llr decimal.Decimal, prec int32) (*SPRT, error) {
 		return nil, fmt.Errorf("P0 and P1 must be in (0,1)")
 	}
 
-	rFail := p1.Div(p0)
-	logFail, err := rFail.Ln(prec)
+	logFail, logPass, err := getOrComputeSPRTLogs(p0, p1, prec)
 	if err != nil {
-		return nil, fmt.Errorf("ln(P1/P0): %w", err)
-	}
-
-	rPass := one.Sub(p1).Div(one.Sub(p0))
-	logPass, err := rPass.Ln(prec)
-	if err != nil {
-		return nil, fmt.Errorf("ln((1-P1)/(1-P0)): %w", err)
+		return nil, err
 	}
 
 	return &SPRT{
@@ -55,6 +63,40 @@ func NewSPRT(p0, p1, h, llr decimal.Decimal, prec int32) (*SPRT, error) {
 		logFail: logFail,
 		logPass: logPass,
 	}, nil
+}
+
+func getOrComputeSPRTLogs(p0, p1 decimal.Decimal, prec int32) (decimal.Decimal, decimal.Decimal, error) {
+	key := sprtLogKey{
+		p0:   decimalCacheKey(p0),
+		p1:   decimalCacheKey(p1),
+		prec: prec,
+	}
+	if cached, ok := sprtLogCache.Load(key); ok {
+		coeffs := cached.(sprtLogCoefficients)
+		return coeffs.logFail, coeffs.logPass, nil
+	}
+
+	rFail := p1.Div(p0)
+	logFail, err := rFail.Ln(prec)
+	if err != nil {
+		return decimal.Zero, decimal.Zero, fmt.Errorf("ln(P1/P0): %w", err)
+	}
+
+	rPass := one.Sub(p1).Div(one.Sub(p0))
+	logPass, err := rPass.Ln(prec)
+	if err != nil {
+		return decimal.Zero, decimal.Zero, fmt.Errorf("ln((1-P1)/(1-P0)): %w", err)
+	}
+
+	sprtLogCache.Store(key, sprtLogCoefficients{
+		logFail: logFail,
+		logPass: logPass,
+	})
+	return logFail, logPass, nil
+}
+
+func decimalCacheKey(d decimal.Decimal) string {
+	return d.Coefficient().String() + "e" + strconv.FormatInt(int64(d.Exponent()), 10)
 }
 
 // UpdateCounts applies a batch: `failures` and `passes` since last call.
