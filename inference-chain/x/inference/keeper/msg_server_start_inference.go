@@ -80,6 +80,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
+		BlockHash:      ctx.HeaderInfo().Hash,
 	}
 
 	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)

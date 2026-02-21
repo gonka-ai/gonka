@@ -1,6 +1,10 @@
 // Package apitypes contains shared types used across internal packages to avoid import cycles.
 package apitypes
 
+import (
+	"github.com/productscience/inference/api/inference/inference"
+)
+
 // PayloadResponse is returned by payload retrieval endpoints.
 type PayloadResponse struct {
 	InferenceId       string `json:"inference_id"`
@@ -11,17 +15,18 @@ type PayloadResponse struct {
 
 // ChatRequest represents the request stored by the TA in prompt storage.
 type ChatRequest struct {
-	Body              []byte        `json:"body"`
-	ContentType       string        `json:"content_type"`
-	OpenAiRequest     OpenAiRequest `json:"open_ai_request"`
-	AuthKey           string        `json:"auth_key"`
-	Seed              string        `json:"seed"`
-	InferenceId       string        `json:"inference_id"`
-	RequesterAddress  string        `json:"requester_address"`
-	TransferAddress   string        `json:"transfer_address"`
-	Timestamp         int64         `json:"timestamp"`
-	TransferSignature string        `json:"transfer_signature"`
-	PromptHash        string        `json:"prompt_hash"`
+	Body              []byte                  `json:"body"`
+	ContentType       string                  `json:"content_type"`
+	OpenAiRequest     OpenAiRequest           `json:"open_ai_request"` // kept for compatibility
+	AuthKey           string                  `json:"auth_key"` // signature signing inference request
+	Seed              string                  `json:"seed"`
+	InferenceId       string                  `json:"inference_id"`
+	RequesterAddress  string                  `json:"requester_address"` // address of participant, who signed inference request
+	TransferAddress   string                  `json:"transfer_address"`
+	Timestamp         int64                   `json:"timestamp"` // timestamp of the request
+	TransferSignature string                  `json:"transfer_signature"` // signature of the transfer address
+	PromptHash        string                  `json:"prompt_hash"`
+	VotingResult      *inference.VotingResult `json:"voting_result"` // outcome of vote, if there was one
 }
 
 // OpenAiRequest is the parsed OpenAI-compatible request body.

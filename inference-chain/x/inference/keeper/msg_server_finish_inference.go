@@ -11,6 +11,14 @@ import (
 )
 
 func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishInference) (*types.MsgFinishInferenceResponse, error) {
+	return k.finishInferenceImpl(goCtx, msg, calculations.FinishSuccessfully)
+}
+
+func (k msgServer) finishInferenceImpl(
+	goCtx context.Context,
+	msg *types.MsgFinishInference,
+	outcome calculations.FinishInferenceOutcome,
+) (*types.MsgFinishInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
@@ -54,7 +62,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
 	}
 
-	err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor)
+	err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor, outcome)
 	if err != nil {
 		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -94,9 +102,16 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	blockContext := calculations.BlockContext{
 		BlockHeight:    ctx.BlockHeight(),
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
+		BlockHash:      ctx.HeaderInfo().Hash,
 	}
 
-	inference, payments, err := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
+	inference, payments, err := calculations.ProcessFinishInference(
+		&existingInference,
+		msg,
+		blockContext,
+		k,
+		outcome,
+	)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
@@ -119,17 +134,28 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	return &types.MsgFinishInferenceResponse{InferenceIndex: msg.InferenceId}, nil
 }
 
-func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *types.MsgFinishInferenceResponse {
+func emitFailedFinishEvent(ctx sdk.Context) {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent("finish_inference",
 			sdk.NewAttribute("result", "failed")))
+}
+
+func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *types.MsgFinishInferenceResponse {
+	emitFailedFinishEvent(ctx)
 	return &types.MsgFinishInferenceResponse{
 		InferenceIndex: msg.InferenceId,
 		ErrorMessage:   err.Error(),
 	}
 }
 
-func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant) error {
+func (k msgServer) verifyFinishKeys(
+	ctx sdk.Context,
+	msg *types.MsgFinishInference,
+	transferAgent *types.Participant,
+	requestor *types.Participant,
+	executor *types.Participant,
+	outcome calculations.FinishInferenceOutcome,
+) error {
 	// Hash-based signature verification (post-upgrade flow)
 	// Dev signs: original_prompt_hash + timestamp + ta_address
 	// TA signs: prompt_hash + timestamp + ta_address + executor_address
@@ -142,12 +168,15 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 		return err
 	}
 
-	// Verify dev signature (original_prompt_hash)
-	if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
-		DevSignature: msg.InferenceId, Dev: requestor,
-	}, k); err != nil {
-		k.LogError("FinishInference: dev signature failed", types.Inferences, "error", err)
-		return err
+	// We don't have the body to calculate the original prompt hash if the payload is missing
+	if outcome == calculations.FinishSuccessfully {
+		// Verify dev signature (original_prompt_hash)
+		if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
+			DevSignature: msg.InferenceId, Dev: requestor,
+		}, k); err != nil {
+			k.LogError("FinishInference: dev signature failed", types.Inferences, "error", err)
+			return err
+		}
 	}
 
 	// Verify TA signature (prompt_hash)

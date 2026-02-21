@@ -9,6 +9,25 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// postVotingValidateVote is a test-only endpoint (TestMode) that validates a VerificationResponse.
+// Returns 200 if valid, 400 if invalid (forged, wrong inference ID, bad signature).
+func (s *Server) postVotingValidateVote(ctx echo.Context) error {
+	var resp voting.VerificationResponse
+	if err := ctx.Bind(&resp); err != nil {
+		logging.Error("Failed to bind verification response", types.Voting, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid verification response")
+	}
+	inferenceId := ctx.QueryParam("inference_id")
+	if inferenceId == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "inference_id query param required")
+	}
+	if err := voting.ValidateVoteForTest(inferenceId, &resp); err != nil {
+		logging.Info("ValidateVote rejected", types.Voting, "inferenceId", inferenceId, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "valid"})
+}
+
 // postVotingVerify handles verification requests from challengers.
 // When a challenger (executor) asks this node (voter) to verify a respondent (TA),
 // the voter pings the respondent's payload endpoint and returns the result.
@@ -30,7 +49,7 @@ func (s *Server) postVotingVerify(ctx echo.Context) error {
 		"epochId", req.EpochId)
 
 	// Query chain to validate the request before doing any work.
-	cv := voting.NewChainVerifier(s.recorder, nil)
+	cv := voting.NewChainVerifier(s.recorder)
 	onChain, err := cv.QueryInferenceState(ctx.Request().Context(), req.InferenceId)
 	if err != nil {
 		logging.Error("Failed to query chain for inference state", types.Voting,
@@ -63,7 +82,7 @@ func (s *Server) postVotingVerify(ctx echo.Context) error {
 
 	// Create a NodePinger using the server's cosmos client to sign requests
 	npConfig := voting.DefaultNodePingerConfig()
-	np := voting.NewNodePinger(s.recorder, npConfig)
+	np := voting.NewNodePinger(s.recorder, s.inferenceIdTracker, npConfig)
 
 	// Verify the respondent: ping their payload endpoint and check if they have the data.
 	// PromptHash is left empty — the on-chain hash and stored payload hash use different

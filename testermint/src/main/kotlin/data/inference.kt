@@ -74,6 +74,7 @@ enum class InferenceStatus(val value: Int) {
     INVALIDATED(3),
     VOTING(4),
     EXPIRED(5),
+    FINISHED_WITH_MISSING_PAYLOAD(6),
 }
 
 data class InferencesWrapper(
@@ -140,6 +141,50 @@ data class MsgValidation(
     val responsePayload: String = "",
     val value: Double = 0.0,
     val revalidation: Boolean = false,
+) : TxMessage
+
+data class SignedVote(
+    val inferenceId: String = "",
+    val voterAddress: String = "",
+    val voteType: Int = 0,
+    val respondentDataHash: String = "",
+    val timestamp: Long = 0,
+    val voterSignature: String = "",
+)
+
+data class VotingResult(
+    val inferenceId: String = "",
+    val votes: List<SignedVote> = emptyList(),
+    val completedAt: Long = 0,
+    val requesterAddress: String = "",
+    val requesterSignature: String = "",
+)
+
+// Plain data class (no TxMessage) so the MessageSerializer won't add @type when nested.
+data class FinishInferenceData(
+    val creator: String = "",
+    val inferenceId: String = "",
+    val responseHash: String = "",
+    val responsePayload: String = "",
+    val promptTokenCount: Long = 0,
+    val completionTokenCount: Long = 0,
+    val executedBy: String = "",
+    val transferredBy: String = "",
+    val requestTimestamp: Long = 0,
+    val transferSignature: String = "",
+    val executorSignature: String = "",
+    val requestedBy: String = "",
+    val originalPrompt: String = "",
+    val model: String = "",
+    val promptHash: String = "",
+    val originalPromptHash: String = "",
+)
+
+data class MsgFinishInferenceWithMissingPayload(
+    override val type: String = "/inference.inference.MsgFinishInferenceWithMissingPayload",
+    val creator: String = "",
+    val msgFinishInference: FinishInferenceData = FinishInferenceData(),
+    val votingResult: VotingResult = VotingResult(),
 ) : TxMessage
 
 data class MsgClaimRewards(

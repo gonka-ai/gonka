@@ -147,3 +147,17 @@ func (k Keeper) SlashForDowntime(ctx context.Context, participant *types.Partici
 		k.LogError("Failed to slash participant for downtime", types.Tokenomics, "participant", participant.Address, "error", err)
 	}
 }
+
+// SlashForForgedVotingResult slashes the executor (requester) when they submit a forged
+// or malformed VotingResult (e.g. forged voter signature) after requester signature passed.
+func (k Keeper) SlashForForgedVotingResult(ctx context.Context, requesterAddress sdk.AccAddress, params types.Params) {
+	slashFraction, err := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
+	if err != nil {
+		k.LogError("invalid slash_fraction_invalid:", types.Tokenomics, "error", err)
+		return
+	}
+	_, err = k.collateralKeeper.Slash(ctx, requesterAddress, slashFraction, types.SlashReasonForgedVotingResult)
+	if err != nil {
+		k.LogError("Failed to slash executor for forged voting result", types.Tokenomics, "requester", requesterAddress.String(), "error", err)
+	}
+}

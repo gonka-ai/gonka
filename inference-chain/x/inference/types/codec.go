@@ -15,6 +15,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgFinishInference{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgFinishInferenceWithMissingPayload{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitNewParticipant{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),

@@ -514,6 +514,25 @@ data class ApplicationAPI(
             response
         }
 
+    /**
+     * Sends a VerificationResponse to the node's /v1/voting/validate-vote endpoint (test-only).
+     * Returns 200 if valid, 400 if invalid (forged, wrong inference ID, bad signature).
+     */
+    fun makeVotingValidateVoteRequest(
+        inferenceId: String,
+        verificationResponse: String,
+    ): Triple<Request, Response, Result<String, FuelError>> =
+        wrapLog("MakeVotingValidateVoteRequest", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            val response = Fuel.post("$url/v1/voting/validate-vote?inference_id=$inferenceId")
+                .jsonBody(verificationResponse)
+                .timeout(1000 * 5)
+                .timeoutRead(1000 * 5)
+                .responseString()
+            logResponse(response)
+            response
+        }
+
 }
 
 

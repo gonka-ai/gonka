@@ -23,6 +23,7 @@ const maxInt64Uint64 = uint64(math.MaxInt64)
 type BlockContext struct {
 	BlockHeight    int64
 	BlockTimestamp int64
+	BlockHash      []byte // Hash of the block at BlockHeight, for voter sampling replay
 }
 
 type Payments struct {
@@ -85,6 +86,7 @@ func ProcessStartInference(
 	currentInference.Model = startMessage.Model
 	currentInference.StartBlockHeight = blockContext.BlockHeight
 	currentInference.StartBlockTimestamp = blockContext.BlockTimestamp
+	currentInference.StartBlockHash = blockContext.BlockHash
 	currentInference.MaxTokens = getMaxTokens(startMessage)
 	currentInference.AssignedTo = startMessage.AssignedTo
 	currentInference.NodeVersion = startMessage.NodeVersion
@@ -125,11 +127,20 @@ func setEscrowForFinished(currentInference *types.Inference, escrowAmount int64,
 	return nil
 }
 
+type FinishInferenceOutcome int
+
+const (
+	FinishSuccessfully FinishInferenceOutcome = iota
+	FinishWithMissingPayload
+	FinishWithInvalidVote
+)
+
 func ProcessFinishInference(
 	currentInference *types.Inference,
 	finishMessage *types.MsgFinishInference,
 	blockContext BlockContext,
 	logger types.InferenceLogger,
+	outcome FinishInferenceOutcome,
 ) (*types.Inference, *Payments, error) {
 	payments := Payments{}
 	logger.LogInfo("FinishInference being processed", types.Inferences)
@@ -149,7 +160,11 @@ func ProcessFinishInference(
 			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
-	currentInference.Status = types.InferenceStatus_FINISHED
+	if outcome != FinishSuccessfully {
+		currentInference.Status = types.InferenceStatus_FINISHED_WITH_MISSING_PAYLOAD
+	} else {
+		currentInference.Status = types.InferenceStatus_FINISHED
+	}
 	currentInference.ResponseHash = finishMessage.ResponseHash
 	// PromptTokenCount for Finish can be set to 0 if the inference was streamed and interrupted
 	// before the end of the response. Then we should default to the value set in StartInference.
@@ -169,14 +184,18 @@ func ProcessFinishInference(
 	if currentInference.PromptTokenCount == 0 {
 		logger.LogWarn("PromptTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
 	}
-	if currentInference.CompletionTokenCount == 0 {
-		logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+	if outcome != FinishSuccessfully {
+		currentInference.ActualCost = 0
+	} else {
+		if currentInference.CompletionTokenCount == 0 {
+			logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+		}
+		actualCost, err := CalculateCost(currentInference)
+		if err != nil {
+			return nil, nil, err
+		}
+		currentInference.ActualCost = actualCost
 	}
-	actualCost, err := CalculateCost(currentInference)
-	if err != nil {
-		return nil, nil, err
-	}
-	currentInference.ActualCost = actualCost
 	if startProcessed(currentInference) {
 		escrowAmount := currentInference.EscrowAmount
 		if currentInference.ActualCost >= escrowAmount {

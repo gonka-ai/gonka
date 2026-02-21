@@ -3,68 +3,27 @@ package voting
 
 import (
 	"context"
-	"encoding/binary"
-	"time"
-	"log/slog"
-
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "cosmossdk.io/errors"
-
-	"github.com/cometbft/cometbft/libs/bytes"
+	"fmt"
 
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
-)
-
-const (
-	ModuleName = "votes"
-)
-
-var errorRegisterCounter uint32 = 1100
-func registerError(description string) error {
-	err := sdkerrors.Register(ModuleName, errorRegisterCounter, description)
-	errorRegisterCounter++
-	return err
-}
-
-// TODO: Inferencetypes has error codes used for validations, should we use those instead?
-// NOTE: These errors are sorted alphabetically.
-var (
-	ErrAssigneeMismatch             = registerError("assignee does not match challenger")
-	ErrCreatorMismatch              = registerError("creator does not match challenger")
-	ErrDuplicatePositiveVote        = registerError("more than one positive vote was collected")
-	ErrEmptyTransferAddress         = registerError("transfer address is empty")
-	ErrEmptyTransferSignature       = registerError("transfer signature is empty")
-	ErrExceededMaximumNegativeVotes = registerError("too many negative votes were collected")
-	ErrInferenceIdMismatch          = registerError("inference IDs do not match")
-	ErrInferenceNotFound            = registerError("inference not found on-chain and no assignment proof provided")
-	ErrInvalidChallengerRole        = registerError("invalid challenger role")
-	ErrInvalidNegativeOutcome       = registerError("negative outcome with invalid number of votes")
-	ErrInvalidTransferSignature     = registerError("invalid transfer signature")
-	ErrInvalidVoteType              = registerError("invalid vote type")
-	ErrNegativeVoteAfterPositive    = registerError("a negative vote was collected after a positive vote")
-	ErrNilAssignmentProof           = registerError("assignment proof is nil")
-	ErrSeedMismatch                 = registerError("initial seeds do not match")
-	ErrTooManySkips                 = registerError("too many voters were skipped")
-	ErrTransferAgentNotFound        = registerError("transfer agent not found or has no public key")
+	"github.com/productscience/inference/x/inference/validation"
 )
 
 // ChainVerifier queries the chain for inference state and validates challenger claims.
 // Used by the voting service at dispute initiation.
 type ChainVerifier struct {
 	Recorder   cosmosclient.CosmosMessageClient
-	EpochGroup *epochgroup.EpochGroup
 }
 
-// NewChainVerifier creates a new ChainVerifier with the given cosmos client and epoch group.
-func NewChainVerifier(recorder cosmosclient.CosmosMessageClient, eg *epochgroup.EpochGroup) *ChainVerifier {
+// NewChainVerifier creates a new ChainVerifier with the given cosmos client.
+func NewChainVerifier(recorder cosmosclient.CosmosMessageClient) *ChainVerifier {
 	return &ChainVerifier{
-		Recorder:   recorder,
-		EpochGroup: eg,
+		Recorder: recorder,
 	}
 }
 
@@ -78,289 +37,70 @@ func (cv *ChainVerifier) QueryInferenceState(ctx context.Context, inferenceId st
 		return &OnChainProof{InferenceExists: false}, nil
 	}
 
-	inference := response.Inference
-	finishExists := inference.ResponseHash != ""
+	inf := response.Inference
+	finishExists := inf.ResponseHash != ""
 
 	return &OnChainProof{
 		InferenceExists:      true,
-		AssignedTo:           inference.AssignedTo,
-		CreatedBy:            inference.TransferredBy,
+		AssignedTo:           inf.AssignedTo,
+		CreatedBy:            inf.TransferredBy,
 		FinishExists:         finishExists,
-		ExpectedPromptHash:   inference.PromptHash,
-		ExpectedResponseHash: inference.ResponseHash,
-		RequestTimestamp:     inference.RequestTimestamp,
-		TransferSignature:    inference.TransferSignature,
+		ExpectedPromptHash:   inf.PromptHash,
+		ExpectedResponseHash: inf.ResponseHash,
+		RequestTimestamp:     inf.RequestTimestamp,
+		TransferSignature:    inf.TransferSignature,
 	}, nil
 }
 
-// ValidateAssignmentProof verifies the TransferSignature cryptographically.
-func (cv *ChainVerifier) ValidateAssignmentProof(ctx context.Context, proof *AssignmentProof) error {
-	if proof == nil {
-		slog.Error("assignment proof is nil")
-		return ErrNilAssignmentProof
+// ValidateVotingResultSignature verifies the requester's signature on a VotingResult.
+// Used as an off-chain fail-fast pre-check before submitting to the chain.
+// Uses ValidateSignatureWithGrantees for consistency with the keeper (supports grantee keys).
+func ValidateVotingResultSignature(result *inference.VotingResult, requesterPubKeys []string) error {
+	voteFields := make([]calculations.VoteFields, len(result.Votes))
+	for i, vote := range result.Votes {
+		voteFields[i] = calculations.VoteFields{
+			InferenceId:        vote.InferenceId,
+			VoterAddress:       vote.VoterAddress,
+			VoteType:           int32(vote.VoteType),
+			RespondentDataHash: vote.RespondentDataHash,
+			Timestamp:          vote.Timestamp,
+			VoterSignature:     vote.VoterSignature,
+		}
 	}
-	if proof.TransferSignature == "" {
-		slog.Error("transfer signature is empty")
-		return ErrEmptyTransferSignature
-	}
-	if proof.TransferAddress == "" {
-		slog.Error("transfer address is empty")
-		return ErrEmptyTransferAddress
-	}
-
-	queryClient := cv.Recorder.NewInferenceQueryClient()
-	participant, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{
-		Address: proof.TransferAddress,
-	})
-	if err != nil || participant.Pubkey == "" {
-		slog.Error("failed to get transfer agent participant and its public key", "error", err, "transferAddress", proof.TransferAddress)
-		return ErrTransferAgentNotFound
-	}
+	payloadBytes := calculations.VotingResultBytesToSign(result.InferenceId, voteFields)
 
 	components := calculations.SignatureComponents{
-		Payload:         proof.PromptHash,
-		Timestamp:       proof.Timestamp,
-		TransferAddress: proof.TransferAddress,
-		ExecutorAddress: proof.ExecutorAddress,
+		Payload:         string(payloadBytes),
+		EpochId:         0,
+		Timestamp:       result.CompletedAt,
+		TransferAddress: result.RequesterAddress,
+		ExecutorAddress: "",
 	}
-
-	if err := calculations.ValidateSignatureWithGrantees(
+	return calculations.ValidateSignatureWithGrantees(
 		components,
-		calculations.TransferAgent,
-		[]string{participant.Pubkey},
-		proof.TransferSignature,
-	); err != nil {
-		slog.Error("invalid transfer signature", "error", err)
-		return ErrInvalidTransferSignature
-	}
-
-	return nil
+		calculations.Developer,
+		requesterPubKeys,
+		result.RequesterSignature,
+	)
 }
 
-// ValidateChallengerRole verifies that the challenger is legitimately associated with the inference.
-func (cv *ChainVerifier) ValidateChallengerRole(onChain *OnChainProof, req *VotingInitiateRequest) error {
-	if !onChain.InferenceExists {
-		if req.AssignmentProof == nil {
-			slog.Error("inference not found on-chain and no assignment proof provided")
-			return ErrInferenceNotFound
-		}
-		return nil
-	}
-
-	switch req.ChallengerRole {
-	case RoleExecutor:
-		if onChain.AssignedTo != req.ChallengerAddress {
-			slog.Error("challenger is not the assigned executor", "challenger", req.ChallengerAddress, "expected", onChain.AssignedTo)
-			return ErrAssigneeMismatch
-		}
-	case RoleTA:
-		if onChain.CreatedBy != req.ChallengerAddress {
-			slog.Error("challenger is not the transfer agent", "challenger", req.ChallengerAddress, "expected", onChain.CreatedBy)
-			return ErrCreatorMismatch
-		}
-	default:
-		slog.Error("invalid challenger role", "role", req.ChallengerRole)
-		return ErrInvalidChallengerRole
-	}
-
-	return nil
-}
-
-// ValidateVotes performs full deterministic validation of the voting session.
-func (cv *ChainVerifier) ValidateVotes(
+// ValidateVotingResultFull validates a VotingResult using the shared inference-chain validation.
+// Call this before submitting MsgFinishInferenceWithMissingPayload.
+func ValidateVotingResultFull(
 	ctx context.Context,
-	onChain *OnChainProof,
-	cfg VotingConfig,
-	req VotingInitiateRequest,
-	res VotingResult,
-	start *inference.MsgStartInference,
-	blockHash bytes.HexBytes,
+	queryClient types.QueryClient,
+	cosmosClient cosmosclient.CosmosMessageClient,
+	_ *types.Inference,
+	result *inference.VotingResult,
+	requesterPubkey string,
 ) error {
-	randomCtx, err := cv.EpochGroup.NewReplayableRandomContext(ctx, blockHash)
+	backend := NewQueryBackend(queryClient, cosmosClient, []string{requesterPubkey})
+	typesResult := toTypesVotingResult(result)
+	_, _, err := validation.ValidateVotingResult(ctx, backend, typesResult)
 	if err != nil {
-		slog.Error("error creating replayable random context")
-		return err // TODO: What to do here?
+		logging.Error("Voting result validation failed", types.Voting,
+			"inferenceId", result.InferenceId, "error", err)
+		return fmt.Errorf("invalid voting result: %w", err)
 	}
-
-	if err := cv.ValidateAssignmentProof(ctx, req.AssignmentProof); err != nil {
-		return err
-	}
-	if randomCtx.Seed != req.AssignmentProof.Seed {
-		slog.Error("seed does not match expected seed", "expected", randomCtx.Seed, "actual", req.AssignmentProof.Seed)
-		return ErrSeedMismatch
-	}
-
-	if res.InferenceId != req.InferenceId || res.InferenceId != start.InferenceId {
-		slog.Error("response inference ID does not match voting request and start inference request IDs", "response", res.InferenceId, "req", req.InferenceId, "start", start.InferenceId)
-		return ErrInferenceIdMismatch
-	}
-
-	if err := cv.ValidateChallengerRole(onChain, &req); err != nil {
-		return err
-	}
-
-	// Challenger signature validation
-	msg := []byte{}
-	msg = append(msg, req.InferenceId...)
-	msg = append(msg, req.ChallengerAddress...)
-	msg = append(msg, req.RespondentAddress...)
-	binary.LittleEndian.AppendUint64(msg, uint64(req.Timestamp))
-
-	if err := calculations.ValidateSignatureBytes(msg, req.ChallengerAddress, req.ChallengerSignature); err != nil {
-		slog.Error("signature does not match for challenger")
-		return err
-	}
-
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-
-	skippedMembersCount := uint8(0)
-	negativeVotesCounter := 0
-	hasPositiveVote := false
-	voteIdx := 0
-
-	// TODO: Validate upper bound
-	// TODO: Check that hashes match
-	// TODO: Check auth key
-	for voteIdx < len(res.Votes) {
-		participant, err := cv.EpochGroup.GetRandomMemberReplayable(ctx, randomCtx)
-		if err != nil {
-			slog.Error("error getting next participant")
-			return err // TODO: What to do here?
-		}
-
-		vote := res.Votes[voteIdx]
-		if vote.VoterAddress != participant.Address {
-			skippedMembersCount++
-			if skippedMembersCount > cfg.MaxNumSkips {
-				slog.Error("too many vote skips")
-				return ErrTooManySkips
-			}
-			continue
-		}
-
-		if vote.InferenceId != req.InferenceId {
-			slog.Error("vote inference ID does not match expected inference ID", "vote", vote.InferenceId, "req", req.InferenceId)
-			return ErrInferenceIdMismatch
-		}
-
-		msg := []byte{}
-		msg = append(msg, vote.InferenceId...)
-		msg = append(msg, vote.VoterAddress...)
-		binary.LittleEndian.AppendUint16(msg, uint16(vote.VoteType))
-		msg = append(msg, vote.RespondentDataHash...)
-		binary.LittleEndian.AppendUint64(msg, uint64(vote.Timestamp))
-
-		if err := calculations.ValidateSignatureBytes(msg, vote.VoterAddress, vote.VoterSignature); err != nil {
-			slog.Error("signature does not match for voter")
-			return err
-		}
-
-		calculations.ValidateTimestamp(
-			vote.Timestamp,
-			sdkCtx.BlockTime().UnixNano(),
-			-1, // TODO: params.ValidationParams.TimestampExpiration,
-			-1, // TODO: params.ValidationParams.TimestampAdvance,
-			60*int64(time.Second),
-		)
-
-		switch vote.VoteType {
-		case VotePositive:
-			if hasPositiveVote {
-				slog.Error("got more than one positive vote")
-				return ErrDuplicatePositiveVote
-			}
-			hasPositiveVote = true
-		case VoteNegative:
-			negativeVotesCounter++
-			if hasPositiveVote {
-				slog.Error("got a negative vote after a positive vote was received")
-				return ErrNegativeVoteAfterPositive
-			}
-			if negativeVotesCounter > cfg.MaxNumNodes {
-				slog.Error("too many negative votes")
-				return ErrExceededMaximumNegativeVotes
-			}
-		case VoteInvalid:
-			slog.Error("vote type is invalid")
-			return ErrInvalidVoteType
-		default:
-			slog.Error("vote type is unknown")
-			return ErrInvalidVoteType
-		}
-
-		voteIdx++
-	}
-
-	if !hasPositiveVote && negativeVotesCounter != cfg.MaxNumNodes {
-		slog.Error("too few negative votes and no positive vote")
-		return ErrInvalidNegativeOutcome
-	}
-
 	return nil
-}
-
-// DetermineVerificationOutcome checks the on-chain state and determines what the vote should be.
-func (cv *ChainVerifier) DetermineVerificationOutcomeAndDeliverPayload(
-	onChain *OnChainProof,
-	verificationType VerificationType,
-	actualDataHash string,
-) VoteType {
-	switch verificationType {
-	case VerifyPayloadFromTA:
-		if actualDataHash == "" {
-			return VoteNegative
-		}
-		if onChain.ExpectedPromptHash != "" && actualDataHash != onChain.ExpectedPromptHash {
-			return VoteNegative
-		}
-		if onChain.FinishExists {
-			return VoteNegative
-		}
-		return VotePositive
-	// TODO: Implement other verification types when needed
-	// case VerifyMsgStartExists:
-	// 	// Check if MsgStartInference exists
-	// 	if onChain.InferenceExists {
-	// 		return VotePositive // TA posted the message
-	// 	}
-	// 	return VoteNegative // TA didn't post
-	//
-	// case VerifyMsgFinishExists:
-	// 	// Check if MsgFinishInference exists
-	// 	if onChain.FinishExists {
-	// 		return VotePositive // Executor completed
-	// 	}
-	// 	return VoteNegative // Executor didn't complete
-	//
-	// case VerifyPromptHashMatch:
-	// 	// Compare actual payload hash with on-chain prompt_hash
-	// 	if actualDataHash == onChain.ExpectedPromptHash {
-	// 		return VotePositive // Hash matches
-	// 	}
-	// 	return VoteNegative // Hash mismatch
-	//
-	// case VerifyResponseHashMatch:
-	// 	// Compare actual payload hash with on-chain response_hash
-	// 	if actualDataHash == onChain.ExpectedResponseHash {
-	// 		return VotePositive // Hash matches
-	// 	}
-	// 	return VoteNegative // Hash mismatch
-	//
-	// case VerifyPayloadFromExecutor:
-	// 	// TA challenges executor: verify executor has the payload
-	// 	if actualDataHash != "" {
-	// 		return VotePositive // Got payload
-	// 	}
-	// 	return VoteNegative // No payload
-	//
-	// case VerifyResponseDeliveryToTA:
-	// 	// TA claims they didn't receive response from executor.
-	// 	// We verify: Did executor complete their job?
-	// 	if onChain.FinishExists && actualDataHash != "" {
-	// 		return VotePositive // Executor completed and has payload - not at fault
-	// 	}
-	// 	return VoteNegative // Executor didn't complete or doesn't have payload
-	default:
-		return VoteInvalid
-	}
 }

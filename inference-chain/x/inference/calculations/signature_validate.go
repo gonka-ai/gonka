@@ -2,6 +2,7 @@ package calculations
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"log/slog"
@@ -194,6 +195,64 @@ func getTransferBytes(components SignatureComponents) []byte {
 	messagePayload := getDevBytes(components)
 	messagePayload = append(messagePayload, []byte(components.ExecutorAddress)...)
 	return messagePayload
+}
+
+// VoteFields contains the fields from a SignedVote needed for hashing.
+// This is type-agnostic so both on-chain (types.SignedVote) and off-chain
+// (inference.SignedVote) code can use the same hashing logic.
+type VoteFields struct {
+	InferenceId        string
+	VoterAddress       string
+	VoteType           int32
+	RespondentDataHash string
+	Timestamp          int64
+	VoterSignature     string
+}
+
+// VoteBytesToSign returns the canonical bytes a voter signs for their individual vote.
+// Must match the field order used in VotingResultBytesToSign (excluding VoterSignature).
+// Signs: inference_id + voter_address + vote_type + respondent_data_hash + timestamp
+func VoteBytesToSign(inferenceId, voterAddress string, voteType int32, respondentDataHash string, timestamp int64) []byte {
+	var b []byte
+	b = append(b, inferenceId...)
+	b = append(b, voterAddress...)
+	b = append(b, strconv.FormatInt(int64(voteType), 10)...)
+	b = append(b, respondentDataHash...)
+	b = append(b, strconv.FormatInt(timestamp, 10)...)
+	return b
+}
+
+// SignVote signs the vote bytes with the voter's key. Returns base64-encoded signature.
+func SignVote(signer Signer, inferenceId, voterAddress string, voteType int32, respondentDataHash string, timestamp int64) (string, error) {
+	bytes := VoteBytesToSign(inferenceId, voterAddress, voteType, respondentDataHash, timestamp)
+	return signer.SignBytes(bytes)
+}
+
+// ValidateVoteSignature verifies a voter's signature on their vote.
+func ValidateVoteSignature(inferenceId, voterAddress string, voteType int32, respondentDataHash string, timestamp int64, pubKey string, signature string) error {
+	bytes := VoteBytesToSign(inferenceId, voterAddress, voteType, respondentDataHash, timestamp)
+	return ValidateSignatureBytes(bytes, pubKey, signature)
+}
+
+// VotingResultBytesToSign computes the payload bytes for signing a VotingResult.
+// Returns inference_id || sha256(votes) where each vote's fields are hashed in order.
+func VotingResultBytesToSign(inferenceId string, votes []VoteFields) []byte {
+	votesHash := sha256.New()
+	for _, vote := range votes {
+		fields := [6]string{
+			vote.InferenceId,
+			vote.VoterAddress,
+			strconv.FormatInt(int64(vote.VoteType), 10),
+			vote.RespondentDataHash,
+			strconv.FormatInt(vote.Timestamp, 10),
+			vote.VoterSignature,
+		}
+		for _, field := range fields {
+			votesHash.Write([]byte(field))
+		}
+	}
+
+	return append([]byte(inferenceId), votesHash.Sum(nil)...)
 }
 
 func ValidateTimestamp(signatureTimestamp int64, currentTimestamp int64, expirationSeconds int64, advanceSeconds int64, extraTime int64) error {

@@ -206,6 +206,7 @@ type CosmosMessageClient interface {
 	EncryptBytes(plaintext []byte) ([]byte, error)
 	StartInference(transaction *inference.MsgStartInference) error
 	FinishInference(transaction *inference.MsgFinishInference) error
+	FinishInferenceWithMissingPayload(transaction *inference.MsgFinishInferenceWithMissingPayload) error
 	ReportValidation(transaction *inference.MsgValidation) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
 	// PoC V1 methods (on-chain batches, used when poc_v2_enabled=false)
@@ -338,6 +339,19 @@ func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFini
 	transaction.ExecutedBy = icc.Address
 	if icc.batchingEnabled {
 		return icc.batchConsumer.PublishFinishInference(transaction)
+	}
+	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) FinishInferenceWithMissingPayload(
+	transaction *inference.MsgFinishInferenceWithMissingPayload,
+) error {
+	transaction.Creator = icc.Address
+	transaction.MsgFinishInference.Creator = icc.Address
+	transaction.MsgFinishInference.ExecutedBy = icc.Address
+	if icc.batchingEnabled {
+		return icc.batchConsumer.PublishFinishInferenceWithMissingPayload(transaction)
 	}
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
 	return err

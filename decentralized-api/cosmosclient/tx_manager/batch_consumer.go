@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	batchStartConsumer        = "batch-start-consumer"
-	batchFinishConsumer       = "batch-finish-consumer"
-	batchValidationV2Consumer = "batch-validation-v2-consumer"
-	batchAckWait              = time.Minute // must exceed FlushTimeout to prevent redelivery
+	batchStartConsumer                    = "batch-start-consumer"
+	batchFinishConsumer                   = "batch-finish-consumer"
+	batchFinishWithMissingPayloadConsumer = "batch-finish-with-missing-payload-consumer"
+	batchValidationV2Consumer             = "batch-validation-v2-consumer"
+	batchAckWait                          = time.Minute // must exceed FlushTimeout to prevent redelivery
 
 	// V1 PoC batch consumers
 	batchPocBatchConsumer      = "batch-poc-batch-consumer"
@@ -41,25 +42,28 @@ type BatchConsumer struct {
 	txManager TxManager
 	config    BatchConfig
 
-	startBatch        []pendingMsg
-	finishBatch       []pendingMsg
-	validationV2Batch []pendingMsg
+	startBatch                    []pendingMsg
+	finishBatch                   []pendingMsg
+	finishWithMissingPayloadBatch []pendingMsg
+	validationV2Batch             []pendingMsg
 
 	// V1 PoC batches
 	pocBatchBatch      []pendingMsg
 	pocValidationBatch []pendingMsg
 
-	startMu        sync.Mutex
-	finishMu       sync.Mutex
-	validationV2Mu sync.Mutex
+	startMu                    sync.Mutex
+	finishMu                   sync.Mutex
+	finishWithMissingPayloadMu sync.Mutex
+	validationV2Mu             sync.Mutex
 
 	// V1 PoC mutexes
 	pocBatchMu      sync.Mutex
 	pocValidationMu sync.Mutex
 
-	startCreatedAt        time.Time
-	finishCreatedAt       time.Time
-	validationV2CreatedAt time.Time
+	startCreatedAt                    time.Time
+	finishCreatedAt                   time.Time
+	finishWithMissingPayloadCreatedAt time.Time
+	validationV2CreatedAt             time.Time
 
 	// V1 PoC timestamps
 	pocBatchCreatedAt      time.Time
@@ -73,15 +77,16 @@ func NewBatchConsumer(
 	config BatchConfig,
 ) *BatchConsumer {
 	return &BatchConsumer{
-		js:                 js,
-		codec:              cdc,
-		txManager:          txManager,
-		config:             config,
-		startBatch:         make([]pendingMsg, 0, config.FlushSize),
-		finishBatch:        make([]pendingMsg, 0, config.FlushSize),
-		validationV2Batch:  make([]pendingMsg, 0, config.ValidationV2FlushSize),
-		pocBatchBatch:      make([]pendingMsg, 0, config.FlushSize),
-		pocValidationBatch: make([]pendingMsg, 0, config.FlushSize),
+		js:                            js,
+		codec:                         cdc,
+		txManager:                     txManager,
+		config:                        config,
+		startBatch:                    make([]pendingMsg, 0, config.FlushSize),
+		finishBatch:                   make([]pendingMsg, 0, config.FlushSize),
+		finishWithMissingPayloadBatch: make([]pendingMsg, 0, config.FlushSize),
+		validationV2Batch:             make([]pendingMsg, 0, config.ValidationV2FlushSize),
+		pocBatchBatch:                 make([]pendingMsg, 0, config.FlushSize),
+		pocValidationBatch:            make([]pendingMsg, 0, config.FlushSize),
 	}
 }
 
@@ -90,6 +95,9 @@ func (c *BatchConsumer) Start() error {
 		return err
 	}
 	if err := c.subscribeStream(server.TxsBatchFinishStream, batchFinishConsumer, c.handleFinishMsg); err != nil {
+		return err
+	}
+	if err := c.subscribeStream(server.TxsBatchFinishWithMissingPayloadStream, batchFinishWithMissingPayloadConsumer, c.handleFinishWithMissingPayloadMsg); err != nil {
 		return err
 	}
 	if err := c.subscribeStream(server.TxsBatchValidationV2Stream, batchValidationV2Consumer, c.handleValidationV2Msg); err != nil {
@@ -166,6 +174,31 @@ func (c *BatchConsumer) handleFinishMsg(msg *nats.Msg) {
 
 	if shouldFlush {
 		c.flushFinish()
+	}
+}
+
+func (c *BatchConsumer) handleFinishWithMissingPayloadMsg(msg *nats.Msg) {
+	if err := msg.InProgress(); err != nil {
+		logging.Error("Failed to mark finish with missing payload msg in progress", types.Messages, "error", err)
+	}
+	sdkMsg, err := c.unmarshalMsg(msg.Data)
+	if err != nil {
+		logging.Error("Failed to unmarshal finish with missing payload msg", types.Messages, "error", err)
+		msg.Term()
+		return
+	}
+
+	var shouldFlush bool
+	c.finishWithMissingPayloadMu.Lock()
+	if len(c.finishWithMissingPayloadBatch) == 0 {
+		c.finishWithMissingPayloadCreatedAt = time.Now()
+	}
+	c.finishWithMissingPayloadBatch = append(c.finishWithMissingPayloadBatch, pendingMsg{msg: sdkMsg, natsMsg: msg})
+	shouldFlush = len(c.finishWithMissingPayloadBatch) >= c.config.FlushSize
+	c.finishWithMissingPayloadMu.Unlock()
+
+	if shouldFlush {
+		c.flushFinishWithMissingPayload()
 	}
 }
 
@@ -252,6 +285,7 @@ func (c *BatchConsumer) flushLoop() {
 		c.extendAckDeadlines()
 		c.checkAndFlushStart()
 		c.checkAndFlushFinish()
+		c.checkAndFlushFinishWithMissingPayload()
 		c.checkAndFlushValidationV2()
 		c.checkAndFlushPocBatch()
 		c.checkAndFlushPocValidation()
@@ -270,6 +304,12 @@ func (c *BatchConsumer) extendAckDeadlines() {
 		_ = p.natsMsg.InProgress()
 	}
 	c.finishMu.Unlock()
+
+	c.finishWithMissingPayloadMu.Lock()
+	for _, p := range c.finishWithMissingPayloadBatch {
+		_ = p.natsMsg.InProgress()
+	}
+	c.finishWithMissingPayloadMu.Unlock()
 
 	c.validationV2Mu.Lock()
 	for _, p := range c.validationV2Batch {
@@ -307,6 +347,16 @@ func (c *BatchConsumer) checkAndFlushFinish() {
 
 	if shouldFlush {
 		c.flushFinish()
+	}
+}
+
+func (c *BatchConsumer) checkAndFlushFinishWithMissingPayload() {
+	c.finishWithMissingPayloadMu.Lock()
+	shouldFlush := len(c.finishWithMissingPayloadBatch) > 0 && time.Since(c.finishWithMissingPayloadCreatedAt) >= c.config.FlushTimeout
+	c.finishWithMissingPayloadMu.Unlock()
+
+	if shouldFlush {
+		c.flushFinishWithMissingPayload()
 	}
 }
 
@@ -366,6 +416,20 @@ func (c *BatchConsumer) flushFinish() {
 	c.finishMu.Unlock()
 
 	c.broadcastBatch("finish", batch)
+}
+
+func (c *BatchConsumer) flushFinishWithMissingPayload() {
+	c.finishWithMissingPayloadMu.Lock()
+	batch := c.finishWithMissingPayloadBatch
+	if len(batch) == 0 {
+		c.finishWithMissingPayloadMu.Unlock()
+		return
+	}
+	c.finishWithMissingPayloadBatch = make([]pendingMsg, 0, c.config.FlushSize)
+	c.finishWithMissingPayloadCreatedAt = time.Time{} // reset timer
+	c.finishWithMissingPayloadMu.Unlock()
+
+	c.broadcastBatch("finish-with-missing-payload", batch)
 }
 
 func (c *BatchConsumer) flushValidationV2() {
@@ -506,6 +570,10 @@ func (c *BatchConsumer) PublishStartInference(msg sdk.Msg) error {
 
 func (c *BatchConsumer) PublishFinishInference(msg sdk.Msg) error {
 	return c.publishMsg(server.TxsBatchFinishStream, msg)
+}
+
+func (c *BatchConsumer) PublishFinishInferenceWithMissingPayload(msg sdk.Msg) error {
+	return c.publishMsg(server.TxsBatchFinishWithMissingPayloadStream, msg)
 }
 
 func (c *BatchConsumer) PublishPocValidationV2(msg sdk.Msg) error {

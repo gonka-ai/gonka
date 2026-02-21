@@ -571,6 +571,14 @@ func logInferencesToValidate(toValidate []string) {
 }
 
 func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Inference, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
+	if inf.Status == types.InferenceStatus_FINISHED_WITH_MISSING_PAYLOAD {
+		logging.Info(
+			"Skipping validation: inference finished with missing payload", types.Validation,
+			"inferenceId", inf.InferenceId,
+		)
+		return
+	}
+
 	promptPayload, responsePayload, err := s.retrievePayloadsWithRetry(inf)
 	if err != nil {
 		if errors.Is(err, ErrPayloadUnavailable) {

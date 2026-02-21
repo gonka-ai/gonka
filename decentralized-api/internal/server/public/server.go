@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal"
 	"decentralized-api/internal/authzcache"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/internal/voting"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/training"
@@ -33,6 +34,7 @@ type Server struct {
 	artifactStore       *artifacts.ManagedArtifactStore
 	authzCache          *authzcache.AuthzCache
 	promptStorage       payloadstorage.PayloadStorage
+	inferenceIdTracker  *voting.InferenceIdTracker
 }
 
 // ServerOption configures optional Server dependencies.
@@ -54,6 +56,7 @@ func NewServer(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	payloadStorage payloadstorage.PayloadStorage,
 	promptStorage payloadstorage.PayloadStorage,
+	inferenceIdTracker *voting.InferenceIdTracker,
 	opts ...ServerOption) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
@@ -74,6 +77,7 @@ func NewServer(
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
 		promptStorage:       promptStorage,
+		inferenceIdTracker:  inferenceIdTracker,
 	}
 
 	for _, opt := range opts {
@@ -95,6 +99,9 @@ func NewServer(
 
 	// Voting endpoint: voters verify respondent behavior on behalf of challengers
 	g.POST("voting/verify", s.postVotingVerify)
+	if configManager.GetApiConfig().TestMode {
+		g.POST("voting/validate-vote", s.postVotingValidateVote)
+	}
 
 	g.GET("participants/:address", s.getInferenceParticipantByAddress)
 	g.GET("participants", s.getAllParticipants)

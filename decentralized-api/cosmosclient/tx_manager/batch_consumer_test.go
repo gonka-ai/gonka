@@ -101,6 +101,13 @@ func startTestNatsServer(t *testing.T) (*server.Server, nats.JetStreamContext) {
 	require.NoError(t, err)
 
 	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "txs_batch_finish_with_mising_payload",
+		Subjects: []string{"txs_batch_finish_with_mising_payload"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "txs_batch_poc_v2",
 		Subjects: []string{"txs_batch_poc_v2"},
 		Storage:  nats.MemoryStorage,

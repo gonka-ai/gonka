@@ -7,9 +7,11 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	internalutils "decentralized-api/internal/utils"
+	"decentralized-api/internal/voting"
 	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/utils"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -89,6 +91,9 @@ var (
 
 	// Reference to the config manager for accessing validation parameters
 	configManagerRef *apiconfig.ConfigManager
+
+	// Map for O(1) tracking of which inference IDs began processing
+	InferenceIds *voting.InferenceIdTracker = voting.NewInferenceIdTracker()
 )
 
 func NewNoRedirectClient() *http.Client {
@@ -624,6 +629,53 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return echo.NewHTTPError(http.StatusBadRequest, "Prompt hash mismatch")
 	}
 
+	// We don't unregister the inference ID from the tracker in this case because the node pinger may come after.
+	// * If TA request registered first:
+	//   * If TA request came first, then NP request will stop below or before it can register. The TA will proceed as usual.
+	//   * If NP request came first (impossible?), then some extra work as done but was stopped below. The TA will proceed as usual.
+	// * If NP request registered first:
+	//   * If TA request came first, then TA request will stop below. The NP will proceed as usual.
+	//   * If NP request came first, then TA request will also stop below. The NP will proceed as usual.
+	switch s.inferenceIdTracker.TryRegisterInferenceId(request.InferenceId, voting.RegisteredByTARequest) {
+	case voting.Unregistered:
+		// Ideal case; we're processing it for the first time.
+	case voting.RegisteredByTARequest:
+		if request.VotingResult != nil {
+			// Should be impossible, but let's handle it anyway...
+			logging.Error(
+				"Inference has already begun processing by the TA", types.Inferences,
+				"inferenceId", request.InferenceId,
+			)
+			return echo.NewHTTPError(http.StatusConflict, "Request already began processing")
+		}
+		// Possibly an HTTP retry? Let's proceed regardless.
+		logging.Warn(
+			"Inference previously registered by TA request; continuing anyway", types.Inferences,
+			"inferenceId", request.InferenceId,
+		)
+	case voting.RegisteredByNodePinger:
+		// The TA doesn't send the voting result (validated above).
+		// The vote result here is only used for the signature of the executor and to reach this case.
+		// It is not valid, so we remove it from the request before broadcasting it.
+		if request.VotingResult == nil {
+			logging.Error(
+				"Inference has already begun processing by the node pinger", types.Inferences,
+				"inferenceId", request.InferenceId,
+			)
+			return echo.NewHTTPError(http.StatusConflict, "Request already began processing")
+		}
+		request.VotingResult = nil // Used only for validation
+	case voting.RegisteredByNodePingerWithVotes:
+		// The TA doesn't send the voting result (validated above).
+		if request.VotingResult == nil {
+			logging.Error(
+				"Inference has already begun processing by the node pinger", types.Inferences,
+				"inferenceId", request.InferenceId,
+			)
+			return echo.NewHTTPError(http.StatusConflict, "Request already began processing")
+		}
+	}
+
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
@@ -725,6 +777,66 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 	if err = validateExecuteRequestWithGrantees(request, transferPubkeys, s.recorder.GetAccountAddress(), request.TransferSignature); err != nil {
 		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
+	}
+
+	if request.VotingResult != nil {
+		executorPubKeySdk, err := s.recorder.GetApiAccount().SignerAccount.Record.GetPubKey()
+		if err != nil {
+			logging.Error("Failed to get executor public key", types.Inferences, "error", err)
+			return err
+		}
+
+		// TODO: Also validate vote completion time?
+		if request.InferenceId != request.VotingResult.InferenceId {
+			return echo.NewHTTPError(
+				http.StatusUnauthorized,
+				fmt.Sprintf(
+					"Inference IDs from request (%s) and voting result (%s) do not match",
+					request.InferenceId,
+					request.VotingResult.InferenceId,
+				),
+			)
+		}
+
+		executorPubKey := base64.StdEncoding.EncodeToString(executorPubKeySdk.Bytes())
+		if err = voting.ValidateVotingResultSignature(request.VotingResult, []string{executorPubKey}); err != nil {
+			logging.Error(
+				"Unable to validate voting result against executor key", types.Inferences,
+				"executorPubKey", executorPubKey,
+				"error", err,
+			)
+			return echo.NewHTTPError(
+				http.StatusUnauthorized,
+				fmt.Sprintf("Unable to validate voting result against executor key: %s", err.Error()),
+			)
+		}
+
+		// Full validation matching inference-chain keeper to avoid submitting forged/invalid votes.
+		infResp, infErr := queryClient.Inference(ctx.Request().Context(), &types.QueryGetInferenceRequest{Index: request.InferenceId})
+		if infErr != nil {
+			logging.Error("Failed to query inference for voting result validation", types.Inferences,
+				"inferenceId", request.InferenceId, "error", infErr)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to validate voting result")
+		}
+		if infResp != nil {
+			if err = voting.ValidateVotingResultFull(
+				ctx.Request().Context(),
+				queryClient,
+				s.recorder,
+				&infResp.Inference,
+				request.VotingResult,
+				executorPubKey,
+			); err != nil {
+				logging.Error(
+					"Voting result failed full validation (keeper-equivalent checks)", types.Inferences,
+					"inferenceId", request.InferenceId, "error", err,
+				)
+				return echo.NewHTTPError(
+					http.StatusUnauthorized,
+					fmt.Sprintf("Invalid voting result: %s", err.Error()),
+				)
+			}
+		}
 	}
 
 	err = s.validateTimestampNonce(request)
@@ -907,12 +1019,21 @@ func (s *Server) sendInferenceTransaction(
 		// If storage fails, we still proceed with broadcast (but log error)
 		s.storePayloadsToStorage(ctx, inferenceId, promptPayload, bodyBytes)
 
-		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
-		err = s.recorder.FinishInference(message)
-		if err != nil {
-			logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", inferenceId, "error", err)
+		isMissingVotingResult := request.VotingResult == nil
+		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId, "isMissingVotingResult", isMissingVotingResult)
+		if isMissingVotingResult {
+			err = s.recorder.FinishInference(message)
 		} else {
-			logging.Debug("Submitted MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
+			message := &inference.MsgFinishInferenceWithMissingPayload{
+				MsgFinishInference: message,
+				VotingResult: request.VotingResult,
+			}
+			err = s.recorder.FinishInferenceWithMissingPayload(message)
+		}
+		if err != nil {
+			logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", inferenceId, "isMissingVotingResult", isMissingVotingResult, "error", err)
+		} else {
+			logging.Debug("Submitted MsgFinishInference", types.Inferences, "inferenceId", inferenceId, "isMissingVotingResult", isMissingVotingResult)
 		}
 	}
 	return nil
@@ -1041,6 +1162,17 @@ func readRequest(request *http.Request, transferAddress string) (*ChatRequest, e
 		transferAddress = request.Header.Get(utils.XTransferAddressHeader)
 	}
 
+	var votingResult *inference.VotingResult
+	if votingResultStr := request.Header.Get(utils.XVotingResult); votingResultStr != "" {
+		votingResult = &inference.VotingResult{}
+		if err = json.Unmarshal([]byte(votingResultStr), votingResult); err != nil {
+			logging.Warn(
+				"Failed to decode voting result. Ignoring", types.Server,
+				"error", err,
+			)
+		}
+	}
+
 	return &ChatRequest{
 		Body:              body,
 		ContentType:       request.Header.Get(utils.ContentTypeHeader),
@@ -1053,6 +1185,7 @@ func readRequest(request *http.Request, transferAddress string) (*ChatRequest, e
 		TransferAddress:   transferAddress,
 		TransferSignature: request.Header.Get(utils.XTASignatureHeader),
 		PromptHash:        request.Header.Get(utils.XPromptHashHeader),
+		VotingResult:      votingResult,
 	}, nil
 }
 

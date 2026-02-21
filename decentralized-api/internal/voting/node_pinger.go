@@ -9,6 +9,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	apiutils "decentralized-api/utils"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,9 +20,11 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	inferenceutils "github.com/productscience/inference/x/inference/utils"
 )
 
 // NodePinger handles HTTP communication with nodes for payload verification.
@@ -29,9 +32,10 @@ import (
 // - Voters: to ping respondent and verify payload exists, return payload in vote response
 // - Challengers: to request verification from pre-sampled voters
 type NodePinger struct {
-	httpClient   *http.Client
-	cosmosClient cosmosclient.CosmosMessageClient
-	timeout      time.Duration
+	httpClient         *http.Client
+	cosmosClient       cosmosclient.CosmosMessageClient
+	timeout            time.Duration
+	inferenceIdTracker *InferenceIdTracker
 }
 
 // NodePingerConfig holds configuration for NodePinger.
@@ -48,15 +52,20 @@ func DefaultNodePingerConfig() NodePingerConfig {
 }
 
 // NewNodePinger creates a new NodePinger instance.
-func NewNodePinger(cosmosClient cosmosclient.CosmosMessageClient, config NodePingerConfig) *NodePinger {
+func NewNodePinger(
+	cosmosClient cosmosclient.CosmosMessageClient,
+	inferenceIdTracker *InferenceIdTracker,
+	config NodePingerConfig,
+) *NodePinger {
 	if config.Timeout == 0 {
 		config.Timeout = DefaultNodePingerConfig().Timeout
 	}
 
 	return &NodePinger{
-		httpClient:   apiutils.NewHttpClient(config.Timeout),
-		cosmosClient: cosmosClient,
-		timeout:      config.Timeout,
+		httpClient:         apiutils.NewHttpClient(config.Timeout),
+		cosmosClient:       cosmosClient,
+		timeout:            config.Timeout,
+		inferenceIdTracker: inferenceIdTracker,
 	}
 }
 
@@ -88,6 +97,7 @@ type VerificationResponse struct {
 	InferenceId    string   `json:"inference_id"`
 	Vote           VoteType `json:"vote"`
 	VoterAddress   string   `json:"voter_address"`
+	VoterPubKey    string   `json:"voter_pubkey"`
 	VoterSignature string   `json:"voter_signature"`
 	// DataFound indicates if respondent had the payload
 	DataFound bool `json:"data_found"`
@@ -98,6 +108,56 @@ type VerificationResponse struct {
 	PromptHash string `json:"prompt_hash,omitempty"`
 	// Error message if verification failed
 	ErrorMsg string `json:"error,omitempty"`
+	// Timestamp when the vote was cast (nanoseconds).
+	// Uses json:",string" to preserve int64 precision over JSON (number loses precision above 2^53).
+	// Must not use omitempty: chain validates signature over exact bytes; corrupted timestamp = invalid sig.
+	Timestamp int64 `json:"timestamp,string"`
+}
+
+type InferenceIdRegisterType uint
+
+const (
+	Unregistered InferenceIdRegisterType = iota
+	RegisteredByTARequest
+	RegisteredByNodePinger
+	RegisteredByNodePingerWithVotes
+)
+
+// Tracks which inference IDs have begun processing
+type InferenceIdTracker struct {
+	tracker map[string]InferenceIdRegisterType
+	mutex   sync.Mutex
+}
+
+func NewInferenceIdTracker() *InferenceIdTracker {
+	return &InferenceIdTracker {
+		tracker: map[string]InferenceIdRegisterType{},
+		mutex:   sync.Mutex{},
+	}
+}
+
+// Tries to register the given register type with the given inference ID.
+// If it's unregistered, doesn't do anything.
+// Returns the previous register type.
+func (tracker *InferenceIdTracker) TryRegisterInferenceId(
+	inferenceId string,
+	registerType InferenceIdRegisterType,
+) InferenceIdRegisterType {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	if registerType := tracker.tracker[inferenceId]; registerType != Unregistered {
+		return registerType
+	}
+
+	tracker.tracker[inferenceId] = registerType
+	return Unregistered
+}
+
+// Deletes the register type for the given inference ID.
+func (tracker *InferenceIdTracker) UnregisterInferenceId(inferenceId string) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	delete(tracker.tracker, inferenceId)
 }
 
 // Voter Functions: Ping Respondent and Relay to Challenger
@@ -223,11 +283,13 @@ func (np *NodePinger) VerifyRespondent(
 	response := &VerificationResponse{
 		InferenceId:  inferenceId,
 		VoterAddress: voterAddress,
-		Vote:         VoteInvalid, // Default to invalid until we determine
+		VoterPubKey:  inferenceutils.PubKeyToString(np.cosmosClient.GetAccountPubKey()),
+		Vote:         types.VoteType_VoteInvalid, // Default to invalid until we determine
 	}
 
 	// Step 1: Ping respondent for payload
 	pingResult, err := np.PingRespondentForPayload(ctx, respondentURL, inferenceId, epochId)
+	response.Timestamp = time.Now().UnixNano()
 	if err != nil {
 		response.ErrorMsg = err.Error()
 		return response
@@ -235,8 +297,9 @@ func (np *NodePinger) VerifyRespondent(
 
 	if pingResult.Error != nil || pingResult.Payload == nil {
 		// Respondent doesn't have payload - negative vote
-		response.Vote = VoteNegative
+		response.Vote = types.VoteType_VoteNegative
 		response.DataFound = false
+		np.signVote(response)
 		logging.Info("Voter verification: respondent does not have payload", types.Voting,
 			"inferenceId", inferenceId, "voterAddress", voterAddress)
 		return response
@@ -248,11 +311,48 @@ func (np *NodePinger) VerifyRespondent(
 	response.Payload = pingResult.Payload // Include payload in response for challenger
 
 	// Respondent has correct payload - positive vote
-	response.Vote = VotePositive
+	response.Vote = types.VoteType_VotePositive
+	np.signVote(response)
 	logging.Info("Voter verification: respondent has correct payload", types.Voting,
 		"inferenceId", inferenceId, "voterAddress", voterAddress)
 
 	return response
+}
+
+// ValidateVoteForTest exposes validateVote for the test-only /v1/voting/validate-vote endpoint.
+// Only used when TestMode is true; production code uses validateVote directly.
+func ValidateVoteForTest(inferenceId string, vote *VerificationResponse) error {
+	return validateVote(inferenceId, vote)
+}
+
+// validateVote checks that a received vote is valid: inference ID matches, vote type is valid,
+// and the voter's signature verifies using the pubkey from the response.
+// Invalid votes should be skipped by the challenger.
+func validateVote(inferenceId string, vote *VerificationResponse) error {
+	if vote == nil {
+		return fmt.Errorf("vote is nil")
+	}
+	if vote.InferenceId != inferenceId {
+		return fmt.Errorf("inference ID mismatch: expected %s, got %s", inferenceId, vote.InferenceId)
+	}
+	if !types.VoteType(vote.Vote).IsValid() {
+		return fmt.Errorf("invalid vote type: %d", vote.Vote)
+	}
+	if vote.VoterPubKey == "" {
+		return fmt.Errorf("missing voter pubkey")
+	}
+	if vote.VoterSignature == "" {
+		return fmt.Errorf("missing voter signature")
+	}
+	return calculations.ValidateVoteSignature(
+		vote.InferenceId,
+		vote.VoterAddress,
+		int32(vote.Vote),
+		vote.PromptHash,
+		vote.Timestamp,
+		vote.VoterPubKey,
+		vote.VoterSignature,
+	)
 }
 
 // Pinging from executor to TA
@@ -272,12 +372,10 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 		return nil
 	}
 
-	// TODO: Consider adding a mechanism to check whether the request started so the TA is not pinged
-	// For now, this should act like a basic barrier
-	if inferenceResp.Inference.Status != types.InferenceStatus_STARTED {
-		logging.Debug("Inference status is not started; skipping", types.Voting, "inferenceId", inferenceId, "status", inferenceResp.Inference.Status)
+	if !np.registerInitiatePostChat(inferenceId, inferenceResp.Inference.Status, false) {
 		return nil
 	}
+	defer np.inferenceIdTracker.UnregisterInferenceId(inferenceId)
 
 	transferAddress := inferenceResp.Inference.TransferredBy
 	logging.Info(
@@ -313,7 +411,22 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 		return err
 	}
 
-	err = np.PostChat(executorURL, executorAddress, payload.Payload.PromptPayload)
+	// Make a voting result, used only for validation.
+	// This will be removed from the request before being broadcast on-chain.
+	completedAt := time.Now().UnixNano()
+	votes := []*inference.SignedVote{}
+	signature, err := np.signVotingResult(inferenceId, votes, completedAt, executorAddress)
+	if err != nil {
+		return err
+	}
+	votingResult := &inference.VotingResult{
+		InferenceId: inferenceId,
+		Votes: votes,
+		CompletedAt: completedAt,
+		RequesterAddress: executorAddress,
+		RequesterSignature: signature,
+	}
+	err = np.PostChat(executorURL, payload.Payload.PromptPayload, votingResult)
 	if err != nil {
 		logging.Error("Failed to post chat request to executor", types.Voting, "inferenceId", inferenceId, "executorURL", executorURL, "executorAddress", executorAddress, "error", err)
 		return err
@@ -324,8 +437,8 @@ func (np *NodePinger) RetrievePayloadToRequester(ctx context.Context, inferenceI
 
 func (np *NodePinger) PostChat(
 	executorURL string,
-	executorAddress string,
 	payloadBytes []byte,
+	votingResult *inference.VotingResult,
 ) error {
 	var chatRequest apitypes.ChatRequest
 	err := json.Unmarshal(payloadBytes, &chatRequest)
@@ -343,7 +456,7 @@ func (np *NodePinger) PostChat(
 
 	req, err := http.NewRequest("POST", chatURL, bytes.NewBuffer(chatRequest.Body))
 	if err != nil {
-		logging.Error("Failed create POST request to completions URL", types.Voting, "chatURL", chatURL, "error", err)
+		logging.Error("Failed to create POST request to completions URL", types.Voting, "chatURL", chatURL, "error", err)
 		return err
 	}
 
@@ -356,6 +469,15 @@ func (np *NodePinger) PostChat(
 	req.Header.Set(apiutils.XTASignatureHeader, chatRequest.TransferSignature)
 	req.Header.Set(apiutils.XPromptHashHeader, chatRequest.PromptHash)
 	req.Header.Set(apiutils.ContentTypeHeader, chatRequest.ContentType)
+	if votingResult != nil {
+		// Inject voting result for executor request
+		votingResultBytes, err := json.Marshal(votingResult)
+		if err != nil {
+			logging.Error("Failed to marshal voting result", types.Voting, "error", err)
+			return err
+		}
+		req.Header.Set(apiutils.XVotingResult, string(votingResultBytes))
+	}
 
 	resp, err := np.httpClient.Do(req)
 	if err != nil {
@@ -395,6 +517,32 @@ func (np *NodePinger) GetAddressUrl(ctx context.Context, address string) (string
 	return participantResp.Participant.InferenceUrl, nil
 }
 
+func (np *NodePinger) registerInitiatePostChat(inferenceId string, status types.InferenceStatus, isVoting bool) bool {
+	if status != types.InferenceStatus_STARTED {
+		logging.Debug("Inference status is not started; skipping", types.Voting, "inferenceId", inferenceId, "status", status)
+		return false
+	}
+
+	var registerType InferenceIdRegisterType
+	if isVoting {
+		registerType = RegisteredByNodePingerWithVotes
+	} else {
+		registerType = RegisteredByNodePinger
+	}
+
+	if oldRegisterType := np.inferenceIdTracker.TryRegisterInferenceId(inferenceId, registerType); oldRegisterType != Unregistered {
+		logging.Debug(
+			"Inference has already begun processing; skipping", types.Voting,
+			"inferenceId", inferenceId,
+			"registerType", registerType,
+			"oldRegisterType", oldRegisterType,
+		)
+		return false
+	}
+
+	return true
+}
+
 // VoterFallback is called when the executor's direct payload retrieval from the TA fails.
 // It samples voters from active participants and requests verification.
 // If a voter finds the payload on the TA, the voter returns it and the executor uses it.
@@ -413,6 +561,11 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		// Not our inference
 		return nil
 	}
+
+	if !np.registerInitiatePostChat(inferenceId, inferenceResp.Inference.Status, true) {
+		return nil
+	}
+	defer np.inferenceIdTracker.UnregisterInferenceId(inferenceId)
 
 	transferAddress := inferenceResp.Inference.TransferredBy
 	epochId := inferenceResp.Inference.EpochId
@@ -433,7 +586,7 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 	// Sample voters using replayable random (exclude TA and executor).
 	sampledVoters, err := SampleVotersForInference(
 		ctx, np.cosmosClient, &inferenceResp.Inference,
-		DefaultMaxVoters, transferAddress, executorAddress,
+		transferAddress, executorAddress,
 	)
 	if err != nil {
 		logging.Error("VoterFallback: failed to sample voters", types.Voting, "error", err)
@@ -465,7 +618,7 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 
 	votingCfg := DefaultVotingConfig()
 	// Override defaults with NodePinger-specific settings.
-	votingCfg.VoteTimeout = int(np.timeout.Milliseconds())
+	votingCfg.VoteTimeout = np.timeout.Milliseconds()
 	votingCfg.MaxRetries = 2
 
 	// Request verification from voters
@@ -476,7 +629,15 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		return err
 	}
 
+	votingResult, err := np.createVotingResult(result)
+	if err != nil {
+		logging.Error("VoterFallback: Failed to sign voting result", types.Voting, "inferenceId", inferenceId, "error", err)
+		return err
+	}
+
 	// Check result: if we got a positive vote with payload, use it
+	// Otherwise, we post `MsgFinishInferenceWithMissingPayload` indicating that
+	// the vote was negative.
 	if result.FirstPositive != nil && result.FirstPositive.Response != nil &&
 		result.FirstPositive.Response.Payload != nil {
 		logging.Info("VoterFallback: received payload from voter", types.Voting,
@@ -491,7 +652,7 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 			return err
 		}
 
-		err = np.PostChat(executorURL, executorAddress, result.FirstPositive.Response.Payload.PromptPayload)
+		err = np.PostChat(executorURL, result.FirstPositive.Response.Payload.PromptPayload, votingResult)
 		if err != nil {
 			logging.Error("VoterFallback: failed to post chat to executor", types.Voting,
 				"inferenceId", inferenceId, "error", err)
@@ -501,6 +662,69 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		logging.Info("VoterFallback: successfully forwarded payload to executor", types.Voting,
 			"inferenceId", inferenceId)
 		return nil
+	} else {
+		executorSignature, err := np.signMsgFinishInference(
+			inferenceResp.Inference.PromptHash,
+			inferenceResp.Inference.RequestTimestamp,
+			transferAddress,
+			executorAddress,
+			0,
+		)
+		if err != nil {
+			logging.Error(
+				"VoterFallback: failed to sign MsgFinishInference", types.Voting,
+				"inferenceId", inferenceId,
+				"error", err,
+			)
+			return err
+		}
+
+		message := &inference.MsgFinishInference {
+			Creator:              executorAddress,
+			InferenceId:          inferenceId,
+			ResponseHash:         inferenceResp.Inference.ResponseHash,
+			PromptTokenCount:     inferenceResp.Inference.PromptTokenCount,
+			CompletionTokenCount: inferenceResp.Inference.CompletionTokenCount,
+			ExecutedBy:           executorAddress,
+			TransferredBy:        transferAddress,
+			TransferSignature:    inferenceResp.Inference.TransferSignature,
+			ExecutorSignature:    executorSignature,
+			RequestTimestamp:     inferenceResp.Inference.RequestTimestamp,
+			RequestedBy:          inferenceResp.Inference.RequestedBy,
+			Model:                inferenceResp.Inference.Model,
+			PromptHash:           inferenceResp.Inference.PromptHash,
+			OriginalPromptHash:   inferenceResp.Inference.OriginalPromptHash,
+		}
+		messageWithMissingPayload := &inference.MsgFinishInferenceWithMissingPayload {
+			MsgFinishInference: message,
+			VotingResult: votingResult,
+		}
+
+		// Validate before direct chain submit (executor validates when receiving via HTTP).
+		executorPubKeySdk, err := np.cosmosClient.GetApiAccount().SignerAccount.Record.GetPubKey()
+		if err != nil {
+			logging.Error("Failed to get executor public key", types.Voting, "error", err)
+			return err
+		}
+		executorPubKey := base64.StdEncoding.EncodeToString(executorPubKeySdk.Bytes())
+		if err = ValidateVotingResultFull(ctx, queryClient, np.cosmosClient, &inferenceResp.Inference, votingResult, executorPubKey); err != nil {
+			logging.Error("VoterFallback: voting result failed validation before direct submit", types.Voting,
+				"inferenceId", inferenceId, "error", err)
+			return err
+		}
+
+		logging.Warn(
+			"VoterFallback: posting MsgFinishInferenceWithMissingPayload with negative voting outcome", types.Voting,
+			"inferenceId", inferenceId,
+		)
+		if err = np.cosmosClient.FinishInferenceWithMissingPayload(messageWithMissingPayload); err != nil {
+			logging.Error(
+				"VoterFallback: failed to MsgFinishInferenceWithMissingPayload with negative voting outcome", types.Voting,
+				"inferenceId", inferenceId,
+				"error", err,
+			)
+			return err
+		}
 	}
 
 	// All voters returned negative — payload doesn't exist
@@ -510,6 +734,53 @@ func (np *NodePinger) VoterFallback(ctx context.Context, inferenceId string) err
 		"negativeVotes", result.NegativeVotes)
 	return fmt.Errorf("voter fallback failed: all %d voters returned negative for inference %s",
 		result.NegativeVotes, inferenceId)
+}
+
+// createVotingResult builds a VotingResult from challenger responses.
+// Validation is done by the executor when it receives the result (HTTP path) or
+// by ValidateVotingResultFull before direct chain submit (negative-vote path).
+func (np *NodePinger) createVotingResult(result *ChallengerVotingResult) (*inference.VotingResult, error) {
+	votes := []*inference.SignedVote{}
+	for _, vote := range result.VoterResults {
+		if vote.Response == nil {
+			logging.Warn("Vote response is nil", types.Voting, "error", vote.Error)
+			continue
+		}
+
+		resp := vote.Response
+		votes = append(
+			votes,
+			&inference.SignedVote{
+				InferenceId:        resp.InferenceId,
+				VoterAddress:       resp.VoterAddress,
+				VoteType:           inference.VoteType(resp.Vote),
+				RespondentDataHash: resp.PromptHash,
+				Timestamp:          resp.Timestamp,
+				VoterSignature:     resp.VoterSignature,
+			},
+		)
+	}
+
+	if len(votes) == 0 {
+		return nil, fmt.Errorf("no votes to include in voting result")
+	}
+
+	completedAt := time.Now().UnixNano()
+	requesterAddress := np.cosmosClient.GetAccountAddress()
+	signature, err := np.signVotingResult(result.InferenceId, votes, completedAt, requesterAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	votingResult := &inference.VotingResult{
+		InferenceId:        result.InferenceId,
+		Votes:              votes,
+		CompletedAt:        completedAt,
+		RequesterAddress:   requesterAddress,
+		RequesterSignature: signature,
+	}
+
+	return votingResult, nil
 }
 
 // Challenger Functions: Request Verification from Voters
@@ -529,7 +800,7 @@ type ChallengerVotingResult struct {
 	// VoterResults contains results from all voters that were contacted
 	VoterResults []VoterVerificationResult
 	// NegativeVotes is the count of negative votes
-	NegativeVotes int
+	NegativeVotes int32
 	// FirstPositive is the first positive voter result (if any)
 	FirstPositive *VoterVerificationResult
 	// StoppedEarly indicates if we stopped after finding a positive vote
@@ -558,24 +829,18 @@ func (np *NodePinger) RequestVerificationFromVoters(
 	}
 
 	// Apply sane defaults from config.
-	// By default, we cap the number of voters to DefaultMaxVoters (or fewer if not enough URLs).
-	if cfg.MaxNumNodes <= 0 {
-		if len(voterURLs) < DefaultMaxVoters {
-			cfg.MaxNumNodes = len(voterURLs)
-		} else {
-			cfg.MaxNumNodes = DefaultMaxVoters
-		}
-	} else if cfg.MaxNumNodes > len(voterURLs) {
-		cfg.MaxNumNodes = len(voterURLs)
-	}
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = 1
 	}
 	if cfg.VoteTimeout <= 0 {
 		// Fall back to NodePinger's HTTP client timeout if not specified.
-		cfg.VoteTimeout = int(np.timeout.Milliseconds())
+		cfg.VoteTimeout = np.timeout.Milliseconds()
 	}
 
+	// Ping up to DefaultMaxVotersToSample voters (2x DefaultMaxVoters) so that if the first
+	// batch has invalid voters (unreachable, timeout, bad signature), we can still reach
+	// DefaultMaxVoters valid votes.
+	maxVoters := min(int(types.DefaultMaxVotersToSample), len(voterURLs))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -584,10 +849,9 @@ func (np *NodePinger) RequestVerificationFromVoters(
 		result   VoterVerificationResult
 	}
 
-	resultsCh := make(chan voterJobResult, cfg.MaxNumNodes)
+	resultsCh := make(chan voterJobResult, maxVoters)
 
 	var wg sync.WaitGroup
-	maxVoters := cfg.MaxNumNodes
 
 	for i := 0; i < maxVoters; i++ {
 		voterURL := voterURLs[i]
@@ -598,7 +862,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 
 			var lastResult VoterVerificationResult
 
-			for attempt := 0; attempt < cfg.MaxRetries; attempt++ {
+			for attempt := 0; attempt < int(cfg.MaxRetries); attempt++ {
 				select {
 				case <-ctx.Done():
 					return
@@ -617,7 +881,7 @@ func (np *NodePinger) RequestVerificationFromVoters(
 				lastResult = res
 
 				// If the voter was reachable and responded, no need to retry.
-				if res.Error == nil || !res.Reachable {
+				if res.Error == nil && res.Reachable {
 					break
 				}
 			}
@@ -636,8 +900,19 @@ func (np *NodePinger) RequestVerificationFromVoters(
 		close(resultsCh)
 	}()
 
+	validVoteCount := 0
 	for jobRes := range resultsCh {
 		voterResult := jobRes.result
+
+		// Validate vote at receipt; skip invalid votes (forged, wrong inference, bad signature).
+		if voterResult.Response != nil && voterResult.Reachable {
+			if err := validateVote(request.InferenceId, voterResult.Response); err != nil {
+				logging.Warn("Skipping invalid vote from voter", types.Voting,
+					"inferenceId", request.InferenceId, "voterURL", jobRes.voterURL, "error", err)
+				continue
+			}
+		}
+
 		result.VoterResults = append(result.VoterResults, voterResult)
 
 		// If we already stopped early due to a positive vote, just record results without
@@ -653,7 +928,8 @@ func (np *NodePinger) RequestVerificationFromVoters(
 
 		if voterResult.Response != nil {
 			switch voterResult.Response.Vote {
-			case VotePositive:
+			case types.VoteType_VotePositive:
+				validVoteCount++
 				// Capture the first positive vote and stop further work.
 				resultCopy := voterResult
 				result.FirstPositive = &resultCopy
@@ -666,8 +942,15 @@ func (np *NodePinger) RequestVerificationFromVoters(
 				// Cancel the shared context so in-flight requests can be aborted.
 				cancel()
 
-			case VoteNegative:
+			case types.VoteType_VoteNegative:
+				validVoteCount++
 				result.NegativeVotes++
+				// Stop once we have enough valid votes (positive or negative).
+				if validVoteCount >= int(types.DefaultMaxVoters) {
+					logging.Info("Reached required valid vote count, stopping verification", types.Voting,
+						"inferenceId", request.InferenceId, "validVoteCount", validVoteCount)
+					cancel()
+				}
 
 			default:
 				// Invalid or unknown vote - treat as negative for aggregation.
@@ -787,7 +1070,7 @@ func (np *NodePinger) signPayloadRequest(
 		ExecutorAddress: "",
 	}
 
-	return np.sign(components)
+	return np.sign(components, calculations.Developer)
 }
 
 // signVerificationRequest signs a verification request from challenger to voter.
@@ -804,11 +1087,62 @@ func (np *NodePinger) signVerificationRequest(
 		ExecutorAddress: "",
 	}
 
-	return np.sign(components)
+	return np.sign(components, calculations.Developer)
+}
+
+// signMsgFinishInference signs an inference request from.
+func (np *NodePinger) signMsgFinishInference(
+	promptHash string,
+	timestamp int64,
+	transferAddress string,
+	executorAddress string,
+	epochId uint64,
+) (string, error) {
+	components := calculations.SignatureComponents{
+		Payload:         promptHash,
+		EpochId:         epochId,
+		Timestamp:       timestamp,
+		TransferAddress: transferAddress,
+		ExecutorAddress: executorAddress,
+	}
+
+	return np.sign(components, calculations.ExecutorAgent)
+}
+
+func (np *NodePinger) signVotingResult(
+	inferenceId string,
+	votes []*inference.SignedVote,
+	completedAt int64,
+	requesterAddress string,
+) (string, error) {
+	voteFields := make([]calculations.VoteFields, len(votes))
+	for i, v := range votes {
+		voteFields[i] = calculations.VoteFields{
+			InferenceId:        v.InferenceId,
+			VoterAddress:       v.VoterAddress,
+			VoteType:           int32(v.VoteType),
+			RespondentDataHash: v.RespondentDataHash,
+			Timestamp:          v.Timestamp,
+			VoterSignature:     v.VoterSignature,
+		}
+	}
+	resultBytes := calculations.VotingResultBytesToSign(inferenceId, voteFields)
+	components := calculations.SignatureComponents{
+		Payload:         string(resultBytes),
+		EpochId:         0,
+		Timestamp:       completedAt,
+		TransferAddress: requesterAddress,
+		ExecutorAddress: "",
+	}
+
+	return np.sign(components, calculations.Developer)
 }
 
 // sign is a helper to sign with the cosmos client's keyring.
-func (np *NodePinger) sign(components calculations.SignatureComponents) (string, error) {
+func (np *NodePinger) sign(
+	components calculations.SignatureComponents,
+	signatureType calculations.SignatureType,
+) (string, error) {
 	signerAddressStr := np.cosmosClient.GetSignerAddress()
 	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
 	if err != nil {
@@ -820,5 +1154,35 @@ func (np *NodePinger) sign(components calculations.SignatureComponents) (string,
 		Keyring: np.cosmosClient.GetKeyring(),
 	}
 
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(accountSigner, components, signatureType)
+}
+
+// signVote signs the voter's vote and populates VoterSignature on the response.
+// Must use the same address for signing as VoterAddress: the chain verifies the
+// signature using the pubkey for vote.VoterAddress (the participant in the epoch group).
+func (np *NodePinger) signVote(response *VerificationResponse) {
+	voterAddressStr := np.cosmosClient.GetAccountAddress()
+	voterAddress, err := sdk.AccAddressFromBech32(voterAddressStr)
+	if err != nil {
+		logging.Error("signVote: invalid voter address", types.Voting, "error", err)
+		return
+	}
+	accountSigner := &cmd.AccountSigner{
+		Addr:    voterAddress,
+		Keyring: np.cosmosClient.GetKeyring(),
+	}
+	sig, err := calculations.SignVote(
+		accountSigner,
+		response.InferenceId,
+		response.VoterAddress,
+		int32(response.Vote),
+		response.PromptHash,
+		response.Timestamp,
+	)
+	if err != nil {
+		logging.Error("signVote: failed to sign vote", types.Voting,
+			"inferenceId", response.InferenceId, "error", err)
+		return
+	}
+	response.VoterSignature = sig
 }

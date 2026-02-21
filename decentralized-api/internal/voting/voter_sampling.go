@@ -44,12 +44,9 @@ func SampleVotersForInference(
 	ctx context.Context,
 	cosmosClient cosmosclient.CosmosMessageClient,
 	inf *types.Inference,
-	maxVoters int,
 	excludeAddresses ...string,
 ) ([]SampledVoter, error) {
-	if maxVoters <= 0 {
-		maxVoters = DefaultMaxVoters
-	}
+	maxVoters := types.DefaultMaxVotersToSample
 
 	excludeSet := make(map[string]bool, len(excludeAddresses))
 	for _, addr := range excludeAddresses {
@@ -107,7 +104,7 @@ func SampleVotersForInference(
 
 	// Sample voters using deterministic weighted random selection
 	var voters []SampledVoter
-	for len(voters) < maxVoters {
+	for uint32(len(voters)) < maxVoters {
 		participantAddress, err := selectRandomParticipantReplayable(randomCtx)
 		if err != nil {
 			logging.Debug("Voter sampling exhausted participants", types.Voting,

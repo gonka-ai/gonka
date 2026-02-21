@@ -10,6 +10,7 @@ enum InferenceStatus {
   INVALIDATED = 3;
   VOTING = 4;
   EXPIRED = 5;
+  FINISHED_WITH_MISSING_PAYLOAD = 6;
 }
 
 message ProposalDetails {
@@ -52,5 +53,6 @@ message Inference {
   string original_prompt = 31 [deprecated = true];  // Phase 3: will be removed in Phase 6
   uint64 per_token_price = 32; // Locked-in per-token price when inference started (for dynamic pricing)
   string original_prompt_hash = 33;                 // Phase 3: for dev signature verification
+  bytes start_block_hash = 34;                      // Block hash at StartBlockHeight, for voter sampling replay
 }
 
