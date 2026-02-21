@@ -310,7 +310,7 @@ val blsDataJson = """
             "slot_end_index": 99
           }
         ],
-        "dkg_phase": 3,
+        "dkg_phase": "COMPLETED",
         "dealing_phase_deadline_block": "100",
         "verifying_phase_deadline_block": "103",
         "group_public_key": "siKm25OFmsUteDpaYKG1uErvK2rI7kgtFFgKsgNNx2Iq8MyX4g7uIcgDd2AvMGduEppwXem/Uln3yGZey+GduxHw+lhhij/RPeIuyCF0e2UucMYdsNEhTP3nEBNUejwy",

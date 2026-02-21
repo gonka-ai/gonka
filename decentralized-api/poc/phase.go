@@ -6,21 +6,22 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// ShouldAcceptGeneratedArtifacts returns true if the system should accept
-// incoming artifact batches from MLNodes.
 func ShouldAcceptGeneratedArtifacts(epochState *chainphase.EpochState) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
 	}
-	// Regular PoC generation
 	if epochState.CurrentPhase == types.PoCGeneratePhase {
 		return true
 	}
-	// Confirmation PoC generation during inference phase
+	if epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
+		return epochState.LatestEpoch.IsPoCExchangeWindow(epochState.CurrentBlock.Height)
+	}
 	if epochState.CurrentPhase == types.InferencePhase &&
 		epochState.ActiveConfirmationPoCEvent != nil &&
 		epochState.ActiveConfirmationPoCEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
-		return true
+		event := epochState.ActiveConfirmationPoCEvent
+		epochParams := &epochState.LatestEpoch.EpochParams
+		return event.IsInBatchSubmissionWindow(epochState.CurrentBlock.Height, epochParams)
 	}
 	return false
 }
@@ -93,26 +94,21 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
 }
 
-// ShouldHaveDistributedWeights returns true if weights should have been distributed.
-// True during Validation phase or WindDown phase.
 func ShouldHaveDistributedWeights(epochState *chainphase.EpochState) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
 	}
-
-	// Regular PoC: Validation or WindDown phases
 	if epochState.CurrentPhase == types.PoCValidatePhase ||
-		epochState.CurrentPhase == types.PoCValidateWindDownPhase ||
-		epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
+		epochState.CurrentPhase == types.PoCValidateWindDownPhase {
 		return true
 	}
-
-	// Confirmation PoC: Validation phase
+	if epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
+		return epochState.CurrentBlock.Height >= epochState.LatestEpoch.EndOfPoCGeneration()
+	}
 	if epochState.CurrentPhase == types.InferencePhase &&
 		epochState.ActiveConfirmationPoCEvent != nil &&
 		epochState.ActiveConfirmationPoCEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION {
 		return true
 	}
-
 	return false
 }

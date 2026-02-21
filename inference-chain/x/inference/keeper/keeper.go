@@ -82,6 +82,10 @@ type (
 		WrappedContractReverseIndex    collections.Map[string, types.BridgeTokenReference]
 		LiquidityPoolItem              collections.Item[types.LiquidityPool]
 		LiquidityPoolApprovedTokensMap collections.Map[collections.Pair[string, string], types.BridgeTokenReference]
+		// PoC validation sampling snapshots
+		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
+		// Punishment grace epochs for upgrade protection
+		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 	}
 )
 
@@ -409,6 +413,20 @@ func NewKeeper(
 			types.LiquidityPoolPrefix,
 			"liquidity_pool",
 			codec.CollValue[types.LiquidityPool](cdc),
+		),
+		PoCValidationSnapshots: collections.NewMap(
+			sb,
+			types.PoCValidationSnapshotPrefix,
+			"poc_validation_snapshot",
+			collections.Int64Key,
+			codec.CollValue[types.PoCValidationSnapshot](cdc),
+		),
+		PunishmentGraceEpochs: collections.NewMap(
+			sb,
+			types.PunishmentGraceEpochsPrefix,
+			"punishment_grace_epochs",
+			collections.Uint64Key,
+			codec.CollValue[types.GraceEpochParams](cdc),
 		),
 	}
 	// Build the collections schema

@@ -1,15 +1,23 @@
+import ValidationTests.Companion.alwaysValidate
 import com.productscience.EpochStage
 import com.productscience.data.UpdateParams
+import com.productscience.data.ProposalStatus
 import com.productscience.data.spec
 import com.productscience.data.AppState
+import com.productscience.data.Coin
 import com.productscience.data.InferenceState
 import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.Decimal
+import com.productscience.data.MsgSend
+import com.productscience.data.MsgStartInference
+import com.productscience.data.MsgTransferWithVesting
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.tinylog.kotlin.Logger
+import kotlin.test.assertNotNull
 
 class GovernanceTests : TestermintTest() {
     @Test
@@ -80,7 +88,7 @@ class GovernanceTests : TestermintTest() {
         val finalTallyResult = proposals.proposals.first { it.id == proposalId }.finalTallyResult
         assertThat(finalTallyResult.noCount).isEqualTo(20)
         assertThat(finalTallyResult.yesCount).isEqualTo(100)
-        
+
         // Mark for reboot to reset parameters for subsequent tests
         genesis.markNeedsReboot()
     }
@@ -128,10 +136,73 @@ class GovernanceTests : TestermintTest() {
         }
         assertThat(paramsProposal.finalTallyResult.noCount).isEqualTo(12)
         assertThat(paramsProposal.finalTallyResult.yesCount).isEqualTo(11)
-        assertThat(paramsProposal.status).isEqualTo(4)
-        
+        assertThat(paramsProposal.status).isEqualTo(ProposalStatus.REJECTED)
+
         // Mark for reboot to reset parameters for subsequent tests
         genesis.markNeedsReboot()
+    }
+
+    @Test
+    fun `send gov funds to an account`() {
+        val (cluster, genesis) = initCluster(mergeSpec = alwaysValidate, reboot = true)
+        genesis.waitForNextEpoch()
+        cluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
+        }
+        val helper = InferenceTestHelper(cluster, genesis)
+        val lateValidator = cluster.joinPairs.first()
+        val mlNodeVersionResponse = genesis.node.getMlNodeVersion()
+        val mlNodeVersion = mlNodeVersionResponse.mlnodeVersion.currentVersion
+        val segment = "/${mlNodeVersion}"
+        lateValidator.mock?.setInferenceErrorResponse(500, segment = segment)
+        logSection("Make sure we're in safe inference zone")
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.node.waitForNextBlock(3)
+        val lateValidatorBeforeBalance = lateValidator.node.getSelfBalance()
+        logSection("Use messages only for inference")
+        val seed = lateValidator.api.getConfig().currentSeed
+        val inference = helper.runFullInference()
+        logSection("Wait for claims")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS, 3)
+        // Both helpers should have validated and been rewarded
+        val updatedInference = genesis.node.getInference(inference.inferenceId)
+        // Only the other join should have validated
+        assertNotNull(updatedInference)
+        assertNotNull(updatedInference.inference)
+
+        assertThat(
+            updatedInference.inference.validatedBy ?: listOf()
+        ).doesNotContain(lateValidator.node.getColdAddress())
+        val afterBalance = lateValidator.node.getSelfBalance()
+        assertThat(afterBalance).isEqualTo(lateValidatorBeforeBalance)
+        logSection("Wait for claims to default to gov account")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Submit Proposal to send funds")
+        val governanceAddress = genesis.node.getModuleAccount("gov").account.value.address
+        val governanceBalance = genesis.node.getBalance(governanceAddress, "ngonka")
+        val genesisAddress = genesis.node.getColdAddress()
+        val genesisBalance = genesis.node.getBalance(genesisAddress, "ngonka")
+        val sendFunds = MsgTransferWithVesting(
+            sender = governanceAddress,
+            recipient = genesisAddress,
+            amount = listOf(Coin("ngonka", governanceBalance.balance.amount)),
+            vestingEpochs = 100
+        )
+
+        val message = genesis.submitMessage(sendFunds, true)
+        Logger.warn { message.toString() }
+        val proposalId = genesis.runProposal(cluster, sendFunds)
+        logSection("Verifying Proposal")
+        val newGovBalance = genesis.node.getBalance(governanceAddress, "ngonka")
+        val newGenesisBalance = genesis.node.getBalance(genesisAddress, "ngonka")
+        assertThat(newGovBalance.balance.amount).isEqualTo(0)
+        // amount should be unaffected immediately
+        assertThat(newGenesisBalance.balance.amount).isEqualTo(genesisBalance.balance.amount)
+        val newVestingSchedule = genesis.node.queryVestingSchedule(genesisAddress)
+        assertThat(newVestingSchedule).withFailMessage { "No vesting schedule added" }.isNotNull
+        val totalAmount = newVestingSchedule.vestingSchedule?.epochAmounts?.sumOf { it.coins.sumOf { it.amount } } ?: 0
+        assertThat(totalAmount).isEqualTo(governanceBalance.balance.amount)
+        assertThat(newVestingSchedule.vestingSchedule?.epochAmounts).hasSize(100)
     }
 
 
