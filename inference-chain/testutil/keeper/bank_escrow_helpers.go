@@ -7,9 +7,9 @@ import (
 )
 
 func (escrow *MockBookkeepingBankKeeper) ExpectAny(context sdk.Context) {
-	escrow.EXPECT().SendCoinsFromAccountToModule(context, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	escrow.EXPECT().SendCoinsFromModuleToAccount(context, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	escrow.EXPECT().SendCoinsFromModuleToModule(context, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	escrow.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	escrow.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	escrow.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	escrow.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 }
@@ -27,5 +27,5 @@ func (escrow *MockBookkeepingBankKeeper) ExpectPay(context sdk.Context, who stri
 	if err != nil {
 		panic(err)
 	}
-	return escrow.EXPECT().SendCoinsFromAccountToModule(context, whoAddr, types.ModuleName, coinsOf(amount), gomock.Any())
+	return escrow.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), whoAddr, types.ModuleName, coinsOf(amount), gomock.Any())
 }

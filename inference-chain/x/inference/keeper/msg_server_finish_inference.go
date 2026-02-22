@@ -76,19 +76,22 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired"), msg), nil
 	}
 
+	cacheCtx, writeCache := ctx.CacheContext()
+	workingInference := existingInference
+
 	// Record the current price only if this is the first message (StartInference not processed yet)
 	// This ensures consistent pricing regardless of message arrival order
-	if !existingInference.StartProcessed() {
-		existingInference.Model = msg.Model
-		k.RecordInferencePrice(goCtx, &existingInference, msg.InferenceId)
-	} else if existingInference.Model == "" {
+	if !workingInference.StartProcessed() {
+		workingInference.Model = msg.Model
+		k.RecordInferencePrice(cacheCtx, &workingInference, msg.InferenceId)
+	} else if workingInference.Model == "" {
 		k.LogError("FinishInference: model not set by the processed start message", types.Inferences,
 			"inferenceId", msg.InferenceId,
 			"executedBy", msg.ExecutedBy)
-	} else if existingInference.Model != msg.Model {
+	} else if workingInference.Model != msg.Model {
 		k.LogError("FinishInference: model mismatch", types.Inferences,
 			"inferenceId", msg.InferenceId,
-			"existingInference.Model", existingInference.Model,
+			"existingInference.Model", workingInference.Model,
 			"msg.Model", msg.Model)
 	}
 
@@ -97,25 +100,26 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
 	}
 
-	inference, payments, err := calculations.ProcessFinishInference(&existingInference, msg, blockContext, k)
+	inference, payments, err := calculations.ProcessFinishInference(&workingInference, msg, blockContext, k)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, true)
+	finalInference, err := k.processInferencePayments(cacheCtx, inference, payments, true)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
 	if finalInference.IsCompleted() && finalInference.EpochId == 0 {
-		err := k.handleInferenceCompleted(ctx, finalInference)
+		err := k.handleInferenceCompleted(cacheCtx, finalInference)
 		if err != nil {
 			return failedFinish(ctx, err, msg), nil
 		}
 	}
-	err = k.SetInferenceWithoutDevStatComputation(ctx, *finalInference)
+	err = k.SetInferenceWithoutDevStatComputation(cacheCtx, *finalInference)
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
+	writeCache()
 
 	return &types.MsgFinishInferenceResponse{InferenceIndex: msg.InferenceId}, nil
 }

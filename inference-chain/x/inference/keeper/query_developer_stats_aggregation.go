@@ -32,6 +32,10 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 	}
 
 	k.LogInfo("StatsByTimePeriodByDeveloper", types.Stat, "developer", req.Developer, "time_from", req.TimeFrom, "time_to", req.TimeTo)
+	if cutoverTimestamp, ok := k.GetModelUsageCutoverTimestamp(ctx); ok && req.TimeTo >= cutoverTimestamp {
+		k.LogWarn("StatsByTimePeriodByDeveloper uses legacy per-developer stats after model-usage cutover", types.Stat,
+			"developer", req.Developer, "time_from", req.TimeFrom, "time_to", req.TimeTo, "cutover", cutoverTimestamp)
+	}
 	stats := k.GetDeveloperStatsByTime(ctx, req.Developer, req.TimeFrom, req.TimeTo)
 	return &types.QueryStatsByTimePeriodByDeveloperResponse{Stats: stats}, nil
 }
@@ -39,6 +43,10 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 func (k Keeper) StatsByDeveloperAndEpochsBackwards(ctx context.Context, req *types.QueryStatsByDeveloperAndEpochBackwardsRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
 	if req.Developer == "" {
 		return nil, ErrInvalidDeveloperAddress
+	}
+	if _, ok := k.GetModelUsageCutoverTimestamp(ctx); ok {
+		k.LogWarn("StatsByDeveloperAndEpochsBackwards uses legacy per-developer epoch stats after model-usage cutover", types.Stat,
+			"developer", req.Developer, "epochs_n", req.EpochsN)
 	}
 
 	summary := k.GetSummaryLastNEpochsByDeveloper(ctx, req.Developer, int(req.EpochsN))

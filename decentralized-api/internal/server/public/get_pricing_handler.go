@@ -167,14 +167,14 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 		return metricsData
 	}
 
-	// Calculate time window (similar to BeginBlocker logic)
-	currentTime := time.Now().Unix()
-	timeWindowStart := currentTime - windowDurationSeconds
+	// Calculate time window in milliseconds to match chain stats query semantics
+	currentTimeMillis := time.Now().UnixMilli()
+	timeWindowStartMillis := currentTimeMillis - windowDurationSeconds*1000
 
 	// Get stats for all models in time window
 	statsResponse, err := queryClient.InferencesAndTokensStatsByModels(context, &types.QueryInferencesAndTokensStatsByModelsRequest{
-		TimeFrom: timeWindowStart,
-		TimeTo:   currentTime,
+		TimeFrom: timeWindowStartMillis,
+		TimeTo:   currentTimeMillis,
 	})
 	if err != nil {
 		logging.Warn("Failed to get model stats for utilization", types.Pricing, "error", err)

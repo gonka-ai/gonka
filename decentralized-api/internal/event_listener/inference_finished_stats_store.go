@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"decentralized-api/internal/event_listener/chainevents"
+	"decentralized-api/logging"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const inferenceFinishedStatsSchema = `
@@ -28,6 +31,8 @@ CREATE TABLE IF NOT EXISTS inference_finished_stats (
 	created_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now')),
 	updated_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_ifs_time ON inference_finished_stats(end_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_ifs_time_model ON inference_finished_stats(end_timestamp_ms, model);
 CREATE INDEX IF NOT EXISTS idx_ifs_model_time ON inference_finished_stats(model, end_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_ifs_requested_by_time ON inference_finished_stats(requested_by, end_timestamp_ms);
 `
@@ -108,9 +113,12 @@ func (s *InferenceFinishedStatsStore) UpsertFromTxEvent(event *chainevents.JSONR
 
 	events := event.Result.Events
 
-	rows, err := parseInferenceFinishedStatsRows(events)
+	rows, skipped, err := parseInferenceFinishedStatsRows(events)
 	if err != nil {
 		return err
+	}
+	if skipped > 0 && hasRichInferenceFinishedPayload(events) {
+		logging.Warn("Skipped malformed inference_finished stats rows", types.EventProcessing, "skipped", skipped, "total", len(events["inference_finished.inference_id"]))
 	}
 	if len(rows) == 0 {
 		return nil
@@ -178,46 +186,48 @@ func isRetryableSQLiteError(err error) bool {
 		strings.Contains(msg, "context deadline exceeded")
 }
 
-func parseInferenceFinishedStatsRows(events map[string][]string) ([]inferenceFinishedStatsRow, error) {
+func parseInferenceFinishedStatsRows(events map[string][]string) ([]inferenceFinishedStatsRow, int, error) {
 	ids := events["inference_finished.inference_id"]
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	rows := make([]inferenceFinishedStatsRow, 0, len(ids))
+	skipped := 0
 	for idx := range ids {
 		row, ok, err := parseInferenceFinishedStatsRowAt(events, idx)
 		if err != nil {
-			return nil, err
+			return nil, skipped, err
 		}
 		if !ok {
+			skipped++
 			continue
 		}
 		rows = append(rows, row)
 	}
-	return rows, nil
+	return rows, skipped, nil
 }
 
 func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (inferenceFinishedStatsRow, bool, error) {
-	inferenceID, ok := firstEventValueAt(events, "inference_finished.inference_id", index)
+	inferenceID, ok := firstEventValueAt(events, "inference_finished.inference_id", index, false)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	requestedBy, ok := firstEventValueAt(events, "inference_finished.requested_by", index)
+	requestedBy, ok := firstEventValueAt(events, "inference_finished.requested_by", index, false)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
-	executedBy, ok := firstEventValueAt(events, "inference_finished.executed_by", index)
+	executedBy, ok := firstEventValueAt(events, "inference_finished.executed_by", index, false)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
-	model, ok := firstEventValueAt(events, "inference_finished.model", index)
+	model, ok := firstEventValueAt(events, "inference_finished.model", index, false)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	epochID, ok, err := parseRequiredInt64At(events, "inference_finished.epoch_id", index)
+	epochID, ok, err := parseRequiredInt64At(events, "inference_finished.epoch_id", index, false)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse epoch_id for inference %s: %w", inferenceID, err)
 	}
@@ -225,7 +235,7 @@ func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (in
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	promptTokens, ok, err := parseRequiredInt64At(events, "inference_finished.prompt_token_count", index)
+	promptTokens, ok, err := parseRequiredInt64At(events, "inference_finished.prompt_token_count", index, false)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse prompt_token_count for inference %s: %w", inferenceID, err)
 	}
@@ -233,7 +243,7 @@ func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (in
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	completionTokens, ok, err := parseRequiredInt64At(events, "inference_finished.completion_token_count", index)
+	completionTokens, ok, err := parseRequiredInt64At(events, "inference_finished.completion_token_count", index, false)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse completion_token_count for inference %s: %w", inferenceID, err)
 	}
@@ -241,7 +251,7 @@ func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (in
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	actualCost, ok, err := parseRequiredInt64At(events, "inference_finished.actual_cost", index)
+	actualCost, ok, err := parseRequiredInt64At(events, "inference_finished.actual_cost", index, false)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse actual_cost for inference %s: %w", inferenceID, err)
 	}
@@ -249,7 +259,7 @@ func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (in
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	endTimestampMs, ok, err := parseRequiredInt64At(events, "inference_finished.end_block_timestamp", index)
+	endTimestampMs, ok, err := parseRequiredInt64At(events, "inference_finished.end_block_timestamp", index, false)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse end_block_timestamp for inference %s: %w", inferenceID, err)
 	}
@@ -257,7 +267,7 @@ func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (in
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	txHeight, err := parseOptionalInt64At(events, "tx.height", index)
+	txHeight, err := parseOptionalInt64At(events, "tx.height", index, true)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse tx.height for inference %s: %w", inferenceID, err)
 	}
@@ -277,7 +287,7 @@ func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (in
 	}, true, nil
 }
 
-func firstEventValueAt(events map[string][]string, key string, index int) (string, bool) {
+func firstEventValueAt(events map[string][]string, key string, index int, allowShared bool) (string, bool) {
 	values := events[key]
 	if len(values) == 0 {
 		return "", false
@@ -285,14 +295,14 @@ func firstEventValueAt(events map[string][]string, key string, index int) (strin
 	if index < len(values) && values[index] != "" {
 		return values[index], true
 	}
-	if len(values) == 1 && values[0] != "" {
+	if allowShared && len(values) == 1 && values[0] != "" {
 		return values[0], true
 	}
 	return "", false
 }
 
-func parseRequiredInt64At(events map[string][]string, key string, index int) (int64, bool, error) {
-	raw, ok := firstEventValueAt(events, key, index)
+func parseRequiredInt64At(events map[string][]string, key string, index int, allowShared bool) (int64, bool, error) {
+	raw, ok := firstEventValueAt(events, key, index, allowShared)
 	if !ok {
 		return 0, false, nil
 	}
@@ -303,8 +313,8 @@ func parseRequiredInt64At(events map[string][]string, key string, index int) (in
 	return val, true, nil
 }
 
-func parseOptionalInt64At(events map[string][]string, key string, index int) (int64, error) {
-	raw, ok := firstEventValueAt(events, key, index)
+func parseOptionalInt64At(events map[string][]string, key string, index int, allowShared bool) (int64, error) {
+	raw, ok := firstEventValueAt(events, key, index, allowShared)
 	if !ok {
 		return 0, nil
 	}
@@ -313,4 +323,10 @@ func parseOptionalInt64At(events map[string][]string, key string, index int) (in
 		return 0, err
 	}
 	return val, nil
+}
+
+func hasRichInferenceFinishedPayload(events map[string][]string) bool {
+	return len(events["inference_finished.requested_by"]) > 0 ||
+		len(events["inference_finished.executed_by"]) > 0 ||
+		len(events["inference_finished.model"]) > 0
 }

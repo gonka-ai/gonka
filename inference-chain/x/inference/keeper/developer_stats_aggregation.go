@@ -110,32 +110,12 @@ func (k Keeper) GetDeveloperStatsByTime(
 }
 
 func (k Keeper) GetSummaryByTime(ctx context.Context, from, to int64) StatsSummary {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
-
-	start := sdk.Uint64ToBigEndian(uint64(from))
-	end := sdk.Uint64ToBigEndian(uint64(to + 1))
-
-	iterator := timeStore.Iterator(start, end)
-	defer iterator.Close()
-
+	statsByModel := k.GetSummaryByModelAndTime(ctx, from, to)
 	summary := StatsSummary{}
-	for ; iterator.Valid(); iterator.Next() {
-		// covers corner case when we have inferences with empty requestedBy filed, because
-		// dev had insufficient funds for payment-on-escrow
-		if addr := extractDeveloperAddrFromKey(iterator.Key()); addr == "" {
-			continue
-		}
-
-		var stats types.DeveloperStatsByTime
-		err := k.cdc.Unmarshal(iterator.Value(), &stats)
-		if err != nil {
-			k.LogError("Unable to unmarshal DeveloperStatsByTime", types.Participants, "key", iterator.Key(), "error", err)
-			continue
-		}
-		summary.TokensUsed += int64(stats.Inference.TotalTokenCount)
-		summary.InferenceCount++
-		summary.ActualCost += stats.Inference.ActualCostInCoins
+	for _, modelSummary := range statsByModel {
+		summary.TokensUsed += modelSummary.TokensUsed
+		summary.InferenceCount += modelSummary.InferenceCount
+		summary.ActualCost += modelSummary.ActualCost
 	}
 	return summary
 }

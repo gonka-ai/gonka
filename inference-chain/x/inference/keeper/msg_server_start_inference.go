@@ -62,11 +62,14 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrInferenceStartProcessed, "inference has already start processed"), msg), nil
 	}
 
+	cacheCtx, writeCache := ctx.CacheContext()
+	workingInference := existingInference
+
 	// Record the current price only if this is the first message (FinishInference not processed yet)
 	// This ensures consistent pricing regardless of message arrival order
-	if !existingInference.FinishedProcessed() {
-		existingInference.Model = msg.Model
-		k.RecordInferencePrice(goCtx, &existingInference, msg.InferenceId)
+	if !workingInference.FinishedProcessed() {
+		workingInference.Model = msg.Model
+		k.RecordInferencePrice(cacheCtx, &workingInference, msg.InferenceId)
 	}
 
 	blockContext := calculations.BlockContext{
@@ -74,27 +77,28 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		BlockTimestamp: ctx.BlockTime().UnixMilli(),
 	}
 
-	inference, payments, err := calculations.ProcessStartInference(&existingInference, msg, blockContext, k)
+	inference, payments, err := calculations.ProcessStartInference(&workingInference, msg, blockContext, k)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, false)
+	finalInference, err := k.processInferencePayments(cacheCtx, inference, payments, false)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
-	k.addTimeout(ctx, finalInference)
+	k.addTimeout(cacheCtx, finalInference)
 
 	if finalInference.IsCompleted() && finalInference.EpochId == 0 {
-		err := k.handleInferenceCompleted(ctx, finalInference)
+		err := k.handleInferenceCompleted(cacheCtx, finalInference)
 		if err != nil {
 			return failedStart(ctx, err, msg), nil
 		}
 	}
-	err = k.SetInferenceWithoutDevStatComputation(ctx, *finalInference)
+	err = k.SetInferenceWithoutDevStatComputation(cacheCtx, *finalInference)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
+	writeCache()
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
