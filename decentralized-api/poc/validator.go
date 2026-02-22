@@ -385,7 +385,7 @@ func (v *OffChainValidator) worker(
 				*pendingCount--
 				// Report participant as invalid to chain
 				// Uncomment when stabilized
-				// reportAddr = work.address
+				reportAddr = work.address
 			case validateFailRetry:
 				// Re-queue for retry if under max attempts
 				if work.attempt < v.config.MaxRetries-1 {
@@ -700,8 +700,8 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 
 // filterNodesForValidation returns nodes available for PoC validation.
 // - Accept nodes in POC status with any sub-status
-// - Accept nodes in INFERENCE status
-// - Exclude FAILED or administratively disabled nodes
+// - Accept nodes in INFERENCE status (unless preserved for inference via POC_SLOT)
+// - Exclude FAILED, administratively disabled, or POC_SLOT-preserved nodes
 func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse {
 	filtered := make([]broker.NodeResponse, 0, len(nodes))
 	for _, node := range nodes {
@@ -720,6 +720,12 @@ func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse
 		// Exclude administratively disabled nodes
 		if !node.State.AdminState.Enabled {
 			logging.Debug("filterNodesForValidation: Skipping administratively disabled node", types.PoC, "node_id", node.Node.Id)
+			continue
+		}
+
+		// Exclude nodes preserved for inference (POC_SLOT allocation)
+		if node.State.ShouldContinueInference() {
+			logging.Debug("filterNodesForValidation: Skipping node preserved for inference", types.PoC, "node_id", node.Node.Id)
 			continue
 		}
 

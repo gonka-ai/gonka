@@ -18,7 +18,7 @@ import (
 	echomw "github.com/labstack/echo/v4/middleware"
 )
 
-const httpClientTimeout = 5 * time.Minute
+const httpClientTimeout = 20 * time.Minute
 
 type Server struct {
 	e                   *echo.Echo
