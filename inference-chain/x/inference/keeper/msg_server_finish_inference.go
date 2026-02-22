@@ -296,8 +296,14 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"traffic_basis", inferenceDetails.TrafficBasis,
 	)
 	k.SetInferenceValidationDetails(ctx, inferenceDetails)
-	if err := k.SetDeveloperStats(ctx, *existingInference); err != nil {
-		return err
+	if err := k.AddModelUsageSample(
+		ctx,
+		existingInference.Model,
+		existingInference.EndBlockTimestamp,
+		existingInference.PromptTokenCount+existingInference.CompletionTokenCount,
+		existingInference.ActualCost,
+	); err != nil {
+		k.LogError("Failed to update model usage stats", types.Stat, "inferenceId", existingInference.InferenceId, "error", err)
 	}
 	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 

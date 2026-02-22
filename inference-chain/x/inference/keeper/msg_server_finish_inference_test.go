@@ -143,7 +143,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.Equal(t, expectedFinished, &savedInference)
 
 	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
-	require.True(t, found)
+	require.False(t, found)
 
 }
 

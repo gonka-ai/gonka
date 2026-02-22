@@ -261,6 +261,28 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 }
 
 func (k Keeper) GetSummaryByModelAndTime(ctx context.Context, from, to int64) map[string]StatsSummary {
+	cutoverTimestamp, hasCutover := k.GetModelUsageCutoverTimestamp(ctx)
+	if !hasCutover || to < cutoverTimestamp {
+		return k.getSummaryByModelAndTimeLegacy(ctx, from, to)
+	}
+	if from >= cutoverTimestamp {
+		return k.GetModelUsageSummaryByTime(ctx, from, to)
+	}
+
+	stats := k.getSummaryByModelAndTimeLegacy(ctx, from, cutoverTimestamp-1)
+	lightweightStats := k.GetModelUsageSummaryByTime(ctx, cutoverTimestamp, to)
+	for model, summary := range lightweightStats {
+		current := stats[model]
+		current.InferenceCount += summary.InferenceCount
+		current.TokensUsed += summary.TokensUsed
+		current.ActualCost += summary.ActualCost
+		stats[model] = current
+	}
+
+	return stats
+}
+
+func (k Keeper) getSummaryByModelAndTimeLegacy(ctx context.Context, from, to int64) map[string]StatsSummary {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 

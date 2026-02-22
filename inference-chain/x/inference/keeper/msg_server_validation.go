@@ -173,9 +173,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogError("Failed to set inference", types.Validation, "inferenceId", inference.InferenceId, "error", err)
 		return nil, err
 	}
-	if err := k.SetDeveloperStats(ctx, inference); err != nil {
-		k.LogError("Failed to set developer stats", types.Validation, "inferenceId", inference.InferenceId, "error", err)
-	}
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

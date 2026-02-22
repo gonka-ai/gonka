@@ -152,10 +152,24 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	if err != nil || params.Params.DynamicPricingParams == nil {
 		return metricsData // Return with capacity data only
 	}
+	windowDurationSeconds := int64(params.Params.DynamicPricingParams.UtilizationWindowDuration)
+
+	localModelStats, ok := s.getModelTokenStatsFromLocalStore(context, windowDurationSeconds)
+	if ok {
+		for modelID, totalTokens := range localModelStats {
+			if capacity, exists := capacityMap[modelID]; exists && capacity > 0 {
+				metricsData[modelID] = ModelMetrics{
+					Capacity:    capacity,
+					Utilization: float64(totalTokens) / float64(capacity),
+				}
+			}
+		}
+		return metricsData
+	}
 
 	// Calculate time window (similar to BeginBlocker logic)
 	currentTime := time.Now().Unix()
-	timeWindowStart := currentTime - int64(params.Params.DynamicPricingParams.UtilizationWindowDuration)
+	timeWindowStart := currentTime - windowDurationSeconds
 
 	// Get stats for all models in time window
 	statsResponse, err := queryClient.InferencesAndTokensStatsByModels(context, &types.QueryInferencesAndTokensStatsByModelsRequest{
@@ -182,6 +196,51 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	}
 
 	return metricsData
+}
+
+func (s *Server) getModelTokenStatsFromLocalStore(ctx context.Context, windowDurationSeconds int64) (map[string]int64, bool) {
+	if s.configManager == nil || s.configManager.SqlDb() == nil || s.configManager.SqlDb().GetDb() == nil {
+		return nil, false
+	}
+
+	nowMillis := time.Now().UnixMilli()
+	fromMillis := nowMillis - windowDurationSeconds*1000
+
+	rows, err := s.configManager.SqlDb().GetDb().QueryContext(
+		ctx,
+		`SELECT model, COALESCE(SUM(total_tokens), 0)
+		 FROM inference_finished_stats
+		 WHERE end_timestamp_ms >= ? AND end_timestamp_ms <= ?
+		 GROUP BY model`,
+		fromMillis,
+		nowMillis,
+	)
+	if err != nil {
+		logging.Warn("Failed to read model stats from local store", types.Pricing, "error", err)
+		return nil, false
+	}
+	defer rows.Close()
+
+	stats := make(map[string]int64)
+	for rows.Next() {
+		var (
+			model      string
+			totalToken int64
+		)
+		if err := rows.Scan(&model, &totalToken); err != nil {
+			logging.Warn("Failed to scan model stats row from local store", types.Pricing, "error", err)
+			return nil, false
+		}
+		stats[model] = totalToken
+	}
+	if err := rows.Err(); err != nil {
+		logging.Warn("Failed while iterating local model stats", types.Pricing, "error", err)
+		return nil, false
+	}
+	if len(stats) == 0 {
+		return nil, false
+	}
+	return stats, true
 }
 
 // getDynamicPricingData queries dynamic pricing information from the chain

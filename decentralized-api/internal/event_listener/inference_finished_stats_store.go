@@ -108,25 +108,25 @@ func (s *InferenceFinishedStatsStore) UpsertFromTxEvent(event *chainevents.JSONR
 
 	events := event.Result.Events
 
-	row, ok, err := parseInferenceFinishedStatsRow(events)
+	rows, err := parseInferenceFinishedStatsRows(events)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if len(rows) == 0 {
 		return nil
 	}
 
-	return s.upsertRowWithRetry(row)
+	return s.upsertRowsWithRetry(rows)
 }
 
-func (s *InferenceFinishedStatsStore) upsertRowWithRetry(row inferenceFinishedStatsRow) error {
+func (s *InferenceFinishedStatsStore) upsertRowsWithRetry(rows []inferenceFinishedStatsRow) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var lastErr error
 	for attempt := 0; attempt < statsWriterMaxRetries; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := s.upsertRow(ctx, row)
+		err := s.upsertRows(ctx, rows)
 		cancel()
 		if err == nil {
 			return nil
@@ -140,70 +140,124 @@ func (s *InferenceFinishedStatsStore) upsertRowWithRetry(row inferenceFinishedSt
 	return lastErr
 }
 
-func (s *InferenceFinishedStatsStore) upsertRow(ctx context.Context, row inferenceFinishedStatsRow) error {
-	_, err := s.db.ExecContext(
-		ctx,
-		inferenceFinishedStatsUpsertSQL,
-		row.InferenceID,
-		row.RequestedBy,
-		row.ExecutedBy,
-		row.Model,
-		row.EpochID,
-		row.PromptTokens,
-		row.CompletionTokens,
-		row.TotalTokens,
-		row.ActualCost,
-		row.EndTimestampMs,
-		row.TxHeight,
-	)
-	return err
+func (s *InferenceFinishedStatsStore) upsertRows(ctx context.Context, rows []inferenceFinishedStatsRow) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, row := range rows {
+		_, err = tx.ExecContext(
+			ctx,
+			inferenceFinishedStatsUpsertSQL,
+			row.InferenceID,
+			row.RequestedBy,
+			row.ExecutedBy,
+			row.Model,
+			row.EpochID,
+			row.PromptTokens,
+			row.CompletionTokens,
+			row.TotalTokens,
+			row.ActualCost,
+			row.EndTimestampMs,
+			row.TxHeight,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func isRetryableSQLiteError(err error) bool {
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database is busy")
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database is busy") ||
+		strings.Contains(msg, "context deadline exceeded")
 }
 
-func parseInferenceFinishedStatsRow(events map[string][]string) (inferenceFinishedStatsRow, bool, error) {
-	inferenceID, ok := firstEventValue(events, "inference_finished.inference_id")
+func parseInferenceFinishedStatsRows(events map[string][]string) ([]inferenceFinishedStatsRow, error) {
+	ids := events["inference_finished.inference_id"]
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows := make([]inferenceFinishedStatsRow, 0, len(ids))
+	for idx := range ids {
+		row, ok, err := parseInferenceFinishedStatsRowAt(events, idx)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func parseInferenceFinishedStatsRowAt(events map[string][]string, index int) (inferenceFinishedStatsRow, bool, error) {
+	inferenceID, ok := firstEventValueAt(events, "inference_finished.inference_id", index)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	requestedBy, ok := firstEventValue(events, "inference_finished.requested_by")
+	requestedBy, ok := firstEventValueAt(events, "inference_finished.requested_by", index)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
-	executedBy, ok := firstEventValue(events, "inference_finished.executed_by")
+	executedBy, ok := firstEventValueAt(events, "inference_finished.executed_by", index)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
-	model, ok := firstEventValue(events, "inference_finished.model")
+	model, ok := firstEventValueAt(events, "inference_finished.model", index)
 	if !ok {
 		return inferenceFinishedStatsRow{}, false, nil
 	}
 
-	epochID, err := parseRequiredInt64(events, "inference_finished.epoch_id")
+	epochID, ok, err := parseRequiredInt64At(events, "inference_finished.epoch_id", index)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse epoch_id for inference %s: %w", inferenceID, err)
 	}
-	promptTokens, err := parseRequiredInt64(events, "inference_finished.prompt_token_count")
+	if !ok {
+		return inferenceFinishedStatsRow{}, false, nil
+	}
+
+	promptTokens, ok, err := parseRequiredInt64At(events, "inference_finished.prompt_token_count", index)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse prompt_token_count for inference %s: %w", inferenceID, err)
 	}
-	completionTokens, err := parseRequiredInt64(events, "inference_finished.completion_token_count")
+	if !ok {
+		return inferenceFinishedStatsRow{}, false, nil
+	}
+
+	completionTokens, ok, err := parseRequiredInt64At(events, "inference_finished.completion_token_count", index)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse completion_token_count for inference %s: %w", inferenceID, err)
 	}
-	actualCost, err := parseRequiredInt64(events, "inference_finished.actual_cost")
+	if !ok {
+		return inferenceFinishedStatsRow{}, false, nil
+	}
+
+	actualCost, ok, err := parseRequiredInt64At(events, "inference_finished.actual_cost", index)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse actual_cost for inference %s: %w", inferenceID, err)
 	}
-	endTimestampMs, err := parseRequiredInt64(events, "inference_finished.end_block_timestamp")
+	if !ok {
+		return inferenceFinishedStatsRow{}, false, nil
+	}
+
+	endTimestampMs, ok, err := parseRequiredInt64At(events, "inference_finished.end_block_timestamp", index)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse end_block_timestamp for inference %s: %w", inferenceID, err)
 	}
-	txHeight, err := parseOptionalInt64(events, "tx.height")
+	if !ok {
+		return inferenceFinishedStatsRow{}, false, nil
+	}
+
+	txHeight, err := parseOptionalInt64At(events, "tx.height", index)
 	if err != nil {
 		return inferenceFinishedStatsRow{}, false, fmt.Errorf("parse tx.height for inference %s: %w", inferenceID, err)
 	}
@@ -223,28 +277,34 @@ func parseInferenceFinishedStatsRow(events map[string][]string) (inferenceFinish
 	}, true, nil
 }
 
-func firstEventValue(events map[string][]string, key string) (string, bool) {
+func firstEventValueAt(events map[string][]string, key string, index int) (string, bool) {
 	values := events[key]
-	if len(values) == 0 || values[0] == "" {
+	if len(values) == 0 {
 		return "", false
 	}
-	return values[0], true
+	if index < len(values) && values[index] != "" {
+		return values[index], true
+	}
+	if len(values) == 1 && values[0] != "" {
+		return values[0], true
+	}
+	return "", false
 }
 
-func parseRequiredInt64(events map[string][]string, key string) (int64, error) {
-	raw, ok := firstEventValue(events, key)
+func parseRequiredInt64At(events map[string][]string, key string, index int) (int64, bool, error) {
+	raw, ok := firstEventValueAt(events, key, index)
 	if !ok {
-		return 0, fmt.Errorf("missing key %s", key)
+		return 0, false, nil
 	}
 	val, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return val, nil
+	return val, true, nil
 }
 
-func parseOptionalInt64(events map[string][]string, key string) (int64, error) {
-	raw, ok := firstEventValue(events, key)
+func parseOptionalInt64At(events map[string][]string, key string, index int) (int64, error) {
+	raw, ok := firstEventValueAt(events, key, index)
 	if !ok {
 		return 0, nil
 	}

@@ -15,9 +15,11 @@ import (
 
 const (
 	StatsModelUsageBySecond = "stats/model/usage/second"
+	StatsModelUsageMeta     = "stats/model/usage/meta"
 )
 
 var modelUsageSeparator = []byte("__MODEL__")
+var modelUsageCutoverKey = []byte("cutover_ms")
 
 type modelUsageBucket struct {
 	InferenceCount uint64
@@ -42,6 +44,11 @@ func (k Keeper) AddModelUsageSample(
 	bucketSecond := uint64(timestampMillis / 1000)
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	usageStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsModelUsageBySecond))
+	metaStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsModelUsageMeta))
+
+	if metaStore.Get(modelUsageCutoverKey) == nil {
+		metaStore.Set(modelUsageCutoverKey, sdk.Uint64ToBigEndian(uint64(timestampMillis)))
+	}
 
 	key := modelUsageKey(bucketSecond, model)
 	bucket := modelUsageBucket{}
@@ -68,6 +75,21 @@ func (k Keeper) AddModelUsageSample(
 
 	usageStore.Set(key, marshalModelUsageBucket(bucket))
 	return nil
+}
+
+func (k Keeper) GetModelUsageCutoverTimestamp(ctx context.Context) (int64, bool) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	metaStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsModelUsageMeta))
+	value := metaStore.Get(modelUsageCutoverKey)
+	if len(value) != 8 {
+		return 0, false
+	}
+	cutover := sdk.BigEndianToUint64(value)
+	maxInt64AsUint64 := ^uint64(0) >> 1
+	if cutover > maxInt64AsUint64 {
+		return 0, false
+	}
+	return int64(cutover), true
 }
 
 // GetModelUsageSummaryByTime returns aggregated model usage from lightweight
