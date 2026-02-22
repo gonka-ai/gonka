@@ -261,11 +261,6 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 }
 
 func (k Keeper) GetSummaryByModelAndTime(ctx context.Context, from, to int64) map[string]StatsSummary {
-	lightweightStats := k.GetModelUsageSummaryByTime(ctx, from, to)
-	if len(lightweightStats) > 0 {
-		return lightweightStats
-	}
-
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
