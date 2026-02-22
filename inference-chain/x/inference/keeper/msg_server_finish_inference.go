@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"strconv"
 
 	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
@@ -105,15 +106,15 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
-	err = k.SetInference(ctx, *finalInference)
-	if err != nil {
-		return failedFinish(ctx, err, msg), nil
-	}
-	if existingInference.IsCompleted() {
+	if finalInference.IsCompleted() {
 		err := k.handleInferenceCompleted(ctx, finalInference)
 		if err != nil {
 			return failedFinish(ctx, err, msg), nil
 		}
+	}
+	err = k.SetInferenceWithoutDevStatComputation(ctx, *finalInference)
+	if err != nil {
+		return failedFinish(ctx, err, msg), nil
 	}
 
 	return &types.MsgFinishInferenceResponse{InferenceIndex: msg.InferenceId}, nil
@@ -218,13 +219,6 @@ func getFinishTASignatureComponents(msg *types.MsgFinishInference) calculations.
 }
 
 func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *types.Inference) error {
-	ctx.EventManager().EmitEvent(
-		sdk.NewEvent(
-			"inference_finished",
-			sdk.NewAttribute("inference_id", existingInference.InferenceId),
-		),
-	)
-
 	executedBy := existingInference.ExecutedBy
 	executor, found := k.GetParticipant(ctx, executedBy)
 	if !found {
@@ -302,10 +296,31 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"traffic_basis", inferenceDetails.TrafficBasis,
 	)
 	k.SetInferenceValidationDetails(ctx, inferenceDetails)
-	err = k.SetInference(ctx, *existingInference)
-	if err != nil {
+	if err := k.AddModelUsageSample(
+		ctx,
+		existingInference.Model,
+		existingInference.EndBlockTimestamp,
+		existingInference.PromptTokenCount+existingInference.CompletionTokenCount,
+		existingInference.ActualCost,
+	); err != nil {
 		return err
 	}
 	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
+
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"inference_finished",
+			sdk.NewAttribute("inference_id", existingInference.InferenceId),
+			sdk.NewAttribute("requested_by", existingInference.RequestedBy),
+			sdk.NewAttribute("executed_by", existingInference.ExecutedBy),
+			sdk.NewAttribute("model", existingInference.Model),
+			sdk.NewAttribute("epoch_id", strconv.FormatUint(existingInference.EpochId, 10)),
+			sdk.NewAttribute("prompt_token_count", strconv.FormatUint(existingInference.PromptTokenCount, 10)),
+			sdk.NewAttribute("completion_token_count", strconv.FormatUint(existingInference.CompletionTokenCount, 10)),
+			sdk.NewAttribute("actual_cost", strconv.FormatInt(existingInference.ActualCost, 10)),
+			sdk.NewAttribute("end_block_timestamp", strconv.FormatInt(existingInference.EndBlockTimestamp, 10)),
+		),
+	)
+
 	return nil
 }

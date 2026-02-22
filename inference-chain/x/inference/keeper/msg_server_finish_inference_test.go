@@ -120,12 +120,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, expected, &savedInference)
 
-	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
-	require.True(t, found)
-	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId:      epochId,
-		InferenceIds: []string{expected.InferenceId},
-	}, devStat)
+	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
+	require.False(t, found)
 
 	newBlockHeight := initialBlockTime + 10
 	// This should advance us to epoch 2
@@ -146,15 +142,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, expectedFinished, &savedInference)
 
-	devStat, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
-	require.True(t, found)
-	require.Equal(t, 1, len(devStat.InferenceIds))
-
-	devStatUpdated, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
-	require.True(t, found)
-	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId:      epochId2,
-		InferenceIds: []string{expectedFinished.InferenceId}}, devStatUpdated)
+	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
+	require.False(t, found)
 
 }
 
