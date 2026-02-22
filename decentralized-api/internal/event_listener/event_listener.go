@@ -44,6 +44,7 @@ type EventListener struct {
 	configManager         *apiconfig.ConfigManager
 	validator             *validation.InferenceValidator
 	transactionRecorder   cosmosclient.InferenceCosmosClient
+	inferenceStatsStore   *InferenceFinishedStatsStore
 	trainingExecutor      *training.Executor
 	blsManager            *bls.BlsManager
 	nodeCaughtUp          atomic.Bool
@@ -89,12 +90,22 @@ func NewEventListener(
 	}
 
 	bo := NewBlockObserver(configManager)
+	var inferenceStatsStore *InferenceFinishedStatsStore
+	if configManager != nil && configManager.SqlDb() != nil {
+		store, err := NewInferenceFinishedStatsStore(configManager.SqlDb().GetDb())
+		if err != nil {
+			logging.Warn("Failed to initialize inference finished stats store", types.EventProcessing, "error", err)
+		} else {
+			inferenceStatsStore = store
+		}
+	}
 
 	return &EventListener{
 		nodeBroker:            nodeBroker,
 		transactionRecorder:   transactionRecorder,
 		configManager:         configManager,
 		validator:             validator,
+		inferenceStatsStore:   inferenceStatsStore,
 		trainingExecutor:      trainingExecutor,
 		phaseTracker:          phaseTracker,
 		dispatcher:            dispatcher,
@@ -427,10 +438,20 @@ func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResp
 }
 
 func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if err := el.storeInferenceFinishedEvent(event); err != nil {
+		logging.Warn("Failed to persist inference finished stats", types.EventProcessing, "error", err)
+	}
 	if el.isNodeSynced() {
 		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
 	}
 	return nil
+}
+
+func (el *EventListener) storeInferenceFinishedEvent(event *chainevents.JSONRPCResponse) error {
+	if el.inferenceStatsStore == nil {
+		return nil
+	}
+	return el.inferenceStatsStore.UpsertFromTxEvent(event)
 }
 
 type InferenceValidationEventHandler struct {
