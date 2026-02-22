@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -57,6 +58,11 @@ func NewApplicationActionError(err error) *ActionError {
 		err = errors.New("application error")
 	}
 	return &ActionError{Kind: ActionErrorApplication, Err: err}
+}
+
+func isTimeoutError(err error) bool {
+	var urlErr *url.Error
+	return errors.As(err, &urlErr) && urlErr.Timeout()
 }
 
 // DoWithLockedNodeHTTPRetry is a convenience helper for HTTP calls under a node lock.
@@ -131,17 +137,24 @@ func DoWithLockedNodeHTTPRetry(
 
 		if aerr != nil {
 			if aerr.Kind == ActionErrorTransport {
-				// Transport error: retry and recheck
-				retry = true
-				triggerRecheck = true
-				lastErr = fmt.Errorf("node %s transport failure: %w", node.Id, aerr)
-				logging.Info("HTTP retry helper: transport error from node", types.Inferences,
-					"attempt", attempts,
-					"node_id", node.Id,
-					"error_kind", aerr.Kind.String(),
-					"retry", retry,
-					"recheck", triggerRecheck,
-					"error", aerr.Err)
+				if isTimeoutError(aerr.Err) {
+					retry = false
+					triggerRecheck = true
+					lastErr = fmt.Errorf("node %s timeout: %w", node.Id, aerr)
+					logging.Info("HTTP retry helper: timeout (no retry)", types.Inferences,
+						"attempt", attempts, "node_id", node.Id, "error", aerr.Err)
+				} else {
+					retry = true
+					triggerRecheck = true
+					lastErr = fmt.Errorf("node %s transport failure: %w", node.Id, aerr)
+					logging.Info("HTTP retry helper: transport error from node", types.Inferences,
+						"attempt", attempts,
+						"node_id", node.Id,
+						"error_kind", aerr.Kind.String(),
+						"retry", retry,
+						"recheck", triggerRecheck,
+						"error", aerr.Err)
+				}
 			} else {
 				// Application error: do not retry
 				retry = false

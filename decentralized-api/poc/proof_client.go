@@ -31,6 +31,8 @@ var (
 	ErrInvalidVectorData       = errors.New("invalid vector data detected")
 )
 
+const DefaultKDim = 12
+
 // ProofClient fetches and verifies MMR proofs from participant APIs.
 type ProofClient struct {
 	httpClient *http.Client
@@ -183,8 +185,8 @@ func (c *ProofClient) FetchAndVerifyProofs(
 			return nil, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
 		}
 
-		// Validate FP16 vector content - reject NaN/Infinity
-		if err := ValidateFP16Vector(vectorBytes); err != nil {
+		// Validate FP16 vector: must be exactly DefaultKDim values, no NaN/Infinity
+		if err := ValidateFP16Vector(vectorBytes, DefaultKDim); err != nil {
 			logging.Warn("Invalid FP16 vector data", types.PoC,
 				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "error", err)
 			return nil, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)
@@ -307,11 +309,12 @@ func buildLeafData(nonce int32, vector []byte) []byte {
 	return buf
 }
 
-// ValidateFP16Vector checks that all FP16 values in the vector are valid finite numbers.
-// Returns error if any value is NaN, Infinity, or other invalid representation.
-func ValidateFP16Vector(vectorBytes []byte) error {
-	if len(vectorBytes)%2 != 0 {
-		return fmt.Errorf("invalid vector length: %d bytes (must be even)", len(vectorBytes))
+// ValidateFP16Vector checks that the vector has exactly kDim FP16 values and all are valid finite numbers.
+// Returns error if length doesn't match kDim*2 bytes, or any value is NaN or Infinity.
+func ValidateFP16Vector(vectorBytes []byte, kDim int) error {
+	expectedLen := kDim * 2
+	if len(vectorBytes) != expectedLen {
+		return fmt.Errorf("invalid vector length: got %d bytes, expected %d (kDim=%d)", len(vectorBytes), expectedLen, kDim)
 	}
 
 	for i := 0; i < len(vectorBytes); i += 2 {
