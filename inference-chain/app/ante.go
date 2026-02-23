@@ -38,6 +38,41 @@ type HandlerOptions struct {
 	InferenceKeeper       *inferencemodulekeeper.Keeper
 }
 
+// ParamsDraftDecorator attaches a tx-scoped params draft to context so GetParams/SetParams use it when INFERENCE_PARAMS_CACHE_MODE=tx.
+// CommitParamsDraftFromContext is called from the PostHandler on tx success.
+type ParamsDraftDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// AnteHandle injects WithParamsDraft into the context for the rest of the tx when mode is "tx"; skipped in "block" mode for performance.
+func (d ParamsDraftDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if d.InferenceKeeper == nil || d.InferenceKeeper.GetParamsCacheMode() != inferencemodulekeeper.ParamsCacheModeTx {
+		return next(ctx, tx, simulate)
+	}
+	newCtx := ctx.WithContext(inferencemodulekeeper.WithParamsDraft(ctx.Context()))
+	return next(newCtx, tx, simulate)
+}
+
+// ParamsDraftCommitPostDecorator commits the tx-scoped params draft to store when the tx succeeded.
+// Only runs when success is true. Use with INFERENCE_PARAMS_CACHE_MODE=tx.
+type ParamsDraftCommitPostDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// PostHandle runs the rest of the post chain, then on success commits the params draft to store (tx mode only).
+func (d ParamsDraftCommitPostDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
+	newCtx, err := next(ctx, tx, simulate, success)
+	if err != nil {
+		return newCtx, err
+	}
+	if success && d.InferenceKeeper != nil && d.InferenceKeeper.GetParamsCacheMode() == inferencemodulekeeper.ParamsCacheModeTx {
+		if commitErr := d.InferenceKeeper.CommitParamsDraftFromContext(newCtx); commitErr != nil {
+			return newCtx, commitErr
+		}
+	}
+	return newCtx, nil
+}
+
 // Gas is still charged against the tx's gas limit; this only bypasses fee checks.
 type LiquidityPoolFeeBypassDecorator struct {
 	// Dynamic sources from chain state
@@ -192,6 +227,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
+		ParamsDraftDecorator{InferenceKeeper: options.InferenceKeeper}, // tx-scoped params draft for GetParams/SetParams when INFERENCE_PARAMS_CACHE_MODE=tx
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
@@ -251,4 +287,9 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 
 	// Set the AnteHandler for the app
 	app.SetAnteHandler(anteHandler)
+
+	// Commit tx-scoped params draft to store on tx success; only register when INFERENCE_PARAMS_CACHE_MODE=tx
+	if app.InferenceKeeper.GetParamsCacheMode() == inferencemodulekeeper.ParamsCacheModeTx {
+		app.SetPostHandler(sdk.ChainPostDecorators(ParamsDraftCommitPostDecorator{InferenceKeeper: &app.InferenceKeeper}))
+	}
 }

@@ -174,6 +174,9 @@ func (AppModule) ConsensusVersion() uint64 { return 12 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Per-block params cache: clear so GetParams returns params at block start for the rest of the block.
+	am.keeper.InvalidateParamsBlockCache()
+
 	// Update dynamic pricing for all models at the start of each block
 	// This ensures consistent pricing for all inferences processed in this block
 	err := am.keeper.UpdateDynamicPricing(ctx)

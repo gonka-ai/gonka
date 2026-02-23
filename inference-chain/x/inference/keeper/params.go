@@ -13,14 +13,13 @@ const defaultGenesisGuardianNetworkMaturityMinHeight int64 = 0
 const defaultDeveloperAccessUntilBlockHeight int64 = 0
 const defaultNewParticipantRegistrationStartHeight int64 = 0
 
-// GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
+// getParamsFromStore reads params from the KV store only (no cache).
+func (k Keeper) getParamsFromStore(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
 		return params, nil
 	}
-
 	err = k.cdc.Unmarshal(bz, &params)
 	if err != nil {
 		return types.Params{}, err
@@ -28,16 +27,86 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 	return params, nil
 }
 
-// SetParams set the params
-func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
-	oldParams, _ := k.GetParams(ctx)
-
+// setParamsToStore writes params to the KV store only (no cache update).
+func (k Keeper) setParamsToStore(ctx context.Context, params types.Params) error {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz, err := k.cdc.Marshal(&params)
 	if err != nil {
 		return err
 	}
 	store.Set(types.ParamsKey, bz)
+	return nil
+}
+
+// GetParams returns all parameters. Behavior depends on INFERENCE_PARAMS_CACHE_MODE (default "block"):
+//   - "tx": use tx-bound draft if present (AnteHandler attached); else store.
+//   - "block": always return params at block start (cache cleared in BeginBlock); SetParams in block does not change value returned by GetParams until next block.
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
+	// Tx mode: use draft if attached to context
+	if k.paramsCacheMode == ParamsCacheModeTx {
+		d := getParamsDraftFromContext(ctx)
+		if d != nil {
+			if !d.loaded {
+				params, err = k.getParamsFromStore(ctx)
+				if err != nil {
+					return types.Params{}, err
+				}
+				d.p = &params
+				d.loaded = true
+				return params, nil
+			}
+			if d.p != nil {
+				return *d.p, nil
+			}
+			return types.Params{}, nil
+		}
+	}
+
+	// Block mode: use per-block cache (value at block start only)
+	if k.paramsCacheMode == ParamsCacheModeBlock && k.paramsBlockCache != nil {
+		k.paramsBlockCache.mu.Lock()
+		if !k.paramsBlockCache.inited {
+			params, err = k.getParamsFromStore(ctx)
+			if err != nil {
+				k.paramsBlockCache.mu.Unlock()
+				return types.Params{}, err
+			}
+			k.paramsBlockCache.p = &params
+			k.paramsBlockCache.inited = true
+			k.paramsBlockCache.mu.Unlock()
+			return params, nil
+		}
+		p := k.paramsBlockCache.p
+		k.paramsBlockCache.mu.Unlock()
+		if p != nil {
+			return *p, nil
+		}
+		return types.Params{}, nil
+	}
+
+	return k.getParamsFromStore(ctx)
+}
+
+// SetParams sets the params. In tx mode with draft: updates draft only (committed in PostHandler).
+// In block mode: writes to store but GetParams keeps returning block-start value until next block.
+func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
+	// Tx mode with draft: write to draft only
+	if k.paramsCacheMode == ParamsCacheModeTx {
+		d := getParamsDraftFromContext(ctx)
+		if d != nil {
+			dup := params
+			d.p = &dup
+			d.loaded = true
+			// Grace-epoch logic runs when we commit to store in CommitParamsDraftFromContext
+			return nil
+		}
+	}
+
+	// Block mode or no draft: write to store. For block mode we do not update paramsBlockCache.
+	oldParams, _ := k.getParamsFromStore(ctx)
+	if err := k.setParamsToStore(ctx, params); err != nil {
+		return err
+	}
 
 	// Auto-set grace epoch when poc_v2_enabled transitions false -> true
 	if params.PocParams != nil && params.PocParams.PocV2Enabled {
@@ -50,7 +119,6 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 			}
 		}
 	}
-
 	return nil
 }
 

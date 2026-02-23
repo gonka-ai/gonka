@@ -2,6 +2,9 @@ package keeper
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"sync"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
@@ -11,6 +14,19 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// ParamsCacheMode is the mode for GetParams caching. See INFERENCE_PARAMS_CACHE_MODE.
+const (
+	ParamsCacheModeTx   = "tx"   // tx-bound draft; commit to store on tx success
+	ParamsCacheModeBlock = "block" // per-block cache; always return value at block start
+)
+
+// paramsBlockCache holds params at block start for ParamsCacheModeBlock. Cleared in BeginBlock.
+type paramsBlockCache struct {
+	mu     sync.RWMutex
+	p      *types.Params
+	inited bool
+}
 
 type (
 	Keeper struct {
@@ -86,6 +102,9 @@ type (
 		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
+		// Params cache: mode "tx" = tx-bound draft (commit on tx); "block" = per-block cache (value at block start only). Default: block.
+		paramsCacheMode  string
+		paramsBlockCache *paramsBlockCache
 	}
 )
 
@@ -428,6 +447,8 @@ func NewKeeper(
 			collections.Uint64Key,
 			codec.CollValue[types.GraceEpochParams](cdc),
 		),
+		paramsCacheMode:  getParamsCacheMode(),
+		paramsBlockCache: &paramsBlockCache{},
 	}
 	// Build the collections schema
 	schema, err := sb.Build()
@@ -439,9 +460,23 @@ func NewKeeper(
 	return k
 }
 
+// getParamsCacheMode returns INFERENCE_PARAMS_CACHE_MODE ("tx" or "block"); default "block".
+func getParamsCacheMode() string {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("INFERENCE_PARAMS_CACHE_MODE")))
+	if mode == ParamsCacheModeTx {
+		return ParamsCacheModeTx
+	}
+	return ParamsCacheModeBlock
+}
+
 // GetAuthority returns the module's authority.
 func (k Keeper) GetAuthority() string {
 	return k.authority
+}
+
+// GetParamsCacheMode returns the params cache mode ("tx" or "block") from INFERENCE_PARAMS_CACHE_MODE.
+func (k Keeper) GetParamsCacheMode() string {
+	return k.paramsCacheMode
 }
 
 // GetWasmKeeper returns the WASM keeper
