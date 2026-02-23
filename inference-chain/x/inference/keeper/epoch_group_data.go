@@ -39,8 +39,8 @@ type ctxKeyEpochGroupDraft struct{}
 type epochGroupDraft struct {
 	mu          sync.RWMutex
 	m           map[epochGroupCacheKey]types.EpochGroupData
-	writeHolder int64  // goroutine id of the writer (for reentrancy)
-	writeCount  int32  // number of Lock() calls not yet Unlock()ed by the holder
+	writeHolder int64 // goroutine id of the writer (for reentrancy)
+	writeCount  int32 // number of Lock() calls not yet Unlock()ed by the holder
 }
 
 // lockWrite acquires the write lock; reentrant for the same goroutine (increments count). Release via unlockWrite or releaseWriteLock.
@@ -188,6 +188,11 @@ func (k Keeper) FlushCurrentEpochGroupCache(ctx context.Context) {
 		return
 	}
 	delta := c.currentEpochRequestCount.Swap(0)
+	if !c.currentDirty && delta == 0 {
+		return
+	}
+
+	// We persist here if have changes in cache or have increments in currentEpochRequestCount
 	rootKey := epochGroupCacheKey{Epoch: c.current, ModelId: ""}
 	if val, inCache := c.m[rootKey]; inCache {
 		val.NumberOfRequests += delta
@@ -199,6 +204,8 @@ func (k Keeper) FlushCurrentEpochGroupCache(ctx context.Context) {
 			_ = k.EpochGroupDataMap.Set(ctx, collections.Join(rootKey.Epoch, rootKey.ModelId), val)
 		}
 	}
+
+	// We persist here all other cached EpochGroupData for the current epoch
 	for key, val := range c.m {
 		if key.Epoch == c.current && key != rootKey {
 			_ = k.EpochGroupDataMap.Set(ctx, collections.Join(key.Epoch, key.ModelId), val)
