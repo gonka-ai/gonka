@@ -7,6 +7,7 @@ type SetParticipantReason int
 
 const (
 	SetParticipantReasonNone SetParticipantReason = iota
+	SetParticipantReasonCompletedInference
 	SetParticipantReasonMissedInference
 	SetParticipantReasonInvalidation
 	SetParticipantReasonConfirmationPoC

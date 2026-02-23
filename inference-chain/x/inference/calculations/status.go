@@ -36,10 +36,10 @@ const (
 type StatusCheckScope int
 
 const (
-	OnlyConsecutiveFailures StatusCheckScope = 1 << iota
-	OnlyInvalidation
-	OnlyInactive
-	OnlyConfirmationPoC
+	CheckConsecutiveFailures StatusCheckScope = 1 << iota
+	CheckInvalidation
+	CheckInactive
+	CheckConfirmationPoC
 	// RunAll (0) means run all checks; used when scope is not specified.
 )
 
@@ -47,12 +47,14 @@ const (
 // None returns RunAll. Otherwise only the matching check(s) run.
 func ScopeFromReason(reason types.SetParticipantReason) StatusCheckScope {
 	switch reason {
+	case types.SetParticipantReasonCompletedInference:
+		return CheckInactive
 	case types.SetParticipantReasonMissedInference:
-		return OnlyInactive
+		return CheckInactive
 	case types.SetParticipantReasonInvalidation:
-		return OnlyConsecutiveFailures | OnlyInvalidation
+		return CheckConsecutiveFailures | CheckInvalidation
 	case types.SetParticipantReasonConfirmationPoC:
-		return OnlyConfirmationPoC
+		return CheckConfirmationPoC
 	default:
 		return 0 // RunAll
 	}
@@ -80,7 +82,7 @@ func ComputeStatus(
 
 	runAll := scope == 0
 
-	if runAll || (scope&OnlyConsecutiveFailures != 0) {
+	if runAll || (scope&CheckConsecutiveFailures != 0) {
 		// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad
 		falsePositiveRate := validationParameters.FalsePositiveRate.ToDecimal()
 		consecutiveFailureCutoff := validationParameters.QuickFailureThreshold.ToDecimal()
@@ -89,29 +91,32 @@ func ComputeStatus(
 		}
 	}
 
-	if runAll || (scope&OnlyInvalidation != 0) {
+	if runAll || (scope&CheckInvalidation != 0) {
 		invalidationDecision := getInvalidationStatus(&newStats, oldStats, validationParameters)
-		if invalidationDecision == Fail {
+		switch invalidationDecision {
+		case Fail:
 			return types.ParticipantStatus_INVALID, StatisticalInvalidations, newStats
-		} else if invalidationDecision == Error {
+		case Error:
 			return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
 		}
 	}
 
-	if runAll || (scope&OnlyInactive != 0) {
+	if runAll || (scope&CheckInactive != 0) {
 		inactiveDecision := getInactiveStatus(&newStats, oldStats, validationParameters)
-		if inactiveDecision == Fail {
+		switch inactiveDecision {
+		case Fail:
 			return types.ParticipantStatus_INACTIVE, Downtime, newStats
-		} else if inactiveDecision == Error {
+		case Error:
 			return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
 		}
 	}
 
-	if runAll || (scope&OnlyConfirmationPoC != 0) {
+	if runAll || (scope&CheckConfirmationPoC != 0) {
 		failedConfirmationPoCDecision := getConfirmationPoCStatus(&newStats, confirmationPocParams)
-		if failedConfirmationPoCDecision == Fail {
+		switch failedConfirmationPoCDecision {
+		case Fail:
 			return types.ParticipantStatus_INACTIVE, FailedConfirmationPoC, newStats
-		} else if failedConfirmationPoCDecision == Error {
+		case Error:
 			return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
 		}
 	}

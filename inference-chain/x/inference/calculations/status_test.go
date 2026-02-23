@@ -176,3 +176,95 @@ func TestGetStats(t *testing.T) {
 	require.Equal(t, int64(0), result2.InvalidLLR.Value)
 	require.Equal(t, int64(0), result2.InactiveLLR.Value)
 }
+
+// TestSkipComputeStatusOnCompletionBreaksLLR shows that if we skip calling ComputeStatus on
+// successful completions (e.g. SetParticipantReasonNone from MsgFinishInference), the inactive
+// LLR is wrong when we later run ComputeStatus on a miss: we only apply miss deltas, not the
+// completion deltas, so the LLR can flip from ACTIVE to INACTIVE for the same event sequence.
+func TestSkipComputeStatusOnCompletionBreaksLLR(t *testing.T) {
+	params := types.DefaultValidationParams()
+	completions := 50
+	misses := 6
+
+	emptyStats := func() types.CurrentEpochStats {
+		return types.CurrentEpochStats{
+			InvalidLLR:  types.DecimalFromFloat(0),
+			InactiveLLR: types.DecimalFromFloat(0),
+		}
+	}
+
+	scope := StatusCheckScope(0) // RunAll so inactive check runs
+
+	// A: simulate 50 successful inferences + 6 misses (calling ComputeStatus every time)
+	stored := emptyStats()
+	for i := 0; i < completions; i++ {
+		_, _, stored = ComputeStatus(params, nil, types.Participant{
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InferenceCount:  stored.InferenceCount + 1,
+				MissedRequests:  stored.MissedRequests,
+				InactiveLLR:     stored.InactiveLLR,
+				InvalidLLR:      stored.InvalidLLR,
+			},
+		}, stored, scope)
+	}
+	var st types.ParticipantStatus
+	for i := 0; i < misses; i++ {
+		st, _, stored = ComputeStatus(params, nil, types.Participant{
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InferenceCount:  stored.InferenceCount,
+				MissedRequests:  stored.MissedRequests + 1,
+				InactiveLLR:     stored.InactiveLLR,
+				InvalidLLR:      stored.InvalidLLR,
+			},
+		}, stored, scope)
+	}
+	t.Logf("always compute: LLR=%s status=%s", stored.InactiveLLR.ToDecimal(), st)
+	require.Equal(t, types.ParticipantStatus_ACTIVE, st)
+
+	// B: same event sequence but skip ComputeStatus on completions (only run on misses)
+	skipped := emptyStats()
+	skipped.InferenceCount = uint64(completions)
+	var st2 types.ParticipantStatus
+	for i := 0; i < misses; i++ {
+		st2, _, skipped = ComputeStatus(params, nil, types.Participant{
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InferenceCount: uint64(completions),
+				MissedRequests: skipped.MissedRequests + 1,
+				InactiveLLR:    skipped.InactiveLLR,
+				InvalidLLR:     skipped.InvalidLLR,
+			},
+		}, skipped, scope)
+	}
+	t.Logf("skip completions: LLR=%s status=%s", skipped.InactiveLLR.ToDecimal(), st2)
+
+	// Same participant, same event sequence (50 completions, 6 misses), but B is marked INACTIVE
+	// because InactiveLLR never received the 50 * logPass contributions from completions.
+	require.Equal(t, types.ParticipantStatus_INACTIVE, st2)
+
+	// C: batch 50 completions (one ComputeStatus with delta (50,0)), then apply 6 misses.
+	// Same net deltas as A, so InactiveLLR and status must match A.
+	skipped2 := emptyStats()
+	var st3 types.ParticipantStatus
+	st3, _, skipped2 = ComputeStatus(params, nil, types.Participant{
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: uint64(completions),
+			MissedRequests: 0,
+			InactiveLLR:    skipped2.InactiveLLR,
+			InvalidLLR:     skipped2.InvalidLLR,
+		},
+	}, skipped2, scope)
+	for i := 0; i < misses; i++ {
+		st3, _, skipped2 = ComputeStatus(params, nil, types.Participant{
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InferenceCount: skipped2.InferenceCount,
+				MissedRequests: skipped2.MissedRequests + 1,
+				InactiveLLR:    skipped2.InactiveLLR,
+				InvalidLLR:     skipped2.InvalidLLR,
+			},
+		}, skipped2, scope)
+	}
+	t.Logf("batch completions then misses: LLR=%s status=%s", skipped2.InactiveLLR.ToDecimal(), st3)
+	require.Equal(t, types.ParticipantStatus_ACTIVE, st3, "same event sequence as A should stay ACTIVE")
+	require.Equal(t, stored.InactiveLLR.ToDecimal().String(), skipped2.InactiveLLR.ToDecimal().String(),
+		"InactiveLLR should equal case A when we batch completions then apply misses")
+}
