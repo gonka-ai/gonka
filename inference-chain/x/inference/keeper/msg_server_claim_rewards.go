@@ -39,14 +39,13 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	response, err = k.payoutClaim(ctx, msg, settleAmount)
 	if err != nil {
 		k.LogError("Claim payout failed", types.Claims, "error", err, "account", msg.Creator)
-		return response, nil
+		return nil, err
 	}
 
 	return response, nil
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
-	// TODO: Optimization: Payout claim should be done in one transaction
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
 
 	// Pay for work from escrow
@@ -58,17 +57,13 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
 	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
-			ms.handleUnderfundedWork(ctx, err, settleAmount)
-			return &types.MsgClaimRewardsResponse{
-				Amount: 0,
-				Result: "Insufficient funds for paying participant for work! Unpaid settlement",
-			}, err
+			ms.LogError("Insufficient funds for paying participant for work! Unpaid settlement", types.Claims, "error", err, "settleAmount", settleAmount)
+			spendable, required := ms.parseBalanceError(err.Error())
+			ms.LogError("Balance details", types.Claims, "spendable", spendable, "required", required)
+		} else {
+			ms.LogError("Error paying participant from escrow", types.Claims, "error", err)
 		}
-		ms.LogError("Error paying participant from escrow", types.Claims, "error", err)
-		return &types.MsgClaimRewardsResponse{
-			Amount: 0,
-			Result: "Error paying participant from escrow",
-		}, err
+		return nil, err
 	}
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
 
@@ -76,15 +71,14 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
 	if err := ms.PayParticipantFromModule(ctx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
-			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
+			ms.LogError("Insufficient funds for paying rewards", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
 			ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
 		}
-		ms.finishSettle(ctx, settleAmount)
-		return &types.MsgClaimRewardsResponse{
-			Amount: settleAmount.GetWorkCoins(),
-			Result: "Work paid, but rewards failed.",
-		}, err
+		// Return error to trigger full transaction rollback.
+		// This reverts the work payment and preserves the settlement record,
+		// allowing the participant to retry when funds are available.
+		return nil, err
 	}
 
 	ms.finishSettle(ctx, settleAmount)
@@ -96,15 +90,6 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		Amount: uint64(settleAmount.GetTotalCoins()),
 		Result: "Rewards claimed successfully",
 	}, nil
-}
-
-func (ms msgServer) handleUnderfundedWork(ctx sdk.Context, err error, settleAmount *types.SettleAmount) {
-	ms.LogError("Insufficient funds for paying participant for work! Unpaid settlement", types.Claims, "error", err, "settleAmount", settleAmount)
-
-	spendable, required := ms.parseBalanceError(err.Error())
-	ms.LogError("Balance details", types.Claims, "spendable", spendable, "required", required)
-
-	ms.finishSettle(ctx, settleAmount)
 }
 
 func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required int64) {
