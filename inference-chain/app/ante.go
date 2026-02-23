@@ -25,6 +25,43 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
+// EpochGroupDraftDecorator binds a tx-scoped EpochGroupData draft to the request context at tx start.
+// PostHandler must call CommitEpochGroupDraftFromContext on success; block cache is flushed to store in EndBlock.
+type EpochGroupDraftDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// AnteHandle attaches WithEpochGroupDraft to the context for the rest of the tx.
+func (d EpochGroupDraftDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if d.InferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+	newCtx := ctx.WithContext(inferencemodulekeeper.WithEpochGroupDraft(ctx.Context()))
+	return next(newCtx, tx, simulate)
+}
+
+// EpochGroupDraftCommitPostDecorator merges the tx-scoped EpochGroupData draft into the block cache on tx success.
+type EpochGroupDraftCommitPostDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// PostHandle runs the rest of the post chain, then on success commits the epoch group draft to the block cache; on failure releases the draft write lock.
+func (d EpochGroupDraftCommitPostDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
+	newCtx, err := next(ctx, tx, simulate, success)
+	if err != nil {
+		return newCtx, err
+	}
+	if d.InferenceKeeper == nil {
+		return newCtx, nil
+	}
+	if success {
+		d.InferenceKeeper.CommitEpochGroupDraftFromContext(newCtx)
+	} else {
+		d.InferenceKeeper.ReleaseEpochGroupDraftFromContext(newCtx)
+	}
+	return newCtx, nil
+}
+
 // HandlerOptions extend the SDK's AnteHandler options by requiring the IBC
 // channel keeper.
 type HandlerOptions struct {
@@ -192,6 +229,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
+		EpochGroupDraftDecorator{InferenceKeeper: options.InferenceKeeper}, // tx-scoped EpochGroupData draft; committed to block cache in PostHandler, flushed in EndBlock
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
@@ -251,4 +289,6 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 
 	// Set the AnteHandler for the app
 	app.SetAnteHandler(anteHandler)
+	// Merge tx-scoped EpochGroupData draft into block cache on tx success (block cache flushed to store in EndBlock)
+	app.SetPostHandler(sdk.ChainPostDecorators(EpochGroupDraftCommitPostDecorator{InferenceKeeper: &app.InferenceKeeper}))
 }

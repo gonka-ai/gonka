@@ -174,6 +174,8 @@ func (AppModule) ConsensusVersion() uint64 { return 12 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Invalidate epoch group block cache so it is re-inited from store for this block
+	am.keeper.InvalidateEpochGroupCache()
 	// Update dynamic pricing for all models at the start of each block
 	// This ensures consistent pricing for all inferences processed in this block
 	err := am.keeper.UpdateDynamicPricing(ctx)
@@ -313,6 +315,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 
+	// Persist epoch group block cache to store (tx drafts were merged to cache in PostHandler)
+	am.keeper.FlushCurrentEpochGroupCache(ctx)
 	// Handle confirmation PoC trigger decisions and phase transitions
 	err := am.handleConfirmationPoC(ctx, blockHeight)
 	if err != nil {

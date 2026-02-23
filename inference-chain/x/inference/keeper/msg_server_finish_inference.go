@@ -251,7 +251,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 
 	existingInference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
 	existingInference.EpochId = effectiveEpoch.Index
-	currentEpochGroup.GroupData.NumberOfRequests++
+	k.IncrementCurrentEpochGroupRequestCount(ctx)
 
 	executorPower := uint64(0)
 	executorReputation := int32(0)
@@ -269,6 +269,11 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		return err
 	}
 
+	// For TrafficBasis
+	// we don't use here precise (already incremented) number of requests because it's not yet committed to the store,
+	// and can cause undeterministic results.
+	// Moreover we prefer performance and determenism over precision here,
+	// so we just use value from previous committed block.
 	inferenceDetails := types.InferenceValidationDetails{
 		InferenceId:          existingInference.InferenceId,
 		ExecutorId:           existingInference.ExecutedBy,
@@ -306,6 +311,5 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	if err != nil {
 		return err
 	}
-	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 	return nil
 }
