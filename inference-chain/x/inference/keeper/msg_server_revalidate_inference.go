@@ -21,7 +21,7 @@ func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevali
 	executor.ConsecutiveInvalidInferences = 0
 	executor.CurrentEpochStats.ValidatedInferences++
 
-	err = k.SetParticipant(ctx, *executor)
+	err = k.SetParticipant(ctx, *executor, types.SetParticipantReasonNone)
 	if err != nil {
 		return nil, err
 	}

@@ -7,13 +7,20 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetParticipant set a specific participant in the store from its index
-func (k Keeper) SetParticipant(ctx context.Context, participant types.Participant) error {
-	// Compute new status and delegate transition handling to a unified method.
-	err := k.UpdateParticipantStatus(ctx, &participant)
-	if err != nil {
-		k.LogError("Failed to update participant status", types.Validation, "error", err)
-		return err
+// SetParticipant set a specific participant in the store from its index.
+// reason: SetParticipantReasonNone to skip status computation and only ensure CurrentEpochStats is set;
+// pass MissedInference, Invalidation, or ConfirmationPoC to run only the corresponding status check(s).
+func (k Keeper) SetParticipant(ctx context.Context, participant types.Participant, reason types.SetParticipantReason) error {
+	if reason != types.SetParticipantReasonNone {
+		err := k.UpdateParticipantStatus(ctx, &participant, reason)
+		if err != nil {
+			k.LogError("Failed to update participant status", types.Validation, "error", err)
+			return err
+		}
+	} else {
+		if participant.CurrentEpochStats == nil {
+			participant.CurrentEpochStats = &types.CurrentEpochStats{}
+		}
 	}
 
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Index)

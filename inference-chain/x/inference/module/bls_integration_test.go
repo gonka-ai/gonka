@@ -131,7 +131,7 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, ValidatorKey: "valKeyCharlie", WorkerPublicKey: "ignoredWKeyCharlie", Weight: 20, Status: types.ParticipantStatus_ACTIVE},
 	}
 	for _, p := range participants {
-		k.SetParticipant(ctx, *p)
+		k.SetParticipant(ctx, *p, types.SetParticipantReasonNone)
 	}
 
 	activeParticipants := []*types.ActiveParticipant{
@@ -200,7 +200,7 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, Weight: 40, Status: types.ParticipantStatus_ACTIVE},
 	}
 	for _, p := range storedParticipants {
-		k.SetParticipant(ctx, *p)
+		k.SetParticipant(ctx, *p, types.SetParticipantReasonNone)
 	}
 
 	activeParticipants := []*types.ActiveParticipant{
@@ -247,7 +247,7 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 		Weight:          100,
 		Status:          types.ParticipantStatus_ACTIVE,
 	}
-	k.SetParticipant(ctx, storedParticipant)
+	k.SetParticipant(ctx, storedParticipant, types.SetParticipantReasonNone)
 
 	activeParticipants := []*types.ActiveParticipant{
 		{Index: aliceAccAddrStr, Weight: 100},
@@ -326,7 +326,7 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 		Weight:          100,
 		Status:          types.ParticipantStatus_ACTIVE,
 	}
-	k.SetParticipant(ctx, storedParticipantWithBadWKey)
+	k.SetParticipant(ctx, storedParticipantWithBadWKey, types.SetParticipantReasonNone)
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)

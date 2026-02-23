@@ -865,17 +865,17 @@ func (mr *MockParticipantKeeperMockRecorder) RemoveParticipant(ctx, index any) *
 }
 
 // SetParticipant mocks base method.
-func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types4.Participant) error {
+func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types4.Participant, reason types4.SetParticipantReason) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetParticipant", ctx, participant)
+	ret := m.ctrl.Call(m, "SetParticipant", ctx, participant, reason)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetParticipant indicates an expected call of SetParticipant.
-func (mr *MockParticipantKeeperMockRecorder) SetParticipant(ctx, participant any) *gomock.Call {
+func (mr *MockParticipantKeeperMockRecorder) SetParticipant(ctx, participant, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetParticipant", reflect.TypeOf((*MockParticipantKeeper)(nil).SetParticipant), ctx, participant)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetParticipant", reflect.TypeOf((*MockParticipantKeeper)(nil).SetParticipant), ctx, participant, reason)
 }
 
 // MockHardwareNodeKeeper is a mock of HardwareNodeKeeper interface.

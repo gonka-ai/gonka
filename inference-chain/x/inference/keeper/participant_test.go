@@ -26,7 +26,7 @@ func createNParticipant(keeper keeper.Keeper, ctx context.Context, n int) []type
 		// To test counter
 		items[i].Status = types.ParticipantStatus_ACTIVE
 		items[i].CurrentEpochStats = types.NewCurrentEpochStats()
-		keeper.SetParticipant(ctx, items[i])
+		keeper.SetParticipant(ctx, items[i], types.SetParticipantReasonNone)
 	}
 	return items
 }
@@ -98,7 +98,7 @@ func TestUpdateParticipantStatus_NoTransition(t *testing.T) {
 	}
 
 	// Call UpdateParticipantStatus
-	err := k.UpdateParticipantStatus(ctx, &participant)
+	err := k.UpdateParticipantStatus(ctx, &participant, types.SetParticipantReasonInvalidation)
 	require.NoError(t, err)
 
 	// Status should remain ACTIVE
@@ -160,7 +160,7 @@ func TestUpdateParticipantStatus_TransitionToInvalid(t *testing.T) {
 		Times(1)
 
 	// Call UpdateParticipantStatus
-	err = k.UpdateParticipantStatus(ctx, &participant)
+	err = k.UpdateParticipantStatus(ctx, &participant, types.SetParticipantReasonInvalidation)
 	require.NoError(t, err)
 
 	// Status should transition to INVALID
@@ -197,7 +197,7 @@ func TestUpdateParticipantStatus_AlreadyInvalid(t *testing.T) {
 		Times(0)
 
 	// Call UpdateParticipantStatus
-	err := k.UpdateParticipantStatus(ctx, &participant)
+	err := k.UpdateParticipantStatus(ctx, &participant, types.SetParticipantReasonInvalidation)
 	require.NoError(t, err)
 
 	// Status should remain INVALID
@@ -235,7 +235,7 @@ func TestUpdateParticipantStatus_AlreadyInactive(t *testing.T) {
 		Times(0)
 
 	// Call UpdateParticipantStatus
-	err := k.UpdateParticipantStatus(ctx, &participant)
+	err := k.UpdateParticipantStatus(ctx, &participant, types.SetParticipantReasonInvalidation)
 	require.NoError(t, err)
 
 	// Status should remain INACTIVE
@@ -296,7 +296,7 @@ func TestInvalidParticipant_ReputationReduced(t *testing.T) {
 		Times(1)
 
 	// Call UpdateParticipantStatus (which calls invalidateParticipant)
-	err = k.UpdateParticipantStatus(ctx, &participant)
+	err = k.UpdateParticipantStatus(ctx, &participant, types.SetParticipantReasonInvalidation)
 	require.NoError(t, err)
 
 	// EpochsCompleted should be reduced: 50 * 0.6 = 30
@@ -356,8 +356,8 @@ func TestParticipantStatusFlow_ActiveToInvalid(t *testing.T) {
 		Return(&group.MsgUpdateGroupMembersResponse{}, nil).
 		Times(1)
 
-	// Save participant (triggers status update)
-	err = k.SetParticipant(ctx, participant)
+	// Save participant (triggers status update with invalidation scope)
+	err = k.SetParticipant(ctx, participant, types.SetParticipantReasonInvalidation)
 	require.NoError(t, err)
 
 	// Retrieve and verify
@@ -397,7 +397,7 @@ func TestParticipantStatusFlow_InactiveStaysInactive(t *testing.T) {
 		Times(0)
 
 	// Save participant
-	err := k.SetParticipant(ctx, participant)
+	err := k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 	require.NoError(t, err)
 
 	// Retrieve and verify - should remain INACTIVE despite good stats

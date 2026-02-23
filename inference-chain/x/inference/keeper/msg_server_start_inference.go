@@ -225,7 +225,7 @@ func (k msgServer) processInferencePayments(
 		executor.CoinBalance += payments.ExecutorPayment
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
 		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
-		err := k.SetParticipant(ctx, executor)
+		err := k.SetParticipant(ctx, executor, types.SetParticipantReasonNone)
 		if err != nil {
 			return nil, err
 		}

@@ -88,7 +88,7 @@ func TestComputeStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, reason, _ := ComputeStatus(tt.params, nil, tt.participant, zeroStats)
+			status, reason, _ := ComputeStatus(tt.params, nil, tt.participant, zeroStats, 0)
 			require.Equal(t, tt.wantStatus, status)
 			require.Equal(t, tt.wantReason, reason)
 		})
@@ -115,7 +115,7 @@ func TestDowntimeTriggersInactive(t *testing.T) {
 		},
 	}
 
-	status, reason, _ := ComputeStatus(params, nil, participant, zeroStats)
+	status, reason, _ := ComputeStatus(params, nil, participant, zeroStats, 0)
 	require.Equal(t, types.ParticipantStatus_INACTIVE, status)
 	require.Equal(t, Downtime, reason)
 }
@@ -141,7 +141,7 @@ func TestDowntimeParamsOutOfRangeReturnAlgorithmError(t *testing.T) {
 			QuickFailureThreshold:          types.DecimalFromFloat(0.000001),
 		}
 		participant := types.Participant{CurrentEpochStats: &types.CurrentEpochStats{}}
-		status, reason, _ := ComputeStatus(params, nil, participant, zeroStats)
+		status, reason, _ := ComputeStatus(params, nil, participant, zeroStats, 0)
 		require.Equal(t, types.ParticipantStatus_ACTIVE, status)
 		require.Equal(t, AlgorithmError, reason)
 	}

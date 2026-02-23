@@ -301,7 +301,7 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	inference = am.expireInferenceAndIssueRefund(ctx, inference)
 
 	executor.CurrentEpochStats.MissedRequests++
-	err := am.keeper.SetParticipant(ctx, executor)
+	err := am.keeper.SetParticipant(ctx, executor, types.SetParticipantReasonMissedInference)
 	if err != nil {
 		am.LogError("Error updating participant for expired inference", types.Participants, "error", err)
 	}
@@ -861,7 +861,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	am.LogInfo("Setting participants to active", types.EpochGroup, "len(participants)", len(participants))
 	for _, participant := range participants {
 		participant.Status = types.ParticipantStatus_ACTIVE
-		err := am.keeper.SetParticipant(ctx, participant)
+		err := am.keeper.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 		if err != nil {
 			am.LogError("Unable to set participant to active", types.EpochGroup, "participantIndex", participant.Index, "error", err.Error())
 			continue

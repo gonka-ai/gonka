@@ -235,16 +235,17 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 		}).Times(1)
 	// --- End Stateful Mock Logic ---
 
-	// Set up the participant with 4 consecutive failures, just under the threshold
+	// Set up the participant with 4 consecutive failures, just under the threshold.
+	// Use Invalidation reason so status is computed with invalidation scope (still ACTIVE at 4).
 	k.SetParticipant(ctx, types.Participant{
 		Index:                        participantAddrStr,
 		Address:                      participantAddrStr,
 		Status:                       types.ParticipantStatus_ACTIVE,
 		ConsecutiveInvalidInferences: 4,
 		CurrentEpochStats:            &types.CurrentEpochStats{},
-	})
+	}, types.SetParticipantReasonInvalidation)
 	// The authority also needs to be a registered participant to invalidate
-	k.SetParticipant(ctx, types.Participant{Index: authority, Address: authority, CurrentEpochStats: &types.CurrentEpochStats{}})
+	k.SetParticipant(ctx, types.Participant{Index: authority, Address: authority, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonNone)
 
 	// Mock bank keeper for the refund logic, even though cost is 0
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -316,7 +317,7 @@ func TestDoubleJeopardy_DowntimeThenInvalidSlash(t *testing.T) {
 	require.NoError(t, ee)
 
 	// --- 1. First Jeopardy: Downtime Slash ---
-	// Set the participant's epoch stats to trigger downtime slashing.
+	// Store participant with bad epoch stats; then run downtime slash explicitly (same as before reason parameter).
 	k.SetParticipant(ctx, types.Participant{
 		Index:   participantAddrStr,
 		Address: participantAddrStr,
@@ -325,7 +326,7 @@ func TestDoubleJeopardy_DowntimeThenInvalidSlash(t *testing.T) {
 			InferenceCount: 10,
 			MissedRequests: 90, // 90% missed requests
 		},
-	})
+	}, types.SetParticipantReasonNone)
 	participant, found := k.GetParticipant(ctx, participantAddrStr)
 	require.True(t, found)
 
@@ -351,10 +352,10 @@ func TestDoubleJeopardy_DowntimeThenInvalidSlash(t *testing.T) {
 	participant.Status = types.ParticipantStatus_ACTIVE
 	participant.ConsecutiveInvalidInferences = 4
 	participant.CurrentEpochStats = &types.CurrentEpochStats{} // Reset for the new epoch
-	k.SetParticipant(ctx, participant)
+	k.SetParticipant(ctx, participant, types.SetParticipantReasonInvalidation)
 
 	// The authority also needs to be a registered participant to invalidate
-	k.SetParticipant(ctx, types.Participant{Index: authority, Address: authority, CurrentEpochStats: &types.CurrentEpochStats{}})
+	k.SetParticipant(ctx, types.Participant{Index: authority, Address: authority, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonNone)
 
 	// Setup the inference object to be invalidated
 	inferenceId := "double-jeopardy-inference"

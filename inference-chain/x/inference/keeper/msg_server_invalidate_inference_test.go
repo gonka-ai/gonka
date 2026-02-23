@@ -64,11 +64,11 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 		CurrentEpochStats:            &types.CurrentEpochStats{},
 		CoinBalance:                  1_000, // arbitrary internal balance field used by keeper
 	}
-	k.SetParticipant(ctx, executor)
+	k.SetParticipant(ctx, executor, types.SetParticipantReasonInvalidation)
 
 	// Register payer (requester)
 	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
-	k.SetParticipant(ctx, payer)
+	k.SetParticipant(ctx, payer, types.SetParticipantReasonNone)
 
 	// Inference with non-zero cost
 	inferenceID := "refund-no-slash"
@@ -131,11 +131,11 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 		CurrentEpochStats:            &types.CurrentEpochStats{},
 		CoinBalance:                  5_000,
 	}
-	k.SetParticipant(ctx, executor)
+	k.SetParticipant(ctx, executor, types.SetParticipantReasonInvalidation)
 
 	// Register payer
 	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
-	k.SetParticipant(ctx, payer)
+	k.SetParticipant(ctx, payer, types.SetParticipantReasonNone)
 
 	// Non-zero cost
 	inferenceID := "refund-with-slash"
@@ -202,10 +202,10 @@ func TestInvalidateInference_NextEpoch_NoRefundNoCharge_NoSlash(t *testing.T) {
 		CurrentEpochStats:            &types.CurrentEpochStats{},
 		CoinBalance:                  initialBalance,
 	}
-	k.SetParticipant(ctx, executor)
+	k.SetParticipant(ctx, executor, types.SetParticipantReasonInvalidation)
 
 	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
-	k.SetParticipant(ctx, payer)
+	k.SetParticipant(ctx, payer, types.SetParticipantReasonNone)
 
 	inferenceID := "invalidate-next-epoch"
 	actualCost := int64(777)
@@ -253,8 +253,8 @@ func TestInvalidateInference_FailsWithWrongPolicyAddress(t *testing.T) {
 	payerAddr := sample.AccAddress()
 	wrongCreator := sample.AccAddress()
 
-	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
-	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
+	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonInvalidation)
+	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonNone)
 
 	inferenceID := "wrong-policy"
 	k.SetInference(ctx, types.Inference{
@@ -282,8 +282,8 @@ func TestInvalidateInference_RemovesActiveInvalidations(t *testing.T) {
 	executorAddr := sample.AccAddress()
 	payerAddr := sample.AccAddress()
 	invalidator := sample.AccAddress()
-	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
-	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
+	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonInvalidation)
+	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonNone)
 
 	inferenceID := "remove-active-invalidations"
 	k.SetInference(ctx, types.Inference{
@@ -326,8 +326,8 @@ func TestInvalidateInference_AlreadyInvalidated_RemovesActiveInvalidations(t *te
 	executorAddr := sample.AccAddress()
 	payerAddr := sample.AccAddress()
 	invalidator := sample.AccAddress()
-	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
-	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
+	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonInvalidation)
+	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}, types.SetParticipantReasonNone)
 
 	inferenceID := "already-invalidated-removes"
 	k.SetInference(ctx, types.Inference{

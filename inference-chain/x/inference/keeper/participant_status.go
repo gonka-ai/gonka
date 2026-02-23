@@ -14,7 +14,8 @@ import (
 // It detects transitions and applies side-effects exactly once. Currently, when transitioning
 // to INVALID it will: slash collateral, record an exclusion entry for the current epoch,
 // and invoke removal from EpochGroup memberships for the current epoch.
-func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.Participant) error {
+// reason: only the check(s) for that call site run (caller must not pass None; that path skips UpdateParticipantStatus).
+func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.Participant, reason types.SetParticipantReason) error {
 	if participant == nil {
 		return nil
 	}
@@ -32,16 +33,18 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 		k.LogError("UpdateParticipantStatus: failed to get params", types.Validation, "error", err)
 		return err
 	}
+	scope := calculations.ScopeFromReason(reason)
 	originalStatus := participant.Status
-	newStatus, reason, newStats := calculations.ComputeStatus(
+	newStatus, statusReason, newStats := calculations.ComputeStatus(
 		params.ValidationParams,
 		params.ConfirmationPocParams,
 		*participant,
 		*oldParticipant.CurrentEpochStats,
+		scope,
 	)
 	participant.CurrentEpochStats = &newStats
 
-	k.LogInfo("Participant status updated", types.Validation, "address", participant.Address, "original", originalStatus, "new", newStatus, "reason", reason, "stats", participant.CurrentEpochStats)
+	k.LogInfo("Participant status updated", types.Validation, "address", participant.Address, "original", originalStatus, "new", newStatus, "reason", statusReason, "stats", participant.CurrentEpochStats)
 
 	if originalStatus == newStatus {
 		return nil
@@ -52,11 +55,11 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 
 	// Handle transition to INVALID once.
 	if originalStatus != types.ParticipantStatus_INVALID && newStatus == types.ParticipantStatus_INVALID {
-		return k.invalidateParticipant(ctx, participant, reason, params)
+		return k.invalidateParticipant(ctx, participant, statusReason, params)
 	}
 
 	if originalStatus != types.ParticipantStatus_INACTIVE && newStatus == types.ParticipantStatus_INACTIVE {
-		return k.deactiveParticipant(ctx, participant, reason, params)
+		return k.deactiveParticipant(ctx, participant, statusReason, params)
 	}
 
 	return nil

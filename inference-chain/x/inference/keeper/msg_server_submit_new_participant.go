@@ -24,7 +24,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 		if msg.WorkerKey != "" {
 			existing.WorkerPublicKey = msg.WorkerKey
 		}
-		if err := k.SetParticipant(ctx, existing); err != nil {
+		if err := k.SetParticipant(ctx, existing, types.SetParticipantReasonNone); err != nil {
 			return nil, err
 		}
 		return &types.MsgSubmitNewParticipantResponse{}, nil
@@ -40,7 +40,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 
 	// If participant does not exist yet, create a new one
 	newParticipant := createNewParticipant(ctx, msg)
-	if err := k.SetParticipant(ctx, newParticipant); err != nil {
+	if err := k.SetParticipant(ctx, newParticipant, types.SetParticipantReasonNone); err != nil {
 		return nil, err
 	}
 	return &types.MsgSubmitNewParticipantResponse{}, nil

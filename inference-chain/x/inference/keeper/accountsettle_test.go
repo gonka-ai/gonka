@@ -56,8 +56,8 @@ func TestActualSettle(t *testing.T) {
 	params, err := keeper.GetParams(ctx)
 	require.NoError(t, err)
 
-	keeper.SetParticipant(ctx, participant1)
-	keeper.SetParticipant(ctx, participant2)
+	keeper.SetParticipant(ctx, participant1, types.SetParticipantReasonNone)
+	keeper.SetParticipant(ctx, participant2, types.SetParticipantReasonNone)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 10,
 		ValidationWeights: []*types.ValidationWeight{
@@ -183,7 +183,7 @@ func TestActualSettleWithManyParticipants(t *testing.T) {
 			},
 		}
 		participants[i] = participant
-		keeper.SetParticipant(ctx, participant)
+		keeper.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 		if i%50 == 0 {
 			logger.Info("Created participants", "count", i+1)
 		}
@@ -286,7 +286,7 @@ func TestSettleWithGraceEpoch(t *testing.T) {
 		},
 	}
 
-	keeper.SetParticipant(ctx, participantHighMiss)
+	keeper.SetParticipant(ctx, participantHighMiss, types.SetParticipantReasonMissedInference)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: epochIndex,
 		ValidationWeights: []*types.ValidationWeight{
@@ -354,7 +354,7 @@ func TestSettleWithoutGraceEpoch(t *testing.T) {
 		},
 	}
 
-	keeper.SetParticipant(ctx, participantHighMiss)
+	keeper.SetParticipant(ctx, participantHighMiss, types.SetParticipantReasonMissedInference)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: epochIndex,
 		ValidationWeights: []*types.ValidationWeight{

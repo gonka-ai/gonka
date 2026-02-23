@@ -637,7 +637,7 @@ func (am AppModule) checkConfirmationSlashing(
 			ratio = decimal.Min(ratio.Div(pocDeviationCoeff), decimal.NewFromInt(1))
 			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(ratio)
 		}
-		am.keeper.SetParticipant(ctx, participant)
+		am.keeper.SetParticipant(ctx, participant, types.SetParticipantReasonConfirmationPoC)
 	}
 	return nil
 }

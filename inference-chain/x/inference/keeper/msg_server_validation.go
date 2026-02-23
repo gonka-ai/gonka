@@ -161,7 +161,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		inference.Status = types.InferenceStatus_FINISHED
 	}
 
-	err = k.SetParticipant(ctx, executor)
+	err = k.SetParticipant(ctx, executor, types.SetParticipantReasonNone)
 	if err != nil {
 		k.LogError("Failed to set executor", types.Validation, "executor", executor.Address, "error", err)
 		return nil, err
@@ -303,7 +303,7 @@ func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Infe
 			if adjustment.WorkAdjustment < 0 {
 				k.SafeLogSubAccountTransaction(ctx, msg.Creator, adjustment.ParticipantId, types.OwedSubAccount, -adjustment.WorkAdjustment, "share_validation_worker:"+inference.InferenceId)
 			}
-			err := k.SetParticipant(ctx, worker)
+			err := k.SetParticipant(ctx, worker, types.SetParticipantReasonNone)
 			if err != nil {
 				k.LogError("Unable to update participant to share work", types.Validation, "worker", worker.Address)
 			}

@@ -31,12 +31,41 @@ const (
 	LogPrecision = 12
 )
 
-// Note that newValue is passed in BY VALUE, so changes to newValue directly will not pass back
+// StatusCheckScope is a bitmask for which status checks to run in ComputeStatus.
+// When 0 (RunAll), all checks are run. Otherwise only the set bits are evaluated in order.
+type StatusCheckScope int
+
+const (
+	OnlyConsecutiveFailures StatusCheckScope = 1 << iota
+	OnlyInvalidation
+	OnlyInactive
+	OnlyConfirmationPoC
+	// RunAll (0) means run all checks; used when scope is not specified.
+)
+
+// ScopeFromReason maps SetParticipantReason to StatusCheckScope.
+// None returns RunAll. Otherwise only the matching check(s) run.
+func ScopeFromReason(reason types.SetParticipantReason) StatusCheckScope {
+	switch reason {
+	case types.SetParticipantReasonMissedInference:
+		return OnlyInactive
+	case types.SetParticipantReasonInvalidation:
+		return OnlyConsecutiveFailures | OnlyInvalidation
+	case types.SetParticipantReasonConfirmationPoC:
+		return OnlyConfirmationPoC
+	default:
+		return 0 // RunAll
+	}
+}
+
+// Note that newValue is passed in BY VALUE, so changes to newValue directly will not pass back.
+// scope: when 0 (RunAll), all checks run; otherwise only the checks in the bitmask run.
 func ComputeStatus(
 	validationParameters *types.ValidationParams,
 	confirmationPocParams *types.ConfirmationPoCParams,
 	newValue types.Participant,
 	oldStats types.CurrentEpochStats,
+	scope StatusCheckScope,
 ) (status types.ParticipantStatus, reason ParticipantStatusReason, stats types.CurrentEpochStats) {
 	// Genesis only (for tests)
 	newStats := getStats(&newValue)
@@ -49,32 +78,42 @@ func ComputeStatus(
 		return newValue.Status, AlreadySet, newStats
 	}
 
-	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad
-	falsePositiveRate := validationParameters.FalsePositiveRate.ToDecimal()
-	consecutiveFailureCutoff := validationParameters.QuickFailureThreshold.ToDecimal()
-	if probabilityOfConsecutiveFailures(falsePositiveRate, newValue.ConsecutiveInvalidInferences).LessThan(consecutiveFailureCutoff) {
-		return types.ParticipantStatus_INVALID, ConsecutiveFailures, newStats
+	runAll := scope == 0
+
+	if runAll || (scope&OnlyConsecutiveFailures != 0) {
+		// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad
+		falsePositiveRate := validationParameters.FalsePositiveRate.ToDecimal()
+		consecutiveFailureCutoff := validationParameters.QuickFailureThreshold.ToDecimal()
+		if probabilityOfConsecutiveFailures(falsePositiveRate, newValue.ConsecutiveInvalidInferences).LessThan(consecutiveFailureCutoff) {
+			return types.ParticipantStatus_INVALID, ConsecutiveFailures, newStats
+		}
 	}
 
-	invalidationDecision := getInvalidationStatus(&newStats, oldStats, validationParameters)
-	if invalidationDecision == Fail {
-		return types.ParticipantStatus_INVALID, StatisticalInvalidations, newStats
-	} else if invalidationDecision == Error {
-		return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
+	if runAll || (scope&OnlyInvalidation != 0) {
+		invalidationDecision := getInvalidationStatus(&newStats, oldStats, validationParameters)
+		if invalidationDecision == Fail {
+			return types.ParticipantStatus_INVALID, StatisticalInvalidations, newStats
+		} else if invalidationDecision == Error {
+			return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
+		}
 	}
 
-	inactiveDecision := getInactiveStatus(&newStats, oldStats, validationParameters)
-	if inactiveDecision == Fail {
-		return types.ParticipantStatus_INACTIVE, Downtime, newStats
-	} else if inactiveDecision == Error {
-		return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
+	if runAll || (scope&OnlyInactive != 0) {
+		inactiveDecision := getInactiveStatus(&newStats, oldStats, validationParameters)
+		if inactiveDecision == Fail {
+			return types.ParticipantStatus_INACTIVE, Downtime, newStats
+		} else if inactiveDecision == Error {
+			return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
+		}
 	}
 
-	failedConfirmationPoCDecision := getConfirmationPoCStatus(&newStats, confirmationPocParams)
-	if failedConfirmationPoCDecision == Fail {
-		return types.ParticipantStatus_INACTIVE, FailedConfirmationPoC, newStats
-	} else if failedConfirmationPoCDecision == Error {
-		return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
+	if runAll || (scope&OnlyConfirmationPoC != 0) {
+		failedConfirmationPoCDecision := getConfirmationPoCStatus(&newStats, confirmationPocParams)
+		if failedConfirmationPoCDecision == Fail {
+			return types.ParticipantStatus_INACTIVE, FailedConfirmationPoC, newStats
+		} else if failedConfirmationPoCDecision == Error {
+			return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
+		}
 	}
 
 	return types.ParticipantStatus_ACTIVE, NoReason, newStats

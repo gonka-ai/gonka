@@ -57,7 +57,7 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// Import participants provided in genesis
 	for _, p := range genState.ParticipantList {
-		err := k.SetParticipant(ctx, p)
+		err := k.SetParticipant(ctx, p, types.SetParticipantReasonNone)
 		if err != nil {
 			k.LogWarn("Error importing participant", types.System, "error", err, "participant", p)
 		}

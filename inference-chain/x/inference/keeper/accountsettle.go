@@ -225,7 +225,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			return err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
-		err := k.SetParticipant(ctx, participant)
+		err := k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 		if err != nil {
 			return err
 		}

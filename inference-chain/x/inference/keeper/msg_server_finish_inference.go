@@ -232,7 +232,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	} else {
 		executor.CurrentEpochStats.InferenceCount++
 		executor.LastInferenceTime = existingInference.EndBlockTimestamp
-		if err := k.SetParticipant(ctx, executor); err != nil {
+		if err := k.SetParticipant(ctx, executor, types.SetParticipantReasonNone); err != nil {
 			return err
 		}
 

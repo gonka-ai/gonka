@@ -91,7 +91,7 @@ type StreamVestingKeeper interface {
 
 type ParticipantKeeper interface {
 	GetParticipant(ctx context.Context, index string) (val Participant, found bool)
-	SetParticipant(ctx context.Context, participant Participant) error
+	SetParticipant(ctx context.Context, participant Participant, reason SetParticipantReason) error
 	RemoveParticipant(ctx context.Context, index string)
 	GetAllParticipant(ctx context.Context) []Participant
 	ParticipantAll(ctx context.Context, req *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)

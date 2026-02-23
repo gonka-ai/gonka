@@ -54,13 +54,13 @@ func TestUpdateConfirmationWeightsV1_BasicCalculation(t *testing.T) {
 	}
 	k.SetPoCValidation(ctx, validation)
 
-	// Create participant
+	// Create participant (PoC test)
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
 		Index:        testutil.Executor,
 		Address:      testutil.Executor,
 		ValidatorKey: "validatorKey",
 		InferenceUrl: "http://example.com/",
-	}))
+	}, types.SetParticipantReasonConfirmationPoC))
 
 	// Create seed
 	k.SetRandomSeed(ctx, types.RandomSeed{
@@ -193,17 +193,17 @@ func TestUpdateConfirmationWeightsV1_MultipleParticipants(t *testing.T) {
 		FraudDetected:               false,
 	})
 
-	// Create participants
+	// Create participants (PoC test)
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
 		Index:        testutil.Executor,
 		Address:      testutil.Executor,
 		ValidatorKey: "validatorKey1",
-	}))
+	}, types.SetParticipantReasonConfirmationPoC))
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
 		Index:        testutil.Executor2,
 		Address:      testutil.Executor2,
 		ValidatorKey: "validatorKey2",
-	}))
+	}, types.SetParticipantReasonConfirmationPoC))
 
 	// Create seeds
 	k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Executor, EpochIndex: 2, Signature: "sig1"})
@@ -285,12 +285,12 @@ func TestUpdateConfirmationWeightsV1_FraudRejection(t *testing.T) {
 		FraudDetected:               true, // Fraud detected by majority
 	})
 
-	// Create participant
+	// Create participant (PoC test)
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
 		Index:        testutil.Executor,
 		Address:      testutil.Executor,
 		ValidatorKey: "validatorKey",
-	}))
+	}, types.SetParticipantReasonConfirmationPoC))
 
 	// Create seed
 	k.SetRandomSeed(ctx, types.RandomSeed{Participant: testutil.Executor, EpochIndex: 2, Signature: "sig"})

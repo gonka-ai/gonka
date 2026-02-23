@@ -104,7 +104,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 		ValidatorKey: "validatorKey1",
 		InferenceUrl: "http://www.yahoo.com/",
 	}
-	err = k.SetParticipant(ctx, participant)
+	err = k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 	require.NoError(t, err)
 
 	// Set up random seed
@@ -384,7 +384,7 @@ func TestComputeNewWeights(t *testing.T) {
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
 				}
-				k.SetParticipant(ctx, participant)
+				k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 
 				// Set up random seed
 				seed := types.RandomSeed{
@@ -444,7 +444,7 @@ func TestComputeNewWeights(t *testing.T) {
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
 				}
-				k.SetParticipant(ctx, participant)
+				k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 
 				// Set up random seed
 				seed := types.RandomSeed{
@@ -515,7 +515,7 @@ func TestComputeNewWeights(t *testing.T) {
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
 				}
-				k.SetParticipant(ctx, participant)
+				k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 			},
 			expectedParticipants: 0, // Should be rejected due to not enough valid validations
 		},
@@ -702,13 +702,13 @@ func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
 		Address:      participantA,
 		ValidatorKey: "validatorKeyA",
 		InferenceUrl: "http://a.example.com/",
-	}))
+	}, types.SetParticipantReasonNone))
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
 		Index:        participantB,
 		Address:      participantB,
 		ValidatorKey: "validatorKeyB",
 		InferenceUrl: "http://b.example.com/",
-	}))
+	}, types.SetParticipantReasonNone))
 
 	// Set up seeds for both
 	k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantA, EpochIndex: 1, Signature: "sigA"})

@@ -97,7 +97,7 @@ func TestComputeNewWeightsV1WithStakingValidators(t *testing.T) {
 		ValidatorKey: "validatorKey1",
 		InferenceUrl: "http://www.yahoo.com/",
 	}
-	err = k.SetParticipant(ctx, participant)
+	err = k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 	require.NoError(t, err)
 
 	// Set up random seed
@@ -195,7 +195,7 @@ func TestComputeNewWeightsV1_FirstEpoch(t *testing.T) {
 		ValidatorKey: "validatorKey1",
 		InferenceUrl: "inferenceUrl1",
 	}
-	k.SetParticipant(ctx, participant)
+	k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 
 	// Set up random seed
 	seed := types.RandomSeed{
@@ -271,7 +271,7 @@ func TestComputeNewWeightsV1_NotEnoughValidations(t *testing.T) {
 		ValidatorKey: "validatorKey1",
 		InferenceUrl: "inferenceUrl1",
 	}
-	k.SetParticipant(ctx, participant)
+	k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 
 	// Set up random seed
 	seed := types.RandomSeed{
@@ -356,7 +356,7 @@ func TestComputeNewWeightsV1_FraudDetected(t *testing.T) {
 		ValidatorKey: "validatorKey1",
 		InferenceUrl: "inferenceUrl1",
 	}
-	k.SetParticipant(ctx, participant)
+	k.SetParticipant(ctx, participant, types.SetParticipantReasonNone)
 
 	upcomingEpoch := types.Epoch{
 		Index:               2,
@@ -442,13 +442,13 @@ func TestComputeNewWeightsV1_AllowlistExclusion(t *testing.T) {
 		Address:      participantA,
 		ValidatorKey: "validatorKeyA",
 		InferenceUrl: "http://a.example.com/",
-	}))
+	}, types.SetParticipantReasonNone))
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
 		Index:        participantB,
 		Address:      participantB,
 		ValidatorKey: "validatorKeyB",
 		InferenceUrl: "http://b.example.com/",
-	}))
+	}, types.SetParticipantReasonNone))
 
 	// Set up seeds for both
 	k.SetRandomSeed(ctx, types.RandomSeed{Participant: participantA, EpochIndex: 1, Signature: "sigA"})

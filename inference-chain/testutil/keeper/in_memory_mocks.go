@@ -109,7 +109,7 @@ func (keeper *InMemoryParticipantKeeper) ParticipantAll(ctx context.Context, req
 }
 
 // SetParticipant stores or updates the given Participant.
-func (keeper *InMemoryParticipantKeeper) SetParticipant(ctx context.Context, participant types.Participant) error {
+func (keeper *InMemoryParticipantKeeper) SetParticipant(ctx context.Context, participant types.Participant, reason types.SetParticipantReason) error {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
 	keeper.data[participant.Index] = participant

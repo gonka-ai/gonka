@@ -39,7 +39,7 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 
 	k.LogInfo("Inference invalidated", types.Inferences, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
 
-	err = k.SetParticipant(ctx, *executor)
+	err = k.SetParticipant(ctx, *executor, types.SetParticipantReasonInvalidation)
 	if err != nil {
 		return nil, err
 	}
