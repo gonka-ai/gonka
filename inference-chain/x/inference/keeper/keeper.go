@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
@@ -11,6 +13,25 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// epochGroupCacheKey keys the hot cache by (epochIndex, modelId).
+type epochGroupCacheKey struct {
+	Epoch   uint64
+	ModelId string
+}
+
+// epochGroupCache holds EpochGroupData for current and previous effective epoch only.
+// Invalidated in BeginBlock; flushed to store in EndBlock.
+// currentEpochRequestCount is the per-block atomic counter for NumberOfRequests of the current epoch (root group); merged to store on flush.
+type epochGroupCache struct {
+	mu                      sync.RWMutex
+	inited                  bool
+	current                 uint64
+	previous                uint64
+	currentDirty            bool
+	m                       map[epochGroupCacheKey]types.EpochGroupData
+	currentEpochRequestCount atomic.Int64
+}
 
 type (
 	Keeper struct {
@@ -56,6 +77,8 @@ type (
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		// EpochGroupData hot cache: current and previous effective epoch; tx draft merged on tx success, flushed to store in EndBlock.
+		epochGroupCache *epochGroupCache
 		// Epoch collections
 		Epochs              collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex collections.Item[uint64]
@@ -270,6 +293,7 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupData](cdc),
 		),
+		epochGroupCache: &epochGroupCache{},
 		// Epoch collections wiring
 		Epochs: collections.NewMap(
 			sb,
