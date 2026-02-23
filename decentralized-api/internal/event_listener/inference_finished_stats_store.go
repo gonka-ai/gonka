@@ -39,6 +39,9 @@ CREATE INDEX IF NOT EXISTS idx_ifs_requested_by_time ON inference_finished_stats
 
 const (
 	statsWriterMaxRetries = 4
+	statsRetentionPeriod  = 30 * 24 * time.Hour
+	statsPruneInterval    = 6 * time.Hour
+	statsPruneTimeout     = 2 * time.Second
 )
 
 const inferenceFinishedStatsUpsertSQL = `
@@ -84,8 +87,9 @@ type inferenceFinishedStatsRow struct {
 }
 
 type InferenceFinishedStatsStore struct {
-	db *sql.DB
-	mu sync.Mutex
+	db          *sql.DB
+	mu          sync.Mutex
+	lastPruneAt time.Time
 }
 
 func NewInferenceFinishedStatsStore(db *sql.DB) (*InferenceFinishedStatsStore, error) {
@@ -130,6 +134,7 @@ func (s *InferenceFinishedStatsStore) UpsertFromTxEvent(event *chainevents.JSONR
 func (s *InferenceFinishedStatsStore) upsertRowsWithRetry(rows []inferenceFinishedStatsRow) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.maybePruneLocked()
 
 	var lastErr error
 	for attempt := 0; attempt < statsWriterMaxRetries; attempt++ {
@@ -146,6 +151,32 @@ func (s *InferenceFinishedStatsStore) upsertRowsWithRetry(rows []inferenceFinish
 		time.Sleep(time.Duration(40*(1<<attempt)) * time.Millisecond)
 	}
 	return lastErr
+}
+
+func (s *InferenceFinishedStatsStore) maybePruneLocked() {
+	now := time.Now()
+	if !s.lastPruneAt.IsZero() && now.Sub(s.lastPruneAt) < statsPruneInterval {
+		return
+	}
+	s.lastPruneAt = now
+
+	cutoffMillis := now.Add(-statsRetentionPeriod).UnixMilli()
+	ctx, cancel := context.WithTimeout(context.Background(), statsPruneTimeout)
+	defer cancel()
+
+	result, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM inference_finished_stats WHERE end_timestamp_ms < ?`,
+		cutoffMillis,
+	)
+	if err != nil {
+		logging.Warn("Failed to prune inference_finished stats", types.EventProcessing, "error", err)
+		return
+	}
+	deletedRows, err := result.RowsAffected()
+	if err == nil && deletedRows > 0 {
+		logging.Info("Pruned old inference_finished stats", types.EventProcessing, "deleted_rows", deletedRows, "cutoff_ms", cutoffMillis)
+	}
 }
 
 func (s *InferenceFinishedStatsStore) upsertRows(ctx context.Context, rows []inferenceFinishedStatsRow) error {

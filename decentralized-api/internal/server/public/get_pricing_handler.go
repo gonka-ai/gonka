@@ -125,6 +125,8 @@ type ModelMetrics struct {
 	Capacity    uint64
 }
 
+type modelTokenStats map[string]int64
+
 // getModelMetrics calculates utilization and gets capacity for all models in one go
 func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.Context) map[string]ModelMetrics {
 	metricsData := make(map[string]ModelMetrics)
@@ -154,41 +156,26 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	}
 	windowDurationSeconds := int64(params.Params.DynamicPricingParams.UtilizationWindowDuration)
 
-	localModelStats, ok := s.getModelTokenStatsFromLocalStore(context, windowDurationSeconds)
-	if ok {
-		for modelID, totalTokens := range localModelStats {
-			if capacity, exists := capacityMap[modelID]; exists && capacity > 0 {
-				metricsData[modelID] = ModelMetrics{
-					Capacity:    capacity,
-					Utilization: float64(totalTokens) / float64(capacity),
-				}
-			}
-		}
-		return metricsData
-	}
-
-	// Calculate time window in milliseconds to match chain stats query semantics
-	currentTimeMillis := time.Now().UnixMilli()
-	timeWindowStartMillis := currentTimeMillis - windowDurationSeconds*1000
-
-	// Get stats for all models in time window
-	statsResponse, err := queryClient.InferencesAndTokensStatsByModels(context, &types.QueryInferencesAndTokensStatsByModelsRequest{
-		TimeFrom: timeWindowStartMillis,
-		TimeTo:   currentTimeMillis,
-	})
+	localModelStats, hasLocalStats := s.getModelTokenStatsFromLocalStore(context, windowDurationSeconds)
+	chainModelStats, err := s.getModelTokenStatsFromChain(queryClient, context, windowDurationSeconds)
 	if err != nil {
-		logging.Warn("Failed to get model stats for utilization", types.Pricing, "error", err)
-		return metricsData // Return with capacity data only
+		if !hasLocalStats {
+			logging.Warn("Failed to get model stats for utilization", types.Pricing, "error", err)
+			return metricsData
+		}
+		logging.Warn("Falling back to local model stats for utilization", types.Pricing, "error", err)
+		chainModelStats = modelTokenStats{}
 	}
 
-	// Calculate utilization for each model and update metrics
-	for _, modelStat := range statsResponse.StatsModels {
-		if capacity, exists := capacityMap[modelStat.Model]; exists && capacity > 0 {
-			// Calculate utilization = tokens_used / capacity
-			utilization := float64(modelStat.AiTokens) / float64(capacity)
+	effectiveStats := chainModelStats
+	if hasLocalStats {
+		effectiveStats = mergeModelTokenStats(chainModelStats, localModelStats)
+	}
 
-			// Update the metrics with calculated utilization
-			metricsData[modelStat.Model] = ModelMetrics{
+	for modelID, totalTokens := range effectiveStats {
+		if capacity, exists := capacityMap[modelID]; exists && capacity > 0 {
+			utilization := float64(totalTokens) / float64(capacity)
+			metricsData[modelID] = ModelMetrics{
 				Capacity:    capacity,
 				Utilization: utilization,
 			}
@@ -198,7 +185,7 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	return metricsData
 }
 
-func (s *Server) getModelTokenStatsFromLocalStore(ctx context.Context, windowDurationSeconds int64) (map[string]int64, bool) {
+func (s *Server) getModelTokenStatsFromLocalStore(ctx context.Context, windowDurationSeconds int64) (modelTokenStats, bool) {
 	if s.configManager == nil || s.configManager.SqlDb() == nil || s.configManager.SqlDb().GetDb() == nil {
 		return nil, false
 	}
@@ -221,7 +208,7 @@ func (s *Server) getModelTokenStatsFromLocalStore(ctx context.Context, windowDur
 	}
 	defer rows.Close()
 
-	stats := make(map[string]int64)
+	stats := make(modelTokenStats)
 	for rows.Next() {
 		var (
 			model      string
@@ -241,6 +228,62 @@ func (s *Server) getModelTokenStatsFromLocalStore(ctx context.Context, windowDur
 		return nil, false
 	}
 	return stats, true
+}
+
+func (s *Server) getModelTokenStatsFromChain(
+	queryClient types.QueryClient,
+	ctx context.Context,
+	windowDurationSeconds int64,
+) (modelTokenStats, error) {
+	currentTimeMillis := time.Now().UnixMilli()
+	timeWindowStartMillis := currentTimeMillis - windowDurationSeconds*1000
+
+	statsResponse, err := queryClient.InferencesAndTokensStatsByModels(ctx, &types.QueryInferencesAndTokensStatsByModelsRequest{
+		TimeFrom: timeWindowStartMillis,
+		TimeTo:   currentTimeMillis,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	stats := make(modelTokenStats)
+	for _, modelStat := range statsResponse.StatsModels {
+		stats[modelStat.Model] = modelStat.AiTokens
+	}
+	return stats, nil
+}
+
+func mergeModelTokenStats(primary, secondary modelTokenStats) modelTokenStats {
+	merged := make(modelTokenStats, len(primary)+len(secondary))
+	for modelID, totalTokens := range primary {
+		merged[modelID] = totalTokens
+	}
+	mismatchedModels := 0
+	localOnlyModels := 0
+	for modelID, totalTokens := range secondary {
+		current, exists := merged[modelID]
+		if !exists || totalTokens > current {
+			merged[modelID] = totalTokens
+		}
+		if !exists {
+			localOnlyModels++
+			continue
+		}
+		if totalTokens != current {
+			mismatchedModels++
+		}
+	}
+	if mismatchedModels > 0 || localOnlyModels > 0 {
+		logging.Warn(
+			"Model token stats mismatch between chain and local sources",
+			types.Pricing,
+			"mismatched_models", mismatchedModels,
+			"local_only_models", localOnlyModels,
+			"chain_models", len(primary),
+			"local_models", len(secondary),
+		)
+	}
+	return merged
 }
 
 // getDynamicPricingData queries dynamic pricing information from the chain

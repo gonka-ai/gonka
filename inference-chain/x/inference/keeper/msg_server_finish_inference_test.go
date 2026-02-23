@@ -145,6 +145,38 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
 	require.False(t, found)
 
+	events := inferenceHelper.context.EventManager().Events()
+	var finishedEvent sdk.Event
+	finishedEventFound := false
+	for _, event := range events {
+		if event.Type == "inference_finished" {
+			finishedEvent = event
+			finishedEventFound = true
+			break
+		}
+	}
+	require.True(t, finishedEventFound)
+
+	requiredAttributes := map[string]bool{
+		"inference_id":           false,
+		"requested_by":           false,
+		"executed_by":            false,
+		"model":                  false,
+		"epoch_id":               false,
+		"prompt_token_count":     false,
+		"completion_token_count": false,
+		"actual_cost":            false,
+		"end_block_timestamp":    false,
+	}
+	for _, attr := range finishedEvent.Attributes {
+		if _, ok := requiredAttributes[attr.Key]; ok {
+			requiredAttributes[attr.Key] = true
+		}
+	}
+	for key, found := range requiredAttributes {
+		require.Truef(t, found, "missing inference_finished attribute: %s", key)
+	}
+
 }
 
 func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, mockAccount MockAccount) {

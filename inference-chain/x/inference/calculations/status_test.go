@@ -156,6 +156,47 @@ func TestProbabilityOfConsecutiveFailures_PanicOnBadRate(t *testing.T) {
 	require.True(t, result.IsZero(), "Expected zero for invalid rate < 0")
 }
 
+// what happens if we skip ComputeStatus on successful inferences
+func TestSkipComputeStatusOnCompletionBreaksLLR(t *testing.T) {
+	params := types.DefaultValidationParams()
+	completions := 50
+	misses := 6
+
+	emptyStats := func() types.CurrentEpochStats {
+		return types.CurrentEpochStats{InactiveLLR: types.DecimalFromFloat(0), InvalidLLR: types.DecimalFromFloat(0)}
+	}
+
+	// simulate N successful inferences + M misses (calling ComputeStatus every time)
+	stored := emptyStats()
+	for i := 0; i < completions; i++ {
+		_, _, stored = ComputeStatus(params, nil, types.Participant{CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: stored.InferenceCount + 1, MissedRequests: stored.MissedRequests,
+			InactiveLLR: stored.InactiveLLR, InvalidLLR: stored.InvalidLLR}}, stored)
+	}
+	var st types.ParticipantStatus
+	for i := 0; i < misses; i++ {
+		st, _, stored = ComputeStatus(params, nil, types.Participant{CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: stored.InferenceCount, MissedRequests: stored.MissedRequests + 1,
+			InactiveLLR: stored.InactiveLLR, InvalidLLR: stored.InvalidLLR}}, stored)
+	}
+	t.Logf("always compute: LLR=%s status=%s", stored.InactiveLLR.ToDecimal(), st)
+	require.Equal(t, types.ParticipantStatus_ACTIVE, st)
+
+	// now same thing but skip ComputeStatus on completions (bump counter and don't call ComputeStatus)
+	skipped := emptyStats()
+	skipped.InferenceCount = uint64(completions)
+	var st2 types.ParticipantStatus
+	for i := 0; i < misses; i++ {
+		st2, _, skipped = ComputeStatus(params, nil, types.Participant{CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: uint64(completions), MissedRequests: skipped.MissedRequests + 1,
+			InactiveLLR: skipped.InactiveLLR, InvalidLLR: skipped.InvalidLLR}}, skipped)
+	}
+	t.Logf("skip completions: LLR=%s status=%s", skipped.InactiveLLR.ToDecimal(), st2)
+
+	// same participant, same events, but wrongly marked inactive
+	require.Equal(t, types.ParticipantStatus_INACTIVE, st2)
+}
+
 func TestGetStats(t *testing.T) {
 	part := &types.Participant{
 		CurrentEpochStats: &types.CurrentEpochStats{
