@@ -723,7 +723,7 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 		participantAddr := eligibleParticipantAddrs[currentParticipantIdx]
 		nodes := eligibleNodesData.GetForParticipant(modelId, participantAddr)
 
-		nextMLNode := getSmallestMLNodeWithPOCSLotFalse(nodes, previouslySafeNodes[participantAddr])
+		nextMLNode, smallestPreviouslySafe := getSmallestMLNodeWithPOCSLotFalseWithRotationCandidate(nodes, previouslySafeNodes[participantAddr])
 
 		if nextMLNode == nil {
 			currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
@@ -741,6 +741,22 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 		nextMLNode.TimeslotAllocation[1] = true
 		currentWeight += nextMLNode.PocWeight
 		allocatedInRound = true
+
+		if smallestPreviouslySafe != nil && nextMLNode.PocWeight > smallestPreviouslySafe.PocWeight {
+			ma.LogInfo(
+				"Rotation selected heavier non-safe node over lighter previously-safe node",
+				types.Allocation,
+				"flow_context", FlowContext,
+				"sub_flow_context", SubFlowContext,
+				"step", "rotation_heavier_non_safe",
+				"model_id", modelId,
+				"participant", participantAddr,
+				"selected_node_id", nextMLNode.NodeId,
+				"selected_node_weight", nextMLNode.PocWeight,
+				"previously_safe_node_id", smallestPreviouslySafe.NodeId,
+				"previously_safe_node_weight", smallestPreviouslySafe.PocWeight,
+			)
+		}
 
 		ma.LogInfo("Allocated node to PoC slot", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "allocate_node", "model_id", modelId, "participant", participantAddr, "node_id", nextMLNode.NodeId, "node_weight", nextMLNode.PocWeight, "current_weight", currentWeight, "target_weight", targetPoCWeight)
 
@@ -772,6 +788,13 @@ func (ma *ModelAssigner) allocateMLNodePerPoCForModel(
 }
 
 func getSmallestMLNodeWithPOCSLotFalse(nodes []*types.MLNodeInfo, previouslySafeIds map[string]bool) *types.MLNodeInfo {
+	smallest, _ := getSmallestMLNodeWithPOCSLotFalseWithRotationCandidate(nodes, previouslySafeIds)
+	return smallest
+}
+
+// getSmallestMLNodeWithPOCSLotFalseWithRotationCandidate returns selected node and,
+// when available, the smallest previously-safe candidate considered for rotation logging.
+func getSmallestMLNodeWithPOCSLotFalseWithRotationCandidate(nodes []*types.MLNodeInfo, previouslySafeIds map[string]bool) (*types.MLNodeInfo, *types.MLNodeInfo) {
 	var smallest *types.MLNodeInfo
 	var smallestPreviouslySafe *types.MLNodeInfo
 
@@ -790,9 +813,9 @@ func getSmallestMLNodeWithPOCSLotFalse(nodes []*types.MLNodeInfo, previouslySafe
 	}
 
 	if smallest != nil {
-		return smallest
+		return smallest, smallestPreviouslySafe
 	}
-	return smallestPreviouslySafe
+	return smallestPreviouslySafe, nil
 }
 
 // calculateWeightThresholdWithCount calculates both the weight threshold and target node count.
