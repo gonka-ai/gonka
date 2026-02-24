@@ -145,6 +145,17 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
 	require.False(t, found)
 
+	modelUsage := k.GetModelUsageSummaryByTime(
+		ctx,
+		expectedFinished.EndBlockTimestamp-1,
+		expectedFinished.EndBlockTimestamp+1,
+	)
+	summary, ok := modelUsage[modelId]
+	require.True(t, ok)
+	require.Equal(t, 1, summary.InferenceCount)
+	require.Equal(t, int64(expectedFinished.PromptTokenCount+expectedFinished.CompletionTokenCount), summary.TokensUsed)
+	require.Equal(t, expectedFinished.ActualCost, summary.ActualCost)
+
 	events := inferenceHelper.context.EventManager().Events()
 	var finishedEvent sdk.Event
 	finishedEventFound := false

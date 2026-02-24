@@ -157,19 +157,14 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	windowDurationSeconds := int64(params.Params.DynamicPricingParams.UtilizationWindowDuration)
 
 	localModelStats, hasLocalStats := s.getModelTokenStatsFromLocalStore(context, windowDurationSeconds)
-	chainModelStats, err := s.getModelTokenStatsFromChain(queryClient, context, windowDurationSeconds)
-	if err != nil {
-		if !hasLocalStats {
+	effectiveStats := localModelStats
+	if !hasLocalStats {
+		chainModelStats, err := s.getModelTokenStatsFromChain(queryClient, context, windowDurationSeconds)
+		if err != nil {
 			logging.Warn("Failed to get model stats for utilization", types.Pricing, "error", err)
 			return metricsData
 		}
-		logging.Warn("Falling back to local model stats for utilization", types.Pricing, "error", err)
-		chainModelStats = modelTokenStats{}
-	}
-
-	effectiveStats := chainModelStats
-	if hasLocalStats {
-		effectiveStats = mergeModelTokenStats(chainModelStats, localModelStats)
+		effectiveStats = chainModelStats
 	}
 
 	for modelID, totalTokens := range effectiveStats {
@@ -251,39 +246,6 @@ func (s *Server) getModelTokenStatsFromChain(
 		stats[modelStat.Model] = modelStat.AiTokens
 	}
 	return stats, nil
-}
-
-func mergeModelTokenStats(primary, secondary modelTokenStats) modelTokenStats {
-	merged := make(modelTokenStats, len(primary)+len(secondary))
-	for modelID, totalTokens := range primary {
-		merged[modelID] = totalTokens
-	}
-	mismatchedModels := 0
-	localOnlyModels := 0
-	for modelID, totalTokens := range secondary {
-		current, exists := merged[modelID]
-		if !exists || totalTokens > current {
-			merged[modelID] = totalTokens
-		}
-		if !exists {
-			localOnlyModels++
-			continue
-		}
-		if totalTokens != current {
-			mismatchedModels++
-		}
-	}
-	if mismatchedModels > 0 || localOnlyModels > 0 {
-		logging.Warn(
-			"Model token stats mismatch between chain and local sources",
-			types.Pricing,
-			"mismatched_models", mismatchedModels,
-			"local_only_models", localOnlyModels,
-			"chain_models", len(primary),
-			"local_models", len(secondary),
-		)
-	}
-	return merged
 }
 
 // getDynamicPricingData queries dynamic pricing information from the chain

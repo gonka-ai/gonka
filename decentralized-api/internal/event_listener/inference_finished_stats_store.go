@@ -3,9 +3,9 @@ package event_listener
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +13,8 @@ import (
 	"decentralized-api/logging"
 
 	"github.com/productscience/inference/x/inference/types"
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const inferenceFinishedStatsSchema = `
@@ -184,7 +186,7 @@ func (s *InferenceFinishedStatsStore) upsertRows(ctx context.Context, rows []inf
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() // per sql.Tx docs, Rollback after Commit is a no-op
 
 	for _, row := range rows {
 		_, err = tx.ExecContext(
@@ -211,10 +213,15 @@ func (s *InferenceFinishedStatsStore) upsertRows(ctx context.Context, rows []inf
 }
 
 func isRetryableSQLiteError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "database is locked") ||
-		strings.Contains(msg, "database is busy") ||
-		strings.Contains(msg, "context deadline exceeded")
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) {
+		code := sqliteErr.Code() & 0xFF // primary result code (mask off extended bits)
+		return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
+	}
+	return false
 }
 
 func parseInferenceFinishedStatsRows(events map[string][]string) ([]inferenceFinishedStatsRow, int, error) {
