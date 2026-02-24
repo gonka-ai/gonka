@@ -1,0 +1,63 @@
+name: Verify Proto Go Generation
+
+on:
+  pull_request:
+    paths:
+      - "inference-chain/**/*.proto"
+      - "inference-chain/**/*.pb.go"
+      - "inference-chain/**/*.pulsar.go"
+
+jobs:
+  verify-proto-go-generation:
+    name: Verify `ignite generate proto-go`
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      IGNITE_VERSION: "28.10.0"
+      IGNITE_TARBALL: "ignite_28.10.0_linux_amd64.tar.gz"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.2"
+
+      - name: Install Ignite CLI
+        run: |
+          curl -fsSLo "/tmp/${IGNITE_TARBALL}" \
+            "https://github.com/ignite/cli/releases/download/v${IGNITE_VERSION}/${IGNITE_TARBALL}"
+          curl -fsSLo /tmp/ignite_checksums.txt \
+            "https://github.com/ignite/cli/releases/download/v${IGNITE_VERSION}/ignite_${IGNITE_VERSION}_checksums.txt"
+          grep " ${IGNITE_TARBALL}$" /tmp/ignite_checksums.txt | sed "s#  ${IGNITE_TARBALL}\$#  /tmp/${IGNITE_TARBALL}#" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "/tmp/${IGNITE_TARBALL}" -C "$RUNNER_TEMP/bin" ignite
+          chmod +x "$RUNNER_TEMP/bin/ignite"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/ignite" version
+
+      - name: Run proto-go generation
+        working-directory: ./inference-chain
+        env:
+          CI: "true"
+          DO_NOT_TRACK: "true"
+          IGNT_CONFIG_DIR: "${{ runner.temp }}/ignite-config"
+        run: |
+          mkdir -p "$IGNT_CONFIG_DIR"
+          ignite generate proto-go --yes
+
+      - name: Verify no generated changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Proto generation produced changes. Please run 'ignite generate proto-go' in inference-chain and commit the result."
+            echo
+            git status --short
+            echo
+            git diff --stat
+            exit 1
+          fi

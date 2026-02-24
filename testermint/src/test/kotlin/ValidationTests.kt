@@ -43,9 +43,7 @@ class ValidationTests : TestermintTest() {
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")
-        assertThat(statuses.map { status ->
-            InferenceStatus.entries.first { it.value == status }
-        }).allMatch {
+        assertThat(statuses).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
         assertThat(statuses).hasSize(requests)
@@ -158,11 +156,7 @@ class ValidationTests : TestermintTest() {
             }
         }
     }
-
 }
-
-val InferencePayload.statusEnum: InferenceStatus
-    get() = InferenceStatus.entries.first { it.value == status }
 
 fun getInferenceValidationState(
     highestFunded: LocalInferencePair,

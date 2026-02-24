@@ -12,18 +12,29 @@ data class ValidatorsResponse(
 data class StakeValidator(
     val operatorAddress: String,
     val consensusPubkey: ConsensusPubkey,
-    val status: Int,
+    val status: String,
     val tokens: Long,
     val delegatorShares: Double,
     val description: ValidatorDescription,
     val unbondingTime: Instant,
     val commission: Commission,
     val minSelfDelegation: String
-)
+) {
+    val statusEnum: StakeValidatorStatus
+        get() = when (status) {
+            "BOND_STATUS_BONDED", "BONDED", "3" -> StakeValidatorStatus.BONDED
+            "BOND_STATUS_UNBONDING", "UNBONDING", "2" -> StakeValidatorStatus.UNBONDING
+            else -> StakeValidatorStatus.UNBONDING // Default or unknown
+        }
+}
 
 enum class StakeValidatorStatus(val value: Int) {
     UNBONDING(2),
-    BONDED(3),
+    BONDED(3);
+
+    companion object {
+        fun fromValue(value: Int): StakeValidatorStatus = values().find { it.value == value } ?: UNBONDING
+    }
 }
 
 data class ConsensusPubkey(

@@ -64,10 +64,11 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	model, err := k.GetEpochModel(ctx, inference.Model)
+	model, err := k.GetEpochModelForEpoch(ctx, inference.EpochId, inference.Model)
 	if err != nil {
 		k.LogError("Failed to get epoch model", types.Validation,
 			"model", inference.Model,
+			"epochId", inference.EpochId,
 			"inferenceId", msg.InferenceId,
 			"error", err)
 		return nil, err

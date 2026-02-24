@@ -143,23 +143,14 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		return
 	}
 
-	// Check validation phase (regular OR confirmation)
-	shouldValidate := epochState.CurrentPhase == types.PoCValidatePhase ||
-		// FIXME: A bit too wide, it should be PoCGenerateWindDownPhase AND after poc end,
-		//  but we rely on node dispatcher to not send it too early
-		//  if we want to be 100% sure we should check based on block height
-		//  by adding some additional methods for getting block height stage cutoffs for current epoch
-		epochState.CurrentPhase == types.PoCGenerateWindDownPhase
-
-	// Confirmation PoC validation during inference phase
+	shouldValidate := epochState.CurrentPhase == types.PoCValidatePhase
+	if epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
+		shouldValidate = epochState.CurrentBlock.Height >= epochState.LatestEpoch.EndOfPoCGeneration()
+	}
 	if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
 		event := epochState.ActiveConfirmationPoCEvent
 		epochParams := &epochState.LatestEpoch.EpochParams
-		currentHeight := epochState.CurrentBlock.Height
-		// Accept at exchange end (transition) OR during validation window
-		if currentHeight == event.GetExchangeEnd(epochParams) || event.IsInValidationWindow(currentHeight, epochParams) {
-			shouldValidate = true
-		}
+		shouldValidate = event.IsInValidationWindow(epochState.CurrentBlock.Height, epochParams)
 	}
 
 	if !shouldValidate {
