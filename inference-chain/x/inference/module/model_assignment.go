@@ -405,6 +405,9 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	ma.LogDebug("Collected unique models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "collect_unique_models", "num_unique_models", len(uniqueModels))
 
 	sortedModelIds := sortedKeys(uniqueModels)
+	// Intentionally global across models (no modelId key): this prevents multi-model hogging and
+	// reduces incentives for model spamming. Per-model keys would let the same node repeatedly
+	// capture safe slots across different models.
 	previouslySafeNodes := make(map[string]map[string]bool) // participant -> nodeId -> true
 	if upcomingEpoch.Index > 0 {
 		previousEpochIndex := upcomingEpoch.Index - 1
