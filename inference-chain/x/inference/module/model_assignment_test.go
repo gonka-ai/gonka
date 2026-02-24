@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/productscience/inference/x/inference/keeper"
+
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
 )
 
 // Mock Keeper
