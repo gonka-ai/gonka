@@ -34,6 +34,24 @@ func getGID() int64 {
 // ctxKeyEpochGroupDraft is the context key for the tx-scoped EpochGroupData draft.
 type ctxKeyEpochGroupDraft struct{}
 
+// lazyEpochGroupDraft defers allocation of the real draft until the first write (Set/Remove).
+// This avoids allocating a map for every tx when most txs only read epoch group data.
+type lazyEpochGroupDraft struct {
+	once sync.Once
+	d    *epochGroupDraft
+}
+
+func (l *lazyEpochGroupDraft) get() *epochGroupDraft {
+	return l.d
+}
+
+func (l *lazyEpochGroupDraft) getOrCreate() *epochGroupDraft {
+	l.once.Do(func() {
+		l.d = &epochGroupDraft{m: make(map[epochGroupCacheKey]types.EpochGroupData)}
+	})
+	return l.d
+}
+
 // epochGroupDraft holds tx-scoped EpochGroupData writes for optimistic parallel execution.
 // Uses a reentrant write lock: the same goroutine can write (or delete) multiple times; lock is released only in PostHandler (commit or failure).
 type epochGroupDraft struct {
@@ -75,13 +93,14 @@ func (d *epochGroupDraft) releaseWriteLock() {
 	}
 }
 
-// WithEpochGroupDraft attaches a new tx-scoped draft to ctx. Call at tx start (e.g. from AnteHandler).
+// WithEpochGroupDraft attaches a lazy tx-scoped draft holder to ctx. Call at tx start (e.g. from AnteHandler).
+// The real draft (and its map) is created only on first SetEpochGroupData or RemoveEpochGroupData for current/previous epoch;
+// read-only txs never allocate it and always use the per-block cache (or store).
 func WithEpochGroupDraft(ctx context.Context) context.Context {
-	d := &epochGroupDraft{m: make(map[epochGroupCacheKey]types.EpochGroupData)}
-	return context.WithValue(ctx, ctxKeyEpochGroupDraft{}, d)
+	return context.WithValue(ctx, ctxKeyEpochGroupDraft{}, &lazyEpochGroupDraft{})
 }
 
-// getEpochGroupDraftFromContext returns the draft from ctx, or nil if no draft is bound.
+// getEpochGroupDraftFromContext returns the draft from ctx if it exists, or nil. Does not create the draft (for reads and for Commit/Release).
 func getEpochGroupDraftFromContext(ctx context.Context) *epochGroupDraft {
 	if ctx == nil {
 		return nil
@@ -90,8 +109,33 @@ func getEpochGroupDraftFromContext(ctx context.Context) *epochGroupDraft {
 	if v == nil {
 		return nil
 	}
-	d, _ := v.(*epochGroupDraft)
-	return d
+	switch h := v.(type) {
+	case *lazyEpochGroupDraft:
+		return h.get()
+	case *epochGroupDraft:
+		return h
+	default:
+		return nil
+	}
+}
+
+// getEpochGroupDraftForWriteFromContext returns the draft, creating it from the lazy holder on first write. Use in SetEpochGroupData and RemoveEpochGroupData.
+func getEpochGroupDraftForWriteFromContext(ctx context.Context) *epochGroupDraft {
+	if ctx == nil {
+		return nil
+	}
+	v := ctx.Value(ctxKeyEpochGroupDraft{})
+	if v == nil {
+		return nil
+	}
+	switch h := v.(type) {
+	case *lazyEpochGroupDraft:
+		return h.getOrCreate()
+	case *epochGroupDraft:
+		return h
+	default:
+		return nil
+	}
 }
 
 // CommitEpochGroupDraftFromContext merges the draft from ctx into the block cache. Call from PostHandler on tx success.
@@ -228,11 +272,12 @@ func (k Keeper) IncrementCurrentEpochGroupRequestCount(ctx context.Context) {
 }
 
 // SetEpochGroupData sets EpochGroupData. When ctx has a tx-scoped draft, current/previous-epoch writes go to the draft only (merged to block cache on tx success, then flushed to store in EndBlock).
+// Draft is created lazily on first write so read-only txs do not allocate it.
 func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
 	epochIdx := epochGroupData.EpochIndex
 	modelId := epochGroupData.ModelId
 	key := epochGroupCacheKey{Epoch: epochIdx, ModelId: modelId}
-	draft := getEpochGroupDraftFromContext(ctx)
+	draft := getEpochGroupDraftForWriteFromContext(ctx)
 
 	if draft != nil {
 		k.ensureEpochGroupCacheInited(ctx)
@@ -321,6 +366,7 @@ func (k Keeper) GetEpochGroupData(
 }
 
 // RemoveEpochGroupData removes EpochGroupData from store and from block cache / tx draft when applicable.
+// Draft is created only when removing a current/previous-epoch key (same lazy rule as SetEpochGroupData).
 func (k Keeper) RemoveEpochGroupData(
 	ctx context.Context,
 	epochIndex uint64,
@@ -328,12 +374,18 @@ func (k Keeper) RemoveEpochGroupData(
 ) {
 	k.EpochGroupDataMap.Remove(ctx, collections.Join(epochIndex, modelId))
 	key := epochGroupCacheKey{Epoch: epochIndex, ModelId: modelId}
-	if draft := getEpochGroupDraftFromContext(ctx); draft != nil {
-		draft.lockWrite()
-		delete(draft.m, key)
-		// Do not unlock here; released in PostHandler
-	}
+	k.ensureEpochGroupCacheInited(ctx)
 	c := k.epochGroupCache
+	c.mu.RLock()
+	needDraft := c.inited && (epochIndex == c.current || epochIndex == c.previous)
+	c.mu.RUnlock()
+	if needDraft {
+		if draft := getEpochGroupDraftForWriteFromContext(ctx); draft != nil {
+			draft.lockWrite()
+			delete(draft.m, key)
+			// Do not unlock here; released in PostHandler
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.inited && (epochIndex == c.current || epochIndex == c.previous) {
