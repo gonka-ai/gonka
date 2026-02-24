@@ -165,6 +165,13 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 			return metricsData
 		}
 		effectiveStats = chainModelStats
+	} else if hasMissingModelStats(capacityMap, localModelStats) {
+		chainModelStats, err := s.getModelTokenStatsFromChain(queryClient, context, windowDurationSeconds)
+		if err != nil {
+			logging.Warn("Failed to get missing model stats from chain, using local-only stats", types.Pricing, "error", err)
+		} else {
+			effectiveStats = mergeModelTokenStatsForMissingModels(capacityMap, localModelStats, chainModelStats)
+		}
 	}
 
 	for modelID, totalTokens := range effectiveStats {
@@ -178,6 +185,37 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	}
 
 	return metricsData
+}
+
+func hasMissingModelStats(capacityMap map[string]uint64, stats modelTokenStats) bool {
+	for modelID := range capacityMap {
+		if _, exists := stats[modelID]; !exists {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeModelTokenStatsForMissingModels(
+	capacityMap map[string]uint64,
+	localStats modelTokenStats,
+	chainStats modelTokenStats,
+) modelTokenStats {
+	merged := make(modelTokenStats, len(localStats))
+	for modelID, totalTokens := range localStats {
+		merged[modelID] = totalTokens
+	}
+
+	for modelID := range capacityMap {
+		if _, exists := merged[modelID]; exists {
+			continue
+		}
+		if totalTokens, exists := chainStats[modelID]; exists {
+			merged[modelID] = totalTokens
+		}
+	}
+
+	return merged
 }
 
 func (s *Server) getModelTokenStatsFromLocalStore(ctx context.Context, windowDurationSeconds int64) (modelTokenStats, bool) {
