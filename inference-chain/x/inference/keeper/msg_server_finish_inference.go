@@ -274,6 +274,9 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	// and can cause undeterministic results.
 	// Moreover we prefer performance and determenism over precision here,
 	// so we just use value from previous committed block.
+
+	//We can use here exact number: currentEpochGroup.GroupData.NumberOfRequests+epochRequestsCount
+	//But it can be undetermenistic in cosmos optimistic concurrent environment
 	inferenceDetails := types.InferenceValidationDetails{
 		InferenceId:          existingInference.InferenceId,
 		ExecutorId:           existingInference.ExecutedBy,
