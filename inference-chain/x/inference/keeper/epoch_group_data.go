@@ -3,6 +3,7 @@ package keeper
 import (
 	"bytes"
 	"context"
+	"os"
 	"runtime"
 	"strconv"
 	"sync"
@@ -12,6 +13,13 @@ import (
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// cosmosOptimisticCachesEnabled is set once at package init from COSMOS_OPTIMISTIC_CACHES=1.
+var cosmosOptimisticCachesEnabled bool
+
+func init() {
+	cosmosOptimisticCachesEnabled = os.Getenv("COSMOS_OPTIMISTIC_CACHES") == "1"
+}
 
 // getGID returns the current goroutine id (for reentrant lock holder identity). Uses runtime.Stack; for use in reentrant locking only.
 func getGID() int64 {
@@ -62,7 +70,11 @@ type epochGroupDraft struct {
 }
 
 // lockWrite acquires the write lock; reentrant for the same goroutine (increments count). Release via unlockWrite or releaseWriteLock.
+// Only takes the lock when COSMOS_OPTIMISTIC_CACHES=1; otherwise no-op.
 func (d *epochGroupDraft) lockWrite() {
+	if !cosmosOptimisticCachesEnabled {
+		return
+	}
 	gid := getGID()
 	if atomic.LoadInt64(&d.writeHolder) == gid {
 		atomic.AddInt32(&d.writeCount, 1)
@@ -74,7 +86,11 @@ func (d *epochGroupDraft) lockWrite() {
 }
 
 // unlockWrite releases one level of the write lock; if count goes to 0, releases the underlying RWMutex.
+// No-op when COSMOS_OPTIMISTIC_CACHES is not 1.
 func (d *epochGroupDraft) unlockWrite() {
+	if !cosmosOptimisticCachesEnabled {
+		return
+	}
 	if atomic.AddInt32(&d.writeCount, -1) == 0 {
 		atomic.StoreInt64(&d.writeHolder, 0)
 		d.mu.Unlock()
