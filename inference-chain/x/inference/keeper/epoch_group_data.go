@@ -248,7 +248,7 @@ func (k Keeper) FlushCurrentEpochGroupCache(ctx context.Context) {
 		return
 	}
 	delta := c.currentEpochRequestCount.Swap(0)
-	if !c.currentDirty && delta == 0 {
+	if !c.currentDirty {
 		return
 	}
 
@@ -275,16 +275,17 @@ func (k Keeper) FlushCurrentEpochGroupCache(ctx context.Context) {
 }
 
 // IncrementCurrentEpochGroupRequestCount increments the per-block atomic counter for the current epoch's NumberOfRequests. Committed to store in EndBlock.
-func (k Keeper) IncrementCurrentEpochGroupRequestCount(ctx context.Context) {
+func (k Keeper) IncrementCurrentEpochGroupRequestCount(ctx context.Context) int64 {
 	c := k.epochGroupCache
 	k.ensureEpochGroupCacheInited(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.inited {
-		return
+		return 0
 	}
-	c.currentEpochRequestCount.Add(1)
+	count := c.currentEpochRequestCount.Add(1)
 	c.currentDirty = true
+	return count
 }
 
 // SetEpochGroupData sets EpochGroupData. When ctx has a tx-scoped draft, current/previous-epoch writes go to the draft only (merged to block cache on tx success, then flushed to store in EndBlock).
