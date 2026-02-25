@@ -223,6 +223,9 @@ update_configs
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
 kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
 
+# Disable IAVL fast node: cause failed state sync
+kv app iavl-disable-fastnode true
+
 
 # CONFIG_* environment overrides ----------------------------------------------
 (
