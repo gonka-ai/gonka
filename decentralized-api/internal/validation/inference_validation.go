@@ -1048,6 +1048,11 @@ func hasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 		if _, err := strconv.Atoi(t.Token); err != nil {
 			return true
 		}
+		for _, topToken := range t.TopTokens {
+			if _, err := strconv.Atoi(topToken); err != nil {
+				return true
+			}
+		}
 	}
 	return false
 }
