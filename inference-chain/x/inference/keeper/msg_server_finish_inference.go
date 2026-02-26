@@ -109,7 +109,8 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
-	if finalInference.IsCompleted() && finalInference.EpochId == 0 {
+
+	if finalInference.IsCompleted() {
 		err := k.handleInferenceCompleted(cacheCtx, finalInference)
 		if err != nil {
 			return failedFinish(ctx, err, msg), nil

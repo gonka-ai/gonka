@@ -88,7 +88,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 	k.addTimeout(cacheCtx, finalInference)
 
-	if finalInference.IsCompleted() && finalInference.EpochId == 0 {
+	if finalInference.IsCompleted() {
 		err := k.handleInferenceCompleted(cacheCtx, finalInference)
 		if err != nil {
 			return failedStart(ctx, err, msg), nil
