@@ -879,10 +879,10 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return &InvalidInferenceResult{inference.InferenceId, "Failed to get enforced string.", err}, nil
 	}
 
-	if hasTokenIdTokens(enforcedTokens) {
-		logging.Warn("Executor response contains token IDs instead of token text in logprobs", types.Validation,
+	if hasNonNumericTokens(enforcedTokens) {
+		logging.Warn("Executor response contains non-numeric token strings in logprobs instead of token IDs", types.Validation,
 			"inferenceId", inference.InferenceId)
-		return &InvalidInferenceResult{inference.InferenceId, "Logprobs contain token IDs instead of token text.", nil}, nil
+		return &InvalidInferenceResult{inference.InferenceId, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
 	}
 
 	// From here on, errors are on the part of the validator, not the inference that was passed in
@@ -1043,9 +1043,9 @@ func (r InvalidInferenceResult) GetValidationResponseBytes() []byte {
 	return []byte{}
 }
 
-func hasTokenIdTokens(et completionapi.EnforcedTokens) bool {
+func hasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 	for _, t := range et.Tokens {
-		if _, err := strconv.Atoi(t.Token); err == nil && len(t.Token) > 0 {
+		if _, err := strconv.Atoi(t.Token); err != nil {
 			return true
 		}
 	}
