@@ -54,31 +54,6 @@ func grpcErrorToHTTP(err error) error {
 	}
 }
 
-func (s *Server) getAccountByAddressV1(c echo.Context) error {
-	address := c.Param("address")
-	if address == "" {
-		return ErrAddressRequired
-	}
-
-	logging.Debug("GET account by address", types.Inferences, "address", address)
-
-	queryClient := s.recorder.NewInferenceQueryClient()
-	response, err := queryClient.AccountByAddress(c.Request().Context(), &types.QueryAccountByAddressRequest{
-		Address: address,
-	})
-	if err != nil {
-		logging.Error("Failed to get account", types.Inferences, "address", address, "error", err)
-		return grpcErrorToHTTP(err)
-	}
-
-	if response == nil {
-		logging.Error("Account not found", types.Inferences, "address", address)
-		return ErrAccountNotFound
-	}
-
-	return c.JSON(http.StatusOK, response)
-}
-
 func (s *Server) getParticipantByAddress(c echo.Context) error {
 	address := c.Param("address")
 	if address == "" {

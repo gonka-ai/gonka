@@ -44,7 +44,7 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 	if sigData.Dev != "" && sigData.DevSignature != "" {
 		devKey, err := pubKeyGetter.GetAccountPubKey(ctx, sigData.Dev)
 		if err != nil {
-			return err
+			return sdkerrors.Wrapf(err, "failed to get dev pubkey for account %s", sigData.Dev)
 		}
 
 		err = ValidateSignature(components, Developer, devKey, sigData.DevSignature)
@@ -57,7 +57,7 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 	if sigData.TransferAgent != "" && sigData.TransferSignature != "" {
 		agentKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.TransferAgent)
 		if err != nil {
-			return err
+			return sdkerrors.Wrapf(err, "failed to get transfer agent pubkeys for account %s", sigData.TransferAgent)
 		}
 
 		err = ValidateSignatureWithGrantees(components, TransferAgent, agentKeys, sigData.TransferSignature)
@@ -70,7 +70,7 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 	if sigData.Executor != "" && sigData.ExecutorSignature != "" {
 		executorKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.Executor)
 		if err != nil {
-			return err
+			return sdkerrors.Wrapf(err, "failed to get executor pubkeys for account %s", sigData.Executor)
 		}
 
 		err = ValidateSignatureWithGrantees(components, ExecutorAgent, executorKeys, sigData.ExecutorSignature)

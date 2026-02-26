@@ -101,7 +101,7 @@ func NewServer(
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
-	g.GET("participants/:address", s.getAccountByAddressV1)
+	g.GET("participants/:address", s.getAccountByAddress)
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
 
