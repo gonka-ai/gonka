@@ -251,7 +251,6 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 
 	existingInference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
 	existingInference.EpochId = effectiveEpoch.Index
-	k.IncrementCurrentEpochGroupRequestCount(ctx)
 
 	executorPower := uint64(0)
 	executorReputation := int32(0)
@@ -314,5 +313,9 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	if err != nil {
 		return err
 	}
+
+	// Increment current epoch group request count after all possible errors are returned that can cause rollback.
+	// This ensures that the number of requests is always accurate and consistent.
+	k.IncrementCurrentEpochGroupRequestCount(ctx)
 	return nil
 }
