@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 
 	"cosmossdk.io/collections"
-	"github.com/cosmos/gogoproto/proto"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -40,6 +40,39 @@ func getGID() int64 {
 	return gid
 }
 
+// lockDraftWrite on the block cache: while any tx is writing to its draft, no one can read from the block cache (draftWriterMu write lock).
+// Reentrant for the same goroutine; released only in PostHandler via releaseDraftWriteLock. No-op when COSMOS_OPTIMISTIC_CACHES != 1.
+func (c *epochGroupCache) lockDraftWrite() {
+	if !cosmosOptimisticCachesEnabled {
+		return
+	}
+	gid := getGID()
+	if atomic.LoadInt64(&c.draftWriteHolder) == gid {
+		atomic.AddInt32(&c.draftWriteCount, 1)
+		return
+	}
+	c.draftWriterMu.Lock()
+	atomic.StoreInt64(&c.draftWriteHolder, gid)
+	atomic.StoreInt32(&c.draftWriteCount, 1)
+}
+
+func (c *epochGroupCache) unlockDraftWrite() {
+	if !cosmosOptimisticCachesEnabled {
+		return
+	}
+	if atomic.AddInt32(&c.draftWriteCount, -1) == 0 {
+		atomic.StoreInt64(&c.draftWriteHolder, 0)
+		c.draftWriterMu.Unlock()
+	}
+}
+
+// releaseDraftWriteLock fully releases the draft write lock (for PostHandler). Call on tx commit or failure.
+func (c *epochGroupCache) releaseDraftWriteLock() {
+	for atomic.LoadInt32(&c.draftWriteCount) > 0 {
+		c.unlockDraftWrite()
+	}
+}
+
 // ctxKeyEpochGroupDraft is the context key for the tx-scoped EpochGroupData draft.
 type ctxKeyEpochGroupDraft struct{}
 
@@ -47,6 +80,22 @@ type ctxKeyEpochGroupDraft struct{}
 // When set (e.g. via CacheContextWithEpochGroupBranch), reads/writes use this draft instead of the main draft.
 // The branch draft is merged into the parent draft when the branch's writeCache() is called.
 type ctxKeyEpochGroupBranchDraft struct{}
+
+// ctxKeyCommittedStateOnly is set when ctx is for CheckTx or simulate. When set, epoch group uses store for initial reads and a tx-scoped draft for writes (draft never merged to block cache).
+type ctxKeyCommittedStateOnly struct{}
+
+// WithCommittedStateOnly marks ctx so that Get/Set/Remove EpochGroupData use store + tx draft only (no block cache). Call from AnteHandler when IsCheckTx() or simulate.
+func WithCommittedStateOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxKeyCommittedStateOnly{}, true)
+}
+
+func isCommittedStateOnly(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(ctxKeyCommittedStateOnly{}).(bool)
+	return v
+}
 
 // lazyEpochGroupDraft defers allocation of the real draft until the first write (Set/Remove).
 // This avoids allocating a map for every tx when most txs only read epoch group data.
@@ -61,58 +110,20 @@ func (l *lazyEpochGroupDraft) get() *epochGroupDraft {
 
 func (l *lazyEpochGroupDraft) getOrCreate() *epochGroupDraft {
 	l.once.Do(func() {
-		l.d = &epochGroupDraft{m: make(map[epochGroupCacheKey]types.EpochGroupData)}
+		l.d = &epochGroupDraft{
+			m:       make(map[epochGroupCacheKey]types.EpochGroupData),
+			removed: make(map[epochGroupCacheKey]struct{}),
+		}
 	})
 	return l.d
 }
 
 // epochGroupDraft holds tx-scoped EpochGroupData writes for optimistic parallel execution.
-// Uses a reentrant write lock: the same goroutine can write (or delete) multiple times; lock is released only in PostHandler (commit or failure).
+// The block cache's draftWriterMu is held while writing so no one reads uncommitted state; released in PostHandler (commit or failure).
+// removed records keys removed in this tx; deletions are applied to the block cache only on commit so rollback is consistent.
 type epochGroupDraft struct {
-	mu          sync.RWMutex
-	m           map[epochGroupCacheKey]types.EpochGroupData
-	writeHolder int64 // goroutine id of the writer (for reentrancy)
-	writeCount  int32 // number of Lock() calls not yet Unlock()ed by the holder
-}
-
-// lockWrite acquires the write lock; reentrant for the same goroutine (increments count). Release via unlockWrite or releaseWriteLock.
-// Only takes the lock when COSMOS_OPTIMISTIC_CACHES=1; otherwise no-op.
-func (d *epochGroupDraft) lockWrite() {
-	if !cosmosOptimisticCachesEnabled {
-		return
-	}
-	gid := getGID()
-	if atomic.LoadInt64(&d.writeHolder) == gid {
-		atomic.AddInt32(&d.writeCount, 1)
-		return
-	}
-	d.mu.Lock()
-	atomic.StoreInt64(&d.writeHolder, gid)
-	atomic.StoreInt32(&d.writeCount, 1)
-}
-
-// unlockWrite releases one level of the write lock; if count goes to 0, releases the underlying RWMutex.
-// No-op when COSMOS_OPTIMISTIC_CACHES is not 1.
-func (d *epochGroupDraft) unlockWrite() {
-	if !cosmosOptimisticCachesEnabled {
-		return
-	}
-	if atomic.AddInt32(&d.writeCount, -1) == 0 {
-		atomic.StoreInt64(&d.writeHolder, 0)
-		d.mu.Unlock()
-	}
-}
-
-// isWriteLocked returns true if any goroutine holds the write lock (for readers: if true and we are the holder we can read without RLock).
-func (d *epochGroupDraft) isWriteLocked() bool {
-	return atomic.LoadInt32(&d.writeCount) > 0
-}
-
-// releaseWriteLock fully releases the write lock (for PostHandler: unlock until count is 0).
-func (d *epochGroupDraft) releaseWriteLock() {
-	for atomic.LoadInt32(&d.writeCount) > 0 {
-		d.unlockWrite()
-	}
+	m       map[epochGroupCacheKey]types.EpochGroupData
+	removed map[epochGroupCacheKey]struct{}
 }
 
 // WithEpochGroupDraft attaches a lazy tx-scoped draft holder to ctx. Call at tx start (e.g. from AnteHandler).
@@ -194,28 +205,21 @@ func getEpochGroupDraftForWriteFromContext(ctx context.Context) *epochGroupDraft
 }
 
 // CommitEpochGroupDraftFromContext merges the draft from ctx into the block cache. Call from PostHandler on tx success.
-// Does not write to store; FlushCurrentEpochGroupCache in EndBlock persists. Releases the draft write lock if held.
+// Applies draft writes and draft removals (tombstones) to the block cache; does not write to store (FlushCurrentEpochGroupCache in EndBlock persists). Releases the block cache draft write lock if held.
 func (k Keeper) CommitEpochGroupDraftFromContext(ctx context.Context) {
 	draft := getEpochGroupDraftFromContext(ctx)
 	if draft == nil {
 		return
 	}
-	var snapshot map[epochGroupCacheKey]types.EpochGroupData
-	if draft.isWriteLocked() {
-		// This tx holds the write lock (same goroutine as PostHandler); read directly then release.
-		snapshot = make(map[epochGroupCacheKey]types.EpochGroupData, len(draft.m))
-		for key, val := range draft.m {
-			snapshot[key] = val
-		}
-		draft.releaseWriteLock()
-	} else {
-		draft.mu.RLock()
-		snapshot = make(map[epochGroupCacheKey]types.EpochGroupData, len(draft.m))
-		for key, val := range draft.m {
-			snapshot[key] = val
-		}
-		draft.mu.RUnlock()
+	snapshot := make(map[epochGroupCacheKey]types.EpochGroupData, len(draft.m))
+	for key, val := range draft.m {
+		snapshot[key] = val
 	}
+	removedSnapshot := make(map[epochGroupCacheKey]struct{}, len(draft.removed))
+	for key := range draft.removed {
+		removedSnapshot[key] = struct{}{}
+	}
+	k.epochGroupCache.releaseDraftWriteLock()
 
 	c := k.epochGroupCache
 	c.mu.Lock()
@@ -230,52 +234,40 @@ func (k Keeper) CommitEpochGroupDraftFromContext(ctx context.Context) {
 			c.currentDirty = true
 			continue
 		}
-		// Non-current epoch or cache not inited: write through to store.
+		// Non-current/previous epoch or cache not inited: write through to store.
 		_ = k.EpochGroupDataMap.Set(ctx, collections.Join(epochIdx, modelId), epochGroupData)
 	}
-}
-
-// ReleaseEpochGroupDraftFromContext releases the draft write lock if held. Call from PostHandler on tx failure so the lock is released when the tx does not commit.
-func (k Keeper) ReleaseEpochGroupDraftFromContext(ctx context.Context) {
-	draft := getEpochGroupDraftFromContext(ctx)
-	if draft == nil || !draft.isWriteLocked() {
-		return
+	for key := range removedSnapshot {
+		if c.inited && (key.Epoch == c.current || key.Epoch == c.previous) {
+			delete(c.m, key)
+			c.currentDirty = true
+		}
 	}
-	draft.releaseWriteLock()
 }
 
-// mergeEpochGroupBranchDraftIntoParent snapshots the branch draft from branchCtx, releases its write lock,
-// and merges all entries into the parent's draft (from parentCtx). Call before writeCache() when using
-// CacheContextWithEpochGroupBranch so that branch draft writes are visible to the rest of the tx.
+// ReleaseEpochGroupDraftFromContext releases the block cache draft write lock if held. Call from PostHandler on tx failure.
+func (k Keeper) ReleaseEpochGroupDraftFromContext(ctx context.Context) {
+	k.epochGroupCache.releaseDraftWriteLock()
+}
+
+// mergeEpochGroupBranchDraftIntoParent merges the branch draft (writes and removals) into the parent's draft.
+// Call before writeCache() when using CacheContextWithEpochGroupBranch. Caller holds block cache draft writer lock from branch writes.
 func mergeEpochGroupBranchDraftIntoParent(parentCtx, branchCtx context.Context) {
 	branchDraft := getEpochGroupBranchDraftFromContext(branchCtx)
 	if branchDraft == nil {
 		return
 	}
-	var snapshot map[epochGroupCacheKey]types.EpochGroupData
-	if branchDraft.isWriteLocked() {
-		snapshot = make(map[epochGroupCacheKey]types.EpochGroupData, len(branchDraft.m))
-		for key, val := range branchDraft.m {
-			snapshot[key] = val
-		}
-		branchDraft.releaseWriteLock()
-	} else {
-		branchDraft.mu.RLock()
-		snapshot = make(map[epochGroupCacheKey]types.EpochGroupData, len(branchDraft.m))
-		for key, val := range branchDraft.m {
-			snapshot[key] = val
-		}
-		branchDraft.mu.RUnlock()
-	}
 	parentDraft := getEpochGroupDraftForWriteFromContext(parentCtx)
 	if parentDraft == nil {
 		return
 	}
-	parentDraft.lockWrite()
-	defer parentDraft.unlockWrite()
-	for key, val := range snapshot {
+	for key, val := range branchDraft.m {
 		cloned := proto.Clone(&val).(*types.EpochGroupData)
 		parentDraft.m[key] = *cloned
+	}
+	for key := range branchDraft.removed {
+		parentDraft.removed[key] = struct{}{}
+		delete(parentDraft.m, key)
 	}
 }
 
@@ -370,11 +362,15 @@ func (k Keeper) FlushCurrentEpochGroupCache(ctx context.Context) {
 
 // IncrementCurrentEpochGroupRequestCount increments the per-block atomic counter for the current epoch's NumberOfRequests. Committed to store in EndBlock.
 func (k Keeper) IncrementCurrentEpochGroupRequestCount(ctx context.Context) int64 {
+	if isCommittedStateOnly(ctx) {
+		return 0
+	}
 	c := k.epochGroupCache
 	k.ensureEpochGroupCacheInited(ctx)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.inited {
+	inited := c.inited
+	c.mu.Unlock()
+	if !inited {
 		return 0
 	}
 	count := c.currentEpochRequestCount.Add(1)
@@ -385,6 +381,15 @@ func (k Keeper) IncrementCurrentEpochGroupRequestCount(ctx context.Context) int6
 // SetEpochGroupData sets EpochGroupData. When ctx has a tx-scoped draft, current/previous-epoch writes go to the draft only (merged to block cache on tx success, then flushed to store in EndBlock).
 // Draft is created lazily on first write so read-only txs do not allocate it.
 func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
+	if isCommittedStateOnly(ctx) {
+		draft := getEpochGroupDraftForWriteFromContext(ctx)
+		if draft != nil {
+			key := epochGroupCacheKey{Epoch: epochGroupData.EpochIndex, ModelId: epochGroupData.ModelId}
+			cloned := proto.Clone(&epochGroupData).(*types.EpochGroupData)
+			draft.m[key] = *cloned
+		}
+		return
+	}
 	epochIdx := epochGroupData.EpochIndex
 	modelId := epochGroupData.ModelId
 	key := epochGroupCacheKey{Epoch: epochIdx, ModelId: modelId}
@@ -398,12 +403,11 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 		c.mu.RUnlock()
 		if inited && (epochIdx == current || epochIdx == previous) {
 			cloned := proto.Clone(&epochGroupData).(*types.EpochGroupData)
-			draft.lockWrite() // reentrant: same goroutine can write multiple times
+			c.lockDraftWrite() // blocks block cache reads until PostHandler commit/release
 			draft.m[key] = *cloned
-			// Do not unlock here; lock is released in PostHandler (commit or failure)
 			return
 		}
-		// Non-current/previous: write through to store
+		// Non-current: write through to store
 		k.EpochGroupDataMap.Set(ctx, collections.Join(epochIdx, modelId), epochGroupData)
 		return
 	}
@@ -427,6 +431,23 @@ func (k Keeper) GetEpochGroupData(
 	epochIndex uint64,
 	modelId string,
 ) (val types.EpochGroupData, found bool) {
+	if isCommittedStateOnly(ctx) {
+		key := epochGroupCacheKey{Epoch: epochIndex, ModelId: modelId}
+		if draft := getEpochGroupDraftFromContext(ctx); draft != nil {
+			if _, removed := draft.removed[key]; removed {
+				return types.EpochGroupData{}, false
+			}
+			if cached, ok := draft.m[key]; ok {
+				cloned := proto.Clone(&cached).(*types.EpochGroupData)
+				return *cloned, true
+			}
+		}
+		val, err := k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
+		if err != nil {
+			return val, false
+		}
+		return val, true
+	}
 	k.ensureEpochGroupCacheInited(ctx)
 	c := k.epochGroupCache
 	key := epochGroupCacheKey{Epoch: epochIndex, ModelId: modelId}
@@ -437,31 +458,28 @@ func (k Keeper) GetEpochGroupData(
 		inited, current, previous := c.inited, c.current, c.previous
 		c.mu.RUnlock()
 		if inited && (epochIndex == current || epochIndex == previous) {
-			var cached types.EpochGroupData
-			var ok bool
-			if draft.isWriteLocked() && atomic.LoadInt64(&draft.writeHolder) == getGID() {
-				cached, ok = draft.m[key]
-			} else {
-				draft.mu.RLock()
-				cached, ok = draft.m[key]
-				draft.mu.RUnlock()
+			if _, removed := draft.removed[key]; removed {
+				return types.EpochGroupData{}, false
 			}
-			if ok {
+			if cached, ok := draft.m[key]; ok {
 				cloned := proto.Clone(&cached).(*types.EpochGroupData)
 				return *cloned, true
 			}
 		}
 	}
 
+	c.draftWriterMu.RLock()
 	c.mu.RLock()
 	if c.inited && (epochIndex == c.current || epochIndex == c.previous) {
 		if cached, ok := c.m[key]; ok {
 			c.mu.RUnlock()
+			c.draftWriterMu.RUnlock()
 			cloned := proto.Clone(&cached).(*types.EpochGroupData)
 			return *cloned, true
 		}
 	}
 	c.mu.RUnlock()
+	c.draftWriterMu.RUnlock()
 
 	val, err := k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
 	if err != nil {
@@ -483,6 +501,14 @@ func (k Keeper) RemoveEpochGroupData(
 	epochIndex uint64,
 	modelId string,
 ) {
+	if isCommittedStateOnly(ctx) {
+		key := epochGroupCacheKey{Epoch: epochIndex, ModelId: modelId}
+		if draft := getEpochGroupDraftForWriteFromContext(ctx); draft != nil {
+			draft.removed[key] = struct{}{}
+			delete(draft.m, key)
+		}
+		return
+	}
 	k.EpochGroupDataMap.Remove(ctx, collections.Join(epochIndex, modelId))
 	key := epochGroupCacheKey{Epoch: epochIndex, ModelId: modelId}
 	k.ensureEpochGroupCacheInited(ctx)
@@ -492,10 +518,11 @@ func (k Keeper) RemoveEpochGroupData(
 	c.mu.RUnlock()
 	if needDraft {
 		if draft := getEpochGroupDraftForWriteFromContext(ctx); draft != nil {
-			draft.lockWrite()
+			c.lockDraftWrite()
+			draft.removed[key] = struct{}{}
 			delete(draft.m, key)
-			// Do not unlock here; released in PostHandler
 		}
+		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

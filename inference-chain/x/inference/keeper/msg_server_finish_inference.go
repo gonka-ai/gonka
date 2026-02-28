@@ -270,8 +270,8 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 
 	// For TrafficBasis
 	// we don't use here precise (already incremented) number of requests because it's not yet committed to the store,
-	// and can cause undeterministic results.
-	// Moreover we prefer performance and determenism over precision here,
+	// and can cause non-deterministic results.
+	// Moreover we prefer performance and determinism over precision here,
 	// so we just use value from previous committed block.
 
 	//We can use here exact number: currentEpochGroup.GroupData.NumberOfRequests+epochRequestsCount

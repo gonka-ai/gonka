@@ -316,7 +316,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockTime := sdkCtx.BlockTime().Unix()
 
 	// Persist epoch group block cache to store (tx drafts were merged to cache in PostHandler)
-	am.keeper.FlushCurrentEpochGroupCache(ctx)
+	defer am.keeper.FlushCurrentEpochGroupCache(ctx)
 	// Handle confirmation PoC trigger decisions and phase transitions
 	err := am.handleConfirmationPoC(ctx, blockHeight)
 	if err != nil {

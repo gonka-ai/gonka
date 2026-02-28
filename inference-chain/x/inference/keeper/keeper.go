@@ -23,13 +23,17 @@ type epochGroupCacheKey struct {
 // epochGroupCache holds EpochGroupData for current and previous effective epoch only.
 // Invalidated in BeginBlock; flushed to store in EndBlock.
 // currentEpochRequestCount is the per-block atomic counter for NumberOfRequests of the current epoch (root group); merged to store on flush.
+// draftWriterMu is held (write) while any tx is writing to its draft so that no one reads from the block cache until commit/release (deterministic, sequential).
 type epochGroupCache struct {
-	mu                      sync.RWMutex
-	inited                  bool
-	current                 uint64
-	previous                uint64
-	currentDirty            bool
-	m                       map[epochGroupCacheKey]types.EpochGroupData
+	mu                       sync.RWMutex
+	draftWriterMu            sync.RWMutex // held by draft writers; block cache readers take RLock so they wait for no draft writer
+	draftWriteHolder         int64        // goroutine id of current draft writer (reentrancy)
+	draftWriteCount          int32        // reentrant lock count
+	inited                   bool
+	current                  uint64
+	previous                 uint64
+	currentDirty             bool
+	m                        map[epochGroupCacheKey]types.EpochGroupData
 	currentEpochRequestCount atomic.Int64
 }
 

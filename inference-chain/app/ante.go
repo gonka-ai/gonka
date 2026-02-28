@@ -32,11 +32,16 @@ type EpochGroupDraftDecorator struct {
 }
 
 // AnteHandle attaches WithEpochGroupDraft to the context for the rest of the tx.
+// For CheckTx and simulate, also attaches WithCommittedStateOnly so the keeper uses only the store (last committed block), not the block cache.
 func (d EpochGroupDraftDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
 	if d.InferenceKeeper == nil {
 		return next(ctx, tx, simulate)
 	}
-	newCtx := ctx.WithContext(inferencemodulekeeper.WithEpochGroupDraft(ctx.Context()))
+	goCtx := inferencemodulekeeper.WithEpochGroupDraft(ctx.Context())
+	if ctx.IsCheckTx() || simulate {
+		goCtx = inferencemodulekeeper.WithCommittedStateOnly(goCtx)
+	}
+	newCtx := ctx.WithContext(goCtx)
 	return next(newCtx, tx, simulate)
 }
 
@@ -46,12 +51,18 @@ type EpochGroupDraftCommitPostDecorator struct {
 }
 
 // PostHandle runs the rest of the post chain, then on success commits the epoch group draft to the block cache; on failure releases the draft write lock.
+// During DeliverTx: commit on success, release lock on failure. During CheckTx/simulate: always release the lock only (no commit),
+// so we never leak the block-cache draft writer lock; we still skip commit to avoid mutating the shared block cache.
 func (d EpochGroupDraftCommitPostDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
 	newCtx, err := next(ctx, tx, simulate, success)
 	if err != nil {
 		return newCtx, err
 	}
 	if d.InferenceKeeper == nil {
+		return newCtx, nil
+	}
+	if ctx.IsCheckTx() || simulate {
+		d.InferenceKeeper.ReleaseEpochGroupDraftFromContext(newCtx)
 		return newCtx, nil
 	}
 	if success {
