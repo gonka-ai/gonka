@@ -74,9 +74,9 @@ type MockClient struct {
 	PowStatusV2 string // "IDLE", "GENERATING", etc.
 
 	// Capture parameters
-	LastInitDto         *InitDto
-	LastInitValidateDto *InitDto
-	LastValidateBatch   ProofBatch
+	LastInitDto         *InitDtoV1
+	LastInitValidateDto *InitDtoV1
+	LastValidateBatch   ProofBatchV1
 	LastInferenceModel  string
 	LastInferenceArgs   []string
 	LastTrainingParams  struct {
@@ -92,6 +92,30 @@ type MockClient struct {
 	LastModelDelete      *Model
 	LastSetNodeState     MLNodeState
 	LastSetNodeReason    string
+}
+
+// Stub for missing MLNodeClient methods
+func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
+		return []string{}, nil
+	}
+func (m *MockClient) Reset() {}
+func (m *MockClient) InitGenerateV1(ctx context.Context, dto InitDtoV1) error       { return nil }
+func (m *MockClient) InitValidateV1(ctx context.Context, dto InitDtoV1) error       { return nil }
+func (m *MockClient) ValidateBatchV1(ctx context.Context, batch ProofBatchV1) error { return nil }
+func (m *MockClient) GetPowStatusV1(ctx context.Context) (*PowStatusResponseV1, error) {
+	return &PowStatusResponseV1{}, nil
+}
+func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequestV2) (*PoCInitGenerateResponseV2, error) {
+	return &PoCInitGenerateResponseV2{}, nil
+}
+func (m *MockClient) GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (*PoCGenerateResponseV2, error) {
+	return &PoCGenerateResponseV2{}, nil
+}
+func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, error) {
+	return &PoCStatusResponseV2{}, nil
+}
+func (m *MockClient) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) {
+	return &PoCStopResponseV2{}, nil
 }
 
 // NewMockClient creates a new mock client with default values

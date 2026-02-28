@@ -97,13 +97,16 @@ func itoa(v int64) string {
 }
 
 func fmtInt(v int64) string {
-	var buf [20]byte
-	i := len(buf)
-	n := v
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
+       if v == 0 {
+	       return "0"
+       }
+       var buf [20]byte
+       i := len(buf)
+       n := v
+       for n > 0 {
+	       i--
+	       buf[i] = byte('0' + n%10)
+	       n /= 10
+       }
+       return string(buf[i:])
 }
