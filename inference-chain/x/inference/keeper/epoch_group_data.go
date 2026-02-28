@@ -56,6 +56,9 @@ func (c *epochGroupCache) lockDraftWrite() {
 	atomic.StoreInt32(&c.draftWriteCount, 1)
 }
 
+// It is never called as we are releasing the draft write lock when transaction completes
+// and we do not decrement the draft write count
+// It could be used if we want to unlock the reentrant write lock before the transaction completes
 func (c *epochGroupCache) unlockDraftWrite() {
 	if !cosmosOptimisticCachesEnabled {
 		return
@@ -68,8 +71,13 @@ func (c *epochGroupCache) unlockDraftWrite() {
 
 // releaseDraftWriteLock fully releases the draft write lock (for PostHandler). Call on tx commit or failure.
 func (c *epochGroupCache) releaseDraftWriteLock() {
-	for atomic.LoadInt32(&c.draftWriteCount) > 0 {
-		c.unlockDraftWrite()
+	if !cosmosOptimisticCachesEnabled {
+		return
+	}
+	if atomic.LoadInt32(&c.draftWriteCount) > 0 {
+		atomic.StoreInt64(&c.draftWriteHolder, 0)
+		atomic.StoreInt32(&c.draftWriteCount, 0)
+		c.draftWriterMu.Unlock()
 	}
 }
 
