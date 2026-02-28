@@ -51,8 +51,7 @@ type EpochGroupDraftCommitPostDecorator struct {
 }
 
 // PostHandle runs the rest of the post chain, then on success commits the epoch group draft to the block cache; on failure releases the draft write lock.
-// During DeliverTx: commit on success, release lock on failure. During CheckTx/simulate: always release the lock only (no commit),
-// so we never leak the block-cache draft writer lock; we still skip commit to avoid mutating the shared block cache.
+// During DeliverTx: commit on success, release lock on failure. During CheckTx/simulate: skip (we never take the block-cache draft writer lock there, so nothing to release or commit).
 func (d EpochGroupDraftCommitPostDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
 	newCtx, err := next(ctx, tx, simulate, success)
 	if err != nil {
@@ -62,7 +61,7 @@ func (d EpochGroupDraftCommitPostDecorator) PostHandle(ctx sdk.Context, tx sdk.T
 		return newCtx, nil
 	}
 	if ctx.IsCheckTx() || simulate {
-		d.InferenceKeeper.ReleaseEpochGroupDraftFromContext(newCtx)
+		// We never take the block-cache draft writer lock during CheckTx/simulate, so nothing to release or commit.
 		return newCtx, nil
 	}
 	if success {
@@ -239,8 +238,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	}
 
 	anteDecorators := []sdk.AnteDecorator{
-		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
-		EpochGroupDraftDecorator{InferenceKeeper: options.InferenceKeeper}, // tx-scoped EpochGroupData draft; committed to block cache in PostHandler, flushed in EndBlock
+		ante.NewSetUpContextDecorator(),                                                  // outermost AnteDecorator. SetUpContext must be called first
+		EpochGroupDraftDecorator{InferenceKeeper: options.InferenceKeeper},               // tx-scoped EpochGroupData draft; committed to block cache in PostHandler, flushed in EndBlock
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
