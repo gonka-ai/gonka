@@ -469,16 +469,13 @@ func (k Keeper) GetEpochGroupData(
 	}
 
 	c.draftWriterMu.RLock()
-	c.mu.RLock()
 	if c.inited && (epochIndex == c.current || epochIndex == c.previous) {
 		if cached, ok := c.m[key]; ok {
-			c.mu.RUnlock()
 			c.draftWriterMu.RUnlock()
 			cloned := proto.Clone(&cached).(*types.EpochGroupData)
 			return *cloned, true
 		}
 	}
-	c.mu.RUnlock()
 	c.draftWriterMu.RUnlock()
 
 	val, err := k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
