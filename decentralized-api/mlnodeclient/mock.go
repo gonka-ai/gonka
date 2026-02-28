@@ -96,9 +96,9 @@ type MockClient struct {
 
 // Stub for missing MLNodeClient methods
 func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
-		return []string{}, nil
-	}
-func (m *MockClient) Reset() {}
+	return []string{}, nil
+}
+func (m *MockClient) Reset()                                                        {}
 func (m *MockClient) InitGenerateV1(ctx context.Context, dto InitDtoV1) error       { return nil }
 func (m *MockClient) InitValidateV1(ctx context.Context, dto InitDtoV1) error       { return nil }
 func (m *MockClient) ValidateBatchV1(ctx context.Context, batch ProofBatchV1) error { return nil }
