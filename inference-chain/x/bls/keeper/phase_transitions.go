@@ -336,7 +336,7 @@ func (k Keeper) CalculateSlotsWithVerificationVectors(epochBLSData *types.EpochB
 	return totalSlots
 }
 
-// DetermineValidDealersWithConsensus determines which dealers are valid based on majority consensus from verification vectors
+// DetermineValidDealersWithConsensus determines which dealers are valid under weighted slot quorum
 func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSData) ([]bool, error) {
 	participantCount := len(epochBLSData.Participants)
 	if participantCount == 0 {
@@ -344,32 +344,39 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 	}
 
 	validDealers := make([]bool, participantCount)
-	requiredApprovals := participantCount/2 + 1
+	totalSlots := uint64(epochBLSData.ITotalSlots)
+	quorumSlots := totalSlots/2 + 1
 
-	// For each dealer, count approvals against a fixed denominator of all participants.
-	// Missing verification submissions or short DealerValidity vectors are treated as "no" votes.
 	for dealerIndex := 0; dealerIndex < participantCount; dealerIndex++ {
-		validVotes := 0
+		var validVotingSlotsExcludingDealer uint64
 
-		// Count approvals from all participants.
-		for verifierIndex := 0; verifierIndex < participantCount; verifierIndex++ {
-			if verifierIndex >= len(epochBLSData.VerificationSubmissions) {
+		for verifierIndex, verification := range epochBLSData.VerificationSubmissions {
+			if verification == nil || len(verification.DealerValidity) == 0 {
 				continue
 			}
-			verification := epochBLSData.VerificationSubmissions[verifierIndex]
-			if verification == nil || dealerIndex >= len(verification.DealerValidity) {
+			if verifierIndex >= participantCount {
 				continue
 			}
-			if verification.DealerValidity[dealerIndex] {
-				validVotes++
+			if verifierIndex == dealerIndex {
+				continue
 			}
+			if dealerIndex >= len(verification.DealerValidity) || !verification.DealerValidity[dealerIndex] {
+				continue
+			}
+
+			participant := epochBLSData.Participants[verifierIndex]
+			if participant.SlotEndIndex < participant.SlotStartIndex {
+				return nil, fmt.Errorf("invalid slot range for participant %d in epoch %d", verifierIndex, epochBLSData.EpochId)
+			}
+			verifierSlots := uint64(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+			validVotingSlotsExcludingDealer += verifierSlots
 		}
 
-		// Dealer is valid if strict majority of all participants approve.
-		dealerIsValid := validVotes >= requiredApprovals
+		dealerIsValid := totalSlots > 0 && validVotingSlotsExcludingDealer >= quorumSlots
 		dealerSubmittedParts := dealerIndex < len(epochBLSData.DealerParts) &&
 			epochBLSData.DealerParts[dealerIndex] != nil &&
-			epochBLSData.DealerParts[dealerIndex].DealerAddress != ""
+			epochBLSData.DealerParts[dealerIndex].DealerAddress != "" &&
+			len(epochBLSData.DealerParts[dealerIndex].Commitments) > 0
 
 		validDealers[dealerIndex] = dealerIsValid && dealerSubmittedParts
 	}
