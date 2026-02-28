@@ -11,6 +11,7 @@ import (
 
 	"cosmossdk.io/collections"
 	"github.com/cosmos/gogoproto/proto"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -41,6 +42,11 @@ func getGID() int64 {
 
 // ctxKeyEpochGroupDraft is the context key for the tx-scoped EpochGroupData draft.
 type ctxKeyEpochGroupDraft struct{}
+
+// ctxKeyEpochGroupBranchDraft is the context key for a cache-branch-scoped EpochGroupData draft.
+// When set (e.g. via CacheContextWithEpochGroupBranch), reads/writes use this draft instead of the main draft.
+// The branch draft is merged into the parent draft when the branch's writeCache() is called.
+type ctxKeyEpochGroupBranchDraft struct{}
 
 // lazyEpochGroupDraft defers allocation of the real draft until the first write (Set/Remove).
 // This avoids allocating a map for every tx when most txs only read epoch group data.
@@ -117,9 +123,13 @@ func WithEpochGroupDraft(ctx context.Context) context.Context {
 }
 
 // getEpochGroupDraftFromContext returns the draft from ctx if it exists, or nil. Does not create the draft (for reads and for Commit/Release).
+// When ctx has a branch draft (e.g. from CacheContextWithEpochGroupBranch), that is preferred over the main tx draft.
 func getEpochGroupDraftFromContext(ctx context.Context) *epochGroupDraft {
 	if ctx == nil {
 		return nil
+	}
+	if d := getEpochGroupBranchDraftFromContext(ctx); d != nil {
+		return d
 	}
 	v := ctx.Value(ctxKeyEpochGroupDraft{})
 	if v == nil {
@@ -135,10 +145,39 @@ func getEpochGroupDraftFromContext(ctx context.Context) *epochGroupDraft {
 	}
 }
 
+// getEpochGroupBranchDraftFromContext returns only the branch draft from ctx (ctxKeyEpochGroupBranchDraft), or nil.
+// Does not create the draft. Used when merging a branch into the parent.
+func getEpochGroupBranchDraftFromContext(ctx context.Context) *epochGroupDraft {
+	if ctx == nil {
+		return nil
+	}
+	v := ctx.Value(ctxKeyEpochGroupBranchDraft{})
+	if v == nil {
+		return nil
+	}
+	switch h := v.(type) {
+	case *lazyEpochGroupDraft:
+		return h.get()
+	case *epochGroupDraft:
+		return h
+	default:
+		return nil
+	}
+}
+
 // getEpochGroupDraftForWriteFromContext returns the draft, creating it from the lazy holder on first write. Use in SetEpochGroupData and RemoveEpochGroupData.
+// When ctx has a branch draft (e.g. from CacheContextWithEpochGroupBranch), that is preferred over the main tx draft.
 func getEpochGroupDraftForWriteFromContext(ctx context.Context) *epochGroupDraft {
 	if ctx == nil {
 		return nil
+	}
+	if v := ctx.Value(ctxKeyEpochGroupBranchDraft{}); v != nil {
+		switch h := v.(type) {
+		case *lazyEpochGroupDraft:
+			return h.getOrCreate()
+		case *epochGroupDraft:
+			return h
+		}
 	}
 	v := ctx.Value(ctxKeyEpochGroupDraft{})
 	if v == nil {
@@ -203,6 +242,61 @@ func (k Keeper) ReleaseEpochGroupDraftFromContext(ctx context.Context) {
 		return
 	}
 	draft.releaseWriteLock()
+}
+
+// mergeEpochGroupBranchDraftIntoParent snapshots the branch draft from branchCtx, releases its write lock,
+// and merges all entries into the parent's draft (from parentCtx). Call before writeCache() when using
+// CacheContextWithEpochGroupBranch so that branch draft writes are visible to the rest of the tx.
+func mergeEpochGroupBranchDraftIntoParent(parentCtx, branchCtx context.Context) {
+	branchDraft := getEpochGroupBranchDraftFromContext(branchCtx)
+	if branchDraft == nil {
+		return
+	}
+	var snapshot map[epochGroupCacheKey]types.EpochGroupData
+	if branchDraft.isWriteLocked() {
+		snapshot = make(map[epochGroupCacheKey]types.EpochGroupData, len(branchDraft.m))
+		for key, val := range branchDraft.m {
+			snapshot[key] = val
+		}
+		branchDraft.releaseWriteLock()
+	} else {
+		branchDraft.mu.RLock()
+		snapshot = make(map[epochGroupCacheKey]types.EpochGroupData, len(branchDraft.m))
+		for key, val := range branchDraft.m {
+			snapshot[key] = val
+		}
+		branchDraft.mu.RUnlock()
+	}
+	parentDraft := getEpochGroupDraftForWriteFromContext(parentCtx)
+	if parentDraft == nil {
+		return
+	}
+	parentDraft.lockWrite()
+	defer parentDraft.unlockWrite()
+	for key, val := range snapshot {
+		cloned := proto.Clone(&val).(*types.EpochGroupData)
+		parentDraft.m[key] = *cloned
+	}
+}
+
+// CacheContextWithEpochGroupBranch returns a cached context that has its own EpochGroupData draft branch.
+// Use the returned cacheCtx for speculative work; any SetEpochGroupData/RemoveEpochGroupData on cacheCtx
+// go to the branch draft. Call the returned writeCache() on success to merge both the store cache and
+// the branch draft into the parent context. If you do not call writeCache(), both store and draft changes
+// are discarded. Safe to call writeCache() at most once (idempotent).
+func (k Keeper) CacheContextWithEpochGroupBranch(ctx sdk.Context) (sdk.Context, func()) {
+	cacheCtx, writeCache := ctx.CacheContext()
+	branchLazy := &lazyEpochGroupDraft{}
+	cacheCtx = cacheCtx.WithContext(context.WithValue(ctx.Context(), ctxKeyEpochGroupBranchDraft{}, branchLazy))
+	var written bool
+	return cacheCtx, func() {
+		if written {
+			return
+		}
+		written = true
+		mergeEpochGroupBranchDraftIntoParent(ctx.Context(), cacheCtx.Context())
+		writeCache()
+	}
 }
 
 // InvalidateEpochGroupCache clears the epoch group block cache. Call from BeginBlock each block.
