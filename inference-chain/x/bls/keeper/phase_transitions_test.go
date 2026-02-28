@@ -324,15 +324,14 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
 
-	// Set up verification submissions for first 2 participants (sufficient >50%)
-	// Both participants approve both dealers
+	// All 3 participants approve dealers 0 and 1
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
 	k.SetActiveEpochID(ctx, epochID)
 
-	// Call CompleteDKG
 	err := k.CompleteDKG(ctx, &epochBLSData)
 	require.NoError(t, err)
 
@@ -387,6 +386,32 @@ func TestCompleteDKG_InsufficientVerification(t *testing.T) {
 	require.Equal(t, uint64(0), activeEpoch)
 }
 
+func TestCompleteDKG_FailsWhenVerificationCoverageAllowsNoStrictDealerConsensus(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	epochID := uint64(31)
+	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
+
+	testCommitment := createTestG2Commitment()
+	epochBLSData.DealerParts[0].DealerAddress = "participant1"
+	epochBLSData.DealerParts[0].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[1].DealerAddress = "participant2"
+	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
+
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
+
+	k.SetEpochBLSData(ctx, epochBLSData)
+	k.SetActiveEpochID(ctx, epochID)
+
+	err := k.CompleteDKG(ctx, &epochBLSData)
+	require.NoError(t, err)
+
+	require.Equal(t, types.DKGPhase_DKG_PHASE_FAILED, epochBLSData.DkgPhase)
+	require.Nil(t, epochBLSData.GroupPublicKey)
+}
+
 func TestCompleteDKG_WrongPhase(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
@@ -406,30 +431,23 @@ func TestDetermineValidDealersWithConsensus(t *testing.T) {
 	// Create test epoch data with 5 participants
 	epochBLSData := createTestEpochBLSData(uint64(23), 5)
 
-	// Set up dealer parts for first 4 participants
-	for i := 0; i < 4; i++ {
+	// Set up dealer parts for first 3 participants
+	for i := 0; i < 3; i++ {
 		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
 		epochBLSData.DealerParts[i].Commitments = [][]byte{createTestG2Commitment()}
 	}
 
-	// Set up verification submissions with mixed opinions
-	// Participant 1: approves dealers 0,1,2; rejects 3,4
-	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, true, false, false}
-	// Participant 2: approves dealers 0,1; rejects 2,3,4
+	// All 5 participants vote, only dealer 0 reaches quorum
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false, false, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false, false, false}
-	// Participant 3: approves dealers 0,2,3; rejects 1,4
-	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, false, true, true, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, false, false, false, false}
+	epochBLSData.VerificationSubmissions[3].DealerValidity = []bool{true, false, false, false, false}
+	epochBLSData.VerificationSubmissions[4].DealerValidity = []bool{true, false, false, false, false}
 
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-	// Expected results:
-	// Dealer 0: 3/3 votes (100%) -> VALID
-	// Dealer 1: 2/3 votes (67%) -> VALID
-	// Dealer 2: 2/3 votes (67%) -> VALID
-	// Dealer 3: 1/3 votes (33%) -> INVALID (no submission anyway)
-	// Dealer 4: 0/3 votes (0%) -> INVALID (no submission anyway)
-	expectedValidDealers := []bool{true, true, true, false, false}
+	expectedValidDealers := []bool{true, false, false, false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
@@ -445,16 +463,92 @@ func TestDetermineValidDealersWithConsensus_TieVotes(t *testing.T) {
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{createTestG2Commitment()}
 
-	// Set up verification submissions with tie votes (1/2 each)
+	// Each participant only approves itself
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{false, true}
 
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-	// With tie votes (1/2 = 50%), dealers should be INVALID (need >50%)
+	// 50/50 split doesn't reach >50% quorum, both invalid
 	expectedValidDealers := []bool{false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
+}
+
+func TestDetermineValidDealersWithConsensus_WeightedRejectsNodeMajority(t *testing.T) {
+	k, _ := keepertest.BlsKeeper(t)
+
+	epochBLSData := createTestEpochBLSData(uint64(28), 3)
+	epochBLSData.ITotalSlots = 100
+	epochBLSData.Participants[0].SlotStartIndex = 0
+	epochBLSData.Participants[0].SlotEndIndex = 79
+	epochBLSData.Participants[1].SlotStartIndex = 80
+	epochBLSData.Participants[1].SlotEndIndex = 89
+	epochBLSData.Participants[2].SlotStartIndex = 90
+	epochBLSData.Participants[2].SlotEndIndex = 99
+
+	for i := 0; i < 3; i++ {
+		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
+		epochBLSData.DealerParts[i].Commitments = [][]byte{createTestG2Commitment()}
+	}
+
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{false, false, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, false, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, false, false}
+
+	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false, false}, validDealers)
+}
+
+func TestDetermineValidDealersWithConsensus_StrictRejectsSlotMajorityWithoutFullCoverage(t *testing.T) {
+	k, _ := keepertest.BlsKeeper(t)
+
+	epochBLSData := createTestEpochBLSData(uint64(29), 3)
+	epochBLSData.ITotalSlots = 100
+	epochBLSData.Participants[0].SlotStartIndex = 0
+	epochBLSData.Participants[0].SlotEndIndex = 79
+	epochBLSData.Participants[1].SlotStartIndex = 80
+	epochBLSData.Participants[1].SlotEndIndex = 89
+	epochBLSData.Participants[2].SlotStartIndex = 90
+	epochBLSData.Participants[2].SlotEndIndex = 99
+
+	epochBLSData.DealerParts[0].DealerAddress = "participant1"
+	epochBLSData.DealerParts[0].Commitments = [][]byte{createTestG2Commitment()}
+
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, false, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{false, false, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{false, false, false}
+
+	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false, false}, validDealers)
+}
+
+func TestDetermineValidDealersWithConsensus_RejectsBareMajorityAmongSubmitters(t *testing.T) {
+	k, _ := keepertest.BlsKeeper(t)
+
+	epochBLSData := createTestEpochBLSData(uint64(30), 3)
+	epochBLSData.ITotalSlots = 100
+	epochBLSData.Participants[0].SlotStartIndex = 0
+	epochBLSData.Participants[0].SlotEndIndex = 25
+	epochBLSData.Participants[1].SlotStartIndex = 26
+	epochBLSData.Participants[1].SlotEndIndex = 50
+	epochBLSData.Participants[2].SlotStartIndex = 51
+	epochBLSData.Participants[2].SlotEndIndex = 99
+
+	for i := 0; i < 3; i++ {
+		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
+		epochBLSData.DealerParts[i].Commitments = [][]byte{createTestG2Commitment()}
+	}
+
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, false, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{false, false, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{}
+
+	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false, false}, validDealers)
 }
 
 func TestCalculateSlotsWithVerificationVectors(t *testing.T) {
@@ -492,9 +586,10 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
 
-	// Set up verification submissions for first 2 participants (sufficient)
+	// All 3 participants approve both dealers
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
 	k.SetActiveEpochID(ctx, epochID)
