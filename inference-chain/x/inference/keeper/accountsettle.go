@@ -51,7 +51,7 @@ func CheckAndPunishForDowntimeForParticipant(participant types.Participant, rewa
 
 func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) uint64 {
 	if total == 0 {
-		return reward
+		return 0
 	}
 	passed, err := calculations.MissedStatTest(int(missed), int(total), p0.ToDecimal())
 	if err != nil {
