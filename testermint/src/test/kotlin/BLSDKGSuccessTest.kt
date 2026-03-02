@@ -135,7 +135,7 @@ class BLSDKGSuccessTest : TestermintTest() {
         
         // Capture epoch ID once to avoid race conditions
         val epochId = getCurrentEpochId(genesis)
-        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
+        waitForDKGPhase(genesis, DKGPhase.SIGNED, epochId)
         
         val blsData = queryEpochBLSData(genesis, epochId)
         assertThat(blsData).isNotNull()
@@ -170,7 +170,7 @@ class BLSDKGSuccessTest : TestermintTest() {
     
     private fun monitorDKGPhaseProgression(genesis: com.productscience.LocalInferencePair, epochId: Long) {
         logSection("Monitoring DKG phase progression until completion")
-        waitForDKGPhase(genesis, DKGPhase.COMPLETED, epochId)
+        waitForDKGPhase(genesis, DKGPhase.SIGNED, epochId)
         logSection("DKG phase progression completed successfully!")
     }
     
@@ -187,7 +187,7 @@ class BLSDKGSuccessTest : TestermintTest() {
         blsDataList.forEach { (nodeName, blsData) ->
             assertThat(blsData).isNotNull()
             assertThat(blsData?.epochId).isEqualTo(referenceData?.epochId)
-            assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.COMPLETED)
+            assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.SIGNED)
             assertThat(blsData?.groupPublicKey).isEqualTo(referenceData?.groupPublicKey)
             Logger.info("Cross-node consistency validated for node: $nodeName")
         }
@@ -229,7 +229,7 @@ class BLSDKGSuccessTest : TestermintTest() {
             }
             
             assertThat(blsData?.groupPublicKey).isNotNull()
-            assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.COMPLETED)
+            assertThat(blsData?.dkgPhase).isEqualTo(DKGPhase.SIGNED)
             
             Logger.info("Node ${pair.name} ready for threshold signing")
         }
