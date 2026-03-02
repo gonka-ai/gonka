@@ -304,7 +304,7 @@ class BLSDKGSuccessTest : TestermintTest() {
             }
             
             // Check if we've reached the target phase or higher
-            if (currentPhase != null && currentPhase.value >= targetPhase.value) {
+            if (currentPhase != null && hasReachedTargetPhase(currentPhase, targetPhase)) {
                 Logger.info("✅ DKG Phase $currentPhase reached for epoch $epochId (target was $targetPhase)")
                 return
             }
@@ -319,6 +319,22 @@ class BLSDKGSuccessTest : TestermintTest() {
         }
         
         error("Timeout waiting for DKG phase $targetPhase (current: $currentPhase, attempts: $attempts)")
+    }
+
+    private fun hasReachedTargetPhase(currentPhase: DKGPhase, targetPhase: DKGPhase): Boolean {
+        return phaseRank(currentPhase) >= phaseRank(targetPhase)
+    }
+
+    private fun phaseRank(phase: DKGPhase): Int {
+        return when (phase) {
+            DKGPhase.UNDEFINED -> 0
+            DKGPhase.DEALING -> 1
+            DKGPhase.VERIFYING -> 2
+            DKGPhase.DISPUTING -> 3
+            DKGPhase.COMPLETED -> 4
+            DKGPhase.SIGNED -> 5
+            DKGPhase.FAILED -> -1
+        }
     }
     
     private fun validateDKGPhase(pair: com.productscience.LocalInferencePair, epochId: Long, expectedPhase: DKGPhase) {
@@ -450,9 +466,11 @@ class BLSDKGSuccessTest : TestermintTest() {
                 val expectedSlotCount = (participant.slotEndIndex - participant.slotStartIndex + 1)
                 logHighlight("Participant $participantIndex (${participant.address}): expected slots=$expectedSlotCount, actual shares=${shares.encryptedShares.size}")
 
-                // For now, we are going to check for EITHER expectedSlotCount OR expectedSlotCount*2, because we
-                // are producing encryptedShares for both warm and hot key
-                assertThat(shares.encryptedShares.size).isIn(expectedSlotCount, expectedSlotCount * 2)
+                // encrypted_shares is flattened as slot_count * keys_per_slot.
+                // keys_per_slot may vary based on snapshot keys, so only enforce shape.
+                assertThat(expectedSlotCount).isGreaterThan(0)
+                assertThat(shares.encryptedShares.size).isGreaterThanOrEqualTo(expectedSlotCount)
+                assertThat(shares.encryptedShares.size % expectedSlotCount).isEqualTo(0)
                 
                 // Validate encrypted share format (should be non-empty)
                 shares.encryptedShares.forEachIndexed { shareIndex, encryptedShare ->
@@ -527,7 +545,8 @@ class BLSDKGSuccessTest : TestermintTest() {
 enum class DKGPhase(val value: Int) {
     UNDEFINED(0),
     DEALING(1),
-    VERIFYING(2), 
+    VERIFYING(2),
+    DISPUTING(6),
     COMPLETED(3),
     FAILED(4),
     SIGNED(5);

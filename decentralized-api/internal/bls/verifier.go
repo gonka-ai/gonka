@@ -1,6 +1,7 @@
 package bls
 
 import (
+	"bytes"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
@@ -107,6 +108,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 
 	switch epochData.DkgPhase {
 	case types.DKGPhase_DKG_PHASE_VERIFYING,
+		types.DKGPhase_DKG_PHASE_DISPUTING,
 		types.DKGPhase_DKG_PHASE_COMPLETED,
 		types.DKGPhase_DKG_PHASE_SIGNED:
 	default:
@@ -150,7 +152,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 		"tDegree", epochData.TSlotsDegree)
 
 	expectedCommitmentsCount := int(epochData.TSlotsDegree) + 1
-	err := bm.performVerificationAndReconstruction(verificationResult, epochData.DealerParts, myParticipantIndex, expectedCommitmentsCount)
+	err := bm.performVerificationAndReconstruction(verificationResult, epochData.DealerParts, myParticipant, myParticipantIndex, expectedCommitmentsCount)
 	if err != nil {
 		return false, fmt.Errorf("failed to perform verification and reconstruction: %w", err)
 	}
@@ -159,6 +161,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 		epochData.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED {
 		verificationResult.ValidDealers = epochData.ValidDealers
 		verificationResult.GroupPublicKey = epochData.GroupPublicKey
+		bm.recomputeAggregatedSharesFromConsensusValidDealers(verificationResult)
 	}
 
 	bm.storeVerificationResult(verificationResult)
@@ -167,7 +170,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 }
 
 // performVerificationAndReconstruction performs the core verification and share reconstruction logic
-func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipantIndex int, expectedCommitmentsCount int) error {
+func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipant *types.BLSParticipantInfo, myParticipantIndex int, expectedCommitmentsCount int) error {
 	logging.Debug(verifierLogTag+"Starting share verification and reconstruction", inferenceTypes.BLS,
 		"epochID", verificationResult.EpochID,
 		"slotRange", verificationResult.SlotRange,
@@ -179,6 +182,8 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 	verificationResult.DealerShares = make([][]fr.Element, len(dealerParts))
 	verificationResult.DealerValidity = make([]bool, len(dealerParts))
 	verificationResult.AggregatedShares = make([]fr.Element, numSlots)
+	verificationResult.ComplaintEvidence = make(map[uint32]DealerComplaintEvidence)
+	initialDealerKeyIndex := bm.localKeyIndexFromParticipantSnapshot(myParticipant)
 
 	// First iterate over dealers
 	for dealerIndex, dealerPart := range dealerParts {
@@ -223,7 +228,7 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		// Initialize dealer shares array
 		dealerSlotShares := make([]fr.Element, numSlots)
 		allSlotsValid := true
-		dealerKeyIndex := -1 // Track which key index works for this dealer
+		dealerKeyIndex := initialDealerKeyIndex // Track which key index works for this dealer
 
 		// Iterate over all slots for this dealer
 		for slotOffset := 0; slotOffset < numSlots; slotOffset++ {
@@ -236,6 +241,16 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 					"dealerIndex", dealerIndex,
 					"slotIndex", slotIndex,
 					"error", err)
+				if dealerKeyIndex >= 0 {
+					if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, dealerKeyIndex); idxErr == nil {
+						bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
+					}
+				} else {
+					// Without a resolved key index we cannot attribute a specific ciphertext reliably.
+					logging.Debug(verifierLogTag+"Skipping complaint evidence because local key index is unresolved", inferenceTypes.BLS,
+						"dealerIndex", dealerIndex,
+						"slotIndex", slotIndex)
+				}
 				allSlotsValid = false
 				break
 			}
@@ -250,6 +265,9 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 					"dealerIndex", dealerIndex,
 					"slotIndex", slotIndex,
 					"error", err)
+				if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, keyIndex); idxErr == nil {
+					bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
+				}
 				allSlotsValid = false
 				break
 			}
@@ -258,6 +276,9 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 				logging.Warn(verifierLogTag+"Share verification failed", inferenceTypes.BLS,
 					"dealerIndex", dealerIndex,
 					"slotIndex", slotIndex)
+				if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, keyIndex); idxErr == nil {
+					bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
+				}
 				allSlotsValid = false
 				break
 			}
@@ -313,6 +334,64 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		"processedSlots", len(verificationResult.AggregatedShares))
 
 	return nil
+}
+
+func (bm *BlsManager) localKeyIndexFromParticipantSnapshot(participant *types.BLSParticipantInfo) int {
+	if participant == nil {
+		return -1
+	}
+	localPubKey := bm.cosmosClient.GetAccountPubKey()
+	if localPubKey == nil {
+		return -1
+	}
+	localPubKeyBytes := localPubKey.Bytes()
+	if len(localPubKeyBytes) == 0 {
+		return -1
+	}
+	if bytes.Equal(localPubKeyBytes, participant.Secp256K1PublicKey) {
+		return 0
+	}
+	for idx, additionalKey := range participant.AllowedSecp256K1PublicKeys {
+		if bytes.Equal(localPubKeyBytes, additionalKey) {
+			return idx + 1
+		}
+	}
+	return -1
+}
+
+func (bm *BlsManager) appendComplaintEvidence(result *VerificationResult, dealerIndex uint32, slotIndex uint32, ciphertextIndex uint32) {
+	if result == nil {
+		return
+	}
+	if result.ComplaintEvidence == nil {
+		result.ComplaintEvidence = make(map[uint32]DealerComplaintEvidence)
+	}
+	if _, found := result.ComplaintEvidence[dealerIndex]; !found {
+		result.ComplaintEvidence[dealerIndex] = DealerComplaintEvidence{
+			DisputedSlotIndex:       slotIndex,
+			DisputedCiphertextIndex: ciphertextIndex,
+		}
+		return
+	}
+}
+
+func (bm *BlsManager) ciphertextIndexForSlotKey(encryptedShares [][]byte, slotOffset, numSlots, keyIndex int) (uint32, error) {
+	totalCiphertexts := len(encryptedShares)
+	if totalCiphertexts == 0 {
+		return 0, fmt.Errorf("no encrypted shares available")
+	}
+	if numSlots == 0 || totalCiphertexts%numSlots != 0 {
+		return 0, fmt.Errorf("invalid encrypted shares shape")
+	}
+	keysPerSlot := totalCiphertexts / numSlots
+	if keyIndex < 0 || keyIndex >= keysPerSlot {
+		return 0, fmt.Errorf("key index %d out of range [0,%d)", keyIndex, keysPerSlot)
+	}
+	ciphertextIndex := slotOffset*keysPerSlot + keyIndex
+	if ciphertextIndex >= totalCiphertexts {
+		return 0, fmt.Errorf("ciphertext index out of range")
+	}
+	return uint32(ciphertextIndex), nil
 }
 
 // decryptShareForSlot tries to decrypt a share for a specific slot, handling warm keys
@@ -529,9 +608,10 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 
 	// Submit the verification vector using the dealer validity we already determined
 	msg := &types.MsgSubmitVerificationVector{
-		Creator:        bm.cosmosClient.GetAccountAddress(),
-		EpochId:        epochID,
-		DealerValidity: verificationResult.DealerValidity,
+		Creator:          bm.cosmosClient.GetAccountAddress(),
+		EpochId:          epochID,
+		DealerValidity:   verificationResult.DealerValidity,
+		DealerComplaints: bm.buildDealerComplaintsFromEvidence(verificationResult),
 	}
 
 	_, err := bm.cosmosClient.SubmitVerificationVector(msg)
@@ -545,6 +625,28 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 		"totalDealers", len(verificationResult.DealerValidity))
 
 	return nil
+}
+
+func (bm *BlsManager) buildDealerComplaintsFromEvidence(result *VerificationResult) []types.VerificationDealerComplaint {
+	if result == nil || len(result.ComplaintEvidence) == 0 {
+		return nil
+	}
+
+	complaints := make([]types.VerificationDealerComplaint, 0, len(result.ComplaintEvidence))
+	for dealerIndex, evidence := range result.ComplaintEvidence {
+		if int(dealerIndex) >= len(result.DealerValidity) {
+			continue
+		}
+		if result.DealerValidity[dealerIndex] {
+			continue
+		}
+		complaints = append(complaints, types.VerificationDealerComplaint{
+			DealerIndex:             dealerIndex,
+			DisputedSlotIndex:       evidence.DisputedSlotIndex,
+			DisputedCiphertextIndex: evidence.DisputedCiphertextIndex,
+		})
+	}
+	return complaints
 }
 
 // countTrueValues counts the number of true values in a boolean slice
@@ -646,16 +748,18 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 		"groupPubKeyBytes", len(epochData.GroupPublicKey))
 
 	completedResult := &VerificationResult{
-		EpochID:          epochID,
-		DkgPhase:         types.DKGPhase_DKG_PHASE_COMPLETED,
-		IsParticipant:    existingResult.IsParticipant,
-		SlotRange:        existingResult.SlotRange,
-		DealerShares:     existingResult.DealerShares,
-		DealerValidity:   existingResult.DealerValidity,
-		AggregatedShares: existingResult.AggregatedShares,
-		ValidDealers:     epochData.ValidDealers,   // Store consensus valid dealers from event
-		GroupPublicKey:   epochData.GroupPublicKey, // Store validated group public key from epoch data
+		EpochID:           epochID,
+		DkgPhase:          types.DKGPhase_DKG_PHASE_COMPLETED,
+		IsParticipant:     existingResult.IsParticipant,
+		SlotRange:         existingResult.SlotRange,
+		DealerShares:      existingResult.DealerShares,
+		DealerValidity:    existingResult.DealerValidity,
+		AggregatedShares:  existingResult.AggregatedShares,
+		ValidDealers:      epochData.ValidDealers,   // Store consensus valid dealers from event
+		GroupPublicKey:    epochData.GroupPublicKey, // Store validated group public key from epoch data
+		ComplaintEvidence: existingResult.ComplaintEvidence,
 	}
+	bm.recomputeAggregatedSharesFromConsensusValidDealers(completedResult)
 
 	// Store the completed verification result
 	bm.storeVerificationResult(completedResult)
@@ -667,7 +771,44 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 		"aggregatedSharesCount", len(completedResult.AggregatedShares),
 		"phase", completedResult.DkgPhase)
 
+	// Opening material is only needed through disputing phase.
+	bm.deleteDealerOpeningsForEpoch(epochID)
+
 	return nil
+}
+
+// recomputeAggregatedSharesFromConsensusValidDealers rebuilds AggregatedShares using consensus ValidDealers.
+// If consensus data is unavailable or malformed, it leaves AggregatedShares unchanged.
+func (bm *BlsManager) recomputeAggregatedSharesFromConsensusValidDealers(result *VerificationResult) {
+	if result == nil {
+		return
+	}
+	if len(result.ValidDealers) != len(result.DealerShares) {
+		logging.Warn(verifierLogTag+"Skipping consensus share recomputation due to validity/dealer mismatch", inferenceTypes.BLS,
+			"epochID", result.EpochID,
+			"validDealers", len(result.ValidDealers),
+			"dealerShares", len(result.DealerShares))
+		return
+	}
+
+	numSlots := int(result.SlotRange[1] - result.SlotRange[0] + 1)
+	recomputed := make([]fr.Element, numSlots)
+	for slotOffset := 0; slotOffset < numSlots; slotOffset++ {
+		aggregate := &fr.Element{}
+		aggregate.SetZero()
+		for dealerIdx := 0; dealerIdx < len(result.DealerShares); dealerIdx++ {
+			if !result.ValidDealers[dealerIdx] {
+				continue
+			}
+			shares := result.DealerShares[dealerIdx]
+			if slotOffset >= len(shares) {
+				continue
+			}
+			aggregate.Add(aggregate, &shares[slotOffset])
+		}
+		recomputed[slotOffset] = *aggregate
+	}
+	result.AggregatedShares = recomputed
 }
 
 // extractEpochDataFromGroupPublicKeyEvent extracts epoch data from a group public key generated event
@@ -735,6 +876,10 @@ func (bm *BlsManager) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSDat
 			epochDataMap["dkg_phase"] = int32(3)
 		case "DKG_PHASE_FAILED":
 			epochDataMap["dkg_phase"] = int32(4)
+		case "DKG_PHASE_SIGNED":
+			epochDataMap["dkg_phase"] = int32(5)
+		case "DKG_PHASE_DISPUTING":
+			epochDataMap["dkg_phase"] = int32(6)
 		default:
 			// Try to parse as number if it's a numeric string
 			if dkgPhaseNum, err := strconv.ParseUint(dkgPhaseStr, 10, 32); err == nil {
@@ -752,6 +897,11 @@ func (bm *BlsManager) parseEpochDataFromJSON(jsonStr string) (*types.EpochBLSDat
 	if verifyingDeadlineStr, ok := epochDataMap["verifying_phase_deadline_block"].(string); ok {
 		if verifyingDeadline, err := strconv.ParseInt(verifyingDeadlineStr, 10, 64); err == nil {
 			epochDataMap["verifying_phase_deadline_block"] = verifyingDeadline
+		}
+	}
+	if disputingDeadlineStr, ok := epochDataMap["disputing_phase_deadline_block"].(string); ok {
+		if disputingDeadline, err := strconv.ParseInt(disputingDeadlineStr, 10, 64); err == nil {
+			epochDataMap["disputing_phase_deadline_block"] = disputingDeadline
 		}
 	}
 

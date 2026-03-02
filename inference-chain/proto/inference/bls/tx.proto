@@ -23,6 +23,9 @@ service Msg {
   
   // SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
   rpc SubmitVerificationVector(MsgSubmitVerificationVector) returns (MsgSubmitVerificationVectorResponse);
+
+  // RespondDealerComplaints allows a dealer to submit complaint responses in a single transaction during disputing phase
+  rpc RespondDealerComplaints(MsgRespondDealerComplaints) returns (MsgRespondDealerComplaintsResponse);
   
   // SubmitGroupKeyValidationSignature allows a participant to submit their partial signature for group key validation
   rpc SubmitGroupKeyValidationSignature(MsgSubmitGroupKeyValidationSignature) returns (MsgSubmitGroupKeyValidationSignatureResponse);
@@ -79,6 +82,18 @@ message MsgSubmitDealerPart {
 message MsgSubmitDealerPartResponse {}
 
 // MsgSubmitVerificationVector is the message for confirming verification completion during the verifying phase
+message VerificationDealerComplaint {
+  // dealer_index identifies the disputed dealer index in EpochBLSData.participants
+  uint32 dealer_index = 1;
+
+  // disputed_slot_index identifies the disputed slot covered by this complaint
+  uint32 disputed_slot_index = 2;
+
+  // disputed_ciphertext_index identifies the disputed ciphertext offset covered by this complaint
+  uint32 disputed_ciphertext_index = 3;
+}
+
+// MsgSubmitVerificationVector is the message for confirming verification completion during the verifying phase
 message MsgSubmitVerificationVector {
   option (cosmos.msg.v1.signer) = "creator";
   option (amino.name) = "inference/x/bls/MsgSubmitVerificationVector";
@@ -94,11 +109,49 @@ message MsgSubmitVerificationVector {
   // true = dealer's shares verified correctly against their commitments
   // false = dealer's shares failed verification or dealer didn't submit
   repeated bool dealer_validity = 3;
+
+  // dealer_complaints carries optional per-dealer complaint evidence for dealers voted false.
+  // This is used in DISPUTING phase to resolve objective fault assignment.
+  repeated VerificationDealerComplaint dealer_complaints = 4 [(gogoproto.nullable) = false];
 }
 
 // MsgSubmitVerificationVectorResponse defines the response structure for executing a
 // MsgSubmitVerificationVector message.
 message MsgSubmitVerificationVectorResponse {}
+
+// DealerComplaintResponse represents one dealer response for one complainer complaint.
+message DealerComplaintResponse {
+  // complainer_index identifies the complainer participant index in EpochBLSData.participants
+  uint32 complainer_index = 1;
+
+  // response_share_bytes carries dealer response share material
+  bytes response_share_bytes = 2;
+
+  // response_opening_material carries dealer response opening material
+  bytes response_opening_material = 3;
+}
+
+// MsgRespondDealerComplaints is the message for responding to dealer complaints during disputing phase
+message MsgRespondDealerComplaints {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "inference/x/bls/MsgRespondDealerComplaints";
+
+  // creator is the dealer responding to complaints
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // epoch_id identifies the DKG round these responses belong to
+  uint64 epoch_id = 2;
+
+  // dealer_index identifies the dealer index in EpochBLSData.participants
+  uint32 dealer_index = 3;
+
+  // responses carries one response entry per complainer complaint.
+  repeated DealerComplaintResponse responses = 4 [(gogoproto.nullable) = false];
+}
+
+// MsgRespondDealerComplaintsResponse defines the response structure for executing a
+// MsgRespondDealerComplaints message.
+message MsgRespondDealerComplaintsResponse {}
 
 // MsgSubmitGroupKeyValidationSignature is the message for submitting partial signatures for group key validation
 message MsgSubmitGroupKeyValidationSignature {

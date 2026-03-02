@@ -9,6 +9,7 @@ import (
 var _ sdk.Msg = &MsgSubmitVerificationVector{}
 
 const maxVerificationDealerValidityEntries = 65536
+const maxVerificationDealerComplaints = 65536
 
 func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(m.Creator); err != nil {
@@ -22,6 +23,23 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	}
 	if len(m.DealerValidity) > maxVerificationDealerValidityEntries {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity exceeds maximum allowed count")
+	}
+
+	if len(m.DealerComplaints) > maxVerificationDealerComplaints {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_complaints exceeds maximum allowed count")
+	}
+	seenDealers := make(map[uint32]struct{}, len(m.DealerComplaints))
+	for i, complaint := range m.DealerComplaints {
+		if complaint.DealerIndex >= uint32(len(m.DealerValidity)) {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dealer_complaints[%d].dealer_index %d out of range for dealer_validity length %d", i, complaint.DealerIndex, len(m.DealerValidity))
+		}
+		if m.DealerValidity[complaint.DealerIndex] {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dealer_complaints[%d].dealer_index %d must correspond to dealer_validity=false", i, complaint.DealerIndex)
+		}
+		if _, exists := seenDealers[complaint.DealerIndex]; exists {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "duplicate dealer_index %d in dealer_complaints", complaint.DealerIndex)
+		}
+		seenDealers[complaint.DealerIndex] = struct{}{}
 	}
 	return nil
 }

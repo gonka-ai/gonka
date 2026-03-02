@@ -21,24 +21,44 @@ const (
 
 // BlsManager handles all BLS operations including DKG dealing, verification, and group key validation
 type BlsManager struct {
-	cosmosClient cosmosclient.InferenceCosmosClient
-	ctx          context.Context
-	cache        *VerificationCache
-	recoverySF   singleflight.Group
-	maxCacheSize uint64
+	cosmosClient     cosmosclient.InferenceCosmosClient
+	ctx              context.Context
+	cache            *VerificationCache
+	recoverySF       singleflight.Group
+	maxCacheSize     uint64
+	dealerOpeningsMu sync.RWMutex
+	dealerOpenings   map[dealerOpeningKey]dealerOpeningRecord
 }
 
 // VerificationResult holds the results of DKG verification for an epoch
 type VerificationResult struct {
-	EpochID          uint64
-	DkgPhase         types.DKGPhase // The DKG phase when verification was performed
-	IsParticipant    bool
-	SlotRange        [2]uint32      // [start_index, end_index]
-	DealerShares     [][]fr.Element // dealer_index -> [slot_shares...]
-	DealerValidity   []bool         // dealer_index -> validity
-	AggregatedShares []fr.Element   // slot_offset -> aggregated_share
-	ValidDealers     []bool         // final consensus validity of each dealer (after majority voting)
-	GroupPublicKey   []byte         // the final group public key (when DKG is completed)
+	EpochID           uint64
+	DkgPhase          types.DKGPhase // The DKG phase when verification was performed
+	IsParticipant     bool
+	SlotRange         [2]uint32      // [start_index, end_index]
+	DealerShares      [][]fr.Element // dealer_index -> [slot_shares...]
+	DealerValidity    []bool         // dealer_index -> validity
+	AggregatedShares  []fr.Element   // slot_offset -> aggregated_share
+	ValidDealers      []bool         // final consensus validity of each dealer (after majority voting)
+	GroupPublicKey    []byte         // the final group public key (when DKG is completed)
+	ComplaintEvidence map[uint32]DealerComplaintEvidence
+}
+
+type DealerComplaintEvidence struct {
+	DisputedSlotIndex       uint32
+	DisputedCiphertextIndex uint32
+}
+
+type dealerOpeningKey struct {
+	epochID         uint64
+	recipientIndex  uint32
+	ciphertextIndex uint32
+}
+
+type dealerOpeningRecord struct {
+	slotIndex  uint32
+	shareBytes []byte
+	seed       []byte
 }
 
 // VerificationCache manages verification results for multiple epochs
@@ -114,10 +134,11 @@ func (vc *VerificationCache) GetCachedEpochs() []uint64 {
 
 // ParticipantInfo represents participant information for DKG
 type ParticipantInfo struct {
-	Address            string
-	Secp256K1PublicKey []byte
-	SlotStartIndex     uint32
-	SlotEndIndex       uint32
+	Address                    string
+	Secp256K1PublicKey         []byte
+	AllowedSecp256K1PublicKeys [][]byte
+	SlotStartIndex             uint32
+	SlotEndIndex               uint32
 }
 
 // SlotAssignment represents the slot assignment for a participant
@@ -129,10 +150,41 @@ type SlotAssignment struct {
 // NewBlsManager creates a new unified BLS manager
 func NewBlsManager(cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager {
 	return &BlsManager{
-		cosmosClient: cosmosClient,
-		ctx:          context.Background(), // Use background context for chain queries
-		cache:        NewVerificationCache(),
+		cosmosClient:   cosmosClient,
+		ctx:            context.Background(), // Use background context for chain queries
+		cache:          NewVerificationCache(),
+		dealerOpenings: make(map[dealerOpeningKey]dealerOpeningRecord),
 	}
+}
+
+// ensureConsensusSharesComplete enforces fail-closed signing semantics:
+// when consensus ValidDealers is present, every consensus-valid dealer must have
+// a share for each local slot, otherwise signing is aborted.
+func (bm *BlsManager) ensureConsensusSharesComplete(result *VerificationResult) error {
+	if result == nil {
+		return fmt.Errorf("verification result is nil")
+	}
+	if len(result.AggregatedShares) == 0 {
+		return fmt.Errorf("no aggregated shares available")
+	}
+
+	// Backward-compatible fallback for epochs/results that don't include consensus valid dealers.
+	if len(result.ValidDealers) != len(result.DealerShares) {
+		return nil
+	}
+
+	requiredSlots := len(result.AggregatedShares)
+	for dealerIdx, isValid := range result.ValidDealers {
+		if !isValid {
+			continue
+		}
+		shares := result.DealerShares[dealerIdx]
+		if len(shares) < requiredSlots {
+			return fmt.Errorf("missing shares for consensus-valid dealer %d: have %d, need %d", dealerIdx, len(shares), requiredSlots)
+		}
+	}
+
+	return nil
 }
 
 // GetVerificationResult returns the verification result for a specific epoch
@@ -222,4 +274,42 @@ func (bm *BlsManager) ProcessGroupPublicKeyGenerated(event *chainevents.JSONRPCR
 	}
 
 	return nil
+}
+
+func (bm *BlsManager) storeDealerOpeningRecord(epochID uint64, recipientIndex, ciphertextIndex, slotIndex uint32, shareBytes, seed []byte) {
+	bm.dealerOpeningsMu.Lock()
+	defer bm.dealerOpeningsMu.Unlock()
+
+	key := dealerOpeningKey{
+		epochID:         epochID,
+		recipientIndex:  recipientIndex,
+		ciphertextIndex: ciphertextIndex,
+	}
+	bm.dealerOpenings[key] = dealerOpeningRecord{
+		slotIndex:  slotIndex,
+		shareBytes: append([]byte(nil), shareBytes...),
+		seed:       append([]byte(nil), seed...),
+	}
+}
+
+func (bm *BlsManager) getDealerOpeningRecord(epochID uint64, recipientIndex, ciphertextIndex uint32) (dealerOpeningRecord, bool) {
+	bm.dealerOpeningsMu.RLock()
+	defer bm.dealerOpeningsMu.RUnlock()
+	key := dealerOpeningKey{
+		epochID:         epochID,
+		recipientIndex:  recipientIndex,
+		ciphertextIndex: ciphertextIndex,
+	}
+	record, ok := bm.dealerOpenings[key]
+	return record, ok
+}
+
+func (bm *BlsManager) deleteDealerOpeningsForEpoch(epochID uint64) {
+	bm.dealerOpeningsMu.Lock()
+	defer bm.dealerOpeningsMu.Unlock()
+	for key := range bm.dealerOpenings {
+		if key.epochID == epochID {
+			delete(bm.dealerOpenings, key)
+		}
+	}
 }

@@ -15,12 +15,14 @@ package bls
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
-	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"strconv"
 
@@ -33,6 +35,8 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	blst "github.com/supranational/blst/bindings/go"
 )
+
+const dkgOpeningSeedLen = 32
 
 // DEALER METHODS - All methods operate on BlsManager
 
@@ -162,10 +166,11 @@ func (bm *BlsManager) parseParticipantsFromEvent(event *chainevents.JSONRPCRespo
 	participants := make([]ParticipantInfo, len(blsParticipants))
 	for i, blsParticipant := range blsParticipants {
 		participants[i] = ParticipantInfo{
-			Address:            blsParticipant.Address,
-			Secp256K1PublicKey: blsParticipant.Secp256K1PublicKey,
-			SlotStartIndex:     blsParticipant.SlotStartIndex,
-			SlotEndIndex:       blsParticipant.SlotEndIndex,
+			Address:                    blsParticipant.Address,
+			Secp256K1PublicKey:         blsParticipant.Secp256K1PublicKey,
+			AllowedSecp256K1PublicKeys: blsParticipant.AllowedSecp256K1PublicKeys,
+			SlotStartIndex:             blsParticipant.SlotStartIndex,
+			SlotEndIndex:               blsParticipant.SlotEndIndex,
 		}
 
 		logging.Debug("Parsed participant from event", inferenceTypes.BLS,
@@ -194,14 +199,17 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	// Compute public commitments to coefficients (C_kj = g * a_kj, G2 points)
 	commitments := computeG2CommitmentsBlst(polynomial)
 
-	// Create encrypted shares for participants using deterministic array indexing
+	// Create encrypted shares for participants using deterministic array indexing.
 	encryptedSharesForParticipants := make([]types.EncryptedSharesForParticipant, len(participants))
 	for i, participant := range participants {
-		// Get all allowed public keys for this participant (including warm keys)
-		allowedPubKeys, err := bm.getAllowedPubKeysForParticipant(participant.Address)
+		// Build encryption key set from on-chain participant snapshot (primary + additional).
+		allowedPubKeys, err := participantAllowedPubKeys(participant)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get allowed public keys for participant %s: %w",
+			return nil, fmt.Errorf("failed to build allowed public keys from snapshot for participant %s: %w",
 				participant.Address, err)
+		}
+		if len(allowedPubKeys) == 0 {
+			return nil, fmt.Errorf("participant %s has no allowed public keys", participant.Address)
 		}
 
 		// Calculate number of slots for this participant
@@ -211,7 +219,7 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 		// Total ciphertexts = numSlots * numKeys
 		totalCiphertexts := numSlots * uint32(len(allowedPubKeys))
 		encryptedShares := make([][]byte, totalCiphertexts)
-		ciphertextIndex := 0
+		ciphertextIndex := uint32(0)
 
 		for slotOffset := uint32(0); slotOffset < numSlots; slotOffset++ {
 			slotIndex := participant.SlotStartIndex + slotOffset
@@ -220,33 +228,24 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 			share := evaluatePolynomial(polynomial, slotIndex+1)
 			shareBytes := share.Marshal()
 
-			// Encrypt the same share for all allowed public keys
-			for keyIndex, pubKeyBase64 := range allowedPubKeys {
-				// Convert base64 public key to secp256k1 bytes
-				pubKeyBytes, err := bm.convertPubKeyToSecp256k1Bytes(pubKeyBase64)
-				if err != nil {
-					logging.Debug("Failed to convert public key, skipping", inferenceTypes.BLS,
-						"participant", participant.Address, "keyIndex", keyIndex,
-						"pubKeyBase64", pubKeyBase64, "error", err)
-					continue
+			// Encrypt the same share for all allowed public keys from snapshot.
+			for _, pubKeyBytes := range allowedPubKeys {
+				seed := make([]byte, dkgOpeningSeedLen)
+				if _, err := rand.Read(seed); err != nil {
+					return nil, fmt.Errorf("failed to generate opening seed: %w", err)
 				}
 
-				// Encrypt share using this public key
-				encryptedShare, err := encryptForParticipant(shareBytes, pubKeyBytes)
+				// Encrypt share using deterministic seed so revealed openings can be verified on-chain.
+				encryptedShare, err := encryptForParticipantWithSeed(shareBytes, pubKeyBytes, seed)
 				if err != nil {
-					logging.Warn("Failed to encrypt share for public key, skipping", inferenceTypes.BLS,
-						"participant", participant.Address, "slotIndex", slotIndex,
-						"keyIndex", keyIndex, "pubKeyBase64", pubKeyBase64, "error", err)
-					continue
+					return nil, fmt.Errorf("failed to encrypt share for participant %s slot %d: %w", participant.Address, slotIndex, err)
 				}
 
-				encryptedShares[ciphertextIndex] = encryptedShare
+				encryptedShares[int(ciphertextIndex)] = encryptedShare
+				bm.storeDealerOpeningRecord(epochID, uint32(i), ciphertextIndex, slotIndex, shareBytes, seed)
 				ciphertextIndex++
 			}
 		}
-
-		// Trim to actual successful encryptions
-		encryptedShares = encryptedShares[:ciphertextIndex]
 
 		encryptedSharesForParticipants[i] = types.EncryptedSharesForParticipant{
 			EncryptedShares: encryptedShares,
@@ -352,6 +351,41 @@ func evaluatePolynomial(polynomial []*fr.Element, x uint32) *fr.Element {
 // encryptForParticipant encrypts data for a specific participant using Cosmos-compatible ECIES
 // This uses the same go-ethereum ECIES implementation that the modified Cosmos keyring uses
 func encryptForParticipant(data []byte, secp256k1PubKeyBytes []byte) ([]byte, error) {
+	return encryptForParticipantWithReader(data, secp256k1PubKeyBytes, rand.Reader)
+}
+
+func encryptForParticipantWithSeed(data []byte, secp256k1PubKeyBytes []byte, seed []byte) ([]byte, error) {
+	if len(seed) != dkgOpeningSeedLen {
+		return nil, fmt.Errorf("invalid seed length, expected %d bytes, got %d", dkgOpeningSeedLen, len(seed))
+	}
+	eciesPubKey, err := parseECIESPublicKeyFromCompressed(secp256k1PubKeyBytes)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := ecies.Encrypt(newDeterministicSeedReader(seed), eciesPubKey, data, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ECIES encryption failed: %w", err)
+	}
+	return ciphertext, nil
+}
+
+func encryptForParticipantWithReader(data []byte, secp256k1PubKeyBytes []byte, entropy io.Reader) ([]byte, error) {
+	eciesPubKey, err := parseECIESPublicKeyFromCompressed(secp256k1PubKeyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Encrypt the data using the same method as the modified Cosmos keyring
+	// This ensures compatibility: dealer encryption → keyring decryption
+	ciphertext, err := ecies.Encrypt(entropy, eciesPubKey, data, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ECIES encryption failed: %w", err)
+	}
+
+	return ciphertext, nil
+}
+
+func parseECIESPublicKeyFromCompressed(secp256k1PubKeyBytes []byte) (*ecies.PublicKey, error) {
 	// Validate the compressed secp256k1 public key format
 	// (33 bytes: 0x02 or 0x03 + 32 bytes X)
 	if len(secp256k1PubKeyBytes) != 33 {
@@ -372,76 +406,78 @@ func encryptForParticipant(data []byte, secp256k1PubKeyBytes []byte) ([]byte, er
 	ecdsaPubKey := pubKey.ToECDSA()
 
 	// Convert *ecdsa.PublicKey to *ecies.PublicKey using the same method as Cosmos keyring
-	eciesPubKey := ecies.ImportECDSAPublic(ecdsaPubKey)
-
-	// Encrypt the data using the same method as the modified Cosmos keyring
-	// This ensures compatibility: dealer encryption → keyring decryption
-	ciphertext, err := ecies.Encrypt(rand.Reader, eciesPubKey, data, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("ECIES encryption failed: %w", err)
-	}
-
-	return ciphertext, nil
+	return ecies.ImportECDSAPublic(ecdsaPubKey), nil
 }
 
-// getAllowedPubKeysForParticipant gets all allowed public keys for a participant (including warm keys via Authz)
-func (bm *BlsManager) getAllowedPubKeysForParticipant(participantAddress string) ([]string, error) {
-	queryClient := bm.cosmosClient.NewInferenceQueryClient()
+type deterministicSeedReader struct {
+	seed    []byte
+	counter uint64
+	buf     []byte
+}
 
-	// Get all grantees (warm keys) allowed to act on behalf of this participant
-	grantees, err := queryClient.GranteesByMessageType(bm.ctx, &inferenceTypes.QueryGranteesByMessageTypeRequest{
-		GranterAddress: participantAddress,
-		MessageTypeUrl: "/inference.bls.MsgSubmitDealerPart", // BLS operations
-	})
-	if err != nil {
-		// If querying grantees fails, log warning but continue with just the participant's own key
-		logging.Warn("Failed to get grantees for participant, using only participant's own key", inferenceTypes.BLS,
-			"participant", participantAddress, "error", err)
-		grantees = &inferenceTypes.QueryGranteesByMessageTypeResponse{Grantees: []*inferenceTypes.Grantee{}}
+func newDeterministicSeedReader(seed []byte) io.Reader {
+	seedCopy := make([]byte, len(seed))
+	copy(seedCopy, seed)
+	return &deterministicSeedReader{seed: seedCopy}
+}
+
+func (r *deterministicSeedReader) Read(p []byte) (int, error) {
+	// Go's crypto stack may call randutil.MaybeReadByte and consume one random byte
+	// unpredictably; avoid advancing state for single-byte reads to keep outputs stable.
+	if len(p) == 1 {
+		counter := r.counter
+		buf := append([]byte(nil), r.buf...)
+		n := 0
+		for n < len(p) {
+			if len(buf) == 0 {
+				var ctr [8]byte
+				binary.BigEndian.PutUint64(ctr[:], counter)
+				counter++
+				block := sha256.Sum256(append(append([]byte{}, r.seed...), ctr[:]...))
+				buf = block[:]
+			}
+			copied := copy(p[n:], buf)
+			buf = buf[copied:]
+			n += copied
+		}
+		return n, nil
+	}
+	n := 0
+	for n < len(p) {
+		if len(r.buf) == 0 {
+			var ctr [8]byte
+			binary.BigEndian.PutUint64(ctr[:], r.counter)
+			r.counter++
+			block := sha256.Sum256(append(append([]byte{}, r.seed...), ctr[:]...))
+			r.buf = block[:]
+		}
+		copied := copy(p[n:], r.buf)
+		r.buf = r.buf[copied:]
+		n += copied
+	}
+	return n, nil
+}
+
+func participantAllowedPubKeys(participant ParticipantInfo) ([][]byte, error) {
+	if len(participant.Secp256K1PublicKey) != 33 {
+		return nil, fmt.Errorf("invalid primary secp256k1 public key length for participant %s: %d", participant.Address, len(participant.Secp256K1PublicKey))
 	}
 
-	// Get the participant's own public key
-	participant, err := queryClient.AccountByAddress(bm.ctx, &inferenceTypes.QueryAccountByAddressRequest{
-		Address: participantAddress,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get participant's own public key: %w", err)
+	allowedPubKeys := make([][]byte, 0, 1+len(participant.AllowedSecp256K1PublicKeys))
+
+	primaryKey := append([]byte(nil), participant.Secp256K1PublicKey...)
+	allowedPubKeys = append(allowedPubKeys, primaryKey)
+
+	for idx, additionalKey := range participant.AllowedSecp256K1PublicKeys {
+		if len(additionalKey) != 33 {
+			return nil, fmt.Errorf("invalid additional secp256k1 public key length at index %d for participant %s: %d", idx, participant.Address, len(additionalKey))
+		}
+
+		keyCopy := append([]byte(nil), additionalKey...)
+		allowedPubKeys = append(allowedPubKeys, keyCopy)
 	}
-
-	// Collect all allowed public keys (participant's own + warm keys)
-	allowedPubKeys := make([]string, 0, len(grantees.Grantees)+1)
-
-	// Add participant's own public key first
-	allowedPubKeys = append(allowedPubKeys, participant.Pubkey)
-
-	// Add all warm key public keys
-	for _, grantee := range grantees.Grantees {
-		allowedPubKeys = append(allowedPubKeys, grantee.PubKey)
-	}
-
-	logging.Debug("Retrieved allowed public keys for participant", inferenceTypes.BLS,
-		"participant", participantAddress,
-		"ownKey", participant.Pubkey,
-		"warmKeysCount", len(grantees.Grantees),
-		"totalKeys", len(allowedPubKeys))
 
 	return allowedPubKeys, nil
-}
-
-// convertPubKeyToSecp256k1Bytes converts a base64-encoded public key string to secp256k1 bytes
-func (bm *BlsManager) convertPubKeyToSecp256k1Bytes(pubKeyBase64 string) ([]byte, error) {
-	// Decode base64-encoded public key
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyBase64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 public key: %w", err)
-	}
-
-	// Validate secp256k1 compressed format (33 bytes)
-	if len(pubKeyBytes) != 33 {
-		return nil, fmt.Errorf("invalid secp256k1 public key length: expected 33 bytes, got %d", len(pubKeyBytes))
-	}
-
-	return pubKeyBytes, nil
 }
 
 // All BLS cryptographic functions have been implemented above using gnark-crypto

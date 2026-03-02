@@ -213,6 +213,11 @@ func (m *MockCosmosMessageClient) SubmitDealerPart(transaction *blstypes.MsgSubm
 	return args.Error(0)
 }
 
+func (m *MockCosmosMessageClient) RespondDealerComplaints(transaction *blstypes.MsgRespondDealerComplaints) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
 func (m *MockCosmosMessageClient) SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*sdk.TxResponse, error) {
 	args := m.Called(transaction)
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)

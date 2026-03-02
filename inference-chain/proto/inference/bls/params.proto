@@ -26,6 +26,9 @@ message Params {
 
   // Duration in blocks for threshold signing deadline (e.g., 10 blocks for PoC)
   int64 signing_deadline_blocks = 5;
+
+  // Duration in blocks for the disputing phase (e.g., 3 blocks for PoC)
+  int64 dispute_phase_duration_blocks = 6;
 }
 
 // PartialSignature represents a partial signature from a single participant in threshold signing

@@ -11,6 +11,7 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
@@ -23,8 +24,16 @@ import (
 
 // setupTestKeeperWithBLS creates a test keeper with BLS integration
 func setupTestKeeperWithBLS(t testing.TB) (keeper.Keeper, sdk.Context) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 	return k, ctx
+}
+
+func allowEmptyBLSGrantQueries(mocks keepertest.InferenceMocks) {
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		Return(&authztypes.QueryGranterGrantsResponse{}, nil).
+		AnyTimes()
 }
 
 // newSecp256k1PubKeyFromHexStr creates a secp256k1.PubKey from a hex string (compressed, 33 bytes).
@@ -113,7 +122,8 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	participantDetails := map[string]string{
 		aliceAccAddrStr:   aliceSecp256k1PubHex,
@@ -159,7 +169,8 @@ func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
@@ -178,7 +189,8 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// Alice: No account found (GetAccount returns nil)
 	// Bob: Account found, but no public key
@@ -226,7 +238,8 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// AccountKeeper will provide the source of truth for Alice's PubKey
 	participantDetails := map[string]string{
@@ -274,7 +287,8 @@ func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// Generate a valid missing address
 	missingAddr := generateValidBech32Address(t, "03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd")
@@ -306,7 +320,8 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// Generate a valid problem address
 	problemAddr := generateValidBech32Address(t, "0365cdf48e56aa2a8c2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a")

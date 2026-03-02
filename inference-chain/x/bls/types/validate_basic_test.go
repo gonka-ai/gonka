@@ -65,8 +65,8 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 	validCommitment[0] = 0x01
 	validShare := []byte{0x01, 0x02}
 
-	t.Run("valid", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
+	mkValidMsg := func() *MsgSubmitDealerPart {
+		return &MsgSubmitDealerPart{
 			Creator:     creator,
 			EpochId:     1,
 			Commitments: [][]byte{validCommitment},
@@ -74,97 +74,93 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 				EncryptedShares: [][]byte{validShare},
 			}},
 		}
+	}
+
+	t.Run("valid", func(t *testing.T) {
+		msg := mkValidMsg()
 		require.NoError(t, msg.ValidateBasic())
 	})
 
 	t.Run("invalid creator", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: "bad", EpochId: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
+		msg := mkValidMsg()
+		msg.Creator = "bad"
 		err := msg.ValidateBasic()
 		require.Error(t, err)
 		require.True(t, errorsmod.IsOf(err, sdkerrors.ErrInvalidAddress))
 	})
 
 	t.Run("epoch zero", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 0, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
+		msg := mkValidMsg()
+		msg.EpochId = 0
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty commitments", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: nil, EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{EncryptedShares: [][]byte{validShare}}}}
+		msg := mkValidMsg()
+		msg.Commitments = nil
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty encrypted shares list", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{Creator: creator, EpochId: 1, Commitments: [][]byte{validCommitment}, EncryptedSharesForParticipants: nil}
+		msg := mkValidMsg()
+		msg.EncryptedSharesForParticipants = nil
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("invalid commitment length", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{make([]byte, commitmentCompressedG2Len-1)},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{validShare},
-			}},
-		}
+		msg := mkValidMsg()
+		msg.Commitments = [][]byte{make([]byte, commitmentCompressedG2Len-1)}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("all-zero commitment", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{make([]byte, commitmentCompressedG2Len)},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{validShare},
-			}},
-		}
+		msg := mkValidMsg()
+		msg.Commitments = [][]byte{make([]byte, commitmentCompressedG2Len)}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty encrypted shares for participant", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{validCommitment},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: nil,
-			}},
-		}
+		msg := mkValidMsg()
+		msg.EncryptedSharesForParticipants = []EncryptedSharesForParticipant{{
+			EncryptedShares: nil,
+		}}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("empty encrypted share ciphertext", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{validCommitment},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{{}},
-			}},
-		}
+		msg := mkValidMsg()
+		msg.EncryptedSharesForParticipants = []EncryptedSharesForParticipant{{
+			EncryptedShares: [][]byte{{}},
+		}}
 		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("oversized encrypted share ciphertext", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{validCommitment},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{make([]byte, maxEncryptedShareCiphertextLen+1)},
-			}},
-		}
+		msg := mkValidMsg()
+		msg.EncryptedSharesForParticipants = []EncryptedSharesForParticipant{{
+			EncryptedShares: [][]byte{make([]byte, maxEncryptedShareCiphertextLen+1)},
+		}}
 		require.Error(t, msg.ValidateBasic())
 	})
 }
 
 func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 	creator := mkAddr(t)
+	validComplaints := []VerificationDealerComplaint{
+		{
+			DealerIndex:             1,
+			DisputedSlotIndex:       10,
+			DisputedCiphertextIndex: 0,
+		},
+	}
 
 	t.Run("valid", func(t *testing.T) {
-		msg := &MsgSubmitVerificationVector{Creator: creator, EpochId: 1, DealerValidity: []bool{true, false}}
+		msg := &MsgSubmitVerificationVector{
+			Creator:          creator,
+			EpochId:          1,
+			DealerValidity:   []bool{true, false},
+			DealerComplaints: validComplaints,
+		}
 		require.NoError(t, msg.ValidateBasic())
 	})
 
@@ -188,6 +184,59 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 	t.Run("too many dealer_validity entries", func(t *testing.T) {
 		tooMany := make([]bool, maxVerificationDealerValidityEntries+1)
 		msg := &MsgSubmitVerificationVector{Creator: creator, EpochId: 1, DealerValidity: tooMany}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("complaint dealer index out of range", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{false},
+			DealerComplaints: []VerificationDealerComplaint{
+				{
+					DealerIndex:             1,
+					DisputedSlotIndex:       1,
+					DisputedCiphertextIndex: 1,
+				},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("complaint must correspond to false dealer", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{true},
+			DealerComplaints: []VerificationDealerComplaint{
+				{
+					DealerIndex:             0,
+					DisputedSlotIndex:       1,
+					DisputedCiphertextIndex: 1,
+				},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("duplicate complaint dealer", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{false},
+			DealerComplaints: []VerificationDealerComplaint{
+				{
+					DealerIndex:             0,
+					DisputedSlotIndex:       1,
+					DisputedCiphertextIndex: 1,
+				},
+				{
+					DealerIndex:             0,
+					DisputedSlotIndex:       2,
+					DisputedCiphertextIndex: 2,
+				},
+			},
+		}
 		require.Error(t, msg.ValidateBasic())
 	})
 }
@@ -453,6 +502,89 @@ func TestMsgRequestThresholdSignature_ValidateBasic(t *testing.T) {
 			ChainId:        chainID,
 			RequestId:      requestID,
 			Data:           tooMany,
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+}
+
+func TestMsgRespondDealerComplaints_ValidateBasic(t *testing.T) {
+	creator := mkAddr(t)
+
+	t.Run("valid", func(t *testing.T) {
+		msg := &MsgRespondDealerComplaints{
+			Creator:     creator,
+			EpochId:     1,
+			DealerIndex: 2,
+			Responses: []DealerComplaintResponse{
+				{
+					ComplainerIndex:         1,
+					ResponseShareBytes:      append([]byte{1}, make([]byte, dealerComplaintResponseShareBytesLen-1)...),
+					ResponseOpeningMaterial: append([]byte{1}, make([]byte, dealerComplaintResponseOpeningMaterialLen-1)...),
+				},
+			},
+		}
+		require.NoError(t, msg.ValidateBasic())
+	})
+
+	t.Run("empty responses", func(t *testing.T) {
+		msg := &MsgRespondDealerComplaints{
+			Creator:     creator,
+			EpochId:     1,
+			DealerIndex: 2,
+			Responses:   nil,
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("invalid response share bytes length", func(t *testing.T) {
+		msg := &MsgRespondDealerComplaints{
+			Creator:     creator,
+			EpochId:     1,
+			DealerIndex: 2,
+			Responses: []DealerComplaintResponse{
+				{
+					ComplainerIndex:         1,
+					ResponseShareBytes:      nil,
+					ResponseOpeningMaterial: make([]byte, dealerComplaintResponseOpeningMaterialLen),
+				},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("invalid opening material length", func(t *testing.T) {
+		msg := &MsgRespondDealerComplaints{
+			Creator:     creator,
+			EpochId:     1,
+			DealerIndex: 2,
+			Responses: []DealerComplaintResponse{
+				{
+					ComplainerIndex:         1,
+					ResponseShareBytes:      make([]byte, dealerComplaintResponseShareBytesLen),
+					ResponseOpeningMaterial: nil,
+				},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("duplicate complainer index", func(t *testing.T) {
+		msg := &MsgRespondDealerComplaints{
+			Creator:     creator,
+			EpochId:     1,
+			DealerIndex: 2,
+			Responses: []DealerComplaintResponse{
+				{
+					ComplainerIndex:         1,
+					ResponseShareBytes:      make([]byte, dealerComplaintResponseShareBytesLen),
+					ResponseOpeningMaterial: make([]byte, dealerComplaintResponseOpeningMaterialLen),
+				},
+				{
+					ComplainerIndex:         1,
+					ResponseShareBytes:      make([]byte, dealerComplaintResponseShareBytesLen),
+					ResponseOpeningMaterial: make([]byte, dealerComplaintResponseOpeningMaterialLen),
+				},
+			},
 		}
 		require.Error(t, msg.ValidateBasic())
 	})

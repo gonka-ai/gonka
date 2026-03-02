@@ -59,9 +59,62 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("dealer_validity length %d does not match participants count %d", len(msg.DealerValidity), len(epochBLSData.Participants)))
 	}
 
+	complaintsByDealer := make(map[uint32]types.VerificationDealerComplaint, len(msg.DealerComplaints))
+	for _, complaint := range msg.DealerComplaints {
+		if _, exists := complaintsByDealer[complaint.DealerIndex]; exists {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("duplicate dealer complaint for dealer index %d", complaint.DealerIndex))
+		}
+		complaintsByDealer[complaint.DealerIndex] = complaint
+	}
+
 	// Store verification submission at participant's index (same as dealer_parts pattern)
 	epochBLSData.VerificationSubmissions[participantIndex] = &types.VerificationVectorSubmission{
 		DealerValidity: msg.DealerValidity,
+	}
+
+	// Persist complaint evidence alongside verification vote. One complaint per (dealer, complainer).
+	for dealerIndex, dealerValid := range msg.DealerValidity {
+		if dealerValid {
+			continue
+		}
+
+		complaint, hasComplaint := complaintsByDealer[uint32(dealerIndex)]
+		requiresEvidence := false
+		// Defense-in-depth: these shape checks should already hold after SubmitDealerPart +
+		// MsgSubmitDealerPart.ValidateBasic. We re-check persisted epoch state here before
+		// making complaint evidence mandatory, so inconsistent/legacy state does not cause
+		// panics or force evidence requirements for malformed dealer entries.
+		if dealerIndex < len(epochBLSData.DealerParts) {
+			dealerPart := epochBLSData.DealerParts[dealerIndex]
+			expectedCommitmentsCount := int(epochBLSData.TSlotsDegree) + 1
+			if dealerPart != nil &&
+				dealerPart.DealerAddress != "" &&
+				len(dealerPart.Commitments) == expectedCommitmentsCount &&
+				participantIndex < len(dealerPart.ParticipantShares) &&
+				dealerPart.ParticipantShares[participantIndex] != nil &&
+				len(dealerPart.ParticipantShares[participantIndex].EncryptedShares) > 0 {
+				requiresEvidence = true
+			}
+		}
+		if requiresEvidence && !hasComplaint {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("missing complaint evidence for voted-false dealer index %d", dealerIndex))
+		}
+		if !hasComplaint {
+			continue
+		}
+
+		for _, existingComplaint := range epochBLSData.DealerComplaints {
+			if existingComplaint.DealerIndex == uint32(dealerIndex) && existingComplaint.ComplainerIndex == uint32(participantIndex) {
+				return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("complaint already exists for dealer %d by participant %s", dealerIndex, msg.Creator))
+			}
+		}
+
+		epochBLSData.DealerComplaints = append(epochBLSData.DealerComplaints, types.DealerComplaint{
+			DealerIndex:             uint32(dealerIndex),
+			ComplainerIndex:         uint32(participantIndex),
+			DisputedSlotIndex:       complaint.DisputedSlotIndex,
+			DisputedCiphertextIndex: complaint.DisputedCiphertextIndex,
+		})
 	}
 
 	// Store updated EpochBLSData

@@ -30,6 +30,7 @@ const (
 	// BLS Typed Event Types (from EmitTypedEvent)
 	blsKeyGenerationInitiatedEvent    = "inference.bls.EventKeyGenerationInitiated"
 	blsVerifyingPhaseStartedEvent     = "inference.bls.EventVerifyingPhaseStarted"
+	blsDisputePhaseStartedEvent       = "inference.bls.EventDisputePhaseStarted"
 	blsGroupPublicKeyGeneratedEvent   = "inference.bls.EventGroupPublicKeyGenerated"
 	blsThresholdSigningRequestedEvent = "inference.bls.EventThresholdSigningRequested"
 
@@ -379,6 +380,14 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		err := el.blsManager.ProcessVerifyingPhaseStarted(event)
 		if err != nil {
 			logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", workerName)
+		}
+	}
+
+	if epochIdValues := event.Result.Events[blsDisputePhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("Dispute phase started event received", types.EventProcessing, "worker", workerName)
+		err := el.blsManager.ProcessDisputePhaseStarted(event)
+		if err != nil {
+			logging.Error("Failed to process dispute phase started event", types.EventProcessing, "error", err, "worker", workerName)
 		}
 	}
 
