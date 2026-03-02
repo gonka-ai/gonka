@@ -4777,6 +4777,418 @@ func (m *MsgMigrateAllWrappedTokensResponse) GetAttempted() uint32 {
 	return 0
 }
 
+// MsgBatchStartInference wraps multiple MsgStartInference messages for batched on-chain
+// execution. Unlike sending them as separate messages in one Cosmos TX (where one failure
+// rolls back all), each inner start is executed in an isolated CacheContext so individual
+// failures are contained: only the failing item is skipped; others commit normally.
+type MsgBatchStartInference struct {
+	Creator string               `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Starts  []*MsgStartInference `protobuf:"bytes,2,rep,name=starts,proto3" json:"starts,omitempty"`
+}
+
+func (m *MsgBatchStartInference) Reset()         { *m = MsgBatchStartInference{} }
+func (m *MsgBatchStartInference) String() string { return proto.CompactTextString(m) }
+func (*MsgBatchStartInference) ProtoMessage()    {}
+func (m *MsgBatchStartInference) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBatchStartInference) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBatchStartInference.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBatchStartInference) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBatchStartInference.Merge(m, src)
+}
+func (m *MsgBatchStartInference) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBatchStartInference) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBatchStartInference.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBatchStartInference proto.InternalMessageInfo
+
+func (m *MsgBatchStartInference) GetCreator() string {
+	if m != nil {
+		return m.Creator
+	}
+	return ""
+}
+
+func (m *MsgBatchStartInference) GetStarts() []*MsgStartInference {
+	if m != nil {
+		return m.Starts
+	}
+	return nil
+}
+
+func (m *MsgBatchStartInference) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBatchStartInference) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBatchStartInference) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Starts) > 0 {
+		for iNdEx := len(m.Starts) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Starts[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.Creator) > 0 {
+		i -= len(m.Creator)
+		copy(dAtA[i:], m.Creator)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBatchStartInference) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Creator)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if len(m.Starts) > 0 {
+		for _, e := range m.Starts {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *MsgBatchStartInference) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBatchStartInference: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBatchStartInference: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Creator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Starts", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Starts = append(m.Starts, &MsgStartInference{})
+			if err := m.Starts[len(m.Starts)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+// MsgBatchStartInferenceResponse contains per-item results for a BatchStartInference call.
+// Each element corresponds to the MsgStartInference at the same index in the request.
+// A non-empty ErrorMessage indicates that item failed; its state changes were not committed.
+type MsgBatchStartInferenceResponse struct {
+	Results []*MsgStartInferenceResponse `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+}
+
+func (m *MsgBatchStartInferenceResponse) Reset()         { *m = MsgBatchStartInferenceResponse{} }
+func (m *MsgBatchStartInferenceResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgBatchStartInferenceResponse) ProtoMessage()    {}
+func (m *MsgBatchStartInferenceResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBatchStartInferenceResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBatchStartInferenceResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBatchStartInferenceResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBatchStartInferenceResponse.Merge(m, src)
+}
+func (m *MsgBatchStartInferenceResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBatchStartInferenceResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBatchStartInferenceResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBatchStartInferenceResponse proto.InternalMessageInfo
+
+func (m *MsgBatchStartInferenceResponse) GetResults() []*MsgStartInferenceResponse {
+	if m != nil {
+		return m.Results
+	}
+	return nil
+}
+
+func (m *MsgBatchStartInferenceResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBatchStartInferenceResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBatchStartInferenceResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Results) > 0 {
+		for iNdEx := len(m.Results) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Results[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0xa
+		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBatchStartInferenceResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.Results) > 0 {
+		for _, e := range m.Results {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *MsgBatchStartInferenceResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBatchStartInferenceResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBatchStartInferenceResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Results", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Results = append(m.Results, &MsgStartInferenceResponse{})
+			if err := m.Results[len(m.Results)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterEnum("inference.inference.TrainingRole", TrainingRole_name, TrainingRole_value)
 	proto.RegisterType((*MsgUpdateParams)(nil), "inference.inference.MsgUpdateParams")
@@ -4863,6 +5275,8 @@ func init() {
 	proto.RegisterType((*MsgRegisterWrappedTokenContractResponse)(nil), "inference.inference.MsgRegisterWrappedTokenContractResponse")
 	proto.RegisterType((*MsgMigrateAllWrappedTokens)(nil), "inference.inference.MsgMigrateAllWrappedTokens")
 	proto.RegisterType((*MsgMigrateAllWrappedTokensResponse)(nil), "inference.inference.MsgMigrateAllWrappedTokensResponse")
+	proto.RegisterType((*MsgBatchStartInference)(nil), "inference.inference.MsgBatchStartInference")
+	proto.RegisterType((*MsgBatchStartInferenceResponse)(nil), "inference.inference.MsgBatchStartInferenceResponse")
 }
 
 func init() { proto.RegisterFile("inference/inference/tx.proto", fileDescriptor_09b36d0241b9acd5) }
@@ -5615,6 +6029,10 @@ type MsgServer interface {
 	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
 	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
 	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
+	// BatchStartInference executes multiple StartInference messages in a single transaction.
+	// Each message is processed in an isolated CacheContext so a failure of one item does not
+	// roll back the others, eliminating the need for the failedStart soft-error pattern.
+	BatchStartInference(context.Context, *MsgBatchStartInference) (*MsgBatchStartInferenceResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -5746,6 +6164,27 @@ func (*UnimplementedMsgServer) AddParticipantsToAllowList(ctx context.Context, r
 }
 func (*UnimplementedMsgServer) RemoveParticipantsFromAllowList(ctx context.Context, req *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveParticipantsFromAllowList not implemented")
+}
+func (*UnimplementedMsgServer) BatchStartInference(ctx context.Context, req *MsgBatchStartInference) (*MsgBatchStartInferenceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchStartInference not implemented")
+}
+
+func _Msg_BatchStartInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBatchStartInference)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).BatchStartInference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Msg/BatchStartInference",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).BatchStartInference(ctx, req.(*MsgBatchStartInference))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -6680,6 +7119,10 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveParticipantsFromAllowList",
 			Handler:    _Msg_RemoveParticipantsFromAllowList_Handler,
+		},
+		{
+			MethodName: "BatchStartInference",
+			Handler:    _Msg_BatchStartInference_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

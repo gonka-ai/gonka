@@ -16,6 +16,7 @@ const (
 	batchStartConsumer        = "batch-start-consumer"
 	batchFinishConsumer       = "batch-finish-consumer"
 	batchValidationV2Consumer = "batch-validation-v2-consumer"
+	batchStartV2Consumer      = "batch-start-v2-consumer"
 	batchAckWait              = time.Minute // must exceed FlushTimeout to prevent redelivery
 
 	// V1 PoC batch consumers
@@ -44,6 +45,11 @@ type BatchConsumer struct {
 	startBatch        []pendingMsg
 	finishBatch       []pendingMsg
 	validationV2Batch []pendingMsg
+	// startV2Batch collects individual MsgStartInference messages that will be wrapped
+	// into a single MsgBatchStartInference before submission. Unlike startBatch (legacy),
+	// the on-chain handler for MsgBatchStartInference isolates each item in a CacheContext
+	// so a single failure does not roll back the entire TX.
+	startV2Batch []pendingMsg
 
 	// V1 PoC batches
 	pocBatchBatch      []pendingMsg
@@ -52,6 +58,7 @@ type BatchConsumer struct {
 	startMu        sync.Mutex
 	finishMu       sync.Mutex
 	validationV2Mu sync.Mutex
+	startV2Mu      sync.Mutex
 
 	// V1 PoC mutexes
 	pocBatchMu      sync.Mutex
@@ -60,6 +67,7 @@ type BatchConsumer struct {
 	startCreatedAt        time.Time
 	finishCreatedAt       time.Time
 	validationV2CreatedAt time.Time
+	startV2CreatedAt      time.Time
 
 	// V1 PoC timestamps
 	pocBatchCreatedAt      time.Time
@@ -80,6 +88,7 @@ func NewBatchConsumer(
 		startBatch:         make([]pendingMsg, 0, config.FlushSize),
 		finishBatch:        make([]pendingMsg, 0, config.FlushSize),
 		validationV2Batch:  make([]pendingMsg, 0, config.ValidationV2FlushSize),
+		startV2Batch:       make([]pendingMsg, 0, config.FlushSize),
 		pocBatchBatch:      make([]pendingMsg, 0, config.FlushSize),
 		pocValidationBatch: make([]pendingMsg, 0, config.FlushSize),
 	}
@@ -93,6 +102,10 @@ func (c *BatchConsumer) Start() error {
 		return err
 	}
 	if err := c.subscribeStream(server.TxsBatchValidationV2Stream, batchValidationV2Consumer, c.handleValidationV2Msg); err != nil {
+		return err
+	}
+	// StartV2: uses MsgBatchStartInference with per-item CacheContext isolation on-chain.
+	if err := c.subscribeStream(server.TxsBatchStartV2Stream, batchStartV2Consumer, c.handleStartV2Msg); err != nil {
 		return err
 	}
 	// V1 PoC streams
@@ -244,6 +257,34 @@ func (c *BatchConsumer) handlePocValidationMsg(msg *nats.Msg) {
 	}
 }
 
+// handleStartV2Msg accumulates individual MsgStartInference messages for later aggregation
+// into a single MsgBatchStartInference. The on-chain handler for MsgBatchStartInference
+// wraps each item in a CacheContext so per-item failures do not roll back the whole batch.
+func (c *BatchConsumer) handleStartV2Msg(msg *nats.Msg) {
+	if err := msg.InProgress(); err != nil {
+		logging.Error("Failed to mark start-v2 msg in progress", types.Messages, "error", err)
+	}
+	sdkMsg, err := c.unmarshalMsg(msg.Data)
+	if err != nil {
+		logging.Error("Failed to unmarshal start-v2 msg", types.Messages, "error", err)
+		msg.Term()
+		return
+	}
+
+	var shouldFlush bool
+	c.startV2Mu.Lock()
+	if len(c.startV2Batch) == 0 {
+		c.startV2CreatedAt = time.Now()
+	}
+	c.startV2Batch = append(c.startV2Batch, pendingMsg{msg: sdkMsg, natsMsg: msg})
+	shouldFlush = len(c.startV2Batch) >= c.config.FlushSize
+	c.startV2Mu.Unlock()
+
+	if shouldFlush {
+		c.flushStartV2()
+	}
+}
+
 func (c *BatchConsumer) flushLoop() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -253,6 +294,7 @@ func (c *BatchConsumer) flushLoop() {
 		c.checkAndFlushStart()
 		c.checkAndFlushFinish()
 		c.checkAndFlushValidationV2()
+		c.checkAndFlushStartV2()
 		c.checkAndFlushPocBatch()
 		c.checkAndFlushPocValidation()
 	}
@@ -276,6 +318,12 @@ func (c *BatchConsumer) extendAckDeadlines() {
 		_ = p.natsMsg.InProgress()
 	}
 	c.validationV2Mu.Unlock()
+
+	c.startV2Mu.Lock()
+	for _, p := range c.startV2Batch {
+		_ = p.natsMsg.InProgress()
+	}
+	c.startV2Mu.Unlock()
 
 	c.pocBatchMu.Lock()
 	for _, p := range c.pocBatchBatch {
@@ -317,6 +365,16 @@ func (c *BatchConsumer) checkAndFlushValidationV2() {
 
 	if shouldFlush {
 		c.flushValidationV2()
+	}
+}
+
+func (c *BatchConsumer) checkAndFlushStartV2() {
+	c.startV2Mu.Lock()
+	shouldFlush := len(c.startV2Batch) > 0 && time.Since(c.startV2CreatedAt) >= c.config.FlushTimeout
+	c.startV2Mu.Unlock()
+
+	if shouldFlush {
+		c.flushStartV2()
 	}
 }
 
@@ -366,6 +424,23 @@ func (c *BatchConsumer) flushFinish() {
 	c.finishMu.Unlock()
 
 	c.broadcastBatch("finish", batch)
+}
+
+// flushStartV2 drains the startV2Batch and sends a single MsgBatchStartInference containing
+// all accumulated MsgStartInference items. The on-chain handler processes each in a
+// CacheContext so individual failures do not roll back the whole batch TX.
+func (c *BatchConsumer) flushStartV2() {
+	c.startV2Mu.Lock()
+	batch := c.startV2Batch
+	if len(batch) == 0 {
+		c.startV2Mu.Unlock()
+		return
+	}
+	c.startV2Batch = make([]pendingMsg, 0, c.config.FlushSize)
+	c.startV2CreatedAt = time.Time{} // reset timer
+	c.startV2Mu.Unlock()
+
+	c.broadcastBatchStartV2(batch)
 }
 
 func (c *BatchConsumer) flushValidationV2() {
@@ -475,6 +550,46 @@ func (c *BatchConsumer) broadcastAggregatedValidationV2(aggregated []sdk.Msg, or
 	}
 }
 
+// broadcastBatchStartV2 aggregates individual MsgStartInference messages into a single
+// MsgBatchStartInference and sends it as one TX. The creator field is taken from the first
+// message in the batch (all messages in a batch share the same creator/TA address).
+func (c *BatchConsumer) broadcastBatchStartV2(batch []pendingMsg) {
+	starts := make([]*types.MsgStartInference, 0, len(batch))
+	for _, p := range batch {
+		start, ok := p.msg.(*types.MsgStartInference)
+		if !ok {
+			logging.Warn("Unexpected message type in start-v2 batch, skipping", types.Messages)
+			continue
+		}
+		starts = append(starts, start)
+	}
+
+	if len(starts) == 0 {
+		logging.Warn("start-v2 batch had no valid MsgStartInference items after filtering", types.Messages)
+		for _, p := range batch {
+			p.natsMsg.Term()
+		}
+		return
+	}
+
+	// Use creator from the first start; all items in a given batch share the same TA.
+	creator := starts[0].Creator
+	batchMsg := &types.MsgBatchStartInference{
+		Creator: creator,
+		Starts:  starts,
+	}
+
+	logging.Info("Broadcasting BatchStartInference", types.Messages, "count", len(starts))
+
+	if err := c.txManager.SendBatchAsyncWithRetry([]sdk.Msg{batchMsg}); err != nil {
+		logging.Error("Failed to hand off BatchStartInference to TxManager", types.Messages, "error", err)
+	}
+
+	for _, p := range batch {
+		p.natsMsg.Ack()
+	}
+}
+
 func (c *BatchConsumer) broadcastBatch(batchType string, batch []pendingMsg) {
 	msgs := make([]sdk.Msg, len(batch))
 	for i, p := range batch {
@@ -502,6 +617,14 @@ func (c *BatchConsumer) unmarshalMsg(data []byte) (sdk.Msg, error) {
 
 func (c *BatchConsumer) PublishStartInference(msg sdk.Msg) error {
 	return c.publishMsg(server.TxsBatchStartStream, msg)
+}
+
+// PublishStartInferenceV2 queues a MsgStartInference for batching via MsgBatchStartInference.
+// Use this instead of PublishStartInference when the chain supports MsgBatchStartInference
+// (upgrade-v0.2.11+). The V2 path provides per-item CacheContext isolation on-chain so a
+// single failing start does not roll back the entire batch TX.
+func (c *BatchConsumer) PublishStartInferenceV2(msg sdk.Msg) error {
+	return c.publishMsg(server.TxsBatchStartV2Stream, msg)
 }
 
 func (c *BatchConsumer) PublishFinishInference(msg sdk.Msg) error {

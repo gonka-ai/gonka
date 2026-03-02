@@ -66,6 +66,10 @@ service Msg {
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
+  // BatchStartInference executes multiple StartInference messages in a single TX.
+  // Each item runs in an isolated CacheContext so a failure of one does not roll back others.
+  // The outer TX always succeeds; individual item failures are reported via Results[i].ErrorMessage.
+  rpc BatchStartInference              (MsgBatchStartInference) returns (MsgBatchStartInferenceResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -471,6 +475,18 @@ message MsgRemoveParticipantsFromAllowList {
 }
 
 message MsgRemoveParticipantsFromAllowListResponse {}
+
+// MsgBatchStartInference wraps multiple MsgStartInference messages for batched on-chain
+// execution with per-item CacheContext isolation (see BatchStartInference RPC).
+message MsgBatchStartInference {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  repeated MsgStartInference starts = 2;
+}
+
+message MsgBatchStartInferenceResponse {
+  repeated MsgStartInferenceResponse results = 1;
+}
 
 message MsgRegisterBridgeAddresses {
   option (cosmos.msg.v1.signer) = "authority";

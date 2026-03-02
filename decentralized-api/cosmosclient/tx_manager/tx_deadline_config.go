@@ -11,6 +11,7 @@ var deadlineByMsgType = map[string]int64{
 	"/inference.inference.MsgFinishInference":        150,
 	"/inference.inference.MsgValidation":             150,
 	"/inference.inference.MsgStartInference":         150,
+	"/inference.inference.MsgBatchStartInference":    150,
 }
 
 // getMaxBlocksForType returns the maximum blocks a transaction type can wait before expiring.
