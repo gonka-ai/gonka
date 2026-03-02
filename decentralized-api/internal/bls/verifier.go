@@ -340,8 +340,10 @@ func (bm *BlsManager) localKeyIndexFromParticipantSnapshot(participant *types.BL
 	if participant == nil {
 		return -1
 	}
-	localPubKey := bm.cosmosClient.GetAccountPubKey()
+	localPubKey := bm.cosmosClient.GetSignerPubKey()
 	if localPubKey == nil {
+		// Decryption always uses signer keyring entry; without signer pubkey we must keep
+		// key index unresolved and probe ciphertexts dynamically.
 		return -1
 	}
 	localPubKeyBytes := localPubKey.Bytes()
@@ -404,8 +406,8 @@ func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, 
 		return nil, -1, fmt.Errorf("no encrypted shares available")
 	}
 
-	// Get our current public key for logging
-	ourPubKey := bm.cosmosClient.GetAccountPubKey()
+	// Get our current decryption key for logging
+	ourPubKey := bm.cosmosClient.GetSignerPubKey()
 
 	// Calculate keys per slot: totalCiphertexts = numSlots * keysPerSlot
 	if totalCiphertexts%numSlots != 0 {
@@ -459,7 +461,7 @@ func (bm *BlsManager) decryptShareForSlot(encryptedShares [][]byte, slotOffset, 
 	}
 
 	// If we get here, none of the ciphertexts for this slot could be decrypted
-	return nil, -1, fmt.Errorf("failed to decrypt any of %d ciphertexts for slot %d with our key %s", keysPerSlot, slotIndex, ourPubKey)
+	return nil, -1, fmt.Errorf("failed to decrypt any of %d ciphertexts for slot %d with signer key %v", keysPerSlot, slotIndex, ourPubKey)
 }
 
 // decryptShare decrypts an encrypted share using the cosmos-sdk keyring Decrypt API
