@@ -40,6 +40,7 @@ type Params struct {
 	DeveloperAccessParams     *DeveloperAccessParams     `protobuf:"bytes,11,opt,name=developer_access_params,json=developerAccessParams,proto3" json:"developer_access_params,omitempty"`
 	ParticipantAccessParams   *ParticipantAccessParams   `protobuf:"bytes,12,opt,name=participant_access_params,json=participantAccessParams,proto3" json:"participant_access_params,omitempty"`
 	TransferAgentAccessParams *TransferAgentAccessParams `protobuf:"bytes,13,opt,name=transfer_agent_access_params,json=transferAgentAccessParams,proto3" json:"transfer_agent_access_params,omitempty"`
+	ContinuousPocParams       *ContinuousPoCParams       `protobuf:"bytes,14,opt,name=continuous_poc_params,json=continuousPocParams,proto3" json:"continuous_poc_params,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
@@ -162,6 +163,13 @@ func (m *Params) GetParticipantAccessParams() *ParticipantAccessParams {
 func (m *Params) GetTransferAgentAccessParams() *TransferAgentAccessParams {
 	if m != nil {
 		return m.TransferAgentAccessParams
+	}
+	return nil
+}
+
+func (m *Params) GetContinuousPocParams() *ContinuousPoCParams {
+	if m != nil {
+		return m.ContinuousPocParams
 	}
 	return nil
 }
@@ -2227,6 +2235,9 @@ func (this *Params) Equal(that interface{}) bool {
 		return false
 	}
 	if !this.TransferAgentAccessParams.Equal(that1.TransferAgentAccessParams) {
+		return false
+	}
+	if !this.ContinuousPocParams.Equal(that1.ContinuousPocParams) {
 		return false
 	}
 	return true

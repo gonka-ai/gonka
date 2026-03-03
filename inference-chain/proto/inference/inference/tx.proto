@@ -13,6 +13,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
+import "inference/inference/continuous_poc.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -66,6 +67,8 @@ service Msg {
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
+  // Continuous PoC commit - lightweight proof of ongoing GPU computation
+  rpc SubmitContinuousPoCCommit        (MsgSubmitContinuousPoCCommit) returns (MsgSubmitContinuousPoCCommitResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -567,3 +570,18 @@ message MsgMigrateAllWrappedTokensResponse {
   // number of contracts attempted; success/failure details are in logs/events
   uint32 attempted = 1;
 }
+
+// MsgSubmitContinuousPoCCommit submits a lightweight continuous PoC commit.
+// Participants submit these periodically while serving inference to prove
+// that spare GPU capacity is being used for PoC nonce generation.
+message MsgSubmitContinuousPoCCommit {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 epoch_index = 2;
+  uint32 nonce_count = 3;
+  bytes root_hash = 4;
+  uint32 inference_count = 5;
+  uint32 gpu_utilization_bps = 6;
+}
+
+message MsgSubmitContinuousPoCCommitResponse {}

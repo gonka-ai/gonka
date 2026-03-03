@@ -36,6 +36,7 @@ import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
+import "inference/inference/continuous_poc.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -484,6 +485,16 @@ service Query {
   // Queries PoC validation snapshot for deterministic sampling synchronization.
   rpc PoCValidationSnapshot (QueryPoCValidationSnapshotRequest) returns (QueryPoCValidationSnapshotResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
+  }
+
+  // Queries the continuous PoC epoch summary for a participant in a given epoch.
+  rpc ContinuousPoCEpochSummary (QueryContinuousPoCEpochSummaryRequest) returns (QueryContinuousPoCEpochSummaryResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/continuous_poc_epoch_summary/{epoch_index}/{participant_address}";
+  }
+
+  // Queries all continuous PoC epoch summaries for a given epoch.
+  rpc AllContinuousPoCEpochSummaries (QueryAllContinuousPoCEpochSummariesRequest) returns (QueryAllContinuousPoCEpochSummariesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/continuous_poc_epoch_summaries/{epoch_index}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1272,4 +1283,26 @@ message QueryPoCValidationSnapshotRequest {
 message QueryPoCValidationSnapshotResponse {
   PoCValidationSnapshot snapshot = 1;
   bool found = 2;
+}
+
+// QueryContinuousPoCEpochSummaryRequest requests the continuous PoC summary for a participant in an epoch.
+message QueryContinuousPoCEpochSummaryRequest {
+  uint64 epoch_index = 1;
+  string participant_address = 2;
+}
+
+// QueryContinuousPoCEpochSummaryResponse returns the continuous PoC epoch summary.
+message QueryContinuousPoCEpochSummaryResponse {
+  ContinuousPoCEpochSummary summary = 1;
+  bool found = 2;
+}
+
+// QueryAllContinuousPoCEpochSummariesRequest requests all continuous PoC summaries for an epoch.
+message QueryAllContinuousPoCEpochSummariesRequest {
+  uint64 epoch_index = 1;
+}
+
+// QueryAllContinuousPoCEpochSummariesResponse returns all continuous PoC epoch summaries.
+message QueryAllContinuousPoCEpochSummariesResponse {
+  repeated ContinuousPoCEpochSummary summaries = 1;
 }

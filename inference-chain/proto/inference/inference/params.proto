@@ -24,6 +24,7 @@ message Params {
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
   TransferAgentAccessParams transfer_agent_access_params = 13;
+  ContinuousPoCParams continuous_poc_params = 14;
 }
 
 message GenesisOnlyParams {
@@ -324,4 +325,17 @@ message TransferAgentAccessParams {
   // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
   // If empty, all TAs are allowed.
   repeated string allowed_transfer_addresses = 1;
+}
+
+// ContinuousPoCParams defines parameters for the continuous PoC feature.
+// When enabled, GPU nodes generate PoC nonces in parallel with inference,
+// utilizing spare capacity to prove computational readiness.
+message ContinuousPoCParams {
+  option (gogoproto.equal) = true;
+  bool enable_continuous_poc = 1;
+  uint32 poc_utilization_target_bps = 2;
+  uint32 nonce_weight = 3;
+  uint32 max_commits_per_epoch = 4;
+  uint32 min_nonces_per_commit = 5;
+  uint32 validation_sample_rate_bps = 6;
 }

@@ -69,4 +69,8 @@ var (
 	ErrNotSupported                          = sdkerrors.Register(ModuleName, 1163, "operation not supported in current mode")
 	ErrInvalidAddress                        = sdkerrors.Register(ModuleName, 1164, "invalid address")
 	ErrTransferAgentNotAllowlisted           = sdkerrors.Register(ModuleName, 1165, "transfer agent not in allowlist")
+	ErrContinuousPoCDisabled                 = sdkerrors.Register(ModuleName, 1166, "continuous PoC is not enabled")
+	ErrContinuousPoCMaxCommitsExceeded       = sdkerrors.Register(ModuleName, 1167, "maximum continuous PoC commits per epoch exceeded")
+	ErrContinuousPoCMinNoncesNotMet          = sdkerrors.Register(ModuleName, 1168, "nonce count below minimum per commit")
+	ErrContinuousPoCInvalidUtilization       = sdkerrors.Register(ModuleName, 1169, "GPU utilization basis points must be in [0, 10000]")
 )

@@ -1,0 +1,59 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// ContinuousPoCCommit represents a lightweight on-chain record of continuous PoC work.
+// Participants submit these commits periodically while inference-serving to prove
+// that unused GPU capacity is being utilized for PoC nonce generation.
+// The actual artifacts are stored locally; only the commit (count + root hash) goes on-chain.
+message ContinuousPoCCommit {
+  // participant_address is the bech32 address of the participant submitting PoC work.
+  string participant_address = 1;
+
+  // epoch_index is the epoch during which this continuous PoC work was performed.
+  uint64 epoch_index = 2;
+
+  // nonce_count is the total number of PoC nonces generated in this commit window.
+  uint32 nonce_count = 3;
+
+  // root_hash is the Merkle root of the locally-stored PoC artifacts (32 bytes).
+  bytes root_hash = 4;
+
+  // inference_count is the number of inferences served during this commit window.
+  // Used to calculate the effective utilization and weight the PoC contribution.
+  uint32 inference_count = 5;
+
+  // commit_block_height is the block height when this commit was recorded on-chain.
+  int64 commit_block_height = 6;
+
+  // gpu_utilization is the self-reported GPU utilization fraction [0, 10000] (basis points).
+  // 0 = fully idle (all capacity for PoC), 10000 = fully utilized by inference.
+  uint32 gpu_utilization_bps = 7;
+}
+
+// ContinuousPoCEpochSummary aggregates a participant's continuous PoC commits for an epoch.
+// Updated on-chain as commits arrive; used during epoch settlement for weight calculation.
+message ContinuousPoCEpochSummary {
+  // participant_address is the bech32 address of the participant.
+  string participant_address = 1;
+
+  // epoch_index is the epoch this summary covers.
+  uint64 epoch_index = 2;
+
+  // total_nonces is the cumulative nonce count across all commits in this epoch.
+  uint64 total_nonces = 3;
+
+  // total_inferences is the cumulative inference count across all commits in this epoch.
+  uint64 total_inferences = 4;
+
+  // commit_count is the number of individual commits submitted during this epoch.
+  uint32 commit_count = 5;
+
+  // last_commit_height is the block height of the most recent commit.
+  int64 last_commit_height = 6;
+
+  // effective_poc_weight is the calculated PoC weight from continuous work,
+  // normalized by the nonce_weight parameter. Updated on each commit.
+  int64 effective_poc_weight = 7;
+}
