@@ -105,7 +105,14 @@ type MockClient struct {
 	LastSetNodeReason    string
 }
 
-// Getter for StopCalled (for tests)
+// SetV2Status sets the V2 PoC status for idempotency testing
+func (m *MockClient) SetV2Status(status string) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.V2Status = status
+}
+
+// GetStopCalled returns the number of times Stop() was called (for tests)
 func (m *MockClient) GetStopCalled() int {
 	return m.StopCalled
 }
@@ -193,12 +200,16 @@ func (m *MockClient) GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (
 	return &PoCGenerateResponseV2{}, nil
 }
 func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.GetPowStatusV2Called++
-	return &PoCStatusResponseV2{}, nil
+	return &PoCStatusResponseV2{Status: m.V2Status}, nil
 }
 func (m *MockClient) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.StopPowV2Called++
-	return &PoCStopResponseV2{}, nil
+	return &PoCStopResponseV2{Status: "OK", Results: []BackendResult{{Status: "stopped"}}}, nil
 }
 
 // NewMockClient creates a new mock client with default values
