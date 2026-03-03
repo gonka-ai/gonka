@@ -86,6 +86,12 @@ type (
 		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
+		// Continuous PoC: per-commit records keyed by (epoch_index, participant, block_height)
+		ContinuousPoCCommits collections.Map[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCCommit]
+		// Continuous PoC: per-epoch summaries keyed by (epoch_index, participant)
+		ContinuousPoCEpochSummaries collections.Map[collections.Pair[uint64, sdk.AccAddress], types.ContinuousPoCEpochSummary]
+		// Continuous PoC: pending challenge records keyed by (epoch_index, participant, challenge_block_height)
+		ContinuousPoCChallenges collections.Map[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCChallenge]
 	}
 )
 
@@ -427,6 +433,27 @@ func NewKeeper(
 			"punishment_grace_epochs",
 			collections.Uint64Key,
 			codec.CollValue[types.GraceEpochParams](cdc),
+		),
+		ContinuousPoCCommits: collections.NewMap(
+			sb,
+			types.ContinuousPoCCommitsPrefix,
+			"continuous_poc_commits",
+			collections.TripleKeyCodec(collections.Uint64Key, sdk.AccAddressKey, collections.Int64Key),
+			codec.CollValue[types.ContinuousPoCCommit](cdc),
+		),
+		ContinuousPoCEpochSummaries: collections.NewMap(
+			sb,
+			types.ContinuousPoCEpochSummariesPrefix,
+			"continuous_poc_epoch_summaries",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+			codec.CollValue[types.ContinuousPoCEpochSummary](cdc),
+		),
+		ContinuousPoCChallenges: collections.NewMap(
+			sb,
+			types.ContinuousPoCChallengesPrefix,
+			"continuous_poc_challenges",
+			collections.TripleKeyCodec(collections.Uint64Key, sdk.AccAddressKey, collections.Int64Key),
+			codec.CollValue[types.ContinuousPoCChallenge](cdc),
 		),
 	}
 	// Build the collections schema

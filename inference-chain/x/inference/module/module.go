@@ -357,6 +357,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
+	// Continuous PoC: issue random challenges and expire overdue ones.
+	am.keeper.IssueContinuousPoCChallenges(ctx, params, blockHeight, hex.EncodeToString(sdkCtx.HeaderInfo().AppHash))
+	am.keeper.ExpireContinuousPoCChallenges(ctx, blockHeight)
+
 	// Track full chain upgrades from UpgradeKeeper
 	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
 	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {

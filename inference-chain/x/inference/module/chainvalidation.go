@@ -50,16 +50,19 @@ type WeightCalculator struct {
 	Validations             map[string][]types.PoCValidationV2
 	Participants            map[string]types.Participant
 	Seeds                   map[string]types.RandomSeed
-	EpochStartBlockHeight   int64
-	Logger                  types.InferenceLogger
-	WeightScaleFactor       mathsdk.LegacyDec
-	TimeNormalizationFactor mathsdk.LegacyDec
-	GuardianEnabled         bool
-	GuardianAddresses       map[string]bool
-	AppHash                 string
-	ValidationSlots         int
-	sortedValidatorEntries  []calculations.WeightEntry
-	validatorTotalWeight    int64
+	// ContinuousPoCEpochSummaries holds the per-participant continuous PoC summary for the settling epoch.
+	// EffectivePocWeight from each summary is added to the standard PoC nonce count during weight calculation.
+	ContinuousPoCEpochSummaries map[string]types.ContinuousPoCEpochSummary
+	EpochStartBlockHeight       int64
+	Logger                      types.InferenceLogger
+	WeightScaleFactor           mathsdk.LegacyDec
+	TimeNormalizationFactor     mathsdk.LegacyDec
+	GuardianEnabled             bool
+	GuardianAddresses           map[string]bool
+	AppHash                     string
+	ValidationSlots             int
+	sortedValidatorEntries      []calculations.WeightEntry
+	validatorTotalWeight        int64
 }
 
 // NewWeightCalculator creates a new WeightCalculator instance.
@@ -70,6 +73,7 @@ func NewWeightCalculator(
 	validations map[string][]types.PoCValidationV2,
 	participants map[string]types.Participant,
 	seeds map[string]types.RandomSeed,
+	continuousPoCEpochSummaries map[string]types.ContinuousPoCEpochSummary,
 	epochStartBlockHeight int64,
 	logger types.InferenceLogger,
 	weightScaleFactor mathsdk.LegacyDec,
@@ -80,20 +84,21 @@ func NewWeightCalculator(
 	validationSlots int,
 ) *WeightCalculator {
 	wc := &WeightCalculator{
-		CurrentValidatorWeights: currentValidatorWeights,
-		StoreCommits:            storeCommits,
-		NodeWeightDistributions: nodeWeightDistributions,
-		Validations:             validations,
-		Participants:            participants,
-		Seeds:                   seeds,
-		EpochStartBlockHeight:   epochStartBlockHeight,
-		Logger:                  logger,
-		WeightScaleFactor:       weightScaleFactor,
-		TimeNormalizationFactor: timeNormalizationFactor,
-		GuardianEnabled:         guardianEnabled,
-		GuardianAddresses:       guardianAddresses,
-		AppHash:                 appHash,
-		ValidationSlots:         validationSlots,
+		CurrentValidatorWeights:     currentValidatorWeights,
+		StoreCommits:                storeCommits,
+		NodeWeightDistributions:     nodeWeightDistributions,
+		Validations:                 validations,
+		Participants:                participants,
+		Seeds:                       seeds,
+		ContinuousPoCEpochSummaries: continuousPoCEpochSummaries,
+		EpochStartBlockHeight:       epochStartBlockHeight,
+		Logger:                      logger,
+		WeightScaleFactor:           weightScaleFactor,
+		TimeNormalizationFactor:     timeNormalizationFactor,
+		GuardianEnabled:             guardianEnabled,
+		GuardianAddresses:           guardianAddresses,
+		AppHash:                     appHash,
+		ValidationSlots:             validationSlots,
 	}
 
 	if validationSlots > 0 {
@@ -393,7 +398,21 @@ func (wc *WeightCalculator) calculateParticipantWeight(participantAddress string
 		combinedFactor = combinedFactor.Mul(wc.TimeNormalizationFactor)
 	}
 
-	totalWeight := mathsdk.LegacyNewDec(int64(commit.Count)).Mul(combinedFactor).TruncateInt64()
+	// Continuous PoC adds effective_poc_weight nonce-equivalents on top of the standard PoC count.
+	// Only included when the summary has no penalty (challenge passed or none was issued).
+	baseCount := int64(commit.Count)
+	if cpocSummary, hasCPoC := wc.ContinuousPoCEpochSummaries[participantAddress]; hasCPoC {
+		if !cpocSummary.PenaltyApplied && cpocSummary.EffectivePocWeight > 0 {
+			baseCount += cpocSummary.EffectivePocWeight
+			wc.Logger.LogInfo("calculateParticipantWeight: adding continuous PoC weight", types.PoC,
+				"participant", participantAddress,
+				"standardCount", commit.Count,
+				"cpocWeight", cpocSummary.EffectivePocWeight,
+				"totalBaseCount", baseCount)
+		}
+	}
+
+	totalWeight := mathsdk.LegacyNewDec(baseCount).Mul(combinedFactor).TruncateInt64()
 
 	distribution, hasDistribution := wc.NodeWeightDistributions[participantAddress]
 	if !hasDistribution || len(distribution.Weights) == 0 {
@@ -965,6 +984,9 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"numValidators", len(weightsForCalculator))
 	}
 
+	// Load continuous PoC epoch summaries for the settling epoch.
+	cpocSummaries := am.keeper.GetAllContinuousPoCEpochSummariesForEpoch(ctx, upcomingEpoch.Index)
+
 	calculator := NewWeightCalculator(
 		weightsForCalculator,
 		allowedCommits,
@@ -972,6 +994,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		validations,
 		participants,
 		seeds,
+		cpocSummaries,
 		epochStartBlockHeight,
 		am,
 		weightScaleFactor,

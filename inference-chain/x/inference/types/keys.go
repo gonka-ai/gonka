@@ -63,8 +63,11 @@ var (
 	MLNodeWeightDistributionPrefix    = collections.NewPrefix(40)
 	PocV2EnabledEpochPrefix           = collections.NewPrefix(41)
 	PoCValidationSnapshotPrefix       = collections.NewPrefix(42)
-	PunishmentGraceEpochsPrefix       = collections.NewPrefix(43)
-	ParamsKey                         = []byte("p_inference")
+	PunishmentGraceEpochsPrefix             = collections.NewPrefix(43)
+	ContinuousPoCCommitsPrefix              = collections.NewPrefix(44)
+	ContinuousPoCEpochSummariesPrefix       = collections.NewPrefix(45)
+	ContinuousPoCChallengesPrefix           = collections.NewPrefix(46)
+	ParamsKey                               = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

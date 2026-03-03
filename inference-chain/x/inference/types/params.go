@@ -108,6 +108,19 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
+		ContinuousPocParams: DefaultContinuousPoCParams(),
+	}
+}
+
+func DefaultContinuousPoCParams() *ContinuousPoCParams {
+	return &ContinuousPoCParams{
+		EnableContinuousPoC:               false, // Disabled by default; enabled via governance
+		PocUtilizationTargetBps:           9950,  // 99.5% of idle capacity used for PoC
+		NonceWeight:                       10,    // 10 nonces = 1 inference unit of work
+		MaxCommitsPerEpoch:                100,
+		MinNoncesPerCommit:                10,
+		ValidationSampleRateBps:           500,  // 5% random sampling
+		ValidationChallengeDeadlineBlocks: 50,   // ~4 min at 5s block time
 	}
 }
 
@@ -416,6 +429,12 @@ func (p Params) Validate() error {
 
 	if p.PocParams != nil {
 		if err := p.PocParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.ContinuousPocParams != nil {
+		if err := p.ContinuousPocParams.Validate(); err != nil {
 			return err
 		}
 	}
