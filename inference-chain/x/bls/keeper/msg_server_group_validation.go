@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 	"fmt"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -60,22 +59,14 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		return &types.MsgSubmitGroupKeyValidationSignatureResponse{}, nil
 	}
 
-	// Get the previous epoch's BLS data for slot validation and signature verification
+	// Get the previous epoch's BLS data for slot validation and signature verification.
+	// This data is mandatory: falling back to the new epoch's own data would allow a new
+	// epoch to self-certify its group key, completely bypassing the chain of trust.
 	previousEpochBLSData, err := ms.GetEpochBLSData(ctx, previousEpochId)
 	if err != nil {
-		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
-			// Emit a searchable event and continue using current epoch data as fallback
-			ms.Keeper.LogWarn("Previous epoch not found - using current epoch for validation", "previous_epoch_id", previousEpochId, "new_epoch_id", msg.NewEpochId)
-			ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
-				NewEpochId: msg.NewEpochId,
-				Reason:     fmt.Sprintf("previous_epoch_missing_fallback:%d", previousEpochId),
-			})
-
-			previousEpochBLSData = newEpochBLSData
-		} else {
-			ms.Keeper.LogError("Failed to get previous epoch BLS data", "previous_epoch_id", previousEpochId, "error", err.Error())
-			return nil, fmt.Errorf("failed to get previous epoch %d BLS data: %w", previousEpochId, err)
-		}
+		ms.Keeper.LogError("Cannot validate group key: previous epoch BLS data unavailable",
+			"previous_epoch_id", previousEpochId, "new_epoch_id", msg.NewEpochId, "error", err.Error())
+		return nil, fmt.Errorf("previous epoch %d BLS data required for group key validation: %w", previousEpochId, err)
 	}
 
 	// Find the participant in the previous epoch
