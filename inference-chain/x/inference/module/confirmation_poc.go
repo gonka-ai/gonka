@@ -581,6 +581,7 @@ func (am AppModule) updateConfirmationWeightsV2(
 			"numValidators", len(weightsForCalculator))
 	}
 
+	// Confirmation PoC does not incorporate continuous PoC weight — those are settled at epoch end.
 	calculator := NewWeightCalculator(
 		weightsForCalculator,
 		storeCommits,
@@ -588,6 +589,7 @@ func (am AppModule) updateConfirmationWeightsV2(
 		validationsV2,
 		participants,
 		seeds,
+		nil, // no continuous PoC summaries for confirmation PoC
 		event.TriggerHeight,
 		am,
 		weightScaleFactor,
