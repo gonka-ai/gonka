@@ -86,14 +86,17 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	return participants
 }
 
+// CountAllParticipants counts participants by iterating keys only,
+// without deserializing all participant data into memory.
 func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
 	iter, err := k.Participants.Iterate(ctx, nil)
 	if err != nil {
 		return 0
 	}
-	participants, err := iter.Values()
-	if err != nil {
-		return 0
+	defer iter.Close()
+	count := int64(0)
+	for ; iter.Valid(); iter.Next() {
+		count++
 	}
-	return int64(len(participants))
+	return count
 }

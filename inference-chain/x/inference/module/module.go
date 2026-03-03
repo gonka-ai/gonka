@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -174,12 +175,23 @@ func (AppModule) ConsensusVersion() uint64 { return 12 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	beginBlockStart := time.Now()
+
 	// Update dynamic pricing for all models at the start of each block
 	// This ensures consistent pricing for all inferences processed in this block
+	pricingStart := time.Now()
 	err := am.keeper.UpdateDynamicPricing(ctx)
+	pricingDuration := time.Since(pricingStart)
 	if err != nil {
 		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
 		// Don't return error - allow block processing to continue even if pricing update fails
+	}
+
+	totalDuration := time.Since(beginBlockStart)
+	if totalDuration > 100*time.Millisecond {
+		am.LogWarn("BeginBlock slow execution detected", types.Performance,
+			"totalMs", totalDuration.Milliseconds(),
+			"dynamicPricingMs", pricingDuration.Milliseconds())
 	}
 
 	return nil
@@ -309,12 +321,15 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 func (am AppModule) EndBlock(ctx context.Context) error {
+	endBlockStart := time.Now()
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 
 	// Handle confirmation PoC trigger decisions and phase transitions
+	pocStart := time.Now()
 	err := am.handleConfirmationPoC(ctx, blockHeight)
+	pocDuration := time.Since(pocStart)
 	if err != nil {
 		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
 		// Don't return error - allow block processing to continue
@@ -343,8 +358,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		return nil
 	}
 
+	expiryStart := time.Now()
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
 	err = am.expireInferences(ctx, timeouts, blockHeight, currentEpoch, &params)
+	expiryDuration := time.Since(expiryStart)
 	if err != nil {
 		am.LogError("Error expiring inferences", types.Inferences)
 	}
@@ -352,7 +369,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
+	pruneStart := time.Now()
 	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
+	pruneDuration := time.Since(pruneStart)
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
@@ -461,6 +480,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		currentEpochGroup.MarkUnchanged(ctx)
 	}
 
+	totalDuration := time.Since(endBlockStart)
+	if totalDuration > 200*time.Millisecond {
+		am.LogWarn("EndBlock slow execution detected", types.Performance,
+			"blockHeight", blockHeight,
+			"totalMs", totalDuration.Milliseconds(),
+			"confirmationPoCMs", pocDuration.Milliseconds(),
+			"inferenceExpiryMs", expiryDuration.Milliseconds(),
+			"pruningMs", pruneDuration.Milliseconds(),
+			"expiredInferences", len(timeouts))
+	}
+
 	return nil
 }
 
@@ -486,6 +516,7 @@ func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 // This stage executes at IsEndOfPoCValidationStage(blockHeight) and must complete
 // before validator switching occurs in onSetNewValidatorsStage.
 func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight int64, blockTime int64) {
+	stageStart := time.Now()
 	effectiveEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
 	if !found {
 		am.LogError("onEndOfPoCValidationStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
@@ -597,6 +628,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	// Call BLS module to initiate key generation for the new epoch
 	am.InitiateBLSKeyGeneration(ctx, upcomingEpoch.Index, activeParticipants)
+
+	stageDuration := time.Since(stageStart)
+	am.LogInfo("onEndOfPoCValidationStage completed", types.Performance,
+		"blockHeight", blockHeight,
+		"epochIndex", effectiveEpoch.Index,
+		"participants", len(activeParticipants),
+		"durationMs", stageDuration.Milliseconds())
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.
@@ -610,6 +648,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 // The stage focuses solely on validator switching, with all epoch preparation
 // handled by the previous stage for clean separation of concerns.
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+	stageStart := time.Now()
 	am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
@@ -643,6 +682,11 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	// Clean up validation snapshot after epoch transition
 	am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+
+	stageDuration := time.Since(stageStart)
+	am.LogInfo("onSetNewValidatorsStage completed", types.Performance,
+		"blockHeight", blockHeight,
+		"durationMs", stageDuration.Milliseconds())
 }
 
 func (am AppModule) captureGenerationStartTimestamp(ctx context.Context, blockTime, pocStartBlockHeight int64) {

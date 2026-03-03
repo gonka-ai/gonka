@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"time"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -13,21 +14,41 @@ const (
 )
 
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
+	pruneStart := time.Now()
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
+
+	infStart := time.Now()
 	err = k.GetInferencePruner(params).Prune(ctx, k, currentEpochIndex)
+	infDuration := time.Since(infStart)
 	if err != nil {
 		return err
 	}
+
+	batchStart := time.Now()
 	err = k.GetPoCBatchesPruner(params).Prune(ctx, k, currentEpochIndex)
+	batchDuration := time.Since(batchStart)
 	if err != nil {
 		return err
 	}
+
+	valStart := time.Now()
 	err = k.GetPoCValidationsPruner(params).Prune(ctx, k, currentEpochIndex)
+	valDuration := time.Since(valStart)
 	if err != nil {
 		return err
+	}
+
+	totalDuration := time.Since(pruneStart)
+	if totalDuration > 50*time.Millisecond {
+		k.LogInfo("Prune completed", types.Performance,
+			"epochIndex", currentEpochIndex,
+			"totalMs", totalDuration.Milliseconds(),
+			"inferencesMs", infDuration.Milliseconds(),
+			"pocBatchesMs", batchDuration.Milliseconds(),
+			"pocValidationsMs", valDuration.Milliseconds())
 	}
 	return nil
 }
