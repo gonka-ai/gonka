@@ -153,13 +153,17 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 			DisputedCiphertextIndex: 0,
 		},
 	}
+	validProofs := []DealerValidityProof{
+		{DealerIndex: 0, ProofSignature: []byte{1}},
+	}
 
 	t.Run("valid", func(t *testing.T) {
 		msg := &MsgSubmitVerificationVector{
-			Creator:          creator,
-			EpochId:          1,
-			DealerValidity:   []bool{true, false},
-			DealerComplaints: validComplaints,
+			Creator:              creator,
+			EpochId:              1,
+			DealerValidity:       []bool{true, false},
+			DealerComplaints:     validComplaints,
+			DealerValidityProofs: validProofs,
 		}
 		require.NoError(t, msg.ValidateBasic())
 	})
@@ -223,7 +227,7 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 		msg := &MsgSubmitVerificationVector{
 			Creator:        creator,
 			EpochId:        1,
-			DealerValidity: []bool{false},
+			DealerValidity: []bool{false, false},
 			DealerComplaints: []VerificationDealerComplaint{
 				{
 					DealerIndex:             0,
@@ -235,6 +239,64 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 					DisputedSlotIndex:       2,
 					DisputedCiphertextIndex: 2,
 				},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("mismatched proof count", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{true, false},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("proof dealer index out of range", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{true},
+			DealerValidityProofs: []DealerValidityProof{
+				{DealerIndex: 1, ProofSignature: []byte{1}},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("proof must correspond to true dealer", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{false, true},
+			DealerValidityProofs: []DealerValidityProof{
+				{DealerIndex: 0, ProofSignature: []byte{1}},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("empty proof signature", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{true},
+			DealerValidityProofs: []DealerValidityProof{
+				{DealerIndex: 0, ProofSignature: nil},
+			},
+		}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("duplicate proof dealer", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{true, true},
+			DealerValidityProofs: []DealerValidityProof{
+				{DealerIndex: 0, ProofSignature: []byte{1}},
+				{DealerIndex: 0, ProofSignature: []byte{2}},
 			},
 		}
 		require.Error(t, msg.ValidateBasic())

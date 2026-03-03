@@ -59,6 +59,10 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("dealer_validity length %d does not match participants count %d", len(msg.DealerValidity), len(epochBLSData.Participants)))
 	}
 
+	if err := ms.validateDealerValidityProofs(msg, &epochBLSData, participantIndex); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	complaintsByDealer := make(map[uint32]types.VerificationDealerComplaint, len(msg.DealerComplaints))
 	for _, complaint := range msg.DealerComplaints {
 		if _, exists := complaintsByDealer[complaint.DealerIndex]; exists {
@@ -103,6 +107,10 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 			continue
 		}
 
+		if err := validateComplaintIndices(&epochBLSData, dealerIndex, participantIndex, &complaint); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+
 		for _, existingComplaint := range epochBLSData.DealerComplaints {
 			if existingComplaint.DealerIndex == uint32(dealerIndex) && existingComplaint.ComplainerIndex == uint32(participantIndex) {
 				return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("complaint already exists for dealer %d by participant %s", dealerIndex, msg.Creator))
@@ -138,4 +146,140 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	)
 
 	return &types.MsgSubmitVerificationVectorResponse{}, nil
+}
+
+func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {
+	trueDealers := make(map[uint32]struct{})
+	for dealerIndex, isValid := range msg.DealerValidity {
+		if isValid {
+			trueDealers[uint32(dealerIndex)] = struct{}{}
+		}
+	}
+
+	if len(msg.DealerValidityProofs) != len(trueDealers) {
+		return fmt.Errorf("dealer_validity_proofs count %d does not match true dealer count %d", len(msg.DealerValidityProofs), len(trueDealers))
+	}
+
+	proofsByDealer := make(map[uint32]*types.DealerValidityProof, len(msg.DealerValidityProofs))
+	for i := range msg.DealerValidityProofs {
+		proof := &msg.DealerValidityProofs[i]
+		if proof.DealerIndex >= uint32(len(epochBLSData.Participants)) {
+			return fmt.Errorf("dealer_validity_proofs[%d].dealer_index %d out of range", i, proof.DealerIndex)
+		}
+		if len(proof.ProofSignature) == 0 {
+			return fmt.Errorf("dealer_validity_proofs[%d].proof_signature must be non-empty", i)
+		}
+		if _, exists := trueDealers[proof.DealerIndex]; !exists {
+			return fmt.Errorf("proof provided for dealer %d that is marked false", proof.DealerIndex)
+		}
+		if _, exists := proofsByDealer[proof.DealerIndex]; exists {
+			return fmt.Errorf("duplicate proof for dealer %d", proof.DealerIndex)
+		}
+		proofsByDealer[proof.DealerIndex] = proof
+	}
+
+	slotIndices, err := participantSlotIndices(epochBLSData, participantIndex)
+	if err != nil {
+		return err
+	}
+
+	for dealerIndex := range trueDealers {
+		proof, exists := proofsByDealer[dealerIndex]
+		if !exists {
+			return fmt.Errorf("missing proof for dealer %d", dealerIndex)
+		}
+		if err := ms.verifyDealerValidityProof(epochBLSData, int(dealerIndex), slotIndices, proof.ProofSignature); err != nil {
+			return fmt.Errorf("invalid proof for dealer %d: %w", dealerIndex, err)
+		}
+	}
+
+	return nil
+}
+
+func participantSlotIndices(epochBLSData *types.EpochBLSData, participantIndex int) ([]uint32, error) {
+	if participantIndex < 0 || participantIndex >= len(epochBLSData.Participants) {
+		return nil, fmt.Errorf("participant index %d out of range", participantIndex)
+	}
+
+	participant := epochBLSData.Participants[participantIndex]
+	if participant.SlotEndIndex < participant.SlotStartIndex {
+		return nil, fmt.Errorf("invalid slot range for participant %d in epoch %d", participantIndex, epochBLSData.EpochId)
+	}
+
+	slotCount := participant.SlotEndIndex - participant.SlotStartIndex + 1
+	slotIndices := make([]uint32, 0, int(slotCount))
+	for slot := participant.SlotStartIndex; slot <= participant.SlotEndIndex; slot++ {
+		slotIndices = append(slotIndices, slot)
+	}
+
+	return slotIndices, nil
+}
+
+
+func validateComplaintIndices(epochBLSData *types.EpochBLSData, dealerIndex, complainerIndex int, complaint *types.VerificationDealerComplaint) error {
+	if complaint == nil {
+		return fmt.Errorf("complaint cannot be nil")
+	}
+	if complainerIndex < 0 || complainerIndex >= len(epochBLSData.Participants) {
+		return fmt.Errorf("complainer index %d out of range", complainerIndex)
+	}
+
+	participant := epochBLSData.Participants[complainerIndex]
+	if participant.SlotEndIndex < participant.SlotStartIndex {
+		return fmt.Errorf("invalid slot range for participant %d in epoch %d", complainerIndex, epochBLSData.EpochId)
+	}
+	if complaint.DisputedSlotIndex < participant.SlotStartIndex || complaint.DisputedSlotIndex > participant.SlotEndIndex {
+		return fmt.Errorf("disputed_slot_index %d out of range for participant %d", complaint.DisputedSlotIndex, complainerIndex)
+	}
+
+	if dealerIndex < 0 || dealerIndex >= len(epochBLSData.DealerParts) || epochBLSData.DealerParts[dealerIndex] == nil {
+		return fmt.Errorf("dealer index %d has no dealer part", dealerIndex)
+	}
+	dealerPart := epochBLSData.DealerParts[dealerIndex]
+	if complainerIndex >= len(dealerPart.ParticipantShares) || dealerPart.ParticipantShares[complainerIndex] == nil {
+		return fmt.Errorf("dealer %d has no shares for participant %d", dealerIndex, complainerIndex)
+	}
+
+	encryptedShares := dealerPart.ParticipantShares[complainerIndex].EncryptedShares
+	numSlots := int(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+	if numSlots <= 0 || len(encryptedShares) == 0 || len(encryptedShares)%numSlots != 0 {
+		return fmt.Errorf("invalid encrypted shares shape for dealer %d and participant %d", dealerIndex, complainerIndex)
+	}
+
+	keysPerSlot := len(encryptedShares) / numSlots
+	slotOffset := int(complaint.DisputedSlotIndex - participant.SlotStartIndex)
+	slotStart := slotOffset * keysPerSlot
+	slotEnd := slotStart + keysPerSlot
+	ciphertextIndex := int(complaint.DisputedCiphertextIndex)
+	if ciphertextIndex < slotStart || ciphertextIndex >= slotEnd {
+		return fmt.Errorf("disputed_ciphertext_index %d out of range for disputed_slot_index %d", complaint.DisputedCiphertextIndex, complaint.DisputedSlotIndex)
+	}
+
+	return nil
+}
+
+func (ms msgServer) verifyDealerValidityProof(epochBLSData *types.EpochBLSData, dealerIndex int, slotIndices []uint32, proofSignature []byte) error {
+	if dealerIndex < 0 || dealerIndex >= len(epochBLSData.Participants) {
+		return fmt.Errorf("dealer index %d out of range", dealerIndex)
+	}
+	if dealerIndex >= len(epochBLSData.DealerParts) || epochBLSData.DealerParts[dealerIndex] == nil || len(epochBLSData.DealerParts[dealerIndex].Commitments) == 0 {
+		return fmt.Errorf("dealer %d has no commitments", dealerIndex)
+	}
+
+	epochForProof := *epochBLSData
+	epochForProof.ValidDealers = make([]bool, len(epochBLSData.Participants))
+	epochForProof.ValidDealers[dealerIndex] = true
+
+	slotPublicKeys, err := ms.PrecomputeSlotPublicKeysBlst(&epochForProof)
+	if err != nil {
+		return fmt.Errorf("failed to precompute dealer slot public keys: %w", err)
+	}
+	epochForProof.SlotPublicKeys = slotPublicKeys
+
+	proofHash := types.BuildDealerValidityProofHash(epochBLSData.EpochId, uint32(dealerIndex))
+	if !ms.verifyBLSPartialSignatureBlst(proofSignature, proofHash, &epochForProof, slotIndices) {
+		return fmt.Errorf("BLS proof signature verification failed")
+	}
+
+	return nil
 }

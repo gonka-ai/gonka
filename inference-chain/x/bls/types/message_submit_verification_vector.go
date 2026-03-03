@@ -32,7 +32,7 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if len(m.DealerComplaints) > len(m.DealerValidity) {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_complaints count cannot exceed dealer_validity length")
 	}
-	seenDealers := make(map[uint32]struct{}, len(m.DealerComplaints))
+	seenComplaintDealers := make(map[uint32]struct{}, len(m.DealerComplaints))
 	for i, complaint := range m.DealerComplaints {
 		if complaint.DealerIndex >= uint32(len(m.DealerValidity)) {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dealer_complaints[%d].dealer_index %d out of range for dealer_validity length %d", i, complaint.DealerIndex, len(m.DealerValidity))
@@ -40,10 +40,37 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 		if m.DealerValidity[complaint.DealerIndex] {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dealer_complaints[%d].dealer_index %d must correspond to dealer_validity=false", i, complaint.DealerIndex)
 		}
-		if _, exists := seenDealers[complaint.DealerIndex]; exists {
+		if _, exists := seenComplaintDealers[complaint.DealerIndex]; exists {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "duplicate dealer_index %d in dealer_complaints", complaint.DealerIndex)
 		}
-		seenDealers[complaint.DealerIndex] = struct{}{}
+		seenComplaintDealers[complaint.DealerIndex] = struct{}{}
+	}
+
+	trueCount := 0
+	for _, isValid := range m.DealerValidity {
+		if isValid {
+			trueCount++
+		}
+	}
+	if len(m.DealerValidityProofs) != trueCount {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity_proofs count must match number of true dealer_validity entries")
+	}
+
+	seenProofDealers := make(map[uint32]struct{}, len(m.DealerValidityProofs))
+	for i, proof := range m.DealerValidityProofs {
+		if proof.DealerIndex >= uint32(len(m.DealerValidity)) {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dealer_validity_proofs[%d].dealer_index %d out of range for dealer_validity length %d", i, proof.DealerIndex, len(m.DealerValidity))
+		}
+		if !m.DealerValidity[proof.DealerIndex] {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "dealer_validity_proofs[%d].dealer_index %d must correspond to dealer_validity=true", i, proof.DealerIndex)
+		}
+		if len(proof.ProofSignature) == 0 {
+			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity_proof signature must be non-empty")
+		}
+		if _, exists := seenProofDealers[proof.DealerIndex]; exists {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "duplicate dealer_index %d in dealer_validity_proofs", proof.DealerIndex)
+		}
+		seenProofDealers[proof.DealerIndex] = struct{}{}
 	}
 	return nil
 }

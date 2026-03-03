@@ -30,7 +30,7 @@ func TestSubmitVerificationVector_Success(t *testing.T) {
 
 	// Create verification message from first participant
 	participant := epochBLSData.Participants[0]
-	dealerValidity := []bool{true, false, true} // Mark dealers 0 and 2 as valid
+	dealerValidity := []bool{false, false, false}
 
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
@@ -50,7 +50,7 @@ func TestSubmitVerificationVector_Success(t *testing.T) {
 	// Verify successful submission
 	submission := storedData.VerificationSubmissions[0] // Alice is at index 0
 	require.Len(t, submission.DealerValidity, 3)        // Should have 3 dealer validity entries
-	require.Equal(t, []bool{true, false, true}, submission.DealerValidity)
+	require.Equal(t, []bool{false, false, false}, submission.DealerValidity)
 
 	// Verify other participants haven't submitted yet (empty DealerValidity)
 	for i := 1; i < len(storedData.VerificationSubmissions); i++ {
@@ -65,7 +65,7 @@ func TestSubmitVerificationVector_EpochNotFound(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        "participant1",
 		EpochId:        999,
-		DealerValidity: []bool{true, false},
+		DealerValidity: []bool{false, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
@@ -93,7 +93,7 @@ func TestSubmitVerificationVector_WrongPhase(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, true},
+		DealerValidity: []bool{false, false, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
@@ -124,7 +124,7 @@ func TestSubmitVerificationVector_DeadlinePassed(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, true},
+		DealerValidity: []bool{false, false, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
@@ -151,7 +151,7 @@ func TestSubmitVerificationVector_NotParticipant(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        "not_a_participant",
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, true},
+		DealerValidity: []bool{false, false, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
@@ -176,7 +176,7 @@ func TestSubmitVerificationVector_AlreadySubmitted(t *testing.T) {
 	// Mark first participant as having already submitted (index-based)
 	participant := epochBLSData.Participants[0]
 	epochBLSData.VerificationSubmissions[0] = &types.VerificationVectorSubmission{
-		DealerValidity: []bool{true, true, false},
+		DealerValidity: []bool{false, false, false},
 	}
 	k.SetEpochBLSData(ctx, epochBLSData)
 
@@ -184,7 +184,7 @@ func TestSubmitVerificationVector_AlreadySubmitted(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{false, true, true},
+		DealerValidity: []bool{false, false, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
@@ -239,7 +239,7 @@ func TestSubmitVerificationVector_EventEmission(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, true},
+		DealerValidity: []bool{false, false, false},
 	}
 
 	// Submit verification vector
@@ -272,11 +272,8 @@ func TestSubmitVerificationVector_MultipleParticipants(t *testing.T) {
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Submit verification vectors from all participants
-	for i, participant := range epochBLSData.Participants {
+	for _, participant := range epochBLSData.Participants {
 		dealerValidity := make([]bool, len(epochBLSData.Participants))
-		// Each participant marks different dealers as valid
-		dealerValidity[i] = true
-		dealerValidity[(i+1)%len(epochBLSData.Participants)] = true
 
 		msg := &types.MsgSubmitVerificationVector{
 			Creator:        participant.Address,
@@ -299,25 +296,51 @@ func TestSubmitVerificationVector_MultipleParticipants(t *testing.T) {
 		submission := storedData.VerificationSubmissions[i]
 		require.Len(t, submission.DealerValidity, 3)
 
-		// Verify the specific dealer validity pattern we set
 		expectedPattern := make([]bool, len(epochBLSData.Participants))
-		expectedPattern[i] = true
-		expectedPattern[(i+1)%len(epochBLSData.Participants)] = true
 		require.Equal(t, expectedPattern, submission.DealerValidity)
 	}
+}
+
+func TestSubmitVerificationVector_TrueDealerWithoutProof(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(108)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{true, false, false},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.Error(t, err)
+	require.Nil(t, resp)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	require.Equal(t, codes.InvalidArgument, st.Code())
+	require.Contains(t, st.Message(), "dealer_validity_proofs count 0 does not match true dealer count 1")
 }
 
 func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(108)
+	epochID := uint64(109)
 	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
 	// Ensure dealer 1 has ciphertexts for participant 0 so complaint evidence is meaningful.
 	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
 	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
+	participant0Shares := make([][]byte, 33)
+	for i := range participant0Shares {
+		participant0Shares[i] = []byte{byte(i + 1)}
+	}
 	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
-		{EncryptedShares: [][]byte{[]byte("c0")}},
+		{EncryptedShares: participant0Shares},
 		{EncryptedShares: [][]byte{[]byte("c1")}},
 		{EncryptedShares: [][]byte{[]byte("c2")}},
 	}
@@ -327,11 +350,11 @@ func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, true},
+		DealerValidity: []bool{false, false, false},
 		DealerComplaints: []types.VerificationDealerComplaint{
 			{
 				DealerIndex:             1,
-				DisputedSlotIndex:       33,
+				DisputedSlotIndex:       0,
 				DisputedCiphertextIndex: 0,
 			},
 		},
@@ -346,7 +369,7 @@ func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	require.Len(t, storedData.DealerComplaints, 1)
 	require.Equal(t, uint32(1), storedData.DealerComplaints[0].DealerIndex)
 	require.Equal(t, uint32(0), storedData.DealerComplaints[0].ComplainerIndex)
-	require.Equal(t, uint32(33), storedData.DealerComplaints[0].DisputedSlotIndex)
+	require.Equal(t, uint32(0), storedData.DealerComplaints[0].DisputedSlotIndex)
 	require.Equal(t, uint32(0), storedData.DealerComplaints[0].DisputedCiphertextIndex)
 }
 
@@ -354,12 +377,16 @@ func TestSubmitVerificationVector_MissingComplaintForFalseDealerWithSharesReject
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochID := uint64(109)
+	epochID := uint64(110)
 	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
 	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
 	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
+	participant0Shares := make([][]byte, 33)
+	for i := range participant0Shares {
+		participant0Shares[i] = []byte{byte(i + 1)}
+	}
 	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
-		{EncryptedShares: [][]byte{[]byte("c0")}},
+		{EncryptedShares: participant0Shares},
 		{EncryptedShares: [][]byte{[]byte("c1")}},
 		{EncryptedShares: [][]byte{[]byte("c2")}},
 	}
@@ -369,13 +396,91 @@ func TestSubmitVerificationVector_MissingComplaintForFalseDealerWithSharesReject
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, true},
+		DealerValidity: []bool{false, false, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.Contains(t, err.Error(), "missing complaint evidence")
+}
+
+func TestSubmitVerificationVector_InvalidComplaintSlotRejected(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(111)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
+	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
+	participant0Shares := make([][]byte, 33)
+	for i := range participant0Shares {
+		participant0Shares[i] = []byte{byte(i + 1)}
+	}
+	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
+		{EncryptedShares: participant0Shares},
+		{EncryptedShares: [][]byte{[]byte("c1")}},
+		{EncryptedShares: [][]byte{[]byte("c2")}},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, false, false},
+		DealerComplaints: []types.VerificationDealerComplaint{
+			{
+				DealerIndex:             1,
+				DisputedSlotIndex:       33,
+				DisputedCiphertextIndex: 0,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "disputed_slot_index")
+}
+
+func TestSubmitVerificationVector_InvalidComplaintCiphertextRejected(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(112)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
+	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
+	participant0Shares := make([][]byte, 33)
+	for i := range participant0Shares {
+		participant0Shares[i] = []byte{byte(i + 1)}
+	}
+	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
+		{EncryptedShares: participant0Shares},
+		{EncryptedShares: [][]byte{[]byte("c1")}},
+		{EncryptedShares: [][]byte{[]byte("c2")}},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, false, false},
+		DealerComplaints: []types.VerificationDealerComplaint{
+			{
+				DealerIndex:             1,
+				DisputedSlotIndex:       0,
+				DisputedCiphertextIndex: 10,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "disputed_ciphertext_index")
 }
 
 // Helper function to create test epoch BLS data in VERIFYING phase

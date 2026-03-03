@@ -608,15 +608,21 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 
 	logging.Debug(verifierLogTag+"Submitting verification vector", inferenceTypes.BLS, "epochID", epochID)
 
-	// Submit the verification vector using the dealer validity we already determined
-	msg := &types.MsgSubmitVerificationVector{
-		Creator:          bm.cosmosClient.GetAccountAddress(),
-		EpochId:          epochID,
-		DealerValidity:   verificationResult.DealerValidity,
-		DealerComplaints: bm.buildDealerComplaintsFromEvidence(verificationResult),
+	dealerValidityProofs, err := bm.buildDealerValidityProofs(epochID, verificationResult)
+	if err != nil {
+		return fmt.Errorf("failed to build dealer validity proofs: %w", err)
 	}
 
-	_, err := bm.cosmosClient.SubmitVerificationVector(msg)
+	// Submit the verification vector using the dealer validity we already determined
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:              bm.cosmosClient.GetAccountAddress(),
+		EpochId:              epochID,
+		DealerValidity:       verificationResult.DealerValidity,
+		DealerComplaints:     bm.buildDealerComplaintsFromEvidence(verificationResult),
+		DealerValidityProofs: dealerValidityProofs,
+	}
+
+	_, err = bm.cosmosClient.SubmitVerificationVector(msg)
 	if err != nil {
 		return fmt.Errorf("failed to submit verification vector: %w", err)
 	}
@@ -649,6 +655,45 @@ func (bm *BlsManager) buildDealerComplaintsFromEvidence(result *VerificationResu
 		})
 	}
 	return complaints
+}
+
+func (bm *BlsManager) buildDealerValidityProofs(epochID uint64, verificationResult *VerificationResult) ([]types.DealerValidityProof, error) {
+	if verificationResult.SlotRange[1] < verificationResult.SlotRange[0] {
+		return nil, fmt.Errorf("invalid slot range: %d-%d", verificationResult.SlotRange[0], verificationResult.SlotRange[1])
+	}
+
+	expectedSlots := int(verificationResult.SlotRange[1]-verificationResult.SlotRange[0]) + 1
+	proofs := make([]types.DealerValidityProof, 0, countTrueValues(verificationResult.DealerValidity))
+
+	for dealerIndex, isValid := range verificationResult.DealerValidity {
+		if !isValid {
+			continue
+		}
+
+		if dealerIndex >= len(verificationResult.DealerShares) {
+			return nil, fmt.Errorf("missing dealer shares for dealer %d", dealerIndex)
+		}
+
+		dealerShares := verificationResult.DealerShares[dealerIndex]
+		if len(dealerShares) != expectedSlots {
+			return nil, fmt.Errorf("dealer %d shares count mismatch: got %d expected %d", dealerIndex, len(dealerShares), expectedSlots)
+		}
+
+		proofHash := types.BuildDealerValidityProofHash(epochID, uint32(dealerIndex))
+		proofSignature, err := bm.computePartialSignatureBlst(proofHash, &VerificationResult{
+			AggregatedShares: dealerShares,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute proof signature for dealer %d: %w", dealerIndex, err)
+		}
+
+		proofs = append(proofs, types.DealerValidityProof{
+			DealerIndex:    uint32(dealerIndex),
+			ProofSignature: proofSignature,
+		})
+	}
+
+	return proofs, nil
 }
 
 // countTrueValues counts the number of true values in a boolean slice
