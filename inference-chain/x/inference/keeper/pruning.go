@@ -37,6 +37,10 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
+	err = k.GetContinuousPoCEpochSummariesPruner(params).Prune(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -161,6 +165,30 @@ func (k Keeper) GetContinuousPoCChallengesPruner(params types.Params) Pruner[col
 		},
 		Remover: func(ctx context.Context, key collections.Triple[uint64, sdk.AccAddress, int64]) error {
 			return k.ContinuousPoCChallenges.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
+// GetContinuousPoCEpochSummariesPruner returns a Pruner for ContinuousPoCEpochSummaries.
+// The collection is keyed by (epoch_index uint64, participant sdk.AccAddress).
+// Summaries are kept until after epoch settlement, so they share the same threshold as PoC data.
+func (k Keeper) GetContinuousPoCEpochSummariesPruner(params types.Params) Pruner[collections.Pair[uint64, sdk.AccAddress], types.ContinuousPoCEpochSummary] {
+	return Pruner[collections.Pair[uint64, sdk.AccAddress], types.ContinuousPoCEpochSummary]{
+		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
+		PruningMax: params.EpochParams.PocPruningMax,
+		List:       k.ContinuousPoCEpochSummaries,
+		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
+			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epochIndex))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.ContinuousPoCEpochSummariesPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.ContinuousPoCEpochSummariesPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
+			return k.ContinuousPoCEpochSummaries.Remove(ctx, key)
 		},
 		Logger: k,
 	}

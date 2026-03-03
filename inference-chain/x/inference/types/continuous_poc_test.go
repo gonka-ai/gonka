@@ -244,11 +244,12 @@ func TestVerifyMerkleProof_FourLeaves(t *testing.T) {
 
 func TestPruningState_NewFieldsRoundTrip(t *testing.T) {
 	original := types.PruningState{
-		PocBatchesPrunedEpoch:             1,
-		PocValidationsPrunedEpoch:         2,
-		InferencePrunedEpoch:              3,
-		ContinuousPoCCommitsPrunedEpoch:   7,
-		ContinuousPoCChallengePrunedEpoch: 8,
+		PocBatchesPrunedEpoch:                  1,
+		PocValidationsPrunedEpoch:              2,
+		InferencePrunedEpoch:                   3,
+		ContinuousPoCCommitsPrunedEpoch:        7,
+		ContinuousPoCChallengePrunedEpoch:      8,
+		ContinuousPoCEpochSummariesPrunedEpoch: 9,
 	}
 	bz, err := original.Marshal()
 	require.NoError(t, err)
@@ -257,6 +258,7 @@ func TestPruningState_NewFieldsRoundTrip(t *testing.T) {
 	require.NoError(t, decoded.Unmarshal(bz))
 	require.Equal(t, original.ContinuousPoCCommitsPrunedEpoch, decoded.ContinuousPoCCommitsPrunedEpoch)
 	require.Equal(t, original.ContinuousPoCChallengePrunedEpoch, decoded.ContinuousPoCChallengePrunedEpoch)
+	require.Equal(t, original.ContinuousPoCEpochSummariesPrunedEpoch, decoded.ContinuousPoCEpochSummariesPrunedEpoch)
 }
 
 func TestPruningState_BackwardsCompatibility(t *testing.T) {
@@ -274,6 +276,7 @@ func TestPruningState_BackwardsCompatibility(t *testing.T) {
 	require.Equal(t, int64(10), decoded.PocBatchesPrunedEpoch)
 	require.Equal(t, int64(0), decoded.ContinuousPoCCommitsPrunedEpoch)
 	require.Equal(t, int64(0), decoded.ContinuousPoCChallengePrunedEpoch)
+	require.Equal(t, int64(0), decoded.ContinuousPoCEpochSummariesPrunedEpoch)
 }
 
 // ── DefaultParams includes ContinuousPoCParams ────────────────────────────────

@@ -26,8 +26,9 @@ type PruningState struct {
 	PocBatchesPrunedEpoch           int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
 	PocValidationsPrunedEpoch       int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
 	InferencePrunedEpoch            int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
-	ContinuousPoCCommitsPrunedEpoch  int64 `protobuf:"varint,4,opt,name=continuous_poc_commits_pruned_epoch,json=continuousPocCommitsPrunedEpoch,proto3" json:"continuous_poc_commits_pruned_epoch,omitempty"`
-	ContinuousPoCChallengePrunedEpoch int64 `protobuf:"varint,5,opt,name=continuous_poc_summaries_pruned_epoch,json=continuousPocSummariesPrunedEpoch,proto3" json:"continuous_poc_summaries_pruned_epoch,omitempty"`
+	ContinuousPoCCommitsPrunedEpoch        int64 `protobuf:"varint,4,opt,name=continuous_poc_commits_pruned_epoch,json=continuousPocCommitsPrunedEpoch,proto3" json:"continuous_poc_commits_pruned_epoch,omitempty"`
+	ContinuousPoCChallengePrunedEpoch      int64 `protobuf:"varint,5,opt,name=continuous_poc_challenges_pruned_epoch,json=continuousPocChallengesPrunedEpoch,proto3" json:"continuous_poc_challenges_pruned_epoch,omitempty"`
+	ContinuousPoCEpochSummariesPrunedEpoch int64 `protobuf:"varint,6,opt,name=continuous_poc_summaries_pruned_epoch,json=continuousPocSummariesPrunedEpoch,proto3" json:"continuous_poc_summaries_pruned_epoch,omitempty"`
 }
 
 func (m *PruningState) Reset()         { *m = PruningState{} }
@@ -98,6 +99,13 @@ func (m *PruningState) GetContinuousPoCChallengePrunedEpoch() int64 {
 	return 0
 }
 
+func (m *PruningState) GetContinuousPoCEpochSummariesPrunedEpoch() int64 {
+	if m != nil {
+		return m.ContinuousPoCEpochSummariesPrunedEpoch
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*PruningState)(nil), "inference.inference.PruningState")
 }
@@ -145,6 +153,11 @@ func (m *PruningState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ContinuousPoCEpochSummariesPrunedEpoch != 0 {
+		i = encodeVarintPruningState(dAtA, i, uint64(m.ContinuousPoCEpochSummariesPrunedEpoch))
+		i--
+		dAtA[i] = 0x30
+	}
 	if m.ContinuousPoCChallengePrunedEpoch != 0 {
 		i = encodeVarintPruningState(dAtA, i, uint64(m.ContinuousPoCChallengePrunedEpoch))
 		i--
@@ -204,6 +217,9 @@ func (m *PruningState) Size() (n int) {
 	}
 	if m.ContinuousPoCChallengePrunedEpoch != 0 {
 		n += 1 + sovPruningState(uint64(m.ContinuousPoCChallengePrunedEpoch))
+	}
+	if m.ContinuousPoCEpochSummariesPrunedEpoch != 0 {
+		n += 1 + sovPruningState(uint64(m.ContinuousPoCEpochSummariesPrunedEpoch))
 	}
 	return n
 }
@@ -334,6 +350,25 @@ func (m *PruningState) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.ContinuousPoCChallengePrunedEpoch |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ContinuousPoCEpochSummariesPrunedEpoch", wireType)
+			}
+			m.ContinuousPoCEpochSummariesPrunedEpoch = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPruningState
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ContinuousPoCEpochSummariesPrunedEpoch |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
