@@ -20,7 +20,7 @@ func (k Keeper) SetInference(ctx context.Context, inference types.Inference) err
 	if err != nil {
 		k.LogError("error setting developer stat", types.Stat, "err", err)
 	} else {
-		k.LogInfo("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
+		k.LogDebug("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
 	}
 	return nil
 }

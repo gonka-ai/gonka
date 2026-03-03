@@ -27,7 +27,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 		epochId = effectiveEpoch.Index
 	}
 
-	k.LogInfo("SetDeveloperStats: got stat", types.Stat,
+	k.LogDebug("SetDeveloperStats: got stat", types.Stat,
 		"inference_id", inference.InferenceId,
 		"inference_status", inference.Status.String(),
 		"developer", inference.RequestedBy,

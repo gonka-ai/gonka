@@ -23,7 +23,7 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 	timeKey := byInferenceStore.Get([]byte(infStats.InferenceId))
 	if timeKey == nil {
 		// completely new record
-		k.LogInfo("completely new record, create record by time", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
+		k.LogDebug("completely new record, create record by time", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
 		timeKey = developerByTimeAndInferenceKey(developer, uint64(inferenceTime), infStats.InferenceId)
 		bz, err := k.cdc.Marshal(&types.DeveloperStatsByTime{
 			EpochId:   epochId,
@@ -44,7 +44,7 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 	)
 
 	if val := byTimeStore.Get(timeKey); val != nil {
-		k.LogInfo("record found by time key", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
+		k.LogDebug("record found by time key", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
 		err := k.cdc.Unmarshal(val, &statsByTime)
 		if err != nil {
 			return 0, err
@@ -64,7 +64,7 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 		statsByTime.Inference.EpochId = infStats.EpochId
 		statsByTime.Inference.ActualCostInCoins = infStats.ActualCostInCoins
 	} else {
-		k.LogInfo("time key exists, record DO NOT exist", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
+		k.LogDebug("time key exists, record DO NOT exist", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)
 		statsByTime = types.DeveloperStatsByTime{
 			EpochId:   epochId,
 			Timestamp: inferenceTime,

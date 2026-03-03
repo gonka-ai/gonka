@@ -14,7 +14,7 @@ import (
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
-	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
+	k.LogDebug("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
 	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
 	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
@@ -46,8 +46,8 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy), msg), nil
 	}
 
-	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
-	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
+	k.LogDebug("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
+	k.LogDebug("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
 
 	err := k.verifyKeys(ctx, msg, transferAgent, dev)
 	if err != nil {
@@ -148,7 +148,7 @@ func (k msgServer) validateTimestamp(
 		k.LogError("StartInference: validateTimestamp failed to get params", types.Inferences, "error", err)
 		return err
 	}
-	k.LogInfo("Validating timestamp for StartInference:", types.Inferences,
+	k.LogDebug("Validating timestamp for StartInference:", types.Inferences,
 		"timestamp", components.Timestamp,
 		"inferenceId", inferenceId,
 		"currentBlockTime", ctx.BlockTime().UnixNano(),
@@ -189,7 +189,7 @@ func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
 		k.LogError("Unable to set inference timeout", types.Inferences, err)
 	}
 
-	k.LogInfo("Inference Timeout Set:", types.Inferences,
+	k.LogDebug("Inference Timeout Set:", types.Inferences,
 		"InferenceId", inference.InferenceId,
 		"ExpirationHeight", inference.StartBlockHeight+expirationBlocks)
 }

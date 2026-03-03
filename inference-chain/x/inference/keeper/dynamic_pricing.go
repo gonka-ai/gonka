@@ -281,7 +281,7 @@ func (k *Keeper) RecordInferencePrice(
 	}
 	if inference.Model == "" {
 		k.LogError("RecordInferencePrice called with empty model ID", types.Pricing,
-			"inferenceId", inference.InferenceId, "inference", inference)
+			"inferenceId", inference.InferenceId, "status", inference.Status.String())
 	}
 	// Fast path: check if price is already stored (already locked in)
 	if inference.PerTokenPrice > 0 {
@@ -303,7 +303,7 @@ func (k *Keeper) RecordInferencePrice(
 	// This eliminates the need for complex fallback logic in calculation functions
 	inference.PerTokenPrice = currentPrice
 
-	k.LogInfo("Recorded inference price", types.Pricing,
+	k.LogDebug("Recorded inference price", types.Pricing,
 		"inferenceId", inferenceId, "modelId", inference.Model, "lockedPrice", currentPrice)
 }
 

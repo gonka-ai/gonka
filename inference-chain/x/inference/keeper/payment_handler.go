@@ -25,7 +25,7 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 		return 0,
 			sdkerrors.Wrap(err, types.ErrRequesterCannotPay.Error())
 	}
-	k.LogInfo("Sent coins to escrow", types.Payments, "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
+	k.LogDebug("Sent coins to escrow", types.Payments, "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
 	return cost, nil
 }
 
@@ -37,7 +37,7 @@ func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64, memo strin
 		k.LogError("Cannot mint negative coins", types.Payments, "coins", newCoins)
 		return sdkerrors.Wrapf(types.ErrCannotMintNegativeCoins, "coins: %d", newCoins)
 	}
-	k.LogInfo("Minting coins", types.Payments, "coins", newCoins, "moduleAccount", types.ModuleName)
+	k.LogDebug("Minting coins", types.Payments, "coins", newCoins, "moduleAccount", types.ModuleName)
 	coins, err := types.GetCoins(newCoins)
 	if err != nil {
 		return err
@@ -55,12 +55,12 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 		return err
 	}
 	if amount == 0 {
-		k.LogInfo("No amount to pay", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)
+		k.LogDebug("No amount to pay", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)
 		return nil
 	}
 
 	vestingEpochs := vestingPeriods
-	k.LogInfo("Paying participant", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)
+	k.LogDebug("Paying participant", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)
 
 	if vestingPeriods != nil && *vestingPeriods > 0 {
 		// Route through streamvesting system
@@ -87,10 +87,10 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 
 func (k *Keeper) BurnModuleCoins(ctx context.Context, burnCoins int64, memo string) error {
 	if burnCoins <= 0 {
-		k.LogInfo("No coins to burn", types.Payments, "coins", burnCoins)
+		k.LogDebug("No coins to burn", types.Payments, "coins", burnCoins)
 		return nil
 	}
-	k.LogInfo("Burning coins", types.Payments, "coins", burnCoins)
+	k.LogDebug("Burning coins", types.Payments, "coins", burnCoins)
 	coins, err := types.GetCoins(burnCoins)
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func (k *Keeper) BurnModuleCoins(ctx context.Context, burnCoins int64, memo stri
 }
 
 func (k *Keeper) IssueRefund(ctx context.Context, refundAmount int64, address string, memo string) error {
-	k.LogInfo("Issuing refund", types.Payments, "address", address, "amount", refundAmount)
+	k.LogDebug("Issuing refund", types.Payments, "address", address, "amount", refundAmount)
 	err := k.PayParticipantFromEscrow(ctx, address, refundAmount, memo, nil) // Refunds should be direct payment
 	if err != nil {
 		k.LogError("Error issuing refund", types.Payments, "error", err)
