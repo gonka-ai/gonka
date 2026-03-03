@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	blst "github.com/supranational/blst/bindings/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -267,10 +269,11 @@ func (ms msgServer) verifyDealerValidityProof(epochBLSData *types.EpochBLSData, 
 	}
 
 	epochForProof := *epochBLSData
-	epochForProof.ValidDealers = make([]bool, len(epochBLSData.Participants))
-	epochForProof.ValidDealers[dealerIndex] = true
-
-	slotPublicKeys, err := ms.PrecomputeSlotPublicKeysBlst(&epochForProof)
+	slotPublicKeys, err := buildDealerSlotPublicKeysForSlots(
+		epochBLSData.DealerParts[dealerIndex].Commitments,
+		epochBLSData.ITotalSlots,
+		slotIndices,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to precompute dealer slot public keys: %w", err)
 	}
@@ -282,4 +285,51 @@ func (ms msgServer) verifyDealerValidityProof(epochBLSData *types.EpochBLSData, 
 	}
 
 	return nil
+}
+
+func buildDealerSlotPublicKeysForSlots(commitments [][]byte, totalSlots uint32, slotIndices []uint32) ([][]byte, error) {
+	if len(commitments) == 0 {
+		return nil, fmt.Errorf("commitments must be non-empty")
+	}
+
+	commitmentPoints := make([]*blst.P2Affine, len(commitments))
+	for i, commitmentBytes := range commitments {
+		point := new(blst.P2Affine).Uncompress(commitmentBytes)
+		if point == nil {
+			return nil, fmt.Errorf("failed to unmarshal commitment %d with blst", i)
+		}
+		if !point.InG2() {
+			return nil, fmt.Errorf("commitment %d is not in G2 subgroup", i)
+		}
+		commitmentPoints[i] = point
+	}
+
+	slotPublicKeys := make([][]byte, totalSlots)
+	for _, slotIndex := range slotIndices {
+		if slotIndex >= totalSlots {
+			return nil, fmt.Errorf("slot index %d out of range for total slots %d", slotIndex, totalSlots)
+		}
+
+		var x fr.Element
+		x.SetUint64(uint64(slotIndex + 1))
+
+		var power fr.Element
+		power.SetOne()
+
+		scalars := make([]byte, len(commitmentPoints)*32)
+		for i := 0; i < len(commitmentPoints); i++ {
+			powerBytes := power.Bytes()
+			// gnark uses big-endian; blst expects little-endian scalar bytes.
+			for j := 0; j < 16; j++ {
+				powerBytes[j], powerBytes[31-j] = powerBytes[31-j], powerBytes[j]
+			}
+			copy(scalars[i*32:(i+1)*32], powerBytes[:])
+			power.Mul(&power, &x)
+		}
+
+		slotPublicKey := blst.P2AffinesMult(commitmentPoints, scalars, 255)
+		slotPublicKeys[slotIndex] = slotPublicKey.ToAffine().Compress()
+	}
+
+	return slotPublicKeys, nil
 }

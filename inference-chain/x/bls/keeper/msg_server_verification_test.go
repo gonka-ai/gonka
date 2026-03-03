@@ -2,8 +2,13 @@ package keeper_test
 
 import (
 	"context"
+	"fmt"
+	"math/big"
 	"testing"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+	hashToCurve "github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -326,6 +331,48 @@ func TestSubmitVerificationVector_TrueDealerWithoutProof(t *testing.T) {
 	require.Contains(t, st.Message(), "dealer_validity_proofs count 0 does not match true dealer count 1")
 }
 
+func TestSubmitVerificationVector_TrueDealerWithValidProof(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(113)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+
+	// Configure dealer 0 as a valid dealer with a constant polynomial commitment C0 = g2 * s.
+	// With one commitment, per-slot dealer shares equal s for every slot.
+	const dealerScalar uint64 = 7
+	epochBLSData.DealerParts[0].DealerAddress = epochBLSData.Participants[0].Address
+	epochBLSData.DealerParts[0].Commitments = [][]byte{g2CommitmentFromScalar(dealerScalar)}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	slotCount := int(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+	proofHash := types.BuildDealerValidityProofHash(epochID, 0)
+	proofSignature, err := constantShareProofSignature(proofHash, dealerScalar, slotCount)
+	require.NoError(t, err)
+
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{true, false, false},
+		DealerValidityProofs: []types.DealerValidityProof{
+			{
+				DealerIndex:    0,
+				ProofSignature: proofSignature,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, msg.DealerValidity, storedData.VerificationSubmissions[0].DealerValidity)
+	require.Empty(t, storedData.DealerComplaints)
+}
+
 func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -481,6 +528,61 @@ func TestSubmitVerificationVector_InvalidComplaintCiphertextRejected(t *testing.
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.Contains(t, err.Error(), "disputed_ciphertext_index")
+}
+
+func g2CommitmentFromScalar(scalar uint64) []byte {
+	var g2Gen bls12381.G2Affine
+	_, _, _, g2Gen = bls12381.Generators()
+
+	var scalarBigInt big.Int
+	scalarBigInt.SetUint64(scalar)
+
+	var commitment bls12381.G2Affine
+	commitment.ScalarMultiplication(&g2Gen, &scalarBigInt)
+	commitmentBytes := commitment.Bytes()
+	return commitmentBytes[:]
+}
+
+func constantShareProofSignature(proofHash []byte, scalar uint64, slotCount int) ([]byte, error) {
+	if slotCount <= 0 {
+		return nil, fmt.Errorf("slotCount must be > 0")
+	}
+
+	messageG1, err := mapProofHashToG1(proofHash)
+	if err != nil {
+		return nil, err
+	}
+
+	var scalarBigInt big.Int
+	scalarBigInt.SetUint64(scalar)
+
+	var slotSignature bls12381.G1Affine
+	slotSignature.ScalarMultiplication(&messageG1, &scalarBigInt)
+	slotSignatureBytes := slotSignature.Bytes()
+
+	proofSignature := make([]byte, 0, slotCount*len(slotSignatureBytes))
+	for i := 0; i < slotCount; i++ {
+		proofSignature = append(proofSignature, slotSignatureBytes[:]...)
+	}
+	return proofSignature, nil
+}
+
+func mapProofHashToG1(hash []byte) (bls12381.G1Affine, error) {
+	var out bls12381.G1Affine
+	if len(hash) != 32 {
+		return out, fmt.Errorf("message hash must be 32 bytes, got %d", len(hash))
+	}
+
+	var be [48]byte
+	copy(be[48-32:], hash)
+
+	var u fp.Element
+	u.SetBytes(be[:])
+
+	p := bls12381.MapToCurve1(&u)
+	hashToCurve.G1Isogeny(&p.X, &p.Y)
+	out.ClearCofactor(&p)
+	return out, nil
 }
 
 // Helper function to create test epoch BLS data in VERIFYING phase
