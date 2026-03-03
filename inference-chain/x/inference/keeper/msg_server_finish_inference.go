@@ -68,10 +68,31 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 
 	if found && existingInference.Status == types.InferenceStatus_EXPIRED {
-		k.LogWarn("FinishInference: cannot finish expired inference", types.Inferences,
+		// This is a key diagnostic signal: the inference was executed by the node but the
+		// FinishInference message arrived after the timeout expired. This could indicate:
+		// - The node was too slow to complete the inference
+		// - Network propagation delays caused the message to arrive late
+		// - The timeout duration (ExpirationBlocks) is too short for this model
+		blocksLate := ctx.BlockHeight() - int64(existingInference.StartBlockHeight)
+		k.LogWarn("FinishInference: late arrival for expired inference - node completed but message arrived after timeout",
+			types.Inferences,
 			"inferenceId", msg.InferenceId,
-			"currentStatus", existingInference.Status,
-			"executedBy", msg.ExecutedBy)
+			"executedBy", msg.ExecutedBy,
+			"assignedTo", existingInference.AssignedTo,
+			"model", existingInference.Model,
+			"startBlockHeight", existingInference.StartBlockHeight,
+			"currentBlockHeight", ctx.BlockHeight(),
+			"blocksElapsedSinceStart", blocksLate,
+			"requestedBy", existingInference.RequestedBy)
+
+		ctx.EventManager().EmitEvent(
+			sdk.NewEvent("inference_finish_late",
+				sdk.NewAttribute("inference_id", msg.InferenceId),
+				sdk.NewAttribute("executed_by", msg.ExecutedBy),
+				sdk.NewAttribute("model", existingInference.Model),
+			),
+		)
+
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired"), msg), nil
 	}
 
@@ -122,7 +143,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *types.MsgFinishInferenceResponse {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent("finish_inference",
-			sdk.NewAttribute("result", "failed")))
+			sdk.NewAttribute("result", "failed"),
+			sdk.NewAttribute("inference_id", msg.InferenceId),
+			sdk.NewAttribute("executed_by", msg.ExecutedBy),
+			sdk.NewAttribute("model", msg.Model),
+			sdk.NewAttribute("error", err.Error()),
+		))
 	return &types.MsgFinishInferenceResponse{
 		InferenceIndex: msg.InferenceId,
 		ErrorMessage:   err.Error(),

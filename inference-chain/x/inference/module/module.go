@@ -196,6 +196,11 @@ func (am AppModule) expireInferences(
 		return nil
 	}
 
+	am.LogInfo("Processing inference timeouts", types.Inferences,
+		"blockHeight", blockHeight,
+		"timeoutCount", len(timeouts),
+		"epochIndex", currentEpoch.Index)
+
 	// Create expiry context once for efficiency (reuse already-loaded params and epoch data)
 	expiryCtx, err := am.NewInferenceExpiryContextWithEpoch(ctx, blockHeight, currentEpoch, params)
 	if err != nil {
@@ -203,41 +208,95 @@ func (am AppModule) expireInferences(
 		return err
 	}
 
+	expiredCount := 0
+	alreadyFinishedCount := 0
+	notFoundCount := 0
+
 	for _, i := range timeouts {
 		inference, found := am.keeper.GetInference(ctx, i.InferenceId)
 		if !found {
+			notFoundCount++
+			am.LogWarn("Inference timeout triggered but inference not found in store", types.Inferences,
+				"inferenceId", i.InferenceId,
+				"expirationHeight", i.ExpirationHeight,
+				"blockHeight", blockHeight)
 			continue
 		}
 		if inference.Status == types.InferenceStatus_STARTED {
 			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx)
+			expiredCount++
+		} else {
+			alreadyFinishedCount++
+			am.LogDebug("Inference timeout triggered but inference already processed", types.Inferences,
+				"inferenceId", i.InferenceId,
+				"status", inference.Status.String(),
+				"assignedTo", inference.AssignedTo,
+				"blockHeight", blockHeight)
 		}
 	}
+
+	if expiredCount > 0 || notFoundCount > 0 {
+		am.LogInfo("Inference timeout processing complete", types.Inferences,
+			"blockHeight", blockHeight,
+			"totalTimeouts", len(timeouts),
+			"expired", expiredCount,
+			"alreadyFinished", alreadyFinishedCount,
+			"notFound", notFoundCount)
+	}
+
 	return nil
 }
 
 // expireInferenceAndIssueRefund marks an inference as expired and issues a refund
 // Returns the updated inference
 func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference types.Inference) types.Inference {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
 
 	err := am.keeper.IssueRefund(ctx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
 	if err != nil {
-		am.LogError("Error issuing refund", types.Inferences, "error", err)
+		am.LogError("Error issuing refund for expired inference", types.Inferences,
+			"error", err,
+			"inferenceId", inference.InferenceId,
+			"requestedBy", inference.RequestedBy,
+			"escrowAmount", inference.EscrowAmount)
 	}
 
 	err = am.keeper.SetInference(ctx, inference)
 	if err != nil {
-		am.LogError("Error updating inference", types.Inferences, "error", err)
+		am.LogError("Error updating expired inference", types.Inferences,
+			"error", err,
+			"inferenceId", inference.InferenceId)
 	}
+
+	// Emit event for inference expiry so operators and indexers can track missed inferences
+	sdkCtx.EventManager().EmitEvent(
+		sdk.NewEvent("inference_expired",
+			sdk.NewAttribute("inference_id", inference.InferenceId),
+			sdk.NewAttribute("assigned_to", inference.AssignedTo),
+			sdk.NewAttribute("model", inference.Model),
+			sdk.NewAttribute("requested_by", inference.RequestedBy),
+		),
+	)
 
 	return inference
 }
 
 func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext) {
+	blocksElapsed := expiryCtx.CurrentBlockHeight - inference.StartBlockHeight
+
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
-		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
+		am.LogWarn("Unable to find participant for expired inference", types.Inferences,
+			"inferenceId", inference.InferenceId,
+			"assignedTo", inference.AssignedTo,
+			"model", inference.Model,
+			"startBlockHeight", inference.StartBlockHeight,
+			"blocksElapsed", blocksElapsed,
+			"reason", "executor_not_found")
+		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
 
@@ -245,7 +304,13 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	// This may lazy-load previous epoch data if the inference started before current epoch
 	epochToCheck := expiryCtx.GetEpochForInference(ctx, am.keeper, inference)
 	if epochToCheck == nil {
-		am.LogWarn("No epoch available for expired inference check", types.Inferences, "inferenceId", inference.InferenceId)
+		am.LogWarn("No epoch available for expired inference check", types.Inferences,
+			"inferenceId", inference.InferenceId,
+			"assignedTo", inference.AssignedTo,
+			"model", inference.Model,
+			"startBlockHeight", inference.StartBlockHeight,
+			"blocksElapsed", blocksElapsed,
+			"reason", "no_epoch_available")
 		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
@@ -260,7 +325,13 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 
 	if activeParticipants == nil {
 		am.LogWarn("No active participants available for expired inference check", types.Inferences,
-			"inferenceId", inference.InferenceId, "epochIndex", epochToCheck.Index)
+			"inferenceId", inference.InferenceId,
+			"assignedTo", inference.AssignedTo,
+			"model", inference.Model,
+			"epochIndex", epochToCheck.Index,
+			"startBlockHeight", inference.StartBlockHeight,
+			"blocksElapsed", blocksElapsed,
+			"reason", "no_active_participants")
 		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
@@ -274,16 +345,19 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	if !hasNode {
 		nodeType := "mlnode"
 		if checkPreserveNode {
-			nodeType = "preserve node"
+			nodeType = "preserve_node"
 		}
 		am.LogWarn("Executor doesn't have required node for expired inference, skipping penalty",
 			types.Inferences,
 			"inferenceId", inference.InferenceId,
-			"executor", inference.AssignedTo,
+			"assignedTo", inference.AssignedTo,
 			"model", inference.Model,
 			"nodeType", nodeType,
 			"epochIndex", epochToCheck.Index,
-			"inPoCRange", expiryCtx.IsBlockInPoCRange(inference.StartBlockHeight) || expiryCtx.IsBlockInPoCRange(expiryCtx.CurrentBlockHeight))
+			"startBlockHeight", inference.StartBlockHeight,
+			"blocksElapsed", blocksElapsed,
+			"inPoCRange", expiryCtx.IsBlockInPoCRange(inference.StartBlockHeight) || expiryCtx.IsBlockInPoCRange(expiryCtx.CurrentBlockHeight),
+			"reason", "executor_missing_node")
 
 		// Still issue refund and mark as expired, but don't penalize executor
 		am.expireInferenceAndIssueRefund(ctx, inference)
@@ -291,19 +365,26 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	}
 
 	// Executor has the required node, proceed with normal expiry handling (with penalty)
-	am.LogInfo("Inference expired, not finished. Issuing refund and penalizing executor",
+	am.LogWarn("Inference expired with penalty: executor had node but did not finish in time",
 		types.Inferences,
 		"inferenceId", inference.InferenceId,
-		"executor", inference.AssignedTo,
+		"assignedTo", inference.AssignedTo,
 		"model", inference.Model,
-		"epochIndex", epochToCheck.Index)
+		"epochIndex", epochToCheck.Index,
+		"startBlockHeight", inference.StartBlockHeight,
+		"blocksElapsed", blocksElapsed,
+		"missedRequestsBefore", executor.CurrentEpochStats.MissedRequests,
+		"reason", "executor_timeout")
 
 	inference = am.expireInferenceAndIssueRefund(ctx, inference)
 
 	executor.CurrentEpochStats.MissedRequests++
 	err := am.keeper.SetParticipant(ctx, executor)
 	if err != nil {
-		am.LogError("Error updating participant for expired inference", types.Participants, "error", err)
+		am.LogError("Error updating participant for expired inference", types.Participants,
+			"error", err,
+			"inferenceId", inference.InferenceId,
+			"assignedTo", inference.AssignedTo)
 	}
 }
 
@@ -346,11 +427,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
 	err = am.expireInferences(ctx, timeouts, blockHeight, currentEpoch, &params)
 	if err != nil {
-		am.LogError("Error expiring inferences", types.Inferences)
+		am.LogError("Error expiring inferences", types.Inferences,
+			"error", err,
+			"blockHeight", blockHeight,
+			"timeoutCount", len(timeouts))
 	}
 	for _, t := range timeouts {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
+
+	// Periodic inference health summary for operator diagnostics
+	am.keeper.LogInferenceHealthSummary(ctx, blockHeight)
 
 	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
 	if err != nil {

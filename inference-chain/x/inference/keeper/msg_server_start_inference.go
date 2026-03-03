@@ -14,7 +14,13 @@ import (
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
-	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
+	k.LogInfo("StartInference", types.Inferences,
+		"inferenceId", msg.InferenceId,
+		"creator", msg.Creator,
+		"requestedBy", msg.RequestedBy,
+		"assignedTo", msg.AssignedTo,
+		"model", msg.Model,
+		"blockHeight", ctx.BlockHeight())
 
 	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
 	if k.IsDeveloperAccessRestricted(ctx, ctx.BlockHeight()) && !k.IsAllowedDeveloper(ctx, msg.RequestedBy) {
@@ -96,6 +102,16 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		}
 	}
 
+	// Emit structured event for inference lifecycle tracking
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent("inference_started",
+			sdk.NewAttribute("inference_id", msg.InferenceId),
+			sdk.NewAttribute("assigned_to", msg.AssignedTo),
+			sdk.NewAttribute("model", msg.Model),
+			sdk.NewAttribute("requested_by", msg.RequestedBy),
+		),
+	)
+
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
 	}, nil
@@ -104,7 +120,12 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 func failedStart(ctx sdk.Context, error error, message *types.MsgStartInference) *types.MsgStartInferenceResponse {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent("start_inference",
-			sdk.NewAttribute("result", "failed")))
+			sdk.NewAttribute("result", "failed"),
+			sdk.NewAttribute("inference_id", message.InferenceId),
+			sdk.NewAttribute("assigned_to", message.AssignedTo),
+			sdk.NewAttribute("model", message.Model),
+			sdk.NewAttribute("error", error.Error()),
+		))
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: message.InferenceId,
 		ErrorMessage:   error.Error(),
@@ -174,7 +195,12 @@ func (k msgServer) validateTimestamp(
 func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
 	params, err := k.GetParams(ctx)
 	if err != nil {
-		k.LogError("Unable to get params for inference timeout", types.Inferences, "error", err)
+		k.LogError("Unable to get params for inference timeout - inference may hang without expiry",
+			types.Inferences,
+			"error", err,
+			"inferenceId", inference.InferenceId,
+			"assignedTo", inference.AssignedTo,
+			"model", inference.Model)
 		return
 	}
 	expirationBlocks := params.ValidationParams.ExpirationBlocks
@@ -185,13 +211,24 @@ func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
 	})
 
 	if err != nil {
-		// Not fatal, we try to continue
-		k.LogError("Unable to set inference timeout", types.Inferences, err)
+		// This is a critical issue: without a timeout, the inference could hang indefinitely
+		k.LogError("Unable to set inference timeout - inference may hang without expiry",
+			types.Inferences,
+			"error", err,
+			"inferenceId", inference.InferenceId,
+			"assignedTo", inference.AssignedTo,
+			"model", inference.Model,
+			"expirationHeight", expirationHeight)
+		return
 	}
 
-	k.LogInfo("Inference Timeout Set:", types.Inferences,
-		"InferenceId", inference.InferenceId,
-		"ExpirationHeight", inference.StartBlockHeight+expirationBlocks)
+	k.LogInfo("Inference timeout set", types.Inferences,
+		"inferenceId", inference.InferenceId,
+		"assignedTo", inference.AssignedTo,
+		"model", inference.Model,
+		"startBlockHeight", inference.StartBlockHeight,
+		"expirationHeight", expirationHeight,
+		"expirationBlocks", expirationBlocks)
 }
 
 func (k msgServer) processInferencePayments(
