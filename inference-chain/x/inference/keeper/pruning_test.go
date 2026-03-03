@@ -502,3 +502,149 @@ func TestSubnetPruningPostPruneHook(t *testing.T) {
 	iter.Close()
 	require.False(t, statsFound, "SubnetHostEpochStats should be cleared")
 }
+
+// TestEpochKeyedDataPruning tests that epoch-keyed collections (PoCV2, EpochGroupData,
+// EpochGroupValidations, EpochPerformanceSummaries, RandomSeeds, etc.) are properly
+// cleaned up by the new pruning logic in pruneEpochKeyedData.
+func TestEpochKeyedDataPruning(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	// Set up epochs 1-5 with corresponding PocStartBlockHeight
+	for i := uint64(1); i <= 5; i++ {
+		err := k.Epochs.Set(ctx, i, types.Epoch{
+			Index:               i,
+			PocStartBlockHeight: int64(i * 100),
+		})
+		require.NoError(t, err)
+	}
+
+	// Configure PoC threshold = 1 so endEpoch = current - 1
+	setPruningConfig(ctx, k, PruningSettings{PocThreshold: 1, PocMaxPrune: 5000})
+
+	// --- Populate EpochGroupData for epochs 1-5 ---
+	for i := uint64(1); i <= 5; i++ {
+		k.SetEpochGroupData(ctx, types.EpochGroupData{
+			EpochIndex: i,
+			ModelId:    "model-a",
+		})
+	}
+
+	// --- Populate EpochGroupValidations for epochs 1-5 ---
+	for i := uint64(1); i <= 5; i++ {
+		err := k.SetEpochGroupValidations(ctx, types.EpochGroupValidations{
+			EpochIndex:  i,
+			Participant: mkAddr(1),
+		})
+		require.NoError(t, err)
+	}
+
+	// --- Populate RandomSeeds for epochs 1-5 ---
+	for i := uint64(1); i <= 5; i++ {
+		err := k.SetRandomSeed(ctx, types.RandomSeed{
+			EpochIndex:  i,
+			Participant: mkAddr(1),
+			Signature:   "test-sig",
+		})
+		require.NoError(t, err)
+	}
+
+	// --- Populate EpochPerformanceSummaries for epochs 1-5 ---
+	for i := uint64(1); i <= 5; i++ {
+		err := k.SetEpochPerformanceSummary(ctx, types.EpochPerformanceSummary{
+			EpochIndex:    i,
+			ParticipantId: mkAddr(1),
+		})
+		require.NoError(t, err)
+	}
+
+	// --- Populate PoCV2StoreCommits for epochs 1-5 (using pocStartBlockHeight) ---
+	for i := uint64(1); i <= 5; i++ {
+		err := k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+			PocStageStartBlockHeight: int64(i * 100),
+			ParticipantAddress:       mkAddr(1),
+		})
+		require.NoError(t, err)
+	}
+
+	// --- Populate MLNodeWeightDistributions for epochs 1-5 ---
+	for i := uint64(1); i <= 5; i++ {
+		err := k.SetMLNodeWeightDistribution(ctx, types.MLNodeWeightDistribution{
+			PocStageStartBlockHeight: int64(i * 100),
+			ParticipantAddress:       mkAddr(1),
+		})
+		require.NoError(t, err)
+	}
+
+	// Run pruning at currentEpoch=5, threshold=1 => endEpoch=4
+	// Epochs 1-4 should be pruned, epoch 5 should remain
+	err := k.Prune(ctx, 5)
+	require.NoError(t, err)
+
+	// Verify EpochGroupData: epochs 1-4 pruned, epoch 5 remains
+	for i := uint64(1); i <= 4; i++ {
+		_, found := k.GetEpochGroupData(ctx, i, "model-a")
+		require.False(t, found, "EpochGroupData for epoch %d should be pruned", i)
+	}
+	_, found := k.GetEpochGroupData(ctx, 5, "model-a")
+	require.True(t, found, "EpochGroupData for epoch 5 should remain")
+
+	// Verify EpochGroupValidations: epochs 1-4 pruned, epoch 5 remains
+	for i := uint64(1); i <= 4; i++ {
+		_, found := k.GetEpochGroupValidations(ctx, mkAddr(1), i)
+		require.False(t, found, "EpochGroupValidations for epoch %d should be pruned", i)
+	}
+	_, found = k.GetEpochGroupValidations(ctx, mkAddr(1), 5)
+	require.True(t, found, "EpochGroupValidations for epoch 5 should remain")
+
+	// Verify RandomSeeds: epochs 1-4 pruned, epoch 5 remains
+	for i := uint64(1); i <= 4; i++ {
+		_, seedFound := k.GetRandomSeed(ctx, i, mkAddr(1))
+		require.False(t, seedFound, "RandomSeed for epoch %d should be pruned", i)
+	}
+	_, seedFound := k.GetRandomSeed(ctx, 5, mkAddr(1))
+	require.True(t, seedFound, "RandomSeed for epoch 5 should remain")
+
+	// Verify EpochPerformanceSummaries: epochs 1-4 pruned, epoch 5 remains
+	for i := uint64(1); i <= 4; i++ {
+		_, found := k.GetEpochPerformanceSummary(ctx, i, mkAddr(1))
+		require.False(t, found, "EpochPerformanceSummary for epoch %d should be pruned", i)
+	}
+	_, found = k.GetEpochPerformanceSummary(ctx, 5, mkAddr(1))
+	require.True(t, found, "EpochPerformanceSummary for epoch 5 should remain")
+
+	// Verify PoCV2StoreCommits: epochs 1-4 (pocStartBlockHeight 100-400) pruned
+	for i := uint64(1); i <= 4; i++ {
+		commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, int64(i*100))
+		require.NoError(t, err)
+		require.Empty(t, commits, "PoCV2StoreCommits for epoch %d should be pruned", i)
+	}
+	commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, 500)
+	require.NoError(t, err)
+	require.Len(t, commits, 1, "PoCV2StoreCommits for epoch 5 should remain")
+
+	// Verify MLNodeWeightDistributions: epochs 1-4 pruned
+	for i := uint64(1); i <= 4; i++ {
+		dists, err := k.GetAllMLNodeWeightDistributionsForStage(ctx, int64(i*100))
+		require.NoError(t, err)
+		require.Empty(t, dists, "MLNodeWeightDistributions for epoch %d should be pruned", i)
+	}
+	dists, err := k.GetAllMLNodeWeightDistributionsForStage(ctx, 500)
+	require.NoError(t, err)
+	require.Len(t, dists, 1, "MLNodeWeightDistributions for epoch 5 should remain")
+}
+
+// TestEffectivePruningMax verifies that the fallback default is used when
+// the configured PruningMax is zero (proto default).
+func TestEffectivePruningMax(t *testing.T) {
+	require.Equal(t, int64(5000), keeper.DefaultPruningMaxPerBlock)
+
+	// When max is positive, return it as-is
+	require.Equal(t, int64(100), keeper.EffectivePruningMaxExported(100))
+
+	// When max is zero (proto default), use the fallback
+	require.Equal(t, int64(5000), keeper.EffectivePruningMaxExported(0))
+
+	// When max is negative (shouldn't happen but defensive), use the fallback
+	require.Equal(t, int64(5000), keeper.EffectivePruningMaxExported(-1))
+}
