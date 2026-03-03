@@ -5615,6 +5615,10 @@ type MsgServer interface {
 	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
 	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
 	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
+	// Continuous PoC: lightweight proof of ongoing GPU computation
+	SubmitContinuousPoCCommit(context.Context, *MsgSubmitContinuousPoCCommit) (*MsgSubmitContinuousPoCCommitResponse, error)
+	// Continuous PoC: respond to a chain-issued Merkle proof challenge
+	RespondContinuousPoCChallenge(context.Context, *MsgRespondContinuousPoCChallenge) (*MsgRespondContinuousPoCChallengeResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -5746,6 +5750,12 @@ func (*UnimplementedMsgServer) AddParticipantsToAllowList(ctx context.Context, r
 }
 func (*UnimplementedMsgServer) RemoveParticipantsFromAllowList(ctx context.Context, req *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveParticipantsFromAllowList not implemented")
+}
+func (*UnimplementedMsgServer) SubmitContinuousPoCCommit(ctx context.Context, req *MsgSubmitContinuousPoCCommit) (*MsgSubmitContinuousPoCCommitResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitContinuousPoCCommit not implemented")
+}
+func (*UnimplementedMsgServer) RespondContinuousPoCChallenge(ctx context.Context, req *MsgRespondContinuousPoCChallenge) (*MsgRespondContinuousPoCChallengeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RespondContinuousPoCChallenge not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -6508,6 +6518,42 @@ func _Msg_RemoveParticipantsFromAllowList_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitContinuousPoCCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitContinuousPoCCommit)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitContinuousPoCCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Msg/SubmitContinuousPoCCommit",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitContinuousPoCCommit(ctx, req.(*MsgSubmitContinuousPoCCommit))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RespondContinuousPoCChallenge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRespondContinuousPoCChallenge)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RespondContinuousPoCChallenge(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Msg/RespondContinuousPoCChallenge",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RespondContinuousPoCChallenge(ctx, req.(*MsgRespondContinuousPoCChallenge))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.inference.Msg",
@@ -6680,6 +6726,14 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveParticipantsFromAllowList",
 			Handler:    _Msg_RemoveParticipantsFromAllowList_Handler,
+		},
+		{
+			MethodName: "SubmitContinuousPoCCommit",
+			Handler:    _Msg_SubmitContinuousPoCCommit_Handler,
+		},
+		{
+			MethodName: "RespondContinuousPoCChallenge",
+			Handler:    _Msg_RespondContinuousPoCChallenge_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

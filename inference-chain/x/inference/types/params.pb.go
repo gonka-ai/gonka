@@ -40,6 +40,7 @@ type Params struct {
 	DeveloperAccessParams     *DeveloperAccessParams     `protobuf:"bytes,11,opt,name=developer_access_params,json=developerAccessParams,proto3" json:"developer_access_params,omitempty"`
 	ParticipantAccessParams   *ParticipantAccessParams   `protobuf:"bytes,12,opt,name=participant_access_params,json=participantAccessParams,proto3" json:"participant_access_params,omitempty"`
 	TransferAgentAccessParams *TransferAgentAccessParams `protobuf:"bytes,13,opt,name=transfer_agent_access_params,json=transferAgentAccessParams,proto3" json:"transfer_agent_access_params,omitempty"`
+	ContinuousPocParams       *ContinuousPoCParams       `protobuf:"bytes,14,opt,name=continuous_poc_params,json=continuousPocParams,proto3" json:"continuous_poc_params,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
@@ -162,6 +163,13 @@ func (m *Params) GetParticipantAccessParams() *ParticipantAccessParams {
 func (m *Params) GetTransferAgentAccessParams() *TransferAgentAccessParams {
 	if m != nil {
 		return m.TransferAgentAccessParams
+	}
+	return nil
+}
+
+func (m *Params) GetContinuousPocParams() *ContinuousPoCParams {
+	if m != nil {
+		return m.ContinuousPocParams
 	}
 	return nil
 }
@@ -2229,6 +2237,9 @@ func (this *Params) Equal(that interface{}) bool {
 	if !this.TransferAgentAccessParams.Equal(that1.TransferAgentAccessParams) {
 		return false
 	}
+	if !this.ContinuousPocParams.Equal(that1.ContinuousPocParams) {
+		return false
+	}
 	return true
 }
 func (this *TokenomicsParams) Equal(that interface{}) bool {
@@ -2964,6 +2975,18 @@ func (m *Params) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ContinuousPocParams != nil {
+		{
+			size, err := m.ContinuousPocParams.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintParams(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x72
+	}
 	if m.TransferAgentAccessParams != nil {
 		{
 			size, err := m.TransferAgentAccessParams.MarshalToSizedBuffer(dAtA[:i])
@@ -4673,6 +4696,10 @@ func (m *Params) Size() (n int) {
 		l = m.TransferAgentAccessParams.Size()
 		n += 1 + l + sovParams(uint64(l))
 	}
+	if m.ContinuousPocParams != nil {
+		l = m.ContinuousPocParams.Size()
+		n += 1 + l + sovParams(uint64(l))
+	}
 	return n
 }
 
@@ -5799,6 +5826,42 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 				m.TransferAgentAccessParams = &TransferAgentAccessParams{}
 			}
 			if err := m.TransferAgentAccessParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 14:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ContinuousPocParams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthParams
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthParams
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.ContinuousPocParams == nil {
+				m.ContinuousPocParams = &ContinuousPoCParams{}
+			}
+			if err := m.ContinuousPocParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
