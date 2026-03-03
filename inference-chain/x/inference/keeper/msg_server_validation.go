@@ -105,7 +105,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	groupData, found := k.GetEpochGroupData(ctx, epochGroup.GroupData.EpochIndex, inference.Model)
 	if !found {
 		k.LogError("Failed to get epoch group data", types.Validation, "epochIndex", epochGroup.GroupData.EpochIndex, "model", inference.Model)
-		return nil, err
+		return nil, types.ErrEpochGroupDataNotFound
 	}
 
 	if groupData.ValidationWeight(msg.Creator) == nil {
