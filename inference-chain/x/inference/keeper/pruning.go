@@ -128,7 +128,7 @@ func (k Keeper) GetContinuousPoCCommitsPruner(params types.Params) Pruner[collec
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.ContinuousPoCCommits,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[uint64, sdk.AccAddress, int64]] {
-			return collections.NewSuperPrefixedTripleRange[uint64, sdk.AccAddress, int64](uint64(epochIndex))
+			return collections.NewPrefixedTripleRange[uint64, sdk.AccAddress, int64](uint64(epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.ContinuousPoCCommitsPrunedEpoch
@@ -151,7 +151,7 @@ func (k Keeper) GetContinuousPoCChallengesPruner(params types.Params) Pruner[col
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.ContinuousPoCChallenges,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[uint64, sdk.AccAddress, int64]] {
-			return collections.NewSuperPrefixedTripleRange[uint64, sdk.AccAddress, int64](uint64(epochIndex))
+			return collections.NewPrefixedTripleRange[uint64, sdk.AccAddress, int64](uint64(epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.ContinuousPoCChallengePrunedEpoch

@@ -211,7 +211,7 @@ func (k Keeper) IssueContinuousPoCChallenges(ctx context.Context, params types.P
 	entropy := deriveEntropy(appHashHex, blockHeight)
 
 	iter, err := k.ContinuousPoCCommits.Iterate(ctx,
-		collections.NewSuperPrefixedTripleRange[uint64, sdk.AccAddress, int64](currentEpoch.Index))
+		collections.NewPrefixedTripleRange[uint64, sdk.AccAddress, int64](currentEpoch.Index))
 	if err != nil {
 		k.LogError("[ContinuousPoC] Failed to iterate commits for challenge issuance", types.PoC, "error", err)
 		return
@@ -280,7 +280,7 @@ func (k Keeper) ExpireContinuousPoCChallenges(ctx context.Context, blockHeight i
 	}
 
 	iter, err := k.ContinuousPoCChallenges.Iterate(ctx,
-		collections.NewSuperPrefixedTripleRange[uint64, sdk.AccAddress, int64](currentEpoch.Index))
+		collections.NewPrefixedTripleRange[uint64, sdk.AccAddress, int64](currentEpoch.Index))
 	if err != nil {
 		k.LogError("[ContinuousPoC] Failed to iterate challenges for expiry", types.PoC, "error", err)
 		return
