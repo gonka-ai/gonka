@@ -134,10 +134,17 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		}
 
 		if !hasIntersection {
+			// Check if participant is active before reporting as error
+			// If participant not yet active, this is expected - use Info level
+			active, _ := worker.broker.IsParticipantActiveOnChain()
+			if !active {
+				logging.Info("No epoch models available for this node (participant not yet active)", types.Nodes, "node_id", worker.nodeId)
+			} else {
+				logging.Error("No epoch models available for this node", types.Nodes, "node_id", worker.nodeId)
+			}
 			result.Succeeded = false
 			result.Error = "No epoch models available for this node"
 			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
 			return result
 		}
 

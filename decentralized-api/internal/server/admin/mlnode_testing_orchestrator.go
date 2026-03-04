@@ -66,14 +66,20 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	setTestFailed := func(nodeId string, reason string) {
 		if o.nodeBroker != nil {
 			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_TEST_FAILED))
-			_ = o.nodeBroker.QueueMessage(cmd)
-			_ = o.nodeBroker.QueueMessage(broker.NewSetNodeFailureReasonCommand(nodeId, reason))
+			if err := o.nodeBroker.QueueMessage(cmd); err != nil {
+				logging.Warn("Failed to set MLnode onboarding state to TEST_FAILED", types.Nodes, "node_id", nodeId, "error", err)
+			}
+			if err := o.nodeBroker.QueueMessage(broker.NewSetNodeFailureReasonCommand(nodeId, reason)); err != nil {
+				logging.Warn("Failed to set node failure reason", types.Nodes, "node_id", nodeId, "error", err)
+			}
 		}
 
 		// Notify MLnode about the failure
 		notifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = client.SetNodeState(notifyCtx, mlnodeclient.MlNodeState_TEST_FAILED, reason)
+		if err := client.SetNodeState(notifyCtx, mlnodeclient.MlNodeState_TEST_FAILED, reason); err != nil {
+			logging.Warn("Failed to notify MLnode about test failure", types.Nodes, "node_id", nodeId, "error", err)
+		}
 	}
 
 	metrics := TestMetrics{LoadMs: map[string]int64{}}
@@ -138,7 +144,9 @@ func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apicon
 	setTestSuccess := func(nodeId string) {
 		if o.nodeBroker != nil {
 			cmd := broker.NewSetNodeMLNodeOnboardingStateCommand(nodeId, string(apiconfig.MLNodeState_WAITING_FOR_POC))
-			_ = o.nodeBroker.QueueMessage(cmd)
+			if err := o.nodeBroker.QueueMessage(cmd); err != nil {
+				logging.Warn("Failed to set MLnode onboarding state to WAITING_FOR_POC", types.Nodes, "node_id", nodeId, "error", err)
+			}
 		}
 	}
 

@@ -23,7 +23,9 @@ func (s *Server) getNodes(ctx echo.Context) error {
 	chainActive := false
 	if s.nodeBroker != nil {
 		active, err := s.nodeBroker.IsParticipantActiveOnChain()
-		if err == nil {
+		if err != nil {
+			logging.Warn("Failed to check participant active status", types.Nodes, "error", err)
+		} else {
 			chainActive = active
 		}
 	}
@@ -226,10 +228,14 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 				if result != nil {
 					if result.Status == TestFailed {
 						cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, result.Error)
-						_ = s.nodeBroker.QueueMessage(cmd)
+						if err := s.nodeBroker.QueueMessage(cmd); err != nil {
+							logging.Warn("Failed to set node failure reason", types.Nodes, "node_id", newNode.Id, "error", err)
+						}
 					} else {
 						cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, "")
-						_ = s.nodeBroker.QueueMessage(cmd)
+						if err := s.nodeBroker.QueueMessage(cmd); err != nil {
+							logging.Warn("Failed to clear node failure reason", types.Nodes, "node_id", newNode.Id, "error", err)
+						}
 					}
 					s.latestTestResults[newNode.Id] = result
 				}
@@ -291,11 +297,15 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 			if result != nil {
 				if result.Status == TestFailed {
 					cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, result.Error)
-					_ = s.nodeBroker.QueueMessage(cmd)
+					if err := s.nodeBroker.QueueMessage(cmd); err != nil {
+						logging.Warn("Failed to set node failure reason", types.Nodes, "node_id", newNode.Id, "error", err)
+					}
 				} else {
 					// Clear any previous failure reason on success
 					cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, "")
-					_ = s.nodeBroker.QueueMessage(cmd)
+					if err := s.nodeBroker.QueueMessage(cmd); err != nil {
+						logging.Warn("Failed to clear node failure reason", types.Nodes, "node_id", newNode.Id, "error", err)
+					}
 				}
 				s.latestTestResults[newNode.Id] = result
 			}
@@ -330,10 +340,14 @@ func (s *Server) postNodeTest(ctx echo.Context) error {
 	if result != nil {
 		if result.Status == TestFailed {
 			cmd := broker.NewSetNodeFailureReasonCommand(nodeId, result.Error)
-			_ = s.nodeBroker.QueueMessage(cmd)
+			if err := s.nodeBroker.QueueMessage(cmd); err != nil {
+				logging.Warn("Failed to set node failure reason", types.Nodes, "node_id", nodeId, "error", err)
+			}
 		} else {
 			cmd := broker.NewSetNodeFailureReasonCommand(nodeId, "")
-			_ = s.nodeBroker.QueueMessage(cmd)
+			if err := s.nodeBroker.QueueMessage(cmd); err != nil {
+				logging.Warn("Failed to clear node failure reason", types.Nodes, "node_id", nodeId, "error", err)
+			}
 		}
 		logging.Info("Admin manual test result", types.Nodes, "node_id", nodeId, "status", string(result.Status), "error", result.Error)
 		s.latestTestResults[nodeId] = result
