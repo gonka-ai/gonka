@@ -24,6 +24,7 @@ message Params {
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
   TransferAgentAccessParams transfer_agent_access_params = 13;
+  CacheQualityParams cache_quality_params = 14;
 }
 
 message GenesisOnlyParams {
@@ -324,4 +325,40 @@ message TransferAgentAccessParams {
   // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
   // If empty, all TAs are allowed.
   repeated string allowed_transfer_addresses = 1;
+}
+
+// CacheQualityParams controls the semantic cache trust layer.
+//
+// Participants serve cached inference results instead of re-running GPU
+// computation when the incoming prompt is semantically equivalent.
+// The on-chain weight bonus (CacheQualityWeight) incentivises cache quality:
+// nodes that reuse high-similarity results earn proportionally more weight
+// without consuming additional compute.  All parameters are governance-managed
+// and can be updated via MsgUpdateParams without a chain upgrade.
+message CacheQualityParams {
+  option (gogoproto.equal) = true;
+
+  // similarity_threshold_bps is the minimum cosine similarity (× 10 000)
+  // required to serve a cached result.  9 700 = 0.97 cosine (default).
+  // Values below this threshold cause a cache miss and trigger a new GPU inference.
+  uint32 similarity_threshold_bps = 1;
+
+  // max_cache_age_epochs is the TTL for cached entries.  A result older than
+  // max_cache_age_epochs epochs is served as a miss and evicted.  Default: 10.
+  uint64 max_cache_age_epochs = 2;
+
+  // max_weight_fraction_bps is the maximum CacheQualityWeight bonus as a
+  // fraction of standard PoC weight (× 10 000).  2 000 = 20 % max bonus.
+  // The bonus scales linearly with the reuse ratio: weight_bonus =
+  // min(reuse_ratio, 1.0) × max_weight_fraction_bps × standard_poc_weight.
+  uint32 max_weight_fraction_bps = 3;
+
+  // embedding_model_version identifies the sentence-embedding model used for
+  // semantic similarity (e.g. "all-MiniLM-L6-v2").  Cached results with a
+  // different model version are immediately served as misses — no flush needed.
+  string embedding_model_version = 4;
+
+  // enabled gates the entire semantic cache.  When false, all lookups return
+  // a miss and no CacheQualityWeight bonuses are applied at settlement.
+  bool enabled = 5;
 }

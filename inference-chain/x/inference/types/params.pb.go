@@ -41,6 +41,7 @@ type Params struct {
 	ParticipantAccessParams   *ParticipantAccessParams   `protobuf:"bytes,12,opt,name=participant_access_params,json=participantAccessParams,proto3" json:"participant_access_params,omitempty"`
 	TransferAgentAccessParams *TransferAgentAccessParams `protobuf:"bytes,13,opt,name=transfer_agent_access_params,json=transferAgentAccessParams,proto3" json:"transfer_agent_access_params,omitempty"`
 	ContinuousPocParams       *ContinuousPoCParams       `protobuf:"bytes,14,opt,name=continuous_poc_params,json=continuousPocParams,proto3" json:"continuous_poc_params,omitempty"`
+	CacheQualityParams        *CacheQualityParams        `protobuf:"bytes,15,opt,name=cache_quality_params,json=cacheQualityParams,proto3" json:"cache_quality_params,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
@@ -170,6 +171,13 @@ func (m *Params) GetTransferAgentAccessParams() *TransferAgentAccessParams {
 func (m *Params) GetContinuousPocParams() *ContinuousPoCParams {
 	if m != nil {
 		return m.ContinuousPocParams
+	}
+	return nil
+}
+
+func (m *Params) GetCacheQualityParams() *CacheQualityParams {
+	if m != nil {
+		return m.CacheQualityParams
 	}
 	return nil
 }
@@ -2240,6 +2248,9 @@ func (this *Params) Equal(that interface{}) bool {
 	if !this.ContinuousPocParams.Equal(that1.ContinuousPocParams) {
 		return false
 	}
+	if !this.CacheQualityParams.Equal(that1.CacheQualityParams) {
+		return false
+	}
 	return true
 }
 func (this *TokenomicsParams) Equal(that interface{}) bool {
@@ -2975,6 +2986,18 @@ func (m *Params) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.CacheQualityParams != nil {
+		{
+			size, err := m.CacheQualityParams.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintParams(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x7a // field 15, bytes
+	}
 	if m.ContinuousPocParams != nil {
 		{
 			size, err := m.ContinuousPocParams.MarshalToSizedBuffer(dAtA[:i])
@@ -4700,6 +4723,10 @@ func (m *Params) Size() (n int) {
 		l = m.ContinuousPocParams.Size()
 		n += 1 + l + sovParams(uint64(l))
 	}
+	if m.CacheQualityParams != nil {
+		l = m.CacheQualityParams.Size()
+		n += 1 + l + sovParams(uint64(l))
+	}
 	return n
 }
 
@@ -5862,6 +5889,42 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 				m.ContinuousPocParams = &ContinuousPoCParams{}
 			}
 			if err := m.ContinuousPocParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 15:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CacheQualityParams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthParams
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthParams
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.CacheQualityParams == nil {
+				m.CacheQualityParams = &CacheQualityParams{}
+			}
+			if err := m.CacheQualityParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

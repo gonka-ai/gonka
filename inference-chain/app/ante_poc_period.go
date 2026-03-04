@@ -160,12 +160,40 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 	return nil
 }
 
+// checkCacheQualityMessage is the ante-handler guard for MsgSubmitCacheQualitySummary.
+// It provides a fast-path mempool rejection when the feature is disabled, so
+// transactions reach block processing only when governance has enabled the feature.
+// This covers the MsgExec { MsgSubmitCacheQualitySummary } path (#857) because
+// checkMessage unwraps MsgExec recursively and calls this function.
+func (ppd PocPeriodValidationDecorator) checkCacheQualityMessage(ctx sdk.Context) error {
+	if ppd.inferenceKeeper == nil {
+		return nil
+	}
+	params, err := ppd.inferenceKeeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.CacheQualityParams == nil || !params.CacheQualityParams.Enabled {
+		ppd.inferenceKeeper.LogDebug(
+			"AnteHandle: PocPeriodValidation - rejecting MsgSubmitCacheQualitySummary (feature disabled)",
+			inferencetypes.PoC,
+			"currentBlockHeight", ctx.BlockHeight(),
+		)
+		return inferencetypes.ErrCacheQualityDisabled
+	}
+	return nil
+}
+
 func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	switch m := msg.(type) {
 	case *inferencetypes.MsgSubmitPocBatch, *inferencetypes.MsgSubmitPocValidation,
 		*inferencetypes.MsgSubmitPocValidationsV2,
 		*inferencetypes.MsgPoCV2StoreCommit, *inferencetypes.MsgMLNodeWeightDistribution:
 		return ppd.checkPocMessageTooLate(ctx, msg)
+
+	case *inferencetypes.MsgSubmitCacheQualitySummary:
+		_ = m // msg identity confirmed by type switch
+		return ppd.checkCacheQualityMessage(ctx)
 
 	case *authztypes.MsgExec:
 		// Recursively validate messages inside MsgExec

@@ -94,6 +94,7 @@ type (
 		// Continuous PoC: pending challenge records keyed by (epoch_index, participant, challenge_block_height)
 		ContinuousPoCChallenges collections.Map[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCChallenge]
 		// Semantic cache quality: per-epoch summaries keyed by (epoch_index, participant)
+		// Stores BLS-verified cache reuse counts that feed into CacheQualityWeight at settlement.
 		CacheQualityEpochSummaries collections.Map[collections.Pair[uint64, sdk.AccAddress], types.CacheQualityEpochSummary]
 	}
 )

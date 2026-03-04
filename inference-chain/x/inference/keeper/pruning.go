@@ -41,6 +41,10 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
+	err = k.GetCacheQualityEpochSummariesPruner(params).Prune(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -189,6 +193,33 @@ func (k Keeper) GetContinuousPoCEpochSummariesPruner(params types.Params) Pruner
 		},
 		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
 			return k.ContinuousPoCEpochSummaries.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
+// GetCacheQualityEpochSummariesPruner returns a Pruner for CacheQualityEpochSummaries.
+// Uses CacheQualityParams.PruningEpochThreshold if set; defaults to PoC data threshold.
+func (k Keeper) GetCacheQualityEpochSummariesPruner(params types.Params) Pruner[collections.Pair[uint64, sdk.AccAddress], types.CacheQualityEpochSummary] {
+	threshold := params.PocParams.PocDataPruningEpochThreshold
+	if params.CacheQualityParams != nil && params.CacheQualityParams.PruningEpochThreshold > 0 {
+		threshold = uint64(params.CacheQualityParams.PruningEpochThreshold)
+	}
+	return Pruner[collections.Pair[uint64, sdk.AccAddress], types.CacheQualityEpochSummary]{
+		Threshold:  threshold,
+		PruningMax: params.EpochParams.PocPruningMax,
+		List:       k.CacheQualityEpochSummaries,
+		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
+			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epochIndex))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.CacheQualityEpochSummariesPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.CacheQualityEpochSummariesPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
+			return k.CacheQualityEpochSummaries.Remove(ctx, key)
 		},
 		Logger: k,
 	}

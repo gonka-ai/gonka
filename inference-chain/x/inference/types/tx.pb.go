@@ -5619,6 +5619,8 @@ type MsgServer interface {
 	SubmitContinuousPoCCommit(context.Context, *MsgSubmitContinuousPoCCommit) (*MsgSubmitContinuousPoCCommitResponse, error)
 	// Continuous PoC: respond to a chain-issued Merkle proof challenge
 	RespondContinuousPoCChallenge(context.Context, *MsgRespondContinuousPoCChallenge) (*MsgRespondContinuousPoCChallengeResponse, error)
+	// Semantic cache quality: submit per-epoch cache reuse summary for trust feedback
+	SubmitCacheQualitySummary(context.Context, *MsgSubmitCacheQualitySummary) (*MsgSubmitCacheQualitySummaryResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -5756,6 +5758,9 @@ func (*UnimplementedMsgServer) SubmitContinuousPoCCommit(ctx context.Context, re
 }
 func (*UnimplementedMsgServer) RespondContinuousPoCChallenge(ctx context.Context, req *MsgRespondContinuousPoCChallenge) (*MsgRespondContinuousPoCChallengeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RespondContinuousPoCChallenge not implemented")
+}
+func (*UnimplementedMsgServer) SubmitCacheQualitySummary(ctx context.Context, req *MsgSubmitCacheQualitySummary) (*MsgSubmitCacheQualitySummaryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitCacheQualitySummary not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -6554,6 +6559,24 @@ func _Msg_RespondContinuousPoCChallenge_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitCacheQualitySummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitCacheQualitySummary)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitCacheQualitySummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Msg/SubmitCacheQualitySummary",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitCacheQualitySummary(ctx, req.(*MsgSubmitCacheQualitySummary))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.inference.Msg",
@@ -6734,6 +6757,10 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RespondContinuousPoCChallenge",
 			Handler:    _Msg_RespondContinuousPoCChallenge_Handler,
+		},
+		{
+			MethodName: "SubmitCacheQualitySummary",
+			Handler:    _Msg_SubmitCacheQualitySummary_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

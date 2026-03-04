@@ -212,6 +212,10 @@ func (f *failingNodeClient) GetDiskSpace(ctx context.Context) (*mlnodeclient.Dis
 	return &mlnodeclient.DiskSpaceInfo{}, nil
 }
 
+func (f *failingNodeClient) Embed(_ context.Context, _ string) (*mlnodeclient.EmbedResponse, error) {
+	return &mlnodeclient.EmbedResponse{}, nil
+}
+
 func (f fakeNodeClient) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
 	return nil
 }
@@ -279,6 +283,10 @@ func (f fakeNodeClient) ListModels(ctx context.Context) (*mlnodeclient.ModelList
 }
 func (f fakeNodeClient) GetDiskSpace(ctx context.Context) (*mlnodeclient.DiskSpaceInfo, error) {
 	return &mlnodeclient.DiskSpaceInfo{}, nil
+}
+
+func (f fakeNodeClient) Embed(_ context.Context, _ string) (*mlnodeclient.EmbedResponse, error) {
+	return &mlnodeclient.EmbedResponse{}, nil
 }
 
 // fakeBroker implements a test broker with configurable node responses.

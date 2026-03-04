@@ -109,6 +109,27 @@ func DefaultParams() Params {
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
 		ContinuousPocParams: DefaultContinuousPoCParams(),
+		CacheQualityParams:  DefaultCacheQualityParams(),
+	}
+}
+
+func DefaultCacheQualityParams() *CacheQualityParams {
+	return &CacheQualityParams{
+		Enabled:                false,
+		ReuseWeightCoefficient: DecimalFromFloat(0.1), // 10 cache reuses ≡ 1 PoC nonce
+		MaxWeightFractionBps:   3000,                  // capped at 30% of standard PoC weight
+		SimilarityThresholdBps: 9700,                  // 0.97 cosine similarity minimum
+		PruningEpochThreshold:  4,
+		// EmbeddingModelVersion must be set so that ALL nodes use the same
+		// embedding model.  Changing this via governance immediately invalidates
+		// all cached vectors from the previous model version (model mismatch = miss).
+		EmbeddingModelVersion: "v1",
+		// MaxCacheAgeEpochs = 10 ≈ 33 minutes at 5s/block, 40-block epochs.
+		// Qdrant vectors older than this are served as cache misses.  Distinct
+		// from PruningEpochThreshold (on-chain record cleanup); this controls the
+		// off-chain TTL enforced via CachedResult.ValidUntilEpoch in the
+		// decentralized-api semanticcache layer.
+		MaxCacheAgeEpochs: 10,
 	}
 }
 
@@ -435,6 +456,11 @@ func (p Params) Validate() error {
 
 	if p.ContinuousPocParams != nil {
 		if err := p.ContinuousPocParams.Validate(); err != nil {
+			return err
+		}
+	}
+	if p.CacheQualityParams != nil {
+		if err := p.CacheQualityParams.Validate(); err != nil {
 			return err
 		}
 	}

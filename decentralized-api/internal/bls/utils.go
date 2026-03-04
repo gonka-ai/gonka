@@ -3,6 +3,9 @@ package bls
 import (
 	"fmt"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	blst "github.com/supranational/blst/bindings/go"
 )
 
@@ -66,4 +69,67 @@ func DecompressG2To256Blst(groupPublicKey []byte) ([]byte, error) {
 	copy(uncompressed[3*64+16:4*64], raw[96:144])
 
 	return uncompressed, nil
+}
+
+// VerifyFinalSignature verifies a BLS threshold aggregate signature against the epoch
+// group public key.  This is the dapi-side mirror of verifyFinalSignatureBlst from
+// inference-chain/x/bls/keeper/bls_crypto.go — identical algorithm, same gnark/blst libs.
+//
+// signature     — 48-byte compressed G1 aggregate signature (ThresholdSigningRequest.FinalSignature)
+// messageHash   — 32-byte keccak256 of the signed data (ThresholdSigningRequest.MessageHash)
+// groupPubKey   — 96-byte compressed G2 group public key (EpochBLSData.GroupPublicKey)
+//
+// Returns true only when the pairing equation e(sig, G2_gen) == e(H(msg), groupPubKey) holds.
+func VerifyFinalSignature(signature, messageHash, groupPubKey []byte) (bool, error) {
+	if len(signature) != 48 {
+		return false, fmt.Errorf("signature must be 48 bytes, got %d", len(signature))
+	}
+	if len(messageHash) != 32 {
+		return false, fmt.Errorf("messageHash must be 32 bytes, got %d", len(messageHash))
+	}
+	if len(groupPubKey) != 96 {
+		return false, fmt.Errorf("groupPubKey must be 96 bytes, got %d", len(groupPubKey))
+	}
+
+	g1Sig := new(blst.P1Affine).Uncompress(signature)
+	if g1Sig == nil {
+		return false, fmt.Errorf("failed to uncompress signature")
+	}
+	if !g1Sig.SigValidate(true) {
+		return false, fmt.Errorf("signature failed SigValidate")
+	}
+
+	g2Key := new(blst.P2Affine).Uncompress(groupPubKey)
+	if g2Key == nil {
+		return false, fmt.Errorf("failed to uncompress group public key")
+	}
+	if !g2Key.KeyValidate() {
+		return false, fmt.Errorf("group public key failed KeyValidate")
+	}
+
+	// Hash message to G1 — must match chain-side hashToG1 exactly.
+	// Single-field SWU map + G1 isogeny + cofactor clear (EIP-2537 compatible).
+	var be [48]byte
+	copy(be[48-32:], messageHash)
+	var u fp.Element
+	u.SetBytes(be[:])
+	p := bls12381.MapToCurve1(&u)
+	hash_to_curve.G1Isogeny(&p.X, &p.Y)
+	var msgG1Gnark bls12381.G1Affine
+	msgG1Gnark.ClearCofactor(&p)
+
+	msgBytes := msgG1Gnark.Bytes()
+	msgG1 := new(blst.P1Affine).Uncompress(msgBytes[:])
+	if msgG1 == nil {
+		return false, fmt.Errorf("failed to uncompress message G1 point")
+	}
+
+	g2Gen := blst.P2Generator().ToAffine()
+	negKey := new(blst.P2).Sub(g2Key).ToAffine()
+
+	// e(sig, G2_gen) · e(H(msg), -groupPubKey) == 1
+	ml := blst.Fp12MillerLoopN([]blst.P2Affine{*g2Gen, *negKey}, []blst.P1Affine{*g1Sig, *msgG1})
+	ml.FinalExp()
+	one := blst.Fp12One()
+	return ml.Equals(&one), nil
 }

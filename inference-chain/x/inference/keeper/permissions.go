@@ -132,6 +132,12 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	// Finish could happen after a new epoch has started
 	reflect.TypeOf((*types.MsgFinishInference)(nil)): {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgValidation)(nil)):      {ActiveParticipantPermission, PreviousActiveParticipantPermission},
+
+	// Continuous PoC: commits happen during the epoch; responses can span epoch boundary.
+	reflect.TypeOf((*types.MsgSubmitContinuousPoCCommit)(nil)):      {ActiveParticipantPermission},
+	reflect.TypeOf((*types.MsgRespondContinuousPoCChallenge)(nil)):  {ActiveParticipantPermission, PreviousActiveParticipantPermission},
+	// Cache quality summaries are submitted at epoch boundary, so both epochs are valid.
+	reflect.TypeOf((*types.MsgSubmitCacheQualitySummary)(nil)):      {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 }
 
 type HasSigners interface {

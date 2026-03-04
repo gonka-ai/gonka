@@ -66,9 +66,15 @@ var (
 	PoCValidationSnapshotPrefix       = collections.NewPrefix(42)
 	PunishmentGraceEpochsPrefix             = collections.NewPrefix(43)
 	ActiveParticipantsCachePrefix           = collections.NewPrefix(44)
+	// Prefixes 45–47 reserved for future use.
+	// Continuous PoC collections (48–50) and semantic cache quality (51)
+	// do not collide with ActiveParticipantsCachePrefix (44) introduced in
+	// Unified Permissions (#760).
 	ContinuousPoCCommitsPrefix              = collections.NewPrefix(48)
 	ContinuousPoCEpochSummariesPrefix       = collections.NewPrefix(49)
 	ContinuousPoCChallengesPrefix           = collections.NewPrefix(50)
+	// CacheQualityEpochSummariesPrefix stores per-epoch per-participant semantic
+	// cache quality summaries used to compute CacheQualityWeight at settlement.
 	CacheQualityEpochSummariesPrefix        = collections.NewPrefix(51)
 	ParamsKey                               = []byte("p_inference")
 )

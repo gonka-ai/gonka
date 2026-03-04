@@ -13,6 +13,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
+import "inference/inference/cache_quality.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -66,6 +67,7 @@ service Msg {
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
+  rpc SubmitCacheQualitySummary        (MsgSubmitCacheQualitySummary) returns (MsgSubmitCacheQualitySummaryResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -567,3 +569,16 @@ message MsgMigrateAllWrappedTokensResponse {
   // number of contracts attempted; success/failure details are in logs/events
   uint32 attempted = 1;
 }
+
+// MsgSubmitCacheQualitySummary submits a self-reported cache quality summary
+// for the completed epoch.  Called once per epoch boundary by each participant
+// that runs the semantic cache.  The on-chain handler merges these into the
+// CacheQualityEpochSummaries collection and uses them at epoch settlement to
+// compute the CacheQualityWeight bonus added to standard PoC weights.
+message MsgSubmitCacheQualitySummary {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  CacheQualityEpochSummary summary = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgSubmitCacheQualitySummaryResponse {}

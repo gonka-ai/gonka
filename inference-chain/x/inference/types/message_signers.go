@@ -68,3 +68,14 @@ func (msg *MsgRequestBridgeWithdrawal) GetSignersStrings() []string { return []s
 
 // And one validator signed message?
 func (msg *MsgBridgeExchange) GetSignersStrings() []string { return []string{msg.Validator} }
+
+// Continuous PoC and semantic cache quality messages
+func (msg *MsgSubmitContinuousPoCCommit) GetSignersStrings() []string {
+	return []string{msg.Creator}
+}
+func (msg *MsgRespondContinuousPoCChallenge) GetSignersStrings() []string {
+	return []string{msg.Creator}
+}
+func (msg *MsgSubmitCacheQualitySummary) GetSignersStrings() []string {
+	return []string{msg.Creator}
+}

@@ -594,5 +594,15 @@ func (m *MockClient) SetV2Status(status string) {
 	m.PowStatusV2 = status
 }
 
+// Embed returns a stub zero-vector embed response for testing.
+func (m *MockClient) Embed(_ context.Context, text string) (*EmbedResponse, error) {
+	const dims = 384
+	return &EmbedResponse{
+		Embedding:  make([]float32, dims),
+		Dimensions: dims,
+		Model:      "sentence-transformers/all-MiniLM-L6-v2",
+	}, nil
+}
+
 // Ensure MockClient implements MLNodeClient
 var _ MLNodeClient = (*MockClient)(nil)

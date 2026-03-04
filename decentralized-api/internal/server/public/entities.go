@@ -28,6 +28,7 @@ type OpenAiRequest struct {
 	MaxTokens           int32     `json:"max_tokens"`
 	MaxCompletionTokens int32     `json:"max_completion_tokens"`
 	Messages            []Message `json:"messages"`
+	Stream              bool      `json:"stream"`
 }
 
 type Message struct {

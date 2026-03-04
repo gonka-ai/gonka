@@ -10,6 +10,7 @@ import (
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/semanticcache"
 	"decentralized-api/training"
 	"net/http"
 	"time"
@@ -35,6 +36,13 @@ type Server struct {
 	artifactStore       *artifacts.ManagedArtifactStore
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
+	// semanticCache is the optional semantic inference result cache.
+	// When nil (default), the feature is inactive and all requests go to GPU nodes.
+	// Activated via WithSemanticCache ServerOption when CacheQualityParams.Enabled=true.
+	semanticCache   *semanticcache.SemanticCache
+	// qualityReporter accumulates cache reuse/compute events and submits
+	// MsgSubmitCacheQualitySummary at each epoch boundary.
+	qualityReporter *semanticcache.QualityReporter
 }
 
 // ServerOption configures optional Server dependencies.
@@ -44,6 +52,24 @@ type ServerOption func(*Server)
 func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 	return func(s *Server) {
 		s.artifactStore = store
+	}
+}
+
+// WithSemanticCache enables semantic inference result caching.
+// When activated, inference requests are checked against the vector DB before
+// being routed to GPU nodes; cache hits return verified results instantly.
+// The feature must also be enabled in on-chain CacheQualityParams governance.
+func WithSemanticCache(cache *semanticcache.SemanticCache) ServerOption {
+	return func(s *Server) {
+		s.semanticCache = cache
+	}
+}
+
+// WithQualityReporter attaches the cache quality reporter that submits
+// per-epoch MsgSubmitCacheQualitySummary transactions to the chain.
+func WithQualityReporter(qr *semanticcache.QualityReporter) ServerOption {
+	return func(s *Server) {
+		s.qualityReporter = qr
 	}
 }
 

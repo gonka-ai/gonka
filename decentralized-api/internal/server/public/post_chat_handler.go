@@ -7,6 +7,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"decentralized-api/logging"
+	"decentralized-api/semanticcache"
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
@@ -546,6 +547,122 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return echo.NewHTTPError(http.StatusBadRequest, "Prompt hash mismatch")
 	}
 
+	// ── Semantic cache lookup ────────────────────────────────────────────────
+	// MsgStartInference is already sent (handleTransferRequest). The on-chain
+	// inference cycle is open; MsgFinishInference MUST be sent regardless of
+	// HIT or MISS so the node earns its CacheQualityWeight reward.
+	//
+	// Two levels checked in order:
+	//   L1 — PromptHash exact-match: sha256(canonical JSON), O(1), 100% same result.
+	//   L2 — cosine similarity: embedding via ML-node, probabilistic (≥ threshold).
+	//
+	// On HIT (either level): serve cached payload + call sendInferenceTransaction
+	// to close the on-chain cycle. Node earns CacheQualityWeight for the reuse.
+	// Streaming cannot be served from a cached JSON entry — skip for stream.
+	var promptEmbedText string
+	if s.semanticCache != nil && !request.OpenAiRequest.Stream {
+		if t, err := s.extractPromptTextFromRequest(request.Body); err == nil {
+			promptEmbedText = t
+		}
+	}
+	var cachedEmbedding []float32 // reused at store time to avoid double embed
+	if s.semanticCache != nil && !request.OpenAiRequest.Stream {
+		var currentEpoch uint64
+		if epochState := s.phaseTracker.GetCurrentEpochState(); epochState != nil {
+			currentEpoch = epochState.LatestEpoch.EpochIndex
+		}
+
+		// L1: PromptHash exact-match — checked first, no embedding needed.
+		if l1cached, l1hit := s.semanticCache.LookupByPromptHash(computedPromptHash, currentEpoch); l1hit {
+			if ok, reason := s.verifyCachedEntry(l1cached); !ok {
+				logging.Warn("Semantic cache L1 HIT: verification failed — falling through",
+					types.Inferences, "inferenceId", inferenceId, "reason", reason)
+			} else {
+				var cachedResp completionapi.Response
+				if parseErr := json.Unmarshal(l1cached.ResponsePayload, &cachedResp); parseErr == nil {
+					logging.Info("Semantic cache L1 HIT — serving cached result, closing on-chain cycle",
+						types.Inferences, "inferenceId", inferenceId,
+						"originalEpoch", l1cached.OriginalEpoch, "similarityBps", l1cached.SimilarityBps)
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("X-Cache", "HIT")
+					w.Header().Set("X-Cache-Level", "1")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(l1cached.ResponsePayload)
+					go func() {
+						_ = s.semanticCache.RecordReuse(context.Background(),
+							l1cached.OriginalParticipantAddress, currentEpoch, l1cached.SimilarityBps)
+						if s.qualityReporter != nil {
+							s.qualityReporter.RecordReuse(currentEpoch, l1cached.SimilarityBps)
+						}
+					}()
+					cachedResponse := &completionapi.JsonCompletionResponse{
+						Bytes: l1cached.ResponsePayload, Resp: cachedResp,
+					}
+					if txErr := s.sendInferenceTransaction(request.InferenceId, cachedResponse, request.Body,
+						s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
+						logging.Error("Failed to send FinishInference for L1 cache hit",
+							types.Inferences, "inferenceId", inferenceId, "error", txErr)
+					}
+					return nil
+				}
+			}
+		}
+
+		// L2: cosine similarity — embedding computed here, reused at store time.
+		// Capture embedding from Lookup regardless of HIT/MISS so StoreResult
+		// can reuse it on the MISS path — one ML-node embed call per request.
+		cached, embedding, hit := s.semanticCache.Lookup(ctx.Request().Context(), []byte(promptEmbedText), currentEpoch)
+		cachedEmbedding = embedding
+		if hit {
+			logging.Info("Semantic cache HIT — serving cached result", types.Inferences,
+				"inferenceId", inferenceId,
+				"similarityBps", cached.SimilarityBps,
+				"originalEpoch", cached.OriginalEpoch,
+				"validUntilEpoch", cached.ValidUntilEpoch)
+
+			if ok, skipReason := s.verifyCachedEntry(cached); !ok {
+				logging.Warn("Semantic cache HIT: verification failed — falling through to GPU",
+					types.Inferences, "inferenceId", inferenceId, "reason", skipReason)
+				// fall through to GPU
+			} else {
+				var cachedResp completionapi.Response
+				if parseErr := json.Unmarshal(cached.ResponsePayload, &cachedResp); parseErr != nil {
+					logging.Warn("Semantic cache HIT: failed to parse cached payload, falling through to GPU",
+						types.Inferences, "inferenceId", inferenceId, "error", parseErr)
+				} else {
+					cachedResponse := &completionapi.JsonCompletionResponse{
+						Bytes: cached.ResponsePayload,
+						Resp:  cachedResp,
+					}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Cache", "HIT")
+				w.Header().Set("X-Cache-Level", "2")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(cached.ResponsePayload)
+
+				go func() {
+					_ = s.semanticCache.RecordReuse(
+						context.Background(),
+						cached.OriginalParticipantAddress,
+						currentEpoch,
+						cached.SimilarityBps,
+					)
+					if s.qualityReporter != nil {
+						s.qualityReporter.RecordReuse(currentEpoch, cached.SimilarityBps)
+					}
+				}()
+
+				if txErr := s.sendInferenceTransaction(request.InferenceId, cachedResponse, request.Body, s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
+					logging.Error("Failed to send FinishInference for L2 cache hit", types.Inferences,
+						"inferenceId", inferenceId, "error", txErr)
+				}
+					return nil
+				}
+			}
+		}
+	}
+	// ── end semantic cache lookup ─────────────────────────────────────────────
+
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
@@ -617,6 +734,37 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
 		return nil
 	}
+
+	// ── Semantic cache store ──────────────────────────────────────────────────
+	// After a successful GPU inference, seed the cache for future non-streaming requests.
+	// Streaming responses are not cached: their format (SSE) cannot be replayed as JSON.
+	// Best-effort and non-blocking; failures must not affect the user.
+	if s.semanticCache != nil && !request.OpenAiRequest.Stream {
+		bodyBytes, _ := completionResponse.GetBodyBytes()
+		if bodyBytes != nil {
+			var currentEpoch uint64
+			if epochState := s.phaseTracker.GetCurrentEpochState(); epochState != nil {
+				currentEpoch = epochState.LatestEpoch.EpochIndex
+			}
+			cacheEntry := semanticcache.CachedResult{
+				PromptHash:                 computedPromptHash,
+				ResponsePayload:            bodyBytes,
+				ResponseHash:               utils.GenerateSHA256HashBytes(bodyBytes),
+				InferenceId:                request.InferenceId,
+				OriginalParticipantAddress: s.recorder.GetAccountAddress(),
+			}
+			go func() {
+				if storeErr := s.semanticCache.StoreResult(context.Background(), []byte(promptEmbedText), cachedEmbedding, cacheEntry, currentEpoch); storeErr != nil {
+					logging.Warn("Semantic cache store failed", types.Inferences,
+						"inferenceId", inferenceId, "error", storeErr)
+				} else if s.qualityReporter != nil {
+					s.qualityReporter.RecordCompute(currentEpoch)
+				}
+			}()
+		}
+	}
+	// ── end semantic cache store ──────────────────────────────────────────────
+
 	return nil
 }
 
@@ -838,6 +986,26 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 		}
 	}
 	return nil
+}
+
+// verifyCachedEntry verifies payload integrity on a cache HIT.
+//
+// ResponseHash = sha256(ResponsePayload), identical to the value committed
+// on-chain via MsgFinishInference.ResponseHash.  This is the same integrity
+// check validators perform for fresh inferences — a cache entry is only served
+// if its payload matches the on-chain hash exactly.
+//
+// BLSSignature (future): when the chain wires RequestThresholdSignature to
+// MsgFinishInference, the stored BLSSignature will carry the quorum proof.
+// Verification is done via bls.VerifyFinalSignature (already implemented in
+// internal/bls/utils.go) against the epoch GroupPublicKey at store time —
+// no gRPC calls needed on the HIT path.
+func (s *Server) verifyCachedEntry(cached semanticcache.CachedResult) (bool, string) {
+	computed := utils.GenerateSHA256HashBytes(cached.ResponsePayload)
+	if cached.ResponseHash == "" || computed != cached.ResponseHash {
+		return false, "response hash mismatch"
+	}
+	return true, ""
 }
 
 func (s *Server) storePayloadsToStorage(ctx context.Context, inferenceId string, promptPayload, responsePayload []byte) {

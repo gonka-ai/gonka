@@ -1,6 +1,7 @@
 package mlnodeclient
 
 import (
+	"bytes"
 	"context"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
@@ -362,4 +363,46 @@ func (api *Client) GetLoadedModels(ctx context.Context) ([]string, error) {
 		modelIds = append(modelIds, model.ID)
 	}
 	return modelIds, nil
+}
+
+const embedPath = "/api/v1/embed"
+
+// Embed calls the ML-node's /api/v1/embed endpoint to compute a
+// 384-dimensional all-MiniLM-L6-v2 embedding for the given text.
+// The endpoint is CPU-only and is always available regardless of the
+// inference or PoC state of the node.
+func (api *Client) Embed(ctx context.Context, text string) (*EmbedResponse, error) {
+	requestUrl, err := url.JoinPath(api.pocUrl, embedPath)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.Marshal(EmbedRequest{Text: text})
+	if err != nil {
+		return nil, fmt.Errorf("marshal embed request: %w", err)
+	}
+
+	// FastAPI/Pydantic requires Content-Type: application/json for JSON bodies.
+	// SendPostJsonRequest does not set this header, so we build the request directly.
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestUrl, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("new embed request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := api.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("embed endpoint returned status %d", resp.StatusCode)
+	}
+
+	var result EmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode embed response: %w", err)
+	}
+	return &result, nil
 }

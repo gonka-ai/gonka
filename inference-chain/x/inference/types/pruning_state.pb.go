@@ -29,6 +29,7 @@ type PruningState struct {
 	ContinuousPoCCommitsPrunedEpoch        int64 `protobuf:"varint,4,opt,name=continuous_poc_commits_pruned_epoch,json=continuousPocCommitsPrunedEpoch,proto3" json:"continuous_poc_commits_pruned_epoch,omitempty"`
 	ContinuousPoCChallengePrunedEpoch      int64 `protobuf:"varint,5,opt,name=continuous_poc_challenges_pruned_epoch,json=continuousPocChallengesPrunedEpoch,proto3" json:"continuous_poc_challenges_pruned_epoch,omitempty"`
 	ContinuousPoCEpochSummariesPrunedEpoch int64 `protobuf:"varint,6,opt,name=continuous_poc_summaries_pruned_epoch,json=continuousPocSummariesPrunedEpoch,proto3" json:"continuous_poc_summaries_pruned_epoch,omitempty"`
+	CacheQualityEpochSummariesPrunedEpoch  int64 `protobuf:"varint,7,opt,name=cache_quality_epoch_summaries_pruned_epoch,json=cacheQualityEpochSummariesPrunedEpoch,proto3" json:"cache_quality_epoch_summaries_pruned_epoch,omitempty"`
 }
 
 func (m *PruningState) Reset()         { *m = PruningState{} }
@@ -106,6 +107,13 @@ func (m *PruningState) GetContinuousPoCEpochSummariesPrunedEpoch() int64 {
 	return 0
 }
 
+func (m *PruningState) GetCacheQualityEpochSummariesPrunedEpoch() int64 {
+	if m != nil {
+		return m.CacheQualityEpochSummariesPrunedEpoch
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*PruningState)(nil), "inference.inference.PruningState")
 }
@@ -153,6 +161,11 @@ func (m *PruningState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.CacheQualityEpochSummariesPrunedEpoch != 0 {
+		i = encodeVarintPruningState(dAtA, i, uint64(m.CacheQualityEpochSummariesPrunedEpoch))
+		i--
+		dAtA[i] = 0x38 // field 7, varint
+	}
 	if m.ContinuousPoCEpochSummariesPrunedEpoch != 0 {
 		i = encodeVarintPruningState(dAtA, i, uint64(m.ContinuousPoCEpochSummariesPrunedEpoch))
 		i--
@@ -220,6 +233,9 @@ func (m *PruningState) Size() (n int) {
 	}
 	if m.ContinuousPoCEpochSummariesPrunedEpoch != 0 {
 		n += 1 + sovPruningState(uint64(m.ContinuousPoCEpochSummariesPrunedEpoch))
+	}
+	if m.CacheQualityEpochSummariesPrunedEpoch != 0 {
+		n += 1 + sovPruningState(uint64(m.CacheQualityEpochSummariesPrunedEpoch))
 	}
 	return n
 }
@@ -369,6 +385,25 @@ func (m *PruningState) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.ContinuousPoCEpochSummariesPrunedEpoch |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CacheQualityEpochSummariesPrunedEpoch", wireType)
+			}
+			m.CacheQualityEpochSummariesPrunedEpoch = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPruningState
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CacheQualityEpochSummariesPrunedEpoch |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

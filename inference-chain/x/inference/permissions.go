@@ -43,6 +43,13 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&blstypes.MsgRequestThresholdSignature{},
 	&blstypes.MsgSubmitPartialSignature{},
 	&blstypes.MsgSubmitGroupKeyValidationSignature{},
+	// Continuous PoC messages — authz delegation allows hot-wallet keys to
+	// submit PoC commits and respond to challenges on behalf of the operator.
+	&types.MsgSubmitContinuousPoCCommit{},
+	&types.MsgRespondContinuousPoCChallenge{},
+	// Semantic cache quality — delegates cache summary submission to an
+	// automated reporting key.  Required for #857 Grant→Exec→Revoke flow.
+	&types.MsgSubmitCacheQualitySummary{},
 }
 
 func GrantMLOperationalKeyPermissionsToAccount(
@@ -150,4 +157,103 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	}
 
 	return fmt.Errorf("\nTimed out waiting for transaction %s to be confirmed in a block", txHash)
+}
+
+// RevokeMLOperationalKeyPermissionsFromAccount revokes all authz grants that
+// were created by GrantMLOperationalKeyPermissionsToAccount.  This is the
+// Revoke leg of the Grant→Exec→Revoke flow tested in Issue #857.
+//
+// Each MsgRevoke removes a single message-type grant; the function batches all
+// revocations into one transaction for efficiency.
+func RevokeMLOperationalKeyPermissionsFromAccount(
+	ctx context.Context,
+	clientCtx client.Context,
+	txFactory tx.Factory,
+	operatorKeyName string,
+	aiOperationalAddress sdk.AccAddress,
+) error {
+	operatorInfo, err := clientCtx.Keyring.Key(operatorKeyName)
+	if err != nil {
+		return fmt.Errorf("failed to get operator key info: %w", err)
+	}
+
+	operatorAddress, err := operatorInfo.GetAddress()
+	if err != nil {
+		return fmt.Errorf("failed to get operator address: %w", err)
+	}
+
+	account, err := clientCtx.AccountRetriever.GetAccount(clientCtx, operatorAddress)
+	if err != nil {
+		return fmt.Errorf("failed to get account details: %w", err)
+	}
+
+	txFactory = txFactory.WithAccountNumber(account.GetAccountNumber())
+	txFactory = txFactory.WithSequence(account.GetSequence())
+
+	var revokeMsgs []sdk.Msg
+	for _, msgType := range InferenceOperationKeyPerms {
+		revokeMsg := authztypes.NewMsgRevoke(
+			operatorAddress,
+			aiOperationalAddress,
+			sdk.MsgTypeURL(msgType),
+		)
+		revokeMsgs = append(revokeMsgs, &revokeMsg)
+	}
+
+	txb, err := txFactory.BuildUnsignedTx(revokeMsgs...)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Sign(ctx, txFactory, clientCtx.GetFromName(), txb, true)
+	if err != nil {
+		return err
+	}
+
+	txBytes, err := clientCtx.TxConfig.TxEncoder()(txb.GetTx())
+	if err != nil {
+		return err
+	}
+
+	res, err := clientCtx.BroadcastTx(txBytes)
+	if err != nil {
+		return err
+	}
+
+	if res.Code != 0 {
+		return fmt.Errorf("revoke transaction failed with code %d: %s", res.Code, res.RawLog)
+	}
+
+	txHash := res.TxHash
+	fmt.Printf("Revoke transaction sent with hash: %s\n", txHash)
+	fmt.Println("Waiting for revoke transaction to be included in a block...")
+
+	for i := 0; i < 20; i++ {
+		time.Sleep(3 * time.Second)
+
+		txHashBytes, hexErr := hex.DecodeString(txHash)
+		if hexErr != nil {
+			return fmt.Errorf("failed to decode transaction hash: %w", hexErr)
+		}
+
+		txResponse, err := clientCtx.Client.Tx(ctx, txHashBytes, false)
+		if err != nil {
+			fmt.Print(".")
+			continue
+		}
+
+		if txResponse.Height > 0 {
+			if txResponse.TxResult.Code == 0 {
+				fmt.Println("\nRevoke transaction confirmed successfully!")
+				fmt.Printf("Block height: %d\n", txResponse.Height)
+				return nil
+			}
+			return fmt.Errorf("\nRevoke transaction %s included in block %d but failed with code %d: %s",
+				txHash, txResponse.Height, txResponse.TxResult.Code, txResponse.TxResult.Log)
+		}
+
+		fmt.Print("+")
+	}
+
+	return fmt.Errorf("\nTimed out waiting for revoke transaction %s to be confirmed in a block", txHash)
 }

@@ -20,6 +20,7 @@ from pow.service.manager import PowManager
 from pow.service.routes import router as pow_router
 
 from api.health import router as health_router
+from api.embed_routes import router as embed_router
 
 from api.service_management import (
     ServiceState,
@@ -129,4 +130,11 @@ app.include_router(
     gpu_router,
     prefix=API_PREFIX + "/gpu",
     tags=["GPU"],
+)
+
+# Embedding endpoint — CPU-only, always available regardless of inference state.
+app.include_router(
+    embed_router,
+    prefix=API_PREFIX,
+    tags=["Embed"],
 )

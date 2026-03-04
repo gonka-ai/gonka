@@ -26,6 +26,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant"
+	"decentralized-api/semanticcache"
 	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
@@ -193,7 +194,89 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore, pserver.WithArtifactStore(artifactStore))
+	// ── Semantic cache ────────────────────────────────────────────────────────
+	// InMemoryCacheStore: zero external dependencies, works on every gonka node
+	// out of the box. ML-node embed endpoint (all-MiniLM-L6-v2 on CPU) is already
+	// part of the gonka node stack — no new services required.
+	// Governance-gated: Enabled=false by default; toggle via CacheQualityParams.
+	publicServerOpts := []pserver.ServerOption{pserver.WithArtifactStore(artifactStore)}
+	if len(config.GetNodes()) > 0 {
+		firstNode := config.GetNodes()[0]
+		embedderClient := mlnodeclient.NewNodeClient(
+			fmt.Sprintf("http://%s:%d%s", firstNode.Host, firstNode.PoCPort, firstNode.PoCSegment),
+			"",
+		)
+		embedder := semanticcache.NewMLNodeEmbedder(embedderClient, 384)
+		cacheStore := semanticcache.NewInMemoryCacheStore(384)
+
+		cqParams := params.Params.CacheQualityParams
+		var (
+			thresholdBps      uint32 = 9700
+			modelVersion             = "v1"
+			maxCacheAgeEpochs uint64 = 10
+			cacheEnabled             = false
+		)
+		if cqParams != nil {
+			thresholdBps = cqParams.SimilarityThresholdBps
+			modelVersion = cqParams.EmbeddingModelVersion
+			maxCacheAgeEpochs = cqParams.MaxCacheAgeEpochs
+			cacheEnabled = cqParams.Enabled
+		}
+		sc := semanticcache.NewSemanticCache(embedder, cacheStore, thresholdBps, modelVersion, maxCacheAgeEpochs, cacheEnabled)
+		publicServerOpts = append(publicServerOpts, pserver.WithSemanticCache(sc))
+		logging.Info("Semantic cache initialised", types.System,
+			"backend", "in-memory", "enabled", cacheEnabled,
+			"thresholdBps", thresholdBps, "modelVersion", modelVersion,
+			"maxCacheAgeEpochs", maxCacheAgeEpochs)
+
+		qr := semanticcache.NewQualityReporter(recorder, sc.ModelVersion)
+		publicServerOpts = append(publicServerOpts, pserver.WithQualityReporter(qr))
+
+		var lastSeenEpoch uint64
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					es := chainPhaseTracker.GetCurrentEpochState()
+					if es == nil {
+						continue
+					}
+					epoch := es.LatestEpoch.EpochIndex
+					if epoch == 0 {
+						continue
+					}
+					if p, qErr := recorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{}); qErr == nil && p != nil && p.Params.CacheQualityParams != nil {
+						cq := p.Params.CacheQualityParams
+						sc.UpdateCacheParams(cq.SimilarityThresholdBps, cq.EmbeddingModelVersion, cq.MaxCacheAgeEpochs)
+						sc.SetEnabled(cq.Enabled)
+					}
+					if epoch != lastSeenEpoch {
+						prevEpoch := lastSeenEpoch
+						lastSeenEpoch = epoch
+						if prevEpoch > 0 {
+							if evictErr := sc.EvictExpired(ctx, epoch); evictErr != nil {
+								logging.Warn("Semantic cache: EvictExpired failed", types.System, "error", evictErr)
+							}
+						}
+						if prevEpoch > 0 {
+							go func(e uint64) {
+								if submitErr := qr.SubmitEpoch(ctx, e); submitErr != nil {
+									logging.Warn("Semantic cache: SubmitCacheQualitySummary failed", types.System, "epoch", e, "error", submitErr)
+								}
+							}(prevEpoch)
+						}
+					}
+				}
+			}
+		}()
+	}
+	// ── end semantic cache ────────────────────────────────────────────────────
+
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore, publicServerOpts...)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

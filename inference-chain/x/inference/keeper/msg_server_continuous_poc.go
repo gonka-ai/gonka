@@ -17,6 +17,10 @@ import (
 // Participants call this periodically to prove that spare GPU capacity is generating
 // PoC nonces in parallel with inference work.
 func (k msgServer) SubmitContinuousPoCCommit(goCtx context.Context, msg *types.MsgSubmitContinuousPoCCommit) (*types.MsgSubmitContinuousPoCCommitResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission); err != nil {
+		return nil, err
+	}
+
 	params, err := k.GetParams(goCtx)
 	if err != nil {
 		return nil, err
@@ -119,6 +123,10 @@ func (k msgServer) SubmitContinuousPoCCommit(goCtx context.Context, msg *types.M
 // with the Merkle path; the chain verifies against the stored root_hash.
 // A valid response resolves the challenge. An expired challenge cannot be answered.
 func (k msgServer) RespondContinuousPoCChallenge(goCtx context.Context, msg *types.MsgRespondContinuousPoCChallenge) (*types.MsgRespondContinuousPoCChallengeResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
+		return nil, err
+	}
+
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	blockHeight := ctx.BlockHeight()
 

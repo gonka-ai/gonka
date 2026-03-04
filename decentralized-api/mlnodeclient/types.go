@@ -1,5 +1,19 @@
 package mlnodeclient
 
+// Embedding types
+
+// EmbedRequest is sent to the ML-node /api/v1/embed endpoint.
+type EmbedRequest struct {
+	Text string `json:"text"`
+}
+
+// EmbedResponse is returned by the ML-node /api/v1/embed endpoint.
+type EmbedResponse struct {
+	Embedding  []float32 `json:"embedding"`
+	Dimensions int       `json:"dimensions"`
+	Model      string    `json:"model"`
+}
+
 // GPU-related types
 
 type GPUDevice struct {

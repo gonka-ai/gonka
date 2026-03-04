@@ -29,6 +29,12 @@ type MLNodeClient interface {
 	InferenceUp(ctx context.Context, model string, args []string) error
 	GetLoadedModels(ctx context.Context) ([]string, error)
 
+	// Embedding operations
+	// Embed computes a 384-dimensional all-MiniLM-L6-v2 embedding for the given text.
+	// The call targets the ML-node management API (/api/v1/embed) and is always
+	// available regardless of inference or PoC state — the embedding model runs on CPU.
+	Embed(ctx context.Context, text string) (*EmbedResponse, error)
+
 	// GPU operations
 	GetGPUDevices(ctx context.Context) (*GPUDevicesResponse, error)
 	GetGPUDriver(ctx context.Context) (*DriverInfo, error)

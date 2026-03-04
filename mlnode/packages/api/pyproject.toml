@@ -15,6 +15,7 @@ python = ">=3.10,<3.14"
 mlnode-train = { path = "../train", develop = true }
 mlnode-pow = { path = "../pow", develop = true }
 mlnode-common = { path = "../common", develop = true }
+fastembed = ">=0.3.6"
 scipy = ">=1.15.1"
 fire = ">=0.7.0"
 toml = ">=0.10.2"
