@@ -49,11 +49,11 @@ type MLnodeTestingOrchestrator struct {
 }
 
 func NewMLnodeTestingOrchestrator(cm *apiconfig.ConfigManager, nodeBroker *broker.Broker) *MLnodeTestingOrchestrator {
-	return &MLnodeTestingOrchestrator{configManager: cm, blockTimeSeconds: 6.0, nodeBroker: nodeBroker}
+	return &MLnodeTestingOrchestrator{configManager: cm, blockTimeSeconds: apiconfig.DefaultBlockTimeSeconds, nodeBroker: nodeBroker}
 }
 
 func (o *MLnodeTestingOrchestrator) ShouldAutoTest(secondsUntilNextPoC int64) bool {
-	return secondsUntilNextPoC > 3600
+	return secondsUntilNextPoC > apiconfig.AutoTestMinSecondsBeforePoC
 }
 
 func (o *MLnodeTestingOrchestrator) RunNodeTest(ctx context.Context, node apiconfig.InferenceNodeConfig) *TestResult {

@@ -30,25 +30,11 @@ type OnboardingStateManager struct {
 func NewOnboardingStateManager() *OnboardingStateManager {
 	return &OnboardingStateManager{
 		timing:            NewTimingCalculator(),
-		blockTimeSeconds:  6.0,
-		alertLeadSeconds:  600,
-		safeOfflineMinSec: 600,
+		blockTimeSeconds:  apiconfig.DefaultBlockTimeSeconds,
+		alertLeadSeconds:  apiconfig.OnlineAlertLeadSeconds,
+		safeOfflineMinSec: apiconfig.OnlineAlertLeadSeconds,
 	}
 }
-
-// func (m *OnboardingStateManager) MLNodeStatus(es *chainphase.EpochState, isTesting bool, testFailed bool) (MLNodeOnboardingState, string, bool) {
-// 	if testFailed {
-// 		return MLNodeState_TEST_FAILED, "Validation testing failed", true
-// 	}
-// 	if isTesting {
-// 		return MLNodeState_TESTING, "Running pre-PoC validation testing", true
-// 	}
-// 	c := m.timing.Countdown(es, m.blockTimeSeconds, m.alertLeadSeconds)
-// 	if c.ShouldBeOnline {
-// 		return MLNodeState_WAITING_FOR_POC, "PoC starting soon (in " + formatShortDuration(c.NextPoCSeconds) + ") - MLnode must be online now", true
-// 	}
-// 	return MLNodeState_WAITING_FOR_POC, "Waiting for next PoC cycle (starts in " + formatShortDuration(c.NextPoCSeconds) + ") - you can safely turn off the server and restart it 10 minutes before PoC", false
-// }
 
 func (m *OnboardingStateManager) ParticipantStatus(isActive bool) ParticipantState {
 	if isActive {
@@ -97,16 +83,16 @@ func itoa(v int64) string {
 }
 
 func fmtInt(v int64) string {
-       if v == 0 {
-	       return "0"
-       }
-       var buf [20]byte
-       i := len(buf)
-       n := v
-       for n > 0 {
-	       i--
-	       buf[i] = byte('0' + n%10)
-	       n /= 10
-       }
-       return string(buf[i:])
+	if v == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	n := v
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
 }

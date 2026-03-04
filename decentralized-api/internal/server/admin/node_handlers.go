@@ -55,6 +55,13 @@ func (s *Server) getNodes(ctx echo.Context) error {
 		if participantActive {
 			userMsg = sr.BuildMLNodeMessage(mlnodeState, secs, "")
 		}
+		if guidance := sr.BuildNoModelGuidance(secs); guidance != "" {
+			if userMsg == "" {
+				userMsg = guidance
+			} else {
+				userMsg = userMsg + " " + guidance
+			}
+		}
 
 		prevOnboarding := MLNodeOnboardingState(state.MLNodeOnboardingState)
 		if prevOnboarding != mlnodeState {
@@ -201,6 +208,33 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 		}
 		// sync config file with updated node list
 		syncNodesWithConfig(s.nodeBroker, s.configManager)
+
+		// Auto-test trigger after update (uses orchestrator)
+		getCmd := broker.NewGetNodesCommand()
+		if err := s.nodeBroker.QueueMessage(getCmd); err == nil {
+			responses := <-getCmd.Response
+			var secs int64
+			for _, resp := range responses {
+				if resp.Node.Id == newNode.Id && resp.State.Timing != nil {
+					secs = resp.State.Timing.SecondsUntilNextPoC
+					break
+				}
+			}
+			if s.tester.ShouldAutoTest(secs) {
+				s.statusReporter.LogTesting("Auto-testing MLnode configuration")
+				result := s.tester.RunNodeTest(context.Background(), *node)
+				if result != nil {
+					if result.Status == TestFailed {
+						cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, result.Error)
+						_ = s.nodeBroker.QueueMessage(cmd)
+					} else {
+						cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, "")
+						_ = s.nodeBroker.QueueMessage(cmd)
+					}
+					s.latestTestResults[newNode.Id] = result
+				}
+			}
+		}
 		return ctx.JSON(http.StatusOK, node)
 	} else {
 		node, err := s.addNode(newNode)

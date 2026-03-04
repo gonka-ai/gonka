@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -20,7 +21,7 @@ func (r *StatusReporter) BuildMLNodeMessage(state MLNodeOnboardingState, seconds
 		}
 		return "MLnode test failed: model '" + failingModel + "' could not be loaded"
 	case MLNodeState_WAITING_FOR_POC:
-		if secondsUntilNextPoC <= 600 {
+		if secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds {
 			return "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) + ") - MLnode must be online now"
 		}
 		return "Waiting for next PoC cycle (starts in " + formatShortDuration(secondsUntilNextPoC) + ") - you can safely turn off the server and restart it 10 minutes before PoC"
@@ -41,7 +42,7 @@ func (r *StatusReporter) BuildParticipantMessage(pstate ParticipantState) string
 }
 
 func (r *StatusReporter) BuildNoModelGuidance(secondsUntilNextPoC int64) string {
-	if secondsUntilNextPoC > 3600 {
+	if secondsUntilNextPoC > apiconfig.AutoTestMinSecondsBeforePoC {
 		return "MLnode will be tested automatically when there is more than 1 hour until next PoC"
 	}
 	return ""

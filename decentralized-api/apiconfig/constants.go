@@ -10,6 +10,13 @@ const (
 	MLNodeState_TEST_FAILED     MLNodeOnboardingState = "TEST_FAILED"
 )
 
+// Timing constants used across broker/admin components
+const (
+	DefaultBlockTimeSeconds           = 6.0
+	AutoTestMinSecondsBeforePoC int64 = 3600
+	OnlineAlertLeadSeconds      int64 = 600
+)
+
 // ParticipantState represents the state of a participant
 type ParticipantState string
 

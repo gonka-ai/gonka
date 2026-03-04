@@ -67,8 +67,8 @@ func (c GetNodesCommand) Execute(b *Broker) {
 		if blocksUntilNextPoC < 0 {
 			blocksUntilNextPoC = 0
 		}
-		// Use default block time of 6 seconds
-		secondsUntilNextPoC = int64(float64(blocksUntilNextPoC) * 6.0)
+		// Use default block time constant
+		secondsUntilNextPoC = int64(float64(blocksUntilNextPoC) * apiconfig.DefaultBlockTimeSeconds)
 	}
 
 	nodeResponses := make([]NodeResponse, 0, len(b.nodes))
@@ -121,7 +121,7 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			State: stateCopy,
 		})
 		if hasEpochInfo {
-			shouldOnline := currentPhase == types.PoCGeneratePhase || currentPhase == types.PoCGenerateWindDownPhase || currentPhase == types.PoCValidatePhase || currentPhase == types.PoCValidateWindDownPhase || secondsUntilNextPoC <= 600
+			shouldOnline := currentPhase == types.PoCGeneratePhase || currentPhase == types.PoCGenerateWindDownPhase || currentPhase == types.PoCValidatePhase || currentPhase == types.PoCValidateWindDownPhase || secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds
 			nodeResponses[len(nodeResponses)-1].State.Timing = &TimingInfo{
 				CurrentPhase:        string(currentPhase),
 				BlocksUntilNextPoC:  blocksUntilNextPoC,

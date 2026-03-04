@@ -175,8 +175,7 @@ func (c RegisterNode) Execute(b *Broker) {
 	logging.Info("RegisterNode. Registered node", types.Nodes, "node", c.Node)
 	c.Response <- NodeCommandResponse{Node: &c.Node, Error: nil}
 
-	// Auto-test: if more than 1 hour until next PoC, perform basic validation
-	go b.autoTestNodeIfTimeAllows(node, "RegisterNode")
+	// Auto-test now handled by admin orchestrator
 }
 
 // UpdateNode updates an existing node's configuration while preserving runtime state
@@ -275,8 +274,7 @@ func (c UpdateNode) Execute(b *Broker) {
 	logging.Info("UpdateNode. Updated node configuration", types.Nodes, "node_id", c.Node.Id)
 	c.Response <- NodeCommandResponse{Node: &c.Node, Error: nil}
 
-	// Auto-test: if more than 1 hour until next PoC, perform basic validation after config changes
-	go b.autoTestNodeIfTimeAllows(updated, "UpdateNode")
+	// Auto-test now handled by admin orchestrator
 }
 
 type RemoveNode struct {
