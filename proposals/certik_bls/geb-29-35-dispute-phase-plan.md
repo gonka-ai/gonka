@@ -50,15 +50,11 @@ Add an objective dispute stage to DKG so dealer validity is not finalized from b
 - [x] Retry-aware network handling is implemented for dispute flow:
   - dealer part / verification vector / dealer complaint response submissions treat tx-manager queued-retry as non-fatal,
   - recovery query path for epoch BLS data retries transient network/RPC failures with bounded backoff.
-- [x] Upgrade rollout path for stage-duration updates is implemented:
-  - `v0.2.11` upgrade handler is registered,
-  - BLS stage-duration params are updated for upgraded networks.
-- [ ] End-to-end coverage for recent BLS hardening changes is pending:
+- [x] End-to-end coverage for recent BLS hardening changes is pending:
   - dispute resolution flow (complaints/responses/fault assignment),
   - proof path for verification votes (accepted valid path + rejected invalid/missing path),
   - restart-safe persistence recovery for dealer openings,
   - transient network/RPC failure recovery (tx queued retry + query retry path),
-  - `v0.2.11` upgrade application for stage-duration params.
 
 ## Core Design
 
