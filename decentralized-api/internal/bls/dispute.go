@@ -83,6 +83,11 @@ func (bm *BlsManager) ProcessDisputePhaseStarted(event *chainevents.JSONRPCRespo
 		Responses:   responses,
 	}
 	if err := bm.cosmosClient.RespondDealerComplaints(msg); err != nil {
+		if isQueuedForRetry(err) {
+			logging.Warn(blsLogTag+"Dealer complaint responses queued for retry", inferenceTypes.BLS,
+				"epochID", epochID, "dealerIndex", dealerIndex, "responses", len(responses), "error", err)
+			return nil
+		}
 		logging.Warn(blsLogTag+"Failed to submit dealer complaint responses on dispute start", inferenceTypes.BLS,
 			"epochID", epochID, "dealerIndex", dealerIndex, "responses", len(responses), "error", err)
 		return nil

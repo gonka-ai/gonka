@@ -127,6 +127,11 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 	// Submit dealer part to chain
 	err = bm.cosmosClient.SubmitDealerPart(dealerPart)
 	if err != nil {
+		if isQueuedForRetry(err) {
+			logging.Warn("Dealer part queued for retry", inferenceTypes.BLS,
+				"epochID", epochID, "dealer", bm.cosmosClient.GetAddress(), "error", err)
+			return nil
+		}
 		return fmt.Errorf("failed to submit dealer part: %w", err)
 	}
 

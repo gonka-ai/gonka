@@ -624,6 +624,12 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 
 	_, err = bm.cosmosClient.SubmitVerificationVector(msg)
 	if err != nil {
+		if isQueuedForRetry(err) {
+			logging.Warn(verifierLogTag+"Verification vector queued for retry", inferenceTypes.BLS,
+				"epochID", epochID,
+				"error", err)
+			return nil
+		}
 		return fmt.Errorf("failed to submit verification vector: %w", err)
 	}
 

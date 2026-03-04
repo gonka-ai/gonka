@@ -26,6 +26,10 @@ Add an objective dispute stage to DKG so dealer validity is not finalized from b
   - recompute `AggregatedShares` from consensus `ValidDealers` after final epoch data is known.
 - [x] Complaint response tx/message is implemented:
   - `MsgRespondDealerComplaints` (batched responses per dealer tx).
+- [x] Cryptographic proof enforcement for `true` verification votes is implemented:
+  - `DealerValidityProof` is required for each dealer marked `dealer_validity=true`,
+  - proofs are verified on-chain against participant slot public keys and `BuildDealerValidityProofHash(...)`,
+  - missing/invalid proofs cause verification submission rejection.
 - [x] Complaint evidence is attached to `MsgSubmitVerificationVector`:
   - disputed `(slot_index, ciphertext_index)` pairs are submitted per voted-false dealer during VERIFYING.
 - [x] Direct late complaint filing in DISPUTING is removed:
@@ -37,9 +41,24 @@ Add an objective dispute stage to DKG so dealer validity is not finalized from b
   - deterministic ciphertext-binding verification,
   - share-vs-polynomial commitment verification,
   - deterministic dealer/complainer fault assignment.
-- [x] Off-chain opening material retention for dispute responses is implemented (current runtime scope: in-memory).
-- [ ] Restart-safe persistence for off-chain opening material is pending (survives process/node restart).
-- [ ] End-to-end dispute resolution tests are pending (including restart/recovery scenarios).
+- [x] Off-chain opening material retention for dispute responses is implemented (runtime cache with persistent SQLite backing).
+- [x] Restart-safe persistence for off-chain opening material is implemented:
+  - SQLite-backed durable storage for dealer openings (`epoch_id`, `recipient_index`, `ciphertext_index`),
+  - write-through persistence on dealer part generation,
+  - startup recovery (load persisted openings into runtime cache),
+  - epoch cleanup after DKG completion.
+- [x] Retry-aware network handling is implemented for dispute flow:
+  - dealer part / verification vector / dealer complaint response submissions treat tx-manager queued-retry as non-fatal,
+  - recovery query path for epoch BLS data retries transient network/RPC failures with bounded backoff.
+- [x] Upgrade rollout path for stage-duration updates is implemented:
+  - `v0.2.11` upgrade handler is registered,
+  - BLS stage-duration params are updated for upgraded networks.
+- [ ] End-to-end coverage for recent BLS hardening changes is pending:
+  - dispute resolution flow (complaints/responses/fault assignment),
+  - proof path for verification votes (accepted valid path + rejected invalid/missing path),
+  - restart-safe persistence recovery for dealer openings,
+  - transient network/RPC failure recovery (tx queued retry + query retry path),
+  - `v0.2.11` upgrade application for stage-duration params.
 
 ## Core Design
 
@@ -166,9 +185,9 @@ Add an objective dispute stage to DKG so dealer validity is not finalized from b
 - `encryptForParticipant`:
   - return encryption metadata needed for later deterministic binding verification.
 
-### Restart-safe persistence for openings (Planned, not implemented yet)
+### Restart-safe persistence for openings (Implemented baseline)
 
-- Persist opening records to durable local storage (DB/file), keyed by:
+- Persist opening records to durable local storage (SQLite), keyed by:
   - `epoch_id`,
   - `recipient_index`,
   - `ciphertext_index`.
@@ -177,19 +196,19 @@ Add an objective dispute stage to DKG so dealer validity is not finalized from b
   - `share_bytes` (32 bytes),
   - `opening_seed` (32 bytes),
   - creation/update metadata.
-- Security requirements:
-  - encrypt at rest using node-local key material (or equivalent protected keystore integration),
-  - avoid plaintext seed/share exposure in logs.
 - Lifecycle rules:
   - write-through on dealer-part generation (durable before tx submission),
-  - load active records on startup for epochs in `DISPUTING`,
-  - delete records after epoch leaves disputing/completion window (`COMPLETED`/`FAILED`/`SIGNED`) with conservative TTL fallback.
+  - load persisted records on startup,
+  - delete records after epoch leaves disputing/completion window (`COMPLETED`/`FAILED`/`SIGNED`).
 - Consistency requirements:
   - idempotent upserts by composite key,
   - crash-safe atomic writes,
   - deterministic replay after restart.
 - Fallback behavior:
   - if required record is missing after restart, log explicit error and skip response for that complaint (do not fabricate data).
+- Remaining hardening:
+  - encrypt at rest using node-local key material (or equivalent protected keystore integration),
+  - add targeted e2e restart/recovery coverage in local testnet flows.
 
 ### `decentralized-api/internal/bls/verifier.go`
 
