@@ -99,6 +99,21 @@ func (bm *BlsManager) ProcessDisputePhaseStarted(event *chainevents.JSONRPCRespo
 	return nil
 }
 
+func (bm *BlsManager) ProcessDKGFailed(event *chainevents.JSONRPCResponse) error {
+	epochIDStr, err := bm.extractEventString(event, "inference.bls.EventDKGFailed.epoch_id")
+	if err != nil {
+		return fmt.Errorf("failed to extract failed DKG epoch id: %w", err)
+	}
+	epochID, err := strconv.ParseUint(epochIDStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse failed DKG epoch id %q: %w", epochIDStr, err)
+	}
+
+	bm.deleteDealerOpeningsForEpoch(epochID)
+	logging.Info(blsLogTag+"Cleaned dealer openings after DKG failure", inferenceTypes.BLS, "epochID", epochID)
+	return nil
+}
+
 func (bm *BlsManager) extractEpochDataFromDisputeEvent(event *chainevents.JSONRPCResponse) (*types.EpochBLSData, error) {
 	epochDataStrs, ok := event.Result.Events["inference.bls.EventDisputePhaseStarted.epoch_data"]
 	if !ok || len(epochDataStrs) == 0 {

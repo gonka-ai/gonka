@@ -31,6 +31,7 @@ const (
 	blsKeyGenerationInitiatedEvent    = "inference.bls.EventKeyGenerationInitiated"
 	blsVerifyingPhaseStartedEvent     = "inference.bls.EventVerifyingPhaseStarted"
 	blsDisputePhaseStartedEvent       = "inference.bls.EventDisputePhaseStarted"
+	blsDKGFailedEvent                 = "inference.bls.EventDKGFailed"
 	blsGroupPublicKeyGeneratedEvent   = "inference.bls.EventGroupPublicKeyGenerated"
 	blsThresholdSigningRequestedEvent = "inference.bls.EventThresholdSigningRequested"
 
@@ -388,6 +389,14 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		err := el.blsManager.ProcessDisputePhaseStarted(event)
 		if err != nil {
 			logging.Error("Failed to process dispute phase started event", types.EventProcessing, "error", err, "worker", workerName)
+		}
+	}
+
+	if epochIdValues := event.Result.Events[blsDKGFailedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("DKG failed event received", types.EventProcessing, "worker", workerName)
+		err := el.blsManager.ProcessDKGFailed(event)
+		if err != nil {
+			logging.Error("Failed to process DKG failed event", types.EventProcessing, "error", err, "worker", workerName)
 		}
 	}
 
