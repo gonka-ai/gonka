@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -65,15 +66,16 @@ func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) 
 
 // AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their aggregated MLNodes
 // by collecting MLNode data from all model-specific EpochGroup subgroups for the given epoch.
+// Optimized: only loads epoch group data for the specific epoch instead of all epochs.
 func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string][]*types.MLNodeInfo {
 	participantMLNodes := make(map[string][]*types.MLNodeInfo)
-	allEpochGroups := k.GetAllEpochGroupData(ctx)
+	epochGroups := k.GetEpochGroupDataForEpoch(ctx, epochIndex)
 
 	for _, vw := range validationWeights {
 		aggregated := make([]*types.MLNodeInfo, 0)
-		for _, subgroup := range allEpochGroups {
-			if subgroup.EpochIndex != epochIndex || subgroup.ModelId == "" {
-				continue // Skip wrong epoch or parent group
+		for _, subgroup := range epochGroups {
+			if subgroup.ModelId == "" {
+				continue // Skip parent group
 			}
 			for _, subVw := range subgroup.ValidationWeights {
 				if subVw.MemberAddress == vw.MemberAddress {
@@ -92,6 +94,7 @@ func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIn
 }
 
 func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, previousEpochIndex uint64) error {
+	settleStart := time.Now()
 	if currentEpochIndex == 0 {
 		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "currentEpochIndex", currentEpochIndex, "skipping")
 		return nil
@@ -254,6 +257,11 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	}
 
 	if previousEpochIndex == 0 {
+		settleDuration := time.Since(settleStart)
+		k.LogInfo("SettleAccounts completed", types.Performance,
+			"epochIndex", currentEpochIndex,
+			"participants", len(allParticipants),
+			"durationMs", settleDuration.Milliseconds())
 		return nil
 	}
 
@@ -262,6 +270,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	if err != nil {
 		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
 	}
+
+	settleDuration := time.Since(settleStart)
+	k.LogInfo("SettleAccounts completed", types.Performance,
+		"epochIndex", currentEpochIndex,
+		"participants", len(allParticipants),
+		"durationMs", settleDuration.Milliseconds())
 	return nil
 }
 

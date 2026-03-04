@@ -47,3 +47,19 @@ func (k Keeper) GetAllEpochGroupData(ctx context.Context) (list []types.EpochGro
 	}
 	return epochGroupDataList
 }
+
+// GetEpochGroupDataForEpoch returns all epochGroupData entries for a specific epoch index.
+// This is more efficient than GetAllEpochGroupData when only data for one epoch is needed,
+// as it avoids loading epoch group data from all historical epochs.
+func (k Keeper) GetEpochGroupDataForEpoch(ctx context.Context, epochIndex uint64) (list []types.EpochGroupData) {
+	iter, err := k.EpochGroupDataMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](epochIndex))
+	if err != nil {
+		return nil
+	}
+	defer iter.Close()
+	epochGroupDataList, err := iter.Values()
+	if err != nil {
+		return nil
+	}
+	return epochGroupDataList
+}
