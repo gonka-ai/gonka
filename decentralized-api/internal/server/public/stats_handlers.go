@@ -182,7 +182,7 @@ func (s *Server) getStatsDebugDevelopers(c echo.Context) error {
 }
 
 func parseStatsTimeRange(timeFromStr, timeToStr string) (statsstorage.UnixMillis, statsstorage.UnixMillis, error) {
-	now := time.Now().UnixMilli()
+	now := statsstorage.UnixMillis(time.Now().UnixMilli())
 
 	var (
 		timeFrom statsstorage.UnixMillis
@@ -190,7 +190,7 @@ func parseStatsTimeRange(timeFromStr, timeToStr string) (statsstorage.UnixMillis
 	)
 
 	if timeToStr == "" {
-		timeTo = statsstorage.UnixMillis(now)
+		timeTo = now
 	} else {
 		parsed, err := strconv.ParseInt(timeToStr, 10, 64)
 		if err != nil {

@@ -58,7 +58,7 @@ func (m *mockStatsStorage) Close() {}
 
 func TestGetStatsModels(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/v1/stats/models?time_from=1&time_to=2", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/stats/models?time_from=1700000000000&time_to=1700000001000", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -81,6 +81,50 @@ func TestGetStatsModels(t *testing.T) {
 	require.Equal(t, "model-a", resp.StatsModels[0].Model)
 	require.Equal(t, int64(111), resp.StatsModels[0].AiTokens)
 	require.Equal(t, int32(2), resp.StatsModels[0].Inferences)
+}
+
+func TestGetStatsDeveloperInferences(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/v1/stats/developers/gonka1dev/inferences?time_from=1700000000000&time_to=1700000001000", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("developer")
+	c.SetParamValues("gonka1dev")
+
+	s := &Server{
+		e:            e,
+		statsStorage: &mockStatsStorage{},
+	}
+
+	err := s.getStatsDeveloperInferences(c)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestGetStatsSummaryTime(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/v1/stats/summary/time?time_from=1700000000000&time_to=1700000001000", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	s := &Server{
+		e: e,
+		statsStorage: &mockStatsStorage{
+			summary: statsstorage.Summary{
+				AiTokens:   100,
+				Inferences: 5,
+			},
+		},
+	}
+
+	err := s.getStatsSummaryTime(c)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp StatsSummaryResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, int64(100), resp.AiTokens)
+	require.Equal(t, int32(5), resp.Inferences)
 }
 
 func TestGetStatsSummaryEpochs_RequiresEpochsN(t *testing.T) {
