@@ -93,12 +93,14 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		if dealerIndex < len(epochBLSData.DealerParts) {
 			dealerPart := epochBLSData.DealerParts[dealerIndex]
 			expectedCommitmentsCount := int(epochBLSData.TSlotsDegree) + 1
+			participant := epochBLSData.Participants[participantIndex]
 			if dealerPart != nil &&
 				dealerPart.DealerAddress != "" &&
 				len(dealerPart.Commitments) == expectedCommitmentsCount &&
 				participantIndex < len(dealerPart.ParticipantShares) &&
 				dealerPart.ParticipantShares[participantIndex] != nil &&
-				len(dealerPart.ParticipantShares[participantIndex].EncryptedShares) > 0 {
+				len(dealerPart.ParticipantShares[participantIndex].EncryptedShares) > 0 &&
+				hasValidEncryptedSharesShape(participant, dealerPart.ParticipantShares[participantIndex].EncryptedShares) {
 				requiresEvidence = true
 			}
 		}

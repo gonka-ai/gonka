@@ -452,6 +452,39 @@ func TestSubmitVerificationVector_MissingComplaintForFalseDealerWithSharesReject
 	require.Contains(t, err.Error(), "missing complaint evidence")
 }
 
+func TestSubmitVerificationVector_MalformedSharesDoNotRequireComplaintEvidence(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(114)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
+	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
+	// Participant 0 owns 33 slots in this test fixture; a single ciphertext is malformed shape.
+	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
+		{EncryptedShares: [][]byte{[]byte("malformed")}},
+		{EncryptedShares: [][]byte{[]byte("c1")}},
+		{EncryptedShares: [][]byte{[]byte("c2")}},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, false, false},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, msg.DealerValidity, storedData.VerificationSubmissions[0].DealerValidity)
+	require.Empty(t, storedData.DealerComplaints)
+}
+
 func TestSubmitVerificationVector_InvalidComplaintSlotRejected(t *testing.T) {
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)

@@ -57,6 +57,14 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("expected %d commitments (t_slots_degree + 1), got %d", expectedCommitmentsCount, len(msg.Commitments))
 	}
 
+	// Enforce encrypted_shares shape for each recipient:
+	// len(encrypted_shares) == recipient_slot_count * recipient_keys_per_slot.
+	for i, participant := range epochBLSData.Participants {
+		if err := validateEncryptedSharesShape(participant, msg.EncryptedSharesForParticipants[i].EncryptedShares); err != nil {
+			return nil, fmt.Errorf("invalid encrypted shares for participant index %d: %w", i, err)
+		}
+	}
+
 	// Create dealer part storage
 	participantShares := make([]*types.EncryptedSharesForParticipant, len(msg.EncryptedSharesForParticipants))
 	for i := range msg.EncryptedSharesForParticipants {
