@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"decentralized-api/logging"
+	"decentralized-api/statsstorage"
 	"net/http"
 	"time"
 
@@ -154,15 +155,15 @@ func (s *Server) getModelMetrics(queryClient types.QueryClient, context context.
 	}
 
 	// Calculate time window (similar to BeginBlocker logic)
-	currentTime := time.Now().Unix()
-	timeWindowStart := currentTime - int64(params.Params.DynamicPricingParams.UtilizationWindowDuration)
+	currentTime := time.Now().UnixMilli()
+	timeWindowStart := currentTime - int64(params.Params.DynamicPricingParams.UtilizationWindowDuration*1000)
 
 	if s.statsStorage == nil {
 		logging.Warn("Stats storage not configured, utilization metrics unavailable", types.Pricing)
 		return metricsData // Return with capacity data only
 	}
 
-	modelStats, err := s.statsStorage.GetModelStatsByTime(context, timeWindowStart, currentTime)
+	modelStats, err := s.statsStorage.GetModelStatsByTime(context, statsstorage.UnixMillis(timeWindowStart), statsstorage.UnixMillis(currentTime))
 	if err != nil {
 		logging.Warn("Failed to get model stats for utilization", types.Pricing, "error", err)
 		return metricsData // Return with capacity data only

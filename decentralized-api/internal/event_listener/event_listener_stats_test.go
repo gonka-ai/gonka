@@ -1,6 +1,7 @@
 package event_listener
 
 import (
+	"decentralized-api/statsstorage"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,8 +17,8 @@ func TestParseInferenceFinishedRecords_Success(t *testing.T) {
 		"inference_finished.prompt_token_count":     {"100"},
 		"inference_finished.completion_token_count": {"50"},
 		"inference_finished.actual_cost_in_coins":   {"12345"},
-		"inference_finished.start_block_timestamp":  {"1000"},
-		"inference_finished.end_block_timestamp":    {"2000"},
+		"inference_finished.start_block_timestamp":  {"1700000000000"},
+		"inference_finished.end_block_timestamp":    {"1700000001000"},
 	}
 
 	records, err := parseInferenceFinishedRecords(events)
@@ -29,7 +30,7 @@ func TestParseInferenceFinishedRecords_Success(t *testing.T) {
 	require.Equal(t, uint64(42), records[0].EpochID)
 	require.Equal(t, uint64(150), records[0].TotalTokenCount)
 	require.Equal(t, int64(12345), records[0].ActualCostInCoins)
-	require.Equal(t, int64(2000), records[0].InferenceTimestamp)
+	require.Equal(t, statsstorage.UnixMillis(1700000001000), records[0].InferenceTimestamp)
 }
 
 func TestParseInferenceFinishedRecords_MissingRequiredField(t *testing.T) {
@@ -42,8 +43,8 @@ func TestParseInferenceFinishedRecords_MissingRequiredField(t *testing.T) {
 		"inference_finished.prompt_token_count":     {"100"},
 		"inference_finished.completion_token_count": {"50"},
 		"inference_finished.actual_cost_in_coins":   {"12345"},
-		"inference_finished.start_block_timestamp":  {"1000"},
-		"inference_finished.end_block_timestamp":    {"2000"},
+		"inference_finished.start_block_timestamp":  {"1700000000000"},
+		"inference_finished.end_block_timestamp":    {"1700000001000"},
 	}
 
 	_, err := parseInferenceFinishedRecords(events)

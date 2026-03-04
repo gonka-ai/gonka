@@ -505,11 +505,11 @@ func parseInferenceFinishedRecords(events map[string][]string) ([]statsstorage.I
 		if err != nil {
 			return nil, fmt.Errorf("parse actual_cost_in_coins for inference %s: %w", id, err)
 		}
-		rec.StartBlockTimestamp, err = parseEventInt64(events, "inference_finished.start_block_timestamp", i)
+		rec.StartBlockTimestamp, err = parseEventUnixMillis(events, "inference_finished.start_block_timestamp", i)
 		if err != nil {
 			return nil, fmt.Errorf("parse start_block_timestamp for inference %s: %w", id, err)
 		}
-		rec.EndBlockTimestamp, err = parseEventInt64(events, "inference_finished.end_block_timestamp", i)
+		rec.EndBlockTimestamp, err = parseEventUnixMillis(events, "inference_finished.end_block_timestamp", i)
 		if err != nil {
 			return nil, fmt.Errorf("parse end_block_timestamp for inference %s: %w", id, err)
 		}
@@ -544,6 +544,21 @@ func parseEventUint64(events map[string][]string, key string, idx int) (uint64, 
 		return 0, err
 	}
 	return parsed, nil
+}
+
+func parseEventUnixMillis(events map[string][]string, key string, idx int) (statsstorage.UnixMillis, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if parsed < 177260313800 {
+		return 0, fmt.Errorf("timestamp is in seconds %s", v)
+	}
+	return statsstorage.UnixMillis(parsed), nil
 }
 
 func parseEventInt64(events map[string][]string, key string, idx int) (int64, error) {

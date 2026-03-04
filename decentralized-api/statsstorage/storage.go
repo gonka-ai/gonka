@@ -7,6 +7,8 @@ import (
 
 var ErrInferenceRecordNotFound = errors.New("inference record not found")
 
+type UnixMillis int64
+
 // InferenceRecord is the off-chain source-of-truth record for one inference.
 type InferenceRecord struct {
 	InferenceID          string
@@ -18,9 +20,9 @@ type InferenceRecord struct {
 	CompletionTokenCount uint64
 	TotalTokenCount      uint64
 	ActualCostInCoins    int64
-	StartBlockTimestamp  int64
-	EndBlockTimestamp    int64
-	InferenceTimestamp   int64
+	StartBlockTimestamp  UnixMillis
+	EndBlockTimestamp    UnixMillis
+	InferenceTimestamp   UnixMillis
 }
 
 type Summary struct {
@@ -55,12 +57,12 @@ type DebugStats struct {
 type StatsStorage interface {
 	UpsertInference(ctx context.Context, rec InferenceRecord) error
 	UpdateInferenceStatus(ctx context.Context, inferenceID, status string) error
-	GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo int64) ([]InferenceRecord, error)
+	GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo UnixMillis) ([]InferenceRecord, error)
 	GetSummaryByDeveloperEpochsBackwards(ctx context.Context, developer string, epochsN int32) (Summary, error)
 	GetSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error)
-	GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo int64) (Summary, error)
-	GetModelStatsByTime(ctx context.Context, timeFrom, timeTo int64) ([]ModelSummary, error)
+	GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error)
+	GetModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error)
 	GetDebugStats(ctx context.Context) (DebugStats, error)
-	PruneOlderThan(ctx context.Context, cutoffTimestamp int64) error
+	PruneOlderThan(ctx context.Context, cutoffTimestamp UnixMillis) error
 	Close()
 }

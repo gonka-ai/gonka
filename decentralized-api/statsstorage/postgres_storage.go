@@ -139,7 +139,7 @@ WHERE inference_id = $1
 	return nil
 }
 
-func (s *PostgresStorage) GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo int64) ([]InferenceRecord, error) {
+func (s *PostgresStorage) GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo UnixMillis) ([]InferenceRecord, error) {
 	const q = `
 SELECT
     inference_id, requested_by, model, status, epoch_id,
@@ -225,7 +225,7 @@ WHERE epoch_id > GREATEST(bounds.max_epoch - $1, 0)
 	return s.scanSummaryRow(ctx, q, epochsN)
 }
 
-func (s *PostgresStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo int64) (Summary, error) {
+func (s *PostgresStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error) {
 	const q = `
 SELECT
     COALESCE(SUM(total_token_count), 0) AS ai_tokens,
@@ -238,7 +238,7 @@ WHERE inference_timestamp >= $1
 	return s.scanSummaryRow(ctx, q, timeFrom, timeTo)
 }
 
-func (s *PostgresStorage) GetModelStatsByTime(ctx context.Context, timeFrom, timeTo int64) ([]ModelSummary, error) {
+func (s *PostgresStorage) GetModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error) {
 	const q = `
 SELECT
     model,
@@ -289,7 +289,7 @@ func (s *PostgresStorage) GetDebugStats(ctx context.Context) (DebugStats, error)
 	}, nil
 }
 
-func (s *PostgresStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp int64) error {
+func (s *PostgresStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp UnixMillis) error {
 	const q = `
 DELETE FROM inference_stats
 WHERE inference_timestamp < $1

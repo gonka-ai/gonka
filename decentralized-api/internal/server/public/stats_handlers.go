@@ -31,9 +31,9 @@ type DeveloperInferencesResponse struct {
 }
 
 type DeveloperStatsByTimeDto struct {
-	EpochID   uint64            `json:"epoch_id"`
-	Timestamp int64             `json:"timestamp"`
-	Inference InferenceStatsDto `json:"inference"`
+	EpochID   uint64                  `json:"epoch_id"`
+	Timestamp statsstorage.UnixMillis `json:"timestamp"`
+	Inference InferenceStatsDto       `json:"inference"`
 }
 
 type InferenceStatsDto struct {
@@ -181,31 +181,32 @@ func (s *Server) getStatsDebugDevelopers(c echo.Context) error {
 	return c.JSON(http.StatusOK, mapDebugStats(debugStats))
 }
 
-func parseStatsTimeRange(timeFromStr, timeToStr string) (int64, int64, error) {
-	now := time.Now().Unix()
+func parseStatsTimeRange(timeFromStr, timeToStr string) (statsstorage.UnixMillis, statsstorage.UnixMillis, error) {
+	now := time.Now().UnixMilli()
 
 	var (
-		timeFrom int64
-		timeTo   int64
-		err      error
+		timeFrom statsstorage.UnixMillis
+		timeTo   statsstorage.UnixMillis
 	)
 
 	if timeToStr == "" {
-		timeTo = now
+		timeTo = statsstorage.UnixMillis(now)
 	} else {
-		timeTo, err = strconv.ParseInt(timeToStr, 10, 64)
+		parsed, err := strconv.ParseInt(timeToStr, 10, 64)
 		if err != nil {
 			return 0, 0, err
 		}
+		timeTo = statsstorage.UnixMillis(parsed)
 	}
 
 	if timeFromStr == "" {
-		timeFrom = timeTo - int64(24*time.Hour.Seconds())
+		timeFrom = timeTo - statsstorage.UnixMillis(24*time.Hour.Milliseconds())
 	} else {
-		timeFrom, err = strconv.ParseInt(timeFromStr, 10, 64)
+		parsed, err := strconv.ParseInt(timeFromStr, 10, 64)
 		if err != nil {
 			return 0, 0, err
 		}
+		timeFrom = statsstorage.UnixMillis(parsed)
 	}
 
 	if timeTo < timeFrom {

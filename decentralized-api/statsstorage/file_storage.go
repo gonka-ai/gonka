@@ -81,7 +81,7 @@ func (f *FileStorage) recordPath(inferenceID string) string {
 	return filepath.Join(f.baseDir, filename)
 }
 
-func (f *FileStorage) GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo int64) ([]InferenceRecord, error) {
+func (f *FileStorage) GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo UnixMillis) ([]InferenceRecord, error) {
 	records, err := f.readAllRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func (f *FileStorage) GetSummaryByEpochsBackwards(ctx context.Context, epochsN i
 	return summary, nil
 }
 
-func (f *FileStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo int64) (Summary, error) {
+func (f *FileStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error) {
 	records, err := f.readAllRecords(ctx)
 	if err != nil {
 		return Summary{}, err
@@ -163,7 +163,7 @@ func (f *FileStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, time
 	return summary, nil
 }
 
-func (f *FileStorage) GetModelStatsByTime(ctx context.Context, timeFrom, timeTo int64) ([]ModelSummary, error) {
+func (f *FileStorage) GetModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error) {
 	records, err := f.readAllRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func (f *FileStorage) GetDebugStats(ctx context.Context) (DebugStats, error) {
 	}, nil
 }
 
-func (f *FileStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp int64) error {
+func (f *FileStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp UnixMillis) error {
 	_ = ctx
 	entries, err := os.ReadDir(f.baseDir)
 	if err != nil {

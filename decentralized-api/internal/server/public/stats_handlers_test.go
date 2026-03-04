@@ -26,7 +26,7 @@ func (m *mockStatsStorage) UpdateInferenceStatus(_ context.Context, _, _ string)
 	return nil
 }
 
-func (m *mockStatsStorage) GetDeveloperInferencesByTime(_ context.Context, _ string, _, _ int64) ([]statsstorage.InferenceRecord, error) {
+func (m *mockStatsStorage) GetDeveloperInferencesByTime(_ context.Context, _ string, _, _ statsstorage.UnixMillis) ([]statsstorage.InferenceRecord, error) {
 	return []statsstorage.InferenceRecord{}, nil
 }
 
@@ -38,11 +38,11 @@ func (m *mockStatsStorage) GetSummaryByEpochsBackwards(_ context.Context, _ int3
 	return m.summary, nil
 }
 
-func (m *mockStatsStorage) GetSummaryByTimePeriod(_ context.Context, _, _ int64) (statsstorage.Summary, error) {
+func (m *mockStatsStorage) GetSummaryByTimePeriod(_ context.Context, _, _ statsstorage.UnixMillis) (statsstorage.Summary, error) {
 	return m.summary, nil
 }
 
-func (m *mockStatsStorage) GetModelStatsByTime(_ context.Context, _, _ int64) ([]statsstorage.ModelSummary, error) {
+func (m *mockStatsStorage) GetModelStatsByTime(_ context.Context, _, _ statsstorage.UnixMillis) ([]statsstorage.ModelSummary, error) {
 	return m.modelStats, nil
 }
 
@@ -50,7 +50,7 @@ func (m *mockStatsStorage) GetDebugStats(_ context.Context) (statsstorage.DebugS
 	return statsstorage.DebugStats{}, nil
 }
 
-func (m *mockStatsStorage) PruneOlderThan(_ context.Context, _ int64) error {
+func (m *mockStatsStorage) PruneOlderThan(_ context.Context, _ statsstorage.UnixMillis) error {
 	return nil
 }
 

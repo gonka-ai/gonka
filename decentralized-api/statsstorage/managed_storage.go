@@ -53,7 +53,7 @@ func (m *ManagedStorage) UpdateInferenceStatus(ctx context.Context, inferenceID,
 	return m.storage.UpdateInferenceStatus(ctx, inferenceID, status)
 }
 
-func (m *ManagedStorage) GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo int64) ([]InferenceRecord, error) {
+func (m *ManagedStorage) GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo UnixMillis) ([]InferenceRecord, error) {
 	return m.storage.GetDeveloperInferencesByTime(ctx, developer, timeFrom, timeTo)
 }
 
@@ -65,11 +65,11 @@ func (m *ManagedStorage) GetSummaryByEpochsBackwards(ctx context.Context, epochs
 	return m.storage.GetSummaryByEpochsBackwards(ctx, epochsN)
 }
 
-func (m *ManagedStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo int64) (Summary, error) {
+func (m *ManagedStorage) GetSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error) {
 	return m.storage.GetSummaryByTimePeriod(ctx, timeFrom, timeTo)
 }
 
-func (m *ManagedStorage) GetModelStatsByTime(ctx context.Context, timeFrom, timeTo int64) ([]ModelSummary, error) {
+func (m *ManagedStorage) GetModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error) {
 	return m.storage.GetModelStatsByTime(ctx, timeFrom, timeTo)
 }
 
@@ -77,7 +77,7 @@ func (m *ManagedStorage) GetDebugStats(ctx context.Context) (DebugStats, error) 
 	return m.storage.GetDebugStats(ctx)
 }
 
-func (m *ManagedStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp int64) error {
+func (m *ManagedStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp UnixMillis) error {
 	return m.storage.PruneOlderThan(ctx, cutoffTimestamp)
 }
 
@@ -106,7 +106,7 @@ func (m *ManagedStorage) cleanupLoop(ctx context.Context) {
 
 func (m *ManagedStorage) pruneOnce() {
 	cutoff := time.Now().Add(-time.Duration(m.retentionDays) * 24 * time.Hour).UnixMilli()
-	if err := m.storage.PruneOlderThan(context.Background(), cutoff); err != nil {
+	if err := m.storage.PruneOlderThan(context.Background(), UnixMillis(cutoff)); err != nil {
 		logging.Warn("Stats auto-prune failed", types.System, "retention_days", m.retentionDays, "error", err)
 		return
 	}
