@@ -9,6 +9,12 @@ var ErrInferenceRecordNotFound = errors.New("inference record not found")
 
 type UnixMillis int64
 
+const (
+	// UnixMillisTimestampThreshold In millis, this is actually VERY long ago (1975), but in seconds it's very far in the future (7587).
+	// this makes it a good threshold for detecting timestamps that are in seconds instead of millis
+	UnixMillisTimestampThreshold = 177260313800
+)
+
 // InferenceRecord is the off-chain source-of-truth record for one inference.
 type InferenceRecord struct {
 	InferenceID          string

@@ -212,6 +212,9 @@ func parseStatsTimeRange(timeFromStr, timeToStr string) (statsstorage.UnixMillis
 	if timeTo < timeFrom {
 		return 0, 0, echo.NewHTTPError(http.StatusBadRequest, "invalid time period: time_to must be >= time_from")
 	}
+	if timeTo < statsstorage.UnixMillisTimestampThreshold || timeFrom < statsstorage.UnixMillisTimestampThreshold {
+		return 0, 0, echo.NewHTTPError(http.StatusBadRequest, "invalid time period: time_to and time_from must be in milliseconds")
+	}
 	return timeFrom, timeTo, nil
 }
 
