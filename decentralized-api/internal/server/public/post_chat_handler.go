@@ -637,22 +637,16 @@ func (s *Server) isAddressActiveParticipantInCurrentEpoch(address string) (bool,
 	// Even if the validator is active in cached epoch group data that is updated once per epoch,
 	// participant could be marked as Invalid (missed confirmation PoC),
 	// and it's confirmation weight is set to 0 in the EpochGroupData.
-	// So we need to check the current epoch group data.
-	// https://github.com/gonka-ai/gonka/pull/514#discussion_r2662704635
-	queryClient := s.recorder.NewInferenceQueryClient()
-	resp, err := queryClient.CurrentEpochGroupData(context.Background(), &types.QueryCurrentEpochGroupDataRequest{})
-	if err != nil {
-		return false, err
-	}
-	for _, vw := range resp.EpochGroupData.ValidationWeights {
-		if vw.MemberAddress == address {
-			if vw.ConfirmationWeight > 0 {
-				return true, nil
-			}
-			return false, nil
-		}
-	}
-	return false, nil // participant is not active in the current epoch
+
+	// But at the moment CheckPermission framework onchain doesn't check the confirmation weight,
+	// and is participant still Active after inference downtime stats checks,
+	// because to remove heavy operations from hot-path (Start/Finish inference).
+	// So we also use here only active participants from start of the epoch.
+	// It is subject to change when CheckPermission framework is updated
+	// to take into account that participant can became inactive during the epoch.
+
+	// TODO: optimize CheckPermission framework and use gRPC call here.
+	return isActive, nil
 }
 
 func (s *Server) getAllowedPubKeysForTAsAndValidators(ctx echo.Context, granterAddress string) ([]string, error) {
