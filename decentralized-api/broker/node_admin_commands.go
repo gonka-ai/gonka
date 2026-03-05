@@ -380,13 +380,6 @@ func (c UpdateNodeHardwareCommand) Execute(b *Broker) {
 	c.Response <- nil
 }
 
-func getFirstModelIdFromNode(node Node) string {
-	for modelId := range node.Models {
-		return modelId
-	}
-	return "" // Return empty if no models
-}
-
 // SetNodeMLNodeOnboardingStateCommand updates the MLNodeOnboardingState of a node
 type SetNodeMLNodeOnboardingStateCommand struct {
 	NodeId   string

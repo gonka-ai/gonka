@@ -57,12 +57,8 @@ func (s *Server) getNodes(ctx echo.Context) error {
 		if participantActive {
 			userMsg = sr.BuildMLNodeMessage(mlnodeState, secs, "")
 		}
-		if guidance := sr.BuildNoModelGuidance(secs); guidance != "" {
-			if userMsg == "" {
-				userMsg = guidance
-			} else {
-				userMsg = userMsg + " " + guidance
-			}
+		if userMsg == "" {
+			userMsg = sr.BuildNoModelGuidance(secs)
 		}
 
 		prevOnboarding := MLNodeOnboardingState(state.MLNodeOnboardingState)
@@ -224,7 +220,9 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 			}
 			if s.tester.ShouldAutoTest(secs) {
 				s.statusReporter.LogTesting("Auto-testing MLnode configuration")
+				s.testingNodes[newNode.Id] = true
 				result := s.tester.RunNodeTest(context.Background(), *node)
+				delete(s.testingNodes, newNode.Id)
 				if result != nil {
 					if result.Status == TestFailed {
 						cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, result.Error)
@@ -293,7 +291,9 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 		}
 		if s.tester.ShouldAutoTest(secs) {
 			s.statusReporter.LogTesting("Auto-testing MLnode configuration")
+			s.testingNodes[newNode.Id] = true
 			result := s.tester.RunNodeTest(context.Background(), *node)
+			delete(s.testingNodes, newNode.Id)
 			if result != nil {
 				if result.Status == TestFailed {
 					cmd := broker.NewSetNodeFailureReasonCommand(newNode.Id, result.Error)
