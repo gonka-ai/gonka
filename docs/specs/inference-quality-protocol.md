@@ -173,6 +173,13 @@ Gonka Labs (gonka.gg). Scope:
 Acceptance criteria: any developer using the SDK should achieve ≥ top-quartile
 QualityScore without manual configuration.
 
+**Reference implementation (Go middleware layer):**
+[`Mayveskii/gonka-quality-middleware`](https://github.com/Mayveskii/gonka-quality-middleware) —
+HTTP middleware measuring L6/L8/L9/DX axes on every request through the
+[gonkalabs/opengnk](https://github.com/gonkalabs/opengnk) proxy.
+Axes tracked: L6 cache hit rate, L8 latency CV, L9 completion rate, DX feedback loop.
+Tests: 7/7 PASS (Go 1.22, no GPU, no external deps). Stats endpoint: `GET /quality/stats`.
+
 ---
 
 ## Proto extension (Phase 1)
@@ -225,7 +232,7 @@ uint64 max_cache_entries          = 9;
 | 4 | GetQualityWeightedExecutor routing | Phase 2+3 | ~3 days |
 | 5 | TaskArchetypeStore + centroid clustering | Phase 0 + StatsStorage | ~3 days |
 | 6 | /v1/models/profiles + response headers | Phase 4+5 | ~2 days |
-| 7 | gonka-sdk (separate repo) | Phase 6 stable | TBD |
+| 7 | gonka-sdk (separate repo) | Phase 6 stable | TBD (ref: gonka-quality-middleware) |
 
 ---
 
