@@ -73,6 +73,7 @@ message EpochParams {
   int64 inference_pruning_max = 12;
   int64 poc_pruning_max = 13;
   Decimal poc_slot_allocation = 14; // Fraction of slots allocated to PoC (0.0 to 1.0, default 0.5)
+  int64 confirmation_poc_safety_window = 15;
 }
 
 message ValidationParams {

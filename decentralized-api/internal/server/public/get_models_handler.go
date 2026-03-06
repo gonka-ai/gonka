@@ -55,3 +55,20 @@ func (s *Server) getGovernanceModels(ctx echo.Context) error {
 		Models: modelsResponse.Model,
 	})
 }
+
+// TODO: Remove later - response format used by old dashboard
+// getGovernanceModelsLegacy is a temporary compatibility endpoint.
+// It mirrors governance models but preserves the legacy chain-gateway field name: "model".
+func (s *Server) getGovernanceModelsLegacy(ctx echo.Context) error {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	context := s.recorder.GetContext()
+
+	modelsResponse, err := queryClient.ModelsAll(context, &types.QueryModelsAllRequest{})
+	if err != nil {
+		return err
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"model": modelsResponse.Model,
+	})
+}
