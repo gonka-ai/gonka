@@ -39,11 +39,13 @@ func setupKeeperWithMocksForStreamVesting(t testing.TB) (keeper.Keeper, types.Ms
 func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, streamvestingkeeper.Keeper, types.MsgServer, streamvestingtypes.MsgServer) {
 	// --- Store and Codec Setup ---
 	inferenceStoreKey := storetypes.NewKVStoreKey(types.StoreKey)
+	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	streamvestingStoreKey := storetypes.NewKVStoreKey(streamvestingtypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(inferenceStoreKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(transientStoreKey, storetypes.StoreTypeTransient, db)
 	stateStore.MountStoreWithDB(streamvestingStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
@@ -87,6 +89,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	inferenceKeeper := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(inferenceStoreKey),
+		runtime.NewTransientStoreService(transientStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
 		bookkeepingBankKeeper,

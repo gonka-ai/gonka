@@ -111,6 +111,12 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	model := types.Model{Id: "model1"}
 	StubModelSubgroup(t, ctx, k, mocks, &model)
 
+	executorBeforeStart, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	if executorBeforeStart.CurrentEpochStats == nil {
+		executorBeforeStart.CurrentEpochStats = &types.CurrentEpochStats{}
+	}
+
 	// Now start the inference
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:        inferenceId,
@@ -151,4 +157,10 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 
 	// The escrow amount should be the same as the actual cost
 	require.Equal(t, expectedActualCost, savedInference.EscrowAmount)
+
+	executorAfterStart, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.NotNil(t, executorAfterStart.CurrentEpochStats)
+	require.Equal(t, executorBeforeStart.CurrentEpochStats.InferenceCount+1, executorAfterStart.CurrentEpochStats.InferenceCount)
+	require.Equal(t, executorBeforeStart.CurrentEpochStats.EarnedCoins+uint64(expectedActualCost), executorAfterStart.CurrentEpochStats.EarnedCoins)
 }

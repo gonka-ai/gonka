@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -23,6 +24,7 @@ func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevali
 		return nil, nil
 	}
 
+	previousStatus := inference.Status
 	inference.Status = types.InferenceStatus_VALIDATED
 	executor.ConsecutiveInvalidInferences = 0
 	executor.CurrentEpochStats.ValidatedInferences++
@@ -36,6 +38,9 @@ func (k msgServer) RevalidateInference(ctx context.Context, msg *types.MsgRevali
 	err = k.SetInference(ctx, *inference)
 	if err != nil {
 		return nil, err
+	}
+	if inference.Status != previousStatus {
+		emitInferenceStatusUpdatedEvent(sdk.UnwrapSDKContext(ctx), inference.InferenceId, inference.Status)
 	}
 
 	return &types.MsgRevalidateInferenceResponse{}, nil

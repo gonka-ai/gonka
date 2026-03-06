@@ -17,6 +17,7 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/statsstorage"
 	"net"
 
 	"github.com/productscience/inference/api/inference/inference"
@@ -149,12 +150,33 @@ func main() {
 	// Start periodic config auto-flush of dynamic data to DB
 	config.StartAutoFlush(ctx, 60*time.Second)
 
+	// Optional off-chain inference stats storage (PostgreSQL-backed when PGHOST is configured).
+	statsStore, err := statsstorage.NewStatsStorage(ctx)
+	if err != nil {
+		logging.Error("Failed to initialize stats storage", types.System, "error", err)
+		return
+	}
+	if statsStore != nil {
+		defer statsStore.Close()
+	}
+
 	training.NewAssigner(recorder, &tendermintClient, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
-	listener := event_listener.NewEventListener(config, pocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsManager)
+	listener := event_listener.NewEventListener(
+		config,
+		pocOrchestrator,
+		nodeBroker,
+		validator,
+		*recorder,
+		trainingExecutor,
+		chainPhaseTracker,
+		cancel,
+		blsManager,
+		event_listener.WithStatsStorage(statsStore),
+	)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 
@@ -194,17 +216,11 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
-	// ── Semantic cache ────────────────────────────────────────────────────────
-	// InMemoryCacheStore: zero external dependencies, works on every gonka node
-	// out of the box. ML-node embed endpoint (all-MiniLM-L6-v2 on CPU) is already
-	// part of the gonka node stack — no new services required.
-	// Governance-gated: Enabled=false by default; toggle via CacheQualityParams.
-	//
-	// sc is declared here (outside the if-block) so the admin server can receive
-	// a read-only reference for GET /admin/v1/cache/stats. When no nodes are
-	// configured sc stays nil; the admin handler is nil-safe.
 	var sc *semanticcache.SemanticCache
-	publicServerOpts := []pserver.ServerOption{pserver.WithArtifactStore(artifactStore)}
+	publicServerOpts := []pserver.ServerOption{
+		pserver.WithArtifactStore(artifactStore),
+		pserver.WithStatsStorage(statsStore),
+	}
 	if len(config.GetNodes()) > 0 {
 		firstNode := config.GetNodes()[0]
 		embedderClient := mlnodeclient.NewNodeClient(
@@ -279,7 +295,6 @@ func main() {
 			}
 		}()
 	}
-	// ── end semantic cache ────────────────────────────────────────────────────
 
 	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore, publicServerOpts...)
 	publicServer.Start(addr)

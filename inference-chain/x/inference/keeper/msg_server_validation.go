@@ -19,11 +19,15 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
 		return nil, err
 	}
+
+	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
+	if err != nil {
+		k.LogWarn("Validation: failed to inject params", types.Validation, "error", err)
+	}
+
 	k.LogInfo("Received MsgValidation", types.Validation,
 		"msg.Creator", msg.Creator,
 		"inferenceId", msg.InferenceId)
-
-	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	if msg.ResponsePayload != "" {
 		return nil, types.ErrValidationPayloadDeprecated
@@ -55,6 +59,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
+	previousStatus := inference.Status
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
 	if !found {
@@ -176,6 +181,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogError("Failed to set inference", types.Validation, "inferenceId", inference.InferenceId, "error", err)
 		return nil, err
 	}
+	if inference.Status != previousStatus {
+		emitInferenceStatusUpdatedEvent(ctx, inference.InferenceId, inference.Status)
+	}
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
@@ -211,17 +219,23 @@ func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccA
 		k.LogError("Failed to get params", types.Validation, "error", err)
 		return false
 	}
-	blockTime := sdk.UnwrapSDKContext(ctx).BlockTime()
-	currentTimeMillis := blockTime.UnixMilli()                                             // Current time in milliseconds
-	windowDurationSeconds := int64(params.BandwidthLimitsParams.InvalidationsSamplePeriod) // Window duration in seconds (e.g., 60)
-	windowDurationMillis := windowDurationSeconds * 1000                                   // Convert to milliseconds for time queries
-	timeWindowStartMillis := currentTimeMillis - windowDurationMillis                      // Start time in milliseconds
+	if params.BandwidthLimitsParams == nil {
+		k.LogError("Failed to get bandwidth limits params", types.Validation)
+		return false
+	}
 
-	recentInferencesMap := k.GetSummaryByModelAndTime(ctx, timeWindowStartMillis, currentTimeMillis)
-	inferencesForModel, found := recentInferencesMap[data.ModelId]
-	if !found {
-		// InferenceCount will be zero here... that's fine, it will return the default value of 1
-		k.LogInfo("No inferences for model", types.Validation, "model", data.ModelId, "error", err)
+	windowBlocks := types.InvalidationsSamplePeriodToBlocks(params.BandwidthLimitsParams.InvalidationsSamplePeriod)
+	inferencesForModel := int64(0)
+	rollingInferenceCount, found, err := k.GetModelInferenceCountRollingSum(ctx, data.ModelId, windowBlocks)
+	if err != nil {
+		k.LogError("Failed to get rolling inference count", types.Validation, "model", data.ModelId, "error", err)
+		return false
+	}
+	if found {
+		inferencesForModel = int64(rollingInferenceCount)
+	} else {
+		// Default to zero when there is no model state yet.
+		k.LogInfo("No rolling inference count for model", types.Validation, "model", data.ModelId)
 	}
 
 	participant := data.ValidationWeight(creator.String())
@@ -229,9 +243,12 @@ func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccA
 		k.LogError("No participant for model", types.Validation, "model", data.ModelId, "error", err)
 		return true
 	}
-	participantWeightPercent := decimal.NewFromInt(participant.Weight).Div(decimal.NewFromInt(data.TotalWeight))
+	var participantWeightPercent = decimal.Zero
+	if data.TotalWeight != 0 {
+		participantWeightPercent = decimal.NewFromInt(participant.Weight).Div(decimal.NewFromInt(data.TotalWeight))
+	}
 	maxValidations := calculations.CalculateInvalidations(
-		int64(inferencesForModel.InferenceCount),
+		inferencesForModel,
 		participantWeightPercent,
 		participant.Reputation,
 		int64(params.BandwidthLimitsParams.InvalidationsLimit),

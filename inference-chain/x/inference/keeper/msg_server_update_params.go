@@ -22,6 +22,11 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 	if err := k.SetParams(ctx, req.Params); err != nil {
 		return nil, err
 	}
+	err := k.PrecomputeSPRTValues(ctx)
+	if err != nil {
+		k.LogError("Failed to precompute SPRT values", types.Validation, "error", err)
+		return nil, err
+	}
 
 	return &types.MsgUpdateParamsResponse{}, nil
 }

@@ -18,7 +18,10 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return nil, err
 	}
 
-	var ctx = sdk.UnwrapSDKContext(goCtx)
+	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
+	if err != nil {
+		k.LogWarn("StartInference: failed to inject params", types.Inferences, "error", err)
+	}
 
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
@@ -55,7 +58,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
 	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
 
-	err := k.verifyKeys(ctx, msg, transferAgent, dev)
+	err = k.verifyKeys(ctx, msg, transferAgent, dev)
 	if err != nil {
 		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -85,22 +88,34 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, false)
+	var executor *types.Participant
+	if inference.ExecutedBy != "" {
+		executorValue, found := k.GetParticipant(ctx, inference.ExecutedBy)
+		if !found {
+			k.LogError("StartInference: executor not found", types.Inferences, "executed_by", inference.ExecutedBy, "inference_id", inference.InferenceId)
+			return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, inference.ExecutedBy), msg), nil
+		}
+		executor = &executorValue
+	}
+
+	finalInference, err := k.processInferencePayments(ctx, inference, payments, false, executor)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
+	}
+
+	if finalInference.IsCompleted() {
+		k.handleInferenceCompleted(ctx, finalInference, executor)
+	}
+	if shouldPersistParticipant(finalInference, payments, executor) {
+		if err := k.SetParticipant(ctx, *executor); err != nil {
+			return failedStart(ctx, err, msg), nil
+		}
 	}
 	err = k.SetInference(ctx, *finalInference)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
-	k.addTimeout(ctx, inference)
-
-	if inference.IsCompleted() {
-		err := k.handleInferenceCompleted(ctx, inference)
-		if err != nil {
-			return failedStart(ctx, err, msg), nil
-		}
-	}
+	k.addTimeout(ctx, finalInference)
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
@@ -174,7 +189,7 @@ func (k msgServer) validateTimestamp(
 		k.LogError("StartInference: validateTimestamp failed", types.Inferences, "error", err)
 		return err
 	}
-	return err
+	return nil
 }
 
 func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
@@ -205,6 +220,7 @@ func (k msgServer) processInferencePayments(
 	inference *types.Inference,
 	payments *calculations.Payments,
 	allowRefund bool,
+	executor *types.Participant,
 ) (*types.Inference, error) {
 	if payments.EscrowAmount > 0 {
 		escrowAmount, err := k.PutPaymentInEscrow(ctx, inference, payments.EscrowAmount)
@@ -223,21 +239,31 @@ func (k msgServer) processInferencePayments(
 		}
 	}
 	if payments.ExecutorPayment > 0 {
-		executedBy := inference.ExecutedBy
-		executor, found := k.GetParticipant(ctx, executedBy)
-		if !found {
-			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, executedBy)
+		if executor == nil {
+			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, inference.ExecutedBy)
 		}
+		ensureParticipantEpochStats(executor)
 		executor.CoinBalance += payments.ExecutorPayment
 		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
 		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
-		err := k.SetParticipant(ctx, executor)
-		if err != nil {
-			return nil, err
-		}
 	}
 	return inference, nil
+}
 
+func shouldPersistParticipant(inference *types.Inference, payments *calculations.Payments, executor *types.Participant) bool {
+	if inference == nil || payments == nil || executor == nil {
+		return false
+	}
+	return inference.IsCompleted() || payments.ExecutorPayment > 0
+}
+
+func ensureParticipantEpochStats(participant *types.Participant) {
+	if participant == nil {
+		return
+	}
+	if participant.CurrentEpochStats == nil {
+		participant.CurrentEpochStats = &types.CurrentEpochStats{}
+	}
 }
 
 // getDevSignatureComponents returns components for dev signature verification

@@ -135,12 +135,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, expected, &savedInference)
 
-	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
-	require.True(t, found)
-	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId:      epochId,
-		InferenceIds: []string{expected.InferenceId},
-	}, devStat)
+	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
+	require.False(t, found)
 
 	newBlockHeight := initialBlockTime + 10
 	// This should advance us to epoch 2
@@ -161,16 +157,90 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, expectedFinished, &savedInference)
 
-	devStat, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
-	require.True(t, found)
-	require.Equal(t, 1, len(devStat.InferenceIds))
+	_, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
+	require.False(t, found)
 
-	devStatUpdated, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
-	require.True(t, found)
-	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId:      epochId2,
-		InferenceIds: []string{expectedFinished.InferenceId}}, devStatUpdated)
+	// Task III: validation-details creation is deferred to EndBlock.
+	queuedInferenceIDs, err := k.ListFinishedInferenceIDs(ctx)
+	require.NoError(t, err)
+	require.Contains(t, queuedInferenceIDs, expected.InferenceId)
 
+	_, found = k.GetInferenceValidationDetails(ctx, epochId2, expected.InferenceId)
+	require.False(t, found)
+
+}
+
+func TestMsgServer_FinishInference_UpdatesExecutorOnceOnCompletion(t *testing.T) {
+	inferenceHelper, k, _ := NewMockInferenceHelper(t)
+	requestTimestamp := inferenceHelper.context.BlockTime().UnixNano()
+
+	_, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp, calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+
+	beforeExecutor, found := k.GetParticipant(inferenceHelper.context, testutil.Executor)
+	require.True(t, found)
+	if beforeExecutor.CurrentEpochStats == nil {
+		beforeExecutor.CurrentEpochStats = &types.CurrentEpochStats{}
+	}
+	beforeEarned := beforeExecutor.CurrentEpochStats.EarnedCoins
+	beforeInferenceCount := beforeExecutor.CurrentEpochStats.InferenceCount
+
+	expectedFinished, err := inferenceHelper.FinishInference()
+	require.NoError(t, err)
+
+	afterExecutor, found := k.GetParticipant(inferenceHelper.context, testutil.Executor)
+	require.True(t, found)
+	require.NotNil(t, afterExecutor.CurrentEpochStats)
+	require.Equal(t, beforeEarned+uint64(expectedFinished.ActualCost), afterExecutor.CurrentEpochStats.EarnedCoins)
+	require.Equal(t, beforeInferenceCount+1, afterExecutor.CurrentEpochStats.InferenceCount)
+	require.Equal(t, expectedFinished.EndBlockTimestamp, afterExecutor.LastInferenceTime)
+}
+
+func TestMsgServer_FinishInference_ParamsCacheDoesNotLeakAcrossCalls(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	err := k.SetEffectiveEpochIndex(ctx, 1) // Set to non-zero epoch to avoid epoch not found error
+	require.NoError(t, err)
+	err = k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 1,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index: testutil.Creator,
+			},
+		},
+	})
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DeveloperAccessParams = &types.DeveloperAccessParams{
+		UntilBlockHeight:          ctx.BlockHeight() + 100,
+		AllowedDeveloperAddresses: []string{testutil.Requester},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	firstResp, err := ms.FinishInference(ctx, &types.MsgFinishInference{
+		InferenceId: "cache-test-finish-1",
+		RequestedBy: testutil.Requester,
+		ExecutedBy:  testutil.Executor,
+		Creator:     testutil.Creator,
+	})
+	require.NoError(t, err)
+	require.NotContains(t, firstResp.ErrorMessage, types.ErrDeveloperNotAllowlisted.Error())
+	require.Contains(t, firstResp.ErrorMessage, types.ErrParticipantNotFound.Error())
+
+	params.DeveloperAccessParams = &types.DeveloperAccessParams{
+		UntilBlockHeight:          ctx.BlockHeight() + 100,
+		AllowedDeveloperAddresses: []string{"gonka1notallowlistedxxxxxxxxxxxxxxxxxxxxxx"},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	secondResp, err := ms.FinishInference(ctx, &types.MsgFinishInference{
+		InferenceId: "cache-test-finish-2",
+		RequestedBy: testutil.Requester,
+		ExecutedBy:  testutil.Executor,
+		Creator:     testutil.Creator,
+	})
+	require.NoError(t, err)
+	require.Contains(t, secondResp.ErrorMessage, types.ErrDeveloperNotAllowlisted.Error())
 }
 
 func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, mockAccount MockAccount) {

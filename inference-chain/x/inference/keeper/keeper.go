@@ -14,16 +14,17 @@ import (
 
 type (
 	Keeper struct {
-		cdc           codec.BinaryCodec
-		storeService  store.KVStoreService
-		logger        log.Logger
-		BankKeeper    types.BookkeepingBankKeeper
-		BankView      types.BankKeeper
-		validatorSet  types.ValidatorSet
-		group         types.GroupMessageKeeper
-		Staking       types.StakingKeeper
-		BlsKeeper     types.BlsKeeper
-		UpgradeKeeper types.UpgradeKeeper
+		cdc                   codec.BinaryCodec
+		storeService          store.KVStoreService
+		transientStoreService store.TransientStoreService
+		logger                log.Logger
+		BankKeeper            types.BookkeepingBankKeeper
+		BankView              types.BankKeeper
+		validatorSet          types.ValidatorSet
+		group                 types.GroupMessageKeeper
+		Staking               types.StakingKeeper
+		BlsKeeper             types.BlsKeeper
+		UpgradeKeeper         types.UpgradeKeeper
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
 		authority     string
@@ -44,8 +45,10 @@ type (
 		PoCV2StoreCommits         collections.Map[collections.Pair[int64, sdk.AccAddress], types.PoCV2StoreCommit]
 		MLNodeWeightDistributions collections.Map[collections.Pair[int64, sdk.AccAddress], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
-		ModelCurrentPriceMap collections.Map[string, uint64]
-		ModelCapacityMap     collections.Map[string, uint64]
+		ModelCurrentPriceMap                collections.Map[string, uint64]
+		ModelCapacityMap                    collections.Map[string, uint64]
+		ModelLoadRollingWindowMap           collections.Map[string, types.RollingWindowState]
+		ModelInferenceCountRollingWindowMap collections.Map[string, types.RollingWindowState]
 		// Governance models
 		Models                        collections.Map[string, types.Model]
 		Inferences                    collections.Map[string, types.Inference]
@@ -102,6 +105,7 @@ type (
 func NewKeeper(
 	cdc codec.BinaryCodec,
 	storeService store.KVStoreService,
+	transientStoreService store.TransientStoreService,
 	logger log.Logger,
 	authority string,
 	bank types.BookkeepingBankKeeper,
@@ -125,22 +129,23 @@ func NewKeeper(
 	sb := collections.NewSchemaBuilder(storeService)
 
 	k := Keeper{
-		cdc:                 cdc,
-		storeService:        storeService,
-		authority:           authority,
-		logger:              logger,
-		BankKeeper:          bank,
-		BankView:            bankView,
-		group:               group,
-		validatorSet:        validatorSet,
-		Staking:             staking,
-		AccountKeeper:       accountKeeper,
-		AuthzKeeper:         authzKeeper,
-		BlsKeeper:           blsKeeper,
-		collateralKeeper:    collateralKeeper,
-		streamvestingKeeper: streamvestingKeeper,
-		getWasmKeeper:       getWasmKeeper,
-		UpgradeKeeper:       upgradeKeeper,
+		cdc:                   cdc,
+		storeService:          storeService,
+		transientStoreService: transientStoreService,
+		authority:             authority,
+		logger:                logger,
+		BankKeeper:            bank,
+		BankView:              bankView,
+		group:                 group,
+		validatorSet:          validatorSet,
+		Staking:               staking,
+		AccountKeeper:         accountKeeper,
+		AuthzKeeper:           authzKeeper,
+		BlsKeeper:             blsKeeper,
+		collateralKeeper:      collateralKeeper,
+		streamvestingKeeper:   streamvestingKeeper,
+		getWasmKeeper:         getWasmKeeper,
+		UpgradeKeeper:         upgradeKeeper,
 		// collection init
 		Participants: collections.NewMap(
 			sb,
@@ -206,6 +211,20 @@ func NewKeeper(
 			"model_capacity",
 			collections.StringKey,
 			collections.Uint64Value,
+		),
+		ModelLoadRollingWindowMap: collections.NewMap(
+			sb,
+			types.ModelLoadRollingWindowPrefix,
+			"model_load_rolling_window",
+			collections.StringKey,
+			codec.CollValue[types.RollingWindowState](cdc),
+		),
+		ModelInferenceCountRollingWindowMap: collections.NewMap(
+			sb,
+			types.ModelInferenceCountRollingWindowPrefix,
+			"model_inference_count_rolling_window",
+			collections.StringKey,
+			codec.CollValue[types.RollingWindowState](cdc),
 		),
 		// governance models map
 		Models: collections.NewMap(

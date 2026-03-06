@@ -175,9 +175,17 @@ func (AppModule) ConsensusVersion() uint64 { return 13 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Precompute SPRT values for the block
+	err := am.keeper.PrecomputeSPRTValues(ctx)
+	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but
+	// this will only happen if the governance values have been set wrong anyhow, so that's a rational choice
+	if err != nil {
+		am.LogError("Failed to precompute SPRT values", types.Validation, "error", err)
+	}
+
 	// Update dynamic pricing for all models at the start of each block
 	// This ensures consistent pricing for all inferences processed in this block
-	err := am.keeper.UpdateDynamicPricing(ctx)
+	err = am.keeper.UpdateDynamicPricing(ctx)
 	if err != nil {
 		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
 		// Don't return error - allow block processing to continue even if pricing update fails
@@ -343,6 +351,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Unable to get current epoch group", types.EpochGroup, "error", err.Error())
 		return nil
 	}
+
+	am.processFinishedInferencesInBlock(ctx, blockHeight, currentEpoch, currentEpochGroup, &params)
 
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
 	err = am.expireInferences(ctx, timeouts, blockHeight, currentEpoch, &params)
@@ -998,10 +1008,11 @@ func init() {
 type ModuleInputs struct {
 	depinject.In
 
-	StoreService store.KVStoreService
-	Cdc          codec.Codec
-	Config       *modulev1.Module
-	Logger       log.Logger
+	StoreService          store.KVStoreService
+	TransientStoreService store.TransientStoreService
+	Cdc                   codec.Codec
+	Config                *modulev1.Module
+	Logger                log.Logger
 
 	AccountKeeper       types.AccountKeeper
 	BankKeeper          types.BankKeeper
@@ -1035,6 +1046,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	k := keeper.NewKeeper(
 		in.Cdc,
 		in.StoreService,
+		in.TransientStoreService,
 		in.Logger,
 		authority.String(),
 		in.BankEscrowKeeper,

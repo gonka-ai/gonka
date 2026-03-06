@@ -266,6 +266,38 @@ data class ApplicationAPI(
         get<GetPricingDto>(url, "v1/pricing")
     }
 
+    fun getStatsModels(timeFrom: Long, timeTo: Long): StatsModelsResponse = wrapLog("GetStatsModels", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/models?time_from=$timeFrom&time_to=$timeTo")
+    }
+
+    fun getStatsDeveloperInferences(developer: String, timeFrom: Long, timeTo: Long): DeveloperInferencesResponse =
+        wrapLog("GetStatsDeveloperInferences", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            get(url, "v1/stats/developers/$developer/inferences?time_from=$timeFrom&time_to=$timeTo")
+        }
+
+    fun getStatsDeveloperSummaryEpochs(developer: String, epochsN: Int): StatsSummaryResponse =
+        wrapLog("GetStatsDeveloperSummaryEpochs", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            get(url, "v1/stats/developers/$developer/summary/epochs?epochs_n=$epochsN")
+        }
+
+    fun getStatsSummaryEpochs(epochsN: Int): StatsSummaryResponse = wrapLog("GetStatsSummaryEpochs", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/summary/epochs?epochs_n=$epochsN")
+    }
+
+    fun getStatsSummaryTime(timeFrom: Long, timeTo: Long): StatsSummaryResponse = wrapLog("GetStatsSummaryTime", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/summary/time?time_from=$timeFrom&time_to=$timeTo")
+    }
+
+    fun getStatsDebugDevelopers(): DebugStatsResponse = wrapLog("GetStatsDebugDevelopers", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/debug/developers")
+    }
+
     fun registerModel(model: RegisterModelDto): String = wrapLog("RegisterModel", true) {
         val url = urlFor(SERVER_TYPE_ADMIN)
         postWithStringResponse(url, "admin/v1/models", model)

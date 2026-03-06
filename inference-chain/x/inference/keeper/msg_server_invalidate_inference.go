@@ -24,6 +24,7 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 		k.LogDebug("Inference already invalidated", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, nil
 	}
+	previousStatus := inference.Status
 	inference.Status = types.InferenceStatus_INVALIDATED
 	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
@@ -52,6 +53,9 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 	err = k.SetInference(ctx, *inference)
 	if err != nil {
 		return nil, err
+	}
+	if inference.Status != previousStatus {
+		emitInferenceStatusUpdatedEvent(sdk.UnwrapSDKContext(ctx), inference.InferenceId, inference.Status)
 	}
 
 	return &types.MsgInvalidateInferenceResponse{}, nil
