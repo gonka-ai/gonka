@@ -76,6 +76,8 @@ data class InferenceParams(
     val confirmationPocParams: ConfirmationPoCParams? = null,
     @SerializedName("transfer_agent_access_params")
     val transferAgentAccessParams: TransferAgentAccessParams? = null,
+    @SerializedName("cache_quality_params")
+    val cacheQualityParams: CacheQualityParams? = null,
 )
 
 data class TokenomicsParams(
@@ -245,6 +247,23 @@ data class ConfirmationPoCParams(
 data class TransferAgentAccessParams(
     @SerializedName("allowed_transfer_addresses")
     val allowedTransferAddresses: List<String> = emptyList(),
+)
+
+data class CacheQualityParams(
+    @SerializedName("enabled")
+    val enabled: Boolean = false,
+    @SerializedName("reuse_weight_coefficient")
+    val reuseWeightCoefficient: Decimal? = null,
+    @SerializedName("max_weight_fraction_bps")
+    val maxWeightFractionBps: Long = 3000,
+    @SerializedName("similarity_threshold_bps")
+    val similarityThresholdBps: Long = 9700,
+    @SerializedName("pruning_epoch_threshold")
+    val pruningEpochThreshold: Long = 4,
+    @SerializedName("embedding_model_version")
+    val embeddingModelVersion: String = "v1",
+    @SerializedName("max_cache_age_epochs")
+    val maxCacheAgeEpochs: Long = 10,
 )
 
 data class PocParams(

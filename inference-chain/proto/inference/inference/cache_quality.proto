@@ -25,7 +25,14 @@ message CacheQualityEpochSummary {
   // cache reuse events.  10 000 = exact PromptHash match (L1); values ≥ 9 700
   // indicate semantic equivalence (L2).  Self-reported; bounded by governance.
   uint32 avg_similarity_bps = 5;
-  // embedding_model_version is the all-MiniLM-L6-v2 version used for embedding.
-  // Must match CacheQualityParams.EmbeddingModelVersion; mismatches are rejected.
-  string embedding_model_version = 6;
+  // cache_quality_weight is the pre-computed additional weight contribution for
+  // this epoch, set by the msg handler:
+  //   min(cache_reuse_count × ReuseWeightCoefficient,
+  //       StandardPoCNonces × MaxWeightFractionBps / 10 000)
+  // This is the value added to baseCount in calculateParticipantWeight.
+  int64 cache_quality_weight = 6;
+  // embedding_model_version records which embedding model version this
+  // participant used when computing similarity scores for the epoch.
+  // Must match CacheQualityParams.EmbeddingModelVersion at submission time.
+  string embedding_model_version = 7;
 }
