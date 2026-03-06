@@ -129,6 +129,7 @@ Permissions model, #760).
 | `decentralized-api/semanticcache/memory_store.go` | `InMemoryCacheStore` (zero external deps) |
 | `decentralized-api/semanticcache/embedder.go` | `MLNodeEmbedder` and `StubEmbedder` |
 | `decentralized-api/internal/server/public/post_chat_handler.go` | L1/L2 integration in executor path |
+| `decentralized-api/internal/server/admin/server.go` | `GET /admin/v1/cache/stats` for DAG/Prometheus |
 
 ---
 
@@ -163,11 +164,73 @@ Covered by the test suite:
 
 ---
 
+### Admin Stats Endpoint
+
+`GET /admin/v1/cache/stats` on the operator-only admin port (`:9200`) exposes read-only
+cache counters for external monitoring:
+
+```json
+{"enabled": true, "hits": 142, "misses": 1037, "hit_rate": 0.1204}
+```
+
+`Stats()` and `HitRate()` use `atomic.LoadInt64` — zero locks, zero side effects, safe at
+any poll frequency. Returns `{"enabled": false, ...}` when the cache is not initialised
+(nil-safe). Not exposed on the public port (`:9000`).
+
+Intended consumers: DAG/CronJob epoch-boundary tasks, Prometheus scraper (GiP #840),
+k8s liveness probes.
+
+---
+
+### Operator Verification Layer (DAG + Prometheus)
+
+Self-reported `CacheReuseCount` can be cross-checked by comparing three independent sources
+at each epoch boundary:
+
+```
+[Epoch boundary] → DAG / k8s CronJob / Go ticker
+  ├── Source A: GET /admin/v1/cache/stats       → {hits, misses, hit_rate}
+  ├── Source B: chain CacheQualityEpochSummary  → reuseCount (self-reported)
+  └── Source C: Prometheus scraper (GiP #840)   → independent time-series
+```
+
+`stats(A).hits ≈ chain(B).reuseCount ± 5%` validates self-reporting consistency.
+Divergence beyond threshold triggers an operator alert.
+
+`/admin/v1/cache/stats` is the piece that makes Source A possible. The Prometheus exporter
+(GiP #840) already reads the admin API on `:9200` — cache stats integrate without new
+infrastructure.
+
+---
+
+### k8s Node Specialization (GiP #816)
+
+Nodes deployed via k8s with one model per node receive 100% of that model's traffic
+(via `GetRandomExecutor` routing where M=1):
+
+```
+hit_rate = repeat_fraction × (1/M)
+
+M = number of nodes serving the same model
+  → M=1 (specialized) → hit_rate = repeat_fraction  (maximum)
+  → M=10 (shared)     → hit_rate = repeat_fraction/10
+```
+
+`CacheQualityWeight` makes specialization economically self-reinforcing:
+higher hit rate → more reuseCount → +EpochGroup power (cap 30%) → more model assignments
+→ more traffic → more reuse.
+
+Streaming (`stream: true`) bypasses cache entirely — `effective_hit_rate` is reduced by
+`stream_fraction`.
+
+---
+
 ### Known Limitations
 
 | Item | Description | Mitigation |
 |---|---|---|
-| L2 self-reported similarity | `AvgSimilarityBps` is computed by the DAPI operator's own ML-node. Cannot be verified on-chain. | `MaxWeightFractionBps` caps the maximum bonus. Incentive to lie is bounded. |
-| `CacheReuseCount` self-reported | Only the DAPI operator knows actual hit count. | Same cap applies. Future: on-chain event per L1 HIT. |
+| L2 self-reported similarity | `AvgSimilarityBps` is computed by the DAPI operator's own ML-node. Cannot be verified on-chain. | `MaxWeightFractionBps` caps the maximum bonus. Incentive to lie is bounded. DAG Source A vs B cross-check adds external consistency. |
+| `CacheReuseCount` self-reported | Only the DAPI operator knows actual hit count. | Same cap applies. `/admin/v1/cache/stats` enables DAG/Prometheus cross-verification. |
 | In-memory cache lost on restart | Rebuilds from new inferences. | Acceptable for a cache. Original results always on-chain. |
 | L2 requires live ML-node embed | If ML-node is down, L2 is disabled; L1 still works. | ML-node is part of standard gonka node stack. |
+| L2 text-only | `all-MiniLM-L6-v2` embeds text only. Image prompts produce L2 MISS. | L1 still works for exact-match. Embedder interface supports future swap to multimodal model via governance `EmbeddingModelVersion` update. |
