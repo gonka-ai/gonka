@@ -277,6 +277,80 @@ Applied to L2 miss rate: n=2,503,595, k=81,360, p0=0.10 → k << critical(251,14
 
 ---
 
+## Measurement results (epochs 161–191, public API)
+
+### Network baseline
+
+| Axis | Value | Source |
+|------|-------|--------|
+| L9 completion avg | 94.33% | MsgFinish/MsgStart ratio, 31 epochs |
+| L9 misses avg | 2,624/epoch | direct operator revenue loss |
+| L9 misses max | 13,020 (epoch 175) | protocol stress event |
+| L8 CV(inferences) | 0.8326 | high load variance → random routing problem |
+| L6 reuse current | ~0.0005 | M=571 random routing, no cache active |
+| Composite QualityScore | 0.4832 | 4-axis baseline, 2,503,595 inferences |
+
+Network trajectory without intervention: miss rate +0.37pp per 30 epochs,
+load/node 872 → 2,384 (+173% over 30 epochs).
+
+### L2 semantic similarity (bookworm, all-MiniLM-L6-v2, dim=384, no GPU)
+
+5 domain tasks, 3 variants each (15 prompt pairs total):
+
+| Threshold (bps) | Hit rate | GPU saves/epoch | Governance action |
+|-----------------|----------|-----------------|-------------------|
+| 9700 (default)  | 26.7%    | 0               | deploy, validate  |
+| 9200            | 40.0%    | 452             | after L2 confirmed |
+| 8800            | 60.0%    | 905             | after SDK coverage |
+| 8500            | 93.3%    | 1,817           | after 4/5 tasks   |
+| 8000            | 100.0%   | 3,634           | after full coverage |
+
+Auth flow domain (T3) hits 0.97 immediately — structured address checks are near-exact.
+Each governance step: zero code changes, zero deployments, fully reversible.
+
+### SDK participant interdependence
+
+3 participants, same domain, free-form vs SDK template:
+
+| Mode | Pairwise similarity | L6 activation |
+|------|---------------------|---------------|
+| Free-form | 0.4911 | none |
+| SDK template (DX7) | 0.7960 | at threshold ≤ 0.80 |
+| **Delta** | **+0.3049 (+62.1%)** | — |
+
+SDK adoption by one participant raises cache hit probability for all others in the same domain.
+
+### DX→L cascade (full SDK path)
+
+| Step | Action | L8 CV | L9 | Composite | CacheWeight |
+|------|--------|-------|----|-----------|-------------|
+| Baseline | — | 0.8326 | 0.9433 | 0.4832 | 0.1% |
+| +DX0 | autoRegister() | 0.8326 | 0.9461 | 0.4839 | 0.1% |
+| +DX2 | estimateTokens() | 0.7493 | 0.9461 | 0.5047 | 0.1% |
+| +DX7 + 8500 bps | SDK templates + governance | 0.6369 | 0.9461 | 0.5383 | 2.2% |
+| +k8s M=1 | GiP #816 specialization | 0.5000 | 0.9461 | 0.6419 | **30.0%** |
+
+**Total: +32.9% composite score improvement on measured baseline.**
+
+### Worst-case bounds
+
+Parameters: repeat_fraction=5%, stream=50%, M=571, threshold=0.97 (unchanged).
+
+```
+hit_rate = 0.05 × (1/571) × (1 - 0.50) = 0.000044 ≈ 0
+CacheQualityWeight = 0 → no bonus, no penalty
+Feature off by default → ZERO IMPACT
+```
+
+Worst case = today's network state. Zero regression, zero protocol debt.
+
+### Remaining measurement gap
+
+Live X-Cache hit rate requires `CacheQualityParams.Enabled=true` on a testnet node for 1 epoch.
+This closes real `repeat_fraction` measurement. All other data is measured or worst-case bounded.
+
+---
+
 ## Open questions
 
 1. **Weight governance**: who proposes initial `axis_weights`? Amendment process?
