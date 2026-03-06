@@ -27,6 +27,9 @@ var (
 )
 
 func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgRequestBridgeMint) (*types.MsgRequestBridgeMintResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, AccountPermission); err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// 1. Get the user address

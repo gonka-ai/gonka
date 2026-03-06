@@ -71,6 +71,7 @@
       },
       "params": {
         "epoch_params": {
+        "confirmation_poc_safety_window": "5",
         "epoch_length": "360",
         "epoch_multiplier": "1",
         "epoch_shift": "300",

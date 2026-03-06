@@ -69,4 +69,8 @@ var (
 	ErrNotSupported                          = sdkerrors.Register(ModuleName, 1163, "operation not supported in current mode")
 	ErrInvalidAddress                        = sdkerrors.Register(ModuleName, 1164, "invalid address")
 	ErrTransferAgentNotAllowlisted           = sdkerrors.Register(ModuleName, 1165, "transfer agent not in allowlist")
+	ErrInvalidPermission                     = sdkerrors.Register(ModuleName, 1166, "invalid permission")
+	ErrAccountNotFound                       = sdkerrors.Register(ModuleName, 1167, "account not found")
+	ErrNotAContractAddress                   = sdkerrors.Register(ModuleName, 1168, "address is not a contract address")
+	ErrActiveParticipantNotFound             = sdkerrors.Register(ModuleName, 1169, "participant is not active")
 )

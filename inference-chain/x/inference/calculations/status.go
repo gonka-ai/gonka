@@ -26,10 +26,16 @@ const (
 	FailedConfirmationPoC ParticipantStatusReason = "failed_confirmation_poc"
 )
 
-const (
-	// Keeping the log precision low keeps compute low and high precision is not needed
-	LogPrecision = 12
-)
+func StatsHaveChanged(oldStats, newStats *types.CurrentEpochStats) bool {
+	if oldStats == nil || newStats == nil {
+		return true
+	}
+	return oldStats.InvalidatedInferences != newStats.InvalidatedInferences ||
+		oldStats.ValidatedInferences != newStats.ValidatedInferences ||
+		oldStats.InferenceCount != newStats.InferenceCount ||
+		oldStats.MissedRequests != newStats.MissedRequests ||
+		oldStats.ConfirmationPoCRatio != newStats.ConfirmationPoCRatio
+}
 
 // Note that newValue is passed in BY VALUE, so changes to newValue directly will not pass back
 func ComputeStatus(
@@ -37,6 +43,7 @@ func ComputeStatus(
 	confirmationPocParams *types.ConfirmationPoCParams,
 	newValue types.Participant,
 	oldStats types.CurrentEpochStats,
+	precomputed types.SPRTPrecomputedValues,
 ) (status types.ParticipantStatus, reason ParticipantStatusReason, stats types.CurrentEpochStats) {
 	// Genesis only (for tests)
 	newStats := getStats(&newValue)
@@ -56,14 +63,14 @@ func ComputeStatus(
 		return types.ParticipantStatus_INVALID, ConsecutiveFailures, newStats
 	}
 
-	invalidationDecision := getInvalidationStatus(&newStats, oldStats, validationParameters)
+	invalidationDecision := getInvalidationStatus(&newStats, oldStats, validationParameters, precomputed)
 	if invalidationDecision == Fail {
 		return types.ParticipantStatus_INVALID, StatisticalInvalidations, newStats
 	} else if invalidationDecision == Error {
 		return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
 	}
 
-	inactiveDecision := getInactiveStatus(&newStats, oldStats, validationParameters)
+	inactiveDecision := getInactiveStatus(&newStats, oldStats, validationParameters, precomputed)
 	if inactiveDecision == Fail {
 		return types.ParticipantStatus_INACTIVE, Downtime, newStats
 	} else if inactiveDecision == Error {
@@ -80,47 +87,50 @@ func ComputeStatus(
 	return types.ParticipantStatus_ACTIVE, NoReason, newStats
 }
 
-func getInactiveStatus(newStats *types.CurrentEpochStats, oldStats types.CurrentEpochStats, parameters *types.ValidationParams) Decision {
+func getInactiveStatus(newStats *types.CurrentEpochStats, oldStats types.CurrentEpochStats, parameters *types.ValidationParams, precomputed types.SPRTPrecomputedValues) Decision {
 	if parameters.DowntimeGoodPercentage == nil || parameters.DowntimeBadPercentage == nil || parameters.DowntimeHThreshold == nil {
 		return Error
 	}
-	newInferences := int64(newStats.InferenceCount) - int64(oldStats.InferenceCount)
-	newMissedInferences := int64(newStats.MissedRequests) - int64(oldStats.MissedRequests)
-	inactiveSprt, err := NewSPRT(
-		parameters.DowntimeGoodPercentage.ToDecimal(),
-		parameters.DowntimeBadPercentage.ToDecimal(),
-		parameters.DowntimeHThreshold.ToDecimal(),
-		newStats.InactiveLLR.ToDecimal(),
-		LogPrecision,
-	)
-	if err != nil {
+
+	if precomputed.InactiveLogFail == nil || precomputed.InactiveLogPass == nil {
 		return Error
 	}
-	inactiveSprt.UpdateCounts(newMissedInferences, newInferences)
+
+	newInferences := int64(newStats.InferenceCount) - int64(oldStats.InferenceCount)
+	newMissedInferences := int64(newStats.MissedRequests) - int64(oldStats.MissedRequests)
+
+	inactiveSprt := SPRT{
+		H:       parameters.DowntimeHThreshold.ToDecimal(),
+		LLR:     newStats.InactiveLLR.ToDecimal(),
+		logFail: precomputed.InactiveLogFail.ToDecimal(),
+		logPass: precomputed.InactiveLogPass.ToDecimal(),
+	}
+
+	inactiveSprt = inactiveSprt.UpdateCounts(newMissedInferences, newInferences)
 	newStats.InactiveLLR = types.DecimalFromDecimal(inactiveSprt.LLR)
 	return inactiveSprt.Decision()
 }
 
-func getInvalidationStatus(newStats *types.CurrentEpochStats, oldStats types.CurrentEpochStats, parameters *types.ValidationParams) Decision {
-	if parameters.BadParticipantInvalidationRate == nil || parameters.InvalidationHThreshold == nil {
+func getInvalidationStatus(newStats *types.CurrentEpochStats, oldStats types.CurrentEpochStats, parameters *types.ValidationParams, precomputed types.SPRTPrecomputedValues) Decision {
+	if parameters.FalsePositiveRate == nil || parameters.BadParticipantInvalidationRate == nil || parameters.InvalidationHThreshold == nil {
 		return Error
 	}
+
+	if precomputed.InvalidationLogFail == nil || precomputed.InvalidationLogPass == nil {
+		return Error
+	}
+
 	newValidations := int64(newStats.ValidatedInferences) - int64(oldStats.ValidatedInferences)
 	newInvalidations := int64(newStats.InvalidatedInferences) - int64(oldStats.InvalidatedInferences)
-	//newInferences := newValue.CurrentEpochStats.InferenceCount - oldValue.CurrentEpochStats.InferenceCount
-	//newMissedInferences := newValue.CurrentEpochStats.MissedRequests - oldValue.CurrentEpochStats.MissedRequests
 
-	invalidationSprt, err := NewSPRT(
-		parameters.FalsePositiveRate.ToDecimal(),
-		parameters.BadParticipantInvalidationRate.ToDecimal(),
-		parameters.InvalidationHThreshold.ToDecimal(),
-		newStats.InvalidLLR.ToDecimal(),
-		LogPrecision,
-	)
-	if err != nil {
-		return Error
+	invalidationSprt := SPRT{
+		H:       parameters.InvalidationHThreshold.ToDecimal(),
+		LLR:     newStats.InvalidLLR.ToDecimal(),
+		logFail: precomputed.InvalidationLogFail.ToDecimal(),
+		logPass: precomputed.InvalidationLogPass.ToDecimal(),
 	}
-	invalidationSprt.UpdateCounts(newInvalidations, newValidations)
+
+	invalidationSprt = invalidationSprt.UpdateCounts(newInvalidations, newValidations)
 	newStats.InvalidLLR = types.DecimalFromDecimal(invalidationSprt.LLR)
 	return invalidationSprt.Decision()
 }

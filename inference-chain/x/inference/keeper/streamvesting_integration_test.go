@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
@@ -38,11 +39,13 @@ func setupKeeperWithMocksForStreamVesting(t testing.TB) (keeper.Keeper, types.Ms
 func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, streamvestingkeeper.Keeper, types.MsgServer, streamvestingtypes.MsgServer) {
 	// --- Store and Codec Setup ---
 	inferenceStoreKey := storetypes.NewKVStoreKey(types.StoreKey)
+	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	streamvestingStoreKey := storetypes.NewKVStoreKey(streamvestingtypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(inferenceStoreKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(transientStoreKey, storetypes.StoreTypeTransient, db)
 	stateStore.MountStoreWithDB(streamvestingStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
@@ -86,6 +89,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	inferenceKeeper := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(inferenceStoreKey),
+		runtime.NewTransientStoreService(transientStoreKey),
 		keepertest.PrintlnLogger{},
 		authority.String(),
 		bookkeepingBankKeeper,
@@ -98,7 +102,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		collateralKeeper,
 		svKeeper,
 		authzKeeper,
-		nil,
+		func() wasmkeeper.Keeper { return wasmkeeper.Keeper{} },
 		upgradeMock,
 	)
 

@@ -65,15 +65,6 @@ func (msg *MsgRequestBridgeMint) ValidateBasic() error {
 	return nil
 }
 
-func (msg *MsgRequestBridgeMint) GetSigners() []sdk.AccAddress {
-	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err != nil {
-		//nolint:forbidigo // GetSigners can't return error
-		return nil
-	}
-	return []sdk.AccAddress{creatorAddr}
-}
-
 // isValidEthereumAddress validates basic Ethereum address format
 func isValidEthereumAddress(address string) bool {
 	if len(address) != 42 {

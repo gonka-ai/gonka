@@ -377,6 +377,7 @@ fun createConfirmationPoCSpec(
                     this[EpochParams::pocValidationDuration] = 4L
                     this[EpochParams::pocExchangeDuration] = 2L
                     this[EpochParams::pocSlotAllocation] = Decimal.fromDouble(pocSlotAllocation)
+                    this[EpochParams::confirmationPocSafetyWindow] = 0L
                 }
                 this[InferenceParams::confirmationPocParams] = spec<ConfirmationPoCParams> {
                     this[ConfirmationPoCParams::expectedConfirmationsPerEpoch] = expectedConfirmationsPerEpoch
