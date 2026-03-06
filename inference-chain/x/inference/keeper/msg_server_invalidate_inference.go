@@ -10,6 +10,11 @@ import (
 )
 
 func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvalidateInference) (*types.MsgInvalidateInferenceResponse, error) {
+	// Invalidate uses the Inference and the group policy id to get permissions,
+	// so it and revalidate don't go through the usual permissions path
+	if err := k.CheckPermission(ctx, msg, NoPermission); err != nil {
+		return nil, err
+	}
 	inference, executor, err := k.validateDecisionMessage(ctx, msg)
 	if err != nil {
 		return nil, err
@@ -19,6 +24,7 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 		k.LogDebug("Inference already invalidated", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, nil
 	}
+	previousStatus := inference.Status
 	inference.Status = types.InferenceStatus_INVALIDATED
 	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
@@ -47,6 +53,9 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 	err = k.SetInference(ctx, *inference)
 	if err != nil {
 		return nil, err
+	}
+	if inference.Status != previousStatus {
+		emitInferenceStatusUpdatedEvent(sdk.UnwrapSDKContext(ctx), inference.InferenceId, inference.Status)
 	}
 
 	return &types.MsgInvalidateInferenceResponse{}, nil

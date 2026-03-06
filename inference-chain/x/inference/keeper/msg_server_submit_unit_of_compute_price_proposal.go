@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	sdkerrors "cosmossdk.io/errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -9,6 +10,9 @@ import (
 )
 
 func (k msgServer) SubmitUnitOfComputePriceProposal(goCtx context.Context, msg *types.MsgSubmitUnitOfComputePriceProposal) (*types.MsgSubmitUnitOfComputePriceProposalResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission); err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	blockHeight := ctx.BlockHeight()

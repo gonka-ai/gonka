@@ -22,6 +22,23 @@ func CreateUpgradeHandler(
 		if err != nil {
 			return nil, err
 		}
+		currentEpochIndex, err := k.EffectiveEpochIndex.Get(ctx)
+		if err != nil {
+			return fromVM, err
+		}
+		if currentEpochIndex < 2 {
+			return fromVM, nil
+		}
+
+		err = setEpochParticipantsSet(ctx, k, currentEpochIndex)
+		if err != nil {
+			return fromVM, err
+		}
+
+		err = setEpochParticipantsSet(ctx, k, currentEpochIndex-1)
+		if err != nil {
+			return fromVM, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -55,4 +72,12 @@ func setSafetyWindow(ctx context.Context, k keeper.Keeper) error {
 
 	k.LogInfo("set safety window", types.Upgrades, "safety_window", params.EpochParams.ConfirmationPocSafetyWindow)
 	return nil
+}
+
+func setEpochParticipantsSet(ctx context.Context, k keeper.Keeper, epochIndex uint64) error {
+	epochActiveParticipants, found := k.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return types.ErrEpochNotFound
+	}
+	return k.SetActiveParticipantsCache(ctx, epochActiveParticipants)
 }

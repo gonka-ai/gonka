@@ -2,8 +2,9 @@ package types
 
 import (
 	"fmt"
+	"math"
 
-	"cosmossdk.io/math"
+	sdkmath "cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/pkg/errors"
 	"github.com/shopspring/decimal"
@@ -51,9 +52,40 @@ func NewParams() Params {
 	return Params{}
 }
 
-const million = 1_000_000
-const billion = 1_000_000_000
-const year = 365 * 24 * 60 * 60
+const (
+	million = 1_000_000
+	billion = 1_000_000_000
+	year    = 365 * 24 * 60 * 60
+
+	DynamicPricingEstimatedBlockSeconds = uint64(5)
+	MaxRollingWindowBlocks              = uint64(500)
+)
+
+func UtilizationWindowToBlocks(utilizationWindowSeconds uint64) uint64 {
+	return SecondsToBlocks(utilizationWindowSeconds)
+}
+
+func InvalidationsSamplePeriodToBlocks(invalidationsSamplePeriodSeconds uint64) uint64 {
+	return SecondsToBlocks(invalidationsSamplePeriodSeconds)
+}
+
+func SecondsToBlocks(windowSeconds uint64) uint64 {
+	windowBlocks := windowSeconds / DynamicPricingEstimatedBlockSeconds
+	if windowBlocks == 0 {
+		return 1
+	}
+	return windowBlocks
+}
+
+func WindowBlocksToSize(windowBlocks uint64) int64 {
+	if windowBlocks == 0 {
+		return 1
+	}
+	if windowBlocks > uint64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(windowBlocks)
+}
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
@@ -402,6 +434,11 @@ func (p Params) Validate() error {
 	if err := p.DynamicPricingParams.Validate(); err != nil {
 		return err
 	}
+	if p.BandwidthLimitsParams != nil {
+		if err := p.BandwidthLimitsParams.Validate(); err != nil {
+			return err
+		}
+	}
 
 	if p.GenesisGuardianParams != nil {
 		if p.GenesisGuardianParams.NetworkMaturityThreshold < 0 {
@@ -649,6 +686,24 @@ func (p *DynamicPricingParams) Validate() error {
 	return nil
 }
 
+func (p *BandwidthLimitsParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.KbPerInputToken == nil {
+		return fmt.Errorf("kb_per_input_token cannot be nil")
+	}
+	if p.KbPerOutputToken == nil {
+		return fmt.Errorf("kb_per_output_token cannot be nil")
+	}
+
+	if err := validateInvalidationsSamplePeriod(p.InvalidationsSamplePeriod); err != nil {
+		return errors.Wrap(err, "invalid invalidations_sample_period")
+	}
+
+	return nil
+}
+
 func validateSlashFraction(i interface{}) error {
 	v, ok := i.(*Decimal)
 	if !ok {
@@ -658,7 +713,7 @@ func validateSlashFraction(i interface{}) error {
 	if err != nil {
 		return err
 	}
-	if legacyDec.IsNegative() || legacyDec.GT(math.LegacyOneDec()) {
+	if legacyDec.IsNegative() || legacyDec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("slash fraction must be between 0 and 1, but is %s", legacyDec.String())
 	}
 	return nil
@@ -677,7 +732,7 @@ func validateBaseWeightRatio(i interface{}) error {
 		return fmt.Errorf("base weight ratio cannot be negative: %s", legacyDec)
 	}
 
-	if legacyDec.GT(math.LegacyOneDec()) {
+	if legacyDec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("base weight ratio cannot be greater than 1: %s", legacyDec)
 	}
 
@@ -733,7 +788,7 @@ func validatePercentage(i interface{}) error {
 	if err != nil {
 		return err
 	}
-	if legacyDec.IsNegative() || legacyDec.GT(math.LegacyOneDec()) {
+	if legacyDec.IsNegative() || legacyDec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("percentage must be between 0 and 1, but is %s", legacyDec.String())
 	}
 	return nil
@@ -769,7 +824,7 @@ func validateDecayRate(i interface{}) error {
 		return fmt.Errorf("decay rate must be negative for reward reduction, but is %s", legacyDec.String())
 	}
 	// Reasonable bounds for decay rate (not too extreme)
-	if legacyDec.LT(math.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
+	if legacyDec.LT(sdkmath.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
 		return fmt.Errorf("decay rate too extreme (less than -0.01): %s", legacyDec.String())
 	}
 	_, err = GetExponent(v.ToDecimal())
@@ -846,6 +901,29 @@ func validateUtilizationWindowDuration(i interface{}) error {
 	if duration > 3600 { // Max 1 hour
 		return fmt.Errorf("utilization window duration must not exceed 3600 seconds (1 hour), got: %d", duration)
 	}
+
+	windowBlocks := UtilizationWindowToBlocks(duration)
+	if windowBlocks > MaxRollingWindowBlocks {
+		return fmt.Errorf("utilization window duration (%d seconds) results in %d blocks, which exceeds the maximum of %d blocks", duration, windowBlocks, MaxRollingWindowBlocks)
+	}
+
+	return nil
+}
+
+func validateInvalidationsSamplePeriod(i interface{}) error {
+	duration, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if duration == 0 {
+		return fmt.Errorf("invalidations sample period must be greater than 0")
+	}
+
+	windowBlocks := InvalidationsSamplePeriodToBlocks(duration)
+	if windowBlocks > MaxRollingWindowBlocks {
+		return fmt.Errorf("invalidations sample period (%d seconds) results in %d blocks, which exceeds the maximum of %d blocks", duration, windowBlocks, MaxRollingWindowBlocks)
+	}
+
 	return nil
 }
 
@@ -902,8 +980,8 @@ func validateInferencePruningEpochThreshold(i interface{}) error {
 	return nil
 }
 
-func (d *Decimal) ToLegacyDec() (math.LegacyDec, error) {
-	return math.LegacyNewDecFromStr(d.ToDecimal().String())
+func (d *Decimal) ToLegacyDec() (sdkmath.LegacyDec, error) {
+	return sdkmath.LegacyNewDecFromStr(d.ToDecimal().String())
 }
 
 func (d *Decimal) ToDecimal() decimal.Decimal {
@@ -930,13 +1008,13 @@ func DecimalFromFloat32(f float32) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
-func (p *PocParams) GetWeightScaleFactorDec() math.LegacyDec {
+func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
 	if p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
-		return math.LegacyOneDec()
+		return sdkmath.LegacyOneDec()
 	}
 	dec, err := p.WeightScaleFactor.ToLegacyDec()
 	if err != nil {
-		return math.LegacyOneDec()
+		return sdkmath.LegacyOneDec()
 	}
 	return dec
 }

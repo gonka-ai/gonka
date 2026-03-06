@@ -59,7 +59,7 @@ func TestPruningBasic(t *testing.T) {
 	}
 
 	// Add inference to the store without calculating developer stats
-	k.SetInferenceWithoutDevStatComputation(ctx, inference)
+	k.SetInference(ctx, inference)
 
 	// Verify inference exists
 	_, found := k.GetInference(ctx, "test-inference")
@@ -115,7 +115,7 @@ func TestPruningEpochThreshold(t *testing.T) {
 
 	// Add inferences to the store without calculating developer stats
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold 2
@@ -162,7 +162,7 @@ func TestPruningStatusPreservation(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold that should prune old inferences
@@ -198,7 +198,7 @@ func TestPruningMultipleEpochs(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold 1 at epoch 10
@@ -232,7 +232,7 @@ func TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T)
 			EpochId: 1,
 			Status:  types.InferenceStatus_FINISHED,
 		}
-		_ = k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		_ = k.SetInference(ctx, inf)
 	}
 
 	// Configure pruning: inference threshold 2 so endEpoch=current-2, and max per call 4

@@ -23,12 +23,17 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	MustAddParticipant(t, ms, ctx, *mockTransferAgent)
 	MustAddParticipant(t, ms, ctx, *mockExecutor)
 
+	k.SetActiveParticipants(ctx, ParticipantsToActive(0, types.Participant{Index: testutil.Executor},
+		types.Participant{Index: testutil.Creator}, types.Participant{Index: testutil.Requester}))
 	mocks.StubForInitGenesis(ctx)
 
 	// For escrow calls
 	mocks.BankKeeper.ExpectAny(ctx)
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), mockRequester.GetBechAddress()).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockRequester.GetBechAddress()).Return(mockRequester).Times(2)
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(mockTransferAgent).Times(2)
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(mockExecutor).Times(1)
 
 	// For GranteesByMessageType calls (used by both FinishInference and StartInference)
@@ -74,6 +79,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
+		Creator:              mockTransferAgent.address,
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
@@ -104,6 +110,12 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 
 	model := types.Model{Id: "model1"}
 	StubModelSubgroup(t, ctx, k, mocks, &model)
+
+	executorBeforeStart, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	if executorBeforeStart.CurrentEpochStats == nil {
+		executorBeforeStart.CurrentEpochStats = &types.CurrentEpochStats{}
+	}
 
 	// Now start the inference
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
@@ -145,4 +157,10 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 
 	// The escrow amount should be the same as the actual cost
 	require.Equal(t, expectedActualCost, savedInference.EscrowAmount)
+
+	executorAfterStart, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.NotNil(t, executorAfterStart.CurrentEpochStats)
+	require.Equal(t, executorBeforeStart.CurrentEpochStats.InferenceCount+1, executorAfterStart.CurrentEpochStats.InferenceCount)
+	require.Equal(t, executorBeforeStart.CurrentEpochStats.EarnedCoins+uint64(expectedActualCost), executorAfterStart.CurrentEpochStats.EarnedCoins)
 }

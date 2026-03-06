@@ -10,12 +10,10 @@ import (
 )
 
 func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmitHardwareDiff) (*types.MsgSubmitHardwareDiffResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	_, found := k.GetParticipant(goCtx, msg.Creator)
-	if !found {
-		return nil, types.ErrParticipantNotFound
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
+		return nil, err
 	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Check for duplicate LocalIds
 	seenIds := make(map[string]bool)

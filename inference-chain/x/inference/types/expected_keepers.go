@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/math"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -16,6 +17,7 @@ import (
 
 // AccountKeeper defines the expected interface for the account module.
 type AccountKeeper interface {
+	HasAccount(ctx context.Context, addr sdk.AccAddress) bool
 	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI // only used for simulation
 	GetModuleAddress(moduleName string) sdk.AccAddress
 	SetAccount(ctx context.Context, acc sdk.AccountI)
@@ -144,4 +146,8 @@ type BlsKeeper interface {
 // UpgradeKeeper defines the expected interface for the upgrade module.
 type UpgradeKeeper interface {
 	GetUpgradePlan(ctx context.Context) (plan upgradetypes.Plan, err error)
+}
+
+type WasmKeeper interface {
+	GetContractInfo(ctx context.Context, contractAddress sdk.AccAddress) *wasmtypes.ContractInfo
 }
