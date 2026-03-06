@@ -83,7 +83,7 @@ type StakingKeeper interface {
 type CollateralKeeper interface {
 	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
 	GetCollateral(ctx context.Context, participant sdk.AccAddress) (collateral sdk.Coin, found bool)
-	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec, reason string) (sdk.Coin, error)
+	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec, reason string, requiredCollateral math.Int) (sdk.Coin, error)
 }
 
 // StreamVestingKeeper defines the expected interface for the StreamVesting module.

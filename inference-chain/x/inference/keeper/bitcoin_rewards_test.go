@@ -2251,3 +2251,305 @@ func TestGetDynamicP0(t *testing.T) {
 		require.Equal(t, int32(-3), p0.Exponent)
 	})
 }
+
+// Tests for calculateDenominatorWeight
+func TestCalculateDenominatorWeight(t *testing.T) {
+	t.Run("Sums unique NodeIds", func(t *testing.T) {
+		mlNodes := []*types.MLNodeInfo{
+			{NodeId: "node-A", PocWeight: 100},
+			{NodeId: "node-B", PocWeight: 200},
+			{NodeId: "node-C", PocWeight: 300},
+		}
+		require.Equal(t, int64(600), calculateDenominatorWeight(mlNodes))
+	})
+
+	t.Run("Deduplicates by NodeId", func(t *testing.T) {
+		mlNodes := []*types.MLNodeInfo{
+			{NodeId: "node-A", PocWeight: 100},
+			{NodeId: "node-A", PocWeight: 100}, // duplicate
+			{NodeId: "node-B", PocWeight: 200},
+		}
+		require.Equal(t, int64(300), calculateDenominatorWeight(mlNodes))
+	})
+
+	t.Run("Skips nil entries and empty NodeId", func(t *testing.T) {
+		mlNodes := []*types.MLNodeInfo{
+			nil,
+			{NodeId: "", PocWeight: 999},
+			{NodeId: "node-A", PocWeight: 50},
+		}
+		require.Equal(t, int64(50), calculateDenominatorWeight(mlNodes))
+	})
+
+	t.Run("Returns 0 for empty slice", func(t *testing.T) {
+		require.Equal(t, int64(0), calculateDenominatorWeight(nil))
+		require.Equal(t, int64(0), calculateDenominatorWeight([]*types.MLNodeInfo{}))
+	})
+
+	t.Run("Returns 0 for all-nil entries", func(t *testing.T) {
+		mlNodes := []*types.MLNodeInfo{nil, nil}
+		require.Equal(t, int64(0), calculateDenominatorWeight(mlNodes))
+	})
+}
+
+// TestBitcoinRewards_DenominatorWeight_UnderCollateralized verifies that when a
+// participant's denominator weight (from MLNode PocWeights) exceeds their effective
+// weight (POC_SLOT=true weights + ConfirmationWeight), the uncovered portion goes
+// to governance remainder and is NOT redistributed to others.
+//
+// Mechanism: calculateDenominatorWeight sums ALL PocWeights regardless of POC_SLOT;
+// RecomputeEffectiveWeightFromMLNodes sums only POC_SLOT=true PocWeights + ConfirmationWeight.
+// Nodes with POC_SLOT=false inflate the denominator without increasing effective weight.
+func TestBitcoinRewards_DenominatorWeight_UnderCollateralized(t *testing.T) {
+	logger := createTestLogger(t)
+	bitcoinParams := &types.BitcoinRewardParams{
+		InitialEpochReward: 15000, // divisible by 1500 for clean math
+		DecayRate:          nil,
+		GenesisEpoch:       0,
+	}
+
+	// P1: fully funded — 1 node, POC_SLOT=true → effective == denominator == 500
+	// P2: under-funded — 2 nodes, only 1 has POC_SLOT=true → effective=500, denominator=1000
+	// Both participants have equal effective weight (500), avoiding power capping (50% each ≤ 50% limit for 2 participants).
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      "p1",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+			{
+				MemberAddress:      "p2",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n2a", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+					{NodeId: "n2b", PocWeight: 500, TimeslotAllocation: []bool{true, false}}, // POC_SLOT=false
+				},
+			},
+		},
+	}
+
+	participants := []types.Participant{
+		{Address: "p1", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+		{Address: "p2", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+	}
+
+	participantMLNodes := map[string][]*types.MLNodeInfo{
+		"p1": {
+			{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+		},
+		"p2": {
+			{NodeId: "n2a", PocWeight: 500, TimeslotAllocation: []bool{true, true}},  // POC_SLOT=true → counted in effective
+			{NodeId: "n2b", PocWeight: 500, TimeslotAllocation: []bool{true, false}}, // POC_SLOT=false → denominator only
+		},
+	}
+
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewards(
+		participants, epochGroupData, bitcoinParams, nil, participantMLNodes, logger,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(results))
+
+	// Denominator = 500 (P1) + 1000 (P2: 500+500) = 1500
+	// Effective: P1=500, P2=500 (only n2a POC_SLOT=true, ConfirmationWeight=0)
+	// No power capping: both at exactly 50% ≤ 50% limit (strictly-greater-than check)
+	// P1 reward = 500/1500 * 15000 = 5000
+	// P2 reward = 500/1500 * 15000 = 5000
+	p1Reward := results[0].Settle.RewardCoins
+	p2Reward := results[1].Settle.RewardCoins
+
+	require.Equal(t, uint64(5000), p1Reward, "P1 should get 500/1500 of rewards")
+	require.Equal(t, uint64(5000), p2Reward, "P2 should get 500/1500 of rewards (not 500/1000)")
+
+	// Governance gets the uncovered portion = 15000 - 10000 = 5000
+	totalDistributed := p1Reward + p2Reward
+	require.Equal(t, uint64(10000), totalDistributed)
+	require.Equal(t, int64(5000), bitcoinResult.GovernanceAmount,
+		"P2's POC_SLOT=false node share should go to governance, not redistributed")
+}
+
+// TestBitcoinRewards_DenominatorWeight_AllFullyCollateralized verifies that when
+// all participants are fully collateralized (effective == denominator), all rewards
+// are distributed and governance gets zero.
+func TestBitcoinRewards_DenominatorWeight_AllFullyCollateralized(t *testing.T) {
+	logger := createTestLogger(t)
+	bitcoinParams := &types.BitcoinRewardParams{
+		InitialEpochReward: 10000,
+		DecayRate:          nil,
+		GenesisEpoch:       0,
+	}
+
+	// Both participants: all nodes POC_SLOT=true, ConfirmationWeight=0
+	// → effective = PocWeight = denominator for each
+	// Equal effective weights (500) avoid power capping (50% each ≤ 50% limit).
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      "p1",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+			{
+				MemberAddress:      "p2",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n2", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+		},
+	}
+
+	participants := []types.Participant{
+		{Address: "p1", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+		{Address: "p2", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+	}
+
+	participantMLNodes := map[string][]*types.MLNodeInfo{
+		"p1": {{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}}},
+		"p2": {{NodeId: "n2", PocWeight: 500, TimeslotAllocation: []bool{true, true}}},
+	}
+
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewards(
+		participants, epochGroupData, bitcoinParams, nil, participantMLNodes, logger,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(results))
+
+	// Denominator = 500 + 500 = 1000, effective = 500 + 500 = 1000 (equal)
+	// P1: 500/1000 * 10000 = 5000
+	// P2: 500/1000 * 10000 = 5000
+	require.Equal(t, uint64(5000), results[0].Settle.RewardCoins)
+	require.Equal(t, uint64(5000), results[1].Settle.RewardCoins)
+
+	// No remainder — full epoch reward distributed
+	require.Equal(t, int64(0), bitcoinResult.GovernanceAmount,
+		"fully collateralized participants should leave no remainder")
+}
+
+// TestBitcoinRewards_DenominatorWeight_FallbackToVWWeight verifies that when
+// participantMLNodes is empty (nil), the denominator falls back to vw.Weight
+// and effective weight is computed from vw.MlNodes instead.
+func TestBitcoinRewards_DenominatorWeight_FallbackToVWWeight(t *testing.T) {
+	logger := createTestLogger(t)
+	bitcoinParams := &types.BitcoinRewardParams{
+		InitialEpochReward: 10000,
+		DecayRate:          nil,
+		GenesisEpoch:       0,
+	}
+
+	// Equal weights to avoid power capping. ConfirmationWeight=0 so effective = PocWeight from vw.MlNodes.
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      "p1",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+			{
+				MemberAddress:      "p2",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n2", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+		},
+	}
+
+	participants := []types.Participant{
+		{Address: "p1", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+		{Address: "p2", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+	}
+
+	// Pass nil MLNode map — forces denominator fallback to vw.Weight
+	// and effective weight fallback to vw.MlNodes
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewards(
+		participants, epochGroupData, bitcoinParams, nil, nil, logger,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(results))
+
+	// calculateDenominatorWeight(nil) = 0 → fallback to vw.Weight = 500 each
+	// RecomputeEffective(vw, nil) → uses vw.MlNodes: PocWeight=500 (POC_SLOT=true) + 0 = 500
+	// Denominator = 500 + 500 = 1000, effective = 500 + 500 = 1000
+	require.Equal(t, uint64(5000), results[0].Settle.RewardCoins)
+	require.Equal(t, uint64(5000), results[1].Settle.RewardCoins)
+	require.Equal(t, int64(0), bitcoinResult.GovernanceAmount,
+		"fallback path should behave identically to explicit MLNode path")
+}
+
+// TestBitcoinRewards_InvalidParticipant_DenominatorPreserved verifies that invalid
+// participants still count in the denominator, so their share goes to governance.
+func TestBitcoinRewards_InvalidParticipant_DenominatorPreserved(t *testing.T) {
+	logger := createTestLogger(t)
+	bitcoinParams := &types.BitcoinRewardParams{
+		InitialEpochReward: 10000,
+		DecayRate:          nil,
+		GenesisEpoch:       0,
+	}
+
+	// ConfirmationWeight=0 so effective = PocWeight for active participant.
+	// Invalid participant gets denominatorWeight but 0 effective (skipped from distribution).
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      "active-p",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+			{
+				MemberAddress:      "invalid-p",
+				Weight:             500,
+				ConfirmationWeight: 0,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n2", PocWeight: 500, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+		},
+	}
+
+	participants := []types.Participant{
+		{Address: "active-p", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+		{Address: "invalid-p", Status: types.ParticipantStatus_INVALID, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+	}
+
+	participantMLNodes := map[string][]*types.MLNodeInfo{
+		"active-p":  {{NodeId: "n1", PocWeight: 500, TimeslotAllocation: []bool{true, true}}},
+		"invalid-p": {{NodeId: "n2", PocWeight: 500, TimeslotAllocation: []bool{true, true}}},
+	}
+
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewards(
+		participants, epochGroupData, bitcoinParams, nil, participantMLNodes, logger,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(results))
+
+	// Denominator = 500 + 500 = 1000 (invalid-p still counted)
+	// Active: effective=500 → 500/1000 * 10000 = 5000
+	// Invalid: effective=0 (skipped from distribution)
+	// Only 1 participant in effectiveWeights → power cap = 100% (no capping)
+	require.Equal(t, uint64(5000), results[0].Settle.RewardCoins)
+	require.Equal(t, uint64(0), results[1].Settle.RewardCoins)
+
+	// Governance gets invalid participant's share = 5000
+	require.Equal(t, int64(5000), bitcoinResult.GovernanceAmount,
+		"invalid participant's share must go to governance")
+}

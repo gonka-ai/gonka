@@ -30,13 +30,13 @@ func (s *KeeperTestSuite) TestSlashing_DuplicateGuard_SameReasonSameEpoch() {
 	frac := math.LegacyNewDecWithPrec(10, 2) // 10%
 
 	// First time with reason invalidation should succeed
-	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonInvalidation)
+	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonInvalidation, math.ZeroInt())
 	if err != nil {
 		t.Fatalf("first slash failed: %v", err)
 	}
 
 	// Second time in same epoch and same reason should error and not burn again
-	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonInvalidation)
+	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonInvalidation, math.ZeroInt())
 	if err == nil {
 		t.Fatalf("expected error on duplicate slash, got nil")
 	}
@@ -59,10 +59,10 @@ func (s *KeeperTestSuite) TestSlashing_DifferentReasonSameEpoch_Allowed() {
 	frac := math.LegacyNewDecWithPrec(10, 2)
 
 	// First reason: invalidation
-	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonInvalidation)
+	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonInvalidation, math.ZeroInt())
 	s.Require().NoError(err)
 
 	// Second reason: downtime (same epoch)
-	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonDowntime)
+	_, err = s.k.Slash(s.ctx, participant, frac, inftypes.SlashReasonDowntime, math.ZeroInt())
 	s.Require().NoError(err)
 }
