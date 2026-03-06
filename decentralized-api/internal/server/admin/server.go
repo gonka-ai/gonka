@@ -8,6 +8,8 @@ import (
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
 	"decentralized-api/payloadstorage"
+	"decentralized-api/semanticcache"
+	"net/http"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	blstypes "github.com/productscience/inference/x/bls/types"
@@ -33,6 +35,29 @@ type Server struct {
 	cdc            *codec.ProtoCodec
 	blockQueue     *pserver.BridgeQueue
 	payloadStorage payloadstorage.PayloadStorage
+	// cache is the optional semantic cache reference for read-only stats exposure.
+	// nil when the node has no inference nodes configured; handler is nil-safe.
+	cache *semanticcache.SemanticCache
+}
+
+// ServerOption configures optional Server dependencies.
+type ServerOption func(*Server)
+
+// WithSemanticCache attaches a read-only view of the semantic cache to the
+// admin server so that DAG / monitoring tools can observe hit/miss counters
+// without any write access to cache state or chain.
+func WithSemanticCache(sc *semanticcache.SemanticCache) ServerOption {
+	return func(s *Server) {
+		s.cache = sc
+	}
+}
+
+// CacheStatsResponse is the JSON shape returned by GET /admin/v1/cache/stats.
+type CacheStatsResponse struct {
+	Enabled bool    `json:"enabled"`
+	Hits    int64   `json:"hits"`
+	Misses  int64   `json:"misses"`
+	HitRate float64 `json:"hit_rate"`
 }
 
 func NewServer(
@@ -41,7 +66,8 @@ func NewServer(
 	configManager *apiconfig.ConfigManager,
 	validator *validation.InferenceValidator,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	opts ...ServerOption) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
@@ -55,6 +81,10 @@ func NewServer(
 		cdc:            cdc,
 		blockQueue:     blockQueue,
 		payloadStorage: payloadStorage,
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -99,6 +129,10 @@ func NewServer(
 	// Payload storage for testing (allows testermint to store payloads directly)
 	g.POST("payloads", s.storePayload)
 
+	// Read-only semantic cache stats for DAG / monitoring.
+	// Pure atomic reads — zero impact on inference hot path, chain, or other nodes.
+	g.GET("cache/stats", s.getCacheStats)
+
 	return s
 }
 
@@ -125,4 +159,25 @@ func (s *Server) Start(addr string) {
 func (s *Server) getConfig(c echo.Context) error {
 	cfg := s.configManager.GetConfig()
 	return c.JSONPretty(200, cfg, "  ")
+}
+
+// getCacheStats returns read-only semantic cache counters.
+//
+// Safe to call at any frequency: Stats() and HitRate() use atomic.LoadInt64
+// with no locks, no side effects, and no writes to any shared state.
+// Returns {"enabled": false, ...} when cache is not initialised (nil-safe).
+//
+// Intended consumers: DAG epoch-boundary tasks, Prometheus scraper, k8s probes.
+// NOT intended as a public endpoint — admin port :9200 is operator-only.
+func (s *Server) getCacheStats(c echo.Context) error {
+	if s.cache == nil {
+		return c.JSON(http.StatusOK, CacheStatsResponse{Enabled: false})
+	}
+	hits, misses := s.cache.Stats()
+	return c.JSON(http.StatusOK, CacheStatsResponse{
+		Enabled: true,
+		Hits:    hits,
+		Misses:  misses,
+		HitRate: s.cache.HitRate(),
+	})
 }

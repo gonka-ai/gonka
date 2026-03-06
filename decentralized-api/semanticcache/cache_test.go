@@ -153,7 +153,7 @@ func TestStoreResult_SetsModelVersionAndTTL(t *testing.T) {
 
 // TestUpdateCacheParams_ModelVersionChange verifies that changing the governance
 // model version immediately invalidates previously cached results without any
-// manual Qdrant cleanup.
+// manual cache cleanup.
 //
 // Proof: this is the "graceful model upgrade" property — governance changes
 // EmbeddingModelVersion from v1 to v2; all v1 in-memory vectors become misses

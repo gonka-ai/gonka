@@ -199,6 +199,11 @@ func main() {
 	// out of the box. ML-node embed endpoint (all-MiniLM-L6-v2 on CPU) is already
 	// part of the gonka node stack — no new services required.
 	// Governance-gated: Enabled=false by default; toggle via CacheQualityParams.
+	//
+	// sc is declared here (outside the if-block) so the admin server can receive
+	// a read-only reference for GET /admin/v1/cache/stats. When no nodes are
+	// configured sc stays nil; the admin handler is nil-safe.
+	var sc *semanticcache.SemanticCache
 	publicServerOpts := []pserver.ServerOption{pserver.WithArtifactStore(artifactStore)}
 	if len(config.GetNodes()) > 0 {
 		firstNode := config.GetNodes()[0]
@@ -222,7 +227,7 @@ func main() {
 			maxCacheAgeEpochs = cqParams.MaxCacheAgeEpochs
 			cacheEnabled = cqParams.Enabled
 		}
-		sc := semanticcache.NewSemanticCache(embedder, cacheStore, thresholdBps, modelVersion, maxCacheAgeEpochs, cacheEnabled)
+		sc = semanticcache.NewSemanticCache(embedder, cacheStore, thresholdBps, modelVersion, maxCacheAgeEpochs, cacheEnabled)
 		publicServerOpts = append(publicServerOpts, pserver.WithSemanticCache(sc))
 		logging.Info("Semantic cache initialised", types.System,
 			"backend", "in-memory", "enabled", cacheEnabled,
@@ -286,7 +291,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue, payloadStore, adminserver.WithSemanticCache(sc))
 	adminServer.Start(addr)
 
 	mlGrpcServerPort := config.GetApiConfig().MlGrpcServerPort

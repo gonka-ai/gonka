@@ -47,7 +47,7 @@ type CacheQualityParams struct {
 	// MaxCacheAgeEpochs is the maximum age (in epochs) of a cached result that
 	// may be served to users.  Results older than this are treated as cache
 	// misses regardless of similarity, preventing stale data accumulation in the
-	// off-chain Qdrant vector store.  Unlike PruningEpochThreshold (which cleans
+	// off-chain vector store.  Unlike PruningEpochThreshold (which cleans
 	// on-chain records), this controls off-chain TTL enforcement in the
 	// decentralized-api layer via CachedResult.ValidUntilEpoch.
 	// Default: 10 epochs (~33 minutes at 5s blocks / 40-block epochs).

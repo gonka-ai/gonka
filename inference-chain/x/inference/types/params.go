@@ -125,7 +125,7 @@ func DefaultCacheQualityParams() *CacheQualityParams {
 		// all cached vectors from the previous model version (model mismatch = miss).
 		EmbeddingModelVersion: "v1",
 		// MaxCacheAgeEpochs = 10 ≈ 33 minutes at 5s/block, 40-block epochs.
-		// Qdrant vectors older than this are served as cache misses.  Distinct
+		// Cached vectors older than this are served as cache misses.  Distinct
 		// from PruningEpochThreshold (on-chain record cleanup); this controls the
 		// off-chain TTL enforced via CachedResult.ValidUntilEpoch in the
 		// decentralized-api semanticcache layer.
