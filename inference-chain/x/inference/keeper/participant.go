@@ -20,10 +20,20 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 	if err != nil {
 		return err
 	}
+
+	// Check if this is a new participant (for counter maintenance)
+	isNew, _ := k.Participants.Has(ctx, participantAddress)
+
 	err = k.Participants.Set(ctx, participantAddress, participant)
 	if err != nil {
 		return err
 	}
+
+	// Increment participant counter only for new participants
+	if !isNew {
+		k.incrementParticipantCount(ctx)
+	}
+
 	k.LogDebug("Saved Participant", types.Participants, "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)
 	return nil
 }
@@ -67,9 +77,19 @@ func (k Keeper) RemoveParticipant(
 		k.LogError("Could not parse participant address for removal", types.Participants, "index", index, "error", err)
 		return
 	}
+
+	// Check if participant exists before removing (for counter maintenance)
+	exists, _ := k.Participants.Has(ctx, addr)
+
 	err = k.Participants.Remove(ctx, addr)
 	if err != nil {
 		k.LogError("Could not remove participant", types.Participants, "error", err, "index", index, "address", addr.String(), "")
+		return
+	}
+
+	// Decrement participant counter only if participant existed
+	if exists {
+		k.decrementParticipantCount(ctx)
 	}
 }
 
@@ -86,9 +106,24 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	return participants
 }
 
-// CountAllParticipants counts participants by iterating keys only,
-// without deserializing all participant data into memory.
+// CountAllParticipants returns the participant count from the store counter.
+// Falls back to key-only iteration if the counter has not been initialized yet,
+// and initializes the counter as a side effect.
 func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
+	count, err := k.ParticipantCountItem.Get(ctx)
+	if err == nil && count >= 0 {
+		return count
+	}
+
+	// Counter not initialized — fall back to iteration and initialize it
+	count = k.countAllParticipantsByIteration(ctx)
+	_ = k.ParticipantCountItem.Set(ctx, count)
+	return count
+}
+
+// countAllParticipantsByIteration counts participants by iterating keys only,
+// without deserializing all participant data into memory.
+func (k Keeper) countAllParticipantsByIteration(ctx context.Context) int64 {
 	iter, err := k.Participants.Iterate(ctx, nil)
 	if err != nil {
 		return 0
@@ -99,4 +134,30 @@ func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
 		count++
 	}
 	return count
+}
+
+// incrementParticipantCount atomically increments the participant counter in the store.
+func (k Keeper) incrementParticipantCount(ctx context.Context) {
+	count, err := k.ParticipantCountItem.Get(ctx)
+	if err != nil {
+		// Counter not initialized — initialize from iteration
+		count = k.countAllParticipantsByIteration(ctx)
+		_ = k.ParticipantCountItem.Set(ctx, count)
+		return
+	}
+	_ = k.ParticipantCountItem.Set(ctx, count+1)
+}
+
+// decrementParticipantCount atomically decrements the participant counter in the store.
+func (k Keeper) decrementParticipantCount(ctx context.Context) {
+	count, err := k.ParticipantCountItem.Get(ctx)
+	if err != nil {
+		// Counter not initialized — initialize from iteration
+		count = k.countAllParticipantsByIteration(ctx)
+		_ = k.ParticipantCountItem.Set(ctx, count)
+		return
+	}
+	if count > 0 {
+		_ = k.ParticipantCountItem.Set(ctx, count-1)
+	}
 }

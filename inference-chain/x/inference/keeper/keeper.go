@@ -86,6 +86,8 @@ type (
 		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
+		// Participant counter to avoid full iteration on count queries
+		ParticipantCountItem collections.Item[int64]
 	}
 )
 
@@ -427,6 +429,12 @@ func NewKeeper(
 			"punishment_grace_epochs",
 			collections.Uint64Key,
 			codec.CollValue[types.GraceEpochParams](cdc),
+		),
+		ParticipantCountItem: collections.NewItem(
+			sb,
+			types.ParticipantCountPrefix,
+			"participant_count",
+			collections.Int64Value,
 		),
 	}
 	// Build the collections schema

@@ -64,6 +64,7 @@ var (
 	PocV2EnabledEpochPrefix           = collections.NewPrefix(41)
 	PoCValidationSnapshotPrefix       = collections.NewPrefix(42)
 	PunishmentGraceEpochsPrefix       = collections.NewPrefix(43)
+	ParticipantCountPrefix            = collections.NewPrefix(44)
 	ParamsKey                         = []byte("p_inference")
 )
 

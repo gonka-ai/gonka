@@ -258,7 +258,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 	if previousEpochIndex == 0 {
 		settleDuration := time.Since(settleStart)
-		k.LogInfo("SettleAccounts completed", types.Performance,
+		k.LogDebug("SettleAccounts completed", types.Performance,
 			"epochIndex", currentEpochIndex,
 			"participants", len(allParticipants),
 			"durationMs", settleDuration.Milliseconds())
@@ -272,7 +272,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	}
 
 	settleDuration := time.Since(settleStart)
-	k.LogInfo("SettleAccounts completed", types.Performance,
+	k.LogDebug("SettleAccounts completed", types.Performance,
 		"epochIndex", currentEpochIndex,
 		"participants", len(allParticipants),
 		"durationMs", settleDuration.Milliseconds())

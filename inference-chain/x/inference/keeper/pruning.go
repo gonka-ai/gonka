@@ -43,7 +43,14 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 
 	totalDuration := time.Since(pruneStart)
 	if totalDuration > 50*time.Millisecond {
-		k.LogInfo("Prune completed", types.Performance,
+		k.LogWarn("Prune completed (exceeded duration threshold)", types.Performance,
+			"epochIndex", currentEpochIndex,
+			"totalMs", totalDuration.Milliseconds(),
+			"inferencesMs", infDuration.Milliseconds(),
+			"pocBatchesMs", batchDuration.Milliseconds(),
+			"pocValidationsMs", valDuration.Milliseconds())
+	} else {
+		k.LogDebug("Prune completed", types.Performance,
 			"epochIndex", currentEpochIndex,
 			"totalMs", totalDuration.Milliseconds(),
 			"inferencesMs", infDuration.Milliseconds(),
