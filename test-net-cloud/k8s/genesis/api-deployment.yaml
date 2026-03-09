@@ -59,6 +59,16 @@ spec:
           value: "http://node:26657"
         - name: TESTS
           value: "true"
+        # Semantic cache — enabled by default in testnet so compressa-perf tests run
+        # without a governance tx pre-requisite.  Set to "false" to disable for a
+        # clean baseline run, or override via MsgUpdateParams once the node is live.
+        - name: DAPI_CACHE__ENABLED
+          value: "true"
+        # L2 similarity threshold in basis points (1 bps = 0.01%).
+        # 4250 = 42.5% cosine similarity: calibrated against all-MiniLM-L6-v2 on
+        # Go code / NL paraphrase pairs (see quality_matrix_research_v2.md §9).
+        - name: DAPI_CACHE__L2_THRESHOLD_BPS
+          value: "4250"
         volumeMounts:
         - name: data
           mountPath: /root/.inference

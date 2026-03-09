@@ -780,17 +780,17 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 			// Two-gate logical verification — no additional GPU inference call.
 			// Both gates use the idle mlnode CPU embed already computed above.
 			//
-		// Gate 1 — Adaptive coherence floor (absolute):
-		//   Verifies the GPU answer semantically addresses THIS prompt.
-		//   Floor scales with sim tier: high-similarity pairs (structural
-		//   twins, sim>8000) require a stricter floor because the risk of
-		//   the model copying a wrong pattern verbatim is highest there.
-		//   NOTE: floor for sim>8000 is 4500 (not 5000): code-embedding to
-		//   NL-prompt cosine is structurally ~4800–5500 bps; 5000 causes
-		//   false rejections for correct code responses.
-		//     sim > 8000 bps → floor 4500  (structural twin zone)
-		//     sim > 6250 bps → floor 4000  (clear zone)
-		//     sim ≤ 6250 bps → floor 3000  (grey zone)
+			// Gate 1 — Adaptive coherence floor (absolute):
+			//   Verifies the GPU answer semantically addresses THIS prompt.
+			//   Floor scales with sim tier: high-similarity pairs (structural
+			//   twins, sim>8000) require a stricter floor because the risk of
+			//   the model copying a wrong pattern verbatim is highest there.
+			//   NOTE: floor for sim>8000 is 4500 (not 5000): code-embedding to
+			//   NL-prompt cosine is structurally ~4800–5500 bps; 5000 causes
+			//   false rejections for correct code responses.
+			//     sim > 8000 bps → floor 4500  (structural twin zone)
+			//     sim > 6250 bps → floor 4000  (clear zone)
+			//     sim ≤ 6250 bps → floor 3000  (grey zone)
 			//
 			// Gate 2 — Loop closure (relative, hub frontier check):
 			//   Verifies the context-injected answer is at/above the hub's
@@ -813,7 +813,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 					} else {
 						cacheEntry.CoherenceScoreBps = semanticcache.CosineBps(cachedEmbedding, responseEmbed)
 
-							// Gate 1: adaptive absolute floor by sim tier.
+						// Gate 1: adaptive absolute floor by sim tier.
 						// See semanticcache.AdaptiveCoherenceFloor for calibration rationale.
 						coherenceFloorBps := semanticcache.AdaptiveCoherenceFloor(l2SimBps)
 
@@ -855,7 +855,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 						if accepted >= loopClosureMinSamples {
 							freshBaseline = coherenceSumBps / accepted
 						}
-							delta := int64(cacheEntry.CoherenceScoreBps) - freshBaseline
+						delta := int64(cacheEntry.CoherenceScoreBps) - freshBaseline
 						if !semanticcache.LoopClosureOK(cacheEntry.CoherenceScoreBps, freshBaseline, loopClosureMarginBps) {
 							logging.Warn("L2 loop closure BREAK — context degrades quality vs hub frontier",
 								types.Inferences,

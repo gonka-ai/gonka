@@ -60,6 +60,12 @@ spec:
           value: "default"
         - name: TESTS
           value: "true"
+        # Semantic cache — mirrors genesis node config. Set to "false" for a
+        # clean baseline run without cache influence on join nodes.
+        - name: DAPI_CACHE__ENABLED
+          value: "true"
+        - name: DAPI_CACHE__L2_THRESHOLD_BPS
+          value: "4250"
         volumeMounts:
         - name: inference-data
           mountPath: /root/.inference
