@@ -40,6 +40,12 @@ type CachedResult struct {
 	// SimilarityBps is cosine similarity × 10 000 of the matched embedding.
 	// 10 000 means exact hash match; values ≥ SimilarityThresholdBps are served.
 	SimilarityBps uint32
+	// CoherenceScoreBps is cosine similarity × 10 000 between the prompt embedding
+	// and the response embedding, computed after GPU inference on L2 context hits.
+	// Measures how well the produced answer actually addresses the prompt.
+	// 0 means not yet computed (L1 hits, cold misses) or embedder unavailable.
+	// Values below the coherence floor cause the entry to be skipped at store time.
+	CoherenceScoreBps uint32
 	// ModelVersion is the embedding model identifier used when the source
 	// inference was cached.  Must match SemanticCache.modelVersion (which
 	// reflects the current CacheQualityParams.EmbeddingModelVersion governance
@@ -89,6 +95,12 @@ type SemanticCache struct {
 	enabled   uint32 // atomic bool: 1 = enabled
 	hitCount  int64  // prometheus-ready counter
 	missCount int64  // prometheus-ready counter
+
+	// Coherence validation counters (L2 context hits only).
+	contextHitCount      int64 // L2 context-augmented inferences validated
+	coherenceRejections  int64 // coherence below floor → not cached
+	coherenceSumBps      int64 // sum of CoherenceScoreBps for avg computation
+	loopClosureBreaks    int64 // loop closure gate triggered: ctx answer below hub frontier
 }
 
 // NewSemanticCache constructs a SemanticCache.
@@ -294,6 +306,73 @@ func (sc *SemanticCache) ModelVersion() string {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.modelVersion
+}
+
+// EmbedText exposes the underlying embedder so callers can compute embeddings
+// for purposes beyond cache lookup — e.g. computing answer coherence scores.
+// Returns nil on embedder failure (non-fatal; caller should fall back gracefully).
+func (sc *SemanticCache) EmbedText(ctx context.Context, text []byte) ([]float32, error) {
+	return sc.embedder.Embed(ctx, text)
+}
+
+// CosineBps computes cosine similarity between two vectors and returns it as
+// basis points (× 10 000).  Returns 0 if vectors are incompatible or zero.
+// Exported so the public handler can compute coherence scores using the same
+// scale as SimilarityBps without duplicating the arithmetic.
+func CosineBps(a, b []float32) uint32 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	score := dot / (math.Sqrt(normA) * math.Sqrt(normB))
+	if score < 0 {
+		return 0
+	}
+	return uint32(score * 10000)
+}
+
+// RecordCoherenceResult records the outcome of an L2 coherence validation.
+// accepted=true means the result was stored; accepted=false means it was rejected
+// (either by the adaptive floor gate or by the loop closure hub frontier check).
+// scoreBps is the CoherenceScoreBps of the validated result.
+// Called from post_chat_handler.go after coherence + loop closure checks.
+func (sc *SemanticCache) RecordCoherenceResult(scoreBps uint32, accepted bool) {
+	atomic.AddInt64(&sc.contextHitCount, 1)
+	if accepted {
+		atomic.AddInt64(&sc.coherenceSumBps, int64(scoreBps))
+	} else {
+		atomic.AddInt64(&sc.coherenceRejections, 1)
+	}
+}
+
+// RecordLoopClosureBreak increments the loop closure break counter.
+// Called when coherence(ctx_injected) < hub_frontier - 800 bps, meaning
+// the hub already holds better answers and storing this would degrade the pool.
+// The user still receives the answer — only hub pool storage is skipped.
+func (sc *SemanticCache) RecordLoopClosureBreak() {
+	atomic.AddInt64(&sc.loopClosureBreaks, 1)
+}
+
+// LoopClosureBreaks returns the count of loop closure gate triggers since last restart.
+// Surfaced via /admin/v1/cache/stats as "loop_closure_breaks".
+func (sc *SemanticCache) LoopClosureBreaks() int64 {
+	return atomic.LoadInt64(&sc.loopClosureBreaks)
+}
+
+// CoherenceStats returns counters for L2 context validation: context hits,
+// rejections, and the running sum of accepted coherence scores.
+func (sc *SemanticCache) CoherenceStats() (contextHits, rejections, coherenceSumBps int64) {
+	return atomic.LoadInt64(&sc.contextHitCount),
+		atomic.LoadInt64(&sc.coherenceRejections),
+		atomic.LoadInt64(&sc.coherenceSumBps)
 }
 
 // Stats returns cumulative hit and miss counts since last restart.

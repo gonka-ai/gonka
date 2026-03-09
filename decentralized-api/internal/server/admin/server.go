@@ -58,6 +58,20 @@ type CacheStatsResponse struct {
 	Hits    int64   `json:"hits"`
 	Misses  int64   `json:"misses"`
 	HitRate float64 `json:"hit_rate"`
+	// ContextHits counts L2 hits that ran context-augmented GPU inference.
+	// These entries have CoherenceScoreBps set; below-floor entries were not stored.
+	ContextHits int64 `json:"context_hits"`
+	// CoherenceRejections counts L2 inferences whose coherence score was below
+	// the adaptive floor (3000/4000/4500 bps by sim tier) and were not stored in cache.
+	// See semanticcache.AdaptiveCoherenceFloor for the tier thresholds.
+	CoherenceRejections int64 `json:"coherence_rejections"`
+	// AvgCoherenceBps is the mean CoherenceScoreBps across all validated L2 hits
+	// stored this session.  0 if no L2 context hits have occurred.
+	AvgCoherenceBps int64 `json:"avg_coherence_bps"`
+	// LoopClosureBreaks counts L2 inferences where coherence(ctx) < hub_frontier - 800 bps,
+	// meaning the hub already holds better answers.  The user still receives the answer;
+	// only hub pool storage is skipped.  Non-zero here means the cache is self-protecting.
+	LoopClosureBreaks int64 `json:"loop_closure_breaks"`
 }
 
 func NewServer(
@@ -174,10 +188,20 @@ func (s *Server) getCacheStats(c echo.Context) error {
 		return c.JSON(http.StatusOK, CacheStatsResponse{Enabled: false})
 	}
 	hits, misses := s.cache.Stats()
+	contextHits, rejections, coherenceSumBps := s.cache.CoherenceStats()
+	var avgCoherenceBps int64
+	accepted := contextHits - rejections
+	if accepted > 0 {
+		avgCoherenceBps = coherenceSumBps / accepted
+	}
 	return c.JSON(http.StatusOK, CacheStatsResponse{
-		Enabled: true,
-		Hits:    hits,
-		Misses:  misses,
-		HitRate: s.cache.HitRate(),
+		Enabled:             true,
+		Hits:                hits,
+		Misses:              misses,
+		HitRate:             s.cache.HitRate(),
+		ContextHits:         contextHits,
+		CoherenceRejections: rejections,
+		AvgCoherenceBps:     avgCoherenceBps,
+		LoopClosureBreaks:   s.cache.LoopClosureBreaks(),
 	})
 }

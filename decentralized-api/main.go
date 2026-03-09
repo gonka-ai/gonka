@@ -243,6 +243,18 @@ func main() {
 			maxCacheAgeEpochs = cqParams.MaxCacheAgeEpochs
 			cacheEnabled = cqParams.Enabled
 		}
+		// ENV overrides for local testing and testnet deployment before governance enables the feature.
+		// Add to docker-compose / K8s env:
+		//   DAPI_CACHE__ENABLED=true
+		//   DAPI_CACHE__L2_THRESHOLD_BPS=7500   (optional, default 9700)
+		if v := os.Getenv("DAPI_CACHE__ENABLED"); v == "true" {
+			cacheEnabled = true
+		}
+		if v := os.Getenv("DAPI_CACHE__L2_THRESHOLD_BPS"); v != "" {
+			if n, parseErr := strconv.ParseUint(v, 10, 32); parseErr == nil && n > 0 && n <= 10000 {
+				thresholdBps = uint32(n)
+			}
+		}
 		sc = semanticcache.NewSemanticCache(embedder, cacheStore, thresholdBps, modelVersion, maxCacheAgeEpochs, cacheEnabled)
 		publicServerOpts = append(publicServerOpts, pserver.WithSemanticCache(sc))
 		logging.Info("Semantic cache initialised", types.System,

@@ -1,0 +1,256 @@
+# Semantic Cache — Full L0-L9 Quality Axis Test Configuration
+#
+# TESTNET PARAMETERS (confirmed from genesis-overrides-configmap.yaml):
+#   epoch_length = 250 blocks, block_time ~6s → epoch = 25 min
+#   inference_validation_cutoff = 25 → inference window = 225 blocks = 22.5 min
+#   3 nodes × ~900 tok/s effective = 7,100 tasks/epoch capacity at max_tokens=512
+#   This config uses ~1,750 tasks = 24.6% of epoch capacity.
+#   All phases fit within ONE epoch. Epoch boundary is used for on-chain measurement.
+#
+# L0-L9 COVERAGE MAP:
+#   L0 compute stability    → Phase 0 + 4: latency variance across task sizes
+#   L1 availability         → Phase 1b: concurrency stress, retry pressure
+#   L2 correctness          → Phase 2+3: go-verifiable code tasks (build -race)
+#   L3 relevance            → Phase 2+3: semantic similarity score (cosine in L2 hit)
+#   L4 usefulness           → Phase 5: mixed, X-Inference-Feedback resolved pattern
+#   L5 outcome              → Phase 3: cross-transfer, new code produced from pattern
+#   L6 reuse                → Phase 1+2+3+5: cache hit rate (primary metric)
+#   L7 stream fidelity      → Phase 4b: streaming=true tasks
+#   L8 latency consistency  → Phase 0+1+5: CV across latencies (hit vs miss delta)
+#   L9 completion rate      → All phases: num_tasks vs completed ratio
+#
+# EPOCH PLAN:
+#   Epoch N:   Phase 0 (seed) → Phase 1 (L1 exact) → Phase 2 (L2 para) → Phase 3 (cross)
+#   Epoch N+1: Phase 4 (large+stream) → Phase 5 (saturation)
+#   Epoch N+2: On-chain CacheQualityEpochSummary available → collect PQM
+#
+# node_url: replace before running
+#   Testnet genesis: http://34.9.136.116:30000
+#   Local Tier B:    http://localhost:9000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 0 — COLD SEED
+# L-axes: L0 (baseline latency), L8 (latency distribution), L9 (completion rate)
+# Goal: fill cache with all 5 domain clusters × 10 prompts each = 50 unique entries
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p0_cold_seed"
+  description: |
+    Cold start. Seeds all 5 domain clusters (race, algo, http, error, validation).
+    All requests go to GPU. Establishes baseline latency for L0 and L8.
+    Expected: 0 hits, 50 misses. Latency: 800-2000ms depending on prompt size.
+    Metric: baseline_latency_mean, baseline_latency_cv (L0, L8 anchors).
+  prompts_file: cache-test-prompts.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 150
+  num_runners: 3
+  max_tokens: 512
+  seed: 0
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1a — L1 EXACT HIT (single runner, clean measurement)
+# L-axes: L6 (reuse rate), L8 (latency delta hit vs miss), L9 (completion)
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p1a_l1_exact_single"
+  description: |
+    Repeats Phase 0 prompts verbatim. L1 exact hash match expected ~100%.
+    Latency target: <100ms (vs 800-2000ms cold). Measures L6 reuse rate and L8 delta.
+    Single runner to isolate per-request latency signal.
+  prompts_file: cache-test-prompts.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 150
+  num_runners: 1
+  max_tokens: 512
+  seed: 0
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1b — L1 EXACT HIT (concurrent, availability stress)
+# L-axes: L1 (availability under load), L6 (reuse under concurrency), L9
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p1b_l1_concurrent_stress"
+  description: |
+    Same prompts, 10 concurrent runners, 500 tasks. Tests cache read concurrency (L1 availability).
+    RWMutex in cache.go must hold under parallel load. Hit rate should remain ~100%.
+    Completion rate (L9) monitors for dropped requests under pressure.
+  prompts_file: cache-test-prompts.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 500
+  num_runners: 10
+  max_tokens: 512
+  seed: 0
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 2a — L2 SEMANTIC / PARAPHRASE (single runner)
+# L-axes: L3 (semantic relevance score), L6 (reuse), L2 (correctness of reused answer)
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p2a_l2_paraphrase_single"
+  description: |
+    Rephrased versions of Phase 0 prompts. Expected similarity: 0.75-0.88 (above L2 threshold).
+    L3: cosine similarity stored in SimilarityBps (target >7500bps). L6: hit rate >60%.
+    L2: reused answer structurally correct for same domain problem.
+    Single runner for clean per-prompt similarity measurement.
+  prompts_file: cache-test-prompts-v2.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 150
+  num_runners: 1
+  max_tokens: 512
+  seed: 1
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 2b — L2 SEMANTIC / PARAPHRASE (concurrent, volume)
+# L-axes: L3, L6, L8 (latency of L2 hits vs cold)
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p2b_l2_paraphrase_volume"
+  description: |
+    High-volume L2 test. 300 tasks, 5 runners. Builds L8 latency distribution for L2 hits.
+    Expected: L2 hit latency ~300-600ms (embed+lookup) vs 800-2000ms cold.
+    Accumulates similaritySum for PQM calculation at epoch boundary.
+  prompts_file: cache-test-prompts-v2.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 300
+  num_runners: 5
+  max_tokens: 512
+  seed: 1
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3a — REAL-TIME LEARNING: cross-domain context injection (single runner)
+# L-axes: L5 (outcome quality), L3 (similarity), L6 (context-hit rate)
+#
+# WHAT THIS PROVES:
+#   L2 hit → context injection → new GPU inference → correct answer for NEW problem.
+#   Counter mutex fix becomes REFERENCE CONTEXT when model solves RateLimiter.
+#   Answer is correct because GPU ran — not a copied wrong answer.
+#   Quality is BETTER than cold inference because model sees the pattern.
+#
+# HOW LEARNING IS MEASURED (run-cache-test.sh):
+#   Phase 0 quality (cold, no context): extract Go code, run go build -race
+#   Phase 3 quality (with context):     extract Go code, run go build -race
+#   Delta = improvement from cache context = learning signal
+#
+# X-Cache header will be "CONTEXT-HIT" with X-Cache-Level: 2
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p3a_learning_context_single"
+  description: |
+    Cross-domain with L2 context injection: Counter→RateLimiter, Fibonacci→Tribonacci,
+    POST /users→POST /orders. Expected similarity: 0.72-0.82 → CONTEXT-HIT.
+    GPU runs with cached pattern as reference → produces correct NEW code.
+    Measures L5 (outcome quality), L3 (cross-domain similarity), real-time learning delta.
+  prompts_file: cache-test-prompts-v3.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 150
+  num_runners: 1
+  max_tokens: 512
+  seed: 2
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3b — REAL-TIME LEARNING: volume (multi-participant context injection)
+# L-axes: L5, L3, L6, L9
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p3b_learning_context_volume"
+  description: |
+    300 tasks, 8 runners. 8 concurrent participants get cached patterns as context.
+    As more participants solve related problems, cache depth grows → better context
+    for next participants. This is the network-scale real-time learning effect.
+    Expected: answer quality (go build success rate) improves from P3a start to end.
+  prompts_file: cache-test-prompts-v3.csv
+  generate_prompts: false
+  num_prompts: 15
+  num_tasks: 300
+  num_runners: 8
+  max_tokens: 512
+  seed: 2
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 4a — LARGE TOKEN / DEEP CONTEXT
+# L-axes: L0 (compute stability at high token load), L8 (latency at max_tokens=1024)
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p4a_large_token_seed"
+  description: |
+    Large code tasks (circuit breaker, worker pool, connection pool — complex implementations).
+    max_tokens=1024. Seeds cache with large-response entries.
+    L0: tests compute stability when GPU processes long outputs.
+    L8: establishes large-token latency baseline (3000-8000ms expected).
+  prompts_file: cache-test-prompts-large.csv
+  generate_prompts: false
+  num_prompts: 10
+  num_tasks: 50
+  num_runners: 2
+  max_tokens: 1024
+  seed: 3
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 4b — LARGE TOKEN L1 HIT + STREAM FIDELITY
+# L-axes: L7 (stream fidelity), L6 (cache hit on large responses), L8 (latency delta)
+# Note: streaming=true bypasses cache in current Phase 0 design.
+#       This phase seeds with non-stream then measures stream separately.
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p4b_large_token_repeat"
+  description: |
+    Repeats Phase 4a prompts exactly. L1 hit expected. Validates that large cached
+    responses (>2KB) are stored and retrieved correctly (L6, L9).
+    L8: latency for large L1 hits should still be <100ms (memory lookup, not GPU).
+    Tests that ResponseHash validation holds for large payloads.
+  prompts_file: cache-test-prompts-large.csv
+  generate_prompts: false
+  num_prompts: 10
+  num_tasks: 100
+  num_runners: 3
+  max_tokens: 1024
+  seed: 3
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 5 — NETWORK SATURATION (all axes simultaneously, epoch-boundary data)
+# L-axes: ALL L0-L9
+# This is the primary epoch-level measurement phase.
+# Run this at start of Epoch N+1 so Phase 0-4 data settles in Epoch N summary.
+# ─────────────────────────────────────────────────────────────────────────────
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "p5_full_saturation"
+  description: |
+    Mixed all 5 domains × all 3 variant levels (v1+v2+v3) = 45 prompts.
+    1000 tasks, 10 runners. Simulates 10 concurrent participants (P0-P9).
+    After Phase 0-4 seeding, expected combined L1+L2 hit rate: >35%.
+    Measures: hit_rate (L6), latency_cv (L8), completion_rate (L9), similarity_mean (L3).
+    PQM = QualityScore × cache_efficiency × avg_confidence computed at epoch end.
+    This is the primary datapoint for CacheQualityWeight calculation.
+  prompts_file: cache-test-prompts-mixed.csv
+  generate_prompts: false
+  num_prompts: 45
+  num_tasks: 1000
+  num_runners: 10
+  max_tokens: 512
+  seed: 9
+  node_url: "http://34.9.136.116:30000"
+  account_address: "gonka"

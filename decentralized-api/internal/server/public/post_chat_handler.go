@@ -566,6 +566,8 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		}
 	}
 	var cachedEmbedding []float32 // reused at store time to avoid double embed
+	var isL2ContextHit bool       // true when L2 context injection ran → coherence check needed
+	var l2SimBps uint32           // similarity score of the matched L2 entry; used for adaptive coherence floor
 	if s.semanticCache != nil && !request.OpenAiRequest.Stream {
 		var currentEpoch uint64
 		if epochState := s.phaseTracker.GetCurrentEpochState(); epochState != nil {
@@ -614,49 +616,66 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		cached, embedding, hit := s.semanticCache.Lookup(ctx.Request().Context(), []byte(promptEmbedText), currentEpoch)
 		cachedEmbedding = embedding
 		if hit {
-			logging.Info("Semantic cache HIT — serving cached result", types.Inferences,
+			logging.Info("Semantic cache L2 HIT — context-augmented inference",
+				types.Inferences,
 				"inferenceId", inferenceId,
 				"similarityBps", cached.SimilarityBps,
 				"originalEpoch", cached.OriginalEpoch,
 				"validUntilEpoch", cached.ValidUntilEpoch)
 
-			if ok, skipReason := s.verifyCachedEntry(cached); !ok {
-				logging.Warn("Semantic cache HIT: verification failed — falling through to GPU",
-					types.Inferences, "inferenceId", inferenceId, "reason", skipReason)
-				// fall through to GPU
-			} else {
-				var cachedResp completionapi.Response
-				if parseErr := json.Unmarshal(cached.ResponsePayload, &cachedResp); parseErr != nil {
-					logging.Warn("Semantic cache HIT: failed to parse cached payload, falling through to GPU",
-						types.Inferences, "inferenceId", inferenceId, "error", parseErr)
+			// L2 context injection: do NOT return the cached payload directly.
+			//
+			// Returning a cached answer verbatim for a semantically similar but
+			// distinct prompt would give a wrong answer (e.g. Counter mutex fix
+			// served for a RateLimiter problem). Instead, inject the cached
+			// answer as a structured reference context and run a fresh GPU
+			// inference so the LLM can adapt the pattern to the current problem.
+			//
+			// This guarantees:
+			//   1. Answer correctness — the model produces code for THIS prompt.
+			//   2. Real-time learning — each epoch's solutions become reference
+			//      context for the next, compounding quality over time.
+			//   3. Honesty — CacheQualityWeight is earned by improving answers,
+			//      not by returning potentially wrong cached bytes faster.
+			//
+			// L2 value is not "skipped GPU call" but "better GPU answer via
+			// accumulated network knowledge".
+			if cachedContent, ok := completionapi.ExtractCachedContent(cached.ResponsePayload); ok {
+				injected, injectErr := completionapi.InjectCachedContext(request.Body, cachedContent)
+				if injectErr != nil {
+					logging.Warn("L2 context injection failed — falling through to plain GPU",
+						types.Inferences, "inferenceId", inferenceId, "error", injectErr)
 				} else {
-					cachedResponse := &completionapi.JsonCompletionResponse{
-						Bytes: cached.ResponsePayload,
-						Resp:  cachedResp,
+					// Replace request body with context-augmented version.
+					// ModifyRequestBody (seed, logprobs) is re-run below on this body.
+					request.Body = injected
+					// Re-derive the modified body with the injected context using the same seed.
+					reinjected, reinjectErr := completionapi.ModifyRequestBody(request.Body, int32(seed))
+					if reinjectErr == nil {
+						modifiedRequestBody = reinjected
 					}
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Cache", "HIT")
-				w.Header().Set("X-Cache-Level", "2")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write(cached.ResponsePayload)
-
-				go func() {
-					_ = s.semanticCache.RecordReuse(
-						context.Background(),
-						cached.OriginalParticipantAddress,
-						currentEpoch,
-						cached.SimilarityBps,
-					)
-					if s.qualityReporter != nil {
-						s.qualityReporter.RecordReuse(currentEpoch, cached.SimilarityBps)
-					}
-				}()
-
-				if txErr := s.sendInferenceTransaction(request.InferenceId, cachedResponse, request.Body, s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
-					logging.Error("Failed to send FinishInference for L2 cache hit", types.Inferences,
-						"inferenceId", inferenceId, "error", txErr)
-				}
-					return nil
+					w.Header().Set("X-Cache", "CONTEXT-HIT")
+					w.Header().Set("X-Cache-Level", "2")
+					w.Header().Set("X-Cache-Similarity", strconv.Itoa(int(cached.SimilarityBps)))
+					// X-Cache-Coherence will be set after GPU inference completes
+					// (coherence is computed from the response, not available yet).
+					go func() {
+						_ = s.semanticCache.RecordReuse(
+							context.Background(),
+							cached.OriginalParticipantAddress,
+							currentEpoch,
+							cached.SimilarityBps,
+						)
+						if s.qualityReporter != nil {
+							s.qualityReporter.RecordReuse(currentEpoch, cached.SimilarityBps)
+						}
+					}()
+					isL2ContextHit = true
+				l2SimBps = cached.SimilarityBps
+				logging.Info("L2 context injected — proceeding to GPU inference",
+					types.Inferences, "inferenceId", inferenceId,
+					"similarityBps", cached.SimilarityBps)
+					// fall through to GPU inference with augmented context
 				}
 			}
 		}
@@ -754,7 +773,112 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 				OriginalParticipantAddress: s.recorder.GetAccountAddress(),
 			}
 			go func() {
-				if storeErr := s.semanticCache.StoreResult(context.Background(), []byte(promptEmbedText), cachedEmbedding, cacheEntry, currentEpoch); storeErr != nil {
+				storeCtx := context.Background()
+
+			// ── Hub-level coherence + loop closure (L2 context hits only) ──
+			//
+			// Two-gate logical verification — no additional GPU inference call.
+			// Both gates use the idle mlnode CPU embed already computed above.
+			//
+		// Gate 1 — Adaptive coherence floor (absolute):
+		//   Verifies the GPU answer semantically addresses THIS prompt.
+		//   Floor scales with sim tier: high-similarity pairs (structural
+		//   twins, sim>8000) require a stricter floor because the risk of
+		//   the model copying a wrong pattern verbatim is highest there.
+		//   NOTE: floor for sim>8000 is 4500 (not 5000): code-embedding to
+		//   NL-prompt cosine is structurally ~4800–5500 bps; 5000 causes
+		//   false rejections for correct code responses.
+		//     sim > 8000 bps → floor 4500  (structural twin zone)
+		//     sim > 6250 bps → floor 4000  (clear zone)
+		//     sim ≤ 6250 bps → floor 3000  (grey zone)
+			//
+			// Gate 2 — Loop closure (relative, hub frontier check):
+			//   Verifies the context-injected answer is at/above the hub's
+			//   current semantic frontier — the running avg coherence of all
+			//   accepted entries. This IS the hub verify state: CoherenceStats()
+			//   accumulates the frontier over time without any extra inference.
+			//   If coherence(ctx) < frontier - 800 bps → the hub already knows
+			//   better answers exist → don't store the degraded entry → the user
+			//   still receives the answer (always deliver), but the hub pool is
+			//   not polluted with below-frontier results.
+			//
+			// In both cases the user always gets the answer.
+			// Only hub pool storage is gated — this is the PoC honest loop.
+			if isL2ContextHit {
+				if responseContent, ok := completionapi.ExtractCachedContent(bodyBytes); ok {
+					responseEmbed, embedErr := s.semanticCache.EmbedText(storeCtx, []byte(responseContent))
+					if embedErr != nil {
+						logging.Warn("Coherence embed failed — storing without coherence score",
+							types.Inferences, "inferenceId", inferenceId, "error", embedErr)
+					} else {
+						cacheEntry.CoherenceScoreBps = semanticcache.CosineBps(cachedEmbedding, responseEmbed)
+
+							// Gate 1: adaptive absolute floor by sim tier.
+						// See semanticcache.AdaptiveCoherenceFloor for calibration rationale.
+						coherenceFloorBps := semanticcache.AdaptiveCoherenceFloor(l2SimBps)
+
+						logging.Info("L2 coherence validated",
+							types.Inferences,
+							"inferenceId", inferenceId,
+							"coherenceBps", cacheEntry.CoherenceScoreBps,
+							"coherenceFloor", coherenceFloorBps,
+							"l2SimBps", l2SimBps)
+
+						if cacheEntry.CoherenceScoreBps < coherenceFloorBps {
+							logging.Warn("L2 coherence below adaptive floor — skipping cache store",
+								types.Inferences,
+								"inferenceId", inferenceId,
+								"coherenceBps", cacheEntry.CoherenceScoreBps,
+								"floor", coherenceFloorBps,
+								"l2SimBps", l2SimBps)
+							s.semanticCache.RecordCoherenceResult(cacheEntry.CoherenceScoreBps, false)
+							if s.qualityReporter != nil {
+								s.qualityReporter.RecordCompute(currentEpoch)
+							}
+							return
+						}
+
+						// Gate 2: loop closure — hub frontier check.
+						// fresh_baseline = hub's running avg coherence (accumulated semantic frontier).
+						// Requires ≥10 accepted samples for reliable estimate; default 6000 bps
+						// (conservative prior) until enough data is accumulated.
+						const loopClosureMarginBps = 800
+						const loopClosureMinSamples = 10
+						// Default baseline 5500 (not 6000): code-embedding tasks produce
+						// coherence in the 5000–6500 range; 6000 is too conservative during
+						// cold start and causes false loop-closure breaks for correct Go code.
+						// After loopClosureMinSamples entries the running avg takes over.
+						const loopClosureDefaultBaselineBps = 5500
+						ctxHits, rejections, coherenceSumBps := s.semanticCache.CoherenceStats()
+						accepted := ctxHits - rejections
+						freshBaseline := int64(loopClosureDefaultBaselineBps)
+						if accepted >= loopClosureMinSamples {
+							freshBaseline = coherenceSumBps / accepted
+						}
+							delta := int64(cacheEntry.CoherenceScoreBps) - freshBaseline
+						if !semanticcache.LoopClosureOK(cacheEntry.CoherenceScoreBps, freshBaseline, loopClosureMarginBps) {
+							logging.Warn("L2 loop closure BREAK — context degrades quality vs hub frontier",
+								types.Inferences,
+								"inferenceId", inferenceId,
+								"coherenceBps", cacheEntry.CoherenceScoreBps,
+								"hubFrontier", freshBaseline,
+								"deltaBps", delta,
+								"marginBps", -loopClosureMarginBps)
+							s.semanticCache.RecordCoherenceResult(cacheEntry.CoherenceScoreBps, false)
+							s.semanticCache.RecordLoopClosureBreak()
+							if s.qualityReporter != nil {
+								s.qualityReporter.RecordCompute(currentEpoch)
+							}
+							return
+						}
+
+						s.semanticCache.RecordCoherenceResult(cacheEntry.CoherenceScoreBps, true)
+					}
+				}
+			}
+			// ── end hub coherence + loop closure ────────────────────────
+
+				if storeErr := s.semanticCache.StoreResult(storeCtx, []byte(promptEmbedText), cachedEmbedding, cacheEntry, currentEpoch); storeErr != nil {
 					logging.Warn("Semantic cache store failed", types.Inferences,
 						"inferenceId", inferenceId, "error", storeErr)
 				} else if s.qualityReporter != nil {

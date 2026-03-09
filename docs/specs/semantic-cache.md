@@ -161,6 +161,11 @@ Covered by the test suite:
 | `TestHTTP_TTL_Expired_FallThrough` | Epoch 101 > `ValidUntilEpoch` 100 → MISS |
 | `TestHTTP_ModelVersion_FallThrough` | v1 entry rejected under v2 governance |
 | `TestHTTP_PublicAPIResponseFormat` | Response parseable, `sha256` non-empty |
+| `TestAdaptiveCoherenceFloor_*` | Correct floor for all 3 sim tiers; C4/C5 clear-zone residual documented |
+| `TestLoopClosureOK_*` | Boundary conditions, C3 cold-start margin, C4/C5 residual gap as expected |
+| `TestCoherenceRatioAnomaly_*` | C4 upper-bound (1.057), C5 NL-domain (0.801), code-domain guard |
+| `TestResearchMatrix_GateSequence` | All C1-C6 with exact `quality_matrix_research_v2.md` numbers |
+| `TestResearchMatrix_RatioGateClosesGap` | Zero-cost ratio gate catches both residual gap cases |
 
 ---
 
@@ -222,6 +227,63 @@ higher hit rate → more reuseCount → +EpochGroup power (cap 30%) → more mod
 
 Streaming (`stream: true`) bypasses cache entirely — `effective_hit_rate` is reduced by
 `stream_fraction`.
+
+---
+
+### Quality Gate Pipeline (Stage 3 + 4 — v2)
+
+The L2 context-injection path includes two additional quality gates applied after GPU inference
+completes, before the result is stored. Neither gate triggers a fresh GPU inference — they
+operate on embeddings already computed in the store path.
+
+**Stage 3 — Adaptive coherence floor (Gate 1)**
+
+```go
+coherenceFloorBps := semanticcache.AdaptiveCoherenceFloor(l2SimBps)
+// sim > 8000: 4500 bps  (structural twin zone — code→NL embed ≈ 4800–5500 bps)
+// sim > 6250: 4000 bps  (clear zone)
+// sim ≤ 6250: 3000 bps  (grey zone; SemanticVerifier also applied here)
+```
+
+Rejects results where the GPU answer embeds poorly against the current prompt despite
+prompt similarity. Floor is intentionally lower for code tasks (4500, not 5000) to avoid
+false rejections where code→NL embedding is structurally lower than NL→NL.
+
+**Stage 4 — Loop closure / hub frontier check (Gate 2)**
+
+```go
+semanticcache.LoopClosureOK(coherenceBps, hubFrontier, 800 /*marginBps*/)
+// hubFrontier = running avg CoherenceScoreBps of all accepted entries
+// Default 5500 bps until 10 entries accumulated (code-task cold start)
+```
+
+Prevents degrading the hub's semantic frontier. If a context-injected answer scores
+more than 800 bps below the running average of what the hub has already accepted, it is
+not stored. The user always receives the answer — only hub pool storage is gated.
+
+**Observable via `/admin/v1/cache/stats`:**
+
+```json
+{
+  "context_hits": 42,
+  "coherence_rejections": 3,
+  "avg_coherence_bps": 6120,
+  "loop_closure_breaks": 1
+}
+```
+
+`loop_closure_breaks > 0` means the cache is self-protecting: it has rejected at least one
+below-frontier entry. This is expected behaviour, not an error.
+
+**Residual gap**: wrong answers with `sim > 6250` that produce high coherence scores (C4/C5
+class) can pass both gates. These are caught by extending `SemanticVerifier v3` to
+`sim ∈ [4250, 8500]`, or by a zero-cost coherence-ratio gate (`c/s ∉ [0.55, 1.03]`).
+See `quality_matrix_research_v2.md §9-10` for the full analysis.
+
+**Unit tests** (`semanticcache/gates_test.go`, 31 tests, zero external dependencies):
+- Validates all 6 research cases (C1–C6) with exact production numbers
+- Documents residual gap as expected behaviour with `t.Log("RESIDUAL GAP: ...")`
+- Proves ratio gate closes the gap without GPU cost
 
 ---
 
