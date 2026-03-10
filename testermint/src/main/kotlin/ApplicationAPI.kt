@@ -10,6 +10,7 @@ import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.github.kittinunf.fuel.gson.jsonBody
 import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.result.Result
+import com.google.gson.Gson
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
@@ -98,6 +99,9 @@ data class ApplicationAPI(
         seed: Long = 0
     ): OpenAIResponse = wrapLog("MakeExecutorInferenceRequest", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
+        val payloadHash = PromptHashing.computeModifiedPromptPayloadAndHash(request, seed)
+        val promptHash = payloadHash.promptHash
+        val canonicalPayload = payloadHash.canonicalPayload
         val response = Fuel.post((url + "/v1/chat/completions"))
             .jsonBody(request)
             .header("X-Requester-Address", requesterAddress)
@@ -106,6 +110,7 @@ data class ApplicationAPI(
             .header("X-Transfer-Address", transferAddress)
             .header("X-Inference-Id", devSignature)
             .header("X-Seed", seed)
+            .header("X-Prompt-Hash", promptHash)
             .header("X-TA-Signature", taSignature)
             .timeout(1000 * 60)
             .timeoutRead(1000 * 60)

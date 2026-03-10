@@ -95,6 +95,7 @@ func TestMsgServer_FinishInference_DeveloperAccessRestricted(t *testing.T) {
 
 	resp, err := inferenceHelper.MessageServer.FinishInference(ctx, &types.MsgFinishInference{
 		Creator:     testutil.Creator,
+		ExecutedBy:  testutil.Creator,
 		InferenceId: "dummy",
 		RequestedBy: testutil.Requester,
 	})
@@ -217,11 +218,12 @@ func TestMsgServer_FinishInference_ParamsCacheDoesNotLeakAcrossCalls(t *testing.
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
+	AddParticipantToActive(ctx, &k, testutil.Executor, 1)
 	firstResp, err := ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId: "cache-test-finish-1",
 		RequestedBy: testutil.Requester,
 		ExecutedBy:  testutil.Executor,
-		Creator:     testutil.Creator,
+		Creator:     testutil.Executor,
 	})
 	require.NoError(t, err)
 	require.NotContains(t, firstResp.ErrorMessage, types.ErrDeveloperNotAllowlisted.Error())
@@ -237,7 +239,7 @@ func TestMsgServer_FinishInference_ParamsCacheDoesNotLeakAcrossCalls(t *testing.
 		InferenceId: "cache-test-finish-2",
 		RequestedBy: testutil.Requester,
 		ExecutedBy:  testutil.Executor,
-		Creator:     testutil.Creator,
+		Creator:     testutil.Executor,
 	})
 	require.NoError(t, err)
 	require.Contains(t, secondResp.ErrorMessage, types.ErrDeveloperNotAllowlisted.Error())
@@ -276,6 +278,18 @@ func TestMsgServer_FinishInference_InferenceNotFound(t *testing.T) {
 	require.NotEmpty(t, response.ErrorMessage)
 	_, found := k.GetInference(ctx, "inferenceId")
 	require.False(t, found)
+}
+
+func TestMsgServer_FinishInferenceCreatorMustMatchExecutor(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	_ = k.SetEffectiveEpochIndex(ctx, 1)
+	AddParticipantToActive(ctx, &k, testutil.Creator, 1)
+	resp, err := ms.FinishInference(ctx, &types.MsgFinishInference{
+		Creator:    testutil.Creator,
+		ExecutedBy: testutil.Executor,
+	})
+	require.NoError(t, err)
+	require.Contains(t, resp.ErrorMessage, types.ErrInferenceRoleMismatch.Error())
 }
 
 type MockAccount struct {
@@ -337,6 +351,24 @@ func NewMockInferenceHelper(t *testing.T) (*MockInferenceHelper, keeper.Keeper, 
 	MustAddParticipant(t, ms, ctx, *requesterAccount)
 	MustAddParticipant(t, ms, ctx, *taAccount)
 	MustAddParticipant(t, ms, ctx, *executorAccount)
+
+	currentEpoch, found := k.GetEffectiveEpochIndex(ctx)
+	require.True(t, found)
+	err = k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: currentEpoch,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index: requesterAccount.address,
+			},
+			{
+				Index: taAccount.address,
+			},
+			{
+				Index: executorAccount.address,
+			},
+		},
+	})
+	require.NoError(t, err)
 
 	return &MockInferenceHelper{
 		MockRequester:     requesterAccount,
@@ -431,6 +463,7 @@ func (h *MockInferenceHelper) StartInference(
 		Index:               inferenceId,
 		InferenceId:         inferenceId,
 		PromptHash:          promptHash,
+		OriginalPromptHash:  originalPromptHash,
 		PromptPayload:       "", // Phase 6: Stored offchain
 		RequestedBy:         h.MockRequester.address,
 		Status:              types.InferenceStatus_STARTED,
@@ -521,6 +554,7 @@ func (h *MockInferenceHelper) FinishInference() (*types.Inference, error) {
 		Index:                    inferenceId,
 		InferenceId:              inferenceId,
 		PromptHash:               h.previousInference.PromptHash,
+		OriginalPromptHash:       originalPromptHash,
 		PromptPayload:            "", // Phase 6: Stored offchain
 		RequestedBy:              h.MockRequester.address,
 		Status:                   types.InferenceStatus_FINISHED,

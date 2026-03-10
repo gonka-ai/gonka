@@ -119,6 +119,16 @@ func DefaultParams() Params {
 		CollateralParams:      DefaultCollateralParams(),
 		BitcoinRewardParams:   DefaultBitcoinRewardParams(),
 		DynamicPricingParams:  DefaultDynamicPricingParams(),
+		BandwidthLimitsParams: &BandwidthLimitsParams{
+			InvalidationsSamplePeriod:      120,
+			InvalidationsLimit:             500,
+			InvalidationsLimitCurve:        250,
+			MinimumConcurrentInvalidations: 1,
+			MaxInferencesPerBlock:          1000,
+			EstimatedLimitsPerBlockKb:      10752,
+			KbPerInputToken:                DecimalFromFloat(0.0023),
+			KbPerOutputToken:               DecimalFromFloat(0.64),
+		},
 		GenesisGuardianParams: &GenesisGuardianParams{
 			NetworkMaturityThreshold: 2_000_000,
 			NetworkMaturityMinHeight: 0,

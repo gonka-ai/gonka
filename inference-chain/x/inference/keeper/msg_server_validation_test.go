@@ -199,6 +199,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 	})
 	require.NoError(t, err)
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
+		Creator:              testutil.Executor,
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",

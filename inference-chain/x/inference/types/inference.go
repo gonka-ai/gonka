@@ -6,7 +6,9 @@ func (i *Inference) IsCompleted() bool {
 }
 
 func (i *Inference) StartProcessed() bool {
-	return i.PromptHash != ""
+	// StartInference always assigns AssignedTo (required by ValidateBasic).
+	// Symmetric with FinishedProcessed which checks ExecutedBy.
+	return i.AssignedTo != ""
 }
 
 func (i *Inference) FinishedProcessed() bool {
