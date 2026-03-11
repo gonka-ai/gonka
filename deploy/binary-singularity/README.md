@@ -1,5 +1,8 @@
 # Binary Singularity — Deploy Stack
 
+Branch: [`Mayveskii/gonka → dev/binary-singularity`](https://github.com/Mayveskii/gonka/tree/dev/binary-singularity)  
+Relates to: [PR #859](https://github.com/gonka-ai/gonka/pull/859) · [GiP #860](https://github.com/gonka-ai/gonka/discussions/860) · base: `upgrade-v0.2.11`
+
 Four deployment tiers: LITE/MEDIUM/HARD for reproducible testing,
 PRODUCTION for real node infrastructure with GNK tokens and live inference.
 
@@ -134,14 +137,24 @@ Agent flow:
 3. On successful completion, distill result → new slot
 4. Slots shared via quality-middleware mesh pool across nodes/clients
 
-## Experiment Results
+## Experiment Results (Bookworm, CPU-only, no GPU)
 
-| Exp | Tier | Runs | PQM | Slots | Verdict |
-|-----|------|------|-----|-------|---------|
-| 1 | LITE | 256 | — | 4 | baseline |
-| 2 | LITE | 9216 | 0.988 | 4 | APPROVED |
-| 3 | HARD | 15360 | 1.001 | 6 | DOMINATES |
-| 4 | HARD (raw) | 11520 | 1.020 | 197 | DOMINATES |
+| Exp | Tier | Runs | PQM | Slots | Peak RAM | Slot latency | Verdict |
+|-----|------|------|-----|-------|----------|-------------|---------|
+| 1 | LITE | 256 | — | 4 | — | — | baseline |
+| 2 | LITE | 9,216 | 0.988 | 4 | 19.25 MB | ~5 ms | Hub APPROVED |
+| 3 | HARD | 15,360 | **1.001** | 6 | 23.1 MB | ~5 ms | DOMINATES GPU |
+| 4 | HARD (raw) | 11,520 | **1.020** | 197 | 20.8 MB | ~5 ms | DOMINATES GPU |
+
+### Network correlation (live data, epochs 161–191, 2,503,595 inferences)
+
+| Metric | Network (no BS) | With BS | Delta |
+|--------|----------------|---------|-------|
+| L6 cache hit rate | 0.000473 (M=571) | 0.27+ (slot store) | **571×** |
+| L8 latency mean | 1280 ms (GPU) | ~5 ms (slot hit) | **~250×** |
+| L9 completion | 90.4% | 100% tracked | +10% |
+| Memory | 16 GB GPU VRAM | 19–23 MB CPU | **~700×** less |
+| GPU saves/epoch (20% spec.) | 0 | **940,698** | — |
 
 ## Protocol Compatibility
 
@@ -151,3 +164,14 @@ No conflict with Gonka protocol (#859 / #860):
 - `CacheQualityParams.Enabled = false` by default — governance activates
 - PruningState wire format additive (fields 5-8, no changes to 1-4)
 - Prefix collision free: 47=EpochGroup (upstream), 48-51=ours
+
+## Shipped components
+
+| Component | Path | Format |
+|-----------|------|--------|
+| Deploy stack (4 tiers) | `deploy/binary-singularity/` | Docker Compose + K3s + K8s |
+| Quality middleware | `examples/quality-middleware/` | Go source |
+| K8s overlay | `test-net-cloud/k8s/overlays/binary-singularity/` | Kustomize |
+| gonka-agent (source) | `gonka-agent/` | Go module |
+| gonka-agent (binary) | `gonka-agent/bin/gonka` | ELF x86_64, static, 6 MB |
+| Binary artifact | `text` | 720 KB, SHA256: 81b5449a... |

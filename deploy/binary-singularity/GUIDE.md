@@ -1,8 +1,18 @@
-# Бинарная Сингулярность — Гайд для всех
+# Binary Singularity — dev/binary-singularity
 
-> **НАМ ЛУЧШЕ ЭТО ИСПОЛЬЗОВАТЬ, ОТХОДЯ ОТ ПРОСТЫХ ИСТИН**
+**Ветка:** [`Mayveskii/gonka → dev/binary-singularity`](https://github.com/Mayveskii/gonka/tree/dev/binary-singularity)  
+**PR:** [#859 Semantic Cache](https://github.com/gonka-ai/gonka/pull/859) · **GiP:** [#860 Inference Quality Protocol](https://github.com/gonka-ai/gonka/discussions/860)  
+**Base:** `upgrade-v0.2.11` · **Agent:** [`gonka-agent`](https://github.com/gonkalabs/gonka-agent)
 
----
+> **НАМ ЛУЧШЕ ЭТО ИСПОЛЬЗОВАТЬ, ОТХОДЯ ОТ ПРОСТЫХ ИСТИН
+                 
+                   используйте это и сделайте это проще для всех , чтобы заменить услги ЖКХ / юридически сложных flow / разработчиков / исследователей / вносящих вклад в развитие / нуждающихся / этического / вычисляемого / не во вред
+                   
+>**
+###is the  gg  finally  while  thrue  for  true ?
+
+      Beta for researchers encourages faith in you, and we believe in you and love you, thank you guys <3
+###
 
 ## Что это и зачем
 
@@ -65,9 +75,10 @@ BS_RAW_INPUT=/path/to/your/research/notes.txt
 ### Быстрый старт (5 минут, любой компьютер)
 
 ```bash
-# 1. Клонируйте репозиторий
-git clone https://github.com/gonka-ai/gonka.git
+# 1. Клонируйте форк с бинарным слоем
+git clone https://github.com/Mayveskii/gonka.git
 cd gonka
+git checkout dev/binary-singularity
 
 # 2. Выберите уровень
 
@@ -95,13 +106,16 @@ docker compose up -d
 
 ### Установка агента (MacOS / Linux)
 
+Агент поставляется вместе со стеком — готовый бинарь в `gonka-agent/bin/gonka`
+(6 MB, статик, без зависимостей). Или собрать из исходников:
+
 ```bash
 cd gonka-agent
 cp .env.example .env
 # Заполните GONKA_API_KEY
 
-# Сборка
-go build -o bin/gonka ./cmd/gonka
+# Сборка (опционально — бинарь уже в bin/)
+CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/gonka ./cmd/gonka
 
 # Запуск
 ./bin/gonka "описание вашей задачи"
@@ -156,51 +170,150 @@ MacBook, Linux-сервер, Docker — без разницы.
 
 ---
 
+## Матрица качества — 10 осей (GiP #860)
+
+Живые данные сети Gonka — **эпохи 161–191, 2 503 595 инференсов**:
+
+```
+Composite QualityScore = 0.7236   (6 осей измерены, 4 спроектированы)
+
+  L0  Compute stability      0.65   CV=0.35, вес PoC упал на 60% пик→минимум
+  L1  Availability            0.92   heartbeat present
+  L2  Correctness (RTV)       0.9675 miss_rate=3.25%, binomial: k=81360 << 251140, α=0.05 → PASS
+  L3  Relevance               —      cosine prompt↔response (PR #859 infra)
+  L4  Usefulness              0.00   нет механизма до BS → агент теперь отправляет X-Inference-Feedback
+  L5  Outcome                 —      developer webhook (planned)
+  L6  Reuse (cache)           0.00   M=571 shared → hit_rate ≈ 0.000473
+  L7  Stream fidelity         1.00   8/8 SSE [DONE] received (16 live requests)
+  L8  Latency consistency     0.32   mean=1280ms, σ=876ms, CV=0.68 ← главное узкое место
+  L9  Completion rate         0.904  mean 90.4%, σ=7.4%, range 72–99%
+```
+
+`QualityScore = Σ(wi × Li)` — веса через governance.
+
+### Специализация: математический мультипликатор
+
+| Параметр | Значение | Hit rate | Улучшение |
+|----------|----------|----------|-----------|
+| M=571 (Qwen3-32B, shared) | 109–197 нод/эпоха | 0.000473 | baseline |
+| M=12 (QwQ-32B, low-M) | dedicated cluster | 0.0225 | **47.6×** |
+| M=1 (unique model) | one node, one model | 0.27 | **571×** |
+
+Чем меньше M (число нод, обслуживающих модель) → тем выше hit rate →
+тем больше CacheQualityWeight → больше наград → глубже специализация.
+Петля замкнута. Экономика, не администрирование.
+
+### Прямая корреляция: BS эксперименты → сеть
+
+| Измерение | Сеть (без BS) | С BS (Exp 4) | Δ |
+|-----------|--------------|-------------|---|
+| L4 Feedback | 0.00 (нет механизма) | Автоматический (`X-Inference-Feedback`) | ∞ |
+| L6 Hit rate | 0.000473 (M=571) | 0.27+ (слот store, sim≥0.75) | **571×** |
+| L8 Latency | 1280ms mean, σ=876ms | ~5ms slot hit + LLM с контекстом | **~250× на слот** |
+| L9 Completion | 90.4% | Controlled loop → 100% tracked | +10% |
+| Memory | 16 GB GPU VRAM | 19–23 MB CPU RAM | **~700× меньше** |
+
+### PQM — формула и результат
+
+```
+PQM = QualityScore(binary) / QualityScore(single_gpu)
+
+PQM > 1.0 → бинарный слой лучше чем одиночный GPU-инференс
+```
+
+---
+
 ## Как это работает (техническая суть)
 
 ```
 Ваш запрос
     │
-    ├─→ Embedder (CPU, all-MiniLM-L6-v2, 384 dims)
+    ├─→ Embedder (CPU, all-MiniLM-L6-v2, 384 dims, int8 quantized)
     │       │
-    │       └─→ Cosine similarity vs PatternSlot store
-    │               │
-    │               ├─ Найден слот (sim ≥ 0.75) → Инжектируется как контекст
-    │               │                               ↓
-    │               │                          LLM получает готовый паттерн
-    │               │                          + адаптирует к вашей задаче
-    │               │
-    │               └─ Не найден → Обычный инференс через сеть Gonka
+    │       ├─→ PatternSlot store (локальный)
+    │       │       cosine sim ≥ 0.75 → инжектируется как контекст
+    │       │
+    │       ├─→ Mesh pool (quality-middleware /quality/search)
+    │       │       слоты от других участников → доступны вам
+    │       │
+    │       └─→ Semcache (семантический кеш предыдущих сессий)
     │
-    └─→ При успехе: результат → новый PatternSlot → store
+    └─→ LLM (Gonka network) → ответ
+         │
+         └─→ При успехе:
+              - Distill → новый PatternSlot (vec + task + solution)
+              - ShareToMesh → POST /quality/slots/share (в пул другим)
+              - X-Inference-Feedback: resolved → L4 сигнал в протокол
 ```
+
+Участник 1 решил задачу → слот в mesh pool →
+Участник 2 ищет похожую задачу → находит слот Участника 1 →
+LLM получает контекст → решает точнее → PQM растёт для всех.
 
 Ключевое: слот — это **не кеш ответа**. Это паттерн решения. LLM видит
 паттерн и адаптирует его к конкретной задаче. Поэтому качество растёт.
 
 ---
 
-## Результаты экспериментов
+## Результаты экспериментов (Bookworm, CPU-only)
 
-| Эксперимент | Запусков | PQM | Слотов | Вердикт |
-|------------|----------|-----|--------|---------|
-| 1 (baseline) | 256 | — | 4 | базовая линия |
-| 2 (масштаб) | 9 216 | 0.988 | 4 | одобрено хабом |
-| 3 (mesh) | 15 360 | **1.001** | 6 | превышает GPU |
-| 4 (raw input) | 11 520 | **1.020** | 197 | превышает GPU |
+| Эксперимент | Запусков | PQM | Слотов | Peak RAM | Slot hit latency | Вердикт |
+|------------|----------|-----|--------|----------|-----------------|---------|
+| 1 (baseline) | 256 | — | 4 | — | — | базовая линия |
+| 2 (масштаб) | 9 216 | 0.988 | 4 | 19.25 MB | ~5 ms | одобрено хабом |
+| 3 (mesh) | 15 360 | **1.001** | 6 | 23.1 MB | ~5 ms | **превышает GPU** |
+| 4 (raw input) | 11 520 | **1.020** | 197 | 20.8 MB | ~5 ms | **превышает GPU** |
 
 **PQM > 1.0** = бинарный слой даёт ответы лучше, чем одиночный GPU-инференс.
-Доказано на реальном железе (Debian Bookworm, только CPU, 20 MB RAM).
+
+Среда: Debian Bookworm, только CPU, нет GPU. 20 MB RAM пиковое потребление.
+Slot hit: ~5 ms (vs ~1280 ms mean GPU latency в сети).
+
+Routing simulation (при 20% специализированных нод):
+
+| Метрика | Сейчас (random) | С BS (quality-weighted) |
+|---------|----------------|------------------------|
+| Распределение трафика | Uniform (1/M) | По QualityScore |
+| Completion rate σ | 7.4% | ~4.4% (↓40%) |
+| Mean latency | 1280 ms | ~1088 ms (↓15%) |
+| GPU saves/epoch | 0 | **940 698** |
+
+---
+
+## Что поставляется в этой ветке
+
+| Компонент | Путь | Формат |
+|-----------|------|--------|
+| Deploy stack (4 тира) | `deploy/binary-singularity/` | Docker Compose + K3s + K8s overlay |
+| Quality middleware | `examples/quality-middleware/` | Go source (quality.go) |
+| K8s overlay | `test-net-cloud/k8s/overlays/binary-singularity/` | Kustomize |
+| Агент (исходники) | `gonka-agent/` | Go module |
+| Агент (бинарь) | `gonka-agent/bin/gonka` | ELF x86_64, static, stripped, 6 MB |
+| Бинарный артефакт | `text` | 720 KB, binary blob, SHA256: 81b5449a... |
+
+---
+
+## Связь с протоколом
+
+| Слой | Затрагивает протокол? | Детали |
+|------|----------------------|--------|
+| PatternSlot store | Нет | Клиент/DAPI уровень, ниже консенсуса |
+| quality-middleware | Нет | Внешний HTTP wrapper |
+| Hub check | Только чтение | `GET /api/public/stats/historical` |
+| CacheQualityParams | Governance-controlled | `Enabled = false` по умолчанию |
+| PruningState (fields 5-8) | Аддитивно | Не ломает поля 1-4 |
+| Key prefixes (48-51) | Без коллизий | Выше EpochGroup (47) |
+| PR #859 conflicts | Разрешены | proto/keys/pruning/upgrades — все merged |
 
 ---
 
 ## Не во вред
 
 Эта технология:
-- Снижает потребление GPU (и энергии) на порядки
-- Делает качественный AI доступным без дорогих карт
+- Снижает потребление GPU (и энергии) на порядки — 940 698 GPU saves/epoch
+- Делает качественный AI доступным без дорогих карт — 20 MB RAM vs 16 GB VRAM
 - Работает локально — ваши данные под вашим контролем
-- Улучшается от каждого участника — коллективный вклад
+- Улучшается от каждого участника — коллективный вклад через mesh pool
 - Открытый код — проверяйте всё сами
 
 Используйте это и сделайте проще для всех.

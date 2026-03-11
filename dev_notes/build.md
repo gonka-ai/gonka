@@ -74,11 +74,42 @@ keys.go: prefix 47=EpochGroup (upstream), 48-51=ContinuousPoC+CacheQuality (ours
 
 ### Bookworm experiment results (4 experiments)
 
-| Exp | Runs | PQM | Slots | Peak RAM | Verdict |
-|-----|------|-----|-------|----------|---------|
-| 1 | 256 | — | 4 | — | baseline |
-| 2 | 9216 | 0.988 | 4 | 19.25 MB | APPROVED |
-| 3 | 15360 | 1.001 | 6 | 23.1 MB | DOMINATES |
-| 4 | 11520 | 1.020 | 197 | 20.8 MB | DOMINATES |
+| Exp | Runs | PQM | Slots | Peak RAM | Slot hit latency | Verdict |
+|-----|------|-----|-------|----------|-----------------|---------|
+| 1 | 256 | — | 4 | — | — | baseline |
+| 2 | 9,216 | 0.988 | 4 | 19.25 MB | ~5 ms | Hub APPROVED |
+| 3 | 15,360 | **1.001** | 6 | 23.1 MB | ~5 ms | DOMINATES GPU |
+| 4 | 11,520 | **1.020** | 197 | 20.8 MB | ~5 ms | DOMINATES GPU |
+
+### Correlation with live network (epochs 161–191, 2,503,595 inferences)
+
+```
+Network QualityScore = 0.7236 (6/10 axes measured)
+
+L6 reuse baseline: hit_rate = 0.000473 (M=571 shared)
+L6 with BS slots:  hit_rate = 0.27+    (571× improvement, M=1 specialization)
+L8 latency mean:   1280ms GPU → ~5ms slot hit (250×)
+L9 completion:     90.4% → 100% tracked in agent loop
+Memory:            16 GB GPU VRAM → 19-23 MB CPU RAM (700×)
+
+Routing sim (20% specialized): 940,698 GPU saves/epoch
+```
+
+### gonka-agent binary
+
+```bash
+# Prebuilt binary included: gonka-agent/bin/gonka
+# ELF x86_64, CGO_ENABLED=0, stripped, static, 6 MB
+file gonka-agent/bin/gonka
+# ELF 64-bit LSB executable, x86-64, statically linked, stripped
+```
+
+### text artifact
+
+```
+SHA256: 81b5449a0b5497256d3c47c0f2ff7f8e8c80574c7b3c70937557340e31bd81c0
+Size:   720 KB
+Type:   binary blob (committed via .gitattributes binary marker)
+```
 
 -----

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "mocknode1",
+    "host": "mock-node",
+    "inference_port": 8080,
+    "poc_port": 8080,
+    "max_concurrent": 100,
+    "models": {
+      "Qwen/Qwen2.5-7B-Instruct": {
+        "args": []
+      }
+    },
+    "hardware": [
+      {
+        "type": "CPU",
+        "count": 1
+      }
+    ]
+  }
+]
