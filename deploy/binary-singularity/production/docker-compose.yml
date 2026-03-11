@@ -153,5 +153,36 @@ services:
         limits:
           memory: 512M
 
+  # ── gonka-agent: AI coding agent with PatternSlot store + mesh sharing ──────
+  gonka-agent:
+    build:
+      context: ../../../../gonka-agent
+      dockerfile: Dockerfile
+    image: gonka-agent:latest
+    restart: unless-stopped
+    depends_on:
+      embedder:
+        condition: service_healthy
+      quality-middleware:
+        condition: service_healthy
+    volumes:
+      - slots_data:/data/slots
+      - ${BS_RAW_INPUT_DIR:-/tmp}:/mnt/raw-input:ro
+    environment:
+      - GONKA_API_KEY=${GONKA_API_KEY:-}
+      - GONKA_SOURCE_URL=http://quality-middleware:9090
+      - BS_EMBED_URL=http://embedder:8686
+      - BS_QUALITY_URL=http://quality-middleware:9090
+      - BS_SLOT_DIR=/data/slots
+      - BS_RAW_INPUT=${BS_RAW_INPUT:-}
+      - BS_CHUNK_LINES=${BS_CHUNK_LINES:-50}
+      - BS_MIN_SIM_BPS=${BS_MIN_SIM_BPS:-7500}
+      - BS_DISTILL_MODE=${BS_DISTILL_MODE:-continuous}
+      - BS_DISTILL_QUALITY_THRESHOLD=${BS_DISTILL_QUALITY_THRESHOLD:-0.70}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
 volumes:
   slots_data:

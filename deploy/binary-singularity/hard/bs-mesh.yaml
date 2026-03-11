@@ -213,6 +213,63 @@ spec:
     requests:
       storage: 1Gi
 ---
+# ── gonka-agent ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gonka-agent
+  namespace: binary-singularity
+  labels:
+    app: gonka-agent
+    tier: client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gonka-agent
+  template:
+    metadata:
+      labels:
+        app: gonka-agent
+    spec:
+      containers:
+      - name: gonka-agent
+        image: gonka-agent:lite
+        imagePullPolicy: Never
+        env:
+        - name: GONKA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: gonka-keys
+              key: api-key
+              optional: true
+        - name: GONKA_SOURCE_URL
+          value: "http://quality-middleware:9090"
+        - name: BS_EMBED_URL
+          value: "http://embedder:8686"
+        - name: BS_QUALITY_URL
+          value: "http://quality-middleware:9090"
+        - name: BS_SLOT_DIR
+          value: "/data/slots"
+        - name: BS_MIN_SIM_BPS
+          value: "7500"
+        - name: BS_DISTILL_MODE
+          value: "continuous"
+        volumeMounts:
+        - name: slots
+          mountPath: /data/slots
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+      volumes:
+      - name: slots
+        persistentVolumeClaim:
+          claimName: slots-data
+---
 # ── NodePort services for external runner access ──────────────────────────────
 apiVersion: v1
 kind: Service

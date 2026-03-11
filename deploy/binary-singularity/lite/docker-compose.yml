@@ -91,5 +91,33 @@ services:
         limits:
           memory: 256M
 
+  gonka-agent:
+    build:
+      context: ../../../../gonka-agent
+      dockerfile: Dockerfile
+    image: gonka-agent:lite
+    depends_on:
+      embedder:
+        condition: service_healthy
+      mock-node:
+        condition: service_healthy
+    volumes:
+      - slots_data:/data/slots
+      - ${BS_RAW_INPUT:-/dev/null}:/mnt/raw-input:ro
+    environment:
+      - GONKA_API_KEY=${GONKA_API_KEY:-}
+      - GONKA_SOURCE_URL=http://mock-node:8082
+      - BS_EMBED_URL=http://embedder:8686
+      - BS_QUALITY_URL=http://mock-node:8082
+      - BS_SLOT_DIR=/data/slots
+      - BS_RAW_INPUT=${BS_RAW_INPUT:+/mnt/raw-input}
+      - BS_CHUNK_LINES=${BS_CHUNK_LINES:-50}
+      - BS_MIN_SIM_BPS=${BS_MIN_SIM_BPS:-7500}
+      - BS_DISTILL_MODE=${BS_DISTILL_MODE:-continuous}
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
 volumes:
   slots_data:
