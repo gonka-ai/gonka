@@ -12,7 +12,7 @@ import (
 
 // newPhaseTrackerWithPhase creates a broker with a phase tracker initialized to a specific phase.
 func newPhaseTrackerWithPhase(t *testing.T, phase types.EpochPhase) *chainphase.ChainPhaseTracker {
-	tracker := chainphase.NewChainPhaseTracker()
+	tracker := &chainphase.ChainPhaseTracker{}
 
 	// These params will result in the following phases for given block heights:
 	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}

@@ -167,6 +167,21 @@ def test_inference_healthy_no_runner_yet(client):
     assert data["loaded_model"] is None
 
 
+def test_inference_healthy_poc_validating(client):
+    """vLLM is healthy and PoC validation is active."""
+    app.state.inference_manager.is_running.return_value = True
+
+    with patch.dict("api.proxy.vllm_healthy", {8000: True}, clear=True), \
+         patch.dict("api.proxy.poc_status_by_port", {8000: "VALIDATING"}, clear=True):
+        response = client.get("/api/v1/state")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["state"] == "INFERENCE"
+    assert data["inference_healthy"] is True
+    assert data["poc_status"] == "VALIDATING"
+
+
 # ---------------------------------------------------------------------------
 # Multi-backend (multi-GPU) scenarios
 # ---------------------------------------------------------------------------

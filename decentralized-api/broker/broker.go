@@ -133,33 +133,6 @@ func (b *Broker) GetParticipantAddress() string {
 	return b.participantInfo.GetAddress()
 }
 
-// IsPoCv2Enabled returns whether PoC V2 (off-chain artifacts) is enabled.
-// Returns true by default if phaseTracker is not available.
-func (b *Broker) IsPoCv2Enabled() bool {
-	if b == nil || b.phaseTracker == nil {
-		return true // default V2
-	}
-	return b.phaseTracker.IsPoCv2Enabled()
-}
-
-// IsV2EndpointsEnabled returns whether V2 endpoints should be enabled.
-// True when poc_v2_enabled=true OR confirmation_poc_v2_enabled=true (migration mode).
-func (b *Broker) IsV2EndpointsEnabled() bool {
-	if b == nil || b.phaseTracker == nil {
-		return true
-	}
-	return b.phaseTracker.IsPoCv2Enabled() || b.phaseTracker.IsConfirmationPoCv2Enabled()
-}
-
-// IsMigrationMode returns whether we're in migration mode.
-// Migration mode: poc_v2_enabled=false, confirmation_poc_v2_enabled=true.
-func (b *Broker) IsMigrationMode() bool {
-	if b == nil || b.phaseTracker == nil {
-		return false
-	}
-	return !b.phaseTracker.IsPoCv2Enabled() && b.phaseTracker.IsConfirmationPoCv2Enabled()
-}
-
 const PoCBatchesBasePathV2 = "/v2/poc-batches"
 
 func GetPoCCallbackBaseURLV2(callbackUrl string) string {

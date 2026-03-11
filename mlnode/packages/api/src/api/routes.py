@@ -22,7 +22,7 @@ router = APIRouter(
 
 class StateResponse(BaseModel):
     state: ServiceState
-    poc_status: Optional[str] = None          # "IDLE" | "GENERATING" | "MIXED" | "NO_BACKENDS"
+    poc_status: Optional[str] = None          # "IDLE" | "GENERATING" | "VALIDATING" | "MIXED" | "NO_BACKENDS"
     inference_healthy: Optional[bool] = None  # True when ≥1 vLLM backend is up
     loaded_model: Optional[str] = None        # Model the current vLLM process was started with
 
@@ -44,9 +44,12 @@ async def state(request: Request) -> StateResponse:
         )
 
     statuses = [proxy_module.poc_status_by_port.get(p, "") for p in healthy_ports]
+    active = {"GENERATING", "VALIDATING"}
     if all(s == "GENERATING" for s in statuses):
         poc_status = "GENERATING"
-    elif any(s == "GENERATING" for s in statuses):
+    elif all(s == "VALIDATING" for s in statuses):
+        poc_status = "VALIDATING"
+    elif any(s in active for s in statuses):
         poc_status = "MIXED"
     else:
         poc_status = "IDLE"

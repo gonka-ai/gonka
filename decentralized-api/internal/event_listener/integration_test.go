@@ -208,8 +208,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockQueryClient := &MockQueryClient{}
 	mockSeedManager := &MockRandomSeedManager{}
 
-	phaseTracker := chainphase.NewChainPhaseTracker()
-	phaseTracker.UpdatePocV2Enabled(true)
+	phaseTracker := &chainphase.ChainPhaseTracker{}
 
 	// Create mock client factory that tracks calls
 	mockClientFactory := mlnodeclient.NewMockClientFactory()

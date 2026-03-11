@@ -236,11 +236,6 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					"enabled", cache.IsEnabled, "count", len(addresses))
 			}
 
-			// Update PoC V2 enabled flags for runtime V1/V2 switching
-			if params.Params.PocParams != nil {
-				d.phaseTracker.UpdatePocV2Enabled(params.Params.PocParams.PocV2Enabled)
-				d.phaseTracker.UpdateConfirmationPocV2Enabled(params.Params.PocParams.ConfirmationPocV2Enabled)
-			}
 		}
 	}
 

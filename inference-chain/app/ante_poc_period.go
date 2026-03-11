@@ -80,9 +80,7 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 		if err != nil {
 			return err
 		}
-		activeEvent, isActive, _ := ppd.inferenceKeeper.GetActiveConfirmationPoCEvent(ctx)
-		isMigrationTracking := params.PocParams.ConfirmationPocV2Enabled && isActive && activeEvent != nil && activeEvent.EventSequence == 0
-		if !params.PocParams.PocV2Enabled && !isMigrationTracking {
+		if !params.PocParams.PocV2Enabled {
 			ppd.inferenceKeeper.LogDebug(
 				"AnteHandle: PocPeriodValidation - rejecting MsgSubmitPocValidationsV2 (V1 mode)",
 				inferencetypes.PoC,
@@ -107,9 +105,7 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 		if err != nil {
 			return err
 		}
-		activeEvent, isActive, _ := ppd.inferenceKeeper.GetActiveConfirmationPoCEvent(ctx)
-		isMigrationTracking := params.PocParams.ConfirmationPocV2Enabled && isActive && activeEvent != nil && activeEvent.EventSequence == 0
-		if !params.PocParams.PocV2Enabled && !isMigrationTracking {
+		if !params.PocParams.PocV2Enabled {
 			ppd.inferenceKeeper.LogDebug(
 				"AnteHandle: PocPeriodValidation - rejecting MsgPoCV2StoreCommit (V1 mode)",
 				inferencetypes.PoC,
@@ -134,9 +130,7 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 		if err != nil {
 			return err
 		}
-		activeEvent, isActive, _ := ppd.inferenceKeeper.GetActiveConfirmationPoCEvent(ctx)
-		isMigrationTracking := params.PocParams.ConfirmationPocV2Enabled && isActive && activeEvent != nil && activeEvent.EventSequence == 0
-		if !params.PocParams.PocV2Enabled && !isMigrationTracking {
+		if !params.PocParams.PocV2Enabled {
 			ppd.inferenceKeeper.LogDebug(
 				"AnteHandle: PocPeriodValidation - rejecting MsgMLNodeWeightDistribution (V1 mode)",
 				inferencetypes.PoC,

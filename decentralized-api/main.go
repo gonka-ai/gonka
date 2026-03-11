@@ -87,7 +87,7 @@ func main() {
 	// Version sync is handled later in the event processing loop when blockchain is fully ready
 	// This prevents EOF errors during startup from breaking the entire application
 
-	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+	chainPhaseTracker := &chainphase.ChainPhaseTracker{}
 	// NOTE: getParams is waiting for rpc to be ready, don't add request before it
 	params, err := getParams(context.Background(), *recorder)
 	if err != nil {
