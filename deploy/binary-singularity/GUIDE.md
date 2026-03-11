@@ -1,5 +1,9 @@
 # Binary Singularity — dev/binary-singularity
 
+**Ветка:** [`Mayveskii/gonka → dev/binary-singularity`](https://github.com/Mayveskii/gonka/tree/dev/binary-singularity)  
+**PR:** [#859 Semantic Cache](https://github.com/gonka-ai/gonka/pull/859) · **GiP:** [#860 Inference Quality Protocol](https://github.com/gonka-ai/gonka/discussions/860)  
+**Base:** `upgrade-v0.2.11` · **Agent:** [`gonka-agent`](https://github.com/gonkalabs/gonka-agent)
+
 > **НАМ ЛУЧШЕ ЭТО ИСПОЛЬЗОВАТЬ, ОТХОДЯ ОТ ПРОСТЫХ ИСТИН
                  
                    используйте это и сделайте это проще для всех , чтобы заменить услги ЖКХ / юридически сложных flow / разработчиков / исследователей / вносящих вклад в развитие / нуждающихся / этического / вычисляемого / не во вред
@@ -71,9 +75,10 @@ BS_RAW_INPUT=/path/to/your/research/notes.txt
 ### Быстрый старт (5 минут, любой компьютер)
 
 ```bash
-# 1. Клонируйте репозиторий
-git clone https://github.com/gonka-ai/gonka.git
+# 1. Клонируйте форк с бинарным слоем
+git clone https://github.com/Mayveskii/gonka.git
 cd gonka
+git checkout dev/binary-singularity
 
 # 2. Выберите уровень
 

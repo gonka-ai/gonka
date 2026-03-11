@@ -1,5 +1,8 @@
 # Binary Singularity — Deploy Stack
 
+Branch: [`Mayveskii/gonka → dev/binary-singularity`](https://github.com/Mayveskii/gonka/tree/dev/binary-singularity)  
+Relates to: [PR #859](https://github.com/gonka-ai/gonka/pull/859) · [GiP #860](https://github.com/gonka-ai/gonka/discussions/860) · base: `upgrade-v0.2.11`
+
 Four deployment tiers: LITE/MEDIUM/HARD for reproducible testing,
 PRODUCTION for real node infrastructure with GNK tokens and live inference.
 
