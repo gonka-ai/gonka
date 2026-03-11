@@ -1,206 +1,274 @@
-# Бинарная Сингулярность — Гайд для всех
+# Binary Singularity — dev/binary-singularity
 
 > **НАМ ЛУЧШЕ ЭТО ИСПОЛЬЗОВАТЬ, ОТХОДЯ ОТ ПРОСТЫХ ИСТИН**
 
----
-
-## Что это и зачем
-
-Представьте: каждый раз, когда кто-то решает задачу через AI — результат записывается
-как компактный **бинарный паттерн**. Следующий человек с похожей задачей получает
-решение мгновенно, без повторного запроса к GPU. Сеть учится на каждом участнике.
-
-Это не кеш. Это **коллективная память**, которая растёт с каждым взаимодействием
-и становится точнее чем одиночный запрос к модели.
-
-**Доказано:** после 15 360 реальных экспериментов, качество бинарного слоя
-превысило качество одиночного GPU-инференса (PQM = 1.020).
+Branch: `dev/binary-singularity`
+Relates to: [GiP #860](https://github.com/gonka-ai/gonka/discussions/860) · [PR #859](https://github.com/gonka-ai/gonka/pull/859)
 
 ---
 
-## Кому это нужно
+## Что здесь
 
-### Разработчикам
-Вы пишете код. Агент (`gonka-agent`) подключён к сети Gonka и решает задачи.
-Каждое успешное решение → бинарный слот. Следующая похожая задача решается
-быстрее и дешевле. Ваш вклад улучшает сеть для всех разработчиков.
+Эта ветка содержит:
 
-### Исследователям
-Вы работаете с данными, моделями, экспериментами. Подключите **любой файл**
-как бинарный инпут — ваши наблюдения, git-логи, заметки, спецификации.
-Система сама найдёт паттерны и предложит релевантные решения.
+| Компонент | Путь | Что делает |
+|-----------|------|-----------|
+| **Деплой стек** (4 уровня) | `deploy/binary-singularity/` | LITE/MEDIUM/HARD/PRODUCTION |
+| **Quality middleware** | `examples/quality-middleware/` | L6/L8/L9/DX + mesh CPU pool |
+| **K8s overlay** | `test-net-cloud/k8s/overlays/binary-singularity/` | Kustomize на реальный кластер |
+| **Агент** | `gonkalabs/gonka-agent` → `dev/binary-singularity` | gonka CLI + слот стор |
+| **Бинарь агента** | `gonka-agent/bin/gonka` | Готовый бинарь, 6MB, статик |
 
-```bash
-BS_RAW_INPUT=/path/to/your/research/notes.txt
+---
+
+## Зачем это существует — тезисы GiP #860
+
+### Проблема (измеренная, не предполагаемая)
+
+Живые данные сети Gonka (эпохи 161–191, **2 503 595 инференсов**):
+
+```
+Composite QualityScore = 0.7236
+
+Узкие места:
+  L8 Latency consistency: 0.32   (CV = 0.68, σ = 876ms — высокая дисперсия)
+  L0 Compute stability:   0.65   (вес упал на 60% пик-к-минимуму)
+  L6 Reuse (shared):      0.00   (M=571 нод → hit_rate ≈ 0)
+  L4 Usefulness:          не измеряется — механизм не существует
 ```
 
-Всё. Файл передаётся как есть. Без предобработки.
+**Качество инференса невидимо для протокола.** PoC измеряет вычисления. Качество ответа — нет.
 
-### Юристам и специалистам ЖКХ
-Сложные процедуры (подача документов, маршрутизация заявок, проверка соответствия)
-повторяются. Бинарный слой запоминает успешные маршруты. Вместо того чтобы
-каждый раз проходить весь flow заново — система предлагает проверенный путь.
+### Матрица качества (L0–L9)
 
-### Вносящим вклад в развитие (contributors)
-Каждый участник сети добавляет ценность. Ваши решения (через агент, через SDK,
-через raw input) становятся частью общего пула. Чем больше участников —
-тем точнее и быстрее сеть.
+10 осей, каждая активируется через governance:
 
-### Нуждающимся
-Доступ к качественному AI не должен стоить дорого. Бинарный слой снижает
-потребление GPU на порядки. То, что раньше требовало 120ms GPU-инференса,
-решается за 5ms на CPU. Это делает AI доступным.
+| Ось | Измеряет | Источник | Статус |
+|-----|---------|---------|--------|
+| L0 | Стабильность вычислений (CV веса PoC) | Chain | Существует (#856) |
+| L1 | Доступность (heartbeat) | Chain | Существует |
+| L2 | Корректность (RTV validated rate) | Chain | Существует |
+| L3 | Релевантность (cosine prompt↔response) | DAPI auto | #859 infra |
+| **L4** | **Полезность (feedback участников)** | `X-Inference-Feedback` | **Реализовано в агенте** |
+| L5 | Исход (developer webhook) | Developer callback | Запланировано |
+| **L6** | **Переиспользование (cache hit rate)** | #859 | **Измеряется** |
+| L7 | Stream fidelity (SSE completeness) | DAPI auto | Запланировано |
+| **L8** | **Latency consistency (σ/μ)** | DAPI auto | **Измеряется в QM** |
+| **L9** | **Completion rate** | Chain | **Измеряется в QM** |
 
-### Этический аспект
-Система спроектирована так, что:
-- Данные обрабатываются **локально** (embedder на вашей машине)
-- Никакие личные данные не покидают вашу среду без явного действия
-- Quality middleware измеряет качество, а не контент
-- Открытый исходный код — всё проверяемо
+Composite: `QualityScore = Σ(wi × Li)` — веса через governance.
+
+### Специализация — математический аргумент
+
+```
+M=571 (Qwen3-32B, shared): hit_rate = 0.000473
+M=12  (QwQ-32B, low-M):    hit_rate = 0.0225    → 47.6× улучшение
+M=1   (unique model):       hit_rate = 0.27      → 571× улучшение
+```
+
+Экономика специализации математична, не спекулятивна. Нода на одной модели
+получает 100% трафика этой модели → максимальный hit rate → максимальный
+CacheQualityWeight → больше наград → глубже специализация. Петля замкнута.
+
+### Binary Singularity — доказательство PQM > 1.0
+
+Дистилляция успешных решений в бинарные паттерны (PatternSlot: 384-мерный
+вектор + задача + решение). CPU cosine search за 5ms вместо 120ms GPU-инференса.
+
+**Результаты 4 экспериментов на Bookworm (CPU only, 20MB RAM):**
+
+| Эксперимент | Запусков | PQM | Слотов | Вердикт |
+|------------|----------|-----|--------|---------|
+| 1 baseline | 256 | — | 4 | базовая линия |
+| 2 масштаб | 9 216 | **0.988** | 4 | Hub: APPROVED |
+| 3 K3s mesh | 15 360 | **1.001** | 6 | ПРЕВЫШАЕТ GPU |
+| 4 raw input | 11 520 | **1.020** | 197 | ПРЕВЫШАЕТ GPU |
+
+**PQM > 1.0 доказан.** Бинарный слой даёт качество лучше одиночного GPU-инференса.
 
 ---
 
-## Как настроить свою бинарную среду
+## Для кого и как использовать
 
-### Быстрый старт (5 минут, любой компьютер)
+### Для разработчиков — 3 минуты до запуска
 
 ```bash
-# 1. Клонируйте репозиторий
-git clone https://github.com/gonka-ai/gonka.git
-cd gonka
+# Скачать агент (бинарь, без зависимостей)
+curl -L https://github.com/gonkalabs/gonka-agent/raw/dev/binary-singularity/bin/gonka \
+  -o gonka && chmod +x gonka
 
-# 2. Выберите уровень
+# Или собрать из исходников
+git clone https://github.com/gonkalabs/gonka-agent
+cd gonka-agent && go build -o bin/gonka ./cmd/gonka
 
-# УРОВЕНЬ 1: Локальный тест (без ключей, без GPU)
+# Запустить
+cp .env.example .env  # заполнить GONKA_API_KEY
+./gonka "your task"
+```
+
+Агент:
+- Подключён к сети Gonka через opengnk
+- Отправляет `X-Inference-Feedback` (L4 сигнал) автоматически
+- Хранит решения в PatternSlot store (~/.gonka-cache/slots/)
+- Делится паттернами с mesh pool через quality-middleware
+
+### Для исследователей — подключить любые данные
+
+```bash
+# Подать любой файл как бинарный инпут
+BS_RAW_INPUT=/path/to/your/research/notes.txt ./gonka "проанализируй"
+
+# Файл идёт as-is — без предобработки. Возможные источники:
+#   git log --oneline > input.txt
+#   cat ~/Документы/notes.md
+#   any downloaded spec, log, dataset
+```
+
+Параметры:
+```bash
+BS_CHUNK_LINES=50        # строк на чанк
+BS_MIN_SIM_BPS=7500      # порог точности (0.75 cosine)
+BS_EMBED_URL=http://localhost:8686  # embedder
+BS_QUALITY_URL=http://localhost:9090  # quality-middleware (mesh pool)
+```
+
+### Для операторов нод — 4 уровня деплоя
+
+#### LITE — локальный тест (1GB RAM, 15 мин)
+```bash
 cd deploy/binary-singularity/lite
-cp .env.example .env
-./run.sh
+cp .env.example .env && ./run.sh
+```
 
-# УРОВЕНЬ 2: С подключением к сети Gonka
+#### MEDIUM — с opengnk proxy (2GB RAM, живой инференс)
+```bash
 cd deploy/binary-singularity/medium
 cp .env.example .env
-# Заполните GONKA_PRIVATE_KEY и GONKA_ADDRESS
+# Заполнить GONKA_PRIVATE_KEY + GONKA_ADDRESS
 docker compose up -d
+curl http://localhost:9090/quality/stats | jq .
+```
 
-# УРОВЕНЬ 3: Полный mesh (K3s кластер)
+#### HARD — K3s mesh (4GB RAM, полный тест)
+```bash
 cd deploy/binary-singularity/hard
-./run.sh
+./run.sh  # 1 server + 3 agents
+./run.sh --raw-input /path/to/data  # с бинарным инпутом
+```
 
-# УРОВЕНЬ 4: На реальной ноде (продакшен)
+#### PRODUCTION — на реальной ноде (поверх deploy/join/)
+```bash
 cd deploy/binary-singularity/production
 cp .env.example .env
-# Заполните ключи — и запустите
+# GONKA_PRIVATE_KEY, GONKA_ADDRESS, GONKA_API_KEY
 docker compose up -d
 ```
 
-### Установка агента (MacOS / Linux)
-
-```bash
-cd gonka-agent
-cp .env.example .env
-# Заполните GONKA_API_KEY
-
-# Сборка
-go build -o bin/gonka ./cmd/gonka
-
-# Запуск
-./bin/gonka "описание вашей задачи"
-
-# С бинарным инпутом (ваши данные)
-BS_RAW_INPUT=/path/to/your/data ./bin/gonka "проанализируй и предложи решение"
+Архитектура на реальной ноде:
+```
+EXISTING NODE (deploy/join/)
+  tmkms → node → api (DAPI :9000/:9100/:9200)
+  mlnode-308 → inference (nginx :8081/:5050)
+         │
+BINARY SINGULARITY LAYER (этот файл)
+  embedder        :8686  — CPU-only, all-MiniLM-L6-v2
+  opengnk         :8081  — SDK proxy, secp256k1 signing
+  quality-middleware :9090  — L6/L8/L9/DX + mesh CPU pool
+  bs-runtime             — continuous slot distillation
 ```
 
-Агент работает на **любой машине с Go 1.22+**. Нет CGO, нет зависимостей от ОС.
-MacBook, Linux-сервер, Docker — без разницы.
+#### K8s overlay (поверх существующего genesis/join)
+```bash
+kubectl apply -k test-net-cloud/k8s/overlays/binary-singularity/
+```
+Патчит DAPI deployment для включения семантического кеша.
 
-### Для исследователей: настройка бинарной среды
+### Для SDK-клиентов — opengnk совместим с OpenAI
 
-1. **Подготовьте данные** — любой текстовый файл:
-   - Git-лог: `git log --oneline > research_input.txt`
-   - Заметки: ваш файл с наблюдениями
-   - Спецификация: скачанный документ
-   - Результаты экспериментов: CSV, лог, markdown
+```python
+from openai import OpenAI
 
-2. **Настройте переменные:**
-   ```bash
-   # В .env файле агента или деплоя:
-   BS_RAW_INPUT=/path/to/research_input.txt   # ваш файл
-   BS_CHUNK_LINES=50                           # строк на чанк (по умолчанию 50)
-   BS_MIN_SIM_BPS=7500                         # порог точности (0.75 cosine)
-   BS_EMBED_URL=http://localhost:8686           # embedder (запускается автоматически)
-   BS_SLOT_DIR=~/.gonka-cache/slots             # где хранить слоты
-   ```
+client = OpenAI(
+    base_url="http://<node>:8081/v1",
+    api_key="not-needed"  # подпись через secp256k1 в opengnk
+)
+response = client.chat.completions.create(
+    model="Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+    messages=[{"role": "user", "content": "your request"}]
+)
+```
 
-3. **Запустите:**
-   ```bash
-   ./bin/gonka "ваш исследовательский вопрос"
-   ```
+### Для всех остальных
 
-4. **Система сама:**
-   - Прочитает ваш файл as-is
-   - Разобьёт на чанки
-   - Создаст embeddings (CPU, без GPU)
-   - Сформирует бинарные слоты
-   - При следующем запросе — найдёт релевантные паттерны
+Если вы не программист — это нормально. Если у вас есть повторяющиеся задачи
+(юридические документы, ЖКХ процедуры, исследовательские запросы, обучение) —
+бинарный слой запоминает успешные решения и применяет их быстрее с каждым разом.
 
-### Параметры точности
-
-| Параметр | Значение | Что делает |
-|----------|----------|-----------|
-| `BS_MIN_SIM_BPS=9000` | Строгий (0.90) | Только очень похожие паттерны |
-| `BS_MIN_SIM_BPS=7500` | Стандарт (0.75) | Баланс точности и полноты |
-| `BS_MIN_SIM_BPS=6000` | Широкий (0.60) | Больше результатов, но с шумом |
-
-Для исследователей рекомендуется начать с **7500** и повышать до **8500**
-если результаты содержат нерелевантные паттерны.
+Подключить: `BS_RAW_INPUT=/path/to/your/file` — и система находит паттерны сама.
 
 ---
 
-## Как это работает (техническая суть)
+## Как это работает технически
 
 ```
 Ваш запрос
     │
-    ├─→ Embedder (CPU, all-MiniLM-L6-v2, 384 dims)
-    │       │
-    │       └─→ Cosine similarity vs PatternSlot store
-    │               │
-    │               ├─ Найден слот (sim ≥ 0.75) → Инжектируется как контекст
-    │               │                               ↓
-    │               │                          LLM получает готовый паттерн
-    │               │                          + адаптирует к вашей задаче
-    │               │
-    │               └─ Не найден → Обычный инференс через сеть Gonka
+    ├─ PatternSlot store (локальный)
+    │   └─ cosine search: sim ≥ 0.75 → инжектируется как контекст
     │
-    └─→ При успехе: результат → новый PatternSlot → store
+    ├─ Mesh pool (quality-middleware)
+    │   └─ POST /quality/search → паттерны от других участников
+    │
+    ├─ Semcache (локальный)
+    │   └─ семантический кеш предыдущих сессий
+    │
+    └─ LLM (Gonka network) → ответ
+         │
+         └─ при успехе:
+              - Distill → новый PatternSlot (vec + task + solution)
+              - ShareToMesh → POST /quality/slots/share
+              - X-Inference-Feedback: resolved
 ```
 
-Ключевое: слот — это **не кеш ответа**. Это паттерн решения. LLM видит
-паттерн и адаптирует его к конкретной задаче. Поэтому качество растёт.
+Участник 1 решил задачу → слот появляется в mesh pool →
+Участник 2 ищет похожую задачу → находит слот Участника 1 →
+LLM получает контекст → решает быстрее → PQM растёт.
 
 ---
 
-## Результаты экспериментов
+## Связь с протоколом (PR #859 / GiP #860)
 
-| Эксперимент | Запусков | PQM | Слотов | Вердикт |
-|------------|----------|-----|--------|---------|
-| 1 (baseline) | 256 | — | 4 | базовая линия |
-| 2 (масштаб) | 9 216 | 0.988 | 4 | одобрено хабом |
-| 3 (mesh) | 15 360 | **1.001** | 6 | превышает GPU |
-| 4 (raw input) | 11 520 | **1.020** | 197 | превышает GPU |
-
-**PQM > 1.0** = бинарный слой даёт ответы лучше, чем одиночный GPU-инференс.
-Доказано на реальном железе (Debian Bookworm, только CPU, 20 MB RAM).
+| Уровень | Что | Протокол затронут? |
+|---------|-----|-------------------|
+| PatternSlot store | Клиент / DAPI | Нет — ниже консенсуса |
+| quality-middleware | DAPI обёртка | Нет — внешний компонент |
+| Hub check | `/api/public/stats` | Только чтение |
+| CacheQualityParams | Governance-controlled | По умолчанию disabled |
+| PruningState (fields 5-8) | Protocol additive | Аддитивно, не ломает #1-4 |
+| Key prefixes (48-51) | Above EpochGroup (47) | Без коллизий |
 
 ---
 
-## Не во вред
+## Что дальше (Phase 1+)
 
-Эта технология:
-- Снижает потребление GPU (и энергии) на порядки
-- Делает качественный AI доступным без дорогих карт
-- Работает локально — ваши данные под вашим контролем
-- Улучшается от каждого участника — коллективный вклад
-- Открытый код — проверяйте всё сами
+- `GET /v1/models/profiles` — quality scores + специализация нод
+- `GetQualityWeightedExecutor` — трафик по QualityScore вместо random
+- `X-Suggested-Model`, `X-Task-Archetype` — протокол подсказывает лучшую модель
+- SDK (TypeScript / Python) — drop-in замена openai с автоматическим routing
 
-Используйте это и сделайте проще для всех.
+Все эти фичи строятся на инфраструктуре этой ветки.
+
+---
+
+## Благодарности
+
+@blizko, @akup, @gmorgachev — ваши вопросы в PR #859 сделали систему
+точнее. KV-cache и request-level cache действительно разные слои.
+Специализация M=1 действительно математична. Data race действительно была.
+
+Эта ветка — ответ на "нужны данные, не предположения."
+
+**PQM = 1.020 измерен. Не вычислен. Измерен.**
+
+Beta for researchers encourages faith in you,
+and we believe in you and love you, thank you guys ♥
