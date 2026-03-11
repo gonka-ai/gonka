@@ -25,10 +25,8 @@ func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeRe
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
 		result.FinalStatus = worker.node.State.CurrentStatus // Status is unchanged
 		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
 		return result
 	}
 
@@ -57,10 +55,8 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
 		result.FinalStatus = worker.node.State.CurrentStatus
 		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
 		return result
 	}
 
@@ -70,12 +66,10 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			// Check if loaded model matches expected
 			modelMatches := true
 			var expectedModel string
-			worker.broker.mu.RLock()
 			for modelId := range worker.node.State.EpochModels {
 				expectedModel = modelId
 				break
 			}
-			worker.broker.mu.RUnlock()
 			if expectedModel != "" {
 				if loadedModels, err := worker.GetClient().GetLoadedModels(ctx); err != nil {
 					logging.Debug("GetLoadedModels failed, assuming model match", types.Nodes, "node_id", worker.nodeId, "error", err)
@@ -141,7 +135,6 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		}
 
 		hasIntersection := false
-		worker.broker.mu.RLock()
 		for _, govModel := range govModels.Model {
 			if _, ok := worker.node.Node.Models[govModel.Id]; ok {
 				hasIntersection = true
@@ -149,7 +142,6 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 				break
 			}
 		}
-		worker.broker.mu.RUnlock()
 
 		if !hasIntersection {
 			result.Succeeded = false
@@ -174,11 +166,9 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 
 	// Merge epoch model args with local ones
 	var localArgs []string
-	worker.broker.mu.RLock()
 	if localModelConfig, ok := worker.node.Node.Models[selectedModel.Id]; ok {
-		localArgs = append([]string(nil), localModelConfig.Args...)
+		localArgs = localModelConfig.Args
 	}
-	worker.broker.mu.RUnlock()
 	mergedArgs := worker.broker.MergeModelArgs(selectedModel.ModelArgs, localArgs)
 
 	if err := worker.GetClient().InferenceUp(ctx, selectedModel.Id, mergedArgs); err != nil {
@@ -212,10 +202,8 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
 		result.FinalStatus = worker.node.State.CurrentStatus
 		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
 		return result
 	}
 
@@ -266,13 +254,10 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 	if c.Message != "" {
 		logging.Debug(c.Message, types.Nodes, "node_id", worker.nodeId)
 	}
-	worker.broker.mu.RLock()
-	currentStatus := worker.node.State.CurrentStatus
-	worker.broker.mu.RUnlock()
 	return NodeResult{
 		Succeeded:      true,
-		FinalStatus:    currentStatus,
-		OriginalTarget: currentStatus,
+		FinalStatus:    worker.node.State.CurrentStatus,
+		OriginalTarget: worker.node.State.CurrentStatus,
 	}
 }
 
@@ -295,10 +280,8 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
 		result.FinalStatus = worker.node.State.CurrentStatus
 		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
 		return result
 	}
 
@@ -318,14 +301,11 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		}
 	}
 
-	worker.broker.mu.RLock()
-	nodeNum := worker.node.Node.NodeNum
-	worker.broker.mu.RUnlock()
 	req := mlnodeclient.PoCInitGenerateRequestV2{
 		BlockHash:   c.BlockHash,
 		BlockHeight: c.BlockHeight,
 		PublicKey:   c.PubKey,
-		NodeId:      int(nodeNum),
+		NodeId:      int(worker.node.Node.NodeNum),
 		NodeCount:   c.TotalNodes,
 		Params: mlnodeclient.PoCParamsV2{
 			Model:  c.Model,
@@ -364,24 +344,19 @@ func (c TransitionPoCToValidatingCommandV2) Execute(ctx context.Context, worker 
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
 		result.FinalStatus = worker.node.State.CurrentStatus
 		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
 		return result
 	}
 
 	// Validate node is in a state that can transition to POC/Validating.
 	// Accept only POC or INFERENCE (matching filterNodesForValidation criteria).
-	worker.broker.mu.RLock()
 	currentStatus := worker.node.State.CurrentStatus
-	currentPocStatus := worker.node.State.PocCurrentStatus
-	worker.broker.mu.RUnlock()
 	if currentStatus != types.HardwareNodeStatus_POC && currentStatus != types.HardwareNodeStatus_INFERENCE {
 		result.Succeeded = false
 		result.Error = "cannot transition to POC/Validating: node is " + currentStatus.String()
 		result.FinalStatus = currentStatus
-		result.FinalPocStatus = currentPocStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
 		logging.Warn("[TransitionPoCToValidatingCommandV2] Rejecting transition due to invalid state", types.PoC,
 			"node_id", worker.nodeId, "current_status", currentStatus.String())
 		return result
