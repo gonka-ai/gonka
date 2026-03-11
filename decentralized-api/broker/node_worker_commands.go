@@ -114,17 +114,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	var selectedModel *types.Model
-	worker.broker.mu.RLock()
-	epochModelsEmpty := len(worker.node.State.EpochModels) == 0
-	if !epochModelsEmpty {
-		for _, m := range worker.node.State.EpochModels {
-			selectedModel = &m
-			break
-		}
-	}
-	worker.broker.mu.RUnlock()
-
-	if epochModelsEmpty {
+	if len(worker.node.State.EpochModels) == 0 {
 		govModels, err := worker.broker.chainBridge.GetGovernanceModels()
 		if err != nil {
 			result.Succeeded = false
@@ -152,6 +142,11 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		}
 
 		logging.Info("No epoch models configured for this node, using a governance model from one the supported by the node", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
+	} else {
+		for _, m := range worker.node.State.EpochModels {
+			selectedModel = &m
+			break
+		}
 	}
 
 	if selectedModel == nil || selectedModel.Id == "" {
