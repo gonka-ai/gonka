@@ -14,16 +14,17 @@ import (
 
 type (
 	Keeper struct {
-		cdc           codec.BinaryCodec
-		storeService  store.KVStoreService
-		logger        log.Logger
-		BankKeeper    types.BookkeepingBankKeeper
-		BankView      types.BankKeeper
-		validatorSet  types.ValidatorSet
-		group         types.GroupMessageKeeper
-		Staking       types.StakingKeeper
-		BlsKeeper     types.BlsKeeper
-		UpgradeKeeper types.UpgradeKeeper
+		cdc                   codec.BinaryCodec
+		storeService          store.KVStoreService
+		transientStoreService store.TransientStoreService
+		logger                log.Logger
+		BankKeeper            types.BookkeepingBankKeeper
+		BankView              types.BankKeeper
+		validatorSet          types.ValidatorSet
+		group                 types.GroupMessageKeeper
+		Staking               types.StakingKeeper
+		BlsKeeper             types.BlsKeeper
+		UpgradeKeeper         types.UpgradeKeeper
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
 		authority     string
@@ -44,8 +45,10 @@ type (
 		PoCV2StoreCommits         collections.Map[collections.Pair[int64, sdk.AccAddress], types.PoCV2StoreCommit]
 		MLNodeWeightDistributions collections.Map[collections.Pair[int64, sdk.AccAddress], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
-		ModelCurrentPriceMap collections.Map[string, uint64]
-		ModelCapacityMap     collections.Map[string, uint64]
+		ModelCurrentPriceMap                collections.Map[string, uint64]
+		ModelCapacityMap                    collections.Map[string, uint64]
+		ModelLoadRollingWindowMap           collections.Map[string, types.RollingWindowState]
+		ModelInferenceCountRollingWindowMap collections.Map[string, types.RollingWindowState]
 		// Governance models
 		Models                        collections.Map[string, types.Model]
 		Inferences                    collections.Map[string, types.Inference]
@@ -56,7 +59,9 @@ type (
 		// Epoch collections
 		Epochs                    collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex       collections.Item[uint64]
+		// TODO(v0.2.11-cleanup): remove legacy aggregate map after upgrade migration period.
 		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		EpochGroupValidationEntry collections.KeySet[collections.Triple[uint64, string, string]]
 		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
 		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
 		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
@@ -86,12 +91,14 @@ type (
 		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
+		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 	}
 )
 
 func NewKeeper(
 	cdc codec.BinaryCodec,
 	storeService store.KVStoreService,
+	transientStoreService store.TransientStoreService,
 	logger log.Logger,
 	authority string,
 	bank types.BookkeepingBankKeeper,
@@ -115,22 +122,23 @@ func NewKeeper(
 	sb := collections.NewSchemaBuilder(storeService)
 
 	k := Keeper{
-		cdc:                 cdc,
-		storeService:        storeService,
-		authority:           authority,
-		logger:              logger,
-		BankKeeper:          bank,
-		BankView:            bankView,
-		group:               group,
-		validatorSet:        validatorSet,
-		Staking:             staking,
-		AccountKeeper:       accountKeeper,
-		AuthzKeeper:         authzKeeper,
-		BlsKeeper:           blsKeeper,
-		collateralKeeper:    collateralKeeper,
-		streamvestingKeeper: streamvestingKeeper,
-		getWasmKeeper:       getWasmKeeper,
-		UpgradeKeeper:       upgradeKeeper,
+		cdc:                   cdc,
+		storeService:          storeService,
+		transientStoreService: transientStoreService,
+		authority:             authority,
+		logger:                logger,
+		BankKeeper:            bank,
+		BankView:              bankView,
+		group:                 group,
+		validatorSet:          validatorSet,
+		Staking:               staking,
+		AccountKeeper:         accountKeeper,
+		AuthzKeeper:           authzKeeper,
+		BlsKeeper:             blsKeeper,
+		collateralKeeper:      collateralKeeper,
+		streamvestingKeeper:   streamvestingKeeper,
+		getWasmKeeper:         getWasmKeeper,
+		UpgradeKeeper:         upgradeKeeper,
 		// collection init
 		Participants: collections.NewMap(
 			sb,
@@ -197,6 +205,20 @@ func NewKeeper(
 			collections.StringKey,
 			collections.Uint64Value,
 		),
+		ModelLoadRollingWindowMap: collections.NewMap(
+			sb,
+			types.ModelLoadRollingWindowPrefix,
+			"model_load_rolling_window",
+			collections.StringKey,
+			codec.CollValue[types.RollingWindowState](cdc),
+		),
+		ModelInferenceCountRollingWindowMap: collections.NewMap(
+			sb,
+			types.ModelInferenceCountRollingWindowPrefix,
+			"model_inference_count_rolling_window",
+			collections.StringKey,
+			codec.CollValue[types.RollingWindowState](cdc),
+		),
 		// governance models map
 		Models: collections.NewMap(
 			sb,
@@ -256,12 +278,19 @@ func NewKeeper(
 			"effective_epoch_index",
 			collections.Uint64Value,
 		),
+		// TODO(v0.2.11-cleanup): remove legacy aggregate map wiring after migration period.
 		EpochGroupValidationsMap: collections.NewMap(
 			sb,
 			types.EpochGroupValidationsPrefix,
 			"epoch_group_validations",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupValidations](cdc),
+		),
+		EpochGroupValidationEntry: collections.NewKeySet(
+			sb,
+			types.EpochGroupValidationEntryPrefix,
+			"epoch_group_validation_entry",
+			collections.TripleKeyCodec(collections.Uint64Key, collections.StringKey, collections.StringKey),
 		),
 		SettleAmounts: collections.NewMap(
 			sb,
@@ -427,6 +456,12 @@ func NewKeeper(
 			"punishment_grace_epochs",
 			collections.Uint64Key,
 			codec.CollValue[types.GraceEpochParams](cdc),
+		),
+		ActiveParticipantsSet: collections.NewKeySet(
+			sb,
+			types.ActiveParticipantsCachePrefix,
+			"active_participants_cache",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
 	}
 	// Build the collections schema
