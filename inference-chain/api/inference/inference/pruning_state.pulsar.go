@@ -13,11 +13,15 @@ import (
 )
 
 var (
-	md_PruningState                                      protoreflect.MessageDescriptor
-	fd_PruningState_poc_batches_pruned_epoch             protoreflect.FieldDescriptor
-	fd_PruningState_poc_validations_pruned_epoch         protoreflect.FieldDescriptor
-	fd_PruningState_inference_pruned_epoch               protoreflect.FieldDescriptor
-	fd_PruningState_epoch_group_validations_pruned_epoch protoreflect.FieldDescriptor
+	md_PruningState                                            protoreflect.MessageDescriptor
+	fd_PruningState_poc_batches_pruned_epoch                   protoreflect.FieldDescriptor
+	fd_PruningState_poc_validations_pruned_epoch               protoreflect.FieldDescriptor
+	fd_PruningState_inference_pruned_epoch                     protoreflect.FieldDescriptor
+	fd_PruningState_epoch_group_validations_pruned_epoch       protoreflect.FieldDescriptor
+	fd_PruningState_continuous_poc_commits_pruned_epoch        protoreflect.FieldDescriptor
+	fd_PruningState_continuous_poc_challenges_pruned_epoch     protoreflect.FieldDescriptor
+	fd_PruningState_continuous_poc_summaries_pruned_epoch      protoreflect.FieldDescriptor
+	fd_PruningState_cache_quality_epoch_summaries_pruned_epoch protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -27,6 +31,10 @@ func init() {
 	fd_PruningState_poc_validations_pruned_epoch = md_PruningState.Fields().ByName("poc_validations_pruned_epoch")
 	fd_PruningState_inference_pruned_epoch = md_PruningState.Fields().ByName("inference_pruned_epoch")
 	fd_PruningState_epoch_group_validations_pruned_epoch = md_PruningState.Fields().ByName("epoch_group_validations_pruned_epoch")
+	fd_PruningState_continuous_poc_commits_pruned_epoch = md_PruningState.Fields().ByName("continuous_poc_commits_pruned_epoch")
+	fd_PruningState_continuous_poc_challenges_pruned_epoch = md_PruningState.Fields().ByName("continuous_poc_challenges_pruned_epoch")
+	fd_PruningState_continuous_poc_summaries_pruned_epoch = md_PruningState.Fields().ByName("continuous_poc_summaries_pruned_epoch")
+	fd_PruningState_cache_quality_epoch_summaries_pruned_epoch = md_PruningState.Fields().ByName("cache_quality_epoch_summaries_pruned_epoch")
 }
 
 var _ protoreflect.Message = (*fastReflection_PruningState)(nil)
@@ -118,6 +126,30 @@ func (x *fastReflection_PruningState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if x.ContinuousPocCommitsPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.ContinuousPocCommitsPrunedEpoch)
+		if !f(fd_PruningState_continuous_poc_commits_pruned_epoch, value) {
+			return
+		}
+	}
+	if x.ContinuousPocChallengesPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.ContinuousPocChallengesPrunedEpoch)
+		if !f(fd_PruningState_continuous_poc_challenges_pruned_epoch, value) {
+			return
+		}
+	}
+	if x.ContinuousPocSummariesPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.ContinuousPocSummariesPrunedEpoch)
+		if !f(fd_PruningState_continuous_poc_summaries_pruned_epoch, value) {
+			return
+		}
+	}
+	if x.CacheQualityEpochSummariesPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.CacheQualityEpochSummariesPrunedEpoch)
+		if !f(fd_PruningState_cache_quality_epoch_summaries_pruned_epoch, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -141,6 +173,14 @@ func (x *fastReflection_PruningState) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.InferencePrunedEpoch != int64(0)
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
 		return x.EpochGroupValidationsPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.continuous_poc_commits_pruned_epoch":
+		return x.ContinuousPocCommitsPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.continuous_poc_challenges_pruned_epoch":
+		return x.ContinuousPocChallengesPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.continuous_poc_summaries_pruned_epoch":
+		return x.ContinuousPocSummariesPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.cache_quality_epoch_summaries_pruned_epoch":
+		return x.CacheQualityEpochSummariesPrunedEpoch != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -165,6 +205,14 @@ func (x *fastReflection_PruningState) Clear(fd protoreflect.FieldDescriptor) {
 		x.InferencePrunedEpoch = int64(0)
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
 		x.EpochGroupValidationsPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.continuous_poc_commits_pruned_epoch":
+		x.ContinuousPocCommitsPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.continuous_poc_challenges_pruned_epoch":
+		x.ContinuousPocChallengesPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.continuous_poc_summaries_pruned_epoch":
+		x.ContinuousPocSummariesPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.cache_quality_epoch_summaries_pruned_epoch":
+		x.CacheQualityEpochSummariesPrunedEpoch = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -192,6 +240,18 @@ func (x *fastReflection_PruningState) Get(descriptor protoreflect.FieldDescripto
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
 		value := x.EpochGroupValidationsPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.continuous_poc_commits_pruned_epoch":
+		value := x.ContinuousPocCommitsPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.continuous_poc_challenges_pruned_epoch":
+		value := x.ContinuousPocChallengesPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.continuous_poc_summaries_pruned_epoch":
+		value := x.ContinuousPocSummariesPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.cache_quality_epoch_summaries_pruned_epoch":
+		value := x.CacheQualityEpochSummariesPrunedEpoch
 		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
@@ -221,6 +281,14 @@ func (x *fastReflection_PruningState) Set(fd protoreflect.FieldDescriptor, value
 		x.InferencePrunedEpoch = value.Int()
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
 		x.EpochGroupValidationsPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.continuous_poc_commits_pruned_epoch":
+		x.ContinuousPocCommitsPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.continuous_poc_challenges_pruned_epoch":
+		x.ContinuousPocChallengesPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.continuous_poc_summaries_pruned_epoch":
+		x.ContinuousPocSummariesPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.cache_quality_epoch_summaries_pruned_epoch":
+		x.CacheQualityEpochSummariesPrunedEpoch = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -249,6 +317,14 @@ func (x *fastReflection_PruningState) Mutable(fd protoreflect.FieldDescriptor) p
 		panic(fmt.Errorf("field inference_pruned_epoch of message inference.inference.PruningState is not mutable"))
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
 		panic(fmt.Errorf("field epoch_group_validations_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.continuous_poc_commits_pruned_epoch":
+		panic(fmt.Errorf("field continuous_poc_commits_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.continuous_poc_challenges_pruned_epoch":
+		panic(fmt.Errorf("field continuous_poc_challenges_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.continuous_poc_summaries_pruned_epoch":
+		panic(fmt.Errorf("field continuous_poc_summaries_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.cache_quality_epoch_summaries_pruned_epoch":
+		panic(fmt.Errorf("field cache_quality_epoch_summaries_pruned_epoch of message inference.inference.PruningState is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -269,6 +345,14 @@ func (x *fastReflection_PruningState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.PruningState.inference_pruned_epoch":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.continuous_poc_commits_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.continuous_poc_challenges_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.continuous_poc_summaries_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.cache_quality_epoch_summaries_pruned_epoch":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
@@ -351,6 +435,18 @@ func (x *fastReflection_PruningState) ProtoMethods() *protoiface.Methods {
 		if x.EpochGroupValidationsPrunedEpoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.EpochGroupValidationsPrunedEpoch))
 		}
+		if x.ContinuousPocCommitsPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.ContinuousPocCommitsPrunedEpoch))
+		}
+		if x.ContinuousPocChallengesPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.ContinuousPocChallengesPrunedEpoch))
+		}
+		if x.ContinuousPocSummariesPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.ContinuousPocSummariesPrunedEpoch))
+		}
+		if x.CacheQualityEpochSummariesPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.CacheQualityEpochSummariesPrunedEpoch))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -379,6 +475,26 @@ func (x *fastReflection_PruningState) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.CacheQualityEpochSummariesPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CacheQualityEpochSummariesPrunedEpoch))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.ContinuousPocSummariesPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ContinuousPocSummariesPrunedEpoch))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.ContinuousPocChallengesPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ContinuousPocChallengesPrunedEpoch))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.ContinuousPocCommitsPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ContinuousPocCommitsPrunedEpoch))
+			i--
+			dAtA[i] = 0x28
 		}
 		if x.EpochGroupValidationsPrunedEpoch != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochGroupValidationsPrunedEpoch))
@@ -525,6 +641,82 @@ func (x *fastReflection_PruningState) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ContinuousPocCommitsPrunedEpoch", wireType)
+				}
+				x.ContinuousPocCommitsPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ContinuousPocCommitsPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ContinuousPocChallengesPrunedEpoch", wireType)
+				}
+				x.ContinuousPocChallengesPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ContinuousPocChallengesPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ContinuousPocSummariesPrunedEpoch", wireType)
+				}
+				x.ContinuousPocSummariesPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ContinuousPocSummariesPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CacheQualityEpochSummariesPrunedEpoch", wireType)
+				}
+				x.CacheQualityEpochSummariesPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CacheQualityEpochSummariesPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -578,10 +770,14 @@ type PruningState struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	PocBatchesPrunedEpoch            int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
-	PocValidationsPrunedEpoch        int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
-	InferencePrunedEpoch             int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
-	EpochGroupValidationsPrunedEpoch int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
+	PocBatchesPrunedEpoch                 int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
+	PocValidationsPrunedEpoch             int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
+	InferencePrunedEpoch                  int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
+	EpochGroupValidationsPrunedEpoch      int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
+	ContinuousPocCommitsPrunedEpoch       int64 `protobuf:"varint,5,opt,name=continuous_poc_commits_pruned_epoch,json=continuousPocCommitsPrunedEpoch,proto3" json:"continuous_poc_commits_pruned_epoch,omitempty"`
+	ContinuousPocChallengesPrunedEpoch    int64 `protobuf:"varint,6,opt,name=continuous_poc_challenges_pruned_epoch,json=continuousPocChallengesPrunedEpoch,proto3" json:"continuous_poc_challenges_pruned_epoch,omitempty"`
+	ContinuousPocSummariesPrunedEpoch     int64 `protobuf:"varint,7,opt,name=continuous_poc_summaries_pruned_epoch,json=continuousPocSummariesPrunedEpoch,proto3" json:"continuous_poc_summaries_pruned_epoch,omitempty"`
+	CacheQualityEpochSummariesPrunedEpoch int64 `protobuf:"varint,8,opt,name=cache_quality_epoch_summaries_pruned_epoch,json=cacheQualityEpochSummariesPrunedEpoch,proto3" json:"cache_quality_epoch_summaries_pruned_epoch,omitempty"`
 }
 
 func (x *PruningState) Reset() {
@@ -632,14 +828,42 @@ func (x *PruningState) GetEpochGroupValidationsPrunedEpoch() int64 {
 	return 0
 }
 
+func (x *PruningState) GetContinuousPocCommitsPrunedEpoch() int64 {
+	if x != nil {
+		return x.ContinuousPocCommitsPrunedEpoch
+	}
+	return 0
+}
+
+func (x *PruningState) GetContinuousPocChallengesPrunedEpoch() int64 {
+	if x != nil {
+		return x.ContinuousPocChallengesPrunedEpoch
+	}
+	return 0
+}
+
+func (x *PruningState) GetContinuousPocSummariesPrunedEpoch() int64 {
+	if x != nil {
+		return x.ContinuousPocSummariesPrunedEpoch
+	}
+	return 0
+}
+
+func (x *PruningState) GetCacheQualityEpochSummariesPrunedEpoch() int64 {
+	if x != nil {
+		return x.CacheQualityEpochSummariesPrunedEpoch
+	}
+	return 0
+}
+
 var File_inference_inference_pruning_state_proto protoreflect.FileDescriptor
 
 var file_inference_inference_pruning_state_proto_rawDesc = []byte{
 	0x0a, 0x27, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x74,
 	0x61, 0x74, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x8e,
-	0x02, 0x0a, 0x0c, 0x50, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xdd,
+	0x04, 0x0a, 0x0c, 0x50, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12,
 	0x37, 0x0a, 0x18, 0x70, 0x6f, 0x63, 0x5f, 0x62, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x5f, 0x70,
 	0x72, 0x75, 0x6e, 0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x03, 0x52, 0x15, 0x70, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x50, 0x72, 0x75,
@@ -655,20 +879,41 @@ var file_inference_inference_pruning_state_proto_rawDesc = []byte{
 	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65,
 	0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x20, 0x65,
 	0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x42,
-	0xbf, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x72, 0x75,
-	0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
-	0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
-	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47,
-	0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x69, 0x6f, 0x6e, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12,
+	0x4c, 0x0a, 0x23, 0x63, 0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x75, 0x6f, 0x75, 0x73, 0x5f, 0x70, 0x6f,
+	0x63, 0x5f, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65, 0x64,
+	0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1f, 0x63, 0x6f,
+	0x6e, 0x74, 0x69, 0x6e, 0x75, 0x6f, 0x75, 0x73, 0x50, 0x6f, 0x63, 0x43, 0x6f, 0x6d, 0x6d, 0x69,
+	0x74, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12, 0x52, 0x0a,
+	0x26, 0x63, 0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x75, 0x6f, 0x75, 0x73, 0x5f, 0x70, 0x6f, 0x63, 0x5f,
+	0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65,
+	0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x22, 0x63,
+	0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x75, 0x6f, 0x75, 0x73, 0x50, 0x6f, 0x63, 0x43, 0x68, 0x61, 0x6c,
+	0x6c, 0x65, 0x6e, 0x67, 0x65, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63,
+	0x68, 0x12, 0x50, 0x0a, 0x25, 0x63, 0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x75, 0x6f, 0x75, 0x73, 0x5f,
+	0x70, 0x6f, 0x63, 0x5f, 0x73, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x69, 0x65, 0x73, 0x5f, 0x70, 0x72,
+	0x75, 0x6e, 0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x21, 0x63, 0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x75, 0x6f, 0x75, 0x73, 0x50, 0x6f, 0x63, 0x53,
+	0x75, 0x6d, 0x6d, 0x61, 0x72, 0x69, 0x65, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70,
+	0x6f, 0x63, 0x68, 0x12, 0x59, 0x0a, 0x2a, 0x63, 0x61, 0x63, 0x68, 0x65, 0x5f, 0x71, 0x75, 0x61,
+	0x6c, 0x69, 0x74, 0x79, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x73, 0x75, 0x6d, 0x6d, 0x61,
+	0x72, 0x69, 0x65, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63,
+	0x68, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x25, 0x63, 0x61, 0x63, 0x68, 0x65, 0x51, 0x75,
+	0x61, 0x6c, 0x69, 0x74, 0x79, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x53, 0x75, 0x6d, 0x6d, 0x61, 0x72,
+	0x69, 0x65, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x42, 0xbf,
+	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x72, 0x75, 0x6e,
+	0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
+	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
+	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
+	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

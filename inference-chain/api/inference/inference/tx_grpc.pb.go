@@ -61,6 +61,7 @@ const (
 	Msg_SetTrainingAllowList_FullMethodName             = "/inference.inference.Msg/SetTrainingAllowList"
 	Msg_AddParticipantsToAllowList_FullMethodName       = "/inference.inference.Msg/AddParticipantsToAllowList"
 	Msg_RemoveParticipantsFromAllowList_FullMethodName  = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
+	Msg_SubmitCacheQualitySummary_FullMethodName        = "/inference.inference.Msg/SubmitCacheQualitySummary"
 )
 
 // MsgClient is the client API for Msg service.
@@ -113,6 +114,7 @@ type MsgClient interface {
 	SetTrainingAllowList(ctx context.Context, in *MsgSetTrainingAllowList, opts ...grpc.CallOption) (*MsgSetTrainingAllowListResponse, error)
 	AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error)
 	RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error)
+	SubmitCacheQualitySummary(ctx context.Context, in *MsgSubmitCacheQualitySummary, opts ...grpc.CallOption) (*MsgSubmitCacheQualitySummaryResponse, error)
 }
 
 type msgClient struct {
@@ -501,6 +503,15 @@ func (c *msgClient) RemoveParticipantsFromAllowList(ctx context.Context, in *Msg
 	return out, nil
 }
 
+func (c *msgClient) SubmitCacheQualitySummary(ctx context.Context, in *MsgSubmitCacheQualitySummary, opts ...grpc.CallOption) (*MsgSubmitCacheQualitySummaryResponse, error) {
+	out := new(MsgSubmitCacheQualitySummaryResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitCacheQualitySummary_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -551,6 +562,7 @@ type MsgServer interface {
 	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
 	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
 	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
+	SubmitCacheQualitySummary(context.Context, *MsgSubmitCacheQualitySummary) (*MsgSubmitCacheQualitySummaryResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -683,6 +695,9 @@ func (UnimplementedMsgServer) AddParticipantsToAllowList(context.Context, *MsgAd
 }
 func (UnimplementedMsgServer) RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveParticipantsFromAllowList not implemented")
+}
+func (UnimplementedMsgServer) SubmitCacheQualitySummary(context.Context, *MsgSubmitCacheQualitySummary) (*MsgSubmitCacheQualitySummaryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitCacheQualitySummary not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1453,6 +1468,24 @@ func _Msg_RemoveParticipantsFromAllowList_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitCacheQualitySummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitCacheQualitySummary)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitCacheQualitySummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitCacheQualitySummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitCacheQualitySummary(ctx, req.(*MsgSubmitCacheQualitySummary))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1627,6 +1660,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveParticipantsFromAllowList",
 			Handler:    _Msg_RemoveParticipantsFromAllowList_Handler,
+		},
+		{
+			MethodName: "SubmitCacheQualitySummary",
+			Handler:    _Msg_SubmitCacheQualitySummary_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
