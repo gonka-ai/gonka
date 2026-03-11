@@ -37,7 +37,7 @@ services:
     image: bs-embedder:latest
     build:
       context: ../../../binary-singularity
-      dockerfile: ../../../binary-singularity/Dockerfile.embedder
+      dockerfile: Dockerfile.embedder
     restart: unless-stopped
     ports:
       - "${EMBED_PORT:-8686}:8686"
@@ -92,7 +92,7 @@ services:
     image: bs-quality-middleware:latest
     build:
       context: ../../../
-      dockerfile: ../../../examples/quality-middleware/Dockerfile
+      dockerfile: examples/quality-middleware/Dockerfile
     restart: unless-stopped
     ports:
       - "${QM_PORT:-9090}:9090"
@@ -125,7 +125,7 @@ services:
     image: bs-runtime:latest
     build:
       context: ../../../binary-singularity
-      dockerfile: ../../../binary-singularity/Dockerfile.runtime
+      dockerfile: Dockerfile.runtime
     restart: unless-stopped
     depends_on:
       embedder:
