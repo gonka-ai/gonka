@@ -14,6 +14,10 @@ type NodeWorkerCommand interface {
 	Execute(ctx context.Context, worker *NodeWorker) NodeResult
 }
 
+func getWorkerSnapshot(worker *NodeWorker) WorkerNodeSnapshot {
+	return worker.broker.GetWorkerNodeSnapshotWithFallback(worker.nodeId, worker.node)
+}
+
 // StopNodeCommand stops the ML node
 type StopNodeCommand struct{}
 
@@ -25,10 +29,9 @@ func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeRe
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
-		result.FinalStatus = worker.node.State.CurrentStatus // Status is unchanged
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
+		snapshot := getWorkerSnapshot(worker)
+		result.FinalStatus = snapshot.CurrentStatus // Status is unchanged
+		result.FinalPocStatus = snapshot.PocCurrentStatus
 		return result
 	}
 
@@ -57,10 +60,9 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
-		result.FinalStatus = worker.node.State.CurrentStatus
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
+		snapshot := getWorkerSnapshot(worker)
+		result.FinalStatus = snapshot.CurrentStatus
+		result.FinalPocStatus = snapshot.PocCurrentStatus
 		return result
 	}
 
@@ -70,12 +72,11 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			// Check if loaded model matches expected
 			modelMatches := true
 			var expectedModel string
-			worker.broker.mu.RLock()
-			for modelId := range worker.node.State.EpochModels {
+			snapshot := getWorkerSnapshot(worker)
+			for modelId := range snapshot.EpochModels {
 				expectedModel = modelId
 				break
 			}
-			worker.broker.mu.RUnlock()
 			if expectedModel != "" {
 				if loadedModels, err := worker.GetClient().GetLoadedModels(ctx); err != nil {
 					logging.Debug("GetLoadedModels failed, assuming model match", types.Nodes, "node_id", worker.nodeId, "error", err)
@@ -120,15 +121,15 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	var selectedModel *types.Model
-	worker.broker.mu.RLock()
-	epochModelsEmpty := len(worker.node.State.EpochModels) == 0
+	snapshot := getWorkerSnapshot(worker)
+	epochModelsEmpty := len(snapshot.EpochModels) == 0
 	if !epochModelsEmpty {
-		for _, m := range worker.node.State.EpochModels {
-			selectedModel = &m
+		for _, m := range snapshot.EpochModels {
+			modelCopy := m
+			selectedModel = &modelCopy
 			break
 		}
 	}
-	worker.broker.mu.RUnlock()
 
 	if epochModelsEmpty {
 		govModels, err := worker.broker.chainBridge.GetGovernanceModels()
@@ -141,15 +142,14 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		}
 
 		hasIntersection := false
-		worker.broker.mu.RLock()
+		snapshot = getWorkerSnapshot(worker)
 		for _, govModel := range govModels.Model {
-			if _, ok := worker.node.Node.Models[govModel.Id]; ok {
+			if _, ok := snapshot.NodeModels[govModel.Id]; ok {
 				hasIntersection = true
 				selectedModel = &govModel
 				break
 			}
 		}
-		worker.broker.mu.RUnlock()
 
 		if !hasIntersection {
 			result.Succeeded = false
@@ -174,11 +174,10 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 
 	// Merge epoch model args with local ones
 	var localArgs []string
-	worker.broker.mu.RLock()
-	if localModelConfig, ok := worker.node.Node.Models[selectedModel.Id]; ok {
+	snapshot = getWorkerSnapshot(worker)
+	if localModelConfig, ok := snapshot.NodeModels[selectedModel.Id]; ok {
 		localArgs = append([]string(nil), localModelConfig.Args...)
 	}
-	worker.broker.mu.RUnlock()
 	mergedArgs := worker.broker.MergeModelArgs(selectedModel.ModelArgs, localArgs)
 
 	if err := worker.GetClient().InferenceUp(ctx, selectedModel.Id, mergedArgs); err != nil {
@@ -212,10 +211,9 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
-		result.FinalStatus = worker.node.State.CurrentStatus
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
+		snapshot := getWorkerSnapshot(worker)
+		result.FinalStatus = snapshot.CurrentStatus
+		result.FinalPocStatus = snapshot.PocCurrentStatus
 		return result
 	}
 
@@ -266,9 +264,8 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 	if c.Message != "" {
 		logging.Debug(c.Message, types.Nodes, "node_id", worker.nodeId)
 	}
-	worker.broker.mu.RLock()
-	currentStatus := worker.node.State.CurrentStatus
-	worker.broker.mu.RUnlock()
+	snapshot := getWorkerSnapshot(worker)
+	currentStatus := snapshot.CurrentStatus
 	return NodeResult{
 		Succeeded:      true,
 		FinalStatus:    currentStatus,
@@ -295,10 +292,9 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
-		result.FinalStatus = worker.node.State.CurrentStatus
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
+		snapshot := getWorkerSnapshot(worker)
+		result.FinalStatus = snapshot.CurrentStatus
+		result.FinalPocStatus = snapshot.PocCurrentStatus
 		return result
 	}
 
@@ -318,9 +314,8 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		}
 	}
 
-	worker.broker.mu.RLock()
-	nodeNum := worker.node.Node.NodeNum
-	worker.broker.mu.RUnlock()
+	snapshot := getWorkerSnapshot(worker)
+	nodeNum := snapshot.NodeNum
 	req := mlnodeclient.PoCInitGenerateRequestV2{
 		BlockHash:   c.BlockHash,
 		BlockHeight: c.BlockHeight,
@@ -364,19 +359,17 @@ func (c TransitionPoCToValidatingCommandV2) Execute(ctx context.Context, worker 
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
-		worker.broker.mu.RLock()
-		result.FinalStatus = worker.node.State.CurrentStatus
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		worker.broker.mu.RUnlock()
+		snapshot := getWorkerSnapshot(worker)
+		result.FinalStatus = snapshot.CurrentStatus
+		result.FinalPocStatus = snapshot.PocCurrentStatus
 		return result
 	}
 
 	// Validate node is in a state that can transition to POC/Validating.
 	// Accept only POC or INFERENCE (matching filterNodesForValidation criteria).
-	worker.broker.mu.RLock()
-	currentStatus := worker.node.State.CurrentStatus
-	currentPocStatus := worker.node.State.PocCurrentStatus
-	worker.broker.mu.RUnlock()
+	snapshot := getWorkerSnapshot(worker)
+	currentStatus := snapshot.CurrentStatus
+	currentPocStatus := snapshot.PocCurrentStatus
 	if currentStatus != types.HardwareNodeStatus_POC && currentStatus != types.HardwareNodeStatus_INFERENCE {
 		result.Succeeded = false
 		result.Error = "cannot transition to POC/Validating: node is " + currentStatus.String()

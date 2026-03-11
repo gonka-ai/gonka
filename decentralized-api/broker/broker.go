@@ -349,6 +349,72 @@ type NodeResponse struct {
 	State NodeState `json:"state"`
 }
 
+type WorkerNodeSnapshot struct {
+	CurrentStatus    types.HardwareNodeStatus
+	PocCurrentStatus PocStatus
+	NodeNum          uint64
+	EpochModels      map[string]types.Model
+	NodeModels       map[string]ModelArgs
+}
+
+func buildWorkerNodeSnapshot(node *NodeWithState) WorkerNodeSnapshot {
+	snapshot := WorkerNodeSnapshot{
+		CurrentStatus:    node.State.CurrentStatus,
+		PocCurrentStatus: node.State.PocCurrentStatus,
+		NodeNum:          node.Node.NodeNum,
+		EpochModels:      make(map[string]types.Model, len(node.State.EpochModels)),
+		NodeModels:       make(map[string]ModelArgs, len(node.Node.Models)),
+	}
+
+	for modelID, model := range node.State.EpochModels {
+		modelCopy := model
+		modelCopy.ModelArgs = append([]string(nil), model.ModelArgs...)
+		if model.ValidationThreshold != nil {
+			vt := *model.ValidationThreshold
+			modelCopy.ValidationThreshold = &vt
+		}
+		snapshot.EpochModels[modelID] = modelCopy
+	}
+
+	for modelID, modelArgs := range node.Node.Models {
+		snapshot.NodeModels[modelID] = ModelArgs{
+			Args: append([]string(nil), modelArgs.Args...),
+		}
+	}
+
+	return snapshot
+}
+
+func (b *Broker) GetWorkerNodeSnapshot(nodeID string) (WorkerNodeSnapshot, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	node, exists := b.nodes[nodeID]
+	if !exists {
+		return WorkerNodeSnapshot{}, false
+	}
+
+	return buildWorkerNodeSnapshot(node), true
+}
+
+func (b *Broker) GetWorkerNodeSnapshotWithFallback(nodeID string, fallback *NodeWithState) WorkerNodeSnapshot {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if node, exists := b.nodes[nodeID]; exists {
+		return buildWorkerNodeSnapshot(node)
+	}
+
+	if fallback != nil {
+		return buildWorkerNodeSnapshot(fallback)
+	}
+
+	return WorkerNodeSnapshot{
+		CurrentStatus:    types.HardwareNodeStatus_UNKNOWN,
+		PocCurrentStatus: PocStatusIdle,
+	}
+}
+
 func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory, configManager *apiconfig.ConfigManager) *Broker {
 	broker := &Broker{
 		highPriorityCommands: make(chan Command, 100),
