@@ -549,6 +549,57 @@ func (qm *QualityMiddleware) SearchHandler() http.Handler {
 	})
 }
 
+// ShareHandler serves POST /quality/slots/share — participant pushes slots to the mesh pool.
+// This is how participant 1 sends binary patterns to participant 2 through the shared pool.
+//
+// Body: {"node_id": "...", "slots": [{"slot_id": "...", "vec": [...], "hit_mode": "slot", ...}]}
+// Returns: {"accepted": N, "pool_size": M}
+func (qm *QualityMiddleware) ShareHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			NodeID string          `json:"node_id"`
+			Slots  []MeshPoolEntry `json:"slots"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.NodeID == "" || len(req.Slots) == 0 {
+			http.Error(w, "node_id and slots required", http.StatusBadRequest)
+			return
+		}
+
+		const maxShareBatch = 100
+		accepted := 0
+		for i, slot := range req.Slots {
+			if i >= maxShareBatch {
+				break
+			}
+			if slot.NodeID == "" {
+				slot.NodeID = req.NodeID
+			}
+			if len(slot.Vec) == 0 {
+				continue
+			}
+			if slot.HitMode == "" {
+				slot.HitMode = "slot"
+			}
+			qm.RecordMeshSignal(slot)
+			accepted++
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"accepted":  accepted,
+			"pool_size": len(qm.pool),
+		})
+	})
+}
+
 type responseRecorder struct {
 	http.ResponseWriter
 	status int
