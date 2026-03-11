@@ -10,6 +10,11 @@ import (
 )
 
 func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvalidateInference) (*types.MsgInvalidateInferenceResponse, error) {
+	// Invalidate uses the Inference and the group policy id to get permissions,
+	// so it and revalidate don't go through the usual permissions path
+	if err := k.CheckPermission(ctx, msg, NoPermission); err != nil {
+		return nil, err
+	}
 	inference, executor, err := k.validateDecisionMessage(ctx, msg)
 	if err != nil {
 		return nil, err
@@ -19,16 +24,17 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 		k.LogDebug("Inference already invalidated", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, nil
 	}
+	previousStatus := inference.Status
 	inference.Status = types.InferenceStatus_INVALIDATED
 	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
-	epochGroup, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		k.LogError("Failed to get current epoch group", types.Validation, "error", err)
-		return nil, err
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("Failed to get effective epoch index", types.Validation)
+		return nil, types.ErrEffectiveEpochNotFound
 	}
 
-	shouldRefund, reason := k.inferenceIsBeforeClaimsSet(ctx, *inference, epochGroup.GroupData.EpochIndex)
+	shouldRefund, reason := k.inferenceIsBeforeClaimsSet(ctx, *inference, currentEpochIndex)
 	k.LogInfo("Inference refund decision", types.Validation, "inferenceId", inference.InferenceId, "executor", executor.Address, "shouldRefund", shouldRefund, "reason", reason)
 	if shouldRefund {
 		err := k.refundInvalidatedInference(executor, inference, ctx)
@@ -48,24 +54,34 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 	if err != nil {
 		return nil, err
 	}
+	if inference.Status != previousStatus {
+		emitInferenceStatusUpdatedEvent(sdk.UnwrapSDKContext(ctx), inference.InferenceId, inference.Status)
+	}
 
 	return &types.MsgInvalidateInferenceResponse{}, nil
 }
 
 func (k msgServer) refundInvalidatedInference(executor *types.Participant, inference *types.Inference, ctx context.Context) error {
-	executor.CoinBalance -= inference.ActualCost
-	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "inference_invalidated:"+inference.InferenceId)
-	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
-	// We need to refund the cost, so we have to lookup the person who paid
+	// Lookup the payer first
 	payer, found := k.GetParticipant(ctx, inference.RequestedBy)
 	if !found {
 		k.LogError("Payer not found", types.Validation, "address", inference.RequestedBy)
 		return types.ErrParticipantNotFound
 	}
+
+	// Attempt refund BEFORE modifying executor balance
+	// If refund fails (e.g. underfunded escrow), don't corrupt state
 	err := k.IssueRefund(ctx, inference.ActualCost, payer.Address, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
+		return err
 	}
+
+	// Only deduct from executor after successful refund
+	executor.CoinBalance -= inference.ActualCost
+	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "invalidated_inference:"+inference.InferenceId)
+	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
+
 	return nil
 }
 

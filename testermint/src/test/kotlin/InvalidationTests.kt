@@ -101,18 +101,23 @@ class InvalidationTests : TestermintTest() {
 
     @Test
     fun `test invalid gets marked invalid`() {
-        var tries = 3
+        var tries = 4
         val (cluster, genesis) = initCluster(reboot = true)
         val oddPair = cluster.joinPairs.last()
         val badResponse = defaultInferenceResponseObject.withMissingLogit()
         oddPair.mock?.setInferenceResponse(badResponse)
-        var newState: InferencePayload
-        do {
+        var newState: InferencePayload? = null
+        while (tries-- > 0 && newState?.statusEnum != InferenceStatus.INVALIDATED) {
             logSection("Trying to get invalid inference. Tries left: $tries")
             genesis.waitForNextInferenceWindow()
-            newState = getInferenceValidationState(genesis, oddPair)
-        } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
+            newState = runCatching { getInferenceValidationState(genesis, oddPair) }
+                .onFailure { error ->
+                    Logger.warn("Failed to get invalid inference in this window: $error")
+                }
+                .getOrNull()
+        }
         logSection("Verifying invalidation")
+        assertNotNull(newState)
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
     }
 
@@ -132,7 +137,7 @@ class InvalidationTests : TestermintTest() {
         genesis.node.waitForNextBlock(3)
         val inferencePayload = genesis.node.getInference(inference.inferenceId)
         assertNotNull(inferencePayload)
-        assertThat(inferencePayload.inference.status).isEqualTo(InferenceStatus.INVALIDATED.value)
+        assertThat(inferencePayload.inference.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
     }
 
     @Test

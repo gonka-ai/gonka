@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -25,11 +26,11 @@ func TestMsgUpdateParams(t *testing.T) {
 		{
 			name: "invalid authority",
 			input: &types.MsgUpdateParams{
-				Authority: "invalid",
+				Authority: testutil.Creator,
 				Params:    params,
 			},
 			expErr:    true,
-			expErrMsg: "invalid authority",
+			expErrMsg: "expected gov account as only signer for proposal message",
 		},
 		{
 			name: "invalid params - empty params",

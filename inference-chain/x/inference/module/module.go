@@ -1,10 +1,14 @@
 package inference
 
 import (
+	"cmp"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
@@ -167,16 +171,31 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 12 }
+func (AppModule) ConsensusVersion() uint64 { return 13 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Precompute SPRT values for the block
+	err := am.keeper.PrecomputeSPRTValues(ctx)
+	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but
+	// this will only happen if the governance values have been set wrong anyhow, so that's a rational choice
+	if err != nil {
+		am.LogError("Failed to precompute SPRT values", types.Validation, "error", err)
+	}
+
 	// Update dynamic pricing for all models at the start of each block
 	// This ensures consistent pricing for all inferences processed in this block
-	err := am.keeper.UpdateDynamicPricing(ctx)
+	err = am.keeper.UpdateDynamicPricing(ctx)
 	if err != nil {
 		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
 		// Don't return error - allow block processing to continue even if pricing update fails
+	}
+
+	// Cache epoch model metadata in transient store.
+	// This avoids repeated heavy model-group reads in MsgValidation.
+	err = am.keeper.BuildEpochDataTransientCache(ctx)
+	if err != nil {
+		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
 	return nil
@@ -340,6 +359,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		return nil
 	}
 
+	am.processFinishedInferencesInBlock(ctx, blockHeight, currentEpoch, currentEpochGroup, &params)
+
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
 	err = am.expireInferences(ctx, timeouts, blockHeight, currentEpoch, &params)
 	if err != nil {
@@ -424,6 +445,18 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
+		}
+
+		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
+	}
+
+	// Capture validation snapshot at poc_validation_start for deterministic sampling
+	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
+		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+		if found && upcomingEpoch != nil {
+			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
+		} else {
+			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
 		}
 	}
 
@@ -570,6 +603,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		am.LogError("onEndOfPoCValidationStage: Unable to set active participants", types.EpochGroup, "error", err.Error())
 		return
 	}
+	if upcomingEpoch.Index > 3 {
+		outOfDateActiveParticipants := collections.NewPrefixedPairRange[uint64, sdk.AccAddress](upcomingEpoch.Index - 2)
+		err = am.keeper.ActiveParticipantsSet.Clear(ctx, outOfDateActiveParticipants)
+		if err != nil {
+			am.LogWarn("onEndOfPoCValidationStage: Unable to clear old active participants cache", types.EpochGroup, "epochIndex", upcomingEpoch.Index-2, "error", err.Error())
+		}
+	}
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
 	if err != nil {
@@ -625,6 +665,79 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
+
+	// Clean up validation snapshot after epoch transition
+	am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+}
+
+func (am AppModule) captureGenerationStartTimestamp(ctx context.Context, blockTime, pocStartBlockHeight int64) {
+	snapshot := types.PoCValidationSnapshot{
+		PocStageStartHeight:      pocStartBlockHeight,
+		GenerationStartTimestamp: blockTime,
+	}
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store", types.PoC, "error", err)
+		return
+	}
+	am.LogInfo("captureGenerationStartTimestamp: Stored", types.PoC,
+		"pocStartBlockHeight", pocStartBlockHeight,
+		"generationStartTimestamp", blockTime)
+}
+
+// captureValidationSnapshot stores validator weights and app_hash at validation phase start
+// for deterministic sampling synchronization between chain and DAPI.
+// Used by both regular PoC and confirmation PoC.
+func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	blockTime := sdkCtx.BlockTime().Unix()
+
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
+	if err != nil {
+		am.LogError("captureValidationSnapshot: Failed to get validator weights", types.PoC,
+			"context", logContext, "error", err)
+		return
+	}
+
+	var generationStartTimestamp int64
+	existingSnapshot, found, _ := am.keeper.GetPoCValidationSnapshot(ctx, snapshotKey)
+	if found {
+		generationStartTimestamp = existingSnapshot.GenerationStartTimestamp
+	}
+
+	snapshot := types.PoCValidationSnapshot{
+		PocStageStartHeight:      snapshotKey,
+		SnapshotHeight:           blockHeight,
+		AppHash:                  hex.EncodeToString(sdkCtx.HeaderInfo().AppHash),
+		ValidatorWeights:         validatorWeightsMapToSlice(currentValidatorWeights),
+		GenerationStartTimestamp: generationStartTimestamp,
+		ExchangeEndTimestamp:     blockTime,
+	}
+
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
+		am.LogError("captureValidationSnapshot: Failed to store snapshot", types.PoC,
+			"context", logContext, "error", err)
+		return
+	}
+
+	am.LogInfo("captureValidationSnapshot: Stored validation snapshot", types.PoC,
+		"context", logContext,
+		"snapshotKey", snapshotKey,
+		"snapshotHeight", blockHeight,
+		"numValidators", len(currentValidatorWeights),
+		"generationStartTimestamp", generationStartTimestamp,
+		"exchangeEndTimestamp", blockTime,
+	)
+}
+
+func validatorWeightsMapToSlice(weights map[string]int64) []*types.ValidatorWeight {
+	result := make([]*types.ValidatorWeight, 0, len(weights))
+	for addr, w := range weights {
+		result = append(result, &types.ValidatorWeight{Address: addr, Weight: w})
+	}
+	slices.SortFunc(result, func(a, b *types.ValidatorWeight) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+	return result
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {
@@ -898,10 +1011,11 @@ func init() {
 type ModuleInputs struct {
 	depinject.In
 
-	StoreService store.KVStoreService
-	Cdc          codec.Codec
-	Config       *modulev1.Module
-	Logger       log.Logger
+	StoreService          store.KVStoreService
+	TransientStoreService store.TransientStoreService
+	Cdc                   codec.Codec
+	Config                *modulev1.Module
+	Logger                log.Logger
 
 	AccountKeeper       types.AccountKeeper
 	BankKeeper          types.BankKeeper
@@ -935,6 +1049,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	k := keeper.NewKeeper(
 		in.Cdc,
 		in.StoreService,
+		in.TransientStoreService,
 		in.Logger,
 		authority.String(),
 		in.BankEscrowKeeper,

@@ -16,6 +16,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+var pocDeviationCoeff = decimal.New(909, -3)
+
 // handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions
 func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -105,6 +107,11 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	if upgradeProtectionWindow <= 0 {
 		upgradeProtectionWindow = 500 // Default to 500 blocks if not set
 	}
+	// Check if current epoch is a grace epoch with extended protection window
+	if graceParams, ok := am.keeper.GetPunishmentGraceEpoch(ctx, epochContext.EpochIndex); ok && graceParams.UpgradeProtectionWindow > 0 {
+		upgradeProtectionWindow = graceParams.UpgradeProtectionWindow
+		am.LogDebug("using grace UpgradeProtectionWindow", types.PoC, "epoch", epochContext.EpochIndex, "window", upgradeProtectionWindow)
+	}
 	hasUpgrade, reason, err := am.keeper.HasUpgradeInWindow(ctx, blockHeight, upgradeProtectionWindow)
 	if err != nil {
 		return fmt.Errorf("failed to check upgrade window: %w", err)
@@ -127,7 +134,9 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	confirmationWindowDuration := epochParams.PocStageDuration +
 		epochParams.PocExchangeDuration +
 		epochParams.PocValidationDelay +
-		epochParams.PocValidationDuration
+		epochParams.PocValidationDuration +
+		epochParams.SetNewValidatorsDelay +
+		epochParams.ConfirmationPocSafetyWindow
 	triggerWindowEnd := nextPoCStart - epochParams.InferenceValidationCutoff - confirmationWindowDuration
 
 	if blockHeight < setNewValidatorsHeight || blockHeight > triggerWindowEnd {
@@ -252,6 +261,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		transitionCount++
 		transitions = append(transitions, "GRACE_PERIOD->GENERATION")
 
+		am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight)
+
 		am.LogInfo("Confirmation PoC: GRACE_PERIOD -> GENERATION", types.PoC,
 			"epochIndex", event.EpochIndex,
 			"eventSequence", event.EventSequence,
@@ -262,6 +273,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 
 	// GENERATION -> VALIDATION transition
 	if event.ShouldTransitionToValidation(blockHeight, epochParams) {
+		am.captureValidationSnapshot(ctx, blockHeight, event.TriggerHeight, "confirmation PoC")
+
 		event.Phase = types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION
 		updated = true
 		transitionCount++
@@ -300,6 +313,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
+			// Clean up validation snapshot
+			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
+
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to clear active confirmation PoC event: %w", err)
@@ -520,9 +536,53 @@ func (am AppModule) updateConfirmationWeightsV2(
 		"guardianEnabled", guardianEnabled,
 		"guardianAccAddrs", guardianAccAddrs)
 
-	// Create WeightCalculator with store commits and distributions
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get params", types.PoC, "error", err)
+		return nil
+	}
+
+	var appHash string
+	var validationSlots int
+	timeNormalizationFactor := mathsdk.LegacyOneDec()
+
+	snapshot, snapshotFound, _ := am.keeper.GetPoCValidationSnapshot(ctx, event.TriggerHeight)
+	if snapshotFound {
+		if params.PocParams.ValidationSlots > 0 {
+			appHash = snapshot.AppHash
+			validationSlots = int(params.PocParams.ValidationSlots)
+		}
+		if params.PocParams.PocNormalizationEnabled {
+			timeNormalizationFactor = CalculateTimeNormalizationFactor(
+				snapshot.GenerationStartTimestamp,
+				snapshot.ExchangeEndTimestamp,
+				params.EpochParams.PocStageDuration,
+				params.EpochParams.PocExchangeDuration,
+			)
+		}
+		am.LogInfo("updateConfirmationWeightsV2: Using validation snapshot", types.PoC,
+			"appHash", appHash,
+			"validationSlots", validationSlots,
+			"generationStartTimestamp", snapshot.GenerationStartTimestamp,
+			"exchangeEndTimestamp", snapshot.ExchangeEndTimestamp,
+			"timeNormalizationFactor", timeNormalizationFactor.String(),
+			"pocNormalizationEnabled", params.PocParams.PocNormalizationEnabled,
+		)
+	} else {
+		am.LogWarn("updateConfirmationWeightsV2: Validation snapshot not found", types.PoC,
+			"triggerHeight", event.TriggerHeight,
+		)
+	}
+
+	weightsForCalculator := currentValidatorWeights
+	if snapshotFound && validationSlots > 0 && len(snapshot.ValidatorWeights) > 0 {
+		weightsForCalculator = validatorWeightsSliceToMap(snapshot.ValidatorWeights)
+		am.LogInfo("updateConfirmationWeightsV2: Using snapshot weights for calculator", types.PoC,
+			"numValidators", len(weightsForCalculator))
+	}
+
 	calculator := NewWeightCalculator(
-		currentValidatorWeights,
+		weightsForCalculator,
 		storeCommits,
 		weightDistributions,
 		validationsV2,
@@ -531,8 +591,11 @@ func (am AppModule) updateConfirmationWeightsV2(
 		event.TriggerHeight,
 		am,
 		weightScaleFactor,
+		timeNormalizationFactor,
 		guardianEnabled,
 		guardianSet,
+		appHash,
+		validationSlots,
 	)
 
 	// Calculate confirmation weights
@@ -567,7 +630,10 @@ func (am AppModule) checkConfirmationSlashing(
 		if notPreservedTotalWeightValue == 0 {
 			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(decimal.NewFromInt(1))
 		} else {
-			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(decimal.NewFromInt(confirmationWeight).Div(decimal.NewFromInt(notPreservedTotalWeightValue)))
+			ratio := decimal.NewFromInt(confirmationWeight).Div(decimal.NewFromInt(notPreservedTotalWeightValue))
+			// Use pocDeviationCoeff to avoid decreasing rewards for minor deviations
+			ratio = decimal.Min(ratio.Div(pocDeviationCoeff), decimal.NewFromInt(1))
+			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(ratio)
 		}
 		am.keeper.SetParticipant(ctx, participant)
 	}

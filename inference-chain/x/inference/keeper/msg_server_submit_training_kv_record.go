@@ -8,11 +8,10 @@ import (
 )
 
 func (k msgServer) SubmitTrainingKvRecord(goCtx context.Context, msg *types.MsgSubmitTrainingKvRecord) (*types.MsgSubmitTrainingKvRecordResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	if err := k.CheckTrainingAllowList(ctx, msg); err != nil {
+	if err := k.CheckPermission(goCtx, msg, TrainingExecPermission); err != nil {
 		return nil, err
 	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 	_, found := k.GetParticipant(ctx, msg.Creator)
 	if !found {
 		return nil, types.ErrParticipantNotFound

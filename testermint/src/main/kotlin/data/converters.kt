@@ -31,6 +31,28 @@ class DurationDeserializer : JsonDeserializer<Duration> {
     }
 }
 
+
+class IntDeserializer : JsonDeserializer<Int> {
+    override fun deserialize(
+        json: JsonElement,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?,
+    ): Int? {
+        if (json.asString == "") return null
+        return try {
+            json.asString.replace("_", "").toInt()
+        } catch (e: NumberFormatException) {
+            try {
+                // Handle "5000.0" case
+               json.asDouble.toInt()
+            } catch (e2: Exception) {
+               // Fallback to original parsing (w/o replace) or just let it throw
+               json.asInt
+            }
+        }
+    }
+}
+
 class LongSerializer: JsonSerializer<java.lang.Long> {
     override fun serialize(
         src: java.lang.Long?,
@@ -125,8 +147,57 @@ class ConfirmationPoCPhaseDeserializer : JsonDeserializer<ConfirmationPoCPhase> 
         typeOfT: Type?,
         context: JsonDeserializationContext?
     ): ConfirmationPoCPhase {
+        if (json.isJsonPrimitive && json.asJsonPrimitive.isString) {
+            val str = json.asString
+            return try {
+                ConfirmationPoCPhase.valueOf(str)
+            } catch (e: Exception) {
+                // Try numeric string
+                val num = str.toIntOrNull()
+                if (num != null) {
+                    ConfirmationPoCPhase.values().find { it.value == num }
+                        ?: throw IllegalArgumentException("Unknown ConfirmationPoCPhase value: $num")
+                } else {
+                    throw e
+                }
+            }
+        }
         val intValue = json.asInt
         return ConfirmationPoCPhase.values().find { it.value == intValue }
             ?: throw IllegalArgumentException("Unknown ConfirmationPoCPhase value: $intValue")
+    }
+}
+class InferenceStatusDeserializer : JsonDeserializer<InferenceStatus> {
+    override fun deserialize(
+        json: JsonElement,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): InferenceStatus {
+        return InferenceStatus.fromAny(
+            if (json.isJsonPrimitive && json.asJsonPrimitive.isString) {
+                json.asString
+            } else if (json.isJsonPrimitive && json.asJsonPrimitive.isNumber) {
+                json.asInt
+            } else {
+                null
+            }
+        )
+    }
+}
+class ProposalStatusDeserializer : JsonDeserializer<ProposalStatus> {
+    override fun deserialize(
+        json: JsonElement,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): ProposalStatus {
+        return ProposalStatus.fromAny(
+            if (json.isJsonPrimitive && json.asJsonPrimitive.isString) {
+                json.asString
+            } else if (json.isJsonPrimitive && json.asJsonPrimitive.isNumber) {
+                json.asInt
+            } else {
+                null
+            }
+        )
     }
 }

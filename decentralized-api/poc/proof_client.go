@@ -28,7 +28,10 @@ var (
 	ErrProofVerificationFailed = errors.New("proof verification failed")
 	ErrDuplicateNonces         = errors.New("duplicate nonces detected")
 	ErrIncompleteCoverage      = errors.New("response does not cover all requested leaf indices")
+	ErrInvalidVectorData       = errors.New("invalid vector data detected")
 )
+
+const DefaultKDim = 12
 
 // ProofClient fetches and verifies MMR proofs from participant APIs.
 type ProofClient struct {
@@ -182,6 +185,13 @@ func (c *ProofClient) FetchAndVerifyProofs(
 			return nil, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
 		}
 
+		// Validate FP16 vector: must be exactly DefaultKDim values, no NaN/Infinity
+		if err := ValidateFP16Vector(vectorBytes, DefaultKDim); err != nil {
+			logging.Warn("Invalid FP16 vector data", types.PoC,
+				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "error", err)
+			return nil, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)
+		}
+
 		// Decode proof hashes
 		proofHashes := make([][]byte, len(item.Proof))
 		for i, hashB64 := range item.Proof {
@@ -297,4 +307,28 @@ func buildLeafData(nonce int32, vector []byte) []byte {
 	binary.LittleEndian.PutUint32(buf[:4], uint32(nonce))
 	copy(buf[4:], vector)
 	return buf
+}
+
+// ValidateFP16Vector checks that the vector has exactly kDim FP16 values and all are valid finite numbers.
+// Returns error if length doesn't match kDim*2 bytes, or any value is NaN or Infinity.
+func ValidateFP16Vector(vectorBytes []byte, kDim int) error {
+	expectedLen := kDim * 2
+	if len(vectorBytes) != expectedLen {
+		return fmt.Errorf("invalid vector length: got %d bytes, expected %d (kDim=%d)", len(vectorBytes), expectedLen, kDim)
+	}
+
+	for i := 0; i < len(vectorBytes); i += 2 {
+		h := binary.LittleEndian.Uint16(vectorBytes[i : i+2])
+		exp := (h >> 10) & 0x1f
+
+		// Exponent 31 = special values (NaN or Infinity)
+		if exp == 31 {
+			frac := h & 0x3ff
+			if frac != 0 {
+				return fmt.Errorf("NaN detected at byte offset %d (value 0x%04x)", i, h)
+			}
+			return fmt.Errorf("Infinity detected at byte offset %d (value 0x%04x)", i, h)
+		}
+	}
+	return nil
 }

@@ -34,10 +34,10 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		seedSignature = p.Seed.Signature
 	}
 
-	// If confirmation weight is not provided (0), initialize it from inference-serving nodes (POC_SLOT=false)
+	// If the confirmation weight is not provided (0), initialize it with the weight of PoC participating nodes
 	// This is the baseline weight that can be verified through confirmation PoC
 	if confirmationWeight == 0 {
-		confirmationWeight = calculateInferenceServingWeight(p.MlNodes)
+		confirmationWeight = calculatePocParticipatingNodesWeight(p.MlNodes)
 	}
 
 	return EpochMember{
@@ -52,8 +52,8 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 }
 
-// calculateInferenceServingWeight calculates the total weight of nodes serving inference (POC_SLOT=false)
-func calculateInferenceServingWeight(mlNodes []*types.ModelMLNodes) int64 {
+// calculatePocParticipatingNodesWeight calculates the total weight of nodes participating in PoC
+func calculatePocParticipatingNodesWeight(mlNodes []*types.ModelMLNodes) int64 {
 	totalWeight := int64(0)
 
 	for _, modelNodes := range mlNodes {

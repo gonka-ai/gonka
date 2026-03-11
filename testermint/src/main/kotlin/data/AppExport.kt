@@ -144,6 +144,7 @@ data class EpochParams(
     val pocPruningMax: Long,
     @SerializedName("poc_slot_allocation")
     val pocSlotAllocation: Decimal?,
+    val confirmationPocSafetyWindow: Long,
 )
 
 data class Decimal(
@@ -209,6 +210,8 @@ data class ValidationParams(
     val quickFailureThreshold: Decimal?,
     @SerializedName("binom_test_p0")
     val binomTestP0: Decimal?,
+    @SerializedName("claim_validation_enabled")
+    val claimValidationEnabled: Boolean = false,
 )
 
 data class BandwidthLimitsParams(
@@ -221,7 +224,7 @@ data class BandwidthLimitsParams(
     @SerializedName("invalidations_limit")
     val invalidationsLimit: Long,
     @SerializedName("invalidations_sample_period")
-    val invalidationsSamplePeriod: Long,
+    val invalidationsSamplePeriod: Long = 1,
     @SerializedName("invalidations_limit_curve")
     val invalidationsLimitCurve: Long,
     @SerializedName("minimum_concurrent_invalidations")
@@ -263,6 +266,21 @@ data class PocParams(
     val pocV2Enabled: Boolean = true,  // V2 enabled by default
     @SerializedName("confirmation_poc_v2_enabled")
     val confirmationPocV2Enabled: Boolean = true,  // V2 for confirmation PoC, enables migration mode
+    @SerializedName("stat_test")
+    val statTest: PoCStatTestParams? = null,
+    @SerializedName("validation_slots")
+    val validationSlots: Long = 2,
+    @SerializedName("poc_normalization_enabled")
+    val pocNormalizationEnabled: Boolean = false,  // Disabled by default in tests
+)
+
+data class PoCStatTestParams(
+    @SerializedName("dist_threshold")
+    val distThreshold: Decimal? = null,
+    @SerializedName("p_mismatch")
+    val pMismatch: Decimal? = null,
+    @SerializedName("p_value_threshold")
+    val pValueThreshold: Decimal? = null,
 )
 
 data class PoCModelParams(

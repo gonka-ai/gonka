@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.productscience.data.InferencePayload
+import com.productscience.data.InferenceStatus
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -71,7 +72,7 @@ fun runParallelInferencesWithResults(
         result?.let {
             try {
                 val retrievalStart = System.currentTimeMillis()
-                val inference = genesis.api.getInference(result.id)
+                val inference = genesis.node.getInference(result.id)
                 inference
             } catch (e: Exception) {
                 null
@@ -82,7 +83,7 @@ fun runParallelInferencesWithResults(
     val overallEndTime = System.currentTimeMillis()
     val totalDuration = overallEndTime - overallStartTime
     
-    inferences
+    inferences.map{ it.inference }
 }
 
 /**
@@ -96,8 +97,8 @@ fun runParallelInferences(
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
     models: List<String> = listOf(defaultModel),
     inferenceRequest: InferenceRequestPayload = inferenceRequestObject,  // Allow custom request
-): List<Int> {
+): List<InferenceStatus> {
     // Use the new function and extract statuses for backward compatibility
     val inferences = runParallelInferencesWithResults(genesis, count, waitForBlocks, maxConcurrentRequests, models, inferenceRequest)
-    return inferences.map { it.status }
+    return inferences.map { it.statusEnum }
 } 

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package inference.inference;
+
+import "gogoproto/gogo.proto";
+import "inference/inference/params.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message GraceEpochParams {
+  uint64 epoch_index = 1;
+  Decimal binom_test_p0 = 2;
+  int64 upgrade_protection_window = 3;
+}

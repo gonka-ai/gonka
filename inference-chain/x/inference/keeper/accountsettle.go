@@ -147,8 +147,22 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Aggregate MLNodes from model-specific subgroups for preservedWeight calculation
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
 
+	// Check if this is a grace epoch and override BinomTestP0 if so
+	validationParams := params.ValidationParams
+	if validationParams == nil {
+		validationParams = types.DefaultValidationParams()
+		k.LogWarn("ValidationParams not found, using default ones", types.Settle)
+	}
+
+	if graceParams, ok := k.GetPunishmentGraceEpoch(ctx, currentEpochIndex); ok && graceParams.BinomTestP0 != nil {
+		graceValidationParams := *validationParams
+		graceValidationParams.BinomTestP0 = graceParams.BinomTestP0
+		validationParams = &graceValidationParams
+		k.LogInfo("using grace BinomTestP0", types.Settle, "epoch", currentEpochIndex)
+	}
+
 	var bitcoinResult BitcoinResult
-	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, params.ValidationParams, settleParameters, participantMLNodes, k.Logger())
+	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, validationParams, settleParameters, participantMLNodes, k.Logger())
 	if err != nil {
 		k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
 	}
