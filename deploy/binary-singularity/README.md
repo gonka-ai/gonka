@@ -1,105 +1,140 @@
 # Binary Singularity — Deploy Stack
 
-Reproducible deploy for all environments. Each tier is independently runnable
-and builds on the previous. All tiers use the same `scenario-runner` binary
-and produce comparable metrics (convergence proof, hub approval, PQM).
+Four deployment tiers: LITE/MEDIUM/HARD for reproducible testing,
+PRODUCTION for real node infrastructure with GNK tokens and live inference.
 
 ## Tiers
 
-| Tier | Stack | RAM | Time | PQM target |
-|------|-------|-----|------|------------|
-| **LITE** | Docker Compose, 2 containers | 1 GB | ~15 min | ≥ 0.95 |
-| **MEDIUM** | Docker Compose + opengnk proxy + quality-middleware | 2 GB | ~30 min | ≥ 1.00 |
-| **HARD** | k3d (K3s-in-Docker), 1 server + 3 agents, full mesh | 4 GB | ~60 min | ≥ 1.01 |
+| Tier | Stack | What it does | GNK tokens |
+|------|-------|-------------|------------|
+| **LITE** | Docker Compose, embedder + mock-node | Reproducible convergence proof | No |
+| **MEDIUM** | Docker Compose + opengnk + quality-middleware | SDK client flow with live Gonka (optional) | Optional |
+| **HARD** | k3d (K3s-in-Docker), 1 server + 3 agents | Multi-node mesh, full experiment replay | No |
+| **PRODUCTION** | On real Gonka node (deploy/join) + BS layer | Live inference, continuous slot distillation | **Yes** |
 
-## Requirements
+## PRODUCTION — Real Node Infrastructure
 
-All tiers:
-- Linux x86_64 (Debian Bookworm or Ubuntu 22.04+)
-- Docker ≥ 24.x with Compose plugin
+Runs on top of the existing node stack (`deploy/join/`).
+Real DAPI, real mlnode, real GNK token consumption.
 
-MEDIUM:
-- Gonka account keys (`GONKA_PRIVATE_KEY` + `GONKA_ADDRESS`) — optional, falls back to mock
+```bash
+cd deploy/binary-singularity/production
+cp .env.example .env
+nano .env  # REQUIRED: fill GONKA_PRIVATE_KEY, GONKA_ADDRESS, GONKA_API_KEY
+docker compose up -d
+```
 
-HARD:
-- [k3d](https://k3d.io) ≥ 5.x: `curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash`
-- kubectl
-- Go ≥ 1.22 (for local runner build)
+Architecture on a real node:
+```
+┌─── EXISTING NODE (deploy/join) ──────────────────────────┐
+│  tmkms → node → api (DAPI :9000/:9100/:9200)            │
+│  mlnode-308 → inference (nginx :8080/:5050)              │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+┌──────────────────────┴───────────────────────────────────┐
+│  BINARY SINGULARITY LAYER                                │
+│                                                          │
+│  embedder (:8686)  — CPU-only, all-MiniLM-L6-v2         │
+│  opengnk  (:8080)  — SDK proxy, secp256k1 signing       │
+│  quality-middleware (:9090) — L6/L8/L9/DX + mesh pool    │
+│  bs-runtime        — continuous slot distillation        │
+│    └─ watches live traffic                               │
+│    └─ distills high-quality responses → PatternSlots     │
+│    └─ ingests raw binary input (BS_RAW_INPUT) on startup │
+└──────────────────────────────────────────────────────────┘
+```
 
-## LITE — Quick Start
+Services:
+- **opengnk** — SDK clients connect here (OpenAI-compatible). Handles Transfer Agent whitelist, multi-wallet rotation, tool-call simulation.
+- **quality-middleware** — wraps opengnk, measures L6/L8/L9/DX per request, exposes `GET /quality/stats` and `POST /quality/search` (CPU cosine pool).
+- **bs-runtime** — continuous mode: watches quality-middleware, distills PatternSlots from responses with quality ≥ threshold. No experiment loop.
+- **embedder** — CPU-only fastembed sidecar. Used by both DAPI semantic cache (L2) and slot distillation.
+
+For SDK clients (gonka-agent, any OpenAI client):
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://<node>:8080/v1", api_key="not-needed")
+response = client.chat.completions.create(
+    model="Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+## Raw Binary Input — Any Data Source
+
+Set `BS_RAW_INPUT` in `.env` to feed **any file** into the binarizer:
+
+```bash
+# Developer workflow log
+BS_RAW_INPUT=/home/user/Документы/text
+
+# Git commit history
+BS_RAW_INPUT=/home/user/repos/project/.git/logs/HEAD
+
+# Downloaded specification
+BS_RAW_INPUT=/tmp/downloaded_spec.md
+
+# Custom markup or notes
+BS_RAW_INPUT=/home/user/notes/architecture-decisions.txt
+```
+
+The file is transmitted **as-is** to the cluster embedder. No pre-processing.
+The embedder splits by lines (`BS_CHUNK_LINES`, default 50), embeds each chunk,
+and distills PatternSlots stored in the slot directory.
+
+This works in ALL tiers (LITE, MEDIUM, HARD, PRODUCTION).
+
+## LITE — Reproducible Test
 
 ```bash
 cd deploy/binary-singularity/lite
 cp .env.example .env
-./run.sh                               # standard 12-iteration run
-./run.sh --hub-key gnk_live_...        # with hub approval check
-./run.sh --raw-input /path/to/text     # Exp 4: raw binary ingestion
-```
-
-Expected output (convergence proof):
-```
-SlotModeHitRate: 100%  AvgSlotLatency: ~5ms  GPU baseline: ~120ms
-HubApproval: PQM ≥ 0.988  Verdict: APPROVED
+./run.sh                               # standard run
+./run.sh --hub-key gnk_live_...        # with hub approval
+BS_RAW_INPUT=/path/to/file ./run.sh    # raw binary ingestion
 ```
 
 ## MEDIUM — With opengnk Proxy
 
 ```bash
 cd deploy/binary-singularity/medium
-cp .env.example .env
-# Fill GONKA_PRIVATE_KEY + GONKA_ADDRESS for live inference
-# Leave empty to use mock-node (fully reproducible)
-nano .env
+cp .env.example .env && nano .env
 docker compose up -d
-# Check quality metrics:
 curl http://localhost:9090/quality/stats | jq .
-# Run experiment with live Gonka models:
-docker compose --profile live up opengnk
-MODELS=Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 docker compose run runner ...
+# Mesh pool search:
+curl -X POST http://localhost:9090/quality/search \
+  -d '{"query": [0.1, 0.2, ...], "top_k": 5}'
 ```
 
-Mesh pool signals (cross-node semantic pooling):
-```
-GET http://localhost:9090/quality/stats → {"mesh_pool": {"node_count":N, "slot_hits":M, ...}}
-```
-
-## HARD — K3s Mesh (mirrors bookworm Exp 3/4)
+## HARD — K3s Mesh
 
 ```bash
 cd deploy/binary-singularity/hard
-./run.sh                               # 1 server + 3 agents, 12 iterations
-./run.sh --raw-input /path/to/text     # Exp 4 replay
-./run.sh --iterations 36 --hub-key KEY # full 3072-run scale
+./run.sh                               # 1 server + 3 agents
+./run.sh --raw-input /path/to/text     # raw binary ingestion
 ./run.sh --destroy                     # tear down cluster
 ```
 
-Topology:
-```
-k3d-bs-mesh-server-0  (control plane)
-k3d-bs-mesh-agent-0   (embedder pod)
-k3d-bs-mesh-agent-1   (mock-node pod replica 1)
-k3d-bs-mesh-agent-2   (mock-node pod replica 2)
-```
+## gonka-agent Integration
 
-## opengnk SDK Integration
-
-The MEDIUM/HARD stacks integrate [opengnk](https://github.com/gonkalabs/opengnk/tree/dev)
-as the production inference proxy. The quality-middleware wraps it and measures:
-- **L6**: slot/cache reuse rate via `X-Cache: HIT` header
-- **L8**: latency CV (consistency metric)
-- **L9**: HTTP completion rate
-- **DX**: explicit feedback via `X-Inference-Feedback`
-- **Mesh pool**: cross-node semantic signals via `X-BS-Node-ID` header
-
-To use opengnk with real Gonka nodes:
+The agent reads `BS_*` env vars from `.env.example`:
 ```bash
-# Start proxy + quality measurement
-docker compose --profile live up -d opengnk quality-middleware
-# Route runner through quality middleware (wraps opengnk)
-QM_UPSTREAM=http://opengnk:8080 docker compose up -d quality-middleware
+# In gonka-agent/.env
+BS_RAW_INPUT=/path/to/your/data
+BS_SLOT_DIR=~/.gonka-cache/slots
+BS_EMBED_URL=http://localhost:8686
+BS_QUALITY_URL=http://localhost:9090
+BS_MIN_SIM_BPS=7500
+BS_DISTILL_MODE=continuous
 ```
 
-## Experiment Results Reference
+Agent flow:
+1. On startup, if `BS_RAW_INPUT` is set → ingest, create slots
+2. On each task, check slot store first (cosine sim ≥ `BS_MIN_SIM_BPS`)
+3. On successful completion, distill result → new slot
+4. Slots shared via quality-middleware mesh pool across nodes/clients
+
+## Experiment Results
 
 | Exp | Tier | Runs | PQM | Slots | Verdict |
 |-----|------|------|-----|-------|---------|
@@ -108,13 +143,11 @@ QM_UPSTREAM=http://opengnk:8080 docker compose up -d quality-middleware
 | 3 | HARD | 15360 | 1.001 | 6 | DOMINATES |
 | 4 | HARD (raw) | 11520 | 1.020 | 197 | DOMINATES |
 
-All results reproducible. See `binary-singularity/results/` for stored artifacts.
-
 ## Protocol Compatibility
 
-These stacks are designed to **not conflict with the Gonka protocol** (#859 / #860):
-- `PatternSlot` store operates at client/DAPI level, below chain consensus
-- Hub check uses public read-only API only (`/api/public/stats/historical`)
-- `CacheQualityParams.Enabled = false` by default — requires governance tx
-- All new prefixes (48-51) are above `EpochGroupValidationEntryPrefix` (47)
-- PruningState wire format is additive (fields 5-8 new, fields 1-4 unchanged)
+No conflict with Gonka protocol (#859 / #860):
+- PatternSlot store at client/DAPI level, below chain consensus
+- Hub check uses read-only `/api/public/stats/historical`
+- `CacheQualityParams.Enabled = false` by default — governance activates
+- PruningState wire format additive (fields 5-8, no changes to 1-4)
+- Prefix collision free: 47=EpochGroup (upstream), 48-51=ours

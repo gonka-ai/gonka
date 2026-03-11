@@ -188,3 +188,34 @@ With context injection:
 - `QualityScore` (L2/L3/L5 axes) rises because answers are correct and better
 
 Target: PQM > 1.0 by Phase 5 saturation (network knowledge exceeds single cold inference).
+
+---
+
+## Binary Singularity — PQM > 1.0 PROVEN (2026-03-11)
+
+Four experiments on Bookworm (CPU-only, no GPU) proved PQM > 1.0:
+
+| Experiment | PQM | How |
+|-----------|-----|-----|
+| Exp 2 (9216 runs, 3 models) | 0.988 | Synthetic scenarios, mock node |
+| Exp 3 (15360 runs, K3s mesh) | **1.001** | Real developer semantics, multi-user |
+| Exp 4 (11520 runs, raw binary) | **1.020** | Untouched binary data from developer workflow |
+
+The L2 context injection hypothesis is validated: when PatternSlots accumulate
+from real workflows (not just synthetic scenarios), the binary layer's quality
+exceeds single cold inference on every axis.
+
+### Production deployment
+
+The binary singularity layer is now deployable on real Gonka nodes:
+
+```
+deploy/binary-singularity/production/  — Docker Compose on existing node
+test-net-cloud/k8s/overlays/binary-singularity/  — K8s kustomize overlay
+```
+
+Both integrate with DAPI semantic cache (`DAPI_CACHE__ENABLED=true`,
+`DAPI_CACHE__EMBEDDER_URL=http://embedder:8686`) and the quality-middleware
+(`/quality/stats`, `/quality/search`) for continuous slot distillation.
+
+Raw binary input from any source (`BS_RAW_INPUT`) feeds the binarizer at startup.
