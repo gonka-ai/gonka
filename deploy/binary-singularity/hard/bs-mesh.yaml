@@ -1,0 +1,243 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: binary-singularity
+---
+# ── ConfigMap: shared runtime config ─────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bs-config
+  namespace: binary-singularity
+data:
+  EMBED_URL: "http://embedder:8686"
+  DAPI_URL: "http://mock-node:8082"
+  DAPI_CACHE__ENABLED: "true"
+  DAPI_CACHE__L2_THRESHOLD_BPS: "4250"
+  BS_VERBOSE: "false"
+---
+# ── Embedder ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embedder
+  namespace: binary-singularity
+  labels:
+    app: embedder
+    tier: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: embedder
+  template:
+    metadata:
+      labels:
+        app: embedder
+    spec:
+      containers:
+      - name: embedder
+        image: bs-embedder:lite
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8686
+        env:
+        - name: MODEL_NAME
+          value: all-MiniLM-L6-v2
+        - name: BATCH_SIZE
+          value: "32"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8686
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8686
+          initialDelaySeconds: 30
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embedder
+  namespace: binary-singularity
+spec:
+  selector:
+    app: embedder
+  ports:
+  - port: 8686
+    targetPort: 8686
+  type: ClusterIP
+---
+# ── Mock-node (3 replicas distributed across agents) ─────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-node
+  namespace: binary-singularity
+  labels:
+    app: mock-node
+    tier: inference
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mock-node
+  template:
+    metadata:
+      labels:
+        app: mock-node
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: mock-node
+      containers:
+      - name: mock-node
+        image: bs-mocknode:lite
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8082
+        env:
+        - name: PORT
+          value: "8082"
+        - name: LOG_LEVEL
+          value: "warn"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-node
+  namespace: binary-singularity
+spec:
+  selector:
+    app: mock-node
+  ports:
+  - port: 8082
+    targetPort: 8082
+  type: ClusterIP
+---
+# ── Quality middleware ────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quality-middleware
+  namespace: binary-singularity
+  labels:
+    app: quality-middleware
+    tier: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quality-middleware
+  template:
+    metadata:
+      labels:
+        app: quality-middleware
+    spec:
+      containers:
+      - name: quality-middleware
+        image: bs-quality-middleware:medium
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 9090
+        env:
+        - name: UPSTREAM_URL
+          value: "http://mock-node:8082"
+        - name: LISTEN_PORT
+          value: "9090"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+        readinessProbe:
+          httpGet:
+            path: /quality/stats
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: quality-middleware
+  namespace: binary-singularity
+spec:
+  selector:
+    app: quality-middleware
+  ports:
+  - port: 9090
+    targetPort: 9090
+  type: ClusterIP
+---
+# ── PersistentVolumeClaim for slot store ─────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: slots-data
+  namespace: binary-singularity
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# ── NodePort services for external runner access ──────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: embedder-external
+  namespace: binary-singularity
+spec:
+  selector:
+    app: embedder
+  ports:
+  - port: 8686
+    targetPort: 8686
+    nodePort: 30686
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-node-external
+  namespace: binary-singularity
+spec:
+  selector:
+    app: mock-node
+  ports:
+  - port: 8082
+    targetPort: 8082
+    nodePort: 30082
+  type: NodePort
