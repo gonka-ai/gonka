@@ -70,7 +70,7 @@ var (
 	ActiveParticipantsCachePrefix          = collections.NewPrefix(44)
 	ModelLoadRollingWindowPrefix           = collections.NewPrefix(45)
 	ModelInferenceCountRollingWindowPrefix = collections.NewPrefix(46)
-	// Prefix 47 reserved.
+	EpochGroupValidationEntryPrefix        = collections.NewPrefix(47)
 	ContinuousPoCCommitsPrefix             = collections.NewPrefix(48)
 	ContinuousPoCEpochSummariesPrefix      = collections.NewPrefix(49)
 	ContinuousPoCChallengesPrefix          = collections.NewPrefix(50)
@@ -93,4 +93,6 @@ var (
 	FinishedInferenceQueueEntryPrefix = collections.NewPrefix(1)
 	FinishedInferenceQueueNextSeqKey  = collections.NewPrefix(2)
 	TransientSPRTValuesKey            = collections.NewPrefix(3)
+	TransientEpochDataModelMetaKey    = collections.NewPrefix(4)
+	TransientEpochDataModelWeightKey  = collections.NewPrefix(5)
 )

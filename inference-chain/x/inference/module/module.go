@@ -191,6 +191,13 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		// Don't return error - allow block processing to continue even if pricing update fails
 	}
 
+	// Cache epoch model metadata in transient store.
+	// This avoids repeated heavy model-group reads in MsgValidation.
+	err = am.keeper.BuildEpochDataTransientCache(ctx)
+	if err != nil {
+		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
+	}
+
 	return nil
 }
 

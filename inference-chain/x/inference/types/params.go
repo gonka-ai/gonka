@@ -233,6 +233,7 @@ func DefaultValidationParams() *ValidationParams {
 		DowntimeReputationPreserve:     DecimalFromFloat(0.0),
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
 		BinomTestP0:                    DecimalFromFloat(0.10),
+		ClaimValidationEnabled:         false,
 	}
 }
 

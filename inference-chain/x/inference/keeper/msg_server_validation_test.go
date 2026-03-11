@@ -34,6 +34,7 @@ func TestMsgServer_Validation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Validator,
@@ -69,6 +70,7 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 	mocks := inferenceHelper.Mocks
 	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 1,
@@ -139,6 +141,11 @@ func addMembersToGroupData(k keeper.Keeper, ctx sdk.Context) {
 	}
 	groupData.TotalWeight = total
 	k.SetEpochGroupData(ctx, groupData)
+}
+
+func buildValidationCacheForTest(t *testing.T, k keeper.Keeper, ctx sdk.Context) {
+	t.Helper()
+	require.NoError(t, k.BuildEpochDataTransientCache(ctx))
 }
 
 func TestMsgServer_NoInference(t *testing.T) {
@@ -241,6 +248,7 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// Attempt a failing validation; since limit reached, it should early-return without changing status
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
@@ -310,6 +318,7 @@ func TestMsgServer_Validation_InvalidationsLimit_AllowsVote_WithHighRollingActiv
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// With high rolling activity, invalidation should proceed to voting (not early-return).
 	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
@@ -339,6 +348,7 @@ func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// First validation should succeed
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{

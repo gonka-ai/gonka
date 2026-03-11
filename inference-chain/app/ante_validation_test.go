@@ -42,7 +42,7 @@ func TestValidationEarlyRejectDecorator_DuplicateValidationRejectedInCheckTx(t *
 		},
 	})
 
-	require.NoError(t, k.SetEpochGroupValidations(ctx, inferencetypes.EpochGroupValidations{
+	require.NoError(t, k.SeedEpochGroupValidationEntries(ctx, inferencetypes.EpochGroupValidations{
 		Participant: validator,
 		EpochIndex:  0,
 		// Intentionally unsorted: ante check should not rely on ordering.
