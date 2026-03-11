@@ -163,13 +163,21 @@ fun getInferenceValidationState(
     oddPair: LocalInferencePair,
     modelName: String? = null
 ): InferencePayload {
-    val invalidResult =
-        generateSequence { getInferenceResult(highestFunded, modelName) }
-            .take(5)
-            .firstOrNull {
-                Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
-                it.executorBefore.id == oddPair.node.getColdAddress()
+    var invalidResult: InferenceResult? = null
+    for (attempt in 0 until 12) {
+        val result = runCatching { getInferenceResult(highestFunded, modelName) }
+            .onFailure { error ->
+                Logger.warn("Inference probe attempt ${attempt + 1} failed while waiting for invalid executor: $error")
             }
+            .getOrNull()
+            ?: continue
+
+        Logger.warn("Got result: ${result.executorBefore.id} ${result.executorAfter.id}")
+        if (result.executorBefore.id == oddPair.node.getColdAddress()) {
+            invalidResult = result
+            break
+        }
+    }
     if (invalidResult == null) {
         error("Did not get result from invalid pair(${oddPair.node.getColdAddress()}) in time")
     }

@@ -109,7 +109,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1"},
 	}
-	k.SetEpochGroupValidations(sdk.UnwrapSDKContext(ctx), validations)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdk.UnwrapSDKContext(ctx), validations))
 
 	// Setup account with public key for signature verification
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
@@ -540,6 +540,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	params := types.DefaultParams()
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.ClaimValidationEnabled = true
 	k.SetParams(sdkCtx, params)
 
 	// Setup account with public key for signature verification
@@ -577,7 +578,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3", "inference4", "inference5", "inference6", "inference7", "inference8", "inference9", "inference10"},
 	}
-	k.SetEpochGroupValidations(sdkCtx, validations)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, validations))
 
 	// Mock the bank keeper for successful payment
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
@@ -772,6 +773,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	params := types.DefaultParams()
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.ClaimValidationEnabled = true
 	k.SetParams(sdkCtx, params)
 
 	// Setup account with public key for signature verification
@@ -840,7 +842,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3", "inference4", "inference5", "inference6", "inference7", "inference8", "inference9", "inference10"},
 	}
-	k.SetEpochGroupValidations(sdkCtx, validations)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, validations))
 
 	// Mock the bank keeper for successful payment
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
@@ -964,7 +966,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		EpochIndex:          epochIndex2,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3", "inference4", "inference5", "inference6", "inference7", "inference8", "inference9", "inference10"},
 	}
-	k.SetEpochGroupValidations(sdkCtx, validations2)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, validations2))
 
 	// Call ClaimRewards for second epoch - this should succeed now
 	resp, err = ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
@@ -1040,6 +1042,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	params.EpochParams.InferenceValidationCutoff = inferenceValidationCutoff
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.ClaimValidationEnabled = true
 	k.SetParams(sdkCtx, params)
 
 	// Settle Amount

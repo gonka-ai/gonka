@@ -102,6 +102,7 @@ message ValidationParams {
   Decimal downtime_reputation_preserve = 22; // How much reputation to keep after a downtime him (defaults to 0)
   Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
   Decimal binom_test_p0 = 24; // The null hypothesis probability for the binomial test (default 0.10)
+  bool claim_validation_enabled = 25; // Enables claim-time validation checks in MsgClaimRewards
 }
 
 message PoCModelParams {

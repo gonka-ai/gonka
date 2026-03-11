@@ -25,6 +25,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
+	if msg.Creator != msg.ExecutedBy {
+		err := sdkerrors.Wrapf(types.ErrInferenceRoleMismatch, "creator (%s) must equal executed_by (%s)", msg.Creator, msg.ExecutedBy)
+		k.LogError("FinishInference: creator-role invariant failed", types.Inferences, "error", err)
+		return failedFinish(ctx, err, msg), nil
+	}
 
 	if msg.PromptTokenCount > types.MaxAllowedTokens {
 		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "prompt_token_count exceeds limit (%d > %d)", msg.PromptTokenCount, types.MaxAllowedTokens), msg), nil
@@ -65,12 +70,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
 	}
 
-	err = k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor, &executor)
-	if err != nil {
-		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
-		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
-	}
-
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 
 	if found && existingInference.FinishedProcessed() {
@@ -85,6 +84,34 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			"executedBy", msg.ExecutedBy)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrInferenceExpired, "inference has already expired"), msg), nil
 	}
+
+	// Signature verification policy:
+	// - Start first: finish performs equality checks only (no TA/dev re-verification).
+	// - Finish first: verify dev + TA signatures.
+	// - Executor signature verification is disabled by policy in both paths.
+	if existingInference.StartProcessed() {
+		if err := k.compareDevComponents(msg, &existingInference); err != nil {
+			k.LogError("FinishInference: dev component mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedFinish(ctx, err, msg), nil
+		}
+		if err := k.compareFinishTAComponents(msg, &existingInference); err != nil {
+			k.LogError("FinishInference: TA component mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedFinish(ctx, err, msg), nil
+		}
+		if err := k.compareFinishModelField(msg, &existingInference); err != nil {
+			k.LogError("FinishInference: model field mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedFinish(ctx, err, msg), nil
+		}
+		k.LogDebug("FinishInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
+	} else {
+		err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor)
+		if err != nil {
+			k.LogError("FinishInference: verifyFinishKeys failed", types.Inferences, "error", err)
+			return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
+		}
+		k.LogDebug("FinishInference: dev and TA signatures cryptographically verified", types.Inferences, "inferenceId", msg.InferenceId)
+	}
+	k.LogDebug("FinishInference: executor signature verification disabled by policy", types.Inferences, "inferenceId", msg.InferenceId)
 
 	// Record the current price only if this is the first message (StartInference not processed yet)
 	// This ensures consistent pricing regardless of message arrival order
@@ -142,11 +169,10 @@ func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *ty
 	}
 }
 
-func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant) error {
+func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant) error {
 	// Hash-based signature verification (post-upgrade flow)
 	// Dev signs: original_prompt_hash + timestamp + ta_address
 	// TA signs: prompt_hash + timestamp + ta_address + executor_address
-	// Executor signs: prompt_hash + timestamp + ta_address + executor_address
 	devComponents := getFinishDevSignatureComponents(msg)
 	taComponents := getFinishTASignatureComponents(msg)
 
@@ -165,14 +191,6 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 
 	// Verify TA signature (prompt_hash)
 	if err := k.verifyTASignature(ctx, msg, taComponents, transferAgent); err != nil {
-		return err
-	}
-
-	// Verify Executor signature (prompt_hash)
-	if err := calculations.VerifyKeys(ctx, taComponents, calculations.SignatureData{
-		ExecutorSignature: msg.ExecutorSignature, Executor: executor,
-	}, k); err != nil {
-		k.LogError("FinishInference: Executor signature failed", types.Inferences, "error", err)
 		return err
 	}
 
@@ -228,6 +246,55 @@ func getFinishTASignatureComponents(msg *types.MsgFinishInference) calculations.
 		TransferAddress: msg.TransferredBy,
 		ExecutorAddress: msg.ExecutedBy,
 	}
+}
+
+func (k msgServer) compareFinishTAComponents(msg *types.MsgFinishInference, inference *types.Inference) error {
+	if inference.PromptHash != msg.PromptHash {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"prompt_hash mismatch: finish=%s start=%s",
+			msg.PromptHash,
+			inference.PromptHash,
+		)
+	}
+	if inference.RequestTimestamp != msg.RequestTimestamp {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"request_timestamp mismatch: finish=%d start=%d",
+			msg.RequestTimestamp,
+			inference.RequestTimestamp,
+		)
+	}
+	if inference.TransferredBy != msg.TransferredBy {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"transfer agent mismatch: finish=%s start=%s",
+			msg.TransferredBy,
+			inference.TransferredBy,
+		)
+	}
+	if inference.AssignedTo != msg.ExecutedBy {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"executor mismatch: finish.executed_by=%s start.assigned_to=%s",
+			msg.ExecutedBy,
+			inference.AssignedTo,
+		)
+	}
+	return nil
+}
+
+func (k msgServer) compareFinishModelField(msg *types.MsgFinishInference, inference *types.Inference) error {
+	// inference.Model CANNOT be "" here, Model is a required field for StartInference message
+	if inference.Model != "" && inference.Model != msg.Model {
+		return sdkerrors.Wrapf(
+			types.ErrInferenceRoleMismatch,
+			"model mismatch: finish=%s start=%s",
+			msg.Model,
+			inference.Model,
+		)
+	}
+	return nil
 }
 
 func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.Inference, executor *types.Participant) {

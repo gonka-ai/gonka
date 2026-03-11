@@ -59,7 +59,9 @@ type (
 		// Epoch collections
 		Epochs                    collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex       collections.Item[uint64]
+		// TODO(v0.2.11-cleanup): remove legacy aggregate map after upgrade migration period.
 		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		EpochGroupValidationEntry collections.KeySet[collections.Triple[uint64, string, string]]
 		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
 		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
 		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
@@ -276,12 +278,19 @@ func NewKeeper(
 			"effective_epoch_index",
 			collections.Uint64Value,
 		),
+		// TODO(v0.2.11-cleanup): remove legacy aggregate map wiring after migration period.
 		EpochGroupValidationsMap: collections.NewMap(
 			sb,
 			types.EpochGroupValidationsPrefix,
 			"epoch_group_validations",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupValidations](cdc),
+		),
+		EpochGroupValidationEntry: collections.NewKeySet(
+			sb,
+			types.EpochGroupValidationEntryPrefix,
+			"epoch_group_validation_entry",
+			collections.TripleKeyCodec(collections.Uint64Key, collections.StringKey, collections.StringKey),
 		),
 		SettleAmounts: collections.NewMap(
 			sb,

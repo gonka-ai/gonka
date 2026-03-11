@@ -23,18 +23,18 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	MustAddParticipant(t, ms, ctx, *mockTransferAgent)
 	MustAddParticipant(t, ms, ctx, *mockExecutor)
 
-	k.SetActiveParticipants(ctx, ParticipantsToActive(0, types.Participant{Index: testutil.Executor},
+	_ = k.SetActiveParticipants(ctx, ParticipantsToActive(0, types.Participant{Index: testutil.Executor},
 		types.Participant{Index: testutil.Creator}, types.Participant{Index: testutil.Requester}))
 	mocks.StubForInitGenesis(ctx)
 
 	// For escrow calls
 	mocks.BankKeeper.ExpectAny(ctx)
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), mockRequester.GetBechAddress()).Return(true).AnyTimes()
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockRequester.GetBechAddress()).Return(mockRequester).Times(2)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockRequester.GetBechAddress()).Return(mockRequester).AnyTimes()
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(true).AnyTimes()
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(mockTransferAgent).Times(2)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockTransferAgent.GetBechAddress()).Return(mockTransferAgent).AnyTimes()
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(true).AnyTimes()
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(mockExecutor).Times(1)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), mockExecutor.GetBechAddress()).Return(mockExecutor).AnyTimes()
 
 	// For GranteesByMessageType calls (used by both FinishInference and StartInference)
 	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
@@ -79,7 +79,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
-		Creator:              mockTransferAgent.address,
+		Creator:              mockExecutor.address,
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
@@ -107,6 +107,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	require.Equal(t, uint64(10), savedInference.PromptTokenCount)
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)
+	require.Equal(t, originalPromptHash, savedInference.OriginalPromptHash)
 
 	model := types.Model{Id: "model1"}
 	StubModelSubgroup(t, ctx, k, mocks, &model)
@@ -149,6 +150,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	require.Equal(t, uint64(10), savedInference.PromptTokenCount)
 	require.Equal(t, uint64(20), savedInference.CompletionTokenCount)
 	require.Equal(t, testutil.Executor, savedInference.ExecutedBy)
+	require.Equal(t, originalPromptHash, savedInference.OriginalPromptHash)
 
 	// Verify that the escrow amount is based on the actual token counts, not the MaxTokens
 	// The actual cost should be (10 + 20) * PerTokenCost = 30 * PerTokenCost

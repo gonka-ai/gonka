@@ -73,4 +73,7 @@ var (
 	ErrAccountNotFound                       = sdkerrors.Register(ModuleName, 1167, "account not found")
 	ErrNotAContractAddress                   = sdkerrors.Register(ModuleName, 1168, "address is not a contract address")
 	ErrActiveParticipantNotFound             = sdkerrors.Register(ModuleName, 1169, "participant is not active")
+	ErrDevComponentMismatch                  = sdkerrors.Register(ModuleName, 1170, "developer signature components mismatch")
+	ErrTAComponentMismatch                   = sdkerrors.Register(ModuleName, 1171, "transfer agent signature components mismatch")
+	ErrInferenceRoleMismatch                 = sdkerrors.Register(ModuleName, 1172, "inference role/address invariant mismatch")
 )
