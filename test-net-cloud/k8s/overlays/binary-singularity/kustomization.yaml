@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Overlay: adds binary singularity layer to an existing genesis or join deploy.
+# Usage:
+#   kubectl apply -k test-net-cloud/k8s/overlays/binary-singularity/
+#
+# Prerequisites: genesis/ or join/ base already applied.
+
+resources:
+  - bs-namespace.yaml
+  - embedder.yaml
+  - quality-middleware.yaml
+  - slot-store-pvc.yaml
+
+# Patch the existing DAPI api-deployment to enable semantic cache
+patches:
+  - target:
+      kind: Deployment
+      name: api
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DAPI_CACHE__ENABLED
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DAPI_CACHE__L2_THRESHOLD_BPS
+          value: "4250"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DAPI_CACHE__EMBEDDER_URL
+          value: "http://embedder.binary-singularity:8686"
