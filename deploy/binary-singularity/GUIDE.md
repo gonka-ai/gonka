@@ -293,6 +293,85 @@ Routing simulation (при 20% специализированных нод):
 
 ---
 
+## Ключевые параметры (из исследования)
+
+### Hit rate formula (PR #859)
+
+```
+effective_hit_rate = repeat_fraction × (1/M) × (1 − stream_fraction)
+```
+
+| Scenario | M | repeat% | stream% | hit_rate | GPU saves/epoch |
+|---|---|---|---|---|---|
+| Shared model (M=571) | 571 | 30% | 10% | 0.0005 | 41 |
+| QwQ-32B (M=12) | 12 | 30% | 10% | 0.0225 | 1,942 |
+| Specialized (M=1) | 1 | 30% | 0% | 0.30 | 22,505 |
+| 20% сети (33 ноды M=1) | 1 | 40% | 5% | 0.38 | **940,698** |
+
+### Optimal L2 threshold (quality_matrix_research_v2)
+
+| BPS | F1 | Precision | Recall | Verdict |
+|---|---|---|---|---|
+| 7500 (текущий) | 0.520 | 0.929 | 0.361 | теряет 64% валидных хитов |
+| **4250 (оптимальный)** | **0.986** | **0.973** | **1.000** | 36/36 positives, 19/20 negatives |
+| 9000 | 0.000 | — | 0.000 | ничего не ловит |
+
+### 4-стадийный pipeline (ошибки → 1%)
+
+```
+Stage 1: Similarity gate (4250 bps)     → error ~28%
+Stage 2: +SemanticVerifier v3 (logical)  → error ~12%
+Stage 3: +Coherence gate (adaptive floor) → error ~4%
+Stage 4: +Loop closure (delta ≥ -800 bps) → error ~1%
+```
+
+Coherence floors: sim≤6250 → 3000 bps · sim 6250-8000 → 4000 bps · sim>8000 → 4500 bps
+Loop closure margin: -800 bps (absorbs comment/style embedding variation)
+
+### Экономика в долларах (H100 $2.50/h, 1 inf = 1.28s GPU)
+
+|  | За эпоху | За месяц | За год |
+|---|---|---|---|
+| **1 нода (M=1)** | ~$26 | ~$111 | **~$1,355** |
+| **33 ноды (20%)** | ~$836 | ~$3,580 | **~$43,578** |
+| **115 нод (100%)** | ~$2,988 | ~$12,815 | **~$155,800** |
+
+---
+
+## Связанные PR, GiP и исследования
+
+### Прямые зависимости
+
+| Ref | Название | Связь |
+|---|---|---|
+| [PR #859](https://github.com/gonka-ai/gonka/pull/859) | Semantic Cache + CacheQualityWeight | Инфраструктура: L1/L2 cache, on-chain quality |
+| [GiP #860](https://github.com/gonka-ai/gonka/discussions/860) | Inference Quality Protocol | Дизайн: 10-axis matrix (L0-L9), routing, SDK |
+| [PR #856](https://github.com/gonka-ai/gonka/pull/856) | Continuous PoC | Аддитивно: fields 5-7 в PruningState |
+| [PR #812](https://github.com/gonka-ai/gonka/pull/812) | StartInference/FinishInference perf | Cache HIT path benefit (no GPU call) |
+| [PR #793](https://github.com/gonka-ai/gonka/pull/793) | EpochGroupCache | Dependency: per-block epoch cache |
+
+### Связанные GiP и issues
+
+| Ref | Название | Связь |
+|---|---|---|
+| [GiP #816](https://github.com/gonka-ai/gonka/issues/816) | Node Manager (k8s) | Специализация M=1 → hit_rate 571× |
+| [GiP #840](https://github.com/gonka-ai/gonka/issues/840) | Prometheus scraper | `/admin/v1/cache/stats` endpoint |
+| [Issue #820](https://github.com/gonka-ai/gonka/issues/820) | Missed inferences | L2/L9 axes quantify root cause |
+| [Issue #839](https://github.com/gonka-ai/gonka/issues/839) | log_format=json | Prerequisite for L8 baseline |
+
+### Исследовательские документы (в `exit/` repo)
+
+| Файл | Содержание |
+|---|---|
+| `quality_matrix_research.md` | v1: baseline L0-L9, 5-task test, progressive threshold |
+| `quality_matrix_research_v2.md` | v2: adversarial verifier, 4-stage pipeline, loop closure, coherence-ratio gate |
+| `proof_topology_860_859.md` | Формальная топология доказательства: S1-S4 scenarios, a priori parameters |
+| `docs/GPU_savings_over_distance.md` | Экономика: GPU saves по эпохам, $ по нодам/сети, жёсткий буст |
+| `PR_859_description.md` | Полное описание PR: architecture, tests, proto alignment |
+| `GiP_860_discussion.md` | Полный дизайн-документ: 10-axis matrix, phases, routing |
+
+---
+
 ## Связь с протоколом
 
 | Слой | Затрагивает протокол? | Детали |

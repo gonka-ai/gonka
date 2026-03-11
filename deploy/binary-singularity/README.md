@@ -156,6 +156,28 @@ Agent flow:
 | Memory | 16 GB GPU VRAM | 19–23 MB CPU | **~700×** less |
 | GPU saves/epoch (20% spec.) | 0 | **940,698** | — |
 
+## Key Parameters
+
+```
+Hit rate formula:  H = repeat_fraction × (1/M) × (1 - stream_fraction)
+Optimal L2 threshold: 4250 bps (F1=0.986, quality_matrix_research_v2)
+Current deployment:   7500 bps (loses 64% of valid hits)
+Coherence floors:     sim≤6250→3000 · sim 6250-8000→4000 · sim>8000→4500
+Loop closure margin:  -800 bps
+PQM formula:          QualityScore(binary) / QualityScore(single_gpu)
+Network composite:    0.7236 (6/10 axes measured, epochs 161-191)
+```
+
+Economics (H100 $2.50/h): 1 node ~$1,355/year · 33 nodes ~$43,578/year · full protocol ~$155,800/year
+
+Related: [PR #859](https://github.com/gonka-ai/gonka/pull/859) ·
+[GiP #860](https://github.com/gonka-ai/gonka/discussions/860) ·
+[PR #856](https://github.com/gonka-ai/gonka/pull/856) (Continuous PoC) ·
+[PR #812](https://github.com/gonka-ai/gonka/pull/812) (perf) ·
+[PR #793](https://github.com/gonka-ai/gonka/pull/793) (EpochGroupCache) ·
+[GiP #816](https://github.com/gonka-ai/gonka/issues/816) (Node Manager) ·
+[GiP #840](https://github.com/gonka-ai/gonka/issues/840) (Prometheus)
+
 ## Protocol Compatibility
 
 No conflict with Gonka protocol (#859 / #860):

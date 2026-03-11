@@ -58,6 +58,16 @@ go build -o bin/gonka ./cmd/gonka
 BS_RAW_INPUT=/path/to/data ./bin/gonka "your task"
 ```
 
+### Key references
+
+- [PR #859](https://github.com/gonka-ai/gonka/pull/859) — Semantic Cache + CacheQualityWeight
+- [GiP #860](https://github.com/gonka-ai/gonka/discussions/860) — Inference Quality Protocol (10-axis matrix)
+- [PR #856](https://github.com/gonka-ai/gonka/pull/856) — Continuous PoC (fields 5-7)
+- [PR #812](https://github.com/gonka-ai/gonka/pull/812) — StartInference/FinishInference perf
+- [PR #793](https://github.com/gonka-ai/gonka/pull/793) — EpochGroupCache (dependency)
+- Optimal threshold: 4250 bps (F1=0.986) — see `quality_matrix_research_v2.md`
+- Economics: ~$155,800/year full protocol — see `docs/GPU_savings_over_distance.md`
+
 ### PR #859 conflict resolution (2026-03-11)
 
 PruningState field layout after merge with upgrade-v0.2.11:

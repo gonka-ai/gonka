@@ -191,6 +191,15 @@ Target: PQM > 1.0 by Phase 5 saturation (network knowledge exceeds single cold i
 
 ---
 
+## Related work
+
+- [PR #859](https://github.com/gonka-ai/gonka/pull/859) — on-chain CacheQualityWeight infrastructure
+- [GiP #860](https://github.com/gonka-ai/gonka/discussions/860) — 10-axis quality matrix design
+- [PR #856](https://github.com/gonka-ai/gonka/pull/856) — Continuous PoC (additive settlement)
+- Deploy stack: [`deploy/binary-singularity/`](../deploy/binary-singularity/) (LITE/MEDIUM/HARD/PRODUCTION)
+- Full guide: [`deploy/binary-singularity/GUIDE.md`](../deploy/binary-singularity/GUIDE.md)
+- Agent SDK: [`gonkalabs/gonka-agent`](https://github.com/gonkalabs/gonka-agent/tree/dev/binary-singularity)
+
 ## Binary Singularity — PQM > 1.0 PROVEN (2026-03-11)
 
 Four experiments on Bookworm (CPU-only, no GPU) proved PQM > 1.0:
