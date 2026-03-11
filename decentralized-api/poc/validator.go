@@ -674,7 +674,15 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 			"numNodes", len(nodes),
 			"attempt", attempt)
 
-		nodes = filterNodesForValidation(nodes)
+		epochState := v.phaseTracker.GetCurrentEpochState()
+		if epochState == nil {
+			logging.Error("OffChainValidator: epoch state is nil during node filtering", types.PoC,
+				"pocStageStartBlockHeight", pocStageStartBlockHeight,
+				"attempt", attempt)
+			return nil, errors.New("epoch state is nil during node filtering")
+		}
+
+		nodes = filterNodesForValidation(nodes, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase)
 		logging.Info("OffChainValidator: filtered nodes for validation", types.PoC,
 			"numNodes", len(nodes),
 			"attempt", attempt)
@@ -701,8 +709,8 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 // filterNodesForValidation returns nodes available for PoC validation.
 // - Accept nodes in POC status with any sub-status
 // - Accept nodes in INFERENCE status (unless preserved for inference via POC_SLOT)
-// - Exclude FAILED, administratively disabled, or POC_SLOT-preserved nodes
-func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse {
+// - Exclude FAILED, nodes that are not operational for the current epoch/phase, or POC_SLOT-preserved nodes
+func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase) []broker.NodeResponse {
 	filtered := make([]broker.NodeResponse, 0, len(nodes))
 	for _, node := range nodes {
 		// Exclude failed nodes
@@ -717,9 +725,13 @@ func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse
 			continue
 		}
 
-		// Exclude administratively disabled nodes
-		if !node.State.AdminState.Enabled {
-			logging.Debug("filterNodesForValidation: Skipping administratively disabled node", types.PoC, "node_id", node.Node.Id)
+		// Exclude nodes that are not operational for the current epoch/phase.
+		if !node.State.ShouldBeOperational(latestEpoch, currentPhase) {
+			logging.Debug("filterNodesForValidation: Skipping non-operational node", types.PoC,
+				"node_id", node.Node.Id,
+				"latest_epoch", latestEpoch,
+				"current_phase", currentPhase,
+				"admin_state", node.State.AdminState)
 			continue
 		}
 

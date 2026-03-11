@@ -28,13 +28,13 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 	inference.Status = types.InferenceStatus_INVALIDATED
 	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
-	epochGroup, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		k.LogError("Failed to get current epoch group", types.Validation, "error", err)
-		return nil, err
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("Failed to get effective epoch index", types.Validation)
+		return nil, types.ErrEffectiveEpochNotFound
 	}
 
-	shouldRefund, reason := k.inferenceIsBeforeClaimsSet(ctx, *inference, epochGroup.GroupData.EpochIndex)
+	shouldRefund, reason := k.inferenceIsBeforeClaimsSet(ctx, *inference, currentEpochIndex)
 	k.LogInfo("Inference refund decision", types.Validation, "inferenceId", inference.InferenceId, "executor", executor.Address, "shouldRefund", shouldRefund, "reason", reason)
 	if shouldRefund {
 		err := k.refundInvalidatedInference(executor, inference, ctx)

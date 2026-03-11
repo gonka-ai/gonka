@@ -210,6 +210,8 @@ data class ValidationParams(
     val quickFailureThreshold: Decimal?,
     @SerializedName("binom_test_p0")
     val binomTestP0: Decimal?,
+    @SerializedName("claim_validation_enabled")
+    val claimValidationEnabled: Boolean = false,
 )
 
 data class BandwidthLimitsParams(

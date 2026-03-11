@@ -11,6 +11,16 @@ import (
 // SetInference set a specific inference in the store from its index
 func (k Keeper) SetInference(ctx context.Context, inference types.Inference) error {
 	k.addInferenceToPruningList(ctx, inference)
+	return k.setInferenceValue(ctx, inference)
+}
+
+// SetInferenceWithoutPruning writes inference state without touching pruning index.
+// Useful when updating an already-indexed inference in hot paths.
+func (k Keeper) SetInferenceWithoutPruning(ctx context.Context, inference types.Inference) error {
+	return k.setInferenceValue(ctx, inference)
+}
+
+func (k Keeper) setInferenceValue(ctx context.Context, inference types.Inference) error {
 	return k.Inferences.Set(ctx, inference.Index, inference)
 }
 

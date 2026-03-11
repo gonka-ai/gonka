@@ -30,6 +30,7 @@ func setupInferenceInVoting(t *testing.T) (*MockInferenceHelper, *types.Inferenc
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// Cause an invalidation vote by submitting a below-threshold validation
 	mocks := inferenceHelper.Mocks

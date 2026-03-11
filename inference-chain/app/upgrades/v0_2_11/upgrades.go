@@ -18,24 +18,21 @@ func CreateUpgradeHandler(
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
 
-		err := setSafetyWindow(ctx, k)
+		err := setParameters(ctx, k)
 		if err != nil {
 			return nil, err
 		}
-		currentEpochIndex, err := k.EffectiveEpochIndex.Get(ctx)
+		err = setPruningState(ctx, k)
 		if err != nil {
-			return fromVM, err
-		}
-		if currentEpochIndex < 2 {
-			return fromVM, nil
+			return nil, err
 		}
 
-		err = setEpochParticipantsSet(ctx, k, currentEpochIndex)
+		err = setEpochParticipantsSets(ctx, k)
 		if err != nil {
 			return fromVM, err
 		}
 
-		err = setEpochParticipantsSet(ctx, k, currentEpochIndex-1)
+		err = k.MigrateEpochGroupValidationsToEntries(ctx)
 		if err != nil {
 			return fromVM, err
 		}
@@ -50,21 +47,42 @@ func CreateUpgradeHandler(
 	}
 }
 
-// setSafetyWindow sets the safety_window parameter to 50.
-func setSafetyWindow(ctx context.Context, k keeper.Keeper) error {
+func setEpochParticipantsSets(ctx context.Context, k keeper.Keeper) error {
+	currentEpochIndex, err := k.EffectiveEpochIndex.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if currentEpochIndex < 2 {
+		return err
+	}
+	err = setEpochParticipantsSet(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
+	err = setEpochParticipantsSet(ctx, k, currentEpochIndex-1)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// setParameters sets the safety_window parameter to 50.
+func setParameters(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		k.LogError("failed to get params during upgrade", types.Upgrades, "error", err)
 		return err
 	}
 
-	if params.EpochParams == nil {
-		k.LogError("epoch params not initialized", types.Upgrades)
-		return errors.New("EpochParams are nil")
+	// Impossible, but explicitness is important
+	if params.EpochParams == nil || params.ValidationParams == nil {
+		k.LogError("params not initialized", types.Upgrades)
+		return errors.New("Params not initialized")
 	}
 
 	params.EpochParams.ConfirmationPocSafetyWindow = 50
 
+	params.ValidationParams.ClaimValidationEnabled = false
 	if err := k.SetParams(ctx, params); err != nil {
 		k.LogError("failed to set params with safety window", types.Upgrades, "error", err)
 		return err
@@ -72,6 +90,15 @@ func setSafetyWindow(ctx context.Context, k keeper.Keeper) error {
 
 	k.LogInfo("set safety window", types.Upgrades, "safety_window", params.EpochParams.ConfirmationPocSafetyWindow)
 	return nil
+}
+
+func setPruningState(ctx context.Context, k keeper.Keeper) error {
+	state, err := k.PruningState.Get(ctx)
+	if err != nil {
+		return err
+	}
+	state.EpochGroupValidationsPrunedEpoch = 0
+	return k.PruningState.Set(ctx, state)
 }
 
 func setEpochParticipantsSet(ctx context.Context, k keeper.Keeper, epochIndex uint64) error {
