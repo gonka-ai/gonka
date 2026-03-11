@@ -384,6 +384,11 @@ func (qm *QualityMiddleware) Wrap(next http.Handler) http.Handler {
 
 		latency := float64(time.Since(start).Milliseconds())
 		qm.mu.Lock()
+		const maxLatencies = 10000
+		if len(qm.latencies) >= maxLatencies {
+			copy(qm.latencies, qm.latencies[len(qm.latencies)-maxLatencies/2:])
+			qm.latencies = qm.latencies[:maxLatencies/2]
+		}
 		qm.latencies = append(qm.latencies, latency)
 		qm.mu.Unlock()
 
@@ -592,10 +597,14 @@ func (qm *QualityMiddleware) ShareHandler() http.Handler {
 			accepted++
 		}
 
+		qm.meshMu.Lock()
+		poolSize := len(qm.pool)
+		qm.meshMu.Unlock()
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"accepted":  accepted,
-			"pool_size": len(qm.pool),
+			"pool_size": poolSize,
 		})
 	})
 }
