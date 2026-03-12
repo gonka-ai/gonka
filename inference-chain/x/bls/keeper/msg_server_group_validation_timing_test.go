@@ -178,7 +178,7 @@ func TestSubmitGroupKeyValidationSignature_Timing(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("SubmitGroupKeyValidationSignature (single slot): %s", time.Since(start))
 
-	requiredSlots := previousEpoch.ITotalSlots/2 + 1
+	requiredSlots := previousEpoch.TSlotsDegree + 1
 	slotsCovered := uint32(1)
 	perCallDurations := make([]time.Duration, 0, numParticipants)
 	totalStart := time.Now()
@@ -430,8 +430,8 @@ func TestAggregateBLSPartialSignatures_Timing(t *testing.T) {
 	messageG1, err := k.hashToG1(messageHash)
 	require.NoError(t, err)
 
-	// Prepare 51 slots (threshold) for aggregation
-	requiredSlots := uint32(51)
+	// Prepare t+1 slots (threshold) for aggregation
+	requiredSlots := uint32(commitmentCount)
 	slotScalars := computeSlotScalars(totalCoeffs, totalSlots)
 
 	partialSignatures := make([]types.PartialSignature, 0, requiredSlots)
