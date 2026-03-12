@@ -1,0 +1,170 @@
+version: "3.9"
+
+# ── MEDIUM: Binary Singularity — opengnk proxy + quality middleware ───────────
+# Extends LITE with:
+#   - opengnk (gonkalabs/opengnk:dev) as OpenAI-compatible Gonka proxy
+#   - quality-middleware measuring L6/L8/L9/DX axes per request
+#   - multi-model support (Qwen3-235B, Mistral, mock fallback)
+#   - CPU semantic pool with mesh-ready slot distribution
+#
+# Prerequisites:
+#   - GONKA_PRIVATE_KEY and GONKA_ADDRESS in .env (or GONKA_WALLETS)
+#   - 4 GB RAM
+#
+# Quick start:
+#   cp .env.example .env && nano .env  # fill keys
+#   docker compose up -d
+#   docker compose exec runner ./runner --iterations 12 --models qwen3:4b,mistral
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  embedder:
+    image: bs-embedder:lite
+    build:
+      context: ../../../binary-singularity
+      dockerfile: ../../../binary-singularity/Dockerfile.embedder
+    restart: unless-stopped
+    ports:
+      - "${EMBED_PORT:-8686}:8686"
+    environment:
+      - MODEL_NAME=all-MiniLM-L6-v2
+      - BATCH_SIZE=32
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8686/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  mock-node:
+    image: bs-mocknode:lite
+    build:
+      context: ../../../binary-singularity/mocknode
+    restart: unless-stopped
+    ports:
+      - "${MOCK_NODE_PORT:-8082}:8082"
+    environment:
+      - PORT=8082
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # opengnk: OpenAI-compatible proxy for Gonka decentralized inference
+  # Source: https://github.com/gonkalabs/opengnk/tree/dev
+  opengnk:
+    image: ghcr.io/gonkalabs/opengnk:dev
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "${OPENGNK_PORT:-8080}:8080"
+    environment:
+      - GONKA_PRIVATE_KEY=${GONKA_PRIVATE_KEY:-}
+      - GONKA_ADDRESS=${GONKA_ADDRESS:-}
+      - GONKA_WALLETS=${GONKA_WALLETS:-}
+      - GONKA_SOURCE_URL=${GONKA_SOURCE_URL:-http://node2.gonka.ai:8000}
+      - SIMULATE_TOOL_CALLS=${SIMULATE_TOOL_CALLS:-false}
+      - PORT=8080
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - live  # use: docker compose --profile live up
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # quality-middleware: L6/L8/L9/DX measurement layer for inference quality
+  # Wraps opengnk or mock-node, exposes /quality/stats
+  quality-middleware:
+    build:
+      context: ../../../
+      dockerfile: ../../../examples/quality-middleware/Dockerfile
+    image: bs-quality-middleware:medium
+    restart: unless-stopped
+    ports:
+      - "${QM_PORT:-9090}:9090"
+    environment:
+      - UPSTREAM_URL=${QM_UPSTREAM:-http://mock-node:8082}
+      - LISTEN_PORT=9090
+      - EPOCH_DURATION_SECS=${EPOCH_DURATION_SECS:-600}
+    depends_on:
+      mock-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/quality/stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  runner:
+    image: bs-runner:lite
+    build:
+      context: ../../../binary-singularity/scenarios/runner
+    depends_on:
+      embedder:
+        condition: service_healthy
+      quality-middleware:
+        condition: service_healthy
+    volumes:
+      - slots_data:/data/slots
+      - ./results:/results
+      - ../../../binary-singularity/scenarios:/scenarios:ro
+    environment:
+      - EMBED_URL=http://embedder:8686
+      - DAPI_URL=http://quality-middleware:9090
+      - STORE_DIR=/data/slots
+      - OUTPUT_DIR=/results
+      - HUB_URL=${HUB_URL:-https://gonka.gg/api/public/stats/historical}
+      - HUB_KEY=${HUB_KEY:-}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  gonka-agent:
+    build:
+      context: ../../../../gonka-agent
+      dockerfile: Dockerfile
+    image: gonka-agent:medium
+    depends_on:
+      embedder:
+        condition: service_healthy
+      quality-middleware:
+        condition: service_healthy
+    volumes:
+      - slots_data:/data/slots
+      - ${BS_RAW_INPUT:-/dev/null}:/mnt/raw-input:ro
+    environment:
+      - GONKA_API_KEY=${GONKA_API_KEY:-}
+      - GONKA_SOURCE_URL=http://quality-middleware:9090
+      - BS_EMBED_URL=http://embedder:8686
+      - BS_QUALITY_URL=http://quality-middleware:9090
+      - BS_SLOT_DIR=/data/slots
+      - BS_RAW_INPUT=${BS_RAW_INPUT:+/mnt/raw-input}
+      - BS_CHUNK_LINES=${BS_CHUNK_LINES:-50}
+      - BS_MIN_SIM_BPS=${BS_MIN_SIM_BPS:-7500}
+      - BS_DISTILL_MODE=${BS_DISTILL_MODE:-continuous}
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  slots_data:

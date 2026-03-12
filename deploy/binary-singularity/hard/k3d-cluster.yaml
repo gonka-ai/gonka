@@ -1,0 +1,39 @@
+# k3d cluster configuration for Binary Singularity mesh
+# Creates: 1 server + 3 agents (mirrors bookworm experiment topology)
+#
+# Usage:
+#   k3d cluster create --config k3d-cluster.yaml
+#   kubectl apply -f bs-mesh.yaml
+#
+# Requirements: Docker, k3d >= 5.x, kubectl
+
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: bs-mesh
+servers: 1
+agents: 3
+
+ports:
+  - port: 8686:8686  # embedder
+    nodeFilters:
+      - loadbalancer
+  - port: 8082:8082  # mock-node
+    nodeFilters:
+      - loadbalancer
+  - port: 9090:9090  # quality-middleware
+    nodeFilters:
+      - loadbalancer
+
+options:
+  k3d:
+    wait: true
+    timeout: "120s"
+  k3s:
+    extraArgs:
+      - arg: "--disable=traefik"
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

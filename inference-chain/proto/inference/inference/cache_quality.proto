@@ -1,0 +1,38 @@
+syntax = "proto3";
+package inference.inference;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// CacheQualityEpochSummary records the cache quality metrics reported by a
+// participant for a single epoch.  Submitted via MsgSubmitCacheQualitySummary
+// and stored on-chain in the CacheQualityEpochSummaries collection (prefix 47).
+// At epoch settlement, CacheQualityWeight is derived from these values and
+// added to the participant's standard PoC weight.
+message CacheQualityEpochSummary {
+  // participant_address is the bech32 address of the reporting participant.
+  string participant_address = 1;
+  // epoch_index is the epoch this summary covers.
+  uint64 epoch_index = 2;
+  // cache_reuse_count is the number of times this participant's cached results
+  // were served to other users instead of triggering a new GPU inference.
+  int64 cache_reuse_count = 3;
+  // original_compute_count is the number of GPU inferences performed by this
+  // participant that were stored in the semantic cache.
+  int64 original_compute_count = 4;
+  // avg_similarity_bps is the average cosine similarity (× 10 000) across all
+  // cache reuse events.  10 000 = exact PromptHash match (L1); values ≥ 9 700
+  // indicate semantic equivalence (L2).  Self-reported; bounded by governance.
+  uint32 avg_similarity_bps = 5;
+  // cache_quality_weight is the pre-computed additional weight contribution for
+  // this epoch, set by the msg handler:
+  //   min(cache_reuse_count × ReuseWeightCoefficient,
+  //       StandardPoCNonces × MaxWeightFractionBps / 10 000)
+  // This is the value added to baseCount in calculateParticipantWeight.
+  int64 cache_quality_weight = 6;
+  // embedding_model_version records which embedding model version this
+  // participant used when computing similarity scores for the epoch.
+  // Must match CacheQualityParams.EmbeddingModelVersion at submission time.
+  string embedding_model_version = 7;
+}

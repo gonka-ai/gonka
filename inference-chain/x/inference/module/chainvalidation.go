@@ -50,16 +50,27 @@ type WeightCalculator struct {
 	Validations             map[string][]types.PoCValidationV2
 	Participants            map[string]types.Participant
 	Seeds                   map[string]types.RandomSeed
-	EpochStartBlockHeight   int64
-	Logger                  types.InferenceLogger
-	WeightScaleFactor       mathsdk.LegacyDec
-	TimeNormalizationFactor mathsdk.LegacyDec
-	GuardianEnabled         bool
-	GuardianAddresses       map[string]bool
-	AppHash                 string
-	ValidationSlots         int
-	sortedValidatorEntries  []calculations.WeightEntry
-	validatorTotalWeight    int64
+	// ContinuousPoCEpochSummaries holds the per-participant continuous PoC summary for the settling epoch.
+	// EffectivePocWeight from each summary is added to the standard PoC nonce count during weight calculation.
+	ContinuousPoCEpochSummaries map[string]types.ContinuousPoCEpochSummary
+	// CacheQualityEpochSummaries holds the per-participant semantic cache quality summary.
+	// CacheQualityWeight from each summary is added (capped) to baseCount during weight calculation.
+	CacheQualityEpochSummaries map[string]types.CacheQualityEpochSummary
+	// CacheQualityMaxWeightFractionBps is the governance-managed cap for how much
+	// CacheQualityWeight can add relative to the participant's standard PoC nonce count.
+	// Sourced from CacheQualityParams.MaxWeightFractionBps at settlement time.
+	// Default: 3000 (30%). Must not be hardcoded in calculateParticipantWeight.
+	CacheQualityMaxWeightFractionBps uint32
+	EpochStartBlockHeight       int64
+	Logger                      types.InferenceLogger
+	WeightScaleFactor           mathsdk.LegacyDec
+	TimeNormalizationFactor     mathsdk.LegacyDec
+	GuardianEnabled             bool
+	GuardianAddresses           map[string]bool
+	AppHash                     string
+	ValidationSlots             int
+	sortedValidatorEntries      []calculations.WeightEntry
+	validatorTotalWeight        int64
 }
 
 // NewWeightCalculator creates a new WeightCalculator instance.
@@ -70,6 +81,9 @@ func NewWeightCalculator(
 	validations map[string][]types.PoCValidationV2,
 	participants map[string]types.Participant,
 	seeds map[string]types.RandomSeed,
+	continuousPoCEpochSummaries map[string]types.ContinuousPoCEpochSummary,
+	cacheQualityEpochSummaries map[string]types.CacheQualityEpochSummary,
+	cacheQualityMaxWeightFractionBps uint32,
 	epochStartBlockHeight int64,
 	logger types.InferenceLogger,
 	weightScaleFactor mathsdk.LegacyDec,
@@ -80,20 +94,23 @@ func NewWeightCalculator(
 	validationSlots int,
 ) *WeightCalculator {
 	wc := &WeightCalculator{
-		CurrentValidatorWeights: currentValidatorWeights,
-		StoreCommits:            storeCommits,
-		NodeWeightDistributions: nodeWeightDistributions,
-		Validations:             validations,
-		Participants:            participants,
-		Seeds:                   seeds,
-		EpochStartBlockHeight:   epochStartBlockHeight,
-		Logger:                  logger,
-		WeightScaleFactor:       weightScaleFactor,
-		TimeNormalizationFactor: timeNormalizationFactor,
-		GuardianEnabled:         guardianEnabled,
-		GuardianAddresses:       guardianAddresses,
-		AppHash:                 appHash,
-		ValidationSlots:         validationSlots,
+		CurrentValidatorWeights:          currentValidatorWeights,
+		StoreCommits:                     storeCommits,
+		NodeWeightDistributions:          nodeWeightDistributions,
+		Validations:                      validations,
+		Participants:                     participants,
+		Seeds:                            seeds,
+		ContinuousPoCEpochSummaries:      continuousPoCEpochSummaries,
+		CacheQualityEpochSummaries:       cacheQualityEpochSummaries,
+		CacheQualityMaxWeightFractionBps: cacheQualityMaxWeightFractionBps,
+		EpochStartBlockHeight:            epochStartBlockHeight,
+		Logger:                           logger,
+		WeightScaleFactor:                weightScaleFactor,
+		TimeNormalizationFactor:          timeNormalizationFactor,
+		GuardianEnabled:                  guardianEnabled,
+		GuardianAddresses:                guardianAddresses,
+		AppHash:                          appHash,
+		ValidationSlots:                  validationSlots,
 	}
 
 	if validationSlots > 0 {
@@ -393,7 +410,49 @@ func (wc *WeightCalculator) calculateParticipantWeight(participantAddress string
 		combinedFactor = combinedFactor.Mul(wc.TimeNormalizationFactor)
 	}
 
-	totalWeight := mathsdk.LegacyNewDec(int64(commit.Count)).Mul(combinedFactor).TruncateInt64()
+	// Continuous PoC adds effective_poc_weight nonce-equivalents on top of the standard PoC count.
+	// Only included when the summary has no penalty (challenge passed or none was issued).
+	baseCount := int64(commit.Count)
+	if cpocSummary, hasCPoC := wc.ContinuousPoCEpochSummaries[participantAddress]; hasCPoC {
+		if !cpocSummary.PenaltyApplied && cpocSummary.EffectivePocWeight > 0 {
+			baseCount += cpocSummary.EffectivePocWeight
+			wc.Logger.LogInfo("calculateParticipantWeight: adding continuous PoC weight", types.PoC,
+				"participant", participantAddress,
+				"standardCount", commit.Count,
+				"cpocWeight", cpocSummary.EffectivePocWeight,
+				"totalBaseCount", baseCount)
+		}
+	}
+
+	// Semantic cache quality adds CacheQualityWeight, capped at MaxWeightFractionBps of the
+	// standard PoC nonce count. This creates a trust feedback loop: nodes whose BLS-signed
+	// inference results are repeatedly reused by the protocol earn a weight bonus.
+	if cqSummary, hasCQ := wc.CacheQualityEpochSummaries[participantAddress]; hasCQ {
+		if cqSummary.CacheQualityWeight > 0 {
+			// Lazy cap: MaxWeightFractionBps × standardPoCNonces / 10 000.
+			// Use governance-managed CacheQualityMaxWeightFractionBps (default 3000=30%).
+			// We use commit.Count (not baseCount) so that CPoC and CacheQuality bonuses
+			// are each independently bounded relative to raw PoC work.
+			fractionBps := wc.CacheQualityMaxWeightFractionBps
+			if fractionBps == 0 {
+				fractionBps = 3000 // safe fallback only if governance param not loaded
+			}
+			maxAdd := int64(commit.Count) * int64(fractionBps) / 10000
+			if cqSummary.CacheQualityWeight < maxAdd {
+				maxAdd = cqSummary.CacheQualityWeight
+			}
+			if maxAdd > 0 {
+				baseCount += maxAdd
+				wc.Logger.LogInfo("calculateParticipantWeight: adding cache quality weight", types.PoC,
+					"participant", participantAddress,
+					"cacheQualityWeight", cqSummary.CacheQualityWeight,
+					"cappedAdd", maxAdd,
+					"totalBaseCount", baseCount)
+			}
+		}
+	}
+
+	totalWeight := mathsdk.LegacyNewDec(baseCount).Mul(combinedFactor).TruncateInt64()
 
 	distribution, hasDistribution := wc.NodeWeightDistributions[participantAddress]
 	if !hasDistribution || len(distribution.Weights) == 0 {
@@ -965,6 +1024,17 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"numValidators", len(weightsForCalculator))
 	}
 
+	// Load continuous PoC epoch summaries for the settling epoch.
+	cpocSummaries := am.keeper.GetAllContinuousPoCEpochSummariesForEpoch(ctx, upcomingEpoch.Index)
+	// Load semantic cache quality summaries for the settling epoch.
+	cqSummaries := am.keeper.GetAllCacheQualityEpochSummariesForEpoch(ctx, upcomingEpoch.Index)
+
+	// Read MaxWeightFractionBps from governance params so the cap is not hardcoded.
+	cqMaxWeightFractionBps := uint32(3000) // safe default
+	if params.CacheQualityParams != nil && params.CacheQualityParams.MaxWeightFractionBps > 0 {
+		cqMaxWeightFractionBps = params.CacheQualityParams.MaxWeightFractionBps
+	}
+
 	calculator := NewWeightCalculator(
 		weightsForCalculator,
 		allowedCommits,
@@ -972,6 +1042,9 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		validations,
 		participants,
 		seeds,
+		cpocSummaries,
+		cqSummaries,
+		cqMaxWeightFractionBps,
 		epochStartBlockHeight,
 		am,
 		weightScaleFactor,

@@ -1,0 +1,298 @@
+## Semantic Cache Quality
+
+### Overview
+
+The semantic cache layer allows API nodes to serve verified inference results from an in-memory
+vector store when a semantically equivalent prompt has already been computed. Participants that
+provide reusable results earn an additional weight bonus at epoch settlement, creating a trust
+feedback loop aligned with the existing Proof-of-Computation model.
+
+The feature is **disabled by default** and activated via governance (`CacheQualityParams.Enabled`).
+
+---
+
+### Architecture — Two-Level Cache
+
+```
+User Request
+│
+▼ handleTransferRequest
+  MsgStartInference (async goroutine) ──► chain (fee paid, cycle open)
+  │
+  ▼ handleExecutorRequest
+  [L1: PromptHash exact-match] ─── HIT ──► verify ResponseHash (sha256)
+  │                                         send MsgFinishInference
+  │                                         node earns CacheQualityWeight
+  │ MISS
+  [L2: cosine similarity ≥ threshold] ── HIT ──► verify ResponseHash (sha256)
+  │                                               send MsgFinishInference
+  │                                               node earns CacheQualityWeight
+  │ MISS
+  ▼
+  GPU Inference → MsgFinishInference → StoreResult(embedding, payload)
+```
+
+**Guarantee per level:**
+- L1: `sha256(canonical_JSON)` identical → 100% same result. Cryptographically certain.
+- L2: cosine similarity ≥ `SimilarityThresholdBps` (default 9700 bps = 97%). Probabilistic,
+  governance-controlled.
+
+`MsgFinishInference` is sent on every HIT (both L1 and L2) so that the node closes the on-chain
+cycle and accrues `CacheQualityWeight` for the reuse event.
+
+---
+
+### Chain-Side Components
+
+**CacheQualityParams** (governance, field 14 in `Params`):
+- `Enabled`: gates the feature; must be activated via `MsgUpdateParams`
+- `SimilarityThresholdBps`: minimum cosine similarity for a valid L2 hit (default 9700)
+- `MaxCacheAgeEpochs`: TTL for off-chain cached results (default 10 epochs ≈ 33 min)
+- `MaxWeightFractionBps`: cap on cache bonus as fraction of standard PoC weight (default 3000 = 30%)
+- `EmbeddingModelVersion`: shared model identifier; mismatch invalidates cached vectors
+- `PruningEpochThreshold`: how many epochs of summaries to retain on-chain
+
+**MsgSubmitCacheQualitySummary**: Participants submit per-epoch metrics
+(`CacheReuseCount`, `OriginalComputeCount`, `AvgSimilarityBps`, `EmbeddingModelVersion`).
+Stored keyed by `(epoch_index, participant)`. One summary per epoch per participant.
+`EmbeddingModelVersion` must match the current governance parameter; mismatches are rejected.
+
+**Weight Integration**: In `chainvalidation.go`, `calculateParticipantWeight` adds
+`CacheQualityWeight` to `baseCount`, capped by `MaxWeightFractionBps`. Summaries are loaded
+via `GetAllCacheQualityEpochSummariesForEpoch` at epoch settlement.
+
+**Pruning**: `CacheQualityEpochSummaries` pruned by `PruningEpochThreshold` (field 7 of
+`PruningState`). Upgrade handler seeds `CacheQualityParams` with defaults when nil.
+
+---
+
+### API-Side Components
+
+**SemanticCache** (`decentralized-api/semanticcache/cache.go`):
+- Wraps `Embedder` and `CacheStore`
+- `LookupByPromptHash`: L1 exact-match on `sha256(canonical_JSON)`; O(1), no embedding needed
+- `Lookup`: L2 cosine similarity search; embeds prompt text, queries `InMemoryCacheStore`
+- Both lookups enforce `ValidUntilEpoch` (TTL) and `ModelVersion` match
+- `StoreResult`: sets `ModelVersion`, `OriginalEpoch`, `ValidUntilEpoch` from governance params
+- `UpdateCacheParams`: refreshes threshold, `modelVersion`, `maxCacheAgeEpochs` at runtime
+  (mutex-protected); called every 30 s from the governance sync goroutine
+- `EvictExpired`: delegates TTL cleanup to the underlying store; called at each epoch boundary
+
+**CachedResult fields**: `PromptHash`, `ResponsePayload`, `ResponseHash`, `BLSSignature`
+(reserved), `OriginalEpoch`, `OriginalParticipantAddress`, `SimilarityBps`, `ModelVersion`,
+`ValidUntilEpoch`.
+
+**Trust model (current)**: `ResponseHash = sha256(ResponsePayload)`, identical to
+`MsgFinishInference.ResponseHash` committed on-chain. Verified on every cache hit before
+the response is served.
+
+**Trust model (future)**: `BLSSignature` field is reserved for a protocol extension where
+the executor quorum produces a threshold BLS signature over the inference response. When
+implemented, cache hits will carry a verifiable quorum proof without requiring fresh GPU
+computation.
+
+**InMemoryCacheStore** (`decentralized-api/semanticcache/memory_store.go`):
+Default `CacheStore` backend. Zero external dependencies. Stores `(vector, CachedResult)` pairs
+in a sorted slice; `Lookup` performs linear cosine similarity search (sufficient for node-local
+cache sizes). `EvictExpired` purges all entries whose `ValidUntilEpoch < currentEpoch`.
+Both L1 (`PromptHash`) and L2 (vector) maps are maintained in the same struct.
+
+**Embedder**: `MLNodeEmbedder` calls `/api/v1/embed` on the ML-node management port
+(CPU-only, all-MiniLM-L6-v2, 384 dims). Does not lock the inference GPU.
+`StubEmbedder` is available for unit tests and disables the embedding network call.
+
+**Streaming**: Requests with `stream: true` bypass both lookup and store —
+SSE format cannot be replayed as a cached JSON entry.
+
+---
+
+### Authz Delegation
+
+`MsgSubmitCacheQualitySummary` is in `InferenceOperationKeyPerms`.
+`GrantMLOperationalKeyPermissionsToAccount` and `RevokeMLOperationalKeyPermissionsFromAccount`
+support the Grant → Exec → Revoke flow for operational keys (required by the Unified
+Permissions model, #760).
+
+---
+
+### Key Implementation Files
+
+| File | Description |
+|---|---|
+| `inference-chain/proto/inference/inference/cache_quality.proto` | Proto source for `CacheQualityEpochSummary` |
+| `inference-chain/proto/inference/inference/params.proto` | `CacheQualityParams` added (field 14) |
+| `inference-chain/proto/inference/inference/tx.proto` | `MsgSubmitCacheQualitySummary` RPC added |
+| `inference-chain/x/inference/types/cache_quality.go` | Params and summary types (serialisation) |
+| `inference-chain/x/inference/keeper/msg_server_cache_quality.go` | Submission handler with validation |
+| `inference-chain/x/inference/module/chainvalidation.go` | `CacheQualityWeight` integration |
+| `decentralized-api/semanticcache/cache.go` | Two-level lookup and store logic |
+| `decentralized-api/semanticcache/memory_store.go` | `InMemoryCacheStore` (zero external deps) |
+| `decentralized-api/semanticcache/embedder.go` | `MLNodeEmbedder` and `StubEmbedder` |
+| `decentralized-api/internal/server/public/post_chat_handler.go` | L1/L2 integration in executor path |
+| `decentralized-api/internal/server/admin/server.go` | `GET /admin/v1/cache/stats` for DAG/Prometheus |
+
+---
+
+### Developer Simulation (no GPU, no ML-node, no chain required)
+
+The full L1/L2 cache path can be validated locally using `StubEmbedder` and `InMemoryCacheStore`.
+No GPU, no ML-node, and no live chain are required — analogous to the PoC simulation described in
+the [Host Quickstart](https://gonka.ai/host/quickstart/).
+
+```bash
+# On any machine with Go 1.22+
+cd decentralized-api
+go test ./semanticcache/... -v -count=1
+```
+
+Covered by the test suite:
+
+| Test | What it proves |
+|---|---|
+| `TestMatrix_L1_ExactMatch` | L1 HIT returns `SimilarityBps=10000` |
+| `TestMatrix_L1_WrongHash` | Different `PromptHash` → L1 MISS |
+| `TestMatrix_L2_SemanticHit` | Cosine similarity ≥ 9700 bps → L2 HIT |
+| `TestMatrix_L2_BelowThreshold` | Orthogonal vector → MISS |
+| `TestMatrix_TTL_Eviction` | Expired entry → MISS after `EvictExpired` |
+| `TestMatrix_ModelVersion_Invalidation` | Model version change → MISS |
+| `TestHTTP_L1_HIT_XCacheHeader` | `X-Cache: HIT`, `X-Cache-Level: 1`, correct body |
+| `TestHTTP_L1_MISS_NoXCacheHeader` | MISS → no `X-Cache` header |
+| `TestHTTP_L1_VerifyFail_FallThrough` | Tampered `ResponseHash` → fall through to GPU |
+| `TestHTTP_TTL_Expired_FallThrough` | Epoch 101 > `ValidUntilEpoch` 100 → MISS |
+| `TestHTTP_ModelVersion_FallThrough` | v1 entry rejected under v2 governance |
+| `TestHTTP_PublicAPIResponseFormat` | Response parseable, `sha256` non-empty |
+| `TestAdaptiveCoherenceFloor_*` | Correct floor for all 3 sim tiers; C4/C5 clear-zone residual documented |
+| `TestLoopClosureOK_*` | Boundary conditions, C3 cold-start margin, C4/C5 residual gap as expected |
+| `TestCoherenceRatioAnomaly_*` | C4 upper-bound (1.057), C5 NL-domain (0.801), code-domain guard |
+| `TestResearchMatrix_GateSequence` | All C1-C6 with exact `quality_matrix_research_v2.md` numbers |
+| `TestResearchMatrix_RatioGateClosesGap` | Zero-cost ratio gate catches both residual gap cases |
+
+---
+
+### Admin Stats Endpoint
+
+`GET /admin/v1/cache/stats` on the operator-only admin port (`:9200`) exposes read-only
+cache counters for external monitoring:
+
+```json
+{"enabled": true, "hits": 142, "misses": 1037, "hit_rate": 0.1204}
+```
+
+`Stats()` and `HitRate()` use `atomic.LoadInt64` — zero locks, zero side effects, safe at
+any poll frequency. Returns `{"enabled": false, ...}` when the cache is not initialised
+(nil-safe). Not exposed on the public port (`:9000`).
+
+Intended consumers: DAG/CronJob epoch-boundary tasks, Prometheus scraper (GiP #840),
+k8s liveness probes.
+
+---
+
+### Operator Verification Layer (DAG + Prometheus)
+
+Self-reported `CacheReuseCount` can be cross-checked by comparing three independent sources
+at each epoch boundary:
+
+```
+[Epoch boundary] → DAG / k8s CronJob / Go ticker
+  ├── Source A: GET /admin/v1/cache/stats       → {hits, misses, hit_rate}
+  ├── Source B: chain CacheQualityEpochSummary  → reuseCount (self-reported)
+  └── Source C: Prometheus scraper (GiP #840)   → independent time-series
+```
+
+`stats(A).hits ≈ chain(B).reuseCount ± 5%` validates self-reporting consistency.
+Divergence beyond threshold triggers an operator alert.
+
+`/admin/v1/cache/stats` is the piece that makes Source A possible. The Prometheus exporter
+(GiP #840) already reads the admin API on `:9200` — cache stats integrate without new
+infrastructure.
+
+---
+
+### k8s Node Specialization (GiP #816)
+
+Nodes deployed via k8s with one model per node receive 100% of that model's traffic
+(via `GetRandomExecutor` routing where M=1):
+
+```
+hit_rate = repeat_fraction × (1/M)
+
+M = number of nodes serving the same model
+  → M=1 (specialized) → hit_rate = repeat_fraction  (maximum)
+  → M=10 (shared)     → hit_rate = repeat_fraction/10
+```
+
+`CacheQualityWeight` makes specialization economically self-reinforcing:
+higher hit rate → more reuseCount → +EpochGroup power (cap 30%) → more model assignments
+→ more traffic → more reuse.
+
+Streaming (`stream: true`) bypasses cache entirely — `effective_hit_rate` is reduced by
+`stream_fraction`.
+
+---
+
+### Quality Gate Pipeline (Stage 3 + 4 — v2)
+
+The L2 context-injection path includes two additional quality gates applied after GPU inference
+completes, before the result is stored. Neither gate triggers a fresh GPU inference — they
+operate on embeddings already computed in the store path.
+
+**Stage 3 — Adaptive coherence floor (Gate 1)**
+
+```go
+coherenceFloorBps := semanticcache.AdaptiveCoherenceFloor(l2SimBps)
+// sim > 8000: 4500 bps  (structural twin zone — code→NL embed ≈ 4800–5500 bps)
+// sim > 6250: 4000 bps  (clear zone)
+// sim ≤ 6250: 3000 bps  (grey zone; SemanticVerifier also applied here)
+```
+
+Rejects results where the GPU answer embeds poorly against the current prompt despite
+prompt similarity. Floor is intentionally lower for code tasks (4500, not 5000) to avoid
+false rejections where code→NL embedding is structurally lower than NL→NL.
+
+**Stage 4 — Loop closure / hub frontier check (Gate 2)**
+
+```go
+semanticcache.LoopClosureOK(coherenceBps, hubFrontier, 800 /*marginBps*/)
+// hubFrontier = running avg CoherenceScoreBps of all accepted entries
+// Default 5500 bps until 10 entries accumulated (code-task cold start)
+```
+
+Prevents degrading the hub's semantic frontier. If a context-injected answer scores
+more than 800 bps below the running average of what the hub has already accepted, it is
+not stored. The user always receives the answer — only hub pool storage is gated.
+
+**Observable via `/admin/v1/cache/stats`:**
+
+```json
+{
+  "context_hits": 42,
+  "coherence_rejections": 3,
+  "avg_coherence_bps": 6120,
+  "loop_closure_breaks": 1
+}
+```
+
+`loop_closure_breaks > 0` means the cache is self-protecting: it has rejected at least one
+below-frontier entry. This is expected behaviour, not an error.
+
+**Residual gap**: wrong answers with `sim > 6250` that produce high coherence scores (C4/C5
+class) can pass both gates. These are caught by extending `SemanticVerifier v3` to
+`sim ∈ [4250, 8500]`, or by a zero-cost coherence-ratio gate (`c/s ∉ [0.55, 1.03]`).
+See `quality_matrix_research_v2.md §9-10` for the full analysis.
+
+**Unit tests** (`semanticcache/gates_test.go`, 31 tests, zero external dependencies):
+- Validates all 6 research cases (C1–C6) with exact production numbers
+- Documents residual gap as expected behaviour with `t.Log("RESIDUAL GAP: ...")`
+- Proves ratio gate closes the gap without GPU cost
+
+---
+
+### Known Limitations
+
+| Item | Description | Mitigation |
+|---|---|---|
+| L2 self-reported similarity | `AvgSimilarityBps` is computed by the DAPI operator's own ML-node. Cannot be verified on-chain. | `MaxWeightFractionBps` caps the maximum bonus. Incentive to lie is bounded. DAG Source A vs B cross-check adds external consistency. |
+| `CacheReuseCount` self-reported | Only the DAPI operator knows actual hit count. | Same cap applies. `/admin/v1/cache/stats` enables DAG/Prometheus cross-verification. |
+| In-memory cache lost on restart | Rebuilds from new inferences. | Acceptable for a cache. Original results always on-chain. |
+| L2 requires live ML-node embed | If ML-node is down, L2 is disabled; L1 still works. | ML-node is part of standard gonka node stack. |
+| L2 text-only | `all-MiniLM-L6-v2` embeds text only. Image prompts produce L2 MISS. | L1 still works for exact-match. Embedder interface supports future swap to multimodal model via governance `EmbeddingModelVersion` update. |

@@ -8,4 +8,8 @@ message PruningState {
   int64 poc_validations_pruned_epoch = 2;
   int64 inference_pruned_epoch = 3;
   int64 epoch_group_validations_pruned_epoch = 4;
+  int64 continuous_poc_commits_pruned_epoch = 5;
+  int64 continuous_poc_challenges_pruned_epoch = 6;
+  int64 continuous_poc_summaries_pruned_epoch = 7;
+  int64 cache_quality_epoch_summaries_pruned_epoch = 8;
 }
