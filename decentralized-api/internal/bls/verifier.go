@@ -149,7 +149,8 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 		"totalSlots", epochData.ITotalSlots,
 		"tDegree", epochData.TSlotsDegree)
 
-	err := bm.performVerificationAndReconstruction(verificationResult, epochData.DealerParts, myParticipantIndex)
+	expectedCommitmentsCount := int(epochData.TSlotsDegree) + 1
+	err := bm.performVerificationAndReconstruction(verificationResult, epochData.DealerParts, myParticipantIndex, expectedCommitmentsCount)
 	if err != nil {
 		return false, fmt.Errorf("failed to perform verification and reconstruction: %w", err)
 	}
@@ -166,7 +167,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 }
 
 // performVerificationAndReconstruction performs the core verification and share reconstruction logic
-func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipantIndex int) error {
+func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *VerificationResult, dealerParts []*types.DealerPartStorage, myParticipantIndex int, expectedCommitmentsCount int) error {
 	logging.Debug(verifierLogTag+"Starting share verification and reconstruction", inferenceTypes.BLS,
 		"epochID", verificationResult.EpochID,
 		"slotRange", verificationResult.SlotRange,
@@ -205,6 +206,15 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		if participantShares == nil {
 			logging.Debug(verifierLogTag+"No shares from dealer", inferenceTypes.BLS,
 				"dealerIndex", dealerIndex)
+			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
+			verificationResult.DealerValidity[dealerIndex] = false
+			continue
+		}
+		if len(dealerPart.Commitments) != expectedCommitmentsCount {
+			logging.Warn(verifierLogTag+"Skipping dealer with invalid commitments count", inferenceTypes.BLS,
+				"dealerIndex", dealerIndex,
+				"expected_commitments", expectedCommitmentsCount,
+				"actual_commitments", len(dealerPart.Commitments))
 			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
 			verificationResult.DealerValidity[dealerIndex] = false
 			continue
@@ -293,8 +303,7 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 
 		logging.Debug(verifierLogTag+"Completed slot share reconstruction", inferenceTypes.BLS,
 			"slotIndex", slotIndex,
-			"slotOffset", slotOffset,
-			"finalShare", aggregatedShare.String())
+			"slotOffset", slotOffset)
 	}
 
 	logging.Info(verifierLogTag+"Completed verification and reconstruction", inferenceTypes.BLS,
