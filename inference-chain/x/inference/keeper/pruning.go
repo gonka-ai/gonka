@@ -29,7 +29,32 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
+	err = k.GetEpochGroupValidationPruner(params).Prune(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func (k Keeper) GetEpochGroupValidationPruner(params types.Params) Pruner[collections.Triple[uint64, string, string], collections.NoValue] {
+	return Pruner[collections.Triple[uint64, string, string], collections.NoValue]{
+		Threshold:  params.EpochParams.InferencePruningEpochThreshold,
+		PruningMax: params.EpochParams.InferencePruningMax,
+		List:       collections.Map[collections.Triple[uint64, string, string], collections.NoValue](k.EpochGroupValidationEntry),
+		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[uint64, string, string]] {
+			return collections.NewPrefixedTripleRange[uint64, string, string](uint64(epochIndex))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.EpochGroupValidationsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.EpochGroupValidationsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Triple[uint64, string, string]) error {
+			return k.EpochGroupValidationEntry.Remove(ctx, key)
+		},
+		Logger: k,
+	}
 }
 
 func (k Keeper) GetInferencePruner(params types.Params) Pruner[collections.Pair[int64, string], collections.NoValue] {

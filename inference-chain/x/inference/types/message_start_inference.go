@@ -62,3 +62,7 @@ func (msg *MsgStartInference) ValidateBasic() error {
 	}
 	return nil
 }
+
+func (msg *MsgStartInference) GetTransferredBy() string {
+	return msg.Creator
+}

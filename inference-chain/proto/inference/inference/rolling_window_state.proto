@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// RollingWindowState stores fixed-size rolling values and their running sum.
+message RollingWindowState {
+  repeated uint64 values = 1;
+  uint64 sum = 2;
+}

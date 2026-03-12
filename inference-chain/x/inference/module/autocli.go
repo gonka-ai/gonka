@@ -76,11 +76,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
 				{
-					RpcMethod: "EpochGroupValidationsAll",
-					Use:       "list-epoch-group-validations",
-					Short:     "List all epochGroupValidations",
-				},
-				{
 					RpcMethod:      "EpochGroupValidations",
 					Use:            "show-epoch-group-validations [id]",
 					Short:          "Shows a epochGroupValidations",

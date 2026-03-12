@@ -3,9 +3,11 @@ import com.productscience.data.Collateral
 import com.productscience.data.TxResponse
 import com.productscience.data.spec
 import com.productscience.data.AppState
+import com.productscience.data.Decimal
 import com.productscience.data.InferenceState
 import com.productscience.data.InferenceParams
 import com.productscience.data.ValidationParams
+import com.productscience.data.getParticipant
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
@@ -98,13 +100,14 @@ class CollateralTests : TestermintTest() {
         // Configure genesis with fast expiration for downtime testing
         val fastExpirationSpec = spec {
             this[AppState::inference] = spec<InferenceState> {
-                this[InferenceState::params] = spec<InferenceParams> {
-                    this[InferenceParams::validationParams] = spec<ValidationParams> {
-                        this[ValidationParams::expirationBlocks] = 2L // Fast expiration for testing
+                    this[InferenceState::params] = spec<InferenceParams> {
+                        this[InferenceParams::validationParams] = spec<ValidationParams> {
+                            this[ValidationParams::expirationBlocks] = 2L // Fast expiration for testing
+                            this[ValidationParams::downtimeHThreshold] = Decimal.fromDouble(1.0)
+                        }
                     }
                 }
             }
-        }
 
         val fastExpirationConfig = inferenceConfig.copy(
             genesisSpec = inferenceConfig.genesisSpec?.merge(fastExpirationSpec) ?: fastExpirationSpec
@@ -147,44 +150,47 @@ class CollateralTests : TestermintTest() {
         assertThat(unbondingQueueBeforeSlash.unbondings).hasSize(1)
         assertThat(unbondingQueueBeforeSlash.unbondings!!.first().amount.amount).isEqualTo(withdrawAmount)
 
-
         logSection("Getting bad inferences")
         genesis.mock!!.setInferenceResponse("This is invalid json!!!")
 
-        logSection("Running inferences until genesis is INVALID")
-        repeat(15) {
-            runCatching { genesis.makeInferenceRequest(inferenceRequest) }
-        }
-        genesis.node.waitForNextBlock(1)
-        val timeoutsBefore = genesis.node.getInferenceTimeouts()
-        logSection("Total timeouts right after inference requests: ${timeoutsBefore.inferenceTimeout?.count() ?: 0}")
-
+        logSection("Running inferences until genesis is INACTIVE and downtime slash applies")
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-        val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-        logSection("Waiting for expirationBlocks: $expirationBlocks")
-        genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+        var genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
+        repeat(6) { batch ->
+            if (genesisStatus == "INACTIVE") return@repeat
 
-        val timeoutsAfter = genesis.node.getInferenceTimeouts()
-        logSection("Total timeouts after expiration wait: ${timeoutsAfter.inferenceTimeout?.count() ?: 0}")
-        genesis.node.waitForNextBlock(2)
+            logHighlight("Submitting bad inference batch ${batch + 1}")
+            repeat(6) {
+                runCatching { genesis.makeInferenceRequest(inferenceRequest) }
+            }
 
-        logSection("Waiting for slashing on downtime")
-        genesis.node.waitForNextBlock(2)
-        logSection("Verifying inference was processed and status updated")
+            genesis.node.waitForNextBlock(1)
+            val timeoutsBefore = genesis.node.getInferenceTimeouts()
+            logSection("Total timeouts right after batch ${batch + 1}: ${timeoutsBefore.inferenceTimeout?.count() ?: 0}")
+
+            val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
+            logSection("Waiting for expirationBlocks after batch ${batch + 1}: $expirationBlocks")
+            genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+            genesis.node.waitForNextBlock(3)
+
+            val timeoutsAfter = genesis.node.getInferenceTimeouts()
+            genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
+            logSection("After batch ${batch + 1}: status=$genesisStatus, total timeouts=${timeoutsAfter.inferenceTimeout?.count() ?: 0}")
+        }
+
+        assertThat(genesisStatus).isEqualTo("INACTIVE")
 
         logSection("Verifying collateral has been slashed proportionally")
         val inferenceParams = genesis.node.getInferenceParams().params
         val slashFraction = inferenceParams.collateralParams.slashFractionDowntime
-        
-        // Verify active collateral was slashed
         val expectedSlashedActive = (activeAmount * slashFraction.toDouble()).toLong()
         val expectedFinalActive = activeAmount - expectedSlashedActive
+        val expectedSlashedUnbonding = (withdrawAmount * slashFraction.toDouble()).toLong()
+        val expectedFinalUnbonding = withdrawAmount - expectedSlashedUnbonding
+
         val finalActiveCollateral = genesis.queryCollateral(genesisAddress)
         assertThat(finalActiveCollateral.amount?.amount).isEqualTo(expectedFinalActive)
 
-        // Verify unbonding collateral was slashed proportionally
-        val expectedSlashedUnbonding = (withdrawAmount * slashFraction.toDouble()).toLong()
-        val expectedFinalUnbonding = withdrawAmount - expectedSlashedUnbonding
         val finalUnbondingQueue = genesis.node.queryUnbondingCollateral(genesisAddress)
         assertThat(finalUnbondingQueue.unbondings).hasSize(1)
         assertThat(finalUnbondingQueue.unbondings!!.first().amount.amount).isEqualTo(expectedFinalUnbonding)

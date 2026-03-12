@@ -59,7 +59,7 @@ func TestPruningBasic(t *testing.T) {
 	}
 
 	// Add inference to the store without calculating developer stats
-	k.SetInferenceWithoutDevStatComputation(ctx, inference)
+	k.SetInference(ctx, inference)
 
 	// Verify inference exists
 	_, found := k.GetInference(ctx, "test-inference")
@@ -115,7 +115,7 @@ func TestPruningEpochThreshold(t *testing.T) {
 
 	// Add inferences to the store without calculating developer stats
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold 2
@@ -162,7 +162,7 @@ func TestPruningStatusPreservation(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold that should prune old inferences
@@ -198,7 +198,7 @@ func TestPruningMultipleEpochs(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold 1 at epoch 10
@@ -219,6 +219,43 @@ func TestPruningMultipleEpochs(t *testing.T) {
 	require.True(t, found, "Inference from epoch 10 should not be pruned")
 }
 
+func TestEpochGroupValidationEntryPruningMaxLimit(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	setPruningConfig(ctx, k, PruningSettings{
+		InferenceThreshold: 2,
+		InferenceMaxPrune:  4,
+	})
+
+	participant := "validator-1"
+	for i := 0; i < 10; i++ {
+		require.NoError(t, k.SetEpochGroupValidation(ctx, 1, participant, fmt.Sprintf("inf-%d", i)))
+	}
+	for i := 0; i < 2; i++ {
+		require.NoError(t, k.SetEpochGroupValidation(ctx, 2, participant, fmt.Sprintf("future-%d", i)))
+	}
+
+	current := int64(3) // threshold 2 => prune up to epoch 1
+	require.NoError(t, k.Prune(ctx, current))
+	egv, found := k.GetEpochGroupValidations(ctx, participant, 1)
+	require.True(t, found)
+	require.Len(t, egv.ValidatedInferences, 6)
+
+	require.NoError(t, k.Prune(ctx, current))
+	egv, found = k.GetEpochGroupValidations(ctx, participant, 1)
+	require.True(t, found)
+	require.Len(t, egv.ValidatedInferences, 2)
+
+	require.NoError(t, k.Prune(ctx, current))
+	_, found = k.GetEpochGroupValidations(ctx, participant, 1)
+	require.False(t, found)
+
+	egvEpoch2, found := k.GetEpochGroupValidations(ctx, participant, 2)
+	require.True(t, found)
+	require.Len(t, egvEpoch2.ValidatedInferences, 2)
+}
+
 // TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty ensures we respect the per-call max
 // and only advance the InferencePrunedEpoch after a subsequent call when the epoch becomes empty
 func TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T) {
@@ -232,7 +269,7 @@ func TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T)
 			EpochId: 1,
 			Status:  types.InferenceStatus_FINISHED,
 		}
-		_ = k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		_ = k.SetInference(ctx, inf)
 	}
 
 	// Configure pruning: inference threshold 2 so endEpoch=current-2, and max per call 4

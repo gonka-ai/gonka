@@ -273,6 +273,123 @@ func TestModelCurrentPriceStorage(t *testing.T) {
 	assert.Equal(t, uint64(200), allPrices["model2"])
 }
 
+func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+
+	err := k.UpdateModelRollingWindowsForActiveModels(
+		goCtx,
+		[]string{"model-1", "model-2"},
+		map[string]uint64{"model-1": 100},
+		60,
+		map[string]uint64{"model-1": 1},
+		120,
+	)
+	require.NoError(t, err)
+
+	avg1, found, err := k.GetModelLoadRollingAveragePerBlock(goCtx, "model-1", 12)
+	require.NoError(t, err)
+	require.True(t, found)
+	avg1Float, _ := avg1.Float64()
+	assert.InDelta(t, 100.0/12.0, avg1Float, 1e-6)
+
+	avg2, found, err := k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
+	require.NoError(t, err)
+	require.True(t, found)
+	avg2Float, _ := avg2.Float64()
+	assert.InDelta(t, 0.0, avg2Float, 1e-6)
+
+	count1, found, err := k.GetModelInferenceCountRollingSum(goCtx, "model-1", 24)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint64(1), count1)
+
+	err = k.UpdateModelRollingWindowsForActiveModels(
+		goCtx,
+		[]string{"model-1"},
+		map[string]uint64{"model-1": 200},
+		60,
+		map[string]uint64{"model-1": 2},
+		120,
+	)
+	require.NoError(t, err)
+
+	avg1, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-1", 12)
+	require.NoError(t, err)
+	require.True(t, found)
+	avg1Float, _ = avg1.Float64()
+	assert.InDelta(t, 300.0/12.0, avg1Float, 1e-6)
+
+	count1, found, err = k.GetModelInferenceCountRollingSum(goCtx, "model-1", 24)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint64(3), count1)
+
+	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
+	require.NoError(t, err)
+	assert.False(t, found, "non-active model load state should be removed")
+
+	_, found, err = k.GetModelInferenceCountRollingSum(goCtx, "model-2", 24)
+	require.NoError(t, err)
+	assert.False(t, found, "non-active model inference-count state should be removed")
+}
+
+func TestUpdateDynamicPricing_UsesRollingAverageUtilization(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DynamicPricingParams.StabilityZoneLowerBound = types.DecimalFromFloat(0.40)
+	params.DynamicPricingParams.StabilityZoneUpperBound = types.DecimalFromFloat(0.60)
+	params.DynamicPricingParams.PriceElasticity = types.DecimalFromFloat(0.05)
+	params.DynamicPricingParams.MinPerTokenPrice = 1
+	params.DynamicPricingParams.BasePerTokenPrice = 1000
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	params.DynamicPricingParams.UtilizationWindowDuration = 60
+	k.SetParams(ctx, params)
+
+	effectiveEpoch := types.Epoch{
+		Index:               1,
+		PocStartBlockHeight: ctx.BlockHeight(),
+	}
+	require.NoError(t, k.SetEpoch(ctx, &effectiveEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, effectiveEpoch.Index))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          effectiveEpoch.Index,
+		ModelId:             "",
+		PocStartBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
+		SubGroupModels:      []string{"model-high", "model-zero"},
+	})
+
+	require.NoError(t, k.CacheModelCapacity(goCtx, "model-high", 1000))
+	require.NoError(t, k.CacheModelCapacity(goCtx, "model-zero", 1000))
+	require.NoError(t, k.SetModelCurrentPrice(goCtx, "model-high", 1000))
+	require.NoError(t, k.SetModelCurrentPrice(goCtx, "model-zero", 1000))
+
+	// Fill the full rolling window (12 blocks for 60 seconds) with 5000 tokens/block.
+	for i := 0; i < 12; i++ {
+		require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(
+			goCtx,
+			[]string{"model-high", "model-zero"},
+			map[string]uint64{"model-high": 5000},
+			60,
+			map[string]uint64{"model-high": 1},
+			120,
+		))
+	}
+
+	require.NoError(t, k.UpdateDynamicPricing(goCtx))
+
+	highPrice, err := k.GetModelCurrentPrice(goCtx, "model-high")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1020), highPrice, "high utilization should increase by capped 2%")
+
+	zeroPrice, err := k.GetModelCurrentPrice(goCtx, "model-zero")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(980), zeroPrice, "missing load should be treated as zero and reduce by capped 2%")
+}
+
 // TestStabilityZoneBoundaries tests boundary conditions for stability zones
 func TestStabilityZoneBoundaries(t *testing.T) {
 	tests := []struct {
@@ -492,7 +609,7 @@ func TestDynamicPricingCoreWorkflow(t *testing.T) {
 		// Test escrow calculation
 		escrowAmount, err := calculations.CalculateEscrow(inference, 25) // 25 prompt tokens
 		require.NoError(t, err)
-		expectedEscrow := int64((100 + 25) * 1500)                  // (100 max + 25 prompt) * 1500 price
+		expectedEscrow := int64((100 + 25) * 1500) // (100 max + 25 prompt) * 1500 price
 		assert.Equal(t, expectedEscrow, escrowAmount, "Escrow should use recorded per-token price")
 
 		t.Logf("Cost calculations work: cost=%d, escrow=%d (using price %d)",

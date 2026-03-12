@@ -3,14 +3,13 @@ package keeper
 import (
 	"context"
 
-	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 func (k msgServer) RemoveUserFromTrainingAllowList(goCtx context.Context, msg *types.MsgRemoveUserFromTrainingAllowList) (*types.MsgRemoveUserFromTrainingAllowListResponse, error) {
-	if k.GetAuthority() != msg.Authority {
-		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), msg.Authority)
+	if err := k.CheckPermission(goCtx, msg, GovernancePermission); err != nil {
+		return nil, err
 	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 

@@ -247,6 +247,14 @@ data class LocalInferencePair(
         api.addInferenceParticipant(self)
     }
 
+    fun stopApiContainer() {
+        val apiContainer = getRawContainers(config).getApi(name)
+            ?: error("API container not found for $name")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            dockerClient.stopContainerCmd(apiContainer.id).exec()
+        }
+    }
+
     fun setPocWeight(weight: Long, node: InferenceNode? = null) {
         if (node == null) {
             this.api.getNodes().forEach {
