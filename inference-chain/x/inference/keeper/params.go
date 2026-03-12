@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -13,24 +14,40 @@ const defaultGenesisGuardianNetworkMaturityMinHeight int64 = 0
 const defaultDeveloperAccessUntilBlockHeight int64 = 0
 const defaultNewParticipantRegistrationStartHeight int64 = 0
 
-// GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
+type paramsKey struct{}
+
+func (k Keeper) getParamsFromStore(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
 		return params, nil
 	}
-
-	err = k.cdc.Unmarshal(bz, &params)
-	if err != nil {
+	if err := k.cdc.Unmarshal(bz, &params); err != nil {
 		return types.Params{}, err
 	}
 	return params, nil
 }
 
+// GetParams get all parameters as types.Params
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
+	if cached, ok := ctx.Value(paramsKey{}).(*types.Params); ok && cached != nil {
+		return *cached, nil
+	}
+	return k.getParamsFromStore(ctx)
+}
+
+// InjectParamsIntoContext returns a new context with the params cached.
+func (k Keeper) InjectParamsIntoContext(ctx sdk.Context) (sdk.Context, error) {
+	params, err := k.getParamsFromStore(ctx)
+	if err != nil {
+		return ctx, err
+	}
+	return ctx.WithValue(paramsKey{}, &params), nil
+}
+
 // SetParams set the params
 func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
-	oldParams, _ := k.GetParams(ctx)
+	oldParams, _ := k.getParamsFromStore(ctx)
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz, err := k.cdc.Marshal(&params)

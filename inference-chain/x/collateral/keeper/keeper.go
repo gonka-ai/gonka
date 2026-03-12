@@ -12,6 +12,7 @@ import (
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 
 	"github.com/productscience/inference/x/collateral/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -365,9 +366,10 @@ func (k Keeper) GetAllJailed(ctx sdk.Context) ([]sdk.AccAddress, error) {
 	return iter.Keys()
 }
 
-// Slash penalizes a participant by burning a fraction of their total collateral.
+// Slash penalizes a participant by slashing a fraction of their total collateral.
 // This includes both their active collateral and any collateral in the unbonding queue.
-// The slash is applied proportionally to all holdings.
+// The slash is applied proportionally to all holdings, and the slashed coins are transferred
+// from the collateral module account to the governance module account
 func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, slashFraction math.LegacyDec, reason string) (sdk.Coin, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	if slashFraction.IsNegative() || slashFraction.GT(math.LegacyOneDec()) {
@@ -429,12 +431,13 @@ func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, sl
 		}
 	}
 
-	// 3. Burn the total slashed amount from the module account
+	// 3. Redirect the total slashed amount to governance
 	if !totalSlashedAmount.IsZero() {
-		err := k.bookkeepingBankKeeper.BurnCoins(sdkCtx, types.ModuleName, sdk.NewCoins(totalSlashedAmount), "collateral_slashed:"+reason)
+		memo := "collateral_slashed:" + reason
+		err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(sdkCtx, types.ModuleName, govtypes.ModuleName, sdk.NewCoins(totalSlashedAmount), memo)
 		if err != nil {
-			// This is a critical error, indicating an issue with the module account or supply
-			return sdk.Coin{}, fmt.Errorf("failed to burn slashed coins: %w", err)
+			// This is a critical error, indicating an issue with module accounts or bank module.
+			return sdk.Coin{}, fmt.Errorf("failed to transfer slashed coins to governance: %w", err)
 		}
 
 		if key != nil {

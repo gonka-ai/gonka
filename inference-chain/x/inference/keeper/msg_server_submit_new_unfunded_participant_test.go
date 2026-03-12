@@ -24,6 +24,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
 	testAddress := sdk.AccAddress(pubKey.Address()).String()
 
 	// Setup expectations for account keeper
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(false).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {
@@ -73,6 +74,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant_AccountAlreadyExists(t *testing.
 	encodedPubKey := base64.StdEncoding.EncodeToString(pubKeyBytes)
 
 	// Setup expectations for account keeper - account already exists
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {
 			// Return a non-nil value to simulate an existing account
@@ -104,6 +106,7 @@ func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
 	testAddress := sdk.AccAddress(pubKey.Address()).String()
 
 	// Setup expectations for account keeper
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(false).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {

@@ -50,6 +50,7 @@ services:
       - DEBUG=true
       - IS_TEST_NET=true
       - ENFORCED_MODEL_ID=disabled
+      - DAPI_STATS_FILE_STORAGE_ENABLED=true
     networks:
       - chain-public
 

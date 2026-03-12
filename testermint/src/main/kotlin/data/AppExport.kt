@@ -144,6 +144,7 @@ data class EpochParams(
     val pocPruningMax: Long,
     @SerializedName("poc_slot_allocation")
     val pocSlotAllocation: Decimal?,
+    val confirmationPocSafetyWindow: Long,
 )
 
 data class Decimal(
@@ -209,6 +210,8 @@ data class ValidationParams(
     val quickFailureThreshold: Decimal?,
     @SerializedName("binom_test_p0")
     val binomTestP0: Decimal?,
+    @SerializedName("claim_validation_enabled")
+    val claimValidationEnabled: Boolean = false,
 )
 
 data class BandwidthLimitsParams(
@@ -221,7 +224,7 @@ data class BandwidthLimitsParams(
     @SerializedName("invalidations_limit")
     val invalidationsLimit: Long,
     @SerializedName("invalidations_sample_period")
-    val invalidationsSamplePeriod: Long,
+    val invalidationsSamplePeriod: Long = 1,
     @SerializedName("invalidations_limit_curve")
     val invalidationsLimitCurve: Long,
     @SerializedName("minimum_concurrent_invalidations")

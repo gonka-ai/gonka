@@ -520,6 +520,19 @@ func getModelKey(model Model) string {
 	return model.HfRepo + ":latest"
 }
 
+// Getter methods for thread-safe access
+func (m *MockClient) GetInitGenerateCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InitGenerateV1Called
+}
+
+func (m *MockClient) GetInitValidateCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InitValidateCalled
+}
+
 // PoC v2 mock methods
 
 func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequestV2) (*PoCInitGenerateResponseV2, error) {

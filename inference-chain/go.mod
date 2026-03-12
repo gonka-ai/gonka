@@ -3,7 +3,8 @@ module github.com/productscience/inference
 go 1.24.2
 
 replace (
-	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps15
+	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps17
+	cosmossdk.io/store => github.com/gonka-ai/cosmos-sdk/store v1.1.2-ps1
 	// fix upstream GHSA-h395-qcrw-5vmq vulnerability.
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.7.0
 	// replace broken goleveldb
@@ -29,7 +30,7 @@ require (
 	github.com/CosmWasm/wasmd v0.54.2
 	github.com/CosmWasm/wasmvm/v2 v2.2.4
 	github.com/bufbuild/buf v1.61.0
-	github.com/cometbft/cometbft v0.38.17
+	github.com/cometbft/cometbft v0.38.21
 	github.com/consensys/gnark-crypto v0.18.0
 	github.com/cosmos/cosmos-db v1.1.1
 	github.com/cosmos/cosmos-proto v1.0.0-beta.5

@@ -9,6 +9,7 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 )
 
 // Ensures that duplicate slashing within the same epoch and same reason is prevented
@@ -21,9 +22,9 @@ func (s *KeeperTestSuite) TestSlashing_DuplicateGuard_SameReasonSameEpoch() {
 	// Seed collateral
 	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, sdk.NewInt64Coin(inftypes.BaseCoin, 1000)))
 
-	// Expect only one burn, from the first slash
+	// Expect only one governance redirect, from the first slash
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, coltypes.ModuleName, gomock.Any(), gomock.Any()).
+		SendCoinsFromModuleToModule(s.ctx, coltypes.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
 		Times(1)
 
 	frac := math.LegacyNewDecWithPrec(10, 2) // 10%
@@ -50,9 +51,9 @@ func (s *KeeperTestSuite) TestSlashing_DifferentReasonSameEpoch_Allowed() {
 	// Seed collateral
 	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, sdk.NewInt64Coin(inftypes.BaseCoin, 1000)))
 
-	// Expect two burns: one for each distinct reason
+	// Expect two governance redirects: one for each distinct reason
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, coltypes.ModuleName, gomock.Any(), gomock.Any()).
+		SendCoinsFromModuleToModule(s.ctx, coltypes.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
 		Times(2)
 
 	frac := math.LegacyNewDecWithPrec(10, 2)

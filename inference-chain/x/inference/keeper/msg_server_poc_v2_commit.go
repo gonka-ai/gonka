@@ -12,6 +12,10 @@ import (
 
 // PoCV2StoreCommit handles submission of off-chain artifact store commits.
 func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2StoreCommit) (*types.MsgPoCV2StoreCommitResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+		return nil, err
+	}
+
 	params, err := k.GetParams(goCtx)
 	if err != nil {
 		return nil, err
@@ -107,6 +111,10 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 
 // MLNodeWeightDistribution handles submission of per-node weight distribution.
 func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.MsgMLNodeWeightDistribution) (*types.MsgMLNodeWeightDistributionResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+		return nil, err
+	}
+
 	params, err := k.GetParams(goCtx)
 	if err != nil {
 		return nil, err

@@ -8,6 +8,8 @@ import (
 
 var _ sdk.Msg = &MsgSubmitVerificationVector{}
 
+const maxVerificationDealerValidityEntries = 65536
+
 func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(m.Creator); err != nil {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidAddress, "invalid creator address")
@@ -17,6 +19,9 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	}
 	if len(m.DealerValidity) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity must be non-empty")
+	}
+	if len(m.DealerValidity) > maxVerificationDealerValidityEntries {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity exceeds maximum allowed count")
 	}
 	return nil
 }
