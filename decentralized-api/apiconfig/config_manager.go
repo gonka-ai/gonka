@@ -131,18 +131,26 @@ func (cm *ConfigManager) Load() error {
 // Need to make sure we pass back a COPY of the ChainNodeConfig to make sure
 // we don't modify the original
 func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.ChainNode
 }
 
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.Api
 }
 
 func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.Nats
 }
 
 func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	cfg := cm.currentConfig.TxBatching
 	if cfg.FlushSize == 0 {
 		cfg.FlushSize = 50
@@ -163,6 +171,8 @@ func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
 }
 
 func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	nodes := make([]InferenceNodeConfig, len(cm.currentConfig.Nodes))
 	copy(nodes, cm.currentConfig.Nodes)
 	return nodes
@@ -185,7 +195,11 @@ func (cm *ConfigManager) GetConfig() Config {
 	return cm.currentConfig
 }
 
-func (cm *ConfigManager) GetUpgradePlan() UpgradePlan { return cm.currentConfig.UpgradePlan }
+func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	return cm.currentConfig.UpgradePlan
+}
 
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
 	cm.mutex.Lock()
@@ -212,6 +226,8 @@ func (cm *ConfigManager) SetHeight(height int64) error {
 }
 
 func (cm *ConfigManager) GetLastProcessedHeight() int64 {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.LastProcessedHeight
 }
 
@@ -224,6 +240,8 @@ func (cm *ConfigManager) SetLastProcessedHeight(height int64) error {
 }
 
 func (cm *ConfigManager) GetCurrentNodeVersion() string {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.CurrentNodeVersion
 }
 
@@ -279,6 +297,8 @@ func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error
 }
 
 func (cm *ConfigManager) GetValidationParams() ValidationParamsCache {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.ValidationParams
 }
 
@@ -291,6 +311,8 @@ func (cm *ConfigManager) SetBandwidthParams(params BandwidthParamsCache) error {
 }
 
 func (cm *ConfigManager) GetBandwidthParams() BandwidthParamsCache {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.BandwidthParams
 }
 
@@ -307,10 +329,14 @@ func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache 
 }
 
 func (cm *ConfigManager) GetHeight() int64 {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.CurrentHeight
 }
 
 func (cm *ConfigManager) GetLastUsedVersion() string {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.LastUsedVersion
 }
 
@@ -361,6 +387,8 @@ func (cm *ConfigManager) IsPreviousSeedClaimed() bool {
 }
 
 func (cm *ConfigManager) GetPreviousSeed() SeedInfo {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.PreviousSeed
 }
 
@@ -373,6 +401,8 @@ func (cm *ConfigManager) SetCurrentSeed(seed SeedInfo) error {
 }
 
 func (cm *ConfigManager) GetCurrentSeed() SeedInfo {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.CurrentSeed
 }
 
@@ -385,6 +415,8 @@ func (cm *ConfigManager) SetUpcomingSeed(seed SeedInfo) error {
 }
 
 func (cm *ConfigManager) GetUpcomingSeed() SeedInfo {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return cm.currentConfig.UpcomingSeed
 }
 
