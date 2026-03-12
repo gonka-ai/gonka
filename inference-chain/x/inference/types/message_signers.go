@@ -6,6 +6,9 @@ package types
 // Governance-authority messages
 func (msg *MsgUpdateParams) GetSignersStrings() []string  { return []string{msg.Authority} }
 func (msg *MsgRegisterModel) GetSignersStrings() []string { return []string{msg.Authority} }
+func (msg *MsgDeleteGovernanceModel) GetSignersStrings() []string {
+	return []string{msg.Authority}
+}
 func (msg *MsgApproveBridgeTokenForTrading) GetSignersStrings() []string {
 	return []string{msg.Authority}
 }
