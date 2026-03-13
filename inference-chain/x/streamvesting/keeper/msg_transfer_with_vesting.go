@@ -119,12 +119,12 @@ func (k msgServer) applyVestingSchedule(ctx sdk.Context, recipient string, amoun
 	}
 
 	// 1. Pre-allocate missing capacity to avoid continuous slice re-allocations
-	requiredLength := int(vestingEpochs)
-	currentLen := len(schedule.EpochAmounts)
+	requiredLength := vestingEpochs
+	currentLen := uint64(len(schedule.EpochAmounts))
 	if currentLen < requiredLength {
 		missing := requiredLength - currentLen
 		extension := make([]types.EpochCoins, missing)
-		for i := 0; i < missing; i++ {
+		for i := uint64(0); i < missing; i++ {
 			extension[i] = types.EpochCoins{Coins: sdk.NewCoins()}
 		}
 		schedule.EpochAmounts = append(schedule.EpochAmounts, extension...)
@@ -150,7 +150,7 @@ func (k msgServer) applyVestingSchedule(ctx sdk.Context, recipient string, amoun
 	}
 
 	// 3. Apply the pre-calculated bundles in a flat, single-pass loop
-	for i := 0; i < requiredLength; i++ {
+	for i := uint64(0); i < requiredLength; i++ {
 		if i == 0 {
 			if !firstEpochCoins.Empty() {
 				schedule.EpochAmounts[0].Coins = schedule.EpochAmounts[0].Coins.Add(firstEpochCoins...)
