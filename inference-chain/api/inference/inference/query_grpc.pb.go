@@ -79,6 +79,7 @@ const (
 	Query_LiquidityPool_FullMethodName                             = "/inference.inference.Query/LiquidityPool"
 	Query_WrappedTokenBalances_FullMethodName                      = "/inference.inference.Query/WrappedTokenBalances"
 	Query_ValidateWrappedTokenForTrade_FullMethodName              = "/inference.inference.Query/ValidateWrappedTokenForTrade"
+	Query_ValidateIbcTokenForTrade_FullMethodName                  = "/inference.inference.Query/ValidateIbcTokenForTrade"
 	Query_ApprovedTokensForTrade_FullMethodName                    = "/inference.inference.Query/ApprovedTokensForTrade"
 	Query_TrainingKvRecord_FullMethodName                          = "/inference.inference.Query/TrainingKvRecord"
 	Query_ListTrainingKvRecordKeys_FullMethodName                  = "/inference.inference.Query/ListTrainingKvRecordKeys"
@@ -208,6 +209,8 @@ type QueryClient interface {
 	WrappedTokenBalances(ctx context.Context, in *QueryWrappedTokenBalancesRequest, opts ...grpc.CallOption) (*QueryWrappedTokenBalancesResponse, error)
 	// Validates a wrapped token for trading through liquidity pools
 	ValidateWrappedTokenForTrade(ctx context.Context, in *QueryValidateWrappedTokenForTradeRequest, opts ...grpc.CallOption) (*QueryValidateWrappedTokenForTradeResponse, error)
+	// Validates an IBC token for trading through liquidity pools
+	ValidateIbcTokenForTrade(ctx context.Context, in *QueryValidateIbcTokenForTradeRequest, opts ...grpc.CallOption) (*QueryValidateIbcTokenForTradeResponse, error)
 	// Queries all approved bridge tokens for trading
 	ApprovedTokensForTrade(ctx context.Context, in *QueryApprovedTokensForTradeRequest, opts ...grpc.CallOption) (*QueryApprovedTokensForTradeResponse, error)
 	// Queries a list of TrainingKvRecord items.
@@ -798,6 +801,15 @@ func (c *queryClient) ValidateWrappedTokenForTrade(ctx context.Context, in *Quer
 	return out, nil
 }
 
+func (c *queryClient) ValidateIbcTokenForTrade(ctx context.Context, in *QueryValidateIbcTokenForTradeRequest, opts ...grpc.CallOption) (*QueryValidateIbcTokenForTradeResponse, error) {
+	out := new(QueryValidateIbcTokenForTradeResponse)
+	err := c.cc.Invoke(ctx, Query_ValidateIbcTokenForTrade_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ApprovedTokensForTrade(ctx context.Context, in *QueryApprovedTokensForTradeRequest, opts ...grpc.CallOption) (*QueryApprovedTokensForTradeResponse, error) {
 	out := new(QueryApprovedTokensForTradeResponse)
 	err := c.cc.Invoke(ctx, Query_ApprovedTokensForTrade_FullMethodName, in, out, opts...)
@@ -1101,6 +1113,8 @@ type QueryServer interface {
 	WrappedTokenBalances(context.Context, *QueryWrappedTokenBalancesRequest) (*QueryWrappedTokenBalancesResponse, error)
 	// Validates a wrapped token for trading through liquidity pools
 	ValidateWrappedTokenForTrade(context.Context, *QueryValidateWrappedTokenForTradeRequest) (*QueryValidateWrappedTokenForTradeResponse, error)
+	// Validates an IBC token for trading through liquidity pools
+	ValidateIbcTokenForTrade(context.Context, *QueryValidateIbcTokenForTradeRequest) (*QueryValidateIbcTokenForTradeResponse, error)
 	// Queries all approved bridge tokens for trading
 	ApprovedTokensForTrade(context.Context, *QueryApprovedTokensForTradeRequest) (*QueryApprovedTokensForTradeResponse, error)
 	// Queries a list of TrainingKvRecord items.
@@ -1327,6 +1341,9 @@ func (UnimplementedQueryServer) WrappedTokenBalances(context.Context, *QueryWrap
 }
 func (UnimplementedQueryServer) ValidateWrappedTokenForTrade(context.Context, *QueryValidateWrappedTokenForTradeRequest) (*QueryValidateWrappedTokenForTradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ValidateWrappedTokenForTrade not implemented")
+}
+func (UnimplementedQueryServer) ValidateIbcTokenForTrade(context.Context, *QueryValidateIbcTokenForTradeRequest) (*QueryValidateIbcTokenForTradeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ValidateIbcTokenForTrade not implemented")
 }
 func (UnimplementedQueryServer) ApprovedTokensForTrade(context.Context, *QueryApprovedTokensForTradeRequest) (*QueryApprovedTokensForTradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApprovedTokensForTrade not implemented")
@@ -2487,6 +2504,24 @@ func _Query_ValidateWrappedTokenForTrade_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_ValidateIbcTokenForTrade_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryValidateIbcTokenForTradeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ValidateIbcTokenForTrade(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ValidateIbcTokenForTrade_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ValidateIbcTokenForTrade(ctx, req.(*QueryValidateIbcTokenForTradeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ApprovedTokensForTrade_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryApprovedTokensForTradeRequest)
 	if err := dec(in); err != nil {
@@ -3129,6 +3164,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ValidateWrappedTokenForTrade",
 			Handler:    _Query_ValidateWrappedTokenForTrade_Handler,
+		},
+		{
+			MethodName: "ValidateIbcTokenForTrade",
+			Handler:    _Query_ValidateIbcTokenForTrade_Handler,
 		},
 		{
 			MethodName: "ApprovedTokensForTrade",

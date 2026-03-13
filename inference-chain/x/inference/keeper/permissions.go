@@ -88,6 +88,7 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgAddParticipantsToAllowList)(nil)):      {GovernancePermission},
 	reflect.TypeOf((*types.MsgRemoveParticipantsFromAllowList)(nil)): {GovernancePermission},
 	reflect.TypeOf((*types.MsgApproveBridgeTokenForTrading)(nil)):    {GovernancePermission},
+	reflect.TypeOf((*types.MsgApproveIbcTokenForTrading)(nil)):       {GovernancePermission},
 	reflect.TypeOf((*types.MsgCreatePartialUpgrade)(nil)):            {GovernancePermission},
 	reflect.TypeOf((*types.MsgMigrateAllWrappedTokens)(nil)):         {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterBridgeAddresses)(nil)):         {GovernancePermission},
@@ -95,6 +96,7 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgRegisterLiquidityPool)(nil)):           {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterModel)(nil)):                   {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterTokenMetadata)(nil)):           {GovernancePermission},
+	reflect.TypeOf((*types.MsgRegisterIbcTokenMetadata)(nil)):        {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterWrappedTokenContract)(nil)):    {GovernancePermission},
 
 	reflect.TypeOf((*types.MsgBridgeExchange)(nil)):    {ActiveParticipantPermission, PreviousActiveParticipantPermission},

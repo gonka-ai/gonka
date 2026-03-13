@@ -2,13 +2,22 @@ package v0_2_11
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// MigrationData expected in the Plan.Info JSON
+type MigrationData struct {
+	CommunitySaleAddress string `json:"community_sale_address"`
+	NewCodeID            uint64 `json:"new_code_id"`
+}
 
 func CreateUpgradeHandler(
 	mm *module.Manager,
@@ -42,6 +51,12 @@ func CreateUpgradeHandler(
 			return toVM, err
 		}
 
+		// Execute Dynamic Contract Migration from Plan.Info
+		if err := executeContractMigration(ctx, k, plan.Info); err != nil {
+			k.LogError("contract migration failed", types.Upgrades, "error", err)
+			return toVM, err
+		}
+
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
@@ -63,6 +78,59 @@ func setEpochParticipantsSets(ctx context.Context, k keeper.Keeper) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+// executeContractMigration parses the JSON Plan.Info and triggers Contract Migration.
+// It uses `allow_all_trade_tokens` set to true to complete the community-sale migration payload.
+func executeContractMigration(ctx context.Context, k keeper.Keeper, infoJSON string) error {
+	// Note: For all failures except for actual migration issues
+	// we return nil so the chain will continue. Otherwise we just need to
+	// fix the (obvious) error and try again.
+	if infoJSON == "" {
+		k.LogInfo("no migration data found in Plan.Info, skipping contract migration", types.Upgrades)
+		return nil
+	}
+
+	var data MigrationData
+	if err := json.Unmarshal([]byte(infoJSON), &data); err != nil {
+		k.LogError("failed to unmarshal Plan.Info", types.Upgrades, "info", infoJSON, "error", err)
+		// Log the error and do NOT kill the chain
+		return nil
+	}
+
+	// Get the governance admin address
+	adminAddr, err := sdk.AccAddressFromBech32(k.GetAuthority())
+	if err != nil {
+		k.LogError("invalid governance address", types.Upgrades, "error", err)
+		return nil
+	}
+
+	// Make sure both arguments are provided
+	if data.CommunitySaleAddress == "" || data.NewCodeID == 0 {
+		k.LogInfo("incomplete migration data in Plan.Info, skipping contract migration", types.Upgrades, "info", infoJSON)
+		return nil
+	}
+
+	contractAddr, err := sdk.AccAddressFromBech32(data.CommunitySaleAddress)
+	if err != nil {
+		k.LogError("invalid contract address in Plan.Info", types.Upgrades, "address", data.CommunitySaleAddress, "error", err)
+		return nil
+	}
+
+	// Prepare the CosmWasm Migrate message (enabling all trade tokens natively)
+	migrateMsg := []byte(`{"allow_all_trade_tokens":true}`)
+
+	// Perform the actual contract migration via the Wasm Keeper
+	permissionedKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	_, err = permissionedKeeper.Migrate(sdkCtx, contractAddr, adminAddr, data.NewCodeID, migrateMsg)
+	if err != nil {
+		k.LogError("failed to migrate community sale contract", types.Upgrades, "address", data.CommunitySaleAddress, "new_code_id", data.NewCodeID, "error", err)
+		return err // We critically fail the upgrade if migration fails but parameters were provided
+	}
+
+	k.LogInfo("successfully migrated community sale contract", types.Upgrades, "address", data.CommunitySaleAddress, "new_code_id", data.NewCodeID)
 	return nil
 }
 

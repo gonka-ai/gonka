@@ -11,8 +11,6 @@ pub struct InstantiateMsg {
     pub initial_balances: Vec<Cw20Coin>,
     /// Optional minter, if unset only the instantiating address can mint
     pub mint: Option<MinterResponse>,
-    /// Optional marketing data
-    pub marketing: Option<InstantiateMarketingInfo>,
     /// Optional admin address (WASM admin = governance module). If not provided, will try to query from contract info.
     pub admin: Option<String>,
 }

@@ -1,25 +1,54 @@
 #!/bin/bash
 set -e
 
+# bridge-utils.sh
+# Shared utilities and environment setup for Gonka testnet bridge operations.
+
 # Resolve Base Directory (Logic matches launch.py)
-BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
+export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
 
 # Inferenced binary path (try local first, then system)
 if [ -f "$BASE_DIR/inferenced" ]; then
-    APP_NAME="$BASE_DIR/inferenced"
+    export APP_NAME="$BASE_DIR/inferenced"
 else
-    APP_NAME="inferenced"
+    export APP_NAME="inferenced"
 fi
 
-KEY_DIR="$BASE_DIR/.inference"
+export KEY_DIR="$BASE_DIR/.inference"
+export CHAIN_ID="gonka-testnet"
+export KEY_NAME="${KEY_NAME:-gonka-account-key}"
 
-CHAIN_ID="gonka-testnet"
-KEY_NAME="${KEY_NAME:-gonka-account-key}"
+# Port 26657 is closed on host; node is running in Docker, protecting its RPC endpoint behind proxy on port 8000.
+export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
 
-# Dynamically fetch Gov Module Account Address
-# Port 26657 is closed on host, but 8000 is open (likely proxy)
-# Use trailing slash to avoid 301 redirect which strips port
-NODE_OPTS="--node http://localhost:8000/chain-rpc/"
+# Function to verify key exists and determine its backend
+# Usage:
+#   if get_keyring_backend "12345678"; then
+#       echo "Found in $KEYRING_BACKEND"
+#   else
+#       exit 1
+#   fi
+get_keyring_backend() {
+    local pass=$1
+    export KEYRING_BACKEND=""
+    
+    # Try 'file' backend first
+    if printf "%s\n" "$pass" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "file" --keyring-dir "$KEY_DIR" >/dev/null 2>&1; then
+        export KEYRING_BACKEND="file"
+        echo "Found key '$KEY_NAME' in 'file' backend."
+        return 0
+    fi
+    
+    # Try 'test' backend second
+    if printf "%s\n" "$pass" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "test" --keyring-dir "$KEY_DIR" >/dev/null 2>&1; then
+        export KEYRING_BACKEND="test"
+        echo "Found key '$KEY_NAME' in 'test' backend."
+        return 0
+    fi
+    
+    echo "Error: Key '$KEY_NAME' not found in $KEY_DIR (checked both 'file' and 'test' backends)."
+    return 1
+}
 
 echo "=================================================="
 echo "Registering Liquidity Pool on Gonka (Host Binary Mode)"
@@ -115,32 +144,7 @@ run_keys_cmd() {
 # 1. Verify Key Exists locally
 echo "Checking for key '$KEY_NAME'..."
 
-check_key() {
-    local backend=$1
-    # Quiet verification
-    if printf "%s\n" "$PASSWORD" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "$backend" --keyring-dir "$KEY_DIR" >/dev/null 2>&1; then
-        return 0
-    fi
-    return 1
-}
-
-if check_key "file"; then
-    KEYRING_BACKEND="file"
-    echo "Found key in 'file' backend."
-elif check_key "test"; then
-    KEYRING_BACKEND="test"
-    echo "Found key in 'test' backend."
-else
-    echo "Error: Key '$KEY_NAME' not found in $KEY_DIR (checked file/test backends)"
-    echo "Available keys (file):"
-    
-    # Try to list keys (piping password in case of migration prompt)
-    printf "%s\n" "$PASSWORD" | $APP_NAME keys list --keyring-backend file --keyring-dir "$KEY_DIR" || echo "Listing failed."
-    
-    echo "Available keys (test):"
-    printf "%s\n" "$PASSWORD" | $APP_NAME keys list --keyring-backend test --keyring-dir "$KEY_DIR" || echo "Listing failed."
-    exit 1
-fi
+get_keyring_backend "$PASSWORD" || exit 1
 
 # Get Key Address
 MY_ADDR=$(run_keys_cmd show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" 2>/dev/null)
@@ -217,7 +221,7 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
     
     # Prepare Instantiate Message (admin must be Authority for governance-owned pool)
     # Minified JSON object
-    LP_MSG=$(jq -n -c --arg admin "$AUTHORITY_ADDRESS" '{admin:$admin, daily_limit_bp:"1000", total_supply:"120000000000000000"}')
+    LP_MSG=$(jq -n -c --arg admin "$AUTHORITY_ADDRESS" '{admin:$admin, daily_limit_bp:"1000", total_supply:"120000000000000000", native_denom:"ngonka"}')
 
     # Build the proposal JSON safely. Note: codeId and instantiateMsg are STRINGS in this proto.
     jq -n \

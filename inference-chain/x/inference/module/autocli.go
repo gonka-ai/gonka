@@ -364,6 +364,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Skip:      true, // skipped because authority gated
 				},
 				{
+					RpcMethod: "ApproveIbcTokenForTrading",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "RegisterIbcTokenMetadata",
+					Skip:      true, // skipped because authority gated
+				},
+				{
 					RpcMethod:      "StartInference",
 					Use:            "start-inference [inference-id] [prompt-hash] [prompt-payload] [received-by]",
 					Short:          "Send a startInference tx",

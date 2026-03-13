@@ -67,6 +67,8 @@ service Msg {
   rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
+  rpc ApproveIbcTokenForTrading        (MsgApproveIbcTokenForTrading) returns (MsgApproveIbcTokenForTradingResponse);
+  rpc RegisterIbcTokenMetadata         (MsgRegisterIbcTokenMetadata) returns (MsgRegisterIbcTokenMetadataResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -576,3 +578,25 @@ message MsgMigrateAllWrappedTokensResponse {
   // number of contracts attempted; success/failure details are in logs/events
   uint32 attempted = 1;
 }
+
+message MsgApproveIbcTokenForTrading {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string chainId = 2;
+  string ibcDenom = 3;
+}
+
+message MsgApproveIbcTokenForTradingResponse {}
+
+message MsgRegisterIbcTokenMetadata {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string chainId = 2;
+  string ibcDenom = 3;
+  string name = 4;
+  string symbol = 5;
+  uint32 decimals = 6;
+  bool overwrite = 7;
+}
+
+message MsgRegisterIbcTokenMetadataResponse {}

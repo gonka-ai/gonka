@@ -57,8 +57,8 @@ type (
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 		// Epoch collections
-		Epochs                    collections.Map[uint64, types.Epoch]
-		EffectiveEpochIndex       collections.Item[uint64]
+		Epochs              collections.Map[uint64, types.Epoch]
+		EffectiveEpochIndex collections.Item[uint64]
 		// TODO(v0.2.11-cleanup): remove legacy aggregate map after upgrade migration period.
 		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
 		EpochGroupValidationEntry collections.KeySet[collections.Triple[uint64, string, string]]

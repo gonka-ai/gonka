@@ -365,6 +365,11 @@ service Query {
 
   }
 
+  // Validates an IBC token for trading through liquidity pools
+  rpc ValidateIbcTokenForTrade(QueryValidateIbcTokenForTradeRequest) returns (QueryValidateIbcTokenForTradeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/validate_ibc_token_for_trade/{ibc_denom}";
+  }
+
   // Queries all approved bridge tokens for trading
   rpc ApprovedTokensForTrade(QueryApprovedTokensForTradeRequest) returns (QueryApprovedTokensForTradeResponse) {
     option (google.api.http).get = "/productscience/inference/inference/approved_tokens_for_trade";
@@ -1090,6 +1095,15 @@ message QueryValidateWrappedTokenForTradeRequest {
 
 message QueryValidateWrappedTokenForTradeResponse {
   bool is_valid = 1;
+}
+
+message QueryValidateIbcTokenForTradeRequest {
+  string ibc_denom = 1;
+}
+
+message QueryValidateIbcTokenForTradeResponse {
+  bool is_valid = 1;
+  uint32 decimals = 2;
 }
 
 message QueryLiquidityPoolRequest {}
