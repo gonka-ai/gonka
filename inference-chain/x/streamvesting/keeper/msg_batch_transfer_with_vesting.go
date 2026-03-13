@@ -60,13 +60,16 @@ func (k msgServer) BatchTransferWithVesting(goCtx context.Context, req *types.Ms
 		}
 	}
 
-	totalAmount := sdk.NewCoins()
 	recipients := make([]string, 0, len(aggregated))
-	for recipient, amount := range aggregated {
+	for recipient := range aggregated {
 		recipients = append(recipients, recipient)
-		totalAmount = totalAmount.Add(amount...)
 	}
 	slices.Sort(recipients)
+
+	totalAmount := sdk.NewCoins()
+	for _, recipient := range recipients {
+		totalAmount = totalAmount.Add(aggregated[recipient]...)
+	}
 
 	if err := k.bookkeepingBankKeeper.SendCoinsFromAccountToModule(ctx, senderAddr, types.ModuleName, totalAmount, "batch transfer with vesting"); err != nil {
 		return nil, errorsmod.Wrapf(err, "failed to transfer coins from sender to module")
