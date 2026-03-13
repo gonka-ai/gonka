@@ -37,8 +37,8 @@ func (m *MsgTransferWithVesting) ValidateBasic() error {
 	return validateMinTransferAmounts(m.Amount)
 }
 
-// validateMinTransferAmounts rejects dust amounts for native denominations.
-// Each gonka/ngonka entry must represent at least 10 gonka.
+// validateMinTransferAmounts rejects unknown denominations and dust amounts.
+// Only gonka and ngonka are accepted; each entry must represent at least 10 gonka.
 func validateMinTransferAmounts(coins sdk.Coins) error {
 	for _, coin := range coins {
 		switch coin.Denom {
@@ -53,6 +53,9 @@ func validateMinTransferAmounts(coins sdk.Coins) error {
 					"transfer amount %s is below minimum of %d ngonka (equivalent to %d gonka)",
 					coin.String(), MinTransferNgonka, MinTransferGonka)
 			}
+		default:
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidCoins,
+				"unsupported denomination %q: only gonka and ngonka are allowed", coin.Denom)
 		}
 	}
 	return nil
