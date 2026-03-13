@@ -37,10 +37,6 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 
-		if err := initNewFeatureParams(ctx, k); err != nil {
-			return nil, err
-		}
-
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
 			return toVM, err
@@ -65,43 +61,6 @@ func setEpochParticipantsSets(ctx context.Context, k keeper.Keeper) error {
 	}
 	err = setEpochParticipantsSet(ctx, k, currentEpochIndex-1)
 	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// initNewFeatureParams seeds ContinuousPocParams and CacheQualityParams with
-// their canonical defaults when the existing on-chain state does not yet have
-// them (i.e. nodes that stored params before these fields were added).
-// Both features are disabled by default (Enabled=false); governance must
-// explicitly enable them via MsgUpdateParams after upgrade.
-func initNewFeatureParams(ctx context.Context, k keeper.Keeper) error {
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		k.LogError("failed to get params during upgrade", types.Upgrades, "error", err)
-		return err
-	}
-
-	changed := false
-
-	if params.ContinuousPocParams == nil {
-		params.ContinuousPocParams = types.DefaultContinuousPoCParams()
-		k.LogInfo("initialized ContinuousPocParams with defaults", types.Upgrades)
-		changed = true
-	}
-
-	if params.CacheQualityParams == nil {
-		params.CacheQualityParams = types.DefaultCacheQualityParams()
-		k.LogInfo("initialized CacheQualityParams with defaults", types.Upgrades)
-		changed = true
-	}
-
-	if !changed {
-		return nil
-	}
-
-	if err := k.SetParams(ctx, params); err != nil {
-		k.LogError("failed to set params with new feature defaults", types.Upgrades, "error", err)
 		return err
 	}
 	return nil

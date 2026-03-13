@@ -33,19 +33,7 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
-	err = k.GetContinuousPoCCommitsPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetContinuousPoCChallengesPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetContinuousPoCEpochSummariesPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetCacheQualityEpochSummariesPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.PruneSubnetData(ctx, currentEpochIndex)
 	if err != nil {
 		return err
 	}
@@ -147,104 +135,6 @@ func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.
 		},
 		Remover: func(ctx context.Context, key collections.Triple[int64, sdk.AccAddress, sdk.AccAddress]) error {
 			return k.PoCValidations.Remove(ctx, key)
-		},
-		Logger: k,
-	}
-}
-
-// GetContinuousPoCCommitsPruner returns a Pruner for ContinuousPoCCommits.
-// The collection is keyed by (epoch_index uint64, participant, block_height int64).
-// Uses PocDataPruningEpochThreshold and PocPruningMax to stay aligned with PoC pruning cadence.
-func (k Keeper) GetContinuousPoCCommitsPruner(params types.Params) Pruner[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCCommit] {
-	return Pruner[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCCommit]{
-		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
-		PruningMax: params.EpochParams.PocPruningMax,
-		List:       k.ContinuousPoCCommits,
-		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[uint64, sdk.AccAddress, int64]] {
-			return collections.NewPrefixedTripleRange[uint64, sdk.AccAddress, int64](uint64(epochIndex))
-		},
-		GetLastPruned: func(state types.PruningState) int64 {
-			return state.ContinuousPoCCommitsPrunedEpoch
-		},
-		SetLastPruned: func(state *types.PruningState, epoch int64) {
-			state.ContinuousPoCCommitsPrunedEpoch = epoch
-		},
-		Remover: func(ctx context.Context, key collections.Triple[uint64, sdk.AccAddress, int64]) error {
-			return k.ContinuousPoCCommits.Remove(ctx, key)
-		},
-		Logger: k,
-	}
-}
-
-// GetContinuousPoCChallengesPruner returns a Pruner for ContinuousPoCChallenges.
-// Challenges share the same key structure as commits and are pruned on the same schedule.
-func (k Keeper) GetContinuousPoCChallengesPruner(params types.Params) Pruner[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCChallenge] {
-	return Pruner[collections.Triple[uint64, sdk.AccAddress, int64], types.ContinuousPoCChallenge]{
-		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
-		PruningMax: params.EpochParams.PocPruningMax,
-		List:       k.ContinuousPoCChallenges,
-		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[uint64, sdk.AccAddress, int64]] {
-			return collections.NewPrefixedTripleRange[uint64, sdk.AccAddress, int64](uint64(epochIndex))
-		},
-		GetLastPruned: func(state types.PruningState) int64 {
-			return state.ContinuousPoCChallengePrunedEpoch
-		},
-		SetLastPruned: func(state *types.PruningState, epoch int64) {
-			state.ContinuousPoCChallengePrunedEpoch = epoch
-		},
-		Remover: func(ctx context.Context, key collections.Triple[uint64, sdk.AccAddress, int64]) error {
-			return k.ContinuousPoCChallenges.Remove(ctx, key)
-		},
-		Logger: k,
-	}
-}
-
-// GetContinuousPoCEpochSummariesPruner returns a Pruner for ContinuousPoCEpochSummaries.
-// The collection is keyed by (epoch_index uint64, participant sdk.AccAddress).
-// Summaries are kept until after epoch settlement, so they share the same threshold as PoC data.
-func (k Keeper) GetContinuousPoCEpochSummariesPruner(params types.Params) Pruner[collections.Pair[uint64, sdk.AccAddress], types.ContinuousPoCEpochSummary] {
-	return Pruner[collections.Pair[uint64, sdk.AccAddress], types.ContinuousPoCEpochSummary]{
-		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
-		PruningMax: params.EpochParams.PocPruningMax,
-		List:       k.ContinuousPoCEpochSummaries,
-		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
-			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epochIndex))
-		},
-		GetLastPruned: func(state types.PruningState) int64 {
-			return state.ContinuousPoCEpochSummariesPrunedEpoch
-		},
-		SetLastPruned: func(state *types.PruningState, epoch int64) {
-			state.ContinuousPoCEpochSummariesPrunedEpoch = epoch
-		},
-		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
-			return k.ContinuousPoCEpochSummaries.Remove(ctx, key)
-		},
-		Logger: k,
-	}
-}
-
-// GetCacheQualityEpochSummariesPruner returns a Pruner for CacheQualityEpochSummaries.
-// Uses CacheQualityParams.PruningEpochThreshold if set; defaults to PoC data threshold.
-func (k Keeper) GetCacheQualityEpochSummariesPruner(params types.Params) Pruner[collections.Pair[uint64, sdk.AccAddress], types.CacheQualityEpochSummary] {
-	threshold := params.PocParams.PocDataPruningEpochThreshold
-	if params.CacheQualityParams != nil && params.CacheQualityParams.PruningEpochThreshold > 0 {
-		threshold = uint64(params.CacheQualityParams.PruningEpochThreshold)
-	}
-	return Pruner[collections.Pair[uint64, sdk.AccAddress], types.CacheQualityEpochSummary]{
-		Threshold:  threshold,
-		PruningMax: params.EpochParams.PocPruningMax,
-		List:       k.CacheQualityEpochSummaries,
-		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
-			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epochIndex))
-		},
-		GetLastPruned: func(state types.PruningState) int64 {
-			return state.CacheQualityEpochSummariesPrunedEpoch
-		},
-		SetLastPruned: func(state *types.PruningState, epoch int64) {
-			state.CacheQualityEpochSummariesPrunedEpoch = epoch
-		},
-		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
-			return k.CacheQualityEpochSummaries.Remove(ctx, key)
 		},
 		Logger: k,
 	}

@@ -23,14 +23,10 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type PruningState struct {
-	PocBatchesPrunedEpoch                  int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
-	PocValidationsPrunedEpoch              int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
-	InferencePrunedEpoch                   int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
-	EpochGroupValidationsPrunedEpoch       int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
-	ContinuousPoCCommitsPrunedEpoch        int64 `protobuf:"varint,5,opt,name=continuous_poc_commits_pruned_epoch,json=continuousPocCommitsPrunedEpoch,proto3" json:"continuous_poc_commits_pruned_epoch,omitempty"`
-	ContinuousPoCChallengePrunedEpoch      int64 `protobuf:"varint,6,opt,name=continuous_poc_challenges_pruned_epoch,json=continuousPocChallengesPrunedEpoch,proto3" json:"continuous_poc_challenges_pruned_epoch,omitempty"`
-	ContinuousPoCEpochSummariesPrunedEpoch int64 `protobuf:"varint,7,opt,name=continuous_poc_summaries_pruned_epoch,json=continuousPocSummariesPrunedEpoch,proto3" json:"continuous_poc_summaries_pruned_epoch,omitempty"`
-	CacheQualityEpochSummariesPrunedEpoch  int64 `protobuf:"varint,8,opt,name=cache_quality_epoch_summaries_pruned_epoch,json=cacheQualityEpochSummariesPrunedEpoch,proto3" json:"cache_quality_epoch_summaries_pruned_epoch,omitempty"`
+	PocBatchesPrunedEpoch            int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
+	PocValidationsPrunedEpoch        int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
+	InferencePrunedEpoch             int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
+	EpochGroupValidationsPrunedEpoch int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
 }
 
 func (m *PruningState) Reset()         { *m = PruningState{} }
@@ -94,34 +90,6 @@ func (m *PruningState) GetEpochGroupValidationsPrunedEpoch() int64 {
 	return 0
 }
 
-func (m *PruningState) GetContinuousPoCCommitsPrunedEpoch() int64 {
-	if m != nil {
-		return m.ContinuousPoCCommitsPrunedEpoch
-	}
-	return 0
-}
-
-func (m *PruningState) GetContinuousPoCChallengePrunedEpoch() int64 {
-	if m != nil {
-		return m.ContinuousPoCChallengePrunedEpoch
-	}
-	return 0
-}
-
-func (m *PruningState) GetContinuousPoCEpochSummariesPrunedEpoch() int64 {
-	if m != nil {
-		return m.ContinuousPoCEpochSummariesPrunedEpoch
-	}
-	return 0
-}
-
-func (m *PruningState) GetCacheQualityEpochSummariesPrunedEpoch() int64 {
-	if m != nil {
-		return m.CacheQualityEpochSummariesPrunedEpoch
-	}
-	return 0
-}
-
 func init() {
 	proto.RegisterType((*PruningState)(nil), "inference.inference.PruningState")
 }
@@ -171,26 +139,6 @@ func (m *PruningState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.CacheQualityEpochSummariesPrunedEpoch != 0 {
-		i = encodeVarintPruningState(dAtA, i, uint64(m.CacheQualityEpochSummariesPrunedEpoch))
-		i--
-		dAtA[i] = 0x40 // field 8, varint
-	}
-	if m.ContinuousPoCEpochSummariesPrunedEpoch != 0 {
-		i = encodeVarintPruningState(dAtA, i, uint64(m.ContinuousPoCEpochSummariesPrunedEpoch))
-		i--
-		dAtA[i] = 0x38 // field 7
-	}
-	if m.ContinuousPoCChallengePrunedEpoch != 0 {
-		i = encodeVarintPruningState(dAtA, i, uint64(m.ContinuousPoCChallengePrunedEpoch))
-		i--
-		dAtA[i] = 0x30 // field 6
-	}
-	if m.ContinuousPoCCommitsPrunedEpoch != 0 {
-		i = encodeVarintPruningState(dAtA, i, uint64(m.ContinuousPoCCommitsPrunedEpoch))
-		i--
-		dAtA[i] = 0x28 // field 5
-	}
 	if m.EpochGroupValidationsPrunedEpoch != 0 {
 		i = encodeVarintPruningState(dAtA, i, uint64(m.EpochGroupValidationsPrunedEpoch))
 		i--
@@ -242,18 +190,6 @@ func (m *PruningState) Size() (n int) {
 	}
 	if m.EpochGroupValidationsPrunedEpoch != 0 {
 		n += 1 + sovPruningState(uint64(m.EpochGroupValidationsPrunedEpoch))
-	}
-	if m.ContinuousPoCCommitsPrunedEpoch != 0 {
-		n += 1 + sovPruningState(uint64(m.ContinuousPoCCommitsPrunedEpoch))
-	}
-	if m.ContinuousPoCChallengePrunedEpoch != 0 {
-		n += 1 + sovPruningState(uint64(m.ContinuousPoCChallengePrunedEpoch))
-	}
-	if m.ContinuousPoCEpochSummariesPrunedEpoch != 0 {
-		n += 1 + sovPruningState(uint64(m.ContinuousPoCEpochSummariesPrunedEpoch))
-	}
-	if m.CacheQualityEpochSummariesPrunedEpoch != 0 {
-		n += 1 + sovPruningState(uint64(m.CacheQualityEpochSummariesPrunedEpoch))
 	}
 	return n
 }
@@ -365,82 +301,6 @@ func (m *PruningState) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.EpochGroupValidationsPrunedEpoch |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ContinuousPoCCommitsPrunedEpoch", wireType)
-			}
-			m.ContinuousPoCCommitsPrunedEpoch = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPruningState
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ContinuousPoCCommitsPrunedEpoch |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 6:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ContinuousPoCChallengePrunedEpoch", wireType)
-			}
-			m.ContinuousPoCChallengePrunedEpoch = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPruningState
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ContinuousPoCChallengePrunedEpoch |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 7:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ContinuousPoCEpochSummariesPrunedEpoch", wireType)
-			}
-			m.ContinuousPoCEpochSummariesPrunedEpoch = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPruningState
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ContinuousPoCEpochSummariesPrunedEpoch |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 8:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CacheQualityEpochSummariesPrunedEpoch", wireType)
-			}
-			m.CacheQualityEpochSummariesPrunedEpoch = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPruningState
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.CacheQualityEpochSummariesPrunedEpoch |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
