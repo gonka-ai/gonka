@@ -1890,6 +1890,122 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationEdgeCases(t *testing.T) 
 
 // Test RecomputeEffectiveWeightFromMLNodes helper function
 func TestRecomputeEffectiveWeightFromMLNodes(t *testing.T) {
+	t.Run("Collateral weight ratio scales recomputed effective weight", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:         "participant1",
+			Weight:                270,
+			ConfirmationWeight:    180,
+			CollateralWeightRatio: types.DecimalFromFloat(0.6),
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false},
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true},
+				},
+				{
+					NodeId:             "node3",
+					PocWeight:          150,
+					TimeslotAllocation: []bool{true, false},
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeCollateralAdjustedWeightFromMLNodes(vw, nil, getCollateralWeightRatio(vw))
+
+		// Raw effective weight is preserved(200) + confirmation(180) = 380.
+		// Snapshot collateral weight ratio 0.6 should scale it to 228.
+		require.Equal(t, int64(228), effectiveWeight)
+	})
+
+	t.Run("Missing collateral weight ratio defaults to no haircut", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:      "participant1",
+			Weight:             380,
+			ConfirmationWeight: 180,
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false},
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true},
+				},
+				{
+					NodeId:             "node3",
+					PocWeight:          150,
+					TimeslotAllocation: []bool{true, false},
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeCollateralAdjustedWeightFromMLNodes(vw, nil, getCollateralWeightRatio(vw))
+
+		require.Equal(t, int64(380), effectiveWeight)
+	})
+
+	t.Run("Negative collateral weight ratio clamps to zero", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:         "participant1",
+			Weight:                380,
+			ConfirmationWeight:    180,
+			CollateralWeightRatio: &types.Decimal{Value: -1, Exponent: 0},
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false},
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true},
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeCollateralAdjustedWeightFromMLNodes(vw, nil, getCollateralWeightRatio(vw))
+
+		require.Equal(t, int64(0), effectiveWeight)
+	})
+
+	t.Run("Collateral weight ratio above one clamps to one", func(t *testing.T) {
+		vw := &types.ValidationWeight{
+			MemberAddress:         "participant1",
+			Weight:                380,
+			ConfirmationWeight:    180,
+			CollateralWeightRatio: &types.Decimal{Value: 2, Exponent: 0},
+			MlNodes: []*types.MLNodeInfo{
+				{
+					NodeId:             "node1",
+					PocWeight:          100,
+					TimeslotAllocation: []bool{true, false},
+				},
+				{
+					NodeId:             "node2",
+					PocWeight:          200,
+					TimeslotAllocation: []bool{true, true},
+				},
+				{
+					NodeId:             "node3",
+					PocWeight:          150,
+					TimeslotAllocation: []bool{true, false},
+				},
+			},
+		}
+
+		effectiveWeight := RecomputeCollateralAdjustedWeightFromMLNodes(vw, nil, getCollateralWeightRatio(vw))
+
+		require.Equal(t, int64(380), effectiveWeight)
+	})
+
 	t.Run("Mixed POC_SLOT allocations", func(t *testing.T) {
 		vw := &types.ValidationWeight{
 			MemberAddress:      "participant1",

@@ -340,6 +340,20 @@ func TestNewEpochMemberFromActiveParticipant_AllPreservedNodes(t *testing.T) {
 	require.Equal(t, int64(0), member.ConfirmationWeight, "confirmation_weight should be 0 when all nodes preserved")
 }
 
+func TestNewEpochMemberFromActiveParticipant_CopiesCollateralWeightRatio(t *testing.T) {
+	p := &types.ActiveParticipant{
+		Index:                 "test-participant",
+		ValidatorKey:          "test-pubkey",
+		Weight:                300,
+		CollateralWeightRatio: types.DecimalFromFloat(0.6),
+	}
+
+	member := NewEpochMemberFromActiveParticipant(p, 1, 0)
+
+	require.NotNil(t, member.CollateralWeightRatio)
+	require.Equal(t, "0.6", member.CollateralWeightRatio.ToDecimal().String())
+}
+
 func TestGetAllGroupMembersPaginated_SinglePage(t *testing.T) {
 	members := []*group.GroupMember{
 		{Member: &group.Member{Address: "addr1", Weight: "100"}},

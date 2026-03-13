@@ -993,6 +993,14 @@ func DecimalFromDecimal(d decimal.Decimal) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
+func DecimalFromLegacyDec(d math.LegacyDec) (*Decimal, error) {
+	parsed, err := decimal.NewFromString(d.String())
+	if err != nil {
+		return nil, err
+	}
+	return DecimalFromDecimal(parsed), nil
+}
+
 var DecimalZero = Decimal{Value: 0, Exponent: 0}
 
 func DecimalFromFloat32(f float32) *Decimal {

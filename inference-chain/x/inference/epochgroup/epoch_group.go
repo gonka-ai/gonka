@@ -18,14 +18,15 @@ import (
 
 // EpochMember contains all the parameters related to a member in an epoch group
 type EpochMember struct {
-	Address            string
-	Weight             int64
-	Pubkey             string
-	SeedSignature      string
-	Reputation         int64
-	Models             []string
-	MlNodes            []*types.ModelMLNodes
-	ConfirmationWeight int64 // Minimum confirmation weight from confirmation PoC events
+	Address               string
+	Weight                int64
+	Pubkey                string
+	SeedSignature         string
+	Reputation            int64
+	Models                []string
+	MlNodes               []*types.ModelMLNodes
+	ConfirmationWeight    int64 // Minimum confirmation weight from confirmation PoC events
+	CollateralWeightRatio *types.Decimal
 }
 
 func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64, confirmationWeight int64) EpochMember {
@@ -41,14 +42,15 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 
 	return EpochMember{
-		Address:            p.Index,
-		Weight:             p.Weight,
-		Pubkey:             p.ValidatorKey,
-		SeedSignature:      seedSignature,
-		Reputation:         reputation,
-		Models:             p.Models,
-		MlNodes:            p.MlNodes,
-		ConfirmationWeight: confirmationWeight,
+		Address:               p.Index,
+		Weight:                p.Weight,
+		Pubkey:                p.ValidatorKey,
+		SeedSignature:         seedSignature,
+		Reputation:            reputation,
+		Models:                p.Models,
+		MlNodes:               p.MlNodes,
+		ConfirmationWeight:    confirmationWeight,
+		CollateralWeightRatio: p.CollateralWeightRatio,
 	}
 }
 
@@ -208,11 +210,12 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 	mlNodes := eg.getMLNodeInfo(member, eg.GroupData.ModelId)
 
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
-		MemberAddress:      member.Address,
-		Weight:             int64(member.Weight),
-		Reputation:         int32(member.Reputation),
-		MlNodes:            mlNodes,
-		ConfirmationWeight: member.ConfirmationWeight, // Populated by confirmation PoC weight calculation
+		MemberAddress:         member.Address,
+		Weight:                int64(member.Weight),
+		Reputation:            int32(member.Reputation),
+		MlNodes:               mlNodes,
+		ConfirmationWeight:    member.ConfirmationWeight, // Populated by confirmation PoC weight calculation
+		CollateralWeightRatio: member.CollateralWeightRatio,
 	})
 	eg.GroupData.TotalWeight += member.Weight
 

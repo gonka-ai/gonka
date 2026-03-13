@@ -162,6 +162,8 @@ func TestCollateralGracePeriod(t *testing.T) {
 	// During grace period, final weight should remain the same as potential weight
 	require.Equal(t, int64(1000), finalParticipant.Weight,
 		"During grace period, Weight should be unchanged")
+	require.NotNil(t, finalParticipant.CollateralWeightRatio)
+	require.Equal(t, "1", finalParticipant.CollateralWeightRatio.ToDecimal().String())
 }
 
 func TestNoCollateralPostGracePeriod(t *testing.T) {
@@ -205,6 +207,8 @@ func TestNoCollateralPostGracePeriod(t *testing.T) {
 	// After grace period with no collateral, weight should be base weight (1000 * 0.2 = 200)
 	require.Equal(t, int64(200), finalParticipant.Weight,
 		"With no collateral post-grace period, Weight should be reduced to the base weight")
+	require.NotNil(t, finalParticipant.CollateralWeightRatio)
+	require.Equal(t, "0.2", finalParticipant.CollateralWeightRatio.ToDecimal().String())
 }
 
 func TestPostGracePeriod_FullCollateral(t *testing.T) {
@@ -252,6 +256,8 @@ func TestPostGracePeriod_FullCollateral(t *testing.T) {
 	// With full collateral, weight should equal potential weight
 	require.Equal(t, int64(1000), finalParticipant.Weight,
 		"With full collateral post-grace period, Weight should equal PotentialWeight")
+	require.NotNil(t, finalParticipant.CollateralWeightRatio)
+	require.Equal(t, "1", finalParticipant.CollateralWeightRatio.ToDecimal().String())
 }
 
 func TestPostGracePeriod_PartialCollateral(t *testing.T) {
@@ -301,6 +307,8 @@ func TestPostGracePeriod_PartialCollateral(t *testing.T) {
 	// Total Weight = 200 + 400 = 600
 	require.Equal(t, int64(600), finalParticipant.Weight,
 		"With partial collateral post-grace period, Weight should be BaseWeight + ActivatedWeight")
+	require.NotNil(t, finalParticipant.CollateralWeightRatio)
+	require.Equal(t, "0.6", finalParticipant.CollateralWeightRatio.ToDecimal().String())
 }
 
 func TestComputeNewWeights(t *testing.T) {

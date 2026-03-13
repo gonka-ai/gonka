@@ -211,6 +211,39 @@ func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, mlNodes []*
 	return preservedWeight + vw.ConfirmationWeight
 }
 
+// getCollateralWeightRatio returns the snapshotted collateral haircut ratio for rewards.
+// Older snapshots without this field fall back to 1, meaning no collateral haircut.
+func getCollateralWeightRatio(vw *types.ValidationWeight) decimal.Decimal {
+	if vw == nil || vw.CollateralWeightRatio == nil {
+		return one
+	}
+
+	ratio := vw.CollateralWeightRatio.ToDecimal()
+	if ratio.IsNegative() {
+		return decimal.Zero
+	}
+	if ratio.GreaterThan(one) {
+		return one
+	}
+	return ratio
+}
+
+// RecomputeCollateralAdjustedWeightFromMLNodes reapplies the snapshotted collateral
+// haircut to the recomputed post-confirmation effective weight.
+func RecomputeCollateralAdjustedWeightFromMLNodes(vw *types.ValidationWeight, mlNodes []*types.MLNodeInfo, collateralWeightRatio decimal.Decimal) int64 {
+	rawEffectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, mlNodes)
+	if rawEffectiveWeight <= 0 || collateralWeightRatio.LessThanOrEqual(decimal.Zero) {
+		return 0
+	}
+
+	adjustedWeight := decimal.NewFromInt(rawEffectiveWeight).Mul(collateralWeightRatio).IntPart()
+	if adjustedWeight < 0 {
+		return 0
+	}
+
+	return adjustedWeight
+}
+
 // GetParticipantPoCWeight retrieves and calculates final PoC weight for reward distribution
 // Note: This function is used for display/query purposes and returns original base weight.
 // For settlement, CalculateParticipantBitcoinRewards applies confirmation weight capping
@@ -379,13 +412,14 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 
 	for i, participant := range participants {
 		cappedParticipant := &types.ActiveParticipant{
-			Index:        participant.Index,
-			ValidatorKey: participant.ValidatorKey,
-			Weight:       participant.Weight,
-			InferenceUrl: participant.InferenceUrl,
-			Seed:         participant.Seed,
-			Models:       participant.Models,
-			MlNodes:      participant.MlNodes,
+			Index:                 participant.Index,
+			ValidatorKey:          participant.ValidatorKey,
+			Weight:                participant.Weight,
+			InferenceUrl:          participant.InferenceUrl,
+			Seed:                  participant.Seed,
+			Models:                participant.Models,
+			MlNodes:               participant.MlNodes,
+			CollateralWeightRatio: participant.CollateralWeightRatio,
 		}
 
 		if cappedParticipant.Weight > cap {
@@ -623,9 +657,10 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// Recompute effective weight from MLNodes (includes confirmation capping)
+		// Recompute effective weight from MLNodes (includes confirmation capping & collateral ratio)
 		mlNodes := participantMLNodes[participant.Address]
-		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, mlNodes)
+		collateralWeightRatio := getCollateralWeightRatio(vw)
+		effectiveWeight := RecomputeCollateralAdjustedWeightFromMLNodes(vw, mlNodes, collateralWeightRatio)
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
 		}
@@ -633,6 +668,7 @@ func CalculateParticipantBitcoinRewards(
 		logger.Info("Bitcoin Rewards: Calculated effective weight",
 			"participant", participant.Address,
 			"baseWeight", vw.Weight,
+			"collateralWeightRatio", collateralWeightRatio.String(),
 			"confirmationWeight", vw.ConfirmationWeight,
 			"effectiveWeight", effectiveWeight,
 			"fullWeight", fullWeight)

@@ -32,6 +32,9 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 	// effectively 100%, so the PotentialWeight calculated by ComputeNewWeights
 	// becomes the final EffectiveWeight. We can exit early.
 	if latestEpoch.Index <= collateralParams.GracePeriodEndEpoch {
+		for _, participant := range participants {
+			participant.CollateralWeightRatio = types.DecimalFromFloat(1)
+		}
 		k.LogInfo("Collateral grace period is active, skipping weight adjustment.", types.Tokenomics, "current_epoch", latestEpoch.Index, "grace_period_end", inferenceParams.CollateralParams.GracePeriodEndEpoch)
 		return nil
 	}
@@ -60,6 +63,7 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 			continue
 		}
 
+		potentialWeightInt := participant.Weight
 		potentialWeight := math.LegacyNewDecFromInt(math.NewIntFromUint64(uint64(participant.Weight)))
 
 		// 1. Calculate Base Weight: The portion of weight granted without collateral.
@@ -88,6 +92,8 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 		// 4. Calculate Final Effective Weight and update the participant's weight in-memory.
 		effectiveWeight := baseWeight.Add(activatedWeight)
 		participant.Weight = effectiveWeight.TruncateInt64()
+		// 5. Store the collateral weight ratio for reference (this is the ratio of effective weight to potential weight).
+		participant.CollateralWeightRatio = collateralWeightRatioFromWeights(potentialWeightInt, participant.Weight)
 
 		k.LogDebug("Adjusted participant weight by collateral", types.Tokenomics,
 			"participant", participant.Index,
@@ -100,6 +106,24 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 	}
 
 	return nil
+}
+
+// collateralWeightRatioFromWeights calculates the ratio of effective weight to potential weight for a participant.
+// This ratio is used for informational purposes and can help in understanding how much of a participant's weight is activated by collateral.
+func collateralWeightRatioFromWeights(potentialWeight, effectiveWeight int64) *types.Decimal {
+	if potentialWeight <= 0 {
+		return types.DecimalFromFloat(1)
+	}
+	if effectiveWeight <= 0 {
+		return types.DecimalFromFloat(0)
+	}
+
+	ratio := math.LegacyNewDec(effectiveWeight).Quo(math.LegacyNewDec(potentialWeight))
+	result, err := types.DecimalFromLegacyDec(ratio)
+	if err != nil {
+		return types.DecimalFromFloat(0)
+	}
+	return result
 }
 
 // SlashForInvalidStatus checks if a participant's status has transitioned to INVALID
