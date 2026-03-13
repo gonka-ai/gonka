@@ -607,5 +607,9 @@ func (m *MockClient) SetV2Status(status string) {
 	m.PowStatusV2 = status
 }
 
+func (m *MockClient) Embed(ctx context.Context, text string) (*EmbedResponse, error) {
+	return &EmbedResponse{Embedding: make([]float32, 384)}, nil
+}
+
 // Ensure MockClient implements MLNodeClient
 var _ MLNodeClient = (*MockClient)(nil)

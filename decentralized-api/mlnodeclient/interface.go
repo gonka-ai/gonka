@@ -29,6 +29,9 @@ type MLNodeClient interface {
 	InferenceUp(ctx context.Context, model string, args []string) error
 	GetLoadedModels(ctx context.Context) ([]string, error)
 
+	// Embedding operations (semantic cache L2)
+	Embed(ctx context.Context, text string) (*EmbedResponse, error)
+
 	// GPU operations
 	GetGPUDevices(ctx context.Context) (*GPUDevicesResponse, error)
 	GetGPUDriver(ctx context.Context) (*DriverInfo, error)

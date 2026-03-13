@@ -76,4 +76,6 @@ var (
 	ErrDevComponentMismatch                  = sdkerrors.Register(ModuleName, 1170, "developer signature components mismatch")
 	ErrTAComponentMismatch                   = sdkerrors.Register(ModuleName, 1171, "transfer agent signature components mismatch")
 	ErrInferenceRoleMismatch                 = sdkerrors.Register(ModuleName, 1172, "inference role/address invariant mismatch")
+	ErrCacheQualityInvalidCount              = sdkerrors.Register(ModuleName, 1173, "cache quality invalid count")
+	ErrCacheQualityInvalidSimilarity         = sdkerrors.Register(ModuleName, 1174, "cache quality invalid similarity")
 )

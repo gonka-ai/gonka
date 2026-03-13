@@ -102,8 +102,12 @@ type MeshPoolEntry struct {
 	Quality    float32   `json:"quality"`   // 0–1; decays on misses, grows on hits
 	UseCount   int64     `json:"use_count"`
 	Timestamp  time.Time `json:"timestamp"`
-	// Vec is the raw embedding; not serialized in stats responses.
-	Vec        []float32 `json:"-"`
+	Vec        []float32 `json:"vec,omitempty"`
+	// Task and Solution carry the actual slot content for cross-participant knowledge transfer.
+	Task       string    `json:"task,omitempty"`
+	Solution   string    `json:"solution,omitempty"`
+	// Domain groups semantically related slots for discovery and filtered search.
+	Domain     string    `json:"domain,omitempty"`
 }
 
 // MeshSearchResult is returned by MeshSearch.
@@ -146,8 +150,9 @@ const (
 	// considered in similarity search. Entries below this are garbage-collected.
 	MinPoolQuality float32 = 0.40
 	// MinSearchSimBps is the minimum cosine similarity (in basis points) for
-	// a pool entry to be returned from MeshSearch. Below this = noise.
-	MinSearchSimBps uint32 = 7500
+	// a pool entry to be returned from MeshSearch.
+	// 4250 bps = optimal F1=0.986 per quality_matrix_research_v2 threshold sweep.
+	MinSearchSimBps uint32 = 4250
 	// MaxPoolEntries limits memory. Eviction removes lowest quality*recency.
 	MaxPoolEntries = 4096
 )
@@ -508,8 +513,9 @@ func (qm *QualityMiddleware) SearchHandler() http.Handler {
 			return
 		}
 		var req struct {
-			Query []float32 `json:"query"`
-			TopK  int       `json:"top_k"`
+			Query      []float32 `json:"query"`
+			TopK       int       `json:"top_k"`
+			DomainHint string    `json:"domain,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -523,6 +529,15 @@ func (qm *QualityMiddleware) SearchHandler() http.Handler {
 			req.TopK = 5
 		}
 		results := qm.MeshSearch(req.Query, req.TopK)
+		if req.DomainHint != "" {
+			filtered := results[:0]
+			for _, r := range results {
+				if r.Entry.Domain == req.DomainHint {
+					filtered = append(filtered, r)
+				}
+			}
+			results = filtered
+		}
 		w.Header().Set("Content-Type", "application/json")
 		type hit struct {
 			NodeID    string  `json:"node_id"`
@@ -532,6 +547,9 @@ func (qm *QualityMiddleware) SearchHandler() http.Handler {
 			Quality   float32 `json:"quality"`
 			UseCount  int64   `json:"use_count"`
 			LatencyMs float64 `json:"latency_ms"`
+			Task      string  `json:"task,omitempty"`
+			Solution  string  `json:"solution,omitempty"`
+			Domain    string  `json:"domain,omitempty"`
 		}
 		out := make([]hit, len(results))
 		for i, r := range results {
@@ -543,6 +561,9 @@ func (qm *QualityMiddleware) SearchHandler() http.Handler {
 				Quality:   r.Entry.Quality,
 				UseCount:  r.Entry.UseCount,
 				LatencyMs: r.Entry.LatencyMs,
+				Task:      r.Entry.Task,
+				Solution:  r.Entry.Solution,
+				Domain:    r.Entry.Domain,
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]any{
@@ -605,6 +626,62 @@ func (qm *QualityMiddleware) ShareHandler() http.Handler {
 		json.NewEncoder(w).Encode(map[string]any{
 			"accepted":  accepted,
 			"pool_size": poolSize,
+		})
+	})
+}
+
+// DomainInfo aggregates per-domain statistics for discovery.
+type DomainInfo struct {
+	Domain     string  `json:"domain"`
+	SlotCount  int     `json:"slot_count"`
+	NodeCount  int     `json:"node_count"`
+	AvgQuality float32 `json:"avg_quality"`
+}
+
+// DomainsHandler serves GET /quality/domains — domain discovery for participants.
+func (qm *QualityMiddleware) DomainsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		qm.meshMu.Lock()
+		defer qm.meshMu.Unlock()
+
+		type domainAcc struct {
+			qualitySum float32
+			count      int
+			nodes      map[string]bool
+		}
+		acc := make(map[string]*domainAcc)
+		for _, item := range qm.pool {
+			d := item.entry.Domain
+			if d == "" {
+				d = "_unclassified"
+			}
+			a, ok := acc[d]
+			if !ok {
+				a = &domainAcc{nodes: make(map[string]bool)}
+				acc[d] = a
+			}
+			a.qualitySum += item.entry.Quality
+			a.count++
+			a.nodes[item.entry.NodeID] = true
+		}
+
+		domains := make([]DomainInfo, 0, len(acc))
+		for name, a := range acc {
+			avg := a.qualitySum / float32(a.count)
+			domains = append(domains, DomainInfo{
+				Domain:     name,
+				SlotCount:  a.count,
+				NodeCount:  len(a.nodes),
+				AvgQuality: avg,
+			})
+		}
+		sort.Slice(domains, func(i, j int) bool { return domains[i].SlotCount > domains[j].SlotCount })
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"domains":    domains,
+			"total":      len(qm.pool),
+			"pool_limit": MaxPoolEntries,
 		})
 	})
 }

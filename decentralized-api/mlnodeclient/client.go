@@ -1,6 +1,7 @@
 package mlnodeclient
 
 import (
+	"bytes"
 	"context"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
@@ -362,4 +363,40 @@ func (api *Client) GetLoadedModels(ctx context.Context) ([]string, error) {
 		modelIds = append(modelIds, model.ID)
 	}
 	return modelIds, nil
+}
+
+// EmbedResponse holds the embedding vector returned by the ML node.
+type EmbedResponse struct {
+	Embedding []float32 `json:"embedding"`
+}
+
+// Embed sends text to the ML node's embedding endpoint and returns the vector.
+func (c *Client) Embed(ctx context.Context, text string) (*EmbedResponse, error) {
+	payload, _ := json.Marshal(map[string]string{"input": text})
+	url := c.inferenceUrl + "/v1/embeddings"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("embed request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("embed: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Data []struct {
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
+		return nil, fmt.Errorf("embed: empty response")
+	}
+	return &EmbedResponse{Embedding: result.Data[0].Embedding}, nil
 }
