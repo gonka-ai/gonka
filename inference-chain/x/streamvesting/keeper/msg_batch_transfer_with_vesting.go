@@ -55,6 +55,9 @@ func (k msgServer) BatchTransferWithVesting(goCtx context.Context, req *types.Ms
 		}
 
 		aggregated[output.Recipient] = aggregated[output.Recipient].Add(output.Amount...)
+		if len(aggregated[output.Recipient]) > MaxCoinsInAmount {
+			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many total coin denominations for recipient %s: %d, max allowed: %d", output.Recipient, len(aggregated[output.Recipient]), MaxCoinsInAmount)
+		}
 	}
 
 	totalAmount := sdk.NewCoins()

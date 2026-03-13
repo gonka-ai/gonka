@@ -118,24 +118,47 @@ func (k msgServer) applyVestingSchedule(ctx sdk.Context, recipient string, amoun
 		}
 	}
 
+	// 1. Pre-allocate missing capacity to avoid continuous slice re-allocations
 	requiredLength := int(vestingEpochs)
-	for len(schedule.EpochAmounts) < requiredLength {
-		schedule.EpochAmounts = append(schedule.EpochAmounts, types.EpochCoins{
-			Coins: sdk.NewCoins(),
-		})
+	currentLen := len(schedule.EpochAmounts)
+	if currentLen < requiredLength {
+		missing := requiredLength - currentLen
+		extension := make([]types.EpochCoins, missing)
+		for i := 0; i < missing; i++ {
+			extension[i] = types.EpochCoins{Coins: sdk.NewCoins()}
+		}
+		schedule.EpochAmounts = append(schedule.EpochAmounts, extension...)
 	}
 
+	// 2. Pre-calculate the exact coin bundles to avoid inner-loop allocations
+	firstEpochCoins := sdk.NewCoins()
+	baseEpochCoins := sdk.NewCoins()
+	epochsInt := math.NewInt(int64(vestingEpochs))
+
 	for _, coin := range amount {
-		epochsInt := math.NewInt(int64(vestingEpochs))
 		amountPerEpoch := coin.Amount.Quo(epochsInt)
 		remainder := coin.Amount.Mod(epochsInt)
 
-		for i := 0; i < int(vestingEpochs); i++ {
-			epochCoin := sdk.NewCoin(coin.Denom, amountPerEpoch)
-			if i == 0 && !remainder.IsZero() {
-				epochCoin = epochCoin.Add(sdk.NewCoin(coin.Denom, remainder))
+		if !amountPerEpoch.IsZero() {
+			baseEpochCoins = baseEpochCoins.Add(sdk.NewCoin(coin.Denom, amountPerEpoch))
+		}
+
+		firstAmount := amountPerEpoch.Add(remainder)
+		if !firstAmount.IsZero() {
+			firstEpochCoins = firstEpochCoins.Add(sdk.NewCoin(coin.Denom, firstAmount))
+		}
+	}
+
+	// 3. Apply the pre-calculated bundles in a flat, single-pass loop
+	for i := 0; i < requiredLength; i++ {
+		if i == 0 {
+			if !firstEpochCoins.Empty() {
+				schedule.EpochAmounts[0].Coins = schedule.EpochAmounts[0].Coins.Add(firstEpochCoins...)
 			}
-			schedule.EpochAmounts[i].Coins = schedule.EpochAmounts[i].Coins.Add(epochCoin)
+		} else {
+			if !baseEpochCoins.Empty() {
+				schedule.EpochAmounts[i].Coins = schedule.EpochAmounts[i].Coins.Add(baseEpochCoins...)
+			}
 		}
 	}
 
