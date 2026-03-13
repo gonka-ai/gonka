@@ -3,8 +3,10 @@ package keeper
 import (
 	"context"
 	"errors"
-	"github.com/productscience/inference/x/inference/types"
+	"sort"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 var (
@@ -100,6 +102,9 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 			Inferences: int32(summary.InferenceCount),
 		})
 	}
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].Model < stats[j].Model
+	})
 	return &types.QueryInferencesAndTokensStatsByModelsResponse{StatsModels: stats}, nil
 }
 
@@ -117,6 +122,9 @@ func (k Keeper) DebugStatsDeveloperStats(ctx context.Context, _ *types.QueryDebu
 			Stats:     stat,
 		})
 	}
+	sort.Slice(resp.StatsByTime, func(i, j int) bool {
+		return resp.StatsByTime[i].Developer < resp.StatsByTime[j].Developer
+	})
 
 	for developer, stat := range statByEpoch {
 		resp.StatsByEpoch = append(resp.StatsByEpoch, &types.QueryDebugStatsResponse_TemporaryEpochStat{
@@ -124,5 +132,8 @@ func (k Keeper) DebugStatsDeveloperStats(ctx context.Context, _ *types.QueryDebu
 			Stats:     stat,
 		})
 	}
+	sort.Slice(resp.StatsByEpoch, func(i, j int) bool {
+		return resp.StatsByEpoch[i].Developer < resp.StatsByEpoch[j].Developer
+	})
 	return resp, nil
 }

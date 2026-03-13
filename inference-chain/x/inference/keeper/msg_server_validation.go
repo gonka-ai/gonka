@@ -305,7 +305,7 @@ func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Infe
 			}
 			err := k.SetParticipant(ctx, worker)
 			if err != nil {
-				k.LogError("Unable to update participant to share work", types.Validation, "worker", worker.Address)
+				k.LogError("Unable to update participant to share work", types.Validation, "worker", worker.Address, "error", err)
 			}
 		}
 	}

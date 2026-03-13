@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"sort"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -75,7 +76,12 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 		stats.RewardedCoinsLatestEpoch = summary.RewardedCoins
 	}
 
+	result := maps.Values(participants)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].AccountAddress < result[j].AccountAddress
+	})
+
 	return &types.QueryParticipantsFullStatsResponse{
-		ParticipantsStats: maps.Values(participants),
+		ParticipantsStats: result,
 	}, nil
 }

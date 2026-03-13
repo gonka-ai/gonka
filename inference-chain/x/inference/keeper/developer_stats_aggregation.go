@@ -156,7 +156,12 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 		k.LogError("GetSummaryLastNEpochs. failed to get effective epoch index.", types.Stat)
 		return StatsSummary{}
 	}
-	epochIdFrom := effectiveEpochIndex - uint64(n)
+	var epochIdFrom uint64
+	if effectiveEpochIndex < uint64(n) {
+		epochIdFrom = 0
+	} else {
+		epochIdFrom = effectiveEpochIndex - uint64(n)
+	}
 	epochIdTo := effectiveEpochIndex
 
 	iter := epochStore.Iterator(sdk.Uint64ToBigEndian(epochIdFrom), sdk.Uint64ToBigEndian(epochIdTo))
@@ -217,7 +222,12 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 		k.LogError("GetSummaryLastNEpochsByDeveloper. failed to get effective epoch index.", types.Stat, "developerAddr", developerAddr)
 		return StatsSummary{}
 	}
-	epochIdFrom := effectiveEpochIndex - uint64(n)
+	var epochIdFrom uint64
+	if effectiveEpochIndex < uint64(n) {
+		epochIdFrom = 0
+	} else {
+		epochIdFrom = effectiveEpochIndex - uint64(n)
+	}
 	epochIdTo := effectiveEpochIndex
 
 	iterator := epochStore.Iterator(sdk.Uint64ToBigEndian(epochIdFrom), sdk.Uint64ToBigEndian(epochIdTo))

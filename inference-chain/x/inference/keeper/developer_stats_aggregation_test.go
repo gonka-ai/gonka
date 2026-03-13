@@ -458,3 +458,72 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		assert.Equal(t, expectedSummary, summary2)
 	})
 }
+
+// TestGetSummaryLastNEpochs_UnderflowProtection verifies that requesting more
+// epochs than exist does not cause uint64 underflow (effectiveEpochIndex - n
+// wrapping to MaxUint64).
+func TestGetSummaryLastNEpochs_UnderflowProtection(t *testing.T) {
+	const (
+		testModel = "test_model"
+		tokens    = uint64(10)
+	)
+
+	developer1 := "developer1"
+
+	t.Run("n greater than effective epoch does not panic or return wrong data", func(t *testing.T) {
+		keeper, ctx := keepertest.InferenceKeeper(t)
+
+		// Set effective epoch to 1 (early chain state)
+		keeper.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 10})
+		_ = keeper.SetEffectiveEpochIndex(ctx, 1)
+
+		inference1 := types.Inference{
+			InferenceId:          "inf1",
+			PromptTokenCount:     tokens,
+			CompletionTokenCount: tokens,
+			RequestedBy:          developer1,
+			Status:               types.InferenceStatus_FINISHED,
+			Model:                testModel,
+			EndBlockTimestamp:    time.Now().UnixMilli(),
+			EpochId:              1,
+			ActualCost:           500,
+		}
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1))
+
+		// Request 100 epochs back when only epoch 1 exists.
+		// Before fix: effectiveEpochIndex(1) - uint64(100) would underflow to MaxUint64
+		summary := keeper.GetSummaryLastNEpochs(ctx, 100)
+		assert.Equal(t, 0, summary.InferenceCount, "should return empty since epoch 1 is current and excluded")
+
+		summaryByDev := keeper.GetSummaryLastNEpochsByDeveloper(ctx, developer1, 100)
+		assert.Equal(t, 0, summaryByDev.InferenceCount, "should return empty since epoch 1 is current and excluded")
+	})
+
+	t.Run("n equal to effective epoch", func(t *testing.T) {
+		keeper, ctx := keepertest.InferenceKeeper(t)
+
+		keeper.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 10})
+		_ = keeper.SetEffectiveEpochIndex(ctx, 2)
+		keeper.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 20})
+		_ = keeper.SetEffectiveEpochIndex(ctx, 2)
+
+		inference1 := types.Inference{
+			InferenceId:              "inf1",
+			PromptTokenCount:         tokens,
+			CompletionTokenCount:     tokens,
+			RequestedBy:              developer1,
+			Status:                   types.InferenceStatus_FINISHED,
+			Model:                    testModel,
+			EndBlockTimestamp:        time.Now().UnixMilli(),
+			EpochPocStartBlockHeight: 10,
+			EpochId:                  1,
+			ActualCost:               500,
+		}
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1))
+
+		// n=2, effectiveEpochIndex=2 → epochIdFrom should be 0, not underflow
+		summary := keeper.GetSummaryLastNEpochs(ctx, 2)
+		assert.Equal(t, 1, summary.InferenceCount)
+		assert.Equal(t, int64(tokens*2), summary.TokensUsed)
+	})
+}

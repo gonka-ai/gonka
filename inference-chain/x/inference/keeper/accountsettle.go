@@ -165,6 +165,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, validationParams, settleParameters, participantMLNodes, k.Logger())
 	if err != nil {
 		k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
+		return err
 	}
 	if bitcoinResult.Amount < 0 {
 		k.LogError("Bitcoin reward amount is negative", types.Settle, "amount", bitcoinResult.Amount)
@@ -179,7 +180,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
 		return err
 	}
-	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
+	if err := k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)}); err != nil {
+		k.LogError("Error adding tokenomics data", types.Settle, "error", err)
+		return err
+	}
 
 	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
 	// are transferred to governance instead of being redistributed to other participants.
@@ -250,7 +254,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 		amount.Settle.EpochIndex = currentEpochIndex
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
-		k.SetSettleAmountWithGovernanceTransfer(ctx, *amount.Settle)
+		if err := k.SetSettleAmountWithGovernanceTransfer(ctx, *amount.Settle); err != nil {
+			k.LogError("Error setting settle amount with governance transfer", types.Settle, "error", err, "participant", amount.Settle.Participant)
+			continue
+		}
 	}
 
 	if previousEpochIndex == 0 {
@@ -260,7 +267,8 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.LogInfo("Transferring old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
 	err = k.TransferOldSettleAmountsToGovernance(ctx, previousEpochIndex)
 	if err != nil {
-		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
+		k.LogError("Error transferring old settle amounts to governance", types.Settle, "error", err)
+		return err
 	}
 	return nil
 }
