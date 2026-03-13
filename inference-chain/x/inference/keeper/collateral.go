@@ -44,11 +44,12 @@ func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddr
 	}
 
 	bwr, err := collateralParams.BaseWeightRatio.ToLegacyDec()
-	if err != nil {
+	if err != nil || bwr.IsNegative() || bwr.GTE(math.LegacyOneDec()) {
 		return math.ZeroInt()
 	}
+	
 	cpwu, err := collateralParams.CollateralPerWeightUnit.ToLegacyDec()
-	if err != nil || cpwu.IsZero() {
+	if err != nil || cpwu.IsNegative() || cpwu.IsZero() {
 		return math.ZeroInt()
 	}
 
