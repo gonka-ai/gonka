@@ -186,25 +186,6 @@ func GetPreservedWeight(participant string, epochGroupData *types.EpochGroupData
 	return 0
 }
 
-// calculateDenominatorWeight computes a participant's denominator weight for reward distribution.
-// It sums unique (by NodeId) PocWeights from MLNode data — the same logic as RecalculateWeight
-// but operating on a flat []*MLNodeInfo list. This value is used only in the denominator,
-// so underfunded-collateral portions go to governance instead of being redistributed.
-func calculateDenominatorWeight(mlNodes []*types.MLNodeInfo) int64 {
-	weight := int64(0)
-	countedNodeIds := make(map[string]bool)
-	for _, mlNode := range mlNodes {
-		if mlNode == nil || mlNode.NodeId == "" {
-			continue
-		}
-		if _, ok := countedNodeIds[mlNode.NodeId]; !ok {
-			countedNodeIds[mlNode.NodeId] = true
-			weight += mlNode.PocWeight
-		}
-	}
-	return weight
-}
-
 // RecomputeEffectiveWeightFromMLNodes recalculates participant weight from uncapped MLNode weights
 // This allows integration of confirmation_weight for nodes subject to verification
 func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, mlNodes []*types.MLNodeInfo) int64 {
@@ -603,7 +584,7 @@ func CalculateParticipantBitcoinRewards(
 
 	// 2. Calculate effective weights with confirmation capping
 	participantWeights := make(map[string]uint64)
-	participantDenominatorWeights := make(map[string]uint64) // Track denominator weights (prevents redistribution)
+	participantFullWeights := make(map[string]uint64) // Track full weights for denominator (prevents redistribution)
 
 	// Calculate effectiveWeight for each participant using helper function
 	effectiveWeights := make([]*types.ActiveParticipant, 0, len(participants))
@@ -620,35 +601,30 @@ func CalculateParticipantBitcoinRewards(
 		if vw == nil || vw.Weight <= 0 {
 			logger.Info("Bitcoin Rewards: No valid weight found, skipping", "participant", participant.Address)
 			participantWeights[participant.Address] = 0
-			participantDenominatorWeights[participant.Address] = 0
+			participantFullWeights[participant.Address] = 0
 			continue
 		}
 
-		// Compute denominator weight from MLNode PocWeights (before collateral adjustment).
-		// Using denominator weight ensures that under-collateralized participants'
-		// uncovered portion goes to governance, not redistributed to other participants.
-		mlNodes := participantMLNodes[participant.Address]
-		denominatorWeight := calculateDenominatorWeight(mlNodes)
-		if denominatorWeight <= 0 {
-			// Fallback to vw.Weight if MLNode data is unavailable
-			denominatorWeight = vw.Weight
+		// Store the FULL base weight (before CPoC capping) for denominator
+		// This ensures CPoC reductions and invalidated participants' shares go to governance, not redistributed
+		fullWeight := vw.Weight
+		if fullWeight < 0 {
+			fullWeight = 0
 		}
-		if denominatorWeight < 0 {
-			denominatorWeight = 0
-		}
-		participantDenominatorWeights[participant.Address] = uint64(denominatorWeight)
+		participantFullWeights[participant.Address] = uint64(fullWeight)
 
 		// Skip invalid participants from actual distribution
-		// BUT keep their denominatorWeight in the denominator to prevent redistribution
+		// BUT keep their fullWeight in the denominator to prevent redistribution
 		if participant.Status != types.ParticipantStatus_ACTIVE {
 			logger.Info("Invalid/inactive participant found, will not receive rewards but counts in denominator",
 				"participant", participant.Address,
-				"denominatorWeight", denominatorWeight)
+				"fullWeight", fullWeight)
 			participantWeights[participant.Address] = 0
 			continue
 		}
 
 		// Recompute effective weight from MLNodes (includes confirmation capping)
+		mlNodes := participantMLNodes[participant.Address]
 		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, mlNodes)
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
@@ -659,7 +635,7 @@ func CalculateParticipantBitcoinRewards(
 			"baseWeight", vw.Weight,
 			"confirmationWeight", vw.ConfirmationWeight,
 			"effectiveWeight", effectiveWeight,
-			"denominatorWeight", denominatorWeight)
+			"fullWeight", fullWeight)
 
 		effectiveWeights = append(effectiveWeights, &types.ActiveParticipant{
 			Index:  participant.Address,
@@ -683,11 +659,11 @@ func CalculateParticipantBitcoinRewards(
 		"participantCount", len(effectiveWeights),
 		"wasCapped", wasCapped)
 
-	// Calculate total weight used in denominator.
-	// This includes invalidated participants and pre-collateral-adjustment weights.
-	totalDenominatorWeight := uint64(0)
-	for _, weight := range participantDenominatorWeights {
-		totalDenominatorWeight += weight
+	// Calculate total weight using FULL weights (for denominator)
+	// This includes invalidated participants and pre-CPoC-capping weights
+	totalFullWeight := uint64(0)
+	for _, weight := range participantFullWeights {
+		totalFullWeight += weight
 	}
 
 	// Calculate actual distributed weight (for logging/comparison)
@@ -696,13 +672,13 @@ func CalculateParticipantBitcoinRewards(
 		totalPoCWeight += weight
 	}
 
-	// Use totalDenominatorWeight as denominator to prevent redistribution of unclaimed shares
-	totalPoCWeightBeforeDowntime := totalDenominatorWeight
+	// Use totalFullWeight as the denominator to prevent redistribution of unclaimed shares
+	totalPoCWeightBeforeDowntime := totalFullWeight
 
 	logger.Info("Bitcoin Rewards: Weight calculations",
-		"totalDenominatorWeight", totalDenominatorWeight,
+		"totalFullWeight", totalFullWeight,
 		"totalActualWeight", totalPoCWeight,
-		"weightDifference", totalDenominatorWeight-totalPoCWeight)
+		"weightDifference", totalFullWeight-totalPoCWeight)
 
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
@@ -742,14 +718,14 @@ func CalculateParticipantBitcoinRewards(
 			participantWeight := participantWeights[participant.Address]
 			if participantWeight > 0 {
 				// Use big.Int to prevent overflow with large numbers
-				// Proportional distribution: (participant_weight / total_denominator_weight) × fixed_epoch_reward
-				// Using totalDenominatorWeight as denominator ensures unclaimed shares (from invalid participants,
-				// under-collateralized participants, and CPoC reductions) become remainder and go to governance
+				// Proportional distribution: (participant_weight / total_full_weight) × fixed_epoch_reward
+				// Using totalFullWeight as denominator ensures unclaimed shares (from invalid participants
+				// and CPoC reductions) become remainder and go to governance, not redistributed
 				participantBig := new(big.Int).SetUint64(participantWeight)
 				rewardBig := new(big.Int).SetUint64(fixedEpochReward)
 				totalWeightBig := new(big.Int).SetUint64(totalPoCWeightBeforeDowntime)
 
-				// Calculate: (participantWeight * fixedEpochReward) / totalDenominatorWeight
+				// Calculate: (participantWeight * fixedEpochReward) / totalFullWeight
 				result := new(big.Int).Mul(participantBig, rewardBig)
 				result = result.Div(result, totalWeightBig)
 
@@ -786,8 +762,8 @@ func CalculateParticipantBitcoinRewards(
 	}
 
 	// 6. Any remainder is undistributed and should be transferred to governance.
-	// Remainder includes: invalidated participants' shares, under-collateralized participants'
-	// uncovered portions, CPoC weight reductions, downtime punishments, and integer division truncation.
+	// Remainder includes: invalidated participants' shares, CPoC weight reductions,
+	// downtime punishments, and integer division truncation.
 	remainder := fixedEpochReward - totalDistributed
 	if fixedEpochReward < totalDistributed {
 		remainder = 0
