@@ -41,7 +41,9 @@ func (k msgServer) submitPocValidationV1(goCtx context.Context, msg *types.MsgSu
 	activeEvent, isActive, err := k.Keeper.GetActiveConfirmationPoCEvent(ctx)
 	if err != nil {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] Error checking confirmation PoC event", types.PoC, "error", err)
-		// Continue with regular PoC check
+		// Reset values to ensure we fall through to regular PoC logic safely
+		activeEvent = nil
+		isActive = false
 	}
 
 	// Route to confirmation PoC handler if active and in VALIDATION phase

@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -56,6 +58,10 @@ func (k Keeper) GetAllModelPerTokenPrices(goCtx context.Context, req *types.Quer
 			Price:   price,
 		})
 	}
+	// Sort by ModelId for deterministic query responses across nodes
+	slices.SortFunc(modelPrices, func(a, b types.ModelPrice) int {
+		return strings.Compare(a.ModelId, b.ModelId)
+	})
 
 	k.LogInfo("Retrieved all model prices", types.Pricing,
 		"totalModels", len(modelPrices),
