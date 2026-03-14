@@ -586,21 +586,30 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
 	var i int64 = 1
-	for i <= setup.EpochParams.EpochLength {
-		node1Client.WithTryLock(t, func() {
-			require.Equal(t, 0, node1Client.InitGenerateV2Called, "InitGenerateV2 was called. n = %d. i = %d", node1Client.InitGenerateV2Called, i)
-		})
-		node2Client.WithTryLock(t, func() {
-			require.Equal(t, 0, node2Client.InitGenerateV2Called, "InitGenerateV2 was called. n = %d. i = %d", node2Client.InitGenerateV2Called, i)
-		})
-		if i == setup.EpochParams.EpochLength {
-			setup.transitionChainStateToNextEpoch(i)
-		}
+	inferenceReconcileHeight := int64(defaultReconciliationConfig.Inference.BlockInterval)
+	for i <= inferenceReconcileHeight {
 		err := setup.simulateBlock(i)
 		require.NoError(t, err)
 
 		i++
 	}
+
+	waitForNodeStatus(t, setup, "node-1", types.HardwareNodeStatus_INFERENCE, 2*time.Second)
+	waitForNodeStatus(t, setup, "node-2", types.HardwareNodeStatus_INFERENCE, 2*time.Second)
+	assertNodeClient(t, NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InitValidateCalled: 0, InferenceUpCalled: 1}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InitValidateCalled: 0, InferenceUpCalled: 1}, node2Client)
+
+	for i < setup.EpochParams.EpochLength {
+		err := setup.simulateBlock(i)
+		require.NoError(t, err)
+		require.Equal(t, 0, node1Client.GetInitGenerateV2Called(), "InitGenerateV2 was called early. i = %d", i)
+		require.Equal(t, 0, node2Client.GetInitGenerateV2Called(), "InitGenerateV2 was called early. i = %d", i)
+		i++
+	}
+
+	setup.transitionChainStateToNextEpoch(i)
+	err := setup.simulateBlock(i)
+	require.NoError(t, err)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -650,7 +659,7 @@ func TestRegularPocScenario(t *testing.T) {
 	}
 	require.Equal(t, pocValEnd, i)
 
-	err := setup.simulateBlock(i)
+	err = setup.simulateBlock(i)
 	require.NoError(t, err)
 	waitForAsync(300 * time.Millisecond)
 

@@ -142,6 +142,12 @@ func (m *MockClient) GetInferenceHealthCalled() int {
 	return m.InferenceHealthCalled
 }
 
+func (m *MockClient) GetInitGenerateV2Called() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InitGenerateV2Called
+}
+
 func (m *MockClient) Reset() {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
