@@ -109,7 +109,9 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 }
 
 // collateralWeightRatioFromWeights calculates the ratio of effective weight to potential weight for a participant.
-// This ratio is used for informational purposes and can help in understanding how much of a participant's weight is activated by collateral.
+// This ratio is snapshotted and used in reward settlement (e.g. via getCollateralWeightRatio in bitcoin rewards),
+// directly affecting payouts. It must be treated as consensus-critical/semantics-critical data: any changes to its
+// behavior or rounding semantics must preserve on-chain behavior and be carefully coordinated.
 func collateralWeightRatioFromWeights(potentialWeight, effectiveWeight int64) *types.Decimal {
 	if potentialWeight <= 0 {
 		return types.DecimalFromFloat(1)
