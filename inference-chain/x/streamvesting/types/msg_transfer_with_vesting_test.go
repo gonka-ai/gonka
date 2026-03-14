@@ -1,7 +1,6 @@
 package types_test
 
 import (
-	"fmt"
 	"testing"
 
 	"cosmossdk.io/math"
@@ -149,21 +148,9 @@ func TestMsgTransferWithVesting_ValidateBasic(t *testing.T) {
 			},
 			expectErr: "exceeds maximum allowed",
 		},
-		{
-			name: "exceeds max coin denominations",
-			msg: func() types.MsgTransferWithVesting {
-				coins := sdk.NewCoins()
-				for i := 0; i <= types.MaxCoinsInAmount; i++ {
-					coins = coins.Add(sdk.NewCoin(fmt.Sprintf("gonka%d", i), math.NewInt(100)))
-				}
-				return types.MsgTransferWithVesting{
-					Sender:    sender,
-					Recipient: recipient,
-					Amount:    coins,
-				}
-			}(),
-			expectErr: "too many coin denominations",
-		},
+		// NOTE: "exceeds max coin denominations" is unreachable with the current
+		// denom restriction (only gonka/ngonka → max 2). The MaxCoinsInAmount
+		// check remains as defense-in-depth if the allowed denom set grows.
 	}
 
 	for _, tc := range tests {

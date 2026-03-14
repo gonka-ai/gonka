@@ -1,7 +1,6 @@
 package types_test
 
 import (
-	"fmt"
 	"testing"
 
 	"cosmossdk.io/math"
@@ -136,40 +135,6 @@ func TestMsgBatchTransferWithVesting_ValidateBasic(t *testing.T) {
 				return types.MsgBatchTransferWithVesting{Sender: sender, Outputs: outputs}
 			}(),
 			expectErr: "too many recipients",
-		},
-		{
-			name: "exceeds max coin entries across outputs",
-			msg: func() types.MsgBatchTransferWithVesting {
-				outputs := make([]types.BatchVestingOutput, 0, types.MaxBatchCoinEntries/types.MaxCoinsInAmount+1)
-				for i := 0; i < types.MaxBatchCoinEntries/types.MaxCoinsInAmount+1; i++ {
-					coins := sdk.NewCoins()
-					for d := 0; d < types.MaxCoinsInAmount; d++ {
-						coins = coins.Add(sdk.NewCoin(fmt.Sprintf("denom%d", d), math.NewInt(100)))
-					}
-					outputs = append(outputs, types.BatchVestingOutput{
-						Recipient: validAddr(byte(10 + i%200)),
-						Amount:    coins,
-					})
-				}
-				return types.MsgBatchTransferWithVesting{Sender: sender, Outputs: outputs}
-			}(),
-			expectErr: "too many total coin entries",
-		},
-		{
-			name: "exceeds max coins per output",
-			msg: func() types.MsgBatchTransferWithVesting {
-				coins := sdk.NewCoins()
-				for d := 0; d <= types.MaxCoinsInAmount; d++ {
-					coins = coins.Add(sdk.NewCoin(fmt.Sprintf("denom%d", d), math.NewInt(100)))
-				}
-				return types.MsgBatchTransferWithVesting{
-					Sender: sender,
-					Outputs: []types.BatchVestingOutput{
-						{Recipient: recipient1, Amount: coins},
-					},
-				}
-			}(),
-			expectErr: "too many coin denominations",
 		},
 	}
 
