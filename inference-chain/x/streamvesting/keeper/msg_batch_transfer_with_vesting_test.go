@@ -193,7 +193,7 @@ func TestMsgBatchTransferWithVesting(t *testing.T) {
 
 		schedule, found := k.GetVestingSchedule(wctx, recipient1)
 		require.True(t, found)
-		require.Len(t, schedule.EpochAmounts, int(keeper.DefaultVestingEpochs))
+		require.Len(t, schedule.EpochAmounts, int(types.DefaultVestingEpochs))
 		require.True(t, schedule.EpochAmounts[0].Coins.Equal(sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10)))))
 	})
 
@@ -202,10 +202,10 @@ func TestMsgBatchTransferWithVesting(t *testing.T) {
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
 
-		outputs := make([]types.BatchVestingOutput, 0, keeper.MaxBatchCoinEntries/keeper.MaxCoinsInAmount+1)
-		for i := 0; i < keeper.MaxBatchCoinEntries/keeper.MaxCoinsInAmount+1; i++ {
+		outputs := make([]types.BatchVestingOutput, 0, types.MaxBatchCoinEntries/types.MaxCoinsInAmount+1)
+		for i := 0; i < types.MaxBatchCoinEntries/types.MaxCoinsInAmount+1; i++ {
 			amount := sdk.NewCoins()
-			for d := 0; d < keeper.MaxCoinsInAmount; d++ {
+			for d := 0; d < types.MaxCoinsInAmount; d++ {
 				amount = amount.Add(sdk.NewCoin(fmt.Sprintf("denom%d", d), math.NewInt(1)))
 			}
 

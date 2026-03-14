@@ -13,6 +13,21 @@ const (
 
 	// MinTransferNgonka is the equivalent minimum in ngonka (10 gonka × 10^9).
 	MinTransferNgonka int64 = 10_000_000_000
+
+	// DefaultVestingEpochs is the default number of epochs for vesting (180 epochs)
+	DefaultVestingEpochs = uint64(180)
+
+	// MaxVestingEpochs is the maximum allowed vesting epochs to prevent DoS (~10 years)
+	MaxVestingEpochs = uint64(3650)
+
+	// MaxCoinsInAmount is the maximum number of coin denominations in a single transfer
+	MaxCoinsInAmount = 10
+
+	// MaxBatchRecipients is the maximum number of recipients in a single batch transfer
+	MaxBatchRecipients = 500
+
+	// MaxBatchCoinEntries is the maximum total number of coin entries across all outputs
+	MaxBatchCoinEntries = 2000
 )
 
 var _ sdk.Msg = &MsgTransferWithVesting{}
@@ -32,6 +47,14 @@ func (m *MsgTransferWithVesting) ValidateBasic() error {
 
 	if !m.Amount.IsValid() {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidCoins, "invalid coins")
+	}
+
+	if len(m.Amount) > MaxCoinsInAmount {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many coin denominations: %d, max allowed: %d", len(m.Amount), MaxCoinsInAmount)
+	}
+
+	if m.VestingEpochs > MaxVestingEpochs {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "vesting epochs %d exceeds maximum allowed: %d", m.VestingEpochs, MaxVestingEpochs)
 	}
 
 	return validateMinTransferAmounts(m.Amount)

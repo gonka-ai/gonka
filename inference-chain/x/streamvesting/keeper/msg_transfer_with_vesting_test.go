@@ -124,7 +124,7 @@ func TestMsgTransferWithVesting(t *testing.T) {
 		// Verify vesting schedule was created with default epochs
 		schedule, found := k.GetVestingSchedule(wctx, recipient.String())
 		require.True(t, found)
-		require.Len(t, schedule.EpochAmounts, int(keeper.DefaultVestingEpochs))
+		require.Len(t, schedule.EpochAmounts, int(types.DefaultVestingEpochs))
 	})
 
 	t.Run("uneven division with remainder", func(t *testing.T) {
@@ -190,17 +190,17 @@ func TestMsgTransferWithVesting(t *testing.T) {
 			Sender:        sender.String(),
 			Recipient:     recipient.String(),
 			Amount:        amount,
-			VestingEpochs: keeper.MaxVestingEpochs,
+			VestingEpochs: types.MaxVestingEpochs,
 		})
 		require.NoError(t, err)
 
 		schedule, found := k.GetVestingSchedule(wctx, recipient.String())
 		require.True(t, found)
-		require.Len(t, schedule.EpochAmounts, int(keeper.MaxVestingEpochs))
+		require.Len(t, schedule.EpochAmounts, int(types.MaxVestingEpochs))
 
 		// 3650 / 3650 = 1 per epoch, no remainder
 		expectedPerEpoch := sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1)))
-		for i := 0; i < int(keeper.MaxVestingEpochs); i++ {
+		for i := 0; i < int(types.MaxVestingEpochs); i++ {
 			require.True(t, schedule.EpochAmounts[i].Coins.Equal(expectedPerEpoch),
 				"epoch %d: expected %s, got %s", i, expectedPerEpoch, schedule.EpochAmounts[i].Coins)
 		}
@@ -215,7 +215,7 @@ func TestMsgTransferWithVesting(t *testing.T) {
 			Sender:        sender.String(),
 			Recipient:     recipient.String(),
 			Amount:        sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1000))),
-			VestingEpochs: keeper.MaxVestingEpochs + 1,
+			VestingEpochs: types.MaxVestingEpochs + 1,
 		})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "exceeds maximum allowed")
@@ -228,7 +228,7 @@ func TestMsgTransferWithVesting(t *testing.T) {
 
 		// Create more than MaxCoinsInAmount denominations
 		coins := sdk.NewCoins()
-		for i := 0; i <= keeper.MaxCoinsInAmount; i++ {
+		for i := 0; i <= types.MaxCoinsInAmount; i++ {
 			coins = coins.Add(sdk.NewCoin(fmt.Sprintf("denom%d", i), math.NewInt(100)))
 		}
 

@@ -20,44 +20,13 @@ func (k msgServer) BatchTransferWithVesting(goCtx context.Context, req *types.Ms
 		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid sender address: %s", err)
 	}
 
-	if len(req.Outputs) == 0 {
-		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "outputs cannot be empty")
-	}
-	if len(req.Outputs) > MaxBatchRecipients {
-		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many recipients: %d, max allowed: %d", len(req.Outputs), MaxBatchRecipients)
-	}
-
-	vestingEpochs, err := normalizeVestingEpochs(req.VestingEpochs)
-	if err != nil {
-		return nil, err
-	}
+	vestingEpochs := normalizeVestingEpochs(req.VestingEpochs)
 
 	// Aggregate duplicate recipients for deterministic and efficient schedule updates.
 	aggregated := make(map[string]sdk.Coins, len(req.Outputs))
-	totalCoinEntries := 0
 	for _, output := range req.Outputs {
-		if _, err := sdk.AccAddressFromBech32(output.Recipient); err != nil {
-			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid recipient address: %s", err)
-		}
-		if output.Amount.IsZero() {
-			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidCoins, "amount cannot be zero for recipient %s", output.Recipient)
-		}
-		if !output.Amount.IsValid() {
-			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidCoins, "invalid coins for recipient %s", output.Recipient)
-		}
-		if len(output.Amount) > MaxCoinsInAmount {
-			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many coin denominations for recipient %s: %d, max allowed: %d", output.Recipient, len(output.Amount), MaxCoinsInAmount)
-		}
-
-		totalCoinEntries += len(output.Amount)
-		if totalCoinEntries > MaxBatchCoinEntries {
-			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many total coin entries in batch: %d, max allowed: %d", totalCoinEntries, MaxBatchCoinEntries)
-		}
-
 		aggregated[output.Recipient] = aggregated[output.Recipient].Add(output.Amount...)
-		if len(aggregated[output.Recipient]) > MaxCoinsInAmount {
-			return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many total coin denominations for recipient %s: %d, max allowed: %d", output.Recipient, len(aggregated[output.Recipient]), MaxCoinsInAmount)
-		}
+
 	}
 
 	recipients := make([]string, 0, len(aggregated))

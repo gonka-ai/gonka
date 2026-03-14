@@ -12,56 +12,15 @@ import (
 	"github.com/productscience/inference/x/streamvesting/types"
 )
 
-const (
-	// DefaultVestingEpochs is the default number of epochs for vesting (180 epochs)
-	DefaultVestingEpochs = uint64(180)
-
-	// MaxVestingEpochs is the maximum allowed vesting epochs to prevent DoS
-	MaxVestingEpochs = uint64(3650) // ~10 years
-
-	// MaxCoinsInAmount is the maximum number of coin denominations in a single transfer
-	MaxCoinsInAmount = 10
-
-	// MaxBatchRecipients is the maximum number of recipients in a single batch transfer
-	MaxBatchRecipients = 500
-
-	// MaxBatchCoinEntries is the maximum total number of coin entries across all outputs
-	MaxBatchCoinEntries = 2000
-)
-
 func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTransferWithVesting) (*types.MsgTransferWithVestingResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Validate sender address
 	senderAddr, err := sdk.AccAddressFromBech32(req.Sender)
 	if err != nil {
 		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid sender address: %s", err)
 	}
 
-	// Validate recipient address
-	_, err = sdk.AccAddressFromBech32(req.Recipient)
-	if err != nil {
-		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid recipient address: %s", err)
-	}
-
-	// Validate amount
-	if req.Amount.IsZero() {
-		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, "amount cannot be zero")
-	}
-
-	if !req.Amount.IsValid() {
-		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, "invalid coins")
-	}
-
-	// Validate number of coin denominations to prevent N*M complexity DoS
-	if len(req.Amount) > MaxCoinsInAmount {
-		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "too many coin denominations: %d, max allowed: %d", len(req.Amount), MaxCoinsInAmount)
-	}
-
-	vestingEpochs, err := normalizeVestingEpochs(req.VestingEpochs)
-	if err != nil {
-		return nil, err
-	}
+	vestingEpochs := normalizeVestingEpochs(req.VestingEpochs)
 
 	// Transfer coins from sender to the streamvesting module
 	err = k.bookkeepingBankKeeper.SendCoinsFromAccountToModule(ctx, senderAddr, types.ModuleName, req.Amount, "transfer with vesting")
@@ -99,14 +58,11 @@ func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTran
 	return &types.MsgTransferWithVestingResponse{}, nil
 }
 
-func normalizeVestingEpochs(raw uint64) (uint64, error) {
-	if raw > MaxVestingEpochs {
-		return 0, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "vesting epochs %d exceeds maximum allowed: %d", raw, MaxVestingEpochs)
-	}
+func normalizeVestingEpochs(raw uint64) uint64 {
 	if raw == 0 {
-		return DefaultVestingEpochs, nil
+		return types.DefaultVestingEpochs
 	}
-	return raw, nil
+	return raw
 }
 
 func (k msgServer) applyVestingSchedule(ctx sdk.Context, recipient string, amount sdk.Coins, vestingEpochs uint64) error {
