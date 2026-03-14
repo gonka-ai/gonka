@@ -192,9 +192,12 @@ func (s *KeeperTestSuite) TestSlashing_RequiredCollateral_OverDeposit() {
 	expectedSlashed := math.NewInt(8)
 
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashed, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
@@ -232,9 +235,12 @@ func (s *KeeperTestSuite) TestSlashing_RequiredCollateral_UnderDeposit() {
 	expectedSlashed := math.NewInt(5)
 
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashed, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
@@ -268,9 +274,12 @@ func (s *KeeperTestSuite) TestSlashing_RequiredCollateral_ExactMatch() {
 	expectedSlashed := math.NewInt(10)
 
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashed, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
@@ -299,9 +308,12 @@ func (s *KeeperTestSuite) TestSlashing_RequiredCollateral_Zero_LegacyBehavior() 
 	expectedSlashed := math.NewInt(20)
 
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashed, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
@@ -337,9 +349,12 @@ func (s *KeeperTestSuite) TestSlashing_RequiredCollateral_WithUnbonding() {
 	expectedSlashed := math.NewInt(8)
 
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashed, amt.AmountOf(inftypes.BaseCoin))
+			s.Require().Equal("collateral_slashed:invalidation", memo)
 			return nil
 		}).
 		Times(1)
