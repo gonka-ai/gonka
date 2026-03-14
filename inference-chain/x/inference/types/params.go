@@ -993,7 +993,7 @@ func DecimalFromDecimal(d decimal.Decimal) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
-func DecimalFromLegacyDec(d math.LegacyDec) (*Decimal, error) {
+func DecimalFromLegacyDec(d sdkmath.LegacyDec) (*Decimal, error) {
 	parsed, err := decimal.NewFromString(d.String())
 	if err != nil {
 		return nil, err
