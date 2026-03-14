@@ -20,6 +20,10 @@ func (k msgServer) TransferWithVesting(goCtx context.Context, req *types.MsgTran
 		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid sender address: %s", err)
 	}
 
+	if !k.isAllowedVestingSender(req.Sender) {
+		return nil, errorsmod.Wrapf(types.ErrUnauthorizedSender, "sender %s is not authorized to execute vesting transfers", req.Sender)
+	}
+
 	vestingEpochs := normalizeVestingEpochs(req.VestingEpochs)
 
 	// Transfer coins from sender to the streamvesting module

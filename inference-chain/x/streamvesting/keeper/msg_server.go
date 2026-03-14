@@ -1,6 +1,8 @@
 package keeper
 
 import (
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+
 	"github.com/productscience/inference/x/streamvesting/types"
 )
 
@@ -15,3 +17,10 @@ func NewMsgServerImpl(keeper Keeper) types.MsgServer {
 }
 
 var _ types.MsgServer = msgServer{}
+
+// isAllowedVestingSender returns true if sender is the governance authority
+// or the inference module account.
+func (k msgServer) isAllowedVestingSender(sender string) bool {
+	return sender == k.GetAuthority() ||
+		sender == authtypes.NewModuleAddress("inference").String()
+}

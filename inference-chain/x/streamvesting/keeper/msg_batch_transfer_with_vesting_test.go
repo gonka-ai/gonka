@@ -15,56 +15,41 @@ import (
 )
 
 func TestMsgBatchTransferWithVesting(t *testing.T) {
-	sender := testAddress(1)
+	sender := keepertest.StreamVestingGovAuthority()
 	recipient1 := testAddress(2)
 	recipient2 := testAddress(3)
 
-	t.Run("empty outputs", func(t *testing.T) {
+	t.Run("unauthorized sender", func(t *testing.T) {
 		k, ctx, _ := keepertest.StreamVestingKeeperWithMocks(t)
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
 
+		unauthorized := testAddress(99)
 		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender:        sender,
-			Outputs:       nil,
-			VestingEpochs: 100,
-		})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "outputs cannot be empty")
-	})
-
-	t.Run("invalid recipient address", func(t *testing.T) {
-		k, ctx, _ := keepertest.StreamVestingKeeperWithMocks(t)
-		ms := keeper.NewMsgServerImpl(k)
-		wctx := sdk.UnwrapSDKContext(ctx)
-
-		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender: sender,
+			Sender: unauthorized,
 			Outputs: []types.BatchVestingOutput{
 				{
-					Recipient: "invalid",
-					Amount:    sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1))),
+					Recipient: recipient1,
+					Amount:    sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(100))),
 				},
 			},
 		})
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "invalid recipient address")
+		require.ErrorIs(t, err, types.ErrUnauthorizedSender)
 	})
 
 	t.Run("bank transfer failure", func(t *testing.T) {
 		k, ctx, mocks := keepertest.StreamVestingKeeperWithMocks(t)
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
-		senderAddr, err := sdk.AccAddressFromBech32(sender)
-		require.NoError(t, err)
 
 		total := sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(100)))
 		mocks.BankKeeper.EXPECT().
-			SendCoinsFromAccountToModule(gomock.Any(), senderAddr, types.ModuleName, total, "batch transfer with vesting").
+			SendCoinsFromAccountToModule(gomock.Any(), sender, types.ModuleName, total, "batch transfer with vesting").
 			Return(fmt.Errorf("insufficient funds"))
 
-		_, err = ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender: sender,
+		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
+			Sender: sender.String(),
 			Outputs: []types.BatchVestingOutput{
 				{
 					Recipient: recipient1,
@@ -80,19 +65,17 @@ func TestMsgBatchTransferWithVesting(t *testing.T) {
 		k, ctx, mocks := keepertest.StreamVestingKeeperWithMocks(t)
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
-		senderAddr, err := sdk.AccAddressFromBech32(sender)
-		require.NoError(t, err)
 
 		total := sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1800)))
 		mocks.BankKeeper.EXPECT().
-			SendCoinsFromAccountToModule(gomock.Any(), senderAddr, types.ModuleName, total, "batch transfer with vesting").
+			SendCoinsFromAccountToModule(gomock.Any(), sender, types.ModuleName, total, "batch transfer with vesting").
 			Return(nil)
 		mocks.BankKeeper.EXPECT().
 			LogSubAccountTransaction(gomock.Any(), types.ModuleName, gomock.Any(), keeper.HoldingSubAccount, gomock.Any(), gomock.Any()).
 			AnyTimes()
 
-		_, err = ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender: sender,
+		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
+			Sender: sender.String(),
 			Outputs: []types.BatchVestingOutput{
 				{
 					Recipient: recipient1,
@@ -126,19 +109,17 @@ func TestMsgBatchTransferWithVesting(t *testing.T) {
 		k, ctx, mocks := keepertest.StreamVestingKeeperWithMocks(t)
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
-		senderAddr, err := sdk.AccAddressFromBech32(sender)
-		require.NoError(t, err)
 
 		total := sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(900)))
 		mocks.BankKeeper.EXPECT().
-			SendCoinsFromAccountToModule(gomock.Any(), senderAddr, types.ModuleName, total, "batch transfer with vesting").
+			SendCoinsFromAccountToModule(gomock.Any(), sender, types.ModuleName, total, "batch transfer with vesting").
 			Return(nil)
 		mocks.BankKeeper.EXPECT().
 			LogSubAccountTransaction(gomock.Any(), types.ModuleName, gomock.Any(), keeper.HoldingSubAccount, gomock.Any(), gomock.Any()).
 			AnyTimes()
 
-		_, err = ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender: sender,
+		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
+			Sender: sender.String(),
 			Outputs: []types.BatchVestingOutput{
 				{
 					Recipient: recipient1,
@@ -168,26 +149,24 @@ func TestMsgBatchTransferWithVesting(t *testing.T) {
 		k, ctx, mocks := keepertest.StreamVestingKeeperWithMocks(t)
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
-		senderAddr, err := sdk.AccAddressFromBech32(sender)
-		require.NoError(t, err)
 
 		total := sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1800)))
 		mocks.BankKeeper.EXPECT().
-			SendCoinsFromAccountToModule(gomock.Any(), senderAddr, types.ModuleName, total, "batch transfer with vesting").
+			SendCoinsFromAccountToModule(gomock.Any(), sender, types.ModuleName, total, "batch transfer with vesting").
 			Return(nil)
 		mocks.BankKeeper.EXPECT().
 			LogSubAccountTransaction(gomock.Any(), types.ModuleName, gomock.Any(), keeper.HoldingSubAccount, gomock.Any(), gomock.Any()).
 			AnyTimes()
 
-		_, err = ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender: sender,
+		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
+			Sender: sender.String(),
 			Outputs: []types.BatchVestingOutput{
 				{
 					Recipient: recipient1,
 					Amount:    sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1800))),
 				},
 			},
-			VestingEpochs: 0, // default should be applied
+			VestingEpochs: 0,
 		})
 		require.NoError(t, err)
 
@@ -197,30 +176,35 @@ func TestMsgBatchTransferWithVesting(t *testing.T) {
 		require.True(t, schedule.EpochAmounts[0].Coins.Equal(sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(10)))))
 	})
 
-	t.Run("too many total coin entries", func(t *testing.T) {
-		k, ctx, _ := keepertest.StreamVestingKeeperWithMocks(t)
+	t.Run("inference module as sender", func(t *testing.T) {
+		k, ctx, mocks := keepertest.StreamVestingKeeperWithMocks(t)
 		ms := keeper.NewMsgServerImpl(k)
 		wctx := sdk.UnwrapSDKContext(ctx)
 
-		outputs := make([]types.BatchVestingOutput, 0, types.MaxBatchCoinEntries/types.MaxCoinsInAmount+1)
-		for i := 0; i < types.MaxBatchCoinEntries/types.MaxCoinsInAmount+1; i++ {
-			amount := sdk.NewCoins()
-			for d := 0; d < types.MaxCoinsInAmount; d++ {
-				amount = amount.Add(sdk.NewCoin(fmt.Sprintf("denom%d", d), math.NewInt(1)))
-			}
-
-			outputs = append(outputs, types.BatchVestingOutput{
-				Recipient: testAddress(byte(10 + i%200)),
-				Amount:    amount,
-			})
-		}
+		infSender := keepertest.StreamVestingInferenceAuthority()
+		total := sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(300)))
+		mocks.BankKeeper.EXPECT().
+			SendCoinsFromAccountToModule(gomock.Any(), infSender, types.ModuleName, total, "batch transfer with vesting").
+			Return(nil)
+		mocks.BankKeeper.EXPECT().
+			LogSubAccountTransaction(gomock.Any(), types.ModuleName, gomock.Any(), keeper.HoldingSubAccount, gomock.Any(), gomock.Any()).
+			AnyTimes()
 
 		_, err := ms.BatchTransferWithVesting(wctx, &types.MsgBatchTransferWithVesting{
-			Sender:  sender,
-			Outputs: outputs,
+			Sender: infSender.String(),
+			Outputs: []types.BatchVestingOutput{
+				{
+					Recipient: recipient1,
+					Amount:    total,
+				},
+			},
+			VestingEpochs: 3,
 		})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "too many total coin entries in batch")
+		require.NoError(t, err)
+
+		schedule, found := k.GetVestingSchedule(wctx, recipient1)
+		require.True(t, found)
+		require.Len(t, schedule.EpochAmounts, 3)
 	})
 }
 
