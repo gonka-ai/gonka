@@ -16,18 +16,18 @@ import (
 func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddress string, collateralParams *types.CollateralParams) math.Int {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	latestEpoch, found := k.GetLatestEpoch(sdkCtx)
-	if !found || latestEpoch == nil {
+	effectiveEpoch, found := k.GetEffectiveEpoch(sdkCtx)
+	if !found || effectiveEpoch == nil {
 		return math.ZeroInt()
 	}
 
 	// During the grace period, collateral is not required.
-	if latestEpoch.Index <= collateralParams.GracePeriodEndEpoch {
+	if effectiveEpoch.Index <= collateralParams.GracePeriodEndEpoch {
 		return math.ZeroInt()
 	}
 
 	// Look up the effective weight from the current epoch's parent EpochGroupData.
-	data, found := k.GetEpochGroupData(ctx, latestEpoch.Index, "")
+	data, found := k.GetEpochGroupData(ctx, effectiveEpoch.Index, "")
 	if !found {
 		return math.ZeroInt()
 	}
