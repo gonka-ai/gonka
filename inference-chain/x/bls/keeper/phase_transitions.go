@@ -348,6 +348,16 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 	quorumSlots := totalSlots/2 + 1
 
 	for dealerIndex := 0; dealerIndex < participantCount; dealerIndex++ {
+		dealerParticipant := epochBLSData.Participants[dealerIndex]
+		if dealerParticipant.SlotEndIndex < dealerParticipant.SlotStartIndex {
+			return nil, fmt.Errorf("invalid slot range for dealer %d in epoch %d", dealerIndex, epochBLSData.EpochId)
+		}
+		dealerOwnSlots := uint64(dealerParticipant.SlotEndIndex-dealerParticipant.SlotStartIndex) + 1
+		maxPossibleNonSelfVotingSlots := uint64(0)
+		if dealerOwnSlots <= totalSlots {
+			maxPossibleNonSelfVotingSlots = totalSlots - dealerOwnSlots
+		}
+
 		var validVotingSlotsExcludingDealer uint64
 
 		for verifierIndex, verification := range epochBLSData.VerificationSubmissions {
@@ -377,6 +387,17 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 			epochBLSData.DealerParts[dealerIndex] != nil &&
 			epochBLSData.DealerParts[dealerIndex].DealerAddress != "" &&
 			len(epochBLSData.DealerParts[dealerIndex].Commitments) > 0
+
+		if dealerSubmittedParts && totalSlots > 0 && maxPossibleNonSelfVotingSlots < quorumSlots {
+			k.Logger().Warn("Dealer cannot reach weighted quorum with self-vote excluded",
+				"epochId", epochBLSData.EpochId,
+				"dealerIndex", dealerIndex,
+				"dealerOwnSlots", dealerOwnSlots,
+				"maxNonSelfVotingSlots", maxPossibleNonSelfVotingSlots,
+				"quorumSlots", quorumSlots,
+				"totalSlots", totalSlots,
+				"receivedVotingSlotsExcludingDealer", validVotingSlotsExcludingDealer)
+		}
 
 		validDealers[dealerIndex] = dealerIsValid && dealerSubmittedParts
 	}
