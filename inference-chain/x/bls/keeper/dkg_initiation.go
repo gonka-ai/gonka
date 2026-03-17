@@ -79,7 +79,9 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 		Participants: blsParticipants,
 	}
 
-	ctx.EventManager().EmitTypedEvent(&event)
+	if err := ctx.EventManager().EmitTypedEvent(&event); err != nil {
+		return fmt.Errorf("failed to emit EventKeyGenerationInitiated for epoch %d: %w", epochID, err)
+	}
 
 	k.Logger().Info(
 		"DKG initiated for epoch",
