@@ -389,7 +389,9 @@ func (bm *BlsManager) getAllowedPubKeysForParticipant(participantAddress string)
 	queryClient := bm.cosmosClient.NewInferenceQueryClient()
 
 	// Get all grantees (warm keys) allowed to act on behalf of this participant
-	grantees, err := queryClient.GranteesByMessageType(bm.ctx, &inferenceTypes.QueryGranteesByMessageTypeRequest{
+	granteesCtx, granteesCancel := context.WithTimeout(bm.ctx, 30*time.Second)
+	defer granteesCancel()
+	grantees, err := queryClient.GranteesByMessageType(granteesCtx, &inferenceTypes.QueryGranteesByMessageTypeRequest{
 		GranterAddress: participantAddress,
 		MessageTypeUrl: "/inference.bls.MsgSubmitDealerPart", // BLS operations
 	})
@@ -401,7 +403,9 @@ func (bm *BlsManager) getAllowedPubKeysForParticipant(participantAddress string)
 	}
 
 	// Get the participant's own public key
-	participant, err := queryClient.InferenceParticipant(bm.ctx, &inferenceTypes.QueryInferenceParticipantRequest{
+	participantCtx, participantCancel := context.WithTimeout(bm.ctx, 30*time.Second)
+	defer participantCancel()
+	participant, err := queryClient.InferenceParticipant(participantCtx, &inferenceTypes.QueryInferenceParticipantRequest{
 		Address: participantAddress,
 	})
 	if err != nil {

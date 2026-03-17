@@ -165,7 +165,7 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
-	blsManager := bls.NewBlsManager(*recorder)
+	blsManager := bls.NewBlsManager(ctx, *recorder)
 	listener := event_listener.NewEventListener(
 		config,
 		pocOrchestrator,

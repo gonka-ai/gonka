@@ -127,10 +127,10 @@ type SlotAssignment struct {
 }
 
 // NewBlsManager creates a new unified BLS manager
-func NewBlsManager(cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager {
+func NewBlsManager(ctx context.Context, cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager {
 	return &BlsManager{
 		cosmosClient: cosmosClient,
-		ctx:          context.Background(), // Use background context for chain queries
+		ctx:          ctx,
 		cache:        NewVerificationCache(),
 	}
 }
