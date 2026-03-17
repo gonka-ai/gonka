@@ -225,10 +225,15 @@ func (k Keeper) GetTokenMetadata(ctx sdk.Context, externalChain, externalContrac
 		return TokenMetadata{}, false
 	}
 
+	decimals, err := safeUint8FromUint32(metadata.Decimals)
+	if err != nil {
+		return TokenMetadata{}, false
+	}
+
 	return TokenMetadata{
 		Name:     metadata.Name,
 		Symbol:   metadata.Symbol,
-		Decimals: uint8(metadata.Decimals),
+		Decimals: decimals,
 	}, true
 }
 

@@ -176,6 +176,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	)
 	if err != nil {
 		k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
+		return err
 	}
 	if bitcoinResult.Amount < 0 {
 		k.LogError("Bitcoin reward amount is negative", types.Settle, "amount", bitcoinResult.Amount)
@@ -185,12 +186,21 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	rewardAmount = bitcoinResult.Amount
 	governanceRewardAmount = bitcoinResult.GovernanceAmount
 
-	err = k.MintRewardCoins(ctx, rewardAmount, "reward_distribution")
+	// Use CacheContext so all current-epoch state mutations are atomic.
+	// If any step fails (minting, balance resets, settle writes),
+	// nothing is committed and the caller sees a clean error with no partial state.
+	// Old settle cleanup runs after commit on the real context.
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
+	err = k.MintRewardCoins(cacheCtx, rewardAmount, "reward_distribution")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
 		return err
 	}
-	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
+	if err := k.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)}); err != nil {
+		k.LogError("Error updating tokenomics data", types.Settle, "error", err)
+		return err
+	}
 
 	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
 	// are transferred to governance instead of being redistributed to other participants.
@@ -200,7 +210,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			return err
 		}
 		memo := fmt.Sprintf("bitcoin_reward_to_governance:epoch=%d", currentEpochIndex)
-		if err := k.BankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
 			k.LogError("Error transferring undistributed bitcoin rewards to governance", types.Settle, "error", err, "amount", governanceRewardAmount)
 			return err
 		}
@@ -216,7 +226,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		if participant.Status == types.ParticipantStatus_ACTIVE {
 			participant.EpochsCompleted += 1
 		}
-		k.SafeLogSubAccountTransaction(ctx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
+		k.SafeLogSubAccountTransaction(cacheCtx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
 		participant.CoinBalance = 0
 		participant.CurrentEpochStats.EarnedCoins = 0
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
@@ -231,12 +241,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
 			Claimed:               false,
 		}
-		err = k.SetEpochPerformanceSummary(ctx, epochPerformance)
+		err = k.SetEpochPerformanceSummary(cacheCtx, epochPerformance)
 		if err != nil {
 			return err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
-		err := k.SetParticipant(ctx, participant)
+		err := k.SetParticipant(cacheCtx, participant)
 		if err != nil {
 			return err
 		}
@@ -261,18 +271,28 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 		amount.Settle.EpochIndex = currentEpochIndex
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
-		k.SetSettleAmountWithGovernanceTransfer(ctx, *amount.Settle)
+		if err := k.SetSettleAmountWithGovernanceTransfer(cacheCtx, *amount.Settle); err != nil {
+			k.LogError("Error writing settle amount", types.Settle, "error", err, "participant", amount.Settle.Participant)
+			return err
+		}
 	}
 
-	if previousEpochIndex == 0 {
-		return nil
+	// All current-epoch mutations succeeded — commit atomically.
+	writeFn()
+
+	// Old settle cleanup is independent of current-epoch settlement.
+	// A failure here should not roll back current participants' rewards.
+	if previousEpochIndex > 0 {
+		k.LogInfo("Transferring old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
+		if err := k.TransferOldSettleAmountsToGovernance(ctx, previousEpochIndex); err != nil {
+			k.LogError("Error transferring old settle amounts to governance (non-fatal, will retry next epoch)",
+				types.Settle, "error", err, "previousEpochIndex", previousEpochIndex)
+			// Non-fatal: old settle cleanup is independent of current-epoch settlement.
+			// The unclaimed amounts remain in the module account and can be transferred
+			// on the next epoch's settlement pass.
+		}
 	}
 
-	k.LogInfo("Transferring old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
-	err = k.TransferOldSettleAmountsToGovernance(ctx, previousEpochIndex)
-	if err != nil {
-		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
-	}
 	return nil
 }
 

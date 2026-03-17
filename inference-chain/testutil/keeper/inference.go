@@ -89,6 +89,8 @@ func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
 }
 
 func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Context, validators []stakingtypes.Validator) {
+	inference.IgnoreDuplicateDenomRegistration = true
+
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.BridgeEscrowAccName)

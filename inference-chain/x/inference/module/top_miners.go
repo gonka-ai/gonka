@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -102,6 +103,11 @@ func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) (keeper.Payou
 	}
 	tokenomicsData, _ := am.keeper.GetTokenomicsData(ctx)
 	fullCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(genesisOnlyParams.SupplyDenom, genesisOnlyParams.TopRewardAmount))
+	if genesisOnlyParams.TopRewardPayouts > math.MaxInt32 || genesisOnlyParams.TopRewardPayoutsPerMiner > math.MaxInt32 {
+		return keeper.PayoutSettings{}, types.ErrArithmeticOverflow.Wrapf(
+			"top reward payout params overflow int32: payouts=%d, payoutsPerMiner=%d",
+			genesisOnlyParams.TopRewardPayouts, genesisOnlyParams.TopRewardPayoutsPerMiner)
+	}
 	return keeper.PayoutSettings{
 		PayoutPeriod:       genesisOnlyParams.TopRewardPeriod,
 		TotalRewards:       fullCoin.Amount.Int64(),
