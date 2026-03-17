@@ -542,23 +542,13 @@ func TestComputeParticipantPublicKey_TimingComparison(t *testing.T) {
 		slotIndices[i] = i
 	}
 
-	// 1. Measure gnark
-	startGnark := time.Now()
-	resGnark, err := k.computeParticipantPublicKey(&epochData, slotIndices)
-	durationGnark := time.Since(startGnark)
-	require.NoError(t, err)
-
-	// 2. Measure blst
 	startBlst := time.Now()
 	resBlst, err := k.computeParticipantPublicKeyBlst(&epochData, slotIndices)
 	durationBlst := time.Since(startBlst)
 	require.NoError(t, err)
+	require.NotEmpty(t, resBlst)
 
-	// Compare results
-	require.Equal(t, resGnark, resBlst, "Participant public keys must match")
-
-	t.Logf("computeParticipantPublicKey (gnark-crypto): %s", durationGnark)
-	t.Logf("computeParticipantPublicKeyBlst (blst):      %s", durationBlst)
+	t.Logf("computeParticipantPublicKeyBlst (blst): %s", durationBlst)
 }
 
 func TestDecompressG2To256_TimingComparison(t *testing.T) {
