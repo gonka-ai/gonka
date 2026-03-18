@@ -116,6 +116,46 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
+// ReturnAllCollateral sends all active and unbonding collateral tokens back to the participant.
+// This must be called before removing collateral records to ensure tokens are not lost.
+func (k Keeper) ReturnAllCollateral(ctx sdk.Context, participantAddress sdk.AccAddress) error {
+	totalAmount := math.ZeroInt()
+	denom := inferencetypes.BaseCoin
+
+	// 1. Get active collateral amount
+	activeCollateral, found := k.GetCollateral(ctx, participantAddress)
+	if found && activeCollateral.Amount.IsPositive() {
+		totalAmount = totalAmount.Add(activeCollateral.Amount)
+	}
+
+	// 2. Get all unbonding collateral amounts
+	unbondingEntries, err := k.GetUnbondingByParticipant(ctx, participantAddress)
+	if err != nil {
+		return err
+	}
+	for _, entry := range unbondingEntries {
+		if entry.Amount.Amount.IsPositive() {
+			totalAmount = totalAmount.Add(entry.Amount.Amount)
+		}
+	}
+
+	// 3. Send total back to participant if non-zero
+	if totalAmount.IsPositive() {
+		coins := sdk.NewCoins(sdk.NewCoin(denom, totalAmount))
+		err := k.bookkeepingBankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, coins, "collateral returned on validator removal")
+		if err != nil {
+			return err
+		}
+
+		k.Logger().Info("returned collateral tokens to participant",
+			"participant", participantAddress.String(),
+			"amount", coins.String(),
+		)
+	}
+
+	return nil
+}
+
 // SetCollateral stores a participant's collateral amount
 func (k Keeper) SetCollateral(ctx context.Context, participantAddress sdk.AccAddress, amount sdk.Coin) error {
 	return k.CollateralMap.Set(ctx, participantAddress, amount)

@@ -34,8 +34,17 @@ func (h StakingHooks) AfterValidatorRemoved(ctx context.Context, consAddr sdk.Co
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	accAddr := sdk.AccAddress(valAddr)
 
-	// When a validator is fully removed from the validator set, clean up all associated
-	// collateral module data to prevent orphaned entries.
+	// When a validator is fully removed from the validator set, return all collateral
+	// tokens and clean up associated module data to prevent orphaned entries.
+
+	// 0. Return all active and unbonding collateral tokens to the validator
+	if err := h.k.ReturnAllCollateral(sdkCtx, accAddr); err != nil {
+		h.k.Logger().Error("Staking hook: AfterValidatorRemoved, failed to return collateral tokens",
+			"validator_address", valAddr.String(),
+			"error", err,
+		)
+		return err
+	}
 
 	// 1. Remove any collateral held by this participant
 	if err := h.k.RemoveCollateral(sdkCtx, accAddr); err != nil {
