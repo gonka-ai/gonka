@@ -504,8 +504,9 @@ func TestSubnetPruningPostPruneHook(t *testing.T) {
 }
 
 // TestEpochKeyedDataPruning tests that epoch-keyed collections (PoCV2, EpochGroupData,
-// EpochGroupValidations, EpochPerformanceSummaries, RandomSeeds, etc.) are properly
-// cleaned up by the new pruning logic in pruneEpochKeyedData.
+// EpochPerformanceSummaries, RandomSeeds, etc.) are properly cleaned up by the new
+// pruning logic in pruneEpochKeyedData.
+// Note: EpochGroupValidations are handled by GetEpochGroupValidationPruner (upstream).
 func TestEpochKeyedDataPruning(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
@@ -519,8 +520,10 @@ func TestEpochKeyedDataPruning(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Configure PoC threshold = 1 so endEpoch = current - 1
-	setPruningConfig(ctx, k, PruningSettings{PocThreshold: 1, PocMaxPrune: 5000})
+	// Configure InferencePruningEpochThreshold = 2 (used for EpochGroupData pruning
+	// to protect ClaimRewards which reads data for the previous epoch).
+	// PocThreshold = 1 for other collections.
+	setPruningConfig(ctx, k, PruningSettings{InferenceThreshold: 2, PocThreshold: 1, PocMaxPrune: 5000})
 
 	// --- Populate EpochGroupData for epochs 1-5 ---
 	for i := uint64(1); i <= 5; i++ {
@@ -528,15 +531,6 @@ func TestEpochKeyedDataPruning(t *testing.T) {
 			EpochIndex: i,
 			ModelId:    "model-a",
 		})
-	}
-
-	// --- Populate EpochGroupValidations for epochs 1-5 ---
-	for i := uint64(1); i <= 5; i++ {
-		err := k.SetEpochGroupValidations(ctx, types.EpochGroupValidations{
-			EpochIndex:  i,
-			Participant: mkAddr(1),
-		})
-		require.NoError(t, err)
 	}
 
 	// --- Populate RandomSeeds for epochs 1-5 ---
@@ -576,60 +570,66 @@ func TestEpochKeyedDataPruning(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Run pruning at currentEpoch=5, threshold=1 => endEpoch=4
-	// Epochs 1-4 should be pruned, epoch 5 should remain
+	// Run pruning at currentEpoch=5, InferencePruningEpochThreshold=2 => endEpoch=3
+	// Epochs 1-3 should be pruned, epochs 4-5 should remain.
+	// This uses InferencePruningEpochThreshold (not PocDataPruningEpochThreshold)
+	// to protect ClaimRewards which reads EpochGroupData for the previous epoch.
 	err := k.Prune(ctx, 5)
 	require.NoError(t, err)
 
-	// Verify EpochGroupData: epochs 1-4 pruned, epoch 5 remains
-	for i := uint64(1); i <= 4; i++ {
+	// Verify EpochGroupData: epochs 1-3 pruned, epochs 4-5 remain
+	for i := uint64(1); i <= 3; i++ {
 		_, found := k.GetEpochGroupData(ctx, i, "model-a")
 		require.False(t, found, "EpochGroupData for epoch %d should be pruned", i)
 	}
-	_, found := k.GetEpochGroupData(ctx, 5, "model-a")
+	_, found := k.GetEpochGroupData(ctx, 4, "model-a")
+	require.True(t, found, "EpochGroupData for epoch 4 should remain (needed by ClaimRewards)")
+	_, found = k.GetEpochGroupData(ctx, 5, "model-a")
 	require.True(t, found, "EpochGroupData for epoch 5 should remain")
 
-	// Verify EpochGroupValidations: epochs 1-4 pruned, epoch 5 remains
-	for i := uint64(1); i <= 4; i++ {
-		_, found := k.GetEpochGroupValidations(ctx, mkAddr(1), i)
-		require.False(t, found, "EpochGroupValidations for epoch %d should be pruned", i)
-	}
-	_, found = k.GetEpochGroupValidations(ctx, mkAddr(1), 5)
-	require.True(t, found, "EpochGroupValidations for epoch 5 should remain")
-
-	// Verify RandomSeeds: epochs 1-4 pruned, epoch 5 remains
-	for i := uint64(1); i <= 4; i++ {
+	// Verify RandomSeeds: epochs 1-3 pruned, epochs 4-5 remain
+	for i := uint64(1); i <= 3; i++ {
 		_, seedFound := k.GetRandomSeed(ctx, i, mkAddr(1))
 		require.False(t, seedFound, "RandomSeed for epoch %d should be pruned", i)
 	}
-	_, seedFound := k.GetRandomSeed(ctx, 5, mkAddr(1))
+	_, seedFound := k.GetRandomSeed(ctx, 4, mkAddr(1))
+	require.True(t, seedFound, "RandomSeed for epoch 4 should remain")
+	_, seedFound = k.GetRandomSeed(ctx, 5, mkAddr(1))
 	require.True(t, seedFound, "RandomSeed for epoch 5 should remain")
 
-	// Verify EpochPerformanceSummaries: epochs 1-4 pruned, epoch 5 remains
-	for i := uint64(1); i <= 4; i++ {
+	// Verify EpochPerformanceSummaries: epochs 1-3 pruned, epochs 4-5 remain
+	for i := uint64(1); i <= 3; i++ {
 		_, found := k.GetEpochPerformanceSummary(ctx, i, mkAddr(1))
 		require.False(t, found, "EpochPerformanceSummary for epoch %d should be pruned", i)
 	}
+	_, found = k.GetEpochPerformanceSummary(ctx, 4, mkAddr(1))
+	require.True(t, found, "EpochPerformanceSummary for epoch 4 should remain")
 	_, found = k.GetEpochPerformanceSummary(ctx, 5, mkAddr(1))
 	require.True(t, found, "EpochPerformanceSummary for epoch 5 should remain")
 
-	// Verify PoCV2StoreCommits: epochs 1-4 (pocStartBlockHeight 100-400) pruned
-	for i := uint64(1); i <= 4; i++ {
+	// Verify PoCV2StoreCommits: epochs 1-3 (pocStartBlockHeight 100-300) pruned
+	for i := uint64(1); i <= 3; i++ {
 		commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, int64(i*100))
 		require.NoError(t, err)
 		require.Empty(t, commits, "PoCV2StoreCommits for epoch %d should be pruned", i)
 	}
-	commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, 500)
+	commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, 400)
+	require.NoError(t, err)
+	require.Len(t, commits, 1, "PoCV2StoreCommits for epoch 4 should remain")
+	commits, err = k.GetAllPoCV2StoreCommitsForStage(ctx, 500)
 	require.NoError(t, err)
 	require.Len(t, commits, 1, "PoCV2StoreCommits for epoch 5 should remain")
 
-	// Verify MLNodeWeightDistributions: epochs 1-4 pruned
-	for i := uint64(1); i <= 4; i++ {
+	// Verify MLNodeWeightDistributions: epochs 1-3 pruned
+	for i := uint64(1); i <= 3; i++ {
 		dists, err := k.GetAllMLNodeWeightDistributionsForStage(ctx, int64(i*100))
 		require.NoError(t, err)
 		require.Empty(t, dists, "MLNodeWeightDistributions for epoch %d should be pruned", i)
 	}
-	dists, err := k.GetAllMLNodeWeightDistributionsForStage(ctx, 500)
+	dists, err := k.GetAllMLNodeWeightDistributionsForStage(ctx, 400)
+	require.NoError(t, err)
+	require.Len(t, dists, 1, "MLNodeWeightDistributions for epoch 4 should remain")
+	dists, err = k.GetAllMLNodeWeightDistributionsForStage(ctx, 500)
 	require.NoError(t, err)
 	require.Len(t, dists, 1, "MLNodeWeightDistributions for epoch 5 should remain")
 }

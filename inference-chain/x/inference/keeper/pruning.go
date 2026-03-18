@@ -62,9 +62,12 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 
 	// --- Additional epoch-keyed data cleanup ---
 	// These collections grow unboundedly per epoch but were never pruned,
-	// causing application.db to grow without limit. We use the same PoC
-	// threshold to determine which epochs are safe to clean up.
-	pruningThreshold := params.PocParams.PocDataPruningEpochThreshold
+	// causing application.db to grow without limit.
+	// We use InferencePruningEpochThreshold (default=2) rather than
+	// PocDataPruningEpochThreshold (default=1) because ClaimRewards reads
+	// EpochGroupData for the previous epoch (currentEpoch-1). With threshold=1
+	// that data would be pruned before claims are processed.
+	pruningThreshold := params.EpochParams.InferencePruningEpochThreshold
 	pruneMax := effectivePruningMax(params.EpochParams.PocPruningMax)
 	err = k.pruneEpochKeyedData(ctx, currentEpochIndex, pruningThreshold, pruneMax)
 	if err != nil {
@@ -119,10 +122,11 @@ func (k Keeper) pruneEpochKeyedData(ctx context.Context, currentEpochIndex int64
 	// PoC Validation Snapshots (keyed by pocStageStartHeight)
 	k.prunePoCValidationSnapshots(ctx, endEpoch)
 
-	// Epoch-indexed collections: EpochGroupData, EpochGroupValidations,
+	// Epoch-indexed collections: EpochGroupData,
 	// EpochPerformanceSummaries, ConfirmationPoCEvents, RandomSeeds
+	// Note: EpochGroupValidations are handled by GetEpochGroupValidationPruner
+	// (which prunes the migrated EpochGroupValidationEntry store).
 	k.pruneEpochGroupData(ctx, endEpoch, maxPerCollection)
-	k.pruneEpochGroupValidations(ctx, endEpoch, maxPerCollection)
 	k.pruneEpochPerformanceSummaries(ctx, endEpoch, maxPerCollection)
 	k.pruneConfirmationPoCEvents(ctx, endEpoch, maxPerCollection)
 	k.pruneRandomSeeds(ctx, endEpoch, maxPerCollection)
@@ -254,29 +258,6 @@ func (k Keeper) pruneEpochGroupData(ctx context.Context, endEpoch int64, maxRemo
 	}
 	if removed > 0 {
 		k.LogInfo("Pruned epoch group data", types.Pruning, "removed", removed)
-	}
-}
-
-// pruneEpochGroupValidations removes epoch group validations for old epochs.
-func (k Keeper) pruneEpochGroupValidations(ctx context.Context, endEpoch int64, maxRemovals int64) {
-	removed := int64(0)
-	for epochIdx := uint64(1); epochIdx <= uint64(endEpoch) && removed < maxRemovals; epochIdx++ {
-		iter, err := k.EpochGroupValidationsMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](epochIdx))
-		if err != nil {
-			continue
-		}
-		for ; iter.Valid() && removed < maxRemovals; iter.Next() {
-			key, err := iter.Key()
-			if err != nil {
-				break
-			}
-			_ = k.EpochGroupValidationsMap.Remove(ctx, key)
-			removed++
-		}
-		iter.Close()
-	}
-	if removed > 0 {
-		k.LogInfo("Pruned epoch group validations", types.Pruning, "removed", removed)
 	}
 }
 
