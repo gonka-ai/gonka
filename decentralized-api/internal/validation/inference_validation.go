@@ -609,7 +609,13 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 
 	// Retry logic for LockNode operation
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		var lockedNodeId string
 		valResult, err = broker.LockNode(s.nodeBroker, inf.Model, func(node *broker.Node) (ValidationResult, error) {
+			lockedNodeId = node.Id
+			logging.Info("Validation acquired node", types.Validation,
+				"inferenceId", inf.InferenceId,
+				"node_id", node.Id,
+				"attempt", attempt)
 			return s.validateWithPayloads(inf, node, promptPayload, responsePayload)
 		})
 
@@ -622,6 +628,7 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 		if attempt < maxRetries {
 			logging.Warn("Failed to validate inference, retrying", types.Validation,
 				"id", inf.InferenceId,
+				"node_id", lockedNodeId,
 				"attempt", attempt,
 				"maxRetries", maxRetries,
 				"error", err,
@@ -630,11 +637,12 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 		} else {
 			// Final attempt failed - check if it's ErrNoNodesAvailable for special handling
 			if errors.Is(err, broker.ErrNoNodesAvailable) {
-				logging.Warn("Failed to validate inference after all retry attempts. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "attempts", maxRetries, "error", err)
+				logging.Warn("Failed to validate inference after all retry attempts. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "last_node_id", lockedNodeId, "attempts", maxRetries, "error", err)
 				return
 			} else {
 				logging.Error("Failed to validate inference after all retry attempts", types.Validation,
 					"id", inf.InferenceId,
+					"last_node_id", lockedNodeId,
 					"attempts", maxRetries,
 					"error", err)
 				return
