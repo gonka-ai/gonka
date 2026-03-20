@@ -14,7 +14,7 @@ The concurrency tests in `epoch_group_data_concurrent_test.go` check that:
 Run the concurrency tests as usual:
 
 ```bash
-go test ./x/inference/keeper/ -run EpochGroupDataConcurrent -v
+go test ./x/inference/keeper -run 'Test(ConcurrentReadsSameResult|OneWriterManyReaders_ReadersSeeWriteAfterCommit|OneWriterMultipleSetGet_NoDeadlock|MultipleWritersMultipleReaders_LastWriteWins)$' -v
 ```
 
 **Note on `-race`:** The tests intentionally share a single `sdk.Context` across goroutines to stress the keeper’s locking. The Cosmos SDK store and gas meter are not safe for concurrent use from multiple goroutines. With `go test -race`, the race detector may report races in the SDK layer (e.g. `cosmossdk.io/store/types.(*infiniteGasMeter).ConsumeGas`). That is a limitation of the test harness, not of the keeper’s epoch group logic. In production, each transaction gets its own context, and the keeper’s cache and draft locking are what allow safe concurrent access to epoch group data under optimistic execution.

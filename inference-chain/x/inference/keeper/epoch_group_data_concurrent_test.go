@@ -23,12 +23,13 @@ const (
 )
 
 // txCtxWithDraft returns an sdk.Context that has a tx-scoped draft attached (simulating AnteHandler).
-func txCtxWithDraft(sdkCtx sdk.Context) sdk.Context {
+func txCtxWithDraft(k keeper.Keeper, sdkCtx sdk.Context) sdk.Context {
 	stdCtx := sdkCtx.Context()
 	if stdCtx == nil {
 		stdCtx = context.Background()
 	}
-	return sdkCtx.WithContext(keeper.WithEpochGroupDraft(stdCtx))
+	stdCtx = k.EpochGroupStore().WithDraft(stdCtx)
+	return sdkCtx.WithContext(stdCtx)
 }
 
 // seedEpochGroupData writes one root group for the test epoch into the store (no draft).
@@ -77,7 +78,7 @@ func TestOneWriterManyReaders_ReadersSeeWriteAfterCommit(t *testing.T) {
 
 	writerDone := make(chan struct{})
 	go func() {
-		txCtx := txCtxWithDraft(sdkCtx)
+		txCtx := txCtxWithDraft(k, sdkCtx)
 		data := types.EpochGroupData{
 			EpochIndex:          concurrentTestEpoch,
 			ModelId:             "",
@@ -114,7 +115,7 @@ func TestOneWriterMultipleSetGet_NoDeadlock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		txCtx := txCtxWithDraft(sdkCtx)
+		txCtx := txCtxWithDraft(k, sdkCtx)
 		for i := 0; i < 10; i++ {
 			data := types.EpochGroupData{
 				EpochIndex:          concurrentTestEpoch,
@@ -165,7 +166,7 @@ func TestMultipleWritersMultipleReaders_LastWriteWins(t *testing.T) {
 		wgWriters.Add(1)
 		go func() {
 			defer wgWriters.Done()
-			txCtx := txCtxWithDraft(sdkCtx)
+			txCtx := txCtxWithDraft(k, sdkCtx)
 			data := types.EpochGroupData{
 				EpochIndex:          concurrentTestEpoch,
 				ModelId:             "",

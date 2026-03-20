@@ -2,8 +2,6 @@ package keeper
 
 import (
 	"fmt"
-	"sync"
-	"sync/atomic"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
@@ -18,23 +16,6 @@ import (
 type epochGroupCacheKey struct {
 	Epoch   uint64
 	ModelId string
-}
-
-// epochGroupCache holds EpochGroupData for current and previous effective epoch only.
-// Invalidated in BeginBlock; flushed to store in EndBlock.
-// currentEpochRequestCount is the per-block atomic counter for NumberOfRequests of the current epoch (root group); merged to store on flush.
-// draftWriterMu is held (write) while any tx is writing to its draft so that no one reads from the block cache until commit/release (deterministic, sequential).
-type epochGroupCache struct {
-	mu                       sync.RWMutex
-	draftWriterMu            sync.RWMutex // held by draft writers; block cache readers take RLock so they wait for no draft writer
-	draftWriteHolder         int64        // goroutine id of current draft writer (reentrancy)
-	draftWriteCount          int32        // reentrant lock count
-	inited                   bool
-	current                  uint64
-	previous                 uint64
-	currentDirty             bool
-	m                        map[epochGroupCacheKey]types.EpochGroupData
-	currentEpochRequestCount atomic.Int64
 }
 
 type (
@@ -80,9 +61,9 @@ type (
 		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
-		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
-		// EpochGroupData hot cache: current and previous effective epoch; tx draft merged on tx success, flushed to store in EndBlock.
-		epochGroupCache *epochGroupCache
+		epochGroupStore               *OptimisticCollMap[epochGroupCacheKey, collections.Pair[uint64, string], types.EpochGroupData]
+		paramsStore                   *OptimisticItem[types.Params]
+		storeGroup                    OptimisticStoreGroup
 		// Epoch collections
 		Epochs              collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex collections.Item[uint64]
@@ -153,6 +134,8 @@ func NewKeeper(
 	}
 
 	sb := collections.NewSchemaBuilder(storeService)
+
+	cacheConfig := OptimisticStoreConfig{BlockCacheEnabled: true, TxDraftEnabled: true}
 
 	k := Keeper{
 		cdc:                   cdc,
@@ -290,14 +273,24 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.InferenceTimeout](cdc),
 		),
-		EpochGroupDataMap: collections.NewMap(
+		epochGroupStore: NewOptimisticCollMap[epochGroupCacheKey, collections.Pair[uint64, string], types.EpochGroupData](
 			sb,
 			types.EpochGroupDataPrefix,
 			"epoch_group_data",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupData](cdc),
+			cacheConfig,
+			func(key epochGroupCacheKey) collections.Pair[uint64, string] {
+				return collections.Join(key.Epoch, key.ModelId)
+			},
 		),
-		epochGroupCache: &epochGroupCache{},
+		paramsStore: NewOptimisticProtoItem[types.Params](
+			storeService,
+			cdc,
+			types.ParamsKey,
+			"params",
+			cacheConfig,
+		),
 		// Epoch collections wiring
 		Epochs: collections.NewMap(
 			sb,
@@ -533,14 +526,25 @@ func NewKeeper(
 			collections.NoValue{},
 		),
 	}
-	// Build the collections schema
+
+	// Register all optimistic stores with the group
+	k.storeGroup.Register(k.epochGroupStore.OptimisticStore)
+	k.storeGroup.Register(k.paramsStore.Store())
+
+	// Build the collections schema (must happen after all NewMap/NewItem calls)
 	schema, err := sb.Build()
 	if err != nil {
 		//nolint:forbidigo // init code
 		panic(err)
 	}
 	k.Schema = schema
+
 	return k
+}
+
+// StoreGroup returns the group of all optimistic stores for batch lifecycle operations.
+func (k Keeper) StoreGroup() *OptimisticStoreGroup {
+	return &k.storeGroup
 }
 
 // GetAuthority returns the module's authority.

@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -15,20 +14,37 @@ func (k Keeper) EpochGroupDataAll(ctx context.Context, req *types.QueryAllEpochG
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	epochGroupDatas, pageRes, err := query.CollectionPaginate(
-		ctx,
-		k.EpochGroupDataMap,
-		req.Pagination,
-		func(_ collections.Pair[uint64, string], value types.EpochGroupData) (types.EpochGroupData, error) {
-			return value, nil
-		},
-	)
+	all := k.GetAllEpochGroupData(ctx)
+	pageRes, start, end := paginateSlice(len(all), req.Pagination)
+	return &types.QueryAllEpochGroupDataResponse{EpochGroupData: all[start:end], Pagination: pageRes}, nil
+}
 
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+// paginateSlice computes a window [start, end) over a slice of the given length,
+// honouring the Offset / Limit / CountTotal fields of a PageRequest.
+func paginateSlice(total int, pg *query.PageRequest) (*query.PageResponse, int, int) {
+	if pg == nil {
+		pg = &query.PageRequest{}
 	}
-
-	return &types.QueryAllEpochGroupDataResponse{EpochGroupData: epochGroupDatas, Pagination: pageRes}, nil
+	offset := int(pg.Offset)
+	if offset > total {
+		offset = total
+	}
+	limit := int(pg.Limit)
+	if limit == 0 {
+		limit = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	resp := &query.PageResponse{}
+	if pg.CountTotal {
+		resp.Total = uint64(total)
+	}
+	if end < total {
+		resp.NextKey = []byte{1}
+	}
+	return resp, offset, end
 }
 
 func (k Keeper) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGroupDataRequest) (*types.QueryGetEpochGroupDataResponse, error) {

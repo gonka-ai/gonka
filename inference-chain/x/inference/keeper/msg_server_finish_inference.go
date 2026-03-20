@@ -314,8 +314,5 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		return err
 	}
 
-	// Increment current epoch group request count after all possible errors are returned that can cause rollback.
-	// This ensures that the number of requests is always accurate and consistent.
-	k.IncrementCurrentEpochGroupRequestCount(ctx)
 	return nil
 }
