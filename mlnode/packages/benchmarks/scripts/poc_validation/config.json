@@ -1,0 +1,13 @@
+{
+  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "seq_len": 1024,
+  "k_dim": 12,
+  "block_hash": "TEST_BLOCK",
+  "public_key": "test_pub_key",
+  "block_height": 100,
+  "batch_size": 64,
+  "nonce_count": 500,
+  "servers": {
+    "vllm_at": "http://127.0.0.1:8003"
+  }
+}

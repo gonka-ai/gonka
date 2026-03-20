@@ -3,6 +3,7 @@ package com.productscience.mockserver.routes
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.productscience.mockserver.model.latestNonce
 import com.productscience.mockserver.service.HostName
 import com.productscience.mockserver.service.ModelName
 import com.productscience.mockserver.service.ResponseService
@@ -58,6 +59,10 @@ data class SetPocResponseRequest(
     val hostName: String? = null,
     @JsonProperty("scenario_name")
     val scenarioName: String = "ModelState"
+)
+
+data class SetPocNonceRequest(
+    val nonce: Long
 )
 
 /**
@@ -166,6 +171,31 @@ fun Route.responseRoutes(responseService: ResponseService) {
                 mapOf(
                     "status" to "error",
                     "message" to "Failed to set POC response: ${e.message}"
+                )
+            )
+        }
+    }
+
+    // POST /api/v1/responses/poc/nonce - Sets the global nonce counter for PoC artifact generation
+    post("/api/v1/responses/poc/nonce") {
+        try {
+            val request = call.receive<SetPocNonceRequest>()
+            logger.info("Setting latestNonce to ${request.nonce}")
+            latestNonce.set(request.nonce)
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf(
+                    "status" to "success",
+                    "message" to "PoC nonce counter set to ${request.nonce}",
+                    "nonce" to request.nonce
+                )
+            )
+        } catch (e: Exception) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf(
+                    "status" to "error",
+                    "message" to "Failed to set PoC nonce: ${e.message}"
                 )
             )
         }

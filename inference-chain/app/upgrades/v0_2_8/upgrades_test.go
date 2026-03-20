@@ -166,11 +166,13 @@ func setupTestKeeper(t *testing.T, ctrl *gomock.Controller) (keeper.Keeper, sdk.
 	upgradeKeeper := keepertest.NewMockUpgradeKeeper(ctrl)
 
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
+	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(storeKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(transientStoreKey, storetypes.StoreTypeTransient, db)
 	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
@@ -188,6 +190,7 @@ func setupTestKeeper(t *testing.T, ctrl *gomock.Controller) (keeper.Keeper, sdk.
 	k := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(storeKey),
+		runtime.NewTransientStoreService(transientStoreKey),
 		log.NewNopLogger(),
 		authority.String(),
 		bankKeeper,

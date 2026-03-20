@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/math"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -16,6 +17,7 @@ import (
 
 // AccountKeeper defines the expected interface for the account module.
 type AccountKeeper interface {
+	HasAccount(ctx context.Context, addr sdk.AccAddress) bool
 	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI // only used for simulation
 	GetModuleAddress(moduleName string) sdk.AccAddress
 	SetAccount(ctx context.Context, acc sdk.AccountI)
@@ -28,6 +30,7 @@ type BankKeeper interface {
 	SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins
 	SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
 	GetDenomMetaData(ctx context.Context, denom string) (banktypes.Metadata, bool)
+	SetDenomMetaData(ctx context.Context, denomMetaData banktypes.Metadata)
 	IterateAllBalances(ctx context.Context, cb func(address sdk.AccAddress, coin sdk.Coin) (stop bool))
 	GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
 }
@@ -80,7 +83,7 @@ type StakingKeeper interface {
 type CollateralKeeper interface {
 	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
 	GetCollateral(ctx context.Context, participant sdk.AccAddress) (collateral sdk.Coin, found bool)
-	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec, reason string) (sdk.Coin, error)
+	Slash(ctx context.Context, participant sdk.AccAddress, slashFraction math.LegacyDec, reason string, requiredCollateral math.Int) (sdk.Coin, error)
 }
 
 // StreamVestingKeeper defines the expected interface for the StreamVesting module.
@@ -125,6 +128,7 @@ type ModelKeeper interface {
 
 type AuthzKeeper interface {
 	GranterGrants(ctx context.Context, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error)
+	Grants(ctx context.Context, req *authztypes.QueryGrantsRequest) (*authztypes.QueryGrantsResponse, error)
 }
 
 // BlsKeeper defines the expected interface for the BLS module.
@@ -144,4 +148,8 @@ type BlsKeeper interface {
 // UpgradeKeeper defines the expected interface for the upgrade module.
 type UpgradeKeeper interface {
 	GetUpgradePlan(ctx context.Context) (plan upgradetypes.Plan, err error)
+}
+
+type WasmKeeper interface {
+	GetContractInfo(ctx context.Context, contractAddress sdk.AccAddress) *wasmtypes.ContractInfo
 }

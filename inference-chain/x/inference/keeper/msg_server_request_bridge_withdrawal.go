@@ -28,21 +28,17 @@ var (
 )
 
 func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.MsgRequestBridgeWithdrawal) (*types.MsgRequestBridgeWithdrawalResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ContractPermission); err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// 1. Get the actual transaction signer (this is validated by the Cosmos SDK framework)
-	signers := msg.GetSigners()
+	// 1. Get the actual transaction signer (currently just the Creator of the message and is only one signer)
+	signers := msg.GetSignersStrings()
 	if len(signers) != 1 {
 		return nil, fmt.Errorf("expected exactly one signer, got %d", len(signers))
 	}
-	contractAddr := signers[0]
-	contractAddrStr := contractAddr.String()
-
-	// 2. Verify that the caller is actually a smart contract
-	err := k.validateContractCaller(ctx, contractAddrStr)
-	if err != nil {
-		return nil, fmt.Errorf("caller validation failed: %v", err)
-	}
+	contractAddrStr := signers[0]
 
 	// 3. Verify that the calling contract is a registered wrapped token contract
 	bridgeWrappedTokenContract, found := k.getWrappedTokenMetadata(ctx, contractAddrStr)
@@ -115,30 +111,9 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	}, nil
 }
 
-// validateContractCaller ensures that the caller is actually a smart contract
-func (k msgServer) validateContractCaller(ctx sdk.Context, contractAddress string) error {
-	contractAddr, err := sdk.AccAddressFromBech32(contractAddress)
-	if err != nil {
-		return fmt.Errorf("invalid contract address: %v", err)
-	}
-
-	// Check if the address is a contract by querying contract info
-	wasmKeeper := k.getWasmKeeper()
-	contractInfo := wasmKeeper.GetContractInfo(ctx, contractAddr)
-	if contractInfo == nil {
-		return fmt.Errorf("address %s is not a smart contract", contractAddress)
-	}
-
-	return nil
-}
-
 // Helper function to get wasm keeper
 func (k msgServer) getWasmKeeper() wasmkeeper.Keeper {
-	if k.Keeper.getWasmKeeper == nil {
-		//nolint:forbidigo // init code
-		panic("wasm keeper not available")
-	}
-	return k.Keeper.getWasmKeeper()
+	return k.Keeper.GetWasmKeeper()
 }
 
 // Helper function to get wrapped token metadata using the keeper's existing method

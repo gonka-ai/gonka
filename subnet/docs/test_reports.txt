@@ -1,0 +1,379 @@
+=== STRESS TEST REPORT ===
+Date: 2026-03-06 20:48:51 UTC
+
+=== RUN   TestStress
+=== RUN   TestStress/16hosts_10rounds
+    stress_test.go:301: 
+    stress_test.go:302: --- stress test report ---
+    stress_test.go:303: config: hosts=16 rounds=10 inferences=160 GOMAXPROCS=12 NumCPU=12
+    stress_test.go:305: 
+    stress_test.go:306: timing:
+    stress_test.go:96:   inference_phase: n=160 avg=27.889113ms p50=29.224417ms p99=31.036917ms max=31.155ms total=4.462258121s
+    stress_test.go:308:   state_root_at_N=160: 61.875µs
+    stress_test.go:309:   finalize_phase: 743.026292ms (17 diffs, 16 seed reveals)
+    stress_test.go:310:   settlement: 59.292µs
+    stress_test.go:311:   total: 5.214634333s
+    stress_test.go:312: 
+    stress_test.go:313: memory:
+    stress_test.go:314:   state_size: 0.02 MB (host_stats=0.14 KB, inferences=0.02 MB)
+    stress_test.go:316:   diff_history: 0.05 MB (177 diffs)
+    stress_test.go:317: 
+    stress_test.go:318: signatures:
+    stress_test.go:319:   final_state: 16/16 signatures collected (nonce=177)
+    stress_test.go:321: 
+    stress_test.go:322: correctness:
+    stress_test.go:323:   final_balance: 9980800 (expected 9980800)
+    stress_test.go:324:   revealed_seeds: 16/16
+    stress_test.go:325:   diffs: 177 (expected 177)
+    stress_test.go:326:   host_stats:
+    stress_test.go:329:     slot 0: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 1: cost=1200 missed=0 invalid=0 req_val=9 comp_val=0
+    stress_test.go:329:     slot 2: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 3: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 4: cost=1200 missed=0 invalid=0 req_val=6 comp_val=0
+    stress_test.go:329:     slot 5: cost=1200 missed=0 invalid=0 req_val=7 comp_val=0
+    stress_test.go:329:     slot 6: cost=1200 missed=0 invalid=0 req_val=9 comp_val=0
+    stress_test.go:329:     slot 7: cost=1200 missed=0 invalid=0 req_val=6 comp_val=0
+    stress_test.go:329:     slot 8: cost=1200 missed=0 invalid=0 req_val=9 comp_val=0
+    stress_test.go:329:     slot 9: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 10: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 11: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 12: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 13: cost=1200 missed=0 invalid=0 req_val=3 comp_val=0
+    stress_test.go:329:     slot 14: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 15: cost=1200 missed=0 invalid=0 req_val=3 comp_val=0
+=== RUN   TestStress/16hosts_50rounds
+    stress_test.go:301: 
+    stress_test.go:302: --- stress test report ---
+    stress_test.go:303: config: hosts=16 rounds=50 inferences=800 GOMAXPROCS=12 NumCPU=12
+    stress_test.go:305: 
+    stress_test.go:306: timing:
+    stress_test.go:96:   inference_phase: n=800 avg=32.162563ms p50=32.515125ms p99=36.440041ms max=36.699333ms total=25.730051049s
+    stress_test.go:308:   state_root_at_N=800: 291.084µs
+    stress_test.go:309:   finalize_phase: 934.33575ms (17 diffs, 16 seed reveals)
+    stress_test.go:310:   settlement: 280.959µs
+    stress_test.go:311:   total: 26.673871209s
+    stress_test.go:312: 
+    stress_test.go:313: memory:
+    stress_test.go:314:   state_size: 0.12 MB (host_stats=0.14 KB, inferences=0.12 MB)
+    stress_test.go:316:   diff_history: 0.23 MB (817 diffs)
+    stress_test.go:317: 
+    stress_test.go:318: signatures:
+    stress_test.go:319:   final_state: 16/16 signatures collected (nonce=817)
+    stress_test.go:321: 
+    stress_test.go:322: correctness:
+    stress_test.go:323:   final_balance: 9904000 (expected 9904000)
+    stress_test.go:324:   revealed_seeds: 16/16
+    stress_test.go:325:   diffs: 817 (expected 817)
+    stress_test.go:326:   host_stats:
+    stress_test.go:329:     slot 0: cost=6000 missed=0 invalid=0 req_val=39 comp_val=0
+    stress_test.go:329:     slot 1: cost=6000 missed=0 invalid=0 req_val=21 comp_val=0
+    stress_test.go:329:     slot 2: cost=6000 missed=0 invalid=0 req_val=18 comp_val=0
+    stress_test.go:329:     slot 3: cost=6000 missed=0 invalid=0 req_val=35 comp_val=0
+    stress_test.go:329:     slot 4: cost=6000 missed=0 invalid=0 req_val=26 comp_val=0
+    stress_test.go:329:     slot 5: cost=6000 missed=0 invalid=0 req_val=23 comp_val=0
+    stress_test.go:329:     slot 6: cost=6000 missed=0 invalid=0 req_val=25 comp_val=0
+    stress_test.go:329:     slot 7: cost=6000 missed=0 invalid=0 req_val=16 comp_val=0
+    stress_test.go:329:     slot 8: cost=6000 missed=0 invalid=0 req_val=27 comp_val=0
+    stress_test.go:329:     slot 9: cost=6000 missed=0 invalid=0 req_val=22 comp_val=0
+    stress_test.go:329:     slot 10: cost=6000 missed=0 invalid=0 req_val=26 comp_val=0
+    stress_test.go:329:     slot 11: cost=6000 missed=0 invalid=0 req_val=18 comp_val=0
+    stress_test.go:329:     slot 12: cost=6000 missed=0 invalid=0 req_val=34 comp_val=0
+    stress_test.go:329:     slot 13: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 14: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 15: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+=== RUN   TestStress/32hosts_10rounds
+    stress_test.go:301: 
+    stress_test.go:302: --- stress test report ---
+    stress_test.go:303: config: hosts=32 rounds=10 inferences=320 GOMAXPROCS=12 NumCPU=12
+    stress_test.go:305: 
+    stress_test.go:306: timing:
+    stress_test.go:96:   inference_phase: n=320 avg=55.985651ms p50=58.599833ms p99=74.6105ms max=84.166875ms total=17.915408623s
+    stress_test.go:308:   state_root_at_N=320: 114.334µs
+    stress_test.go:309:   finalize_phase: 3.061373667s (33 diffs, 32 seed reveals)
+    stress_test.go:310:   settlement: 122µs
+    stress_test.go:311:   total: 20.994136s
+    stress_test.go:312: 
+    stress_test.go:313: memory:
+    stress_test.go:314:   state_size: 0.05 MB (host_stats=0.28 KB, inferences=0.05 MB)
+    stress_test.go:316:   diff_history: 0.10 MB (353 diffs)
+    stress_test.go:317: 
+    stress_test.go:318: signatures:
+    stress_test.go:319:   final_state: 32/32 signatures collected (nonce=353)
+    stress_test.go:321: 
+    stress_test.go:322: correctness:
+    stress_test.go:323:   final_balance: 9961600 (expected 9961600)
+    stress_test.go:324:   revealed_seeds: 32/32
+    stress_test.go:325:   diffs: 353 (expected 353)
+    stress_test.go:326:   host_stats:
+    stress_test.go:329:     slot 0: cost=1200 missed=0 invalid=0 req_val=6 comp_val=0
+    stress_test.go:329:     slot 1: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 2: cost=1200 missed=0 invalid=0 req_val=8 comp_val=0
+    stress_test.go:329:     slot 3: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 4: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+    stress_test.go:329:     slot 5: cost=1200 missed=0 invalid=0 req_val=6 comp_val=0
+    stress_test.go:329:     slot 6: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 7: cost=1200 missed=0 invalid=0 req_val=7 comp_val=0
+    stress_test.go:329:     slot 8: cost=1200 missed=0 invalid=0 req_val=3 comp_val=0
+    stress_test.go:329:     slot 9: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+    stress_test.go:329:     slot 10: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 11: cost=1200 missed=0 invalid=0 req_val=0 comp_val=0
+    stress_test.go:329:     slot 12: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 13: cost=1200 missed=0 invalid=0 req_val=3 comp_val=0
+    stress_test.go:329:     slot 14: cost=1200 missed=0 invalid=0 req_val=1 comp_val=0
+    stress_test.go:329:     slot 15: cost=1200 missed=0 invalid=0 req_val=10 comp_val=0
+    stress_test.go:329:     slot 16: cost=1200 missed=0 invalid=0 req_val=6 comp_val=0
+    stress_test.go:329:     slot 17: cost=1200 missed=0 invalid=0 req_val=8 comp_val=0
+    stress_test.go:329:     slot 18: cost=1200 missed=0 invalid=0 req_val=7 comp_val=0
+    stress_test.go:329:     slot 19: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 20: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+    stress_test.go:329:     slot 21: cost=1200 missed=0 invalid=0 req_val=10 comp_val=0
+    stress_test.go:329:     slot 22: cost=1200 missed=0 invalid=0 req_val=2 comp_val=0
+    stress_test.go:329:     slot 23: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 24: cost=1200 missed=0 invalid=0 req_val=5 comp_val=0
+    stress_test.go:329:     slot 25: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+    stress_test.go:329:     slot 26: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+    stress_test.go:329:     slot 27: cost=1200 missed=0 invalid=0 req_val=3 comp_val=0
+    stress_test.go:329:     slot 28: cost=1200 missed=0 invalid=0 req_val=6 comp_val=0
+    stress_test.go:329:     slot 29: cost=1200 missed=0 invalid=0 req_val=9 comp_val=0
+    stress_test.go:329:     slot 30: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+    stress_test.go:329:     slot 31: cost=1200 missed=0 invalid=0 req_val=4 comp_val=0
+=== RUN   TestStress/32hosts_50rounds
+    stress_test.go:301: 
+    stress_test.go:302: --- stress test report ---
+    stress_test.go:303: config: hosts=32 rounds=50 inferences=1600 GOMAXPROCS=12 NumCPU=12
+    stress_test.go:305: 
+    stress_test.go:306: timing:
+    stress_test.go:96:   inference_phase: n=1600 avg=69.251704ms p50=70.176208ms p99=84.790958ms max=86.873833ms total=1m50.802726868s
+    stress_test.go:308:   state_root_at_N=1600: 1.064333ms
+    stress_test.go:309:   finalize_phase: 4.545130083s (33 diffs, 32 seed reveals)
+    stress_test.go:310:   settlement: 736.5µs
+    stress_test.go:311:   total: 1m55.367811541s
+    stress_test.go:312: 
+    stress_test.go:313: memory:
+    stress_test.go:314:   state_size: 0.24 MB (host_stats=0.28 KB, inferences=0.24 MB)
+    stress_test.go:316:   diff_history: 0.46 MB (1633 diffs)
+    stress_test.go:317: 
+    stress_test.go:318: signatures:
+    stress_test.go:319:   final_state: 32/32 signatures collected (nonce=1633)
+    stress_test.go:321: 
+    stress_test.go:322: correctness:
+    stress_test.go:323:   final_balance: 9808000 (expected 9808000)
+    stress_test.go:324:   revealed_seeds: 32/32
+    stress_test.go:325:   diffs: 1633 (expected 1633)
+    stress_test.go:326:   host_stats:
+    stress_test.go:329:     slot 0: cost=6000 missed=0 invalid=0 req_val=31 comp_val=0
+    stress_test.go:329:     slot 1: cost=6000 missed=0 invalid=0 req_val=17 comp_val=0
+    stress_test.go:329:     slot 2: cost=6000 missed=0 invalid=0 req_val=22 comp_val=0
+    stress_test.go:329:     slot 3: cost=6000 missed=0 invalid=0 req_val=34 comp_val=0
+    stress_test.go:329:     slot 4: cost=6000 missed=0 invalid=0 req_val=24 comp_val=0
+    stress_test.go:329:     slot 5: cost=6000 missed=0 invalid=0 req_val=29 comp_val=0
+    stress_test.go:329:     slot 6: cost=6000 missed=0 invalid=0 req_val=28 comp_val=0
+    stress_test.go:329:     slot 7: cost=6000 missed=0 invalid=0 req_val=16 comp_val=0
+    stress_test.go:329:     slot 8: cost=6000 missed=0 invalid=0 req_val=18 comp_val=0
+    stress_test.go:329:     slot 9: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 10: cost=6000 missed=0 invalid=0 req_val=23 comp_val=0
+    stress_test.go:329:     slot 11: cost=6000 missed=0 invalid=0 req_val=17 comp_val=0
+    stress_test.go:329:     slot 12: cost=6000 missed=0 invalid=0 req_val=29 comp_val=0
+    stress_test.go:329:     slot 13: cost=6000 missed=0 invalid=0 req_val=17 comp_val=0
+    stress_test.go:329:     slot 14: cost=6000 missed=0 invalid=0 req_val=34 comp_val=0
+    stress_test.go:329:     slot 15: cost=6000 missed=0 invalid=0 req_val=32 comp_val=0
+    stress_test.go:329:     slot 16: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 17: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 18: cost=6000 missed=0 invalid=0 req_val=24 comp_val=0
+    stress_test.go:329:     slot 19: cost=6000 missed=0 invalid=0 req_val=23 comp_val=0
+    stress_test.go:329:     slot 20: cost=6000 missed=0 invalid=0 req_val=22 comp_val=0
+    stress_test.go:329:     slot 21: cost=6000 missed=0 invalid=0 req_val=22 comp_val=0
+    stress_test.go:329:     slot 22: cost=6000 missed=0 invalid=0 req_val=23 comp_val=0
+    stress_test.go:329:     slot 23: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 24: cost=6000 missed=0 invalid=0 req_val=33 comp_val=0
+    stress_test.go:329:     slot 25: cost=6000 missed=0 invalid=0 req_val=23 comp_val=0
+    stress_test.go:329:     slot 26: cost=6000 missed=0 invalid=0 req_val=27 comp_val=0
+    stress_test.go:329:     slot 27: cost=6000 missed=0 invalid=0 req_val=24 comp_val=0
+    stress_test.go:329:     slot 28: cost=6000 missed=0 invalid=0 req_val=20 comp_val=0
+    stress_test.go:329:     slot 29: cost=6000 missed=0 invalid=0 req_val=21 comp_val=0
+    stress_test.go:329:     slot 30: cost=6000 missed=0 invalid=0 req_val=27 comp_val=0
+    stress_test.go:329:     slot 31: cost=6000 missed=0 invalid=0 req_val=22 comp_val=0
+--- PASS: TestStress (168.25s)
+    --- PASS: TestStress/16hosts_10rounds (5.22s)
+    --- PASS: TestStress/16hosts_50rounds (26.68s)
+    --- PASS: TestStress/32hosts_10rounds (20.99s)
+    --- PASS: TestStress/32hosts_50rounds (115.37s)
+PASS
+ok  	subnet/user	168.642s
+
+
+=== FAULT TEST REPORT ===
+
+=== RUN   TestFault
+=== RUN   TestFault/10pct
+    fault_test.go:318: 
+    fault_test.go:319: --- fault test report (10% failure) ---
+    fault_test.go:320: config: hosts=16 dead=2 alive=14 rounds=3 total_inferences=48
+    fault_test.go:322: 
+    fault_test.go:323: inferences:
+    fault_test.go:324:   healthy=24/24 degraded=20/24
+    fault_test.go:325:   failures: expected=4 actual=4
+    fault_test.go:326:   pre_finalize:  pending=5 started=0 finished=43
+    fault_test.go:328:   post_finalize: pending=0 started=0 finished=44 timed_out=4
+    fault_test.go:331: 
+    fault_test.go:332: timeouts:
+    fault_test.go:333:   dead-host pending inferences: 4
+    fault_test.go:334:   timed out: 4
+    fault_test.go:335:   total missed: 4
+    fault_test.go:336: 
+    fault_test.go:337: state:
+    fault_test.go:338:   nonce: pre_finalize=48 post_finalize=62 (inferences=48)
+    fault_test.go:340:   balance: pre=9993340 post=9994720 (timeout refund=1200)
+    fault_test.go:342:   finalize: failed as expected (dead hosts in iteration)
+    fault_test.go:343:   alive hosts with req_val>0: 11
+    fault_test.go:344: 
+    fault_test.go:345: signatures: 14/14 alive hosts signed
+    fault_test.go:346: 
+    fault_test.go:347: host_stats:
+    fault_test.go:354:   slot  0 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  1 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot  2 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  3 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  4 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  5 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  6 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot  7 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  8 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  9 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 10 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot 11 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot 12 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot 13 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot 14 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 15 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+=== RUN   TestFault/20pct
+    fault_test.go:318: 
+    fault_test.go:319: --- fault test report (20% failure) ---
+    fault_test.go:320: config: hosts=16 dead=4 alive=12 rounds=3 total_inferences=48
+    fault_test.go:322: 
+    fault_test.go:323: inferences:
+    fault_test.go:324:   healthy=24/24 degraded=16/24
+    fault_test.go:325:   failures: expected=8 actual=8
+    fault_test.go:326:   pre_finalize:  pending=9 started=0 finished=39
+    fault_test.go:328:   post_finalize: pending=0 started=0 finished=40 timed_out=8
+    fault_test.go:331: 
+    fault_test.go:332: timeouts:
+    fault_test.go:333:   dead-host pending inferences: 8
+    fault_test.go:334:   timed out: 8
+    fault_test.go:335:   total missed: 8
+    fault_test.go:336: 
+    fault_test.go:337: state:
+    fault_test.go:338:   nonce: pre_finalize=48 post_finalize=60 (inferences=48)
+    fault_test.go:340:   balance: pre=9992620 post=9995200 (timeout refund=2400)
+    fault_test.go:342:   finalize: failed as expected (dead hosts in iteration)
+    fault_test.go:343:   alive hosts with req_val>0: 8
+    fault_test.go:344: 
+    fault_test.go:345: signatures: 12/12 alive hosts signed
+    fault_test.go:346: 
+    fault_test.go:347: host_stats:
+    fault_test.go:354:   slot  0 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  1 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  2 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  3 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  4 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  5 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  6 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  7 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  8 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  9 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot 10 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 11 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot 12 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 13 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 14 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 15 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+=== RUN   TestFault/30pct
+    fault_test.go:318: 
+    fault_test.go:319: --- fault test report (30% failure) ---
+    fault_test.go:320: config: hosts=16 dead=5 alive=11 rounds=3 total_inferences=48
+    fault_test.go:322: 
+    fault_test.go:323: inferences:
+    fault_test.go:324:   healthy=24/24 degraded=14/24
+    fault_test.go:325:   failures: expected=10 actual=10
+    fault_test.go:326:   pre_finalize:  pending=11 started=0 finished=37
+    fault_test.go:328:   post_finalize: pending=0 started=0 finished=38 timed_out=10
+    fault_test.go:331: 
+    fault_test.go:332: timeouts:
+    fault_test.go:333:   dead-host pending inferences: 10
+    fault_test.go:334:   timed out: 10
+    fault_test.go:335:   total missed: 10
+    fault_test.go:336: 
+    fault_test.go:337: state:
+    fault_test.go:338:   nonce: pre_finalize=48 post_finalize=59 (inferences=48)
+    fault_test.go:340:   balance: pre=9992260 post=9995440 (timeout refund=3000)
+    fault_test.go:342:   finalize: failed as expected (dead hosts in iteration)
+    fault_test.go:343:   alive hosts with req_val>0: 7
+    fault_test.go:344: 
+    fault_test.go:345: signatures: 11/11 alive hosts signed
+    fault_test.go:346: 
+    fault_test.go:347: host_stats:
+    fault_test.go:354:   slot  0 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  1 [alive]: cost=360 missed=0 invalid=0 req_val=5 comp_val=0
+    fault_test.go:354:   slot  2 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  3 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot  4 [alive]: cost=360 missed=0 invalid=0 req_val=3 comp_val=0
+    fault_test.go:354:   slot  5 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  6 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  7 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  8 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  9 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot 10 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot 11 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 12 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 13 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 14 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 15 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+=== RUN   TestFault/40pct
+    fault_test.go:318: 
+    fault_test.go:319: --- fault test report (40% failure) ---
+    fault_test.go:320: config: hosts=16 dead=7 alive=9 rounds=3 total_inferences=48
+    fault_test.go:322: 
+    fault_test.go:323: inferences:
+    fault_test.go:324:   healthy=24/24 degraded=10/24
+    fault_test.go:325:   failures: expected=14 actual=14
+    fault_test.go:326:   pre_finalize:  pending=15 started=0 finished=33
+    fault_test.go:328:   post_finalize: pending=0 started=0 finished=34 timed_out=14
+    fault_test.go:331: 
+    fault_test.go:332: timeouts:
+    fault_test.go:333:   dead-host pending inferences: 14
+    fault_test.go:334:   timed out: 14
+    fault_test.go:335:   total missed: 14
+    fault_test.go:336: 
+    fault_test.go:337: state:
+    fault_test.go:338:   nonce: pre_finalize=48 post_finalize=57 (inferences=48)
+    fault_test.go:340:   balance: pre=9991540 post=9995920 (timeout refund=4200)
+    fault_test.go:342:   finalize: failed as expected (dead hosts in iteration)
+    fault_test.go:343:   alive hosts with req_val>0: 5
+    fault_test.go:344: 
+    fault_test.go:345: signatures: 9/9 alive hosts signed
+    fault_test.go:346: 
+    fault_test.go:347: host_stats:
+    fault_test.go:354:   slot  0 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  1 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  2 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  3 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  4 [alive]: cost=360 missed=0 invalid=0 req_val=2 comp_val=0
+    fault_test.go:354:   slot  5 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  6 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  7 [alive]: cost=360 missed=0 invalid=0 req_val=1 comp_val=0
+    fault_test.go:354:   slot  8 [alive]: cost=360 missed=0 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot  9 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 10 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 11 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 12 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 13 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 14 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+    fault_test.go:354:   slot 15 [DEAD]: cost=120 missed=2 invalid=0 req_val=0 comp_val=0
+--- PASS: TestFault (6.51s)
+    --- PASS: TestFault/10pct (1.69s)
+    --- PASS: TestFault/20pct (1.67s)
+    --- PASS: TestFault/30pct (1.63s)
+    --- PASS: TestFault/40pct (1.52s)
+PASS
+ok  	subnet/user	6.711s

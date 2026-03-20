@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests subnetctl-build
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
@@ -86,6 +86,10 @@ test-blockchain: check-docker run-blockchain-tests
 api-local-build:
 	@echo "Building decentralized-api locally..."
 	@cd decentralized-api && go build -mod=mod -o ./build/dapi
+
+subnetctl-build:
+	@echo "Building subnetctl..."
+	@cd subnet && go build -o ../build/subnetctl ./cmd/subnetctl/
 
 node-local-build:
 	@echo "Building inference-chain locally..."

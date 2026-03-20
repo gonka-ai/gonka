@@ -70,6 +70,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
 	k.SetParticipant(ctx, payer)
 
+	k.SetActiveParticipants(ctx, ParticipantsToActive(1, payer, executor))
 	// Inference with non-zero cost
 	inferenceID := "refund-no-slash"
 	actualCost := int64(123)
@@ -90,7 +91,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 
 	// We do NOT expect any slashing in this test
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
 	require.NoError(t, err)
@@ -137,6 +138,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
 	k.SetParticipant(ctx, payer)
 
+	k.SetActiveParticipants(ctx, ParticipantsToActive(1, payer, executor))
 	// Non-zero cost
 	inferenceID := "refund-with-slash"
 	actualCost := int64(250)
@@ -161,7 +163,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 	// Expect a slash due to status transition to INVALID
 	execAcc, _ := sdk.AccAddressFromBech32(executorAddr)
 	slashFraction, _ := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), execAcc, slashFraction, types.SlashReasonInvalidation).Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), execAcc, slashFraction, types.SlashReasonInvalidation, gomock.Any()).Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
 	require.NoError(t, err)
@@ -222,12 +224,13 @@ func TestInvalidateInference_NextEpoch_NoRefundNoCharge_NoSlash(t *testing.T) {
 
 	err = setEffectiveEpoch(ctx, k, 2, mocks)
 	require.NoError(t, err)
+	k.SetActiveParticipants(ctx, ParticipantsToActive(2, payer, executor))
 
 	// In the correct behavior, since the invalidation happens after the epoch of execution,
 	// there should be NO refund and NO charge to executor, and NO slashing.
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
 	require.NoError(t, err)
@@ -282,8 +285,10 @@ func TestInvalidateInference_RemovesActiveInvalidations(t *testing.T) {
 	executorAddr := sample.AccAddress()
 	payerAddr := sample.AccAddress()
 	invalidator := sample.AccAddress()
-	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
-	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
+	executor := types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	k.SetParticipant(ctx, executor)
+	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	k.SetParticipant(ctx, payer)
 
 	inferenceID := "remove-active-invalidations"
 	k.SetInference(ctx, types.Inference{
@@ -306,9 +311,10 @@ func TestInvalidateInference_RemovesActiveInvalidations(t *testing.T) {
 
 	// Move to next epoch to avoid any refund/charge side effects in this focused test
 	require.NoError(t, setEffectiveEpoch(ctx, k, 2, mocks))
+	k.SetActiveParticipants(ctx, ParticipantsToActive(2, payer, executor))
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID, Invalidator: invalidator})
 	require.NoError(t, err)
@@ -326,8 +332,10 @@ func TestInvalidateInference_AlreadyInvalidated_RemovesActiveInvalidations(t *te
 	executorAddr := sample.AccAddress()
 	payerAddr := sample.AccAddress()
 	invalidator := sample.AccAddress()
-	k.SetParticipant(ctx, types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
-	k.SetParticipant(ctx, types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}})
+	executor := types.Participant{Index: executorAddr, Address: executorAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	k.SetParticipant(ctx, executor)
+	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	k.SetParticipant(ctx, payer)
 
 	inferenceID := "already-invalidated-removes"
 	k.SetInference(ctx, types.Inference{
@@ -350,9 +358,10 @@ func TestInvalidateInference_AlreadyInvalidated_RemovesActiveInvalidations(t *te
 
 	// Move to next epoch to avoid any refund/charge expectations
 	require.NoError(t, setEffectiveEpoch(ctx, k, 2, mocks))
+	k.SetActiveParticipants(ctx, ParticipantsToActive(2, payer, executor))
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	// Call invalidate; should succeed and remove ActiveInvalidations
 	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID, Invalidator: invalidator})

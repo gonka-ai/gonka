@@ -24,6 +24,7 @@ message Params {
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
   TransferAgentAccessParams transfer_agent_access_params = 13;
+  SubnetEscrowParams subnet_escrow_params = 14;
 }
 
 message GenesisOnlyParams {
@@ -73,6 +74,7 @@ message EpochParams {
   int64 inference_pruning_max = 12;
   int64 poc_pruning_max = 13;
   Decimal poc_slot_allocation = 14; // Fraction of slots allocated to PoC (0.0 to 1.0, default 0.5)
+  int64 confirmation_poc_safety_window = 15;
 }
 
 message ValidationParams {
@@ -101,6 +103,7 @@ message ValidationParams {
   Decimal downtime_reputation_preserve = 22; // How much reputation to keep after a downtime him (defaults to 0)
   Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
   Decimal binom_test_p0 = 24; // The null hypothesis probability for the binomial test (default 0.10)
+  bool claim_validation_enabled = 25; // Enables claim-time validation checks in MsgClaimRewards
 }
 
 message PoCModelParams {
@@ -323,4 +326,15 @@ message TransferAgentAccessParams {
   // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
   // If empty, all TAs are allowed.
   repeated string allowed_transfer_addresses = 1;
+}
+
+// SubnetEscrowParams defines governance-controlled parameters for subnet escrow creation and settlement.
+message SubnetEscrowParams {
+  option (gogoproto.equal) = true;
+  uint64 min_amount = 1;
+  uint64 max_amount = 2;
+  uint32 max_escrows_per_epoch = 3;
+  uint32 group_size = 4;
+  repeated string allowed_creator_addresses = 5;
+  uint64 token_price = 6;
 }

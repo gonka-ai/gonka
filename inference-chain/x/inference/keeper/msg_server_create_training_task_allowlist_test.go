@@ -17,27 +17,37 @@ func TestCreateTrainingTask_AllowListEnforced(t *testing.T) {
 	ms := keeper.NewMsgServerImpl(k)
 	wctx := sdk.UnwrapSDKContext(ctx)
 
+	creator := "gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2"
+	// Register participant
+	participant := types.Participant{Index: creator, Address: creator}
+	k.SetParticipant(ctx, participant)
+
+	config := &types.TrainingConfig{
+		Datasets: &types.TrainingDatasets{
+			Train: "train_data",
+			Test:  "test_data",
+		},
+	}
 	// not on allow list -> expect ErrTrainingNotAllowed
 	_, err := ms.CreateTrainingTask(wctx, &types.MsgCreateTrainingTask{
-		Creator:           "gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2",
+		Creator:           creator,
 		HardwareResources: []*types.TrainingHardwareResources{},
-		Config:            &types.TrainingConfig{},
+		Config:            config,
 	})
 	require.Error(t, err)
 	require.ErrorIs(t, err, types.ErrTrainingNotAllowed)
 
 	// add to allow list
-	acc, e := sdk.AccAddressFromBech32("gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2")
+	acc, e := sdk.AccAddressFromBech32(creator)
 	require.NoError(t, e)
 	require.NoError(t, k.TrainingStartAllowListSet.Set(wctx, acc))
 
 	// now allowed -> should succeed
 	resp, err := ms.CreateTrainingTask(wctx, &types.MsgCreateTrainingTask{
-		Creator:           "gonka1hgt9lxxxwpsnc3yn2nheqqy9a8vlcjwvgzpve2",
+		Creator:           creator,
 		HardwareResources: []*types.TrainingHardwareResources{},
-		Config:            &types.TrainingConfig{},
+		Config:            config,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.NotNil(t, resp.Task)
 }

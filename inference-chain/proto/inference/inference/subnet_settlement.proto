@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// Duplicated from subnet module for deterministic on-chain verification.
+// These formats are frozen by the subnet protocol.
+// FROZEN: field numbers and types must not change. Chain (gogoproto) and
+// subnet (google-protobuf) must produce identical serialization.
+// See TestComputeSubnetHostStatsHash_GoldenValue for cross-library validation.
+
+message SubnetHostStatsProto {
+  uint32 slot_id = 1;
+  uint32 missed = 2;
+  uint32 invalid = 3;
+  uint64 cost = 4;
+  uint32 required_validations = 5;
+  uint32 completed_validations = 6;
+}
+
+message SubnetHostStatsMapProto {
+  repeated SubnetHostStatsProto entries = 1;
+}
+
+message SubnetStateSignatureContent {
+  bytes state_root = 1;
+  string escrow_id = 2;
+  uint64 nonce = 3;
+}

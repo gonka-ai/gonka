@@ -234,12 +234,6 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		}
 	}
 
-	// Count current slot coverage before adding new signature
-	currentSlotsCovered := uint32(0)
-	for _, partialSig := range request.PartialSignatures {
-		currentSlotsCovered += uint32(len(partialSig.SlotIndices))
-	}
-
 	// Add partial signature to request
 	request.PartialSignatures = append(request.PartialSignatures, types.PartialSignature{
 		ParticipantAddress: submitter,
@@ -313,9 +307,8 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 		totalSlotsCovered += uint32(len(partialSig.SlotIndices))
 	}
 
-	// Get total slots from epoch (threshold = more than 50% of slots)
-	totalSlots := epochBLSData.ITotalSlots
-	threshold := totalSlots/2 + 1
+	// Use DKG threshold t+1, where t is configured via TSlotsDegreeOffset at epoch creation.
+	threshold := epochBLSData.TSlotsDegree + 1
 
 	if totalSlotsCovered < threshold {
 		// Not enough signatures yet, keep collecting

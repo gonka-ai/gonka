@@ -244,8 +244,8 @@ func (bl *BandwidthLimiter) ReleaseRequest(startBlockHeight int64, estimatedKB f
 	}
 }
 
-func (bl *BandwidthLimiter) startCleanupRoutine() {
-	ticker := time.NewTicker(bl.cleanupInterval)
+func (bl *BandwidthLimiter) startCleanupRoutine(interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -342,7 +342,7 @@ func NewBandwidthLimiterFromConfig(configManager ConfigManager, recorder cosmosc
 		"maxInferences", maxInferencesPerBlock,
 		"weightBased", recorder != nil && phaseTracker != nil)
 
-	go bl.startCleanupRoutine()
+	go bl.startCleanupRoutine(bl.cleanupInterval)
 	return bl
 }
 

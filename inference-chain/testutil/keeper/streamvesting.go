@@ -49,6 +49,18 @@ func StreamVestingKeeperWithMocks(t testing.TB) (keeper.Keeper, sdk.Context, Str
 	return k, ctx, mocks
 }
 
+// StreamVestingGovAuthority returns the governance module address used in
+// streamvesting test keepers, so tests can construct valid authorized senders.
+func StreamVestingGovAuthority() sdk.AccAddress {
+	return authtypes.NewModuleAddress(govtypes.ModuleName)
+}
+
+// StreamVestingInferenceAuthority returns the inference module address used in
+// streamvesting test keepers.
+func StreamVestingInferenceAuthority() sdk.AccAddress {
+	return authtypes.NewModuleAddress("inference")
+}
+
 func StreamVestingKeeperWithMock(
 	t testing.TB,
 	bankEscrowKeeper *MockBookkeepingBankKeeper,

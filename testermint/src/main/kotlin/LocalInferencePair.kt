@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.google.gson.Gson
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
@@ -247,6 +248,14 @@ data class LocalInferencePair(
         api.addInferenceParticipant(self)
     }
 
+    fun stopApiContainer() {
+        val apiContainer = getRawContainers(config).getApi(name)
+            ?: error("API container not found for $name")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            dockerClient.stopContainerCmd(apiContainer.id).exec()
+        }
+    }
+
     fun setPocWeight(weight: Long, node: InferenceNode? = null) {
         if (node == null) {
             this.api.getNodes().forEach {
@@ -291,6 +300,12 @@ data class LocalInferencePair(
                 "deposit-collateral",
                 "${amount}${this.config.denom}",
             )
+        )
+    }
+
+    fun createSubnetEscrow(amount: Long): TxResponse {
+        return this.submitTransaction(
+            listOf("inference", "create-subnet-escrow", amount.toString())
         )
     }
 
@@ -711,6 +726,99 @@ data class LocalInferencePair(
         File("reboot.txt").bufferedWriter().use { writer ->
             writer.write("true")
         }
+    }
+
+    data class SubnetProxyHandle(val escrowId: Long, val port: Int, val proxyUrl: String)
+
+    fun startSubnetProxy(escrowId: Long, keyName: String? = null, port: Int = 18080 + escrowId.toInt()): SubnetProxyHandle =
+        wrapLog("startSubnetProxy", true) {
+            val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
+            val stderrFile = "/tmp/subnetctl-proxy-${escrowId}.log"
+            val startCommand = listOf(
+                "sh", "-c",
+                "SUBNET_PRIVATE_KEY='$privateKey'" +
+                    " SUBNET_ESCROW_ID=$escrowId" +
+                    " SUBNET_CHAIN_REST=http://\$NODE_HOST:1317" +
+                    " SUBNET_PORT=$port" +
+                    " SUBNET_STORAGE_PATH=/tmp/subnetctl-proxy-${escrowId}.db" +
+                    " nohup subnetctl >$stderrFile 2>&1 &" +
+                    " echo \$!"
+            )
+            api.executor.exec(startCommand, null)
+            // Wait for proxy to be ready.
+            val proxyUrl = "http://localhost:$port"
+            var ready = false
+            for (i in 0 until 30) {
+                try {
+                    val output = api.executor.exec(listOf("sh", "-c", "curl -sf $proxyUrl/v1/status >/dev/null 2>&1 && echo OK"), null)
+                    if (output.any { it.trim() == "OK" }) {
+                        ready = true
+                        break
+                    }
+                } catch (_: Exception) { }
+                Thread.sleep(500)
+            }
+            if (!ready) {
+                val logs = try {
+                    api.executor.exec(listOf("cat", stderrFile), null).joinToString("")
+                } catch (_: Exception) { "no logs" }
+                error("subnetctl did not start within 15s. Logs:\n$logs")
+            }
+            SubnetProxyHandle(escrowId, port, proxyUrl)
+        }
+
+    fun stopSubnetProxy(escrowId: Long) {
+        try {
+            api.executor.exec(listOf("sh", "-c", "pkill -f 'SUBNET_ESCROW_ID=$escrowId.*subnetctl' || true"), null)
+        } catch (_: Exception) { /* ignore */ }
+    }
+
+    fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
+        val body = """{"model":"$model","messages":[{"role":"user","content":"$prompt"}],"max_tokens":100,"stream":$stream}"""
+        val result = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl -sf -X POST $proxyUrl/v1/chat/completions -H 'Content-Type: application/json' -d '${body.replace("'", "'\\''")}'"
+        ), null)
+        return result.joinToString("")
+    }
+
+    fun finalizeSubnetProxy(proxyUrl: String): SubnetctlResult {
+        val raw = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl -sf -X POST $proxyUrl/v1/finalize"
+        ), null).joinToString("")
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("finalize returned no JSON object. raw:\n$raw")
+        }
+        val json = raw.substring(start, end + 1)
+        val parsed = Gson().fromJson(json, SubnetSettlementData::class.java)
+        return SubnetctlResult(parsed = parsed, rawJson = json, stderr = "")
+    }
+
+    data class SubnetctlResult(val parsed: SubnetSettlementData, val rawJson: String, val stderr: String)
+
+    fun settleSubnetEscrow(settlementJson: String, from: String? = null): TxResponse =
+        wrapLog("settleSubnetEscrow", true) {
+            node.writeFileToContainer(settlementJson, "settlement.json")
+            if (from != null) {
+                val txResp = node.sendTransactionDirectly(
+                    listOf("inference", "settle-subnet-escrow", "settlement.json"),
+                    from
+                )
+                node.waitForTxProcessed(txResp.txhash)
+            } else {
+                submitTransaction(listOf("inference", "settle-subnet-escrow", "settlement.json"))
+            }
+        }
+
+    fun createSubnetEscrow(amount: Long, from: String): TxResponse {
+        val txResp = node.sendTransactionDirectly(
+            listOf("inference", "create-subnet-escrow", amount.toString()),
+            from
+        )
+        return node.waitForTxProcessed(txResp.txhash)
     }
 
     fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? =

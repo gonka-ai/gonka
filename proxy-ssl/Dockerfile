@@ -30,10 +30,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o proxy-ssl ./cmd/cert-issuer
+# Build using the in-image Go toolchain to avoid downloading/running a different
+# toolchain binary in emulated linux/amd64 Docker builds.
+RUN GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o proxy-ssl ./cmd/cert-issuer
 # Final stage
-FROM alpine:latest
+FROM alpine:3.23.3
 
 # Install runtime dependencies and su-exec for dropping privileges
 RUN apk --no-cache add ca-certificates tzdata curl su-exec

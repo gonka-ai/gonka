@@ -10,12 +10,11 @@ import (
 )
 
 func (k msgServer) CreateDummyTrainingTask(goCtx context.Context, msg *types.MsgCreateDummyTrainingTask) (*types.MsgCreateDummyTrainingTaskResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	if err := k.CheckTrainingAllowList(ctx, msg); err != nil {
+	if err := k.CheckPermission(goCtx, msg, TrainingStartPermission); err != nil {
 		return nil, err
 	}
 
+	ctx := sdk.UnwrapSDKContext(goCtx)
 	msg.Task.CreatedAtBlockHeight = uint64(ctx.BlockHeight())
 	if msg.Task.Epoch == nil {
 		msg.Task.Epoch = training.NewEmptyEpochInfo()

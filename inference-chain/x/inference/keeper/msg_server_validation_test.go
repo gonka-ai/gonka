@@ -34,6 +34,7 @@ func TestMsgServer_Validation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Validator,
@@ -69,11 +70,12 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 	mocks := inferenceHelper.Mocks
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 1,
 	}, nil)
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 2,
 	}, nil)
 	ms := inferenceHelper.MessageServer
@@ -87,14 +89,14 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	log.Print(inference)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
-	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
+	mocks.GroupKeeper.EXPECT().Vote(gomock.Any(), gomock.Eq(&group.MsgVote{
 		ProposalId: 1,
 		Voter:      testutil.Requester,
 		Option:     group.VOTE_OPTION_YES,
 		Metadata:   "Invalidate inference " + expected.InferenceId,
 		Exec:       group.Exec_EXEC_TRY,
 	}))
-	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
+	mocks.GroupKeeper.EXPECT().Vote(gomock.Any(), gomock.Eq(&group.MsgVote{
 		ProposalId: 2,
 		Voter:      testutil.Requester,
 		Option:     group.VOTE_OPTION_NO,
@@ -139,6 +141,11 @@ func addMembersToGroupData(k keeper.Keeper, ctx sdk.Context) {
 	}
 	groupData.TotalWeight = total
 	k.SetEpochGroupData(ctx, groupData)
+}
+
+func buildValidationCacheForTest(t *testing.T, k keeper.Keeper, ctx sdk.Context) {
+	t.Helper()
+	require.NoError(t, k.BuildEpochDataTransientCache(ctx))
 }
 
 func TestMsgServer_NoInference(t *testing.T) {
@@ -199,6 +206,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 	})
 	require.NoError(t, err)
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
+		Creator:              testutil.Executor,
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
@@ -228,7 +236,8 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	params.BandwidthLimitsParams.InvalidationsLimit = 1
 	params.BandwidthLimitsParams.InvalidationsLimitCurve = 1
 	params.BandwidthLimitsParams.InvalidationsSamplePeriod = 60
-	k.SetParams(ctx, params)
+	err = k.SetParams(ctx, params)
+	require.NoError(t, err)
 
 	// Pre-populate one active invalidation for the validator so we hit the limit (>= 1)
 	err = k.ActiveInvalidations.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), "prev-inference"))
@@ -239,6 +248,7 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// Attempt a failing validation; since limit reached, it should early-return without changing status
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
@@ -267,6 +277,64 @@ func TestMsgServer_Validation_InvalidationsLimit_NoStatusChange_ButRecordsCredit
 	require.True(t, foundId, "expected inference id to be recorded in epoch group validations")
 }
 
+func TestMsgServer_Validation_InvalidationsLimit_AllowsVote_WithHighRollingActivity(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+	addMembersToGroupData(k, ctx)
+
+	// Configure limit curve so max invalidations grows above 1 when recent activity is high.
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	if params.BandwidthLimitsParams == nil {
+		params.BandwidthLimitsParams = &types.BandwidthLimitsParams{}
+	}
+	params.BandwidthLimitsParams.InvalidationsLimit = 10
+	params.BandwidthLimitsParams.InvalidationsLimitCurve = 1
+	params.BandwidthLimitsParams.InvalidationsSamplePeriod = 60
+	k.SetParams(ctx, params)
+
+	// Current active invalidations = 1.
+	validatorAddr := sdk.MustAccAddressFromBech32(testutil.Validator)
+	err = k.ActiveInvalidations.Set(ctx, collections.Join(validatorAddr, "prev-inference"))
+	require.NoError(t, err)
+
+	// Seed rolling inference-count state with high recent traffic for this model.
+	err = k.UpdateModelRollingWindowsForActiveModels(
+		ctx,
+		[]string{model.Id},
+		map[string]uint64{model.Id: 0},
+		60,
+		map[string]uint64{model.Id: 100},
+		60,
+	)
+	require.NoError(t, err)
+
+	// Create and finish an inference.
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
+
+	// With high rolling activity, invalidation should proceed to voting (not early-return).
+	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
+	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.10), // below threshold so it triggers invalidation voting
+	})
+	require.NoError(t, err)
+
+	saved, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, saved.Status)
+}
+
 func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(t *testing.T) {
 	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
 	createParticipants(t, inferenceHelper.MessageServer, ctx)
@@ -280,6 +348,7 @@ func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// First validation should succeed
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{

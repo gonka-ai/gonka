@@ -8,6 +8,10 @@ import (
 )
 
 func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPocBatch) (*types.MsgSubmitPocBatchResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
+		return nil, err
+	}
+
 	// V1 dispatch: route to V1 handler when poc_v2_enabled=false
 	params, err := k.GetParams(goCtx)
 	if err != nil {

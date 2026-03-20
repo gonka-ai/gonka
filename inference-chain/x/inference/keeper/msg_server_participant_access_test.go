@@ -36,6 +36,10 @@ func TestParticipantAccess_SubmitPocBatch_Deprecated(t *testing.T) {
 	params, _ := k.GetParams(sdkCtx)
 	params.PocParams.PocV2Enabled = true
 	require.NoError(t, k.SetParams(sdkCtx, params))
+	_ = k.SetParticipant(sdkCtx, types.Participant{
+		Index:  testutil.Executor,
+		Status: types.ParticipantStatus_ACTIVE,
+	})
 
 	_, err := ms.SubmitPocBatch(sdkCtx, &types.MsgSubmitPocBatch{
 		Creator:                  testutil.Executor,
@@ -58,6 +62,12 @@ func TestParticipantAccess_SubmitPocValidation_Deprecated(t *testing.T) {
 	params, _ := k.GetParams(sdkCtx)
 	params.PocParams.PocV2Enabled = true
 	require.NoError(t, k.SetParams(sdkCtx, params))
+
+	_ = k.SetParticipant(sdkCtx, types.Participant{
+		Address: testutil.Creator,
+		Index:   testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
 
 	_, err := ms.SubmitPocValidation(sdkCtx, &types.MsgSubmitPocValidation{
 		Creator:                  testutil.Creator,

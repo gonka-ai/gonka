@@ -1,5 +1,6 @@
 import requests
 import math
+import threading
 from typing import (
     Dict,
     Any,
@@ -27,6 +28,17 @@ from common.logger import create_logger
 
 
 logger = create_logger(__name__)
+
+_output_path_to_lock: Dict[str, threading.Lock] = {}
+_registry_lock = threading.Lock()
+
+def _get_lock_for_path(path: str) -> threading.Lock:
+    if not path:
+        return threading.Lock()
+    with _registry_lock:
+        if path not in _output_path_to_lock:
+            _output_path_to_lock[path] = threading.Lock()
+        return _output_path_to_lock[path]
 
 
 class EnforcedToken(BaseModel):
@@ -59,6 +71,19 @@ def _prepare_messages(
     ]
 
 
+def _sampling_extras(request_params: RequestParams) -> Dict[str, Any]:
+    """Return optional sampling params that are set (non-None) plus additional_params."""
+    extras: Dict[str, Any] = {}
+    if request_params.top_p is not None:
+        extras["top_p"] = request_params.top_p
+    if request_params.top_k is not None:
+        extras["top_k"] = request_params.top_k
+    if request_params.repetition_penalty is not None:
+        extras["repetition_penalty"] = request_params.repetition_penalty
+    extras.update(request_params.additional_params)
+    return extras
+
+
 def inference(
     model_info: ModelInfo,
     request_params: RequestParams,
@@ -76,7 +101,7 @@ def inference(
         "n": 1,
         "top_logprobs": request_params.top_logprobs,
         "skip_special_tokens": False,
-        "repetition_penalty": 1.2,
+        **_sampling_extras(request_params),
     }
     
     response = requests.post(url, json=payload)
@@ -104,7 +129,7 @@ def validation(
         "top_logprobs": request_params.top_logprobs,
         "n": 1,
         "skip_special_tokens": False,
-        "repetition_penalty": 1.2,
+        **_sampling_extras(request_params),
     }
     
     if enforced_str:
@@ -151,24 +176,29 @@ def generate_and_validate(
         experiment_request.validation_model,
         experiment_request.request_params,
         experiment_request.prompt,
-        # enforced_str=inference_result.text,
         enforced_tokens=enforced_tokens
     )
     validation_result = _extract_logprobs(validation_resp)
     if validation_result.text != inference_result.text:
-        print(
-            f"text sequences don't match\n" +
-            f"inference:\n {inference_result.text}\n" +
-            f"{'-'*10}\n" +
-            f"validation:\n {validation_result.text}\n" +
-            f"{'-'*100}"
+        raise RuntimeError(
+            "Text sequences don't match between inference and validation."
         )
-        exit(-1)
 
-    return experiment_request.to_result(
+    item = experiment_request.to_result(
         inference_result,
         validation_result
     )
+
+    if experiment_request.output_path:
+        lock = _get_lock_for_path(experiment_request.output_path)
+        with lock:
+            try:
+                with open(experiment_request.output_path, 'a') as f:
+                    f.write(item.model_dump_json() + '\n')
+            except Exception as e:
+                logger.error(f"Failed to write result to {experiment_request.output_path}: {e}")
+
+    return item
 
 
 def token_distance(
@@ -223,7 +253,7 @@ def distance(
 
 def token_distance2(
     inf_position_logprobs: PositionResult,
-    val_position_logprobs: PositionResult
+    val_position_logprobs: PositionResult,
 ):
     dist = 0.0
     n_matches = 0
@@ -263,7 +293,10 @@ def similarity2(
     return 1 - dist, matches_ratio
 
 
-def distance2(inf_result: Result, val_result: Result):
+def distance2(
+    inf_result: Result,
+    val_result: Result,
+):
     if not _check_match(inf_result, val_result):
         return -1, -1
 

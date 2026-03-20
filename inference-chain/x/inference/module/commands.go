@@ -1,13 +1,18 @@
 package inference
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference"
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/spf13/cobra"
 )
 
@@ -72,6 +77,107 @@ Note: Chain ID will be auto-detected from the chain if not specified with --chai
 				mlOperationalAddress,
 				nil, // Use default expiration (1 year)
 			)
+		},
+	}
+
+	flags.AddTxFlagsToCmd(cmd)
+	return cmd
+}
+
+type settlementFileJSON struct {
+	EscrowID   string                    `json:"escrow_id"`
+	StateRoot  string                    `json:"state_root"`
+	Nonce      uint64                    `json:"nonce"`
+	RestHash   string                    `json:"rest_hash"`
+	HostStats  []settlementHostStatsJSON `json:"host_stats"`
+	Signatures []slotSignatureJSON       `json:"signatures"`
+}
+
+type settlementHostStatsJSON struct {
+	SlotID               uint32 `json:"slot_id"`
+	Missed               uint32 `json:"missed"`
+	Invalid              uint32 `json:"invalid"`
+	Cost                 uint64 `json:"cost"`
+	RequiredValidations  uint32 `json:"required_validations"`
+	CompletedValidations uint32 `json:"completed_validations"`
+}
+
+type slotSignatureJSON struct {
+	SlotID    uint32 `json:"slot_id"`
+	Signature string `json:"signature"`
+}
+
+func SettleSubnetEscrowCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "settle-subnet-escrow <settlement-file.json>",
+		Short: "Settle a subnet escrow using a settlement JSON file produced by subnetctl",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientCtx, err := client.GetClientTxContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				return fmt.Errorf("read settlement file: %w", err)
+			}
+
+			var sf settlementFileJSON
+			if err := json.Unmarshal(data, &sf); err != nil {
+				return fmt.Errorf("parse settlement JSON: %w", err)
+			}
+
+			escrowID, err := strconv.ParseUint(sf.EscrowID, 10, 64)
+			if err != nil {
+				return fmt.Errorf("parse escrow_id: %w", err)
+			}
+
+			stateRoot, err := base64.StdEncoding.DecodeString(sf.StateRoot)
+			if err != nil {
+				return fmt.Errorf("decode state_root: %w", err)
+			}
+
+			restHash, err := base64.StdEncoding.DecodeString(sf.RestHash)
+			if err != nil {
+				return fmt.Errorf("decode rest_hash: %w", err)
+			}
+
+			hostStats := make([]*types.SubnetSettlementHostStats, len(sf.HostStats))
+			for i, hs := range sf.HostStats {
+				hostStats[i] = &types.SubnetSettlementHostStats{
+					SlotId:               hs.SlotID,
+					Missed:               hs.Missed,
+					Invalid:              hs.Invalid,
+					Cost:                 hs.Cost,
+					RequiredValidations:  hs.RequiredValidations,
+					CompletedValidations: hs.CompletedValidations,
+				}
+			}
+
+			sigs := make([]*types.SubnetSlotSignature, len(sf.Signatures))
+			for i, s := range sf.Signatures {
+				sigBytes, err := base64.StdEncoding.DecodeString(s.Signature)
+				if err != nil {
+					return fmt.Errorf("decode signature for slot %d: %w", s.SlotID, err)
+				}
+				sigs[i] = &types.SubnetSlotSignature{
+					SlotId:    s.SlotID,
+					Signature: sigBytes,
+				}
+			}
+
+			msg := &types.MsgSettleSubnetEscrow{
+				Settler:    clientCtx.GetFromAddress().String(),
+				EscrowId:   escrowID,
+				StateRoot:  stateRoot,
+				Nonce:      sf.Nonce,
+				RestHash:   restHash,
+				HostStats:  hostStats,
+				Signatures: sigs,
+			}
+
+			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
 		},
 	}
 

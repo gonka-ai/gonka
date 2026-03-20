@@ -401,6 +401,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bls", "signing-status", requestId))
     }
 
+    fun querySubnetEscrow(id: Long): SubnetEscrowResponse = wrapLog("querySubnetEscrow", false) {
+        execAndParse(listOf("query", "inference", "show-subnet-escrow", id.toString()))
+    }
+
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(
         args: List<String>,
@@ -786,10 +790,11 @@ data class ApplicationCLI(
             )
         }
 
-    fun getColdPrivateKey(): String = wrapLog("getColdPrivateKey", infoLevel = false) {
-        val accountName = this.getColdAccountName()
+    fun getColdPrivateKey(): String = getPrivateKey(this.getColdAccountName())
+
+    fun getPrivateKey(keyName: String): String = wrapLog("getPrivateKey($keyName)", infoLevel = false) {
         exec(
-            listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"),
+            listOf(config.execName, "keys", "export", keyName, "--unsafe", "--yes", "--unarmored-hex"),
             passwordInjection
         ).first()
     }

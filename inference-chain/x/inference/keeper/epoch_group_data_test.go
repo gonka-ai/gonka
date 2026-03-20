@@ -84,3 +84,33 @@ func TestEpochGroupDataGetAll(t *testing.T) {
 		nullify.Fill(keeper.GetAllEpochGroupData(ctx)),
 	)
 }
+
+func TestEpochGroupDataWithSlash(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+
+	epoch := uint64(1)
+	modelWithSlash := "org/model/v1"
+
+	data := types.EpochGroupData{
+		EpochIndex:  epoch,
+		ModelId:     modelWithSlash,
+		TotalWeight: 100,
+	}
+
+	k.SetEpochGroupData(ctx, data)
+
+	// Get it back
+	got, found := k.GetEpochGroupData(ctx, epoch, modelWithSlash)
+	require.True(t, found)
+	require.Equal(t, data.ModelId, got.ModelId)
+	require.Equal(t, data.TotalWeight, got.TotalWeight)
+
+	// Verify it doesn't collide with empty modelId or other parts
+	_, found = k.GetEpochGroupData(ctx, epoch, "")
+	require.False(t, found)
+
+	// Remove it
+	k.RemoveEpochGroupData(ctx, epoch, modelWithSlash)
+	_, found = k.GetEpochGroupData(ctx, epoch, modelWithSlash)
+	require.False(t, found)
+}

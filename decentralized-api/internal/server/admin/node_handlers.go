@@ -191,9 +191,7 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 func (s *Server) enableNode(c echo.Context) error {
 	nodeId := c.Param("id")
 	if nodeId == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "node id is required",
-		})
+		return echo.NewHTTPError(http.StatusBadRequest, "node id is required")
 	}
 
 	response := make(chan error, 2)
@@ -203,15 +201,11 @@ func (s *Server) enableNode(c echo.Context) error {
 		Response: response,
 	})
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "failed to queue command: " + err.Error(),
-		})
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to queue command: "+err.Error())
 	}
 
 	if err := <-response; err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{
-			"error": err.Error(),
-		})
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
@@ -224,9 +218,7 @@ func (s *Server) enableNode(c echo.Context) error {
 func (s *Server) disableNode(c echo.Context) error {
 	nodeId := c.Param("id")
 	if nodeId == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "node id is required",
-		})
+		return echo.NewHTTPError(http.StatusBadRequest, "node id is required")
 	}
 
 	response := make(chan error, 2)
@@ -236,15 +228,11 @@ func (s *Server) disableNode(c echo.Context) error {
 		Response: response,
 	})
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "failed to queue command: " + err.Error(),
-		})
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to queue command: "+err.Error())
 	}
 
 	if err := <-response; err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{
-			"error": err.Error(),
-		})
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
@@ -259,12 +247,12 @@ func (s *Server) exportDb(c echo.Context) error {
 	db := s.configManager.SqlDb()
 	if db == nil || db.GetDb() == nil {
 		logging.Error("DB not initialized", types.Nodes)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "db not initialized"})
+		return echo.NewHTTPError(http.StatusInternalServerError, "db not initialized")
 	}
 	payload, err := apiconfig.ExportAllDb(ctx, db.GetDb())
 	if err != nil {
 		logging.Error("Failed to export DB state", types.Nodes, "error", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	return c.JSON(http.StatusOK, payload)
 }

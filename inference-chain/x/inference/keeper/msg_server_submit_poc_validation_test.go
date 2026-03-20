@@ -55,6 +55,7 @@ func TestSubmitPocValidation_DuplicateRejected(t *testing.T) {
 		FraudDetected:               false,
 	})
 	require.NoError(t, err)
+	_ = k.SetParticipant(ctx, types.Participant{Address: validator, Index: validator, Status: types.ParticipantStatus_ACTIVE})
 
 	_, err = ms.SubmitPocValidation(ctx, &types.MsgSubmitPocValidation{
 		Creator:                  validator,

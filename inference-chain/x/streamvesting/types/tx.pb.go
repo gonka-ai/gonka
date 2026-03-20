@@ -239,52 +239,218 @@ func (m *MsgTransferWithVestingResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgTransferWithVestingResponse proto.InternalMessageInfo
 
+// BatchVestingOutput defines one recipient output in batch transfer with vesting.
+type BatchVestingOutput struct {
+	// recipient is the address of the account receiving vesting tokens.
+	Recipient string `protobuf:"bytes,1,opt,name=recipient,proto3" json:"recipient,omitempty"`
+	// amount is the coins to transfer with vesting.
+	Amount github_com_cosmos_cosmos_sdk_types.Coins `protobuf:"bytes,2,rep,name=amount,proto3,castrepeated=github.com/cosmos/cosmos-sdk/types.Coins" json:"amount"`
+}
+
+func (m *BatchVestingOutput) Reset()         { *m = BatchVestingOutput{} }
+func (m *BatchVestingOutput) String() string { return proto.CompactTextString(m) }
+func (*BatchVestingOutput) ProtoMessage()    {}
+func (*BatchVestingOutput) Descriptor() ([]byte, []int) {
+	return fileDescriptor_50f3863e46541da3, []int{4}
+}
+func (m *BatchVestingOutput) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *BatchVestingOutput) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_BatchVestingOutput.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *BatchVestingOutput) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_BatchVestingOutput.Merge(m, src)
+}
+func (m *BatchVestingOutput) XXX_Size() int {
+	return m.Size()
+}
+func (m *BatchVestingOutput) XXX_DiscardUnknown() {
+	xxx_messageInfo_BatchVestingOutput.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_BatchVestingOutput proto.InternalMessageInfo
+
+func (m *BatchVestingOutput) GetRecipient() string {
+	if m != nil {
+		return m.Recipient
+	}
+	return ""
+}
+
+func (m *BatchVestingOutput) GetAmount() github_com_cosmos_cosmos_sdk_types.Coins {
+	if m != nil {
+		return m.Amount
+	}
+	return nil
+}
+
+// MsgBatchTransferWithVesting is the request type for batch transfer with vesting.
+type MsgBatchTransferWithVesting struct {
+	// sender is the address of the account sending the tokens.
+	Sender string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	// outputs are recipients and amounts to vest.
+	Outputs []BatchVestingOutput `protobuf:"bytes,2,rep,name=outputs,proto3" json:"outputs"`
+	// vesting_epochs is the number of epochs over which the tokens will vest.
+	// If not specified or 0, defaults to 180 epochs.
+	VestingEpochs uint64 `protobuf:"varint,3,opt,name=vesting_epochs,json=vestingEpochs,proto3" json:"vesting_epochs,omitempty"`
+}
+
+func (m *MsgBatchTransferWithVesting) Reset()         { *m = MsgBatchTransferWithVesting{} }
+func (m *MsgBatchTransferWithVesting) String() string { return proto.CompactTextString(m) }
+func (*MsgBatchTransferWithVesting) ProtoMessage()    {}
+func (*MsgBatchTransferWithVesting) Descriptor() ([]byte, []int) {
+	return fileDescriptor_50f3863e46541da3, []int{5}
+}
+func (m *MsgBatchTransferWithVesting) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBatchTransferWithVesting) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBatchTransferWithVesting.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBatchTransferWithVesting) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBatchTransferWithVesting.Merge(m, src)
+}
+func (m *MsgBatchTransferWithVesting) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBatchTransferWithVesting) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBatchTransferWithVesting.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBatchTransferWithVesting proto.InternalMessageInfo
+
+func (m *MsgBatchTransferWithVesting) GetSender() string {
+	if m != nil {
+		return m.Sender
+	}
+	return ""
+}
+
+func (m *MsgBatchTransferWithVesting) GetOutputs() []BatchVestingOutput {
+	if m != nil {
+		return m.Outputs
+	}
+	return nil
+}
+
+func (m *MsgBatchTransferWithVesting) GetVestingEpochs() uint64 {
+	if m != nil {
+		return m.VestingEpochs
+	}
+	return 0
+}
+
+// MsgBatchTransferWithVestingResponse defines the response for MsgBatchTransferWithVesting.
+type MsgBatchTransferWithVestingResponse struct {
+}
+
+func (m *MsgBatchTransferWithVestingResponse) Reset()         { *m = MsgBatchTransferWithVestingResponse{} }
+func (m *MsgBatchTransferWithVestingResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgBatchTransferWithVestingResponse) ProtoMessage()    {}
+func (*MsgBatchTransferWithVestingResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_50f3863e46541da3, []int{6}
+}
+func (m *MsgBatchTransferWithVestingResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBatchTransferWithVestingResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBatchTransferWithVestingResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBatchTransferWithVestingResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBatchTransferWithVestingResponse.Merge(m, src)
+}
+func (m *MsgBatchTransferWithVestingResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBatchTransferWithVestingResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBatchTransferWithVestingResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBatchTransferWithVestingResponse proto.InternalMessageInfo
+
 func init() {
 	proto.RegisterType((*MsgUpdateParams)(nil), "inference.streamvesting.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "inference.streamvesting.MsgUpdateParamsResponse")
 	proto.RegisterType((*MsgTransferWithVesting)(nil), "inference.streamvesting.MsgTransferWithVesting")
 	proto.RegisterType((*MsgTransferWithVestingResponse)(nil), "inference.streamvesting.MsgTransferWithVestingResponse")
+	proto.RegisterType((*BatchVestingOutput)(nil), "inference.streamvesting.BatchVestingOutput")
+	proto.RegisterType((*MsgBatchTransferWithVesting)(nil), "inference.streamvesting.MsgBatchTransferWithVesting")
+	proto.RegisterType((*MsgBatchTransferWithVestingResponse)(nil), "inference.streamvesting.MsgBatchTransferWithVestingResponse")
 }
 
 func init() { proto.RegisterFile("inference/streamvesting/tx.proto", fileDescriptor_50f3863e46541da3) }
 
 var fileDescriptor_50f3863e46541da3 = []byte{
-	// 549 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x53, 0x4d, 0x8b, 0x13, 0x41,
-	0x10, 0xcd, 0x6c, 0xd6, 0x40, 0x7a, 0xfd, 0xc0, 0x71, 0x31, 0x1f, 0x87, 0xc9, 0x10, 0x14, 0xc6,
-	0xc0, 0x4e, 0x27, 0x11, 0x15, 0x17, 0x0f, 0x1a, 0xf1, 0x18, 0x90, 0xac, 0x1f, 0xe0, 0x65, 0xe9,
-	0xcc, 0xf4, 0xce, 0xb4, 0x32, 0xdd, 0x43, 0x57, 0x27, 0xec, 0x9e, 0x14, 0x8f, 0x9e, 0xfc, 0x19,
-	0xe2, 0x29, 0x07, 0x7f, 0xc4, 0x82, 0x97, 0x45, 0x10, 0x3c, 0xa9, 0x24, 0x87, 0xfc, 0x06, 0x6f,
-	0x32, 0x33, 0x9d, 0x8d, 0x1b, 0x92, 0xa8, 0x97, 0x74, 0xba, 0xea, 0xd5, 0xeb, 0xaa, 0xf7, 0x6a,
-	0x90, 0xcd, 0xf8, 0x01, 0x95, 0x94, 0x7b, 0x14, 0x83, 0x92, 0x94, 0x44, 0x43, 0x0a, 0x8a, 0xf1,
-	0x00, 0xab, 0x43, 0x37, 0x96, 0x42, 0x09, 0xb3, 0x74, 0x8a, 0x70, 0xcf, 0x20, 0xaa, 0x97, 0x49,
-	0xc4, 0xb8, 0xc0, 0xe9, 0x6f, 0x86, 0xad, 0x96, 0x3c, 0x01, 0x91, 0x00, 0x1c, 0x41, 0x80, 0x87,
-	0xad, 0xe4, 0xd0, 0x89, 0x4a, 0x96, 0xd8, 0x4f, 0x6f, 0x38, 0xbb, 0xe8, 0xd4, 0x76, 0x20, 0x02,
-	0x91, 0xc5, 0x93, 0x7f, 0x3a, 0x6a, 0x69, 0xa6, 0x3e, 0x01, 0x8a, 0x87, 0xad, 0x3e, 0x55, 0xa4,
-	0x85, 0x3d, 0xc1, 0xb8, 0xce, 0x5f, 0x5b, 0xd5, 0x77, 0x4c, 0x24, 0x89, 0x34, 0x77, 0xfd, 0xb3,
-	0x81, 0x2e, 0x75, 0x21, 0x78, 0x1a, 0xfb, 0x44, 0xd1, 0xc7, 0x69, 0xc6, 0xbc, 0x8d, 0x8a, 0x64,
-	0xa0, 0x42, 0x21, 0x99, 0x3a, 0x2a, 0x1b, 0xb6, 0xe1, 0x14, 0x3b, 0xe5, 0x2f, 0x9f, 0x76, 0xb6,
-	0x75, 0x53, 0x0f, 0x7c, 0x5f, 0x52, 0x80, 0x3d, 0x25, 0x19, 0x0f, 0x7a, 0x73, 0xa8, 0xd9, 0x41,
-	0x85, 0x8c, 0xbb, 0xbc, 0x61, 0x1b, 0xce, 0x56, 0xbb, 0xe6, 0xae, 0x10, 0xc6, 0xcd, 0x1e, 0xea,
-	0x14, 0x8f, 0xbf, 0xd7, 0x72, 0x1f, 0xa6, 0xa3, 0x86, 0xd1, 0xd3, 0x95, 0xbb, 0xf7, 0xde, 0x4e,
-	0x47, 0x8d, 0x39, 0xe7, 0xbb, 0xe9, 0xa8, 0x71, 0x63, 0x3e, 0xc8, 0xe1, 0xc2, 0x28, 0x0b, 0x9d,
-	0xd7, 0x2b, 0xa8, 0xb4, 0x10, 0xea, 0x51, 0x88, 0x05, 0x07, 0x5a, 0xff, 0xba, 0x81, 0xae, 0x76,
-	0x21, 0x78, 0x22, 0x09, 0x87, 0x03, 0x2a, 0x9f, 0x33, 0x15, 0x3e, 0xcb, 0x58, 0xcc, 0x26, 0x2a,
-	0x00, 0xe5, 0x3e, 0x95, 0x7f, 0x1d, 0x56, 0xe3, 0x12, 0x85, 0x24, 0xf5, 0x58, 0xcc, 0x28, 0x57,
-	0xe9, 0xb0, 0x6b, 0x15, 0x3a, 0x85, 0x9a, 0x21, 0x2a, 0x90, 0x48, 0x0c, 0xb8, 0x2a, 0xe7, 0xed,
-	0xbc, 0xb3, 0xd5, 0xae, 0xb8, 0xba, 0x22, 0x31, 0xd1, 0xd5, 0x26, 0xba, 0x0f, 0x05, 0xe3, 0x9d,
-	0x5b, 0x89, 0x36, 0x1f, 0x7f, 0xd4, 0x9c, 0x80, 0xa9, 0x70, 0xd0, 0x77, 0x3d, 0x11, 0xe9, 0xad,
-	0xd0, 0xc7, 0x0e, 0xf8, 0xaf, 0xb0, 0x3a, 0x8a, 0x29, 0xa4, 0x05, 0xa0, 0x75, 0xcc, 0xf8, 0xcd,
-	0xeb, 0xe8, 0xa2, 0x16, 0x69, 0x9f, 0xc6, 0xc2, 0x0b, 0xa1, 0xbc, 0x69, 0x1b, 0xce, 0x66, 0xef,
-	0x82, 0x8e, 0x3e, 0x4a, 0x83, 0xbb, 0xf7, 0x13, 0xb9, 0xf5, 0x54, 0x89, 0xd6, 0xcd, 0xb5, 0x5a,
-	0x2f, 0x11, 0xaf, 0x6e, 0x23, 0x6b, 0x79, 0x66, 0xa6, 0x7c, 0xfb, 0x97, 0x81, 0xf2, 0x5d, 0x08,
-	0xcc, 0x97, 0xe8, 0xfc, 0x99, 0x35, 0x73, 0x56, 0xae, 0xc7, 0x82, 0x87, 0xd5, 0xe6, 0xbf, 0x22,
-	0x67, 0x6f, 0x9a, 0xaf, 0xd1, 0x95, 0x65, 0x4e, 0xe3, 0x75, 0x44, 0x4b, 0x0a, 0xaa, 0x77, 0xfe,
-	0xb3, 0x60, 0xd6, 0x40, 0xf5, 0xdc, 0x9b, 0xc4, 0x8e, 0xce, 0xde, 0xf1, 0xd8, 0x32, 0x4e, 0xc6,
-	0x96, 0xf1, 0x73, 0x6c, 0x19, 0xef, 0x27, 0x56, 0xee, 0x64, 0x62, 0xe5, 0xbe, 0x4d, 0xac, 0xdc,
-	0x8b, 0xbb, 0x7f, 0xf8, 0x1a, 0x4b, 0xe1, 0x0f, 0x3c, 0x05, 0x1e, 0x4b, 0x95, 0x5f, 0xed, 0x41,
-	0x6a, 0x77, 0xbf, 0x90, 0x7e, 0xba, 0x37, 0x7f, 0x07, 0x00, 0x00, 0xff, 0xff, 0x7b, 0x50, 0xb2,
-	0x7b, 0x9a, 0x04, 0x00, 0x00,
+	// 650 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x55, 0x4d, 0x6b, 0xd4, 0x40,
+	0x18, 0xde, 0xd9, 0xad, 0x2b, 0x9d, 0xfa, 0x81, 0xb1, 0xd8, 0x34, 0x42, 0x1a, 0xa2, 0x85, 0x58,
+	0x69, 0xd2, 0x56, 0xab, 0x58, 0x7a, 0xd0, 0x48, 0x4f, 0xb2, 0x28, 0x5b, 0x3f, 0xc0, 0x4b, 0xc9,
+	0x26, 0xd3, 0xec, 0x28, 0x99, 0x09, 0x33, 0x93, 0xd2, 0x9e, 0x14, 0x8f, 0x3d, 0x88, 0x3f, 0x43,
+	0x3c, 0xf5, 0x20, 0xfe, 0x86, 0x82, 0x97, 0x22, 0x08, 0x9e, 0x54, 0xda, 0x43, 0xff, 0x86, 0x24,
+	0x99, 0xdd, 0xba, 0x6b, 0x12, 0xb5, 0xe8, 0x65, 0xb3, 0x79, 0x3f, 0x9e, 0x79, 0x9f, 0xe7, 0x79,
+	0x67, 0x17, 0x1a, 0x98, 0xac, 0x23, 0x86, 0x88, 0x8f, 0x1c, 0x2e, 0x18, 0xf2, 0xa2, 0x0d, 0xc4,
+	0x05, 0x26, 0xa1, 0x23, 0x36, 0xed, 0x98, 0x51, 0x41, 0x95, 0x89, 0x7e, 0x85, 0x3d, 0x50, 0xa1,
+	0x9d, 0xf3, 0x22, 0x4c, 0xa8, 0x93, 0x7d, 0xe6, 0xb5, 0xda, 0x84, 0x4f, 0x79, 0x44, 0xb9, 0x13,
+	0xf1, 0xd0, 0xd9, 0x98, 0x4f, 0x1f, 0x32, 0x31, 0x99, 0x27, 0xd6, 0xb2, 0x37, 0x27, 0x7f, 0x91,
+	0xa9, 0xf1, 0x90, 0x86, 0x34, 0x8f, 0xa7, 0xdf, 0x64, 0x54, 0x97, 0x48, 0x1d, 0x8f, 0x23, 0x67,
+	0x63, 0xbe, 0x83, 0x84, 0x37, 0xef, 0xf8, 0x14, 0x13, 0x99, 0xbf, 0x5c, 0x36, 0x77, 0xec, 0x31,
+	0x2f, 0x92, 0xd8, 0xe6, 0x47, 0x00, 0xcf, 0xb6, 0x78, 0xf8, 0x28, 0x0e, 0x3c, 0x81, 0x1e, 0x64,
+	0x19, 0xe5, 0x06, 0x1c, 0xf5, 0x12, 0xd1, 0xa5, 0x0c, 0x8b, 0x2d, 0x15, 0x18, 0xc0, 0x1a, 0x75,
+	0xd5, 0x4f, 0xef, 0x67, 0xc7, 0xe5, 0x50, 0x77, 0x82, 0x80, 0x21, 0xce, 0x57, 0x05, 0xc3, 0x24,
+	0x6c, 0x1f, 0x95, 0x2a, 0x2e, 0x6c, 0xe6, 0xd8, 0x6a, 0xdd, 0x00, 0xd6, 0xd8, 0xc2, 0x94, 0x5d,
+	0x22, 0x8c, 0x9d, 0x1f, 0xe4, 0x8e, 0xee, 0x7e, 0x9d, 0xaa, 0xbd, 0x3d, 0xdc, 0x99, 0x01, 0x6d,
+	0xd9, 0xb9, 0xb4, 0xfc, 0xea, 0x70, 0x67, 0xe6, 0x08, 0x73, 0xfb, 0x70, 0x67, 0xe6, 0xca, 0x11,
+	0x91, 0xcd, 0x21, 0x2a, 0x43, 0x93, 0x9b, 0x93, 0x70, 0x62, 0x28, 0xd4, 0x46, 0x3c, 0xa6, 0x84,
+	0x23, 0xf3, 0x73, 0x1d, 0x5e, 0x68, 0xf1, 0xf0, 0x21, 0xf3, 0x08, 0x5f, 0x47, 0xec, 0x09, 0x16,
+	0xdd, 0xc7, 0x39, 0x8a, 0x32, 0x07, 0x9b, 0x1c, 0x91, 0x00, 0xb1, 0xdf, 0x92, 0x95, 0x75, 0xa9,
+	0x42, 0x0c, 0xf9, 0x38, 0xc6, 0x88, 0x88, 0x8c, 0x6c, 0xa5, 0x42, 0xfd, 0x52, 0xa5, 0x0b, 0x9b,
+	0x5e, 0x44, 0x13, 0x22, 0xd4, 0x86, 0xd1, 0xb0, 0xc6, 0x16, 0x26, 0x6d, 0xd9, 0x91, 0x9a, 0x68,
+	0x4b, 0x13, 0xed, 0xbb, 0x14, 0x13, 0x77, 0x31, 0xd5, 0xe6, 0xdd, 0xb7, 0x29, 0x2b, 0xc4, 0xa2,
+	0x9b, 0x74, 0x6c, 0x9f, 0x46, 0x72, 0x2b, 0xe4, 0x63, 0x96, 0x07, 0xcf, 0x1d, 0xb1, 0x15, 0x23,
+	0x9e, 0x35, 0x70, 0xa9, 0x63, 0x8e, 0xaf, 0x4c, 0xc3, 0x33, 0x52, 0xa4, 0x35, 0x14, 0x53, 0xbf,
+	0xcb, 0xd5, 0x11, 0x03, 0x58, 0x23, 0xed, 0xd3, 0x32, 0xba, 0x92, 0x05, 0x97, 0x6e, 0xa7, 0x72,
+	0x4b, 0x56, 0xa9, 0xd6, 0x73, 0x95, 0x5a, 0x17, 0x88, 0x67, 0x1a, 0x50, 0x2f, 0xce, 0xf4, 0x95,
+	0xff, 0x00, 0xa0, 0xe2, 0x7a, 0xc2, 0xef, 0x25, 0xee, 0x27, 0x22, 0x4e, 0xc4, 0xa0, 0x86, 0xe0,
+	0x38, 0x1a, 0xd6, 0xff, 0xaf, 0x86, 0xe6, 0x76, 0x1d, 0x5e, 0x6c, 0xf1, 0x30, 0x9b, 0xfd, 0xdf,
+	0xec, 0xcd, 0x3d, 0x78, 0x92, 0x66, 0xec, 0xb9, 0x1c, 0xfe, 0x6a, 0xe9, 0x15, 0xf9, 0x55, 0x31,
+	0x77, 0x24, 0xa5, 0xd3, 0xee, 0x21, 0x14, 0x58, 0xdc, 0x28, 0xb2, 0x78, 0x65, 0xc8, 0xe2, 0xc5,
+	0x4a, 0x8b, 0xcb, 0xc8, 0x9a, 0xd3, 0xf0, 0x52, 0x45, 0xba, 0x67, 0xf6, 0xc2, 0x76, 0x03, 0x36,
+	0x5a, 0x3c, 0x54, 0x9e, 0xc1, 0x53, 0x03, 0xbf, 0x29, 0x56, 0x29, 0xd1, 0xa1, 0x0b, 0xab, 0xcd,
+	0xfd, 0x69, 0x65, 0xef, 0x4c, 0xe5, 0x05, 0x3c, 0x5f, 0x64, 0x8f, 0x53, 0x05, 0x54, 0xd0, 0xa0,
+	0xdd, 0xfc, 0xcb, 0x86, 0xfe, 0x00, 0xaf, 0x01, 0x54, 0x4b, 0xb7, 0xe4, 0x7a, 0x15, 0x6a, 0x59,
+	0x97, 0xb6, 0x7c, 0x9c, 0xae, 0xde, 0x40, 0xda, 0x89, 0x97, 0xe9, 0x22, 0xbb, 0xab, 0xbb, 0xfb,
+	0x3a, 0xd8, 0xdb, 0xd7, 0xc1, 0xf7, 0x7d, 0x1d, 0xbc, 0x39, 0xd0, 0x6b, 0x7b, 0x07, 0x7a, 0xed,
+	0xcb, 0x81, 0x5e, 0x7b, 0x7a, 0xeb, 0xa7, 0x1b, 0x11, 0x33, 0x1a, 0x24, 0xbe, 0xe0, 0x3e, 0xce,
+	0x96, 0xa2, 0x7c, 0x3d, 0xb2, 0x8b, 0xd2, 0x69, 0x66, 0x7f, 0x1c, 0xd7, 0x7e, 0x04, 0x00, 0x00,
+	0xff, 0xff, 0xe8, 0xc0, 0x3f, 0x3c, 0x18, 0x07, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -305,6 +471,8 @@ type MsgClient interface {
 	// TransferWithVesting transfers tokens from sender to recipient with a vesting schedule.
 	// The tokens will vest over the specified number of epochs (default: 180).
 	TransferWithVesting(ctx context.Context, in *MsgTransferWithVesting, opts ...grpc.CallOption) (*MsgTransferWithVestingResponse, error)
+	// BatchTransferWithVesting transfers tokens from sender to multiple recipients with vesting schedules.
+	BatchTransferWithVesting(ctx context.Context, in *MsgBatchTransferWithVesting, opts ...grpc.CallOption) (*MsgBatchTransferWithVestingResponse, error)
 }
 
 type msgClient struct {
@@ -333,6 +501,15 @@ func (c *msgClient) TransferWithVesting(ctx context.Context, in *MsgTransferWith
 	return out, nil
 }
 
+func (c *msgClient) BatchTransferWithVesting(ctx context.Context, in *MsgBatchTransferWithVesting, opts ...grpc.CallOption) (*MsgBatchTransferWithVestingResponse, error) {
+	out := new(MsgBatchTransferWithVestingResponse)
+	err := c.cc.Invoke(ctx, "/inference.streamvesting.Msg/BatchTransferWithVesting", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
@@ -341,6 +518,8 @@ type MsgServer interface {
 	// TransferWithVesting transfers tokens from sender to recipient with a vesting schedule.
 	// The tokens will vest over the specified number of epochs (default: 180).
 	TransferWithVesting(context.Context, *MsgTransferWithVesting) (*MsgTransferWithVestingResponse, error)
+	// BatchTransferWithVesting transfers tokens from sender to multiple recipients with vesting schedules.
+	BatchTransferWithVesting(context.Context, *MsgBatchTransferWithVesting) (*MsgBatchTransferWithVestingResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -352,6 +531,9 @@ func (*UnimplementedMsgServer) UpdateParams(ctx context.Context, req *MsgUpdateP
 }
 func (*UnimplementedMsgServer) TransferWithVesting(ctx context.Context, req *MsgTransferWithVesting) (*MsgTransferWithVestingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TransferWithVesting not implemented")
+}
+func (*UnimplementedMsgServer) BatchTransferWithVesting(ctx context.Context, req *MsgBatchTransferWithVesting) (*MsgBatchTransferWithVestingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchTransferWithVesting not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -394,6 +576,24 @@ func _Msg_TransferWithVesting_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_BatchTransferWithVesting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBatchTransferWithVesting)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).BatchTransferWithVesting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.streamvesting.Msg/BatchTransferWithVesting",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).BatchTransferWithVesting(ctx, req.(*MsgBatchTransferWithVesting))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.streamvesting.Msg",
@@ -406,6 +606,10 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TransferWithVesting",
 			Handler:    _Msg_TransferWithVesting_Handler,
+		},
+		{
+			MethodName: "BatchTransferWithVesting",
+			Handler:    _Msg_BatchTransferWithVesting_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -554,6 +758,122 @@ func (m *MsgTransferWithVestingResponse) MarshalToSizedBuffer(dAtA []byte) (int,
 	return len(dAtA) - i, nil
 }
 
+func (m *BatchVestingOutput) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *BatchVestingOutput) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *BatchVestingOutput) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Amount) > 0 {
+		for iNdEx := len(m.Amount) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Amount[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.Recipient) > 0 {
+		i -= len(m.Recipient)
+		copy(dAtA[i:], m.Recipient)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Recipient)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBatchTransferWithVesting) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBatchTransferWithVesting) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBatchTransferWithVesting) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.VestingEpochs != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.VestingEpochs))
+		i--
+		dAtA[i] = 0x18
+	}
+	if len(m.Outputs) > 0 {
+		for iNdEx := len(m.Outputs) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Outputs[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.Sender) > 0 {
+		i -= len(m.Sender)
+		copy(dAtA[i:], m.Sender)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Sender)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBatchTransferWithVestingResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBatchTransferWithVestingResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBatchTransferWithVestingResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintTx(dAtA []byte, offset int, v uint64) int {
 	offset -= sovTx(v)
 	base := offset
@@ -616,6 +936,56 @@ func (m *MsgTransferWithVesting) Size() (n int) {
 }
 
 func (m *MsgTransferWithVestingResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *BatchVestingOutput) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Recipient)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if len(m.Amount) > 0 {
+		for _, e := range m.Amount {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *MsgBatchTransferWithVesting) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Sender)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if len(m.Outputs) > 0 {
+		for _, e := range m.Outputs {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	if m.VestingEpochs != 0 {
+		n += 1 + sovTx(uint64(m.VestingEpochs))
+	}
+	return n
+}
+
+func (m *MsgBatchTransferWithVestingResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -989,6 +1359,307 @@ func (m *MsgTransferWithVestingResponse) Unmarshal(dAtA []byte) error {
 		}
 		if fieldNum <= 0 {
 			return fmt.Errorf("proto: MsgTransferWithVestingResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *BatchVestingOutput) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: BatchVestingOutput: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: BatchVestingOutput: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Recipient", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Recipient = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Amount = append(m.Amount, types.Coin{})
+			if err := m.Amount[len(m.Amount)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgBatchTransferWithVesting) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBatchTransferWithVesting: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBatchTransferWithVesting: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sender", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Sender = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Outputs", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Outputs = append(m.Outputs, BatchVestingOutput{})
+			if err := m.Outputs[len(m.Outputs)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field VestingEpochs", wireType)
+			}
+			m.VestingEpochs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.VestingEpochs |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgBatchTransferWithVestingResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBatchTransferWithVestingResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBatchTransferWithVestingResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:

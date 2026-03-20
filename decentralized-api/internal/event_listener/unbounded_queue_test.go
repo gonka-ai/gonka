@@ -4,14 +4,15 @@ import (
 	"context"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
 )
 
 // TestBasicQueueOperations verifies basic enqueue/dequeue functionality
@@ -318,15 +319,15 @@ func TestEmptyQueueBehavior(t *testing.T) {
 	defer q.Close()
 
 	// Try to receive with timeout
-	received := false
+	var received atomic.Bool
 	go func() {
 		<-q.Out
-		received = true
+		received.Store(true)
 	}()
 
 	// Should time out without receiving
 	time.Sleep(100 * time.Millisecond)
-	if received {
+	if received.Load() {
 		t.Error("Received value from empty queue, expected to block")
 	}
 
@@ -336,7 +337,7 @@ func TestEmptyQueueBehavior(t *testing.T) {
 	// Allow time for processing
 	time.Sleep(100 * time.Millisecond)
 
-	if !received {
+	if !received.Load() {
 		t.Error("Did not receive value after it was sent")
 	}
 }

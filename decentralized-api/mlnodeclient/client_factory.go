@@ -24,16 +24,12 @@ func NewMockClientFactory() *MockClientFactory {
 }
 
 func (f *MockClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLNodeClient {
+	key := pocUrl
 	f.mu.Lock()
 	defer f.mu.Unlock()
-
-	// Use pocUrl as the key to identify nodes (it should be unique per node)
-	key := pocUrl
 	if client, exists := f.clients[key]; exists {
 		return client
 	}
-
-	// Create new mock client for this node
 	client := NewMockClient()
 	f.clients[key] = client
 	return client
@@ -48,18 +44,16 @@ func (f *MockClientFactory) GetClientForNode(pocUrl string) *MockClient {
 func (f *MockClientFactory) GetAllClients() map[string]*MockClient {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-
-	// Return a copy of the map to avoid concurrent access to the map itself
-	clientsCopy := make(map[string]*MockClient)
+	result := make(map[string]*MockClient, len(f.clients))
 	for k, v := range f.clients {
-		clientsCopy[k] = v
+		result[k] = v
 	}
-	return clientsCopy
+	return result
 }
 
 func (f *MockClientFactory) Reset() {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, client := range f.clients {
 		client.Reset()
 	}

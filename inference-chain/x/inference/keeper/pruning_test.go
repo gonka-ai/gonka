@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -59,7 +60,7 @@ func TestPruningBasic(t *testing.T) {
 	}
 
 	// Add inference to the store without calculating developer stats
-	k.SetInferenceWithoutDevStatComputation(ctx, inference)
+	k.SetInference(ctx, inference)
 
 	// Verify inference exists
 	_, found := k.GetInference(ctx, "test-inference")
@@ -115,7 +116,7 @@ func TestPruningEpochThreshold(t *testing.T) {
 
 	// Add inferences to the store without calculating developer stats
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold 2
@@ -162,7 +163,7 @@ func TestPruningStatusPreservation(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold that should prune old inferences
@@ -198,7 +199,7 @@ func TestPruningMultipleEpochs(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		k.SetInference(ctx, inf)
 	}
 
 	// Run pruning with threshold 1 at epoch 10
@@ -219,6 +220,43 @@ func TestPruningMultipleEpochs(t *testing.T) {
 	require.True(t, found, "Inference from epoch 10 should not be pruned")
 }
 
+func TestEpochGroupValidationEntryPruningMaxLimit(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	setPruningConfig(ctx, k, PruningSettings{
+		InferenceThreshold: 2,
+		InferenceMaxPrune:  4,
+	})
+
+	participant := "validator-1"
+	for i := 0; i < 10; i++ {
+		require.NoError(t, k.SetEpochGroupValidation(ctx, 1, participant, fmt.Sprintf("inf-%d", i)))
+	}
+	for i := 0; i < 2; i++ {
+		require.NoError(t, k.SetEpochGroupValidation(ctx, 2, participant, fmt.Sprintf("future-%d", i)))
+	}
+
+	current := int64(3) // threshold 2 => prune up to epoch 1
+	require.NoError(t, k.Prune(ctx, current))
+	egv, found := k.GetEpochGroupValidations(ctx, participant, 1)
+	require.True(t, found)
+	require.Len(t, egv.ValidatedInferences, 6)
+
+	require.NoError(t, k.Prune(ctx, current))
+	egv, found = k.GetEpochGroupValidations(ctx, participant, 1)
+	require.True(t, found)
+	require.Len(t, egv.ValidatedInferences, 2)
+
+	require.NoError(t, k.Prune(ctx, current))
+	_, found = k.GetEpochGroupValidations(ctx, participant, 1)
+	require.False(t, found)
+
+	egvEpoch2, found := k.GetEpochGroupValidations(ctx, participant, 2)
+	require.True(t, found)
+	require.Len(t, egvEpoch2.ValidatedInferences, 2)
+}
+
 // TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty ensures we respect the per-call max
 // and only advance the InferencePrunedEpoch after a subsequent call when the epoch becomes empty
 func TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T) {
@@ -232,7 +270,7 @@ func TestInferencePruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T)
 			EpochId: 1,
 			Status:  types.InferenceStatus_FINISHED,
 		}
-		_ = k.SetInferenceWithoutDevStatComputation(ctx, inf)
+		_ = k.SetInference(ctx, inf)
 	}
 
 	// Configure pruning: inference threshold 2 so endEpoch=current-2, and max per call 4
@@ -388,4 +426,79 @@ func TestPoCBatchesPruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T
 	require.NoError(t, k.Prune(ctx, current))
 	st, _ = k.PruningState.Get(ctx)
 	require.Equal(t, int64(2), st.PocBatchesPrunedEpoch)
+}
+
+func TestSubnetPruningPostPruneHook(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	prunedEpoch := uint64(1)
+	addr1 := sdk.AccAddress([]byte("addr1_______________"))
+	addr2 := sdk.AccAddress([]byte("addr2_______________"))
+
+	// 1. Setup data that should be cleared by PostPruneEpoch
+	// SubnetHostEpochStatsMap
+	err := k.SubnetHostEpochStatsMap.Set(ctx, collections.Join(prunedEpoch, addr1), types.SubnetHostEpochStats{
+		Participant: addr1.String(),
+		EpochIndex:  prunedEpoch,
+	})
+	require.NoError(t, err)
+	err = k.SubnetHostEpochStatsMap.Set(ctx, collections.Join(prunedEpoch, addr2), types.SubnetHostEpochStats{
+		Participant: addr2.String(),
+		EpochIndex:  prunedEpoch,
+	})
+	require.NoError(t, err)
+
+	// SubnetEscrowEpochCount
+	err = k.SubnetEscrowEpochCount.Set(ctx, prunedEpoch, 10)
+	require.NoError(t, err)
+
+	// Add an escrow to the epoch to be pruned
+	escrowID := uint64(1)
+	err = k.SubnetEscrows.Set(ctx, escrowID, types.SubnetEscrow{
+		Id:         escrowID,
+		EpochIndex: prunedEpoch,
+		Settled:    true,
+	})
+	require.NoError(t, err)
+	err = k.SubnetEscrowsByEpoch.Set(ctx, collections.Join(prunedEpoch, escrowID), collections.NoValue{})
+	require.NoError(t, err)
+
+	// 2. Configure pruning
+	// SubnetPruningThreshold is 2. currentEpoch = 3 => endEpoch = 3 - 2 = 1.
+	currentEpoch := int64(3)
+	// InferencePruningMax is used for SubnetPruning too
+	setPruningConfig(ctx, k, PruningSettings{InferenceMaxPrune: 100})
+
+	// 3. Run first prune call - this should prune the escrow
+	require.NoError(t, k.Prune(ctx, currentEpoch))
+
+	// Verify escrow is pruned but epoch is not yet marked complete in PruningState (generic Pruner behavior)
+	_, err = k.SubnetEscrows.Get(ctx, escrowID)
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	st, _ := k.PruningState.Get(ctx)
+	require.Equal(t, int64(0), st.SubnetPrunedEpoch)
+
+	// Verify PostPruneEpoch NOT yet called (it's called when prunedForEpoch == 0)
+	count, _ := k.SubnetEscrowEpochCount.Get(ctx, prunedEpoch)
+	require.Equal(t, uint64(10), count)
+
+	// 4. Run second prune call - this should verify epoch is empty and call PostPruneEpoch
+	require.NoError(t, k.Prune(ctx, currentEpoch))
+
+	// Verify markers advanced
+	st, _ = k.PruningState.Get(ctx)
+	require.Equal(t, int64(1), st.SubnetPrunedEpoch)
+
+	// Verify PostPruneEpoch cleared the data
+	_, err = k.SubnetEscrowEpochCount.Get(ctx, prunedEpoch)
+	require.ErrorIs(t, err, collections.ErrNotFound)
+
+	statsFound := false
+	iter, _ := k.SubnetHostEpochStatsMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, sdk.AccAddress](prunedEpoch))
+	if iter.Valid() {
+		statsFound = true
+	}
+	iter.Close()
+	require.False(t, statsFound, "SubnetHostEpochStats should be cleared")
 }

@@ -124,7 +124,7 @@ pub fn calculate_multi_tier_purchase(
     let mut end_tier = start_tier;
 
     // Maximum 50 tier iterations to prevent infinite loops in case of edge cases
-    for iteration in 0..50 {
+    for _iteration in 0..50 {
         if remaining_usd.is_zero() {
             break;
         }

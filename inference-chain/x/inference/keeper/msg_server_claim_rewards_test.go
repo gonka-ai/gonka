@@ -58,6 +58,19 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	}
 	k.SetEpochGroupData(sdk.UnwrapSDKContext(ctx), currentEpochData)
 
+	// Register participant and set as active in current epoch
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{Index: testutil.Creator, Address: testutil.Creator, Status: types.ParticipantStatus_ACTIVE})
+	// Set active for both previous (when work was done) and current (when claiming)
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+
 	// Create a settle amount for the participant with the signature
 	settleAmount := types.SettleAmount{
 		Participant:   testutil.Creator,
@@ -96,13 +109,14 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1"},
 	}
-	k.SetEpochGroupValidations(sdk.UnwrapSDKContext(ctx), validations)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdk.UnwrapSDKContext(ctx), validations))
 
 	// Setup account with public key for signature verification
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
 
 	// Mock the account keeper to return our mock account
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), addr).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
 
 	// Mock the AuthzKeeper to return empty grants (no grantees)
@@ -164,6 +178,20 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 		gomock.Any(),
 	).Return(nil).AnyTimes()
 
+	creatorAddr, _ = sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
@@ -210,6 +238,20 @@ func TestMsgServer_ClaimRewards_NoRewards(t *testing.T) {
 	}
 	k.SetEpochGroupData(ctx, currentEpochData)
 
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      100, // epochIndex
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
 	// Call ClaimRewards without setting up any rewards
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
@@ -246,6 +288,20 @@ func TestMsgServer_ClaimRewards_WrongHeight(t *testing.T) {
 		},
 	}
 	k.SetEpochGroupData(sdk.UnwrapSDKContext(ctx), currentEpochData)
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      200, // epochIndex in this test
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
 
 	// Setup a settle amount for the participant but with a different height
 	settleAmount := types.SettleAmount{
@@ -304,6 +360,20 @@ func TestMsgServer_ClaimRewards_ZeroRewards(t *testing.T) {
 	}
 	_ = k.SetSettleAmount(sdk.UnwrapSDKContext(ctx), settleAmount)
 
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      100, // epochIndex
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
 	// Call ClaimRewards
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator:    testutil.Creator,
@@ -372,6 +442,21 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		SeedSignature: signatureHex,
 	}
 	_ = k.SetSettleAmount(sdkCtx, settleAmount)
+
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
 
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
@@ -455,6 +540,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	params := types.DefaultParams()
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.ClaimValidationEnabled = true
 	k.SetParams(sdkCtx, params)
 
 	// Setup account with public key for signature verification
@@ -492,7 +578,7 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3", "inference4", "inference5", "inference6", "inference7", "inference8", "inference9", "inference10"},
 	}
-	k.SetEpochGroupValidations(sdkCtx, validations)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, validations))
 
 	// Mock the bank keeper for successful payment
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
@@ -590,6 +676,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	}
 	_ = k.SetSettleAmount(sdkCtx, settleAmount)
 
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+
 	// Setup epoch group data with specific weights
 	epochData := types.EpochGroupData{
 		EpochIndex:          epoch.Index,
@@ -672,6 +773,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	params := types.DefaultParams()
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.ClaimValidationEnabled = true
 	k.SetParams(sdkCtx, params)
 
 	// Setup account with public key for signature verification
@@ -740,7 +842,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		EpochIndex:          epochIndex,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3", "inference4", "inference5", "inference6", "inference7", "inference8", "inference9", "inference10"},
 	}
-	k.SetEpochGroupValidations(sdkCtx, validations)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, validations))
 
 	// Mock the bank keeper for successful payment
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
@@ -841,6 +943,15 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	}
 	_ = k.SetSettleAmount(sdkCtx, settleAmount2)
 
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex2,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex2,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+
 	// Setup performance summary for second epoch
 	perfSummary2 := types.EpochPerformanceSummary{
 		EpochIndex:    epochIndex2,
@@ -855,7 +966,7 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 		EpochIndex:          epochIndex2,
 		ValidatedInferences: []string{"inference1", "inference2", "inference3", "inference4", "inference5", "inference6", "inference7", "inference8", "inference9", "inference10"},
 	}
-	k.SetEpochGroupValidations(sdkCtx, validations2)
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, validations2))
 
 	// Call ClaimRewards for second epoch - this should succeed now
 	resp, err = ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
@@ -931,6 +1042,7 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 	params.EpochParams.InferenceValidationCutoff = inferenceValidationCutoff
 	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
 	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.ClaimValidationEnabled = true
 	k.SetParams(sdkCtx, params)
 
 	// Settle Amount
@@ -942,6 +1054,21 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 		SeedSignature: signatureHex,
 	}
 	_ = k.SetSettleAmount(sdkCtx, settleAmount)
+
+	creatorAddr, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	k.Participants.Set(ctx, creatorAddr, types.Participant{
+		Index:   testutil.Creator,
+		Address: testutil.Creator,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      currentEpochIndex,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Creator}},
+	})
 
 	// Epoch Group Data (Main and Sub-group)
 	// Claimant has two nodes, one with full availability

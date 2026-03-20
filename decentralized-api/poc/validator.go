@@ -60,6 +60,7 @@ const (
 	validateSuccess       validateResult = iota // Validation succeeded
 	validateFailPermanent                       // Permanent failure (fraud, invalid proof) - no retry
 	validateFailRetry                           // Transient failure (network, ML node) - can retry
+	porosityThreshold     = 100.0
 )
 
 // participantWork represents a single participant to validate.
@@ -71,6 +72,36 @@ type participantWork struct {
 	rootHash   []byte
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
+}
+
+// absInt32 returns the absolute value of an int32 as int64,
+// safely handling math.MinInt32 which overflows when negated in int32.
+func absInt32(n int32) int64 {
+	v := int64(n)
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func maxNonceValue(artifacts []VerifiedArtifact) int64 {
+	var maxAbs int64
+	for _, artifact := range artifacts {
+		if a := absInt32(artifact.Nonce); a > maxAbs {
+			maxAbs = a
+		}
+	}
+	return maxAbs
+}
+
+func isPorosityTooHigh(artifacts []VerifiedArtifact, totalCount uint32) (maxNonce int64, porosity float64, tooHigh bool) {
+	if len(artifacts) == 0 || totalCount == 0 {
+		return 0, 0, false
+	}
+
+	maxNonce = maxNonceValue(artifacts)
+	porosity = float64(maxNonce) / float64(totalCount)
+	return maxNonce, porosity, porosity >= porosityThreshold
 }
 
 // NewOffChainValidator creates a new off-chain validator.
@@ -477,6 +508,15 @@ func (v *OffChainValidator) validateParticipant(
 		return validateFailPermanent
 	}
 
+	if maxNonce, porosity, invalid := isPorosityTooHigh(verified, work.count); invalid {
+		logging.Warn("OffChainValidator: porosity too high", types.PoC,
+			"participant", work.address,
+			"maxNonce", maxNonce,
+			"count", work.count,
+			"porosity", porosity)
+		return validateFailPermanent
+	}
+
 	// Convert verified artifacts to ML node format
 	artifacts := make([]mlnodeclient.ArtifactV2, len(verified))
 	nonces := make([]int64, len(verified))
@@ -674,7 +714,15 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 			"numNodes", len(nodes),
 			"attempt", attempt)
 
-		nodes = filterNodesForValidation(nodes)
+		epochState := v.phaseTracker.GetCurrentEpochState()
+		if epochState == nil {
+			logging.Error("OffChainValidator: epoch state is nil during node filtering", types.PoC,
+				"pocStageStartBlockHeight", pocStageStartBlockHeight,
+				"attempt", attempt)
+			return nil, errors.New("epoch state is nil during node filtering")
+		}
+
+		nodes = filterNodesForValidation(nodes, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase)
 		logging.Info("OffChainValidator: filtered nodes for validation", types.PoC,
 			"numNodes", len(nodes),
 			"attempt", attempt)
@@ -701,8 +749,8 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 // filterNodesForValidation returns nodes available for PoC validation.
 // - Accept nodes in POC status with any sub-status
 // - Accept nodes in INFERENCE status (unless preserved for inference via POC_SLOT)
-// - Exclude FAILED, administratively disabled, or POC_SLOT-preserved nodes
-func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse {
+// - Exclude FAILED, nodes that are not operational for the current epoch/phase, or POC_SLOT-preserved nodes
+func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase) []broker.NodeResponse {
 	filtered := make([]broker.NodeResponse, 0, len(nodes))
 	for _, node := range nodes {
 		// Exclude failed nodes
@@ -717,9 +765,13 @@ func filterNodesForValidation(nodes []broker.NodeResponse) []broker.NodeResponse
 			continue
 		}
 
-		// Exclude administratively disabled nodes
-		if !node.State.AdminState.Enabled {
-			logging.Debug("filterNodesForValidation: Skipping administratively disabled node", types.PoC, "node_id", node.Node.Id)
+		// Exclude nodes that are not operational for the current epoch/phase.
+		if !node.State.ShouldBeOperational(latestEpoch, currentPhase) {
+			logging.Debug("filterNodesForValidation: Skipping non-operational node", types.PoC,
+				"node_id", node.Node.Id,
+				"latest_epoch", latestEpoch,
+				"current_phase", currentPhase,
+				"admin_state", node.State.AdminState)
 			continue
 		}
 

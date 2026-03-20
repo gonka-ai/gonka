@@ -9,12 +9,11 @@ import (
 )
 
 func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTraining) (*types.MsgJoinTrainingResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	if err := k.CheckTrainingAllowList(ctx, msg); err != nil {
+	if err := k.CheckPermission(goCtx, msg, TrainingExecPermission); err != nil {
 		return nil, err
 	}
 
+	ctx := sdk.UnwrapSDKContext(goCtx)
 	nodeId, err := training.NewGlobalNodeId(msg.Req.NodeId, msg.Creator)
 	if err != nil {
 		return nil, err

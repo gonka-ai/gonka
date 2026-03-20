@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -32,15 +31,19 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 	}
 	k.SetEpochGroupData(ctx, epochGroupData)
 
+	// Set active participants
+	k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: validatorLower}},
+	})
+
 	// Setup Mocks
 
-	// 1. AccountKeeper.GetAccount for Validator (both lower and upper)
+	// 1. AccountKeeper.HasAccount for Validator (both lower and upper)
 	accAddr, _ := sdk.AccAddressFromBech32(validatorLower)
 
-	// We expect GetAccount to be called. It just checks if account exists (not nil).
-	mocks.AccountKeeper.EXPECT().GetAccount(ctx, accAddr).Return(
-		&authtypes.BaseAccount{Address: validatorLower},
-	).AnyTimes()
+	// We expect HasAccount to be called.
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, accAddr).Return(true).AnyTimes()
 
 	// 2. GroupKeeper.GroupMembers
 	// Called when checking if validator is in epoch group.
@@ -90,5 +93,41 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 	require.Error(t, err, "Second vote should fail as duplicate")
 	if err != nil {
 		require.Contains(t, err.Error(), "validator has already validated this transaction")
+	}
+}
+
+func TestBridgeExchange_NonActiveValidatorRejected(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	// Setup an unauthorized Validator
+	accAddr := sdk.AccAddress([]byte("unauthorized_______"))
+	unauthorizedValidator := accAddr.String()
+
+	// Setup Epoch
+	epochIndex := uint64(1)
+	_ = k.SetEffectiveEpochIndex(ctx, epochIndex)
+
+	// Note: We deliberately DO NOT add this validator to the ActiveParticipants cache
+	// so the permission framework should reject it immediately.
+
+	// Mock account keeper just to avoid panics on basic address checks
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, accAddr).Return(true).AnyTimes()
+
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "ethereum",
+		ContractAddress: "0x123",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       unauthorizedValidator,
+	}
+
+	_, err := ms.BridgeExchange(ctx, msg)
+
+	// We assert that it fails because the permission check intercepts it
+	require.Error(t, err, "Vote from non-active participant should fail at the permission level")
+	if err != nil {
+		require.Contains(t, err.Error(), "participant is not active")
 	}
 }

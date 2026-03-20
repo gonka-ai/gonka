@@ -6,6 +6,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
@@ -16,11 +17,18 @@ const (
 )
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
+		return nil, err
+	}
+
+	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
+	if err != nil {
+		k.LogWarn("Validation: failed to inject params", types.Validation, "error", err)
+	}
+
 	k.LogInfo("Received MsgValidation", types.Validation,
 		"msg.Creator", msg.Creator,
 		"inferenceId", msg.InferenceId)
-
-	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	if msg.ResponsePayload != "" {
 		return nil, types.ErrValidationPayloadDeprecated
@@ -34,6 +42,24 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	if !found {
 		k.LogError("Inference not found", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, types.ErrInferenceNotFound
+	}
+
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("Failed to get current epoch", types.Validation)
+		return nil, types.ErrEffectiveEpochNotFound
+	}
+
+	// Ignore stale validations that arrive later than one epoch after inference epoch.
+	if currentEpochIndex > inference.EpochId+1 {
+		k.LogWarn(
+			"Ignoring stale validation from old epoch",
+			types.Validation,
+			"inferenceId", inference.InferenceId,
+			"inferenceEpoch", inference.EpochId,
+			"currentEpoch", currentEpochIndex,
+		)
+		return &types.MsgValidationResponse{}, nil
 	}
 
 	if !msg.Revalidation {
@@ -52,6 +78,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
+	previousStatus := inference.Status
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
 	if !found {
@@ -64,16 +91,47 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	model, err := k.GetEpochModelForEpoch(ctx, inference.EpochId, inference.Model)
-	if err != nil {
-		k.LogError("Failed to get epoch model", types.Validation,
-			"model", inference.Model,
-			"epochId", inference.EpochId,
-			"inferenceId", msg.InferenceId,
-			"error", err)
-		return nil, err
+	if inference.EpochId != currentEpochIndex {
+		k.LogInfo("Validation for different epoch", types.Validation, "inferenceEpoch", inference.EpochId, "currentEpochIndex", currentEpochIndex)
 	}
-	passValue := model.ValidationThreshold.ToDecimal()
+
+	var (
+		modelThreshold      *types.Decimal
+		participantWeight   int64
+		participantRepution int32
+		totalWeight         int64
+		modelEpochPolicy    string
+	)
+	cachedModelMeta, cacheFound, cacheErr := k.GetCachedEpochDataModelMeta(ctx, inference.EpochId, inference.Model)
+	if cacheErr != nil {
+		k.LogError("Validation: failed to load transient validation cache entry", types.Validation, "error", cacheErr, "model", inference.Model, "epochIndex", inference.EpochId)
+		return nil, cacheErr
+	}
+	if !cacheFound {
+		k.LogError("Validation: transient validation cache entry not found", types.Validation, "model", inference.Model, "epochIndex", inference.EpochId)
+		return nil, types.ErrEpochGroupDataNotFound
+	}
+	modelThreshold = cachedModelMeta.ValidationThreshold
+	modelEpochPolicy = cachedModelMeta.EpochPolicy
+	totalWeight = cachedModelMeta.TotalWeight
+
+	validatorMeta, weightFound, weightErr := k.GetCachedEpochDataModelWeight(ctx, inference.EpochId, inference.Model, msg.Creator)
+	if weightErr != nil {
+		k.LogError("Validation: failed to load transient validation weight entry", types.Validation, "error", weightErr, "participant", msg.Creator, "model", inference.Model, "epochIndex", inference.EpochId)
+		return nil, weightErr
+	}
+	if !weightFound {
+		k.LogError("Participant not found in transient validation cache for model", types.Validation, "participant", msg.Creator, "epochIndex", inference.EpochId, "model", inference.Model)
+		return nil, types.ErrParticipantNotFound
+	}
+	participantWeight = validatorMeta.Weight
+	participantRepution = validatorMeta.Reputation
+	if modelThreshold == nil {
+		k.LogError("Validation threshold missing", types.Validation, "model", inference.Model, "epochIndex", inference.EpochId)
+		return nil, types.ErrModelSnapshotNotFound
+	}
+
+	passValue := modelThreshold.ToDecimal()
 	messageValue := getValidationValue(msg)
 
 	passed := messageValue.GreaterThan(passValue)
@@ -86,36 +144,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	)
 	needsRevalidation := false
 
-	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
-	if !found {
-		k.LogError("Failed to get current epoch", types.Validation, "error", err)
-		return nil, types.ErrEffectiveEpochNotFound
-	}
-
-	if inference.EpochId != currentEpochIndex {
-		k.LogInfo("Validation for different epoch", types.Validation, "inferenceEpoch", inference.EpochId, "currentEpochIndex", currentEpochIndex)
-	}
-
-	epochGroup, err := k.GetEpochGroup(ctx, inference.EpochId, "")
-	if err != nil {
-		k.LogError("Failed to get epoch group", types.Validation, "error", err, "epochIndex", inference.EpochId)
-		return nil, err
-	}
-
-	groupData, found := k.GetEpochGroupData(ctx, epochGroup.GroupData.EpochIndex, inference.Model)
-	if !found {
-		k.LogError("Failed to get epoch group data", types.Validation, "epochIndex", epochGroup.GroupData.EpochIndex, "model", inference.Model)
-		return nil, err
-	}
-
-	if groupData.ValidationWeight(msg.Creator) == nil {
-		k.LogError("Participant not found in epoch group data for the model", types.Validation, "participant", msg.Creator, "epochIndex", epochGroup.GroupData.EpochIndex, "model", inference.Model)
-		return nil, types.ErrParticipantNotFound
-	}
-
 	k.LogInfo("Validating inner loop", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
 	if msg.Revalidation {
-		return epochGroup.Revalidate(passed, inference, msg, ctx)
+		if inference.ProposalDetails == nil {
+			k.LogError("Inference proposal details not set", types.Validation, "inference", inference)
+			return nil, types.ErrInferenceNotFinished
+		}
+		return k.revalidateInferenceVote(ctx, passed, inference, msg.Creator)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
 		shouldShare, information := k.inferenceIsBeforeClaimsSet(ctx, inference, currentEpochIndex)
@@ -132,16 +167,16 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		if err != nil {
 			return nil, err
 		}
-		if k.MaximumInvalidationsReached(ctx, creatorAddr, groupData) {
+		if k.MaximumInvalidationsReached(ctx, creatorAddr, inference.Model, participantWeight, participantRepution, totalWeight) {
 			k.LogWarn("Maximum invalidations reached.", types.Validation,
 				"creator", msg.Creator,
 				"model", inference.Model,
-				"epochIndex", epochGroup.GroupData.EpochIndex,
+				"epochIndex", inference.EpochId,
 			)
 			return &types.MsgValidationResponse{}, nil
 		}
 		inference.Status = types.InferenceStatus_VOTING
-		proposalDetails, err := epochGroup.StartValidationVote(ctx, &inference, msg.Creator)
+		proposalDetails, err := k.startValidationVoteWithPolicy(ctx, modelEpochPolicy, &inference, msg.Creator)
 		if err != nil {
 			return nil, err
 		}
@@ -168,10 +203,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
-	err = k.SetInference(ctx, inference)
+	err = k.SetInferenceWithoutPruning(ctx, inference)
 	if err != nil {
 		k.LogError("Failed to set inference", types.Validation, "inferenceId", inference.InferenceId, "error", err)
 		return nil, err
+	}
+	if inference.Status != previousStatus {
+		emitInferenceStatusUpdatedEvent(ctx, inference.InferenceId, inference.Status)
 	}
 
 	ctx.EventManager().EmitEvent(
@@ -185,6 +223,115 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	return &types.MsgValidationResponse{}, nil
 }
 
+func (k msgServer) revalidateInferenceVote(
+	ctx sdk.Context,
+	passed bool,
+	inference types.Inference,
+	voter string,
+) (*types.MsgValidationResponse, error) {
+	invalidateOption := group.VOTE_OPTION_YES
+	revalidationOption := group.VOTE_OPTION_NO
+	if passed {
+		invalidateOption = group.VOTE_OPTION_NO
+		revalidationOption = group.VOTE_OPTION_YES
+	}
+
+	voteMsg := &group.MsgVote{
+		ProposalId: inference.ProposalDetails.InvalidatePolicyId,
+		Voter:      voter,
+		Option:     invalidateOption,
+		Metadata:   "Invalidate inference " + inference.InferenceId,
+		Exec:       group.Exec_EXEC_TRY,
+	}
+	if err := k.voteValidationProposal(ctx, voteMsg); err != nil {
+		return nil, err
+	}
+
+	voteMsg.ProposalId = inference.ProposalDetails.ReValidatePolicyId
+	voteMsg.Option = revalidationOption
+	voteMsg.Metadata = "Revalidate inference " + inference.InferenceId
+	if err := k.voteValidationProposal(ctx, voteMsg); err != nil {
+		return nil, err
+	}
+	return &types.MsgValidationResponse{}, nil
+}
+
+func (k msgServer) voteValidationProposal(ctx sdk.Context, vote *group.MsgVote) error {
+	k.LogInfo("Voting", types.Validation, "vote", vote)
+	_, err := k.group.Vote(ctx, vote)
+	if err != nil {
+		if err.Error() == "proposal not open for voting: invalid value" {
+			k.LogInfo("Proposal already decided", types.Validation, "vote", vote)
+			return nil
+		}
+		k.LogError("Error voting", types.Validation, "error", err, "vote", vote)
+		return err
+	}
+	k.LogInfo("Voted on validation", types.Validation, "vote", vote)
+	return nil
+}
+
+func (k msgServer) startValidationVoteWithPolicy(
+	ctx sdk.Context,
+	policyAddress string,
+	inference *types.Inference,
+	invalidator string,
+) (*types.ProposalDetails, error) {
+	invalidateResponse, revalidateResponse, err := k.submitValidationProposalsWithPolicy(ctx, policyAddress, inference.InferenceId, invalidator, inference.ExecutedBy)
+	if err != nil {
+		return nil, err
+	}
+	return &types.ProposalDetails{
+		InvalidatePolicyId: invalidateResponse.ProposalId,
+		ReValidatePolicyId: revalidateResponse.ProposalId,
+		PolicyAddress:      policyAddress,
+	}, nil
+}
+
+func (k msgServer) submitValidationProposalsWithPolicy(
+	ctx sdk.Context,
+	policyAddress string,
+	inferenceID string,
+	invalidator string,
+	executor string,
+) (*group.MsgSubmitProposalResponse, *group.MsgSubmitProposalResponse, error) {
+	invalidateMessage := &types.MsgInvalidateInference{
+		InferenceId: inferenceID,
+		Creator:     policyAddress,
+		Invalidator: invalidator,
+	}
+	revalidateMessage := &types.MsgRevalidateInference{
+		InferenceId: inferenceID,
+		Creator:     policyAddress,
+		Invalidator: invalidator,
+	}
+	invalidateProposal := group.MsgSubmitProposal{
+		GroupPolicyAddress: policyAddress,
+		Proposers:          []string{invalidator},
+		Metadata:           "Invalidation of inference " + inferenceID,
+	}
+	revalidateProposal := group.MsgSubmitProposal{
+		GroupPolicyAddress: policyAddress,
+		Proposers:          []string{executor},
+		Metadata:           "Revalidation of inference " + inferenceID,
+	}
+	if err := invalidateProposal.SetMsgs([]sdk.Msg{invalidateMessage}); err != nil {
+		return nil, nil, err
+	}
+	if err := revalidateProposal.SetMsgs([]sdk.Msg{revalidateMessage}); err != nil {
+		return nil, nil, err
+	}
+	invalidateResponse, err := k.group.SubmitProposal(ctx, &invalidateProposal)
+	if err != nil {
+		return nil, nil, err
+	}
+	revalidateResponse, err := k.group.SubmitProposal(ctx, &revalidateProposal)
+	if err != nil {
+		return nil, nil, err
+	}
+	return invalidateResponse, revalidateResponse, nil
+}
+
 func getValidationValue(msg *types.MsgValidation) decimal.Decimal {
 	if msg.ValueDecimal != nil {
 		return msg.ValueDecimal.ToDecimal()
@@ -192,7 +339,14 @@ func getValidationValue(msg *types.MsgValidation) decimal.Decimal {
 	return decimal.NewFromFloat(msg.Value)
 }
 
-func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccAddress, data types.EpochGroupData) bool {
+func (k msgServer) MaximumInvalidationsReached(
+	ctx sdk.Context,
+	creator sdk.AccAddress,
+	modelID string,
+	participantWeight int64,
+	participantReputation int32,
+	totalWeight int64,
+) bool {
 	currentInvalidations, err := k.CountInvalidations(ctx, creator)
 	if err != nil {
 		k.LogError("Failed to get current invalidations", types.Validation, "error", err)
@@ -208,29 +362,32 @@ func (k msgServer) MaximumInvalidationsReached(ctx sdk.Context, creator sdk.AccA
 		k.LogError("Failed to get params", types.Validation, "error", err)
 		return false
 	}
-	blockTime := sdk.UnwrapSDKContext(ctx).BlockTime()
-	currentTimeMillis := blockTime.UnixMilli()                                             // Current time in milliseconds
-	windowDurationSeconds := int64(params.BandwidthLimitsParams.InvalidationsSamplePeriod) // Window duration in seconds (e.g., 60)
-	windowDurationMillis := windowDurationSeconds * 1000                                   // Convert to milliseconds for time queries
-	timeWindowStartMillis := currentTimeMillis - windowDurationMillis                      // Start time in milliseconds
-
-	recentInferencesMap := k.GetSummaryByModelAndTime(ctx, timeWindowStartMillis, currentTimeMillis)
-	inferencesForModel, found := recentInferencesMap[data.ModelId]
-	if !found {
-		// InferenceCount will be zero here... that's fine, it will return the default value of 1
-		k.LogInfo("No inferences for model", types.Validation, "model", data.ModelId, "error", err)
+	if params.BandwidthLimitsParams == nil {
+		k.LogError("Failed to get bandwidth limits params", types.Validation)
+		return false
 	}
 
-	participant := data.ValidationWeight(creator.String())
-	if participant == nil {
-		k.LogError("No participant for model", types.Validation, "model", data.ModelId, "error", err)
-		return true
+	windowBlocks := types.InvalidationsSamplePeriodToBlocks(params.BandwidthLimitsParams.InvalidationsSamplePeriod)
+	inferencesForModel := int64(0)
+	rollingInferenceCount, found, err := k.GetModelInferenceCountRollingSum(ctx, modelID, windowBlocks)
+	if err != nil {
+		k.LogError("Failed to get rolling inference count", types.Validation, "model", modelID, "error", err)
+		return false
 	}
-	participantWeightPercent := decimal.NewFromInt(participant.Weight).Div(decimal.NewFromInt(data.TotalWeight))
+	if found {
+		inferencesForModel = int64(rollingInferenceCount)
+	} else {
+		// Default to zero when there is no model state yet.
+		k.LogInfo("No rolling inference count for model", types.Validation, "model", modelID)
+	}
+	var participantWeightPercent = decimal.Zero
+	if totalWeight != 0 {
+		participantWeightPercent = decimal.NewFromInt(participantWeight).Div(decimal.NewFromInt(totalWeight))
+	}
 	maxValidations := calculations.CalculateInvalidations(
-		int64(inferencesForModel.InferenceCount),
+		inferencesForModel,
 		participantWeightPercent,
-		participant.Reputation,
+		participantReputation,
 		int64(params.BandwidthLimitsParams.InvalidationsLimit),
 		int64(params.BandwidthLimitsParams.InvalidationsLimitCurve),
 		int64(params.BandwidthLimitsParams.MinimumConcurrentInvalidations),
@@ -337,22 +494,15 @@ func (k msgServer) validateAdjustments(adjustments []calculations.Adjustment, ms
 }
 
 func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *types.MsgValidation, inference types.Inference) error {
-	epochGroupValidations, validationsFound := k.GetEpochGroupValidations(ctx, msg.Creator, inference.EpochId)
-	if !validationsFound {
-		epochGroupValidations = types.EpochGroupValidations{
-			Participant:         msg.Creator,
-			EpochIndex:          inference.EpochId,
-			ValidatedInferences: []string{msg.InferenceId},
-		}
-	} else {
-		// Use helper to both check for duplicates and keep the slice sorted.
-		updated, found := UpsertStringIntoSortedSlice(epochGroupValidations.ValidatedInferences, msg.InferenceId)
-		if found {
-			k.LogInfo("Inference already validated", types.Validation, "inferenceId", msg.InferenceId)
-			return types.ErrDuplicateValidation
-		}
-		epochGroupValidations.ValidatedInferences = updated
+	entryKey := collections.Join3(inference.EpochId, msg.Creator, msg.InferenceId)
+	alreadyValidated, err := k.EpochGroupValidationEntry.Has(ctx, entryKey)
+	if err != nil {
+		return err
+	}
+	if alreadyValidated {
+		k.LogInfo("Inference already validated", types.Validation, "inferenceId", msg.InferenceId)
+		return types.ErrDuplicateValidation
 	}
 	k.LogInfo("Adding inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochPocStartBlockHeight)
-	return k.SetEpochGroupValidations(ctx, epochGroupValidations)
+	return k.SetEpochGroupValidation(ctx, inference.EpochId, msg.Creator, msg.InferenceId)
 }

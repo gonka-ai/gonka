@@ -179,11 +179,14 @@ class WebhookService(private val responseService: ResponseService) {
                 // Get the weight from the ResponseService, default to 10 if not set
                 val weight = responseService.getPocResponseWeight(hostName) ?: 10L
 
-                // Generate unique nonces: atomic counter + nodeId offset
-                // Each mock-server container has its own counter, so nodeId ensures uniqueness across nodes
-                val start = latestNonce.getAndAdd(weight) + (nodeId * 1_000_000L)
+                // Sequential nonce assignment via atomic counter.
+                // In prod, nodes use a strided pattern (nonce % nodeCount == nodeId),
+                // but since mock nodes arrive as separate HTTP calls with advancing counters,
+                // simple sequential nonces are sufficient — the validator only checks
+                // uniqueness and porosity (maxNonce / count < 100), not the stride pattern.
+                val base = latestNonce.getAndAdd(weight)
                 val artifacts = (0 until weight.toInt()).map { i ->
-                    val nonce = start + i
+                    val nonce = base + i
                     // Generate valid FP16 vectors (24 bytes = 12 FP16 values)
                     // FP16 NaN/Inf have exponent bits = 31 (0x7C00-0x7FFF, 0xFC00-0xFFFF)
                     // To avoid these, we mask the high byte to keep exponent < 31

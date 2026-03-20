@@ -8,6 +8,7 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"go.uber.org/mock/gomock"
 )
 
@@ -26,10 +27,12 @@ func (s *KeeperTestSuite) TestStakingHooks_BeforeValidatorSlashed() {
 	slashFraction := math.LegacyNewDecWithPrec(25, 2) // 25%
 	expectedSlashedAmount := math.NewInt(initialAmount).ToLegacyDec().Mul(slashFraction).TruncateInt()
 
-	// The hook will trigger our Slash function, which in turn will call BurnCoins
+	// The hook will trigger our Slash function, which in turn redirects slashed funds to gov.
 	s.bankKeeper.EXPECT().
-		BurnCoins(s.ctx, types.ModuleName, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx sdk.Context, moduleName string, amt sdk.Coins, memo string) error {
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(types.ModuleName, senderModule)
+			s.Require().Equal(govtypes.ModuleName, recipientModule)
 			s.Require().Equal(expectedSlashedAmount, amt.AmountOf(inftypes.BaseCoin))
 			s.Require().Equal("collateral_slashed:", memo)
 			return nil

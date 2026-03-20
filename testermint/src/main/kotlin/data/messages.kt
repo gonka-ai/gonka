@@ -210,6 +210,12 @@ data class ProposalVotes(
     val pagination: ProposalVotePagination
 )
 
+data class MsgCreateSubnetEscrow(
+    override val type: String = "/inference.inference.MsgCreateSubnetEscrow",
+    val creator: String = "",
+    val amount: String = "",
+) : TxMessage
+
 data class Transaction(
     val body: TransactionBody,
 )

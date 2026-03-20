@@ -8,12 +8,10 @@ import (
 )
 
 func (k msgServer) ApproveBridgeTokenForTrading(goCtx context.Context, msg *types.MsgApproveBridgeTokenForTrading) (*types.MsgApproveBridgeTokenForTradingResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	// Validate authority - only governance can approve tokens for trading
-	if msg.Authority != k.GetAuthority() {
-		return nil, types.ErrInvalidSigner
+	if err := k.CheckPermission(goCtx, msg, GovernancePermission); err != nil {
+		return nil, err
 	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Check if token is already approved for trading
 	if k.HasBridgeTradeApprovedToken(ctx, msg.ChainId, msg.ContractAddress) {

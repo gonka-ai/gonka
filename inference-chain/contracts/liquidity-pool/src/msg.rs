@@ -16,20 +16,28 @@ pub struct InstantiateMsg {
     pub tier_multiplier: Option<Uint128>,
     /// Initial total supply of native tokens (defaults to 0 if not provided)
     pub total_supply: Option<Uint128>,
+    /// Optional native token denomination (defaults to "ngonka" if not provided)
+    pub native_denom: Option<String>,
 }
 
 #[cw_serde]
 pub enum ExecuteMsg {
     /// Receive CW20 wrapped bridge tokens to purchase native tokens
     Receive(Cw20ReceiveMsg),
+    /// Purchase native tokens with native coins (identifiers parsed from message funds)
+    PurchaseWithNative {},
     /// Admin: Pause the contract
     Pause {},
     /// Admin: Resume the contract
     Resume {},
     /// Admin: Update daily limit in basis points
     UpdateDailyLimit { daily_limit_bp: Option<Uint128> },
-    /// Admin: Withdraw native tokens from contract
-    WithdrawNativeTokens { amount: Uint128, recipient: String },
+    /// Admin: Withdraw native tokens (Gonka) from contract
+    WithdrawNative { amount: Uint128, recipient: String },
+    /// Admin: Withdraw IBC/other native tokens (e.g. USDC)
+    WithdrawIbc { denom: String, amount: Uint128, recipient: String },
+    /// Admin: Withdraw CW20 tokens
+    WithdrawCw20 { contract_addr: String, amount: Uint128, recipient: String },
     /// Admin: Emergency withdraw all funds
     EmergencyWithdraw { recipient: String },
     /// Admin: Update pricing configuration
@@ -38,13 +46,6 @@ pub enum ExecuteMsg {
         tokens_per_tier: Option<Uint128>,
         tier_multiplier: Option<Uint128>,
     },
-    /// Admin: Add or update a payment token and its USD rate
-    AddPaymentToken { 
-        denom: String, 
-        usd_rate: Uint128 // micro-USD per token unit
-    },
-    /// Admin: Remove a payment token
-    RemovePaymentToken { denom: String },
 }
 
 #[cw_serde]
@@ -136,10 +137,6 @@ pub struct TokenCalculationResponse {
     pub current_tier: u32,
 }
 
-#[cw_serde]
-pub struct PaymentTokensResponse {
-    pub tokens: HashMap<String, Uint128>, // denom -> USD rate
-} 
 
 #[cw_serde]
 pub struct TestBridgeValidationResponse {

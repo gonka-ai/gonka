@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 
+	"cosmossdk.io/collections"
+	"github.com/cosmos/cosmos-sdk/testutil/testdata"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -20,7 +22,12 @@ func createNActiveParticipants(keeper keeper.Keeper, ctx context.Context, n int)
 	for i := range items {
 		items[i].EpochGroupId = uint64(i)
 		items[i].EpochId = uint64(i)
-		items[i].Participants = []*types.ActiveParticipant{}
+		_, _, addr := testdata.KeyTestPubAddr()
+		items[i].Participants = []*types.ActiveParticipant{
+			{
+				Index: addr.String(),
+			},
+		}
 		items[i].PocStartBlockHeight = int64(i * 100)
 		items[i].EffectiveBlockHeight = int64(i*100 + 10)
 		items[i].CreatedAtBlockHeight = int64(i*100 - 10)
@@ -51,18 +58,22 @@ func TestActiveParticipantsGetNotFound(t *testing.T) {
 func TestSetActiveParticipants(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
+	_, _, addr0 := testdata.KeyTestPubAddr()
+	_, _, addr1 := testdata.KeyTestPubAddr()
+	_, _, addr2 := testdata.KeyTestPubAddr()
+
 	// Create and set active participants
 	participants := types.ActiveParticipants{
 		EpochGroupId: 1,
 		EpochId:      1,
 		Participants: []*types.ActiveParticipant{
 			{
-				Index:        "0",
+				Index:        addr0.String(),
 				ValidatorKey: "validator0",
 				Weight:       100,
 			},
 			{
-				Index:        "1",
+				Index:        addr1.String(),
 				ValidatorKey: "validator1",
 				Weight:       200,
 			},
@@ -72,7 +83,16 @@ func TestSetActiveParticipants(t *testing.T) {
 		CreatedAtBlockHeight: 90,
 	}
 
-	keeper.SetActiveParticipants(ctx, participants)
+	err := keeper.SetActiveParticipants(ctx, participants)
+	require.NoError(t, err)
+
+	// Verify cache
+	has, err := keeper.ActiveParticipantsSet.Has(ctx, collections.Join(uint64(1), addr0))
+	require.NoError(t, err)
+	require.True(t, has)
+	has, err = keeper.ActiveParticipantsSet.Has(ctx, collections.Join(uint64(1), addr1))
+	require.NoError(t, err)
+	require.True(t, has)
 
 	// Retrieve and verify
 	retrieved, found := keeper.GetActiveParticipants(ctx, 1)
@@ -81,7 +101,7 @@ func TestSetActiveParticipants(t *testing.T) {
 
 	// Update and verify
 	newParticipant := &types.ActiveParticipant{
-		Index:        "2",
+		Index:        addr2.String(),
 		ValidatorKey: "validator2",
 		Weight:       300,
 	}
@@ -95,9 +115,35 @@ func TestSetActiveParticipants(t *testing.T) {
 		CreatedAtBlockHeight: retrieved.CreatedAtBlockHeight,
 	}
 
-	keeper.SetActiveParticipants(ctx, updatedParticipants)
+	err = keeper.SetActiveParticipants(ctx, updatedParticipants)
+	require.NoError(t, err)
+
+	// Verify updated cache
+	has, err = keeper.ActiveParticipantsSet.Has(ctx, collections.Join(uint64(1), addr2))
+	require.NoError(t, err)
+	require.True(t, has)
 
 	retrieved, found = keeper.GetActiveParticipants(ctx, 1)
 	require.True(t, found)
 	require.Equal(t, 3, len(retrieved.Participants))
+}
+
+func ParticipantToActive(p *types.Participant) *types.ActiveParticipant {
+	return &types.ActiveParticipant{
+		Index:        p.Index,
+		Weight:       int64(p.Weight),
+		InferenceUrl: p.InferenceUrl,
+		ValidatorKey: p.ValidatorKey,
+	}
+}
+
+func ParticipantsToActive(epochId int64, participants ...types.Participant) types.ActiveParticipants {
+	activeParticipants := make([]*types.ActiveParticipant, len(participants))
+	for i, p := range participants {
+		activeParticipants[i] = ParticipantToActive(&p)
+	}
+	return types.ActiveParticipants{
+		Participants: activeParticipants,
+		EpochId:      uint64(epochId),
+	}
 }

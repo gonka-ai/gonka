@@ -36,6 +36,7 @@ import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
+import "inference/inference/subnet_escrow.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -365,6 +366,11 @@ service Query {
 
   }
 
+  // Validates an IBC token for trading through liquidity pools
+  rpc ValidateIbcTokenForTrade(QueryValidateIbcTokenForTradeRequest) returns (QueryValidateIbcTokenForTradeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/validate_ibc_token_for_trade/{ibc_denom}";
+  }
+
   // Queries all approved bridge tokens for trading
   rpc ApprovedTokensForTrade(QueryApprovedTokensForTradeRequest) returns (QueryApprovedTokensForTradeResponse) {
     option (google.api.http).get = "/productscience/inference/inference/approved_tokens_for_trade";
@@ -484,6 +490,14 @@ service Query {
   // Queries PoC validation snapshot for deterministic sampling synchronization.
   rpc PoCValidationSnapshot (QueryPoCValidationSnapshotRequest) returns (QueryPoCValidationSnapshotResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
+  }
+
+  rpc SubnetEscrow (QueryGetSubnetEscrowRequest) returns (QueryGetSubnetEscrowResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/subnet_escrow/{id}";
+  }
+
+  rpc SubnetHostEpochStats (QueryGetSubnetHostEpochStatsRequest) returns (QueryGetSubnetHostEpochStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/subnet_host_epoch_stats/{epoch_index}/{participant}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1092,6 +1106,15 @@ message QueryValidateWrappedTokenForTradeResponse {
   bool is_valid = 1;
 }
 
+message QueryValidateIbcTokenForTradeRequest {
+  string ibc_denom = 1;
+}
+
+message QueryValidateIbcTokenForTradeResponse {
+  bool is_valid = 1;
+  uint32 decimals = 2;
+}
+
 message QueryLiquidityPoolRequest {}
 
 message QueryLiquidityPoolResponse {
@@ -1271,5 +1294,24 @@ message QueryPoCValidationSnapshotRequest {
 
 message QueryPoCValidationSnapshotResponse {
   PoCValidationSnapshot snapshot = 1;
+  bool found = 2;
+}
+
+message QueryGetSubnetEscrowRequest {
+  uint64 id = 1;
+}
+
+message QueryGetSubnetEscrowResponse {
+  SubnetEscrow escrow = 1;
+  bool found = 2;
+}
+
+message QueryGetSubnetHostEpochStatsRequest {
+  uint64 epoch_index = 1;
+  string participant = 2;
+}
+
+message QueryGetSubnetHostEpochStatsResponse {
+  SubnetHostEpochStats stats = 1;
   bool found = 2;
 }

@@ -27,7 +27,7 @@ func TestValidationEarlyRejectDecorator_DuplicateValidationRejectedInCheckTx(t *
 	inferenceID := "inf-1"
 	validator := testutil.Validator
 
-	require.NoError(t, k.SetInferenceWithoutDevStatComputation(ctx, inferencetypes.Inference{
+	require.NoError(t, k.SetInference(ctx, inferencetypes.Inference{
 		Index:       inferenceID,
 		InferenceId: inferenceID,
 		Model:       modelID,
@@ -42,7 +42,7 @@ func TestValidationEarlyRejectDecorator_DuplicateValidationRejectedInCheckTx(t *
 		},
 	})
 
-	require.NoError(t, k.SetEpochGroupValidations(ctx, inferencetypes.EpochGroupValidations{
+	require.NoError(t, k.SeedEpochGroupValidationEntries(ctx, inferencetypes.EpochGroupValidations{
 		Participant: validator,
 		EpochIndex:  0,
 		// Intentionally unsorted: ante check should not rely on ordering.
@@ -67,7 +67,7 @@ func TestValidationEarlyRejectDecorator_NotInEpochRejectedInCheckTx(t *testing.T
 	inferenceID := "inf-1"
 	validator := testutil.Validator
 
-	require.NoError(t, k.SetInferenceWithoutDevStatComputation(ctx, inferencetypes.Inference{
+	require.NoError(t, k.SetInference(ctx, inferencetypes.Inference{
 		Index:       inferenceID,
 		InferenceId: inferenceID,
 		Model:       modelID,
@@ -101,7 +101,7 @@ func TestValidationEarlyRejectDecorator_BypassesDeliverTx(t *testing.T) {
 	inferenceID := "inf-1"
 	validator := testutil.Validator
 
-	require.NoError(t, k.SetInferenceWithoutDevStatComputation(ctx, inferencetypes.Inference{
+	require.NoError(t, k.SetInference(ctx, inferencetypes.Inference{
 		Index:       inferenceID,
 		InferenceId: inferenceID,
 		Model:       modelID,
@@ -137,7 +137,7 @@ func TestValidationEarlyRejectDecorator_DoesNotRejectInferenceFromNextEpochInChe
 	validator := testutil.Validator
 
 	// Inference belongs to epoch 1, but local effective epoch is 0 (node lag scenario).
-	require.NoError(t, k.SetInferenceWithoutDevStatComputation(ctx, inferencetypes.Inference{
+	require.NoError(t, k.SetInference(ctx, inferencetypes.Inference{
 		Index:       inferenceID,
 		InferenceId: inferenceID,
 		Model:       modelID,

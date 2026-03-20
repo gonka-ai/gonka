@@ -12,61 +12,18 @@ import kotlin.experimental.xor
 import kotlin.test.assertNotNull
 import java.util.Base64
 import com.productscience.assertions.assertThat
-import java.security.MessageDigest
-import com.google.gson.Gson
-import com.google.gson.JsonArray
-import com.google.gson.JsonElement
-import com.google.gson.JsonObject
-import com.google.gson.JsonPrimitive
-import java.util.TreeMap
 
 // Phase 3: SHA256 hash utility for signature migration
-fun sha256(input: String): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    return digest.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
-}
+fun sha256(input: String): String = PromptHashing.sha256Hex(input)
 
 // Phase 6: Canonicalize JSON to match Go's CanonicalizeJSON behavior
-// Recursively sorts object keys and outputs compact JSON
-// IMPORTANT: Go's json.Encoder.Encode() adds a trailing newline, so we must match that
-fun canonicalizeJson(json: String): String {
-    val gson = Gson()
-    val element = gson.fromJson(json, JsonElement::class.java)
-    val canonical = canonicalizeElement(element)
-    // Go's json.Encoder.Encode() adds trailing newline - must match for hash compatibility
-    return gson.toJson(canonical) + "\n"
-}
-
-private fun canonicalizeElement(element: JsonElement): JsonElement {
-    return when {
-        element.isJsonObject -> {
-            val obj = element.asJsonObject
-            val sortedMap = TreeMap<String, JsonElement>()
-            for (entry in obj.entrySet()) {
-                sortedMap[entry.key] = canonicalizeElement(entry.value)
-            }
-            val result = JsonObject()
-            for ((key, value) in sortedMap) {
-                result.add(key, value)
-            }
-            result
-        }
-        element.isJsonArray -> {
-            val arr = element.asJsonArray
-            val result = JsonArray()
-            for (item in arr) {
-                result.add(canonicalizeElement(item))
-            }
-            result
-        }
-        else -> element // primitives and nulls stay as-is
-    }
-}
+fun canonicalizeJson(json: String): String = PromptHashing.canonicalizeJson(json)
 
 // Compute SHA256 of canonicalized JSON (matches Go's ComputePromptHash)
-fun canonicalSha256(json: String): String {
-    return sha256(canonicalizeJson(json))
-}
+fun canonicalSha256(json: String): String = PromptHashing.canonicalSha256(json)
+
+fun modifiedPromptHash(json: String, defaultSeed: Long = 0): String =
+    PromptHashing.computeModifiedPromptHash(json, defaultSeed)
 
 // Compute response hash matching Go's CompletionResponse.GetHash()
 // Hashes full payload bytes to include logprobs (security fix: prevents logprob manipulation)
@@ -219,7 +176,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
-    fun `submit StartInference with bad TA signature`() {
+    fun `submit StartInference with bad TA signature succeeds (start-first policy skips TA verification)`() {
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         // Phase 3: Use hashes for signatures
@@ -242,8 +199,9 @@ class InferenceTests : TestermintTest() {
             transferSignature = taSignature.invalidate(),
             originalPromptHash = originalPromptHash
         )
+        // Start-first policy: only dev signature is verified, TA signature is skipped
         val response = genesis.submitMessage(message)
-        assertThat(response).isFailure()
+        assertThat(response).isSuccess()
     }
 
     @Test
@@ -292,11 +250,12 @@ class InferenceTests : TestermintTest() {
 
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
-        // Phase 3: Dev signs original_prompt_hash, TA signs prompt_hash
+        // Phase 3: Dev signs original_prompt_hash, TA signs modified prompt_hash
         val originalPromptHash = sha256(inferenceRequest)
+        val promptHash = modifiedPromptHash(inferenceRequest)
         val signature = genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress, null)
         val taSignature =
-            genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
+            genesis.node.signPayload(promptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
         val valid = genesis.api.makeExecutorInferenceRequest(
             inferenceRequest,
             genesisAddress,
@@ -319,9 +278,9 @@ class InferenceTests : TestermintTest() {
             assertThat(inference.executedBy).isEqualTo(genesisAddress)
             // TODO: UNDERSTAND WHY EXACTLY
             // Note: Can't assert executionSignature matches taSignature because:
-            // - TA signs originalPromptHash (what we computed above)
+            // - TA signs modified promptHash (after API request mutation)
             // - Executor signs promptHash (after API modifies request with seed/logprobs)
-            // - These are different hashes, so signatures will differ
+            // - These signatures should match by payload, but exact binary form is not asserted here
             // The test verifies the inference completed successfully
             // assertThat(inference.executionSignature).isEqualTo(taSignature)
         }
@@ -334,11 +293,12 @@ class InferenceTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
-        // Phase 3: Dev signs original_prompt_hash, TA signs prompt_hash
+        // Phase 3: Dev signs original_prompt_hash, TA signs modified prompt_hash
         val originalPromptHash = sha256(inferenceRequest)
+        val promptHash = modifiedPromptHash(inferenceRequest)
         val signature = genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress, null)
         val taSignature =
-            genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
+            genesis.node.signPayload(promptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
         assertThatThrownBy {
             genesis.api.makeExecutorInferenceRequest(
                 inferenceRequest,
@@ -357,11 +317,12 @@ class InferenceTests : TestermintTest() {
     fun `executor validates TA signature`() {
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
-        // Phase 3: Dev signs original_prompt_hash, TA signs prompt_hash
+        // Phase 3: Dev signs original_prompt_hash, TA signs modified prompt_hash
         val originalPromptHash = sha256(inferenceRequest)
+        val promptHash = modifiedPromptHash(inferenceRequest)
         val signature = genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress, null)
         val taSignature =
-            genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
+            genesis.node.signPayload(promptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
         assertThatThrownBy {
             genesis.api.makeExecutorInferenceRequest(
                 inferenceRequest,
@@ -375,16 +336,18 @@ class InferenceTests : TestermintTest() {
             .hasMessageContaining("HTTP Exception 401 Unauthorized")
     }
 
+
     @Test
     fun `executor rejects old timestamp`() {
         val params = genesis.getParams()
         val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
-        // Phase 3: Dev signs original_prompt_hash, TA signs prompt_hash
+        // Phase 3: Dev signs original_prompt_hash, TA signs modified prompt_hash
         val originalPromptHash = sha256(inferenceRequest)
+        val promptHash = modifiedPromptHash(inferenceRequest)
         val signature = genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress, null)
         val taSignature =
-            genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
+            genesis.node.signPayload(promptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
         assertThatThrownBy {
             genesis.api.makeExecutorInferenceRequest(
                 inferenceRequest,
@@ -405,11 +368,12 @@ class InferenceTests : TestermintTest() {
 
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
-        // Phase 3: Dev signs original_prompt_hash, TA signs prompt_hash
+        // Phase 3: Dev signs original_prompt_hash, TA signs modified prompt_hash
         val originalPromptHash = sha256(inferenceRequest)
+        val promptHash = modifiedPromptHash(inferenceRequest)
         val signature = genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress, null)
         val taSignature =
-            genesis.node.signPayload(originalPromptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
+            genesis.node.signPayload(promptHash + timestamp.toString() + genesisAddress + genesisAddress, null)
         val valid = genesis.api.makeExecutorInferenceRequest(
             inferenceRequest,
             genesisAddress,
@@ -531,7 +495,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
-    fun `finish inference validates ea signature`() {
+    fun `finish inference with bad ea signature succeeds (executor verification disabled by policy)`() {
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
         // Phase 3: Dev signs original_prompt_hash, TA/Executor sign prompt_hash
@@ -558,8 +522,9 @@ class InferenceTests : TestermintTest() {
             promptHash = promptHash,
             originalPromptHash = originalPromptHash,
         )
+        // Executor signature verification is disabled by policy in both paths
         val response = genesis.submitMessage(message)
-        assertThat(response).isFailure()
+        assertThat(response).isSuccess()
     }
 
 

@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func proxyResponse(
+func ProxyResponse(
 	resp *http.Response,
 	w http.ResponseWriter,
 	excludeContentLength bool,
@@ -53,7 +53,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		logging.Debug("Chunk", types.Inferences, "inferenceId", inferenceId, "line", line)
 
 		var lineToProxy = line
-		if responseProcessor != nil {
+		// Skip empty lines for the processor to match processSSE behavior.
+		// Empty lines are still written to the response writer for SSE framing.
+		if responseProcessor != nil && line != "" {
 			var err error
 			lineToProxy, err = responseProcessor.ProcessStreamedResponse(line)
 			if err != nil {

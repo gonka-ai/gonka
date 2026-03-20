@@ -21,6 +21,9 @@ service Msg {
   // TransferWithVesting transfers tokens from sender to recipient with a vesting schedule.
   // The tokens will vest over the specified number of epochs (default: 180).
   rpc TransferWithVesting(MsgTransferWithVesting) returns (MsgTransferWithVestingResponse);
+
+  // BatchTransferWithVesting transfers tokens from sender to multiple recipients with vesting schedules.
+  rpc BatchTransferWithVesting(MsgBatchTransferWithVesting) returns (MsgBatchTransferWithVestingResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -69,3 +72,35 @@ message MsgTransferWithVesting {
 
 // MsgTransferWithVestingResponse defines the response for MsgTransferWithVesting.
 message MsgTransferWithVestingResponse {}
+
+// BatchVestingOutput defines one recipient output in batch transfer with vesting.
+message BatchVestingOutput {
+  // recipient is the address of the account receiving vesting tokens.
+  string recipient = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // amount is the coins to transfer with vesting.
+  repeated cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgBatchTransferWithVesting is the request type for batch transfer with vesting.
+message MsgBatchTransferWithVesting {
+  option (cosmos.msg.v1.signer) = "sender";
+  option (amino.name) = "inference/x/streamvesting/MsgBatchTransferWithVesting";
+
+  // sender is the address of the account sending the tokens.
+  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // outputs are recipients and amounts to vest.
+  repeated BatchVestingOutput outputs = 2 [(gogoproto.nullable) = false];
+
+  // vesting_epochs is the number of epochs over which the tokens will vest.
+  // If not specified or 0, defaults to 180 epochs.
+  uint64 vesting_epochs = 3;
+}
+
+// MsgBatchTransferWithVestingResponse defines the response for MsgBatchTransferWithVesting.
+message MsgBatchTransferWithVestingResponse {}

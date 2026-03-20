@@ -324,7 +324,7 @@ func findDonorIndex(assigned []int64, remainders []math.LegacyDec, participants 
 			ri := remainders[i]
 			rd := remainders[donor]
 			if !ri.Equal(rd) {
-				if ri.LT(rd) {
+				if ri.GT(rd) {
 					donor = i
 				}
 				continue

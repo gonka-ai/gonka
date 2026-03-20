@@ -10,6 +10,7 @@ import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.github.kittinunf.fuel.gson.jsonBody
 import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.result.Result
+import com.google.gson.Gson
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
@@ -98,6 +99,9 @@ data class ApplicationAPI(
         seed: Long = 0
     ): OpenAIResponse = wrapLog("MakeExecutorInferenceRequest", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
+        val payloadHash = PromptHashing.computeModifiedPromptPayloadAndHash(request, seed)
+        val promptHash = payloadHash.promptHash
+        val canonicalPayload = payloadHash.canonicalPayload
         val response = Fuel.post((url + "/v1/chat/completions"))
             .jsonBody(request)
             .header("X-Requester-Address", requesterAddress)
@@ -106,6 +110,7 @@ data class ApplicationAPI(
             .header("X-Transfer-Address", transferAddress)
             .header("X-Inference-Id", devSignature)
             .header("X-Seed", seed)
+            .header("X-Prompt-Hash", promptHash)
             .header("X-TA-Signature", taSignature)
             .timeout(1000 * 60)
             .timeoutRead(1000 * 60)
@@ -264,6 +269,38 @@ data class ApplicationAPI(
     fun getPricing(): GetPricingDto = wrapLog("GetPricing", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         get<GetPricingDto>(url, "v1/pricing")
+    }
+
+    fun getStatsModels(timeFrom: Long, timeTo: Long): StatsModelsResponse = wrapLog("GetStatsModels", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/models?time_from=$timeFrom&time_to=$timeTo")
+    }
+
+    fun getStatsDeveloperInferences(developer: String, timeFrom: Long, timeTo: Long): DeveloperInferencesResponse =
+        wrapLog("GetStatsDeveloperInferences", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            get(url, "v1/stats/developers/$developer/inferences?time_from=$timeFrom&time_to=$timeTo")
+        }
+
+    fun getStatsDeveloperSummaryEpochs(developer: String, epochsN: Int): StatsSummaryResponse =
+        wrapLog("GetStatsDeveloperSummaryEpochs", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            get(url, "v1/stats/developers/$developer/summary/epochs?epochs_n=$epochsN")
+        }
+
+    fun getStatsSummaryEpochs(epochsN: Int): StatsSummaryResponse = wrapLog("GetStatsSummaryEpochs", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/summary/epochs?epochs_n=$epochsN")
+    }
+
+    fun getStatsSummaryTime(timeFrom: Long, timeTo: Long): StatsSummaryResponse = wrapLog("GetStatsSummaryTime", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/summary/time?time_from=$timeFrom&time_to=$timeTo")
+    }
+
+    fun getStatsDebugDevelopers(): DebugStatsResponse = wrapLog("GetStatsDebugDevelopers", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/stats/debug/developers")
     }
 
     fun registerModel(model: RegisterModelDto): String = wrapLog("RegisterModel", true) {
@@ -457,6 +494,15 @@ data class ApplicationAPI(
     fun getConfig(): ApiConfig = wrapLog("GetConfig", false) {
         val url = urlFor(SERVER_TYPE_ADMIN)
         get<ApiConfig>(url, "admin/v1/config")
+    }
+
+    fun getSubnetMempool(escrowId: Long): SubnetMempoolResponse = wrapLog("GetSubnetMempool", false) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        val resp = Fuel.get("$url/v1/subnet/sessions/$escrowId/mempool")
+            .timeoutRead(1000 * 30)
+            .responseObject<SubnetMempoolResponse>(gsonDeserializer(cosmosJson))
+        logResponse(resp)
+        resp.third.get()
     }
 
 }

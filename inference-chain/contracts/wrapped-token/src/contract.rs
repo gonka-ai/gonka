@@ -176,9 +176,18 @@ fn withdraw(
         });
     }
 
+    let dest_trimmed = destination_address.trim();
     // Validate destination address is not empty
-    if destination_address.trim().is_empty() {
+    if dest_trimmed.is_empty() {
         return Err(ContractError::Std(StdError::generic_err("destination_address cannot be empty")));
+    }
+    // Validate destination address is a 42-character hex address starting with 0x
+    if dest_trimmed.len() != 42 || !(dest_trimmed.starts_with("0x") || dest_trimmed.starts_with("0X")) {
+        return Err(ContractError::Std(StdError::generic_err("destination_address must be a 42-character hex address starting with 0x")));
+    }
+    // Validate destination address contains only hex characters
+    if !dest_trimmed[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ContractError::Std(StdError::generic_err("destination_address contains invalid characters")));
     }
 
     // Delegate to cw20-base burn

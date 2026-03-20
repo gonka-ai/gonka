@@ -12,6 +12,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/poc"
+	"decentralized-api/statsstorage"
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -51,11 +52,20 @@ type EventListener struct {
 	dispatcher            *OnNewBlockDispatcher
 	cancelFunc            context.CancelFunc
 	rewardRecoveryChecker *startup.RewardRecoveryChecker
+	statsStorage          statsstorage.StatsStorage
 
 	eventHandlers []EventHandler
 
 	ws            *websocket.Conn
 	blockObserver *BlockObserver
+}
+
+type EventListenerOption func(*EventListener)
+
+func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
+	return func(el *EventListener) {
+		el.statsStorage = storage
+	}
 }
 
 func NewEventListener(
@@ -68,6 +78,7 @@ func NewEventListener(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
 	blsManager *bls.BlsManager,
+	opts ...EventListenerOption,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
@@ -83,6 +94,7 @@ func NewEventListener(
 	eventHandlers := []EventHandler{
 		&BlsTransactionEventHandler{},
 		&InferenceFinishedEventHandler{},
+		&InferenceStatusUpdatedEventHandler{},
 		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
 		&TrainingTaskAssignedEventHandler{},
@@ -90,7 +102,7 @@ func NewEventListener(
 
 	bo := NewBlockObserver(configManager)
 
-	return &EventListener{
+	el := &EventListener{
 		nodeBroker:            nodeBroker,
 		transactionRecorder:   transactionRecorder,
 		configManager:         configManager,
@@ -104,6 +116,10 @@ func NewEventListener(
 		blockObserver:         bo,
 		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, validator, configManager),
 	}
+	for _, opt := range opts {
+		opt(el)
+	}
+	return el
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
@@ -430,10 +446,198 @@ func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCRespons
 	if el.isNodeSynced() {
 		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
 	}
+	if el.statsStorage == nil {
+		return nil
+	}
+	records, err := parseInferenceFinishedRecords(event.Result.Events)
+	if err != nil {
+		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
+		return nil
+	}
+	for _, rec := range records {
+		if err := el.statsStorage.UpsertInference(context.Background(), rec); err != nil {
+			logging.Error("Failed to upsert inference_finished record to stats storage", types.EventProcessing,
+				"inference_id", rec.InferenceID, "error", err)
+		}
+	}
 	return nil
 }
 
+func parseInferenceFinishedRecords(events map[string][]string) ([]statsstorage.InferenceRecord, error) {
+	ids := events["inference_finished.inference_id"]
+	if len(ids) == 0 {
+		return nil, errors.New("missing inference_finished.inference_id")
+	}
+
+	records := make([]statsstorage.InferenceRecord, 0, len(ids))
+	for i, id := range ids {
+		var (
+			rec statsstorage.InferenceRecord
+			ok  bool
+			err error
+		)
+		rec.InferenceID = id
+		rec.RequestedBy, ok = getEventValue(events, "inference_finished.requested_by", i)
+		if !ok {
+			return nil, fmt.Errorf("missing requested_by for inference %s", id)
+		}
+		rec.Model, ok = getEventValue(events, "inference_finished.model", i)
+		if !ok {
+			return nil, fmt.Errorf("missing model for inference %s", id)
+		}
+		rec.Status, ok = getEventValue(events, "inference_finished.status", i)
+		if !ok {
+			return nil, fmt.Errorf("missing status for inference %s", id)
+		}
+		rec.EpochID, err = parseEventUint64(events, "inference_finished.epoch_id", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse epoch_id for inference %s: %w", id, err)
+		}
+		rec.PromptTokenCount, err = parseEventUint64(events, "inference_finished.prompt_token_count", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse prompt_token_count for inference %s: %w", id, err)
+		}
+		rec.CompletionTokenCount, err = parseEventUint64(events, "inference_finished.completion_token_count", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse completion_token_count for inference %s: %w", id, err)
+		}
+		rec.ActualCostInCoins, err = parseEventInt64(events, "inference_finished.actual_cost_in_coins", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse actual_cost_in_coins for inference %s: %w", id, err)
+		}
+		rec.StartBlockTimestamp, err = parseEventUnixMillis(events, "inference_finished.start_block_timestamp", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse start_block_timestamp for inference %s: %w", id, err)
+		}
+		rec.EndBlockTimestamp, err = parseEventUnixMillis(events, "inference_finished.end_block_timestamp", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse end_block_timestamp for inference %s: %w", id, err)
+		}
+		rec.TotalTokenCount = rec.PromptTokenCount + rec.CompletionTokenCount
+		rec.InferenceTimestamp = rec.EndBlockTimestamp
+		if rec.InferenceTimestamp == 0 {
+			rec.InferenceTimestamp = rec.StartBlockTimestamp
+		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+func getEventValue(events map[string][]string, key string, idx int) (string, bool) {
+	values := events[key]
+	if len(values) == 0 {
+		return "", false
+	}
+	if idx < len(values) {
+		return values[idx], true
+	}
+	return "", false
+}
+
+func parseEventUint64(events map[string][]string, key string, idx int) (uint64, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, nil
+}
+
+func parseEventUnixMillis(events map[string][]string, key string, idx int) (statsstorage.UnixMillis, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if parsed < statsstorage.UnixMillisTimestampThreshold {
+		return 0, fmt.Errorf("timestamp is in seconds %s", v)
+	}
+	return statsstorage.UnixMillis(parsed), nil
+}
+
+func parseEventInt64(events map[string][]string, key string, idx int) (int64, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, nil
+}
+
 type InferenceValidationEventHandler struct {
+}
+
+type inferenceStatusUpdateRecord struct {
+	InferenceID string
+	Status      string
+}
+
+type InferenceStatusUpdatedEventHandler struct {
+}
+
+func (e *InferenceStatusUpdatedEventHandler) GetName() string {
+	return "inference_status_updated"
+}
+
+func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
+}
+
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.statsStorage == nil {
+		return nil
+	}
+	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	if err != nil {
+		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
+		return nil
+	}
+	for _, rec := range records {
+		err := el.statsStorage.UpdateInferenceStatus(context.Background(), rec.InferenceID, rec.Status)
+		if err != nil {
+			if errors.Is(err, statsstorage.ErrInferenceRecordNotFound) {
+				logging.Warn("Ignoring inference_status_updated for unknown inference in stats storage", types.EventProcessing,
+					"inference_id", rec.InferenceID, "status", rec.Status)
+				continue
+			}
+			logging.Error("Failed to update inference status in stats storage", types.EventProcessing,
+				"inference_id", rec.InferenceID, "status", rec.Status, "error", err)
+		}
+	}
+	return nil
+}
+
+func parseInferenceStatusUpdatedRecords(events map[string][]string) ([]inferenceStatusUpdateRecord, error) {
+	ids := events["inference_status_updated.inference_id"]
+	if len(ids) == 0 {
+		return nil, errors.New("missing inference_status_updated.inference_id")
+	}
+	statuses := events["inference_status_updated.status"]
+	if len(statuses) == 0 {
+		return nil, errors.New("missing inference_status_updated.status")
+	}
+
+	records := make([]inferenceStatusUpdateRecord, 0, len(ids))
+	for i, id := range ids {
+		status, ok := getEventValue(events, "inference_status_updated.status", i)
+		if !ok {
+			return nil, fmt.Errorf("missing status for inference %s", id)
+		}
+		records = append(records, inferenceStatusUpdateRecord{
+			InferenceID: id,
+			Status:      status,
+		})
+	}
+	return records, nil
 }
 
 func (e *InferenceValidationEventHandler) GetName() string {

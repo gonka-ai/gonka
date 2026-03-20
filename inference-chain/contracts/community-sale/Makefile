@@ -1,6 +1,6 @@
 .PHONY: build clean help
 
-PROJECT_NAME := liquidity-pool
+PROJECT_NAME := community-sale
 ARTIFACTS_DIR := artifacts
 
 # Default target

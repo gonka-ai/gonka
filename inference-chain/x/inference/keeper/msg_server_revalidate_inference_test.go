@@ -30,11 +30,12 @@ func setupInferenceInVoting(t *testing.T) (*MockInferenceHelper, *types.Inferenc
 	require.NoError(t, err)
 	_, err = inferenceHelper.FinishInference()
 	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
 
 	// Cause an invalidation vote by submitting a below-threshold validation
 	mocks := inferenceHelper.Mocks
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
-	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Validator,

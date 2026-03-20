@@ -12,6 +12,8 @@ pub struct Config {
     pub accepted_chain_id: String,
     /// Accepted contract address on external chain (e.g., "0xdac17f958d2ee523a2206206994597c13d831ec7" for USDT)
     pub accepted_eth_contract: String,
+    /// Accepted IBC denom (e.g., "ibc/...")
+    pub accepted_ibc_denom: String,
     /// Fixed price per 1 GNK in micro-USD (6 decimals, e.g., 25000 = $0.025/GNK)
     pub price_usd: Uint128,
     /// Native token denomination
@@ -20,6 +22,8 @@ pub struct Config {
     pub is_paused: bool,
     /// Total tokens sold
     pub total_tokens_sold: Uint128,
+    /// Whether to allow any approved token for trading or just the specifically accepted one
+    pub allow_all_trade_tokens: bool,
 }
 
 /// Contract configuration

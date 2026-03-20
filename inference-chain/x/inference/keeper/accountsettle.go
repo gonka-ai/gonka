@@ -161,8 +161,19 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		k.LogInfo("using grace BinomTestP0", types.Settle, "epoch", currentEpochIndex)
 	}
 
+	collateralAdjustmentActive := params.CollateralParams != nil && currentEpochIndex > params.CollateralParams.GracePeriodEndEpoch
+
 	var bitcoinResult BitcoinResult
-	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(allParticipants, &data, params.BitcoinRewardParams, validationParams, settleParameters, participantMLNodes, k.Logger())
+	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(
+		allParticipants,
+		&data,
+		params.BitcoinRewardParams,
+		validationParams,
+		settleParameters,
+		participantMLNodes,
+		collateralAdjustmentActive,
+		k.Logger(),
+	)
 	if err != nil {
 		k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
 	}

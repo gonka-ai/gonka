@@ -188,9 +188,6 @@ class GovernanceTests : TestermintTest() {
             amount = listOf(Coin("ngonka", governanceBalance.balance.amount)),
             vestingEpochs = 100
         )
-
-        val message = genesis.submitMessage(sendFunds, true)
-        Logger.warn { message.toString() }
         val proposalId = genesis.runProposal(cluster, sendFunds)
         logSection("Verifying Proposal")
         val newGovBalance = genesis.node.getBalance(governanceAddress, "ngonka")

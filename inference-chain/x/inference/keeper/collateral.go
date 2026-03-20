@@ -9,6 +9,56 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// calculateRequiredCollateral computes the collateral amount that is expected
+// for a participant's effective weight in the current epoch. If the grace period
+// is still active or data is unavailable, math.ZeroInt() is returned and the
+// caller should fall back to the legacy behaviour (slash from actual balance).
+func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddress string, collateralParams *types.CollateralParams) math.Int {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	effectiveEpoch, found := k.GetEffectiveEpoch(sdkCtx)
+	if !found || effectiveEpoch == nil {
+		return math.ZeroInt()
+	}
+
+	// During the grace period, collateral is not required.
+	if effectiveEpoch.Index <= collateralParams.GracePeriodEndEpoch {
+		return math.ZeroInt()
+	}
+
+	// Look up the effective weight from the current epoch's parent EpochGroupData.
+	data, found := k.GetEpochGroupData(ctx, effectiveEpoch.Index, "")
+	if !found {
+		return math.ZeroInt()
+	}
+
+	var participantWeight int64
+	for _, vw := range data.ValidationWeights {
+		if vw.MemberAddress == participantAddress {
+			participantWeight = vw.Weight
+			break
+		}
+	}
+	if participantWeight <= 0 {
+		return math.ZeroInt()
+	}
+
+	bwr, err := collateralParams.BaseWeightRatio.ToLegacyDec()
+	if err != nil || bwr.IsNegative() || bwr.GTE(math.LegacyOneDec()) {
+		return math.ZeroInt()
+	}
+	
+	cpwu, err := collateralParams.CollateralPerWeightUnit.ToLegacyDec()
+	if err != nil || cpwu.IsNegative() || cpwu.IsZero() {
+		return math.ZeroInt()
+	}
+
+	// requiredCollateral = effectiveWeight × (1 − baseWeightRatio) × collateralPerWeightUnit
+	weightDec := math.LegacyNewDec(participantWeight)
+	requiredDec := weightDec.Mul(math.LegacyOneDec().Sub(bwr)).Mul(cpwu)
+	return requiredDec.TruncateInt()
+}
+
 // AdjustWeightsByCollateral adjusts participant weights based on their collateral deposit,
 // implementing the core logic of the Tokenomics V2 proposal. After an initial grace
 // period, a participant's final weight is a combination of a collateral-free
@@ -116,11 +166,13 @@ func (k Keeper) SlashForInvalidStatus(ctx context.Context, participant *types.Pa
 		// This should not happen if the address is valid in the keeper.
 		k.LogError("Could not parse participant address for slashing", types.Validation, "address", participant.Address, "error", err)
 	} else {
+		requiredCollateral := k.calculateRequiredCollateral(ctx, participant.Address, params.CollateralParams)
 		k.LogInfo("Slashing participant for being marked INVALID", types.Tokenomics,
 			"participant", participant.Address,
 			"slash_fraction", slashFraction.String(),
+			"required_collateral", requiredCollateral.String(),
 		)
-		_, err := k.collateralKeeper.Slash(ctx, participantAddress, slashFraction, types.SlashReasonInvalidation)
+		_, err := k.collateralKeeper.Slash(ctx, participantAddress, slashFraction, types.SlashReasonInvalidation, requiredCollateral)
 		if err != nil {
 			k.LogError("Failed to slash participant", types.Tokenomics, "participant", participant.Address, "error", err)
 			// Non-fatal error, we log and continue. The participant is already marked INVALID.
@@ -142,7 +194,8 @@ func (k Keeper) SlashForDowntime(ctx context.Context, participant *types.Partici
 		k.LogError("Could not parse participant address for downtime slashing", types.Tokenomics, "address", participant.Address, "error", err)
 		return
 	}
-	_, err = k.collateralKeeper.Slash(ctx, participantAddress, slashFractionDown, types.SlashReasonDowntime)
+	requiredCollateral := k.calculateRequiredCollateral(ctx, participant.Address, params.CollateralParams)
+	_, err = k.collateralKeeper.Slash(ctx, participantAddress, slashFractionDown, types.SlashReasonDowntime, requiredCollateral)
 	if err != nil {
 		k.LogError("Failed to slash participant for downtime", types.Tokenomics, "participant", participant.Address, "error", err)
 	}

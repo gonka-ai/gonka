@@ -2,8 +2,9 @@ package types
 
 import (
 	"fmt"
+	"math"
 
-	"cosmossdk.io/math"
+	sdkmath "cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/pkg/errors"
 	"github.com/shopspring/decimal"
@@ -51,9 +52,48 @@ func NewParams() Params {
 	return Params{}
 }
 
-const million = 1_000_000
-const billion = 1_000_000_000
-const year = 365 * 24 * 60 * 60
+const (
+	million = 1_000_000
+	billion = 1_000_000_000
+	year    = 365 * 24 * 60 * 60
+
+	DynamicPricingEstimatedBlockSeconds = uint64(5)
+	MaxRollingWindowBlocks              = uint64(500)
+)
+
+func UtilizationWindowToBlocks(utilizationWindowSeconds uint64) uint64 {
+	return SecondsToBlocks(utilizationWindowSeconds)
+}
+
+func InvalidationsSamplePeriodToBlocks(invalidationsSamplePeriodSeconds uint64) uint64 {
+	return SecondsToBlocks(invalidationsSamplePeriodSeconds)
+}
+
+func SecondsToBlocks(windowSeconds uint64) uint64 {
+	windowBlocks := windowSeconds / DynamicPricingEstimatedBlockSeconds
+	if windowBlocks == 0 {
+		return 1
+	}
+	return windowBlocks
+}
+
+func WindowBlocksToSize(windowBlocks uint64) int64 {
+	if windowBlocks == 0 {
+		return 1
+	}
+	if windowBlocks > uint64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(windowBlocks)
+}
+
+const (
+	DefaultSubnetEscrowMinAmount    uint64 = 5_000_000_000
+	DefaultSubnetEscrowMaxAmount    uint64 = 10_000_000_000
+	DefaultSubnetMaxEscrowsPerEpoch uint32 = 100
+	DefaultSubnetGroupSize          uint32 = 16
+	DefaultSubnetTokenPrice         uint64 = 1
+)
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
@@ -87,6 +127,16 @@ func DefaultParams() Params {
 		CollateralParams:      DefaultCollateralParams(),
 		BitcoinRewardParams:   DefaultBitcoinRewardParams(),
 		DynamicPricingParams:  DefaultDynamicPricingParams(),
+		BandwidthLimitsParams: &BandwidthLimitsParams{
+			InvalidationsSamplePeriod:      120,
+			InvalidationsLimit:             500,
+			InvalidationsLimitCurve:        250,
+			MinimumConcurrentInvalidations: 1,
+			MaxInferencesPerBlock:          1000,
+			EstimatedLimitsPerBlockKb:      10752,
+			KbPerInputToken:                DecimalFromFloat(0.0023),
+			KbPerOutputToken:               DecimalFromFloat(0.64),
+		},
 		GenesisGuardianParams: &GenesisGuardianParams{
 			NetworkMaturityThreshold: 2_000_000,
 			NetworkMaturityMinHeight: 0,
@@ -108,6 +158,7 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
+		SubnetEscrowParams: DefaultSubnetEscrowParams(),
 	}
 }
 
@@ -124,6 +175,7 @@ func DefaultEpochParams() *EpochParams {
 		SetNewValidatorsDelay:          1,
 		InferenceValidationCutoff:      0,
 		InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
+		ConfirmationPocSafetyWindow:    50,
 		PocSlotAllocation: &Decimal{ // Default 0.5 (50%) fraction of nodes allocated to PoC slots
 			Value:    5,
 			Exponent: -1,
@@ -156,6 +208,7 @@ func DefaultValidationParams() *ValidationParams {
 		DowntimeReputationPreserve:     DecimalFromFloat(0.0),
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
 		BinomTestP0:                    DecimalFromFloat(0.10),
+		ClaimValidationEnabled:         false,
 	}
 }
 
@@ -255,6 +308,30 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 	}
 }
 
+func DefaultSubnetEscrowParams() *SubnetEscrowParams {
+	return &SubnetEscrowParams{
+		MinAmount:               DefaultSubnetEscrowMinAmount,
+		MaxAmount:               DefaultSubnetEscrowMaxAmount,
+		MaxEscrowsPerEpoch:      DefaultSubnetMaxEscrowsPerEpoch,
+		GroupSize:               DefaultSubnetGroupSize,
+		AllowedCreatorAddresses: nil,
+		TokenPrice:              DefaultSubnetTokenPrice,
+	}
+}
+
+func (p *SubnetEscrowParams) Validate() error {
+	if p.MinAmount == 0 {
+		return fmt.Errorf("subnet escrow min_amount must be positive")
+	}
+	if p.MaxAmount < p.MinAmount {
+		return fmt.Errorf("subnet escrow max_amount (%d) must be >= min_amount (%d)", p.MaxAmount, p.MinAmount)
+	}
+	if p.GroupSize == 0 {
+		return fmt.Errorf("subnet escrow group_size must be positive")
+	}
+	return nil
+}
+
 func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 	return paramtypes.ParamSetPairs{}
 }
@@ -343,6 +420,9 @@ func (p *EpochParams) Validate() error {
 	if p.InferencePruningEpochThreshold < 1 {
 		return fmt.Errorf("inference pruning epoch threshold must be at least 1")
 	}
+	if p.ConfirmationPocSafetyWindow < 0 {
+		return fmt.Errorf("safety window cannot be negative")
+	}
 	return nil
 }
 
@@ -385,6 +465,11 @@ func (p Params) Validate() error {
 	if err := p.DynamicPricingParams.Validate(); err != nil {
 		return err
 	}
+	if p.BandwidthLimitsParams != nil {
+		if err := p.BandwidthLimitsParams.Validate(); err != nil {
+			return err
+		}
+	}
 
 	if p.GenesisGuardianParams != nil {
 		if p.GenesisGuardianParams.NetworkMaturityThreshold < 0 {
@@ -415,6 +500,13 @@ func (p Params) Validate() error {
 			return err
 		}
 	}
+
+	if p.SubnetEscrowParams != nil {
+		if err := p.SubnetEscrowParams.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -626,6 +718,24 @@ func (p *DynamicPricingParams) Validate() error {
 	return nil
 }
 
+func (p *BandwidthLimitsParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.KbPerInputToken == nil {
+		return fmt.Errorf("kb_per_input_token cannot be nil")
+	}
+	if p.KbPerOutputToken == nil {
+		return fmt.Errorf("kb_per_output_token cannot be nil")
+	}
+
+	if err := validateInvalidationsSamplePeriod(p.InvalidationsSamplePeriod); err != nil {
+		return errors.Wrap(err, "invalid invalidations_sample_period")
+	}
+
+	return nil
+}
+
 func validateSlashFraction(i interface{}) error {
 	v, ok := i.(*Decimal)
 	if !ok {
@@ -635,7 +745,7 @@ func validateSlashFraction(i interface{}) error {
 	if err != nil {
 		return err
 	}
-	if legacyDec.IsNegative() || legacyDec.GT(math.LegacyOneDec()) {
+	if legacyDec.IsNegative() || legacyDec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("slash fraction must be between 0 and 1, but is %s", legacyDec.String())
 	}
 	return nil
@@ -654,7 +764,7 @@ func validateBaseWeightRatio(i interface{}) error {
 		return fmt.Errorf("base weight ratio cannot be negative: %s", legacyDec)
 	}
 
-	if legacyDec.GT(math.LegacyOneDec()) {
+	if legacyDec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("base weight ratio cannot be greater than 1: %s", legacyDec)
 	}
 
@@ -710,7 +820,7 @@ func validatePercentage(i interface{}) error {
 	if err != nil {
 		return err
 	}
-	if legacyDec.IsNegative() || legacyDec.GT(math.LegacyOneDec()) {
+	if legacyDec.IsNegative() || legacyDec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("percentage must be between 0 and 1, but is %s", legacyDec.String())
 	}
 	return nil
@@ -746,7 +856,7 @@ func validateDecayRate(i interface{}) error {
 		return fmt.Errorf("decay rate must be negative for reward reduction, but is %s", legacyDec.String())
 	}
 	// Reasonable bounds for decay rate (not too extreme)
-	if legacyDec.LT(math.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
+	if legacyDec.LT(sdkmath.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
 		return fmt.Errorf("decay rate too extreme (less than -0.01): %s", legacyDec.String())
 	}
 	_, err = GetExponent(v.ToDecimal())
@@ -823,6 +933,29 @@ func validateUtilizationWindowDuration(i interface{}) error {
 	if duration > 3600 { // Max 1 hour
 		return fmt.Errorf("utilization window duration must not exceed 3600 seconds (1 hour), got: %d", duration)
 	}
+
+	windowBlocks := UtilizationWindowToBlocks(duration)
+	if windowBlocks > MaxRollingWindowBlocks {
+		return fmt.Errorf("utilization window duration (%d seconds) results in %d blocks, which exceeds the maximum of %d blocks", duration, windowBlocks, MaxRollingWindowBlocks)
+	}
+
+	return nil
+}
+
+func validateInvalidationsSamplePeriod(i interface{}) error {
+	duration, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if duration == 0 {
+		return fmt.Errorf("invalidations sample period must be greater than 0")
+	}
+
+	windowBlocks := InvalidationsSamplePeriodToBlocks(duration)
+	if windowBlocks > MaxRollingWindowBlocks {
+		return fmt.Errorf("invalidations sample period (%d seconds) results in %d blocks, which exceeds the maximum of %d blocks", duration, windowBlocks, MaxRollingWindowBlocks)
+	}
+
 	return nil
 }
 
@@ -879,8 +1012,8 @@ func validateInferencePruningEpochThreshold(i interface{}) error {
 	return nil
 }
 
-func (d *Decimal) ToLegacyDec() (math.LegacyDec, error) {
-	return math.LegacyNewDecFromStr(d.ToDecimal().String())
+func (d *Decimal) ToLegacyDec() (sdkmath.LegacyDec, error) {
+	return sdkmath.LegacyNewDecFromStr(d.ToDecimal().String())
 }
 
 func (d *Decimal) ToDecimal() decimal.Decimal {
@@ -907,13 +1040,13 @@ func DecimalFromFloat32(f float32) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
-func (p *PocParams) GetWeightScaleFactorDec() math.LegacyDec {
+func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
 	if p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
-		return math.LegacyOneDec()
+		return sdkmath.LegacyOneDec()
 	}
 	dec, err := p.WeightScaleFactor.ToLegacyDec()
 	if err != nil {
-		return math.LegacyOneDec()
+		return sdkmath.LegacyOneDec()
 	}
 	return dec
 }

@@ -424,12 +424,14 @@ func TestDetermineValidDealersWithConsensus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Expected results:
-	// Dealer 0: 3/3 votes (100%) -> VALID
-	// Dealer 1: 2/3 votes (67%) -> VALID
-	// Dealer 2: 2/3 votes (67%) -> VALID
-	// Dealer 3: 1/3 votes (33%) -> INVALID (no submission anyway)
-	// Dealer 4: 0/3 votes (0%) -> INVALID (no submission anyway)
-	expectedValidDealers := []bool{true, true, true, false, false}
+	// Majority is measured against all participants (5), not just submitters (3):
+	// required approvals = floor(5/2)+1 = 3.
+	// Dealer 0: 3 approvals -> VALID
+	// Dealer 1: 2 approvals -> INVALID
+	// Dealer 2: 2 approvals -> INVALID
+	// Dealer 3: 1 approval -> INVALID
+	// Dealer 4: 0 approvals -> INVALID
+	expectedValidDealers := []bool{true, false, false, false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
@@ -454,6 +456,32 @@ func TestDetermineValidDealersWithConsensus_TieVotes(t *testing.T) {
 
 	// With tie votes (1/2 = 50%), dealers should be INVALID (need >50%)
 	expectedValidDealers := []bool{false, false}
+	require.Equal(t, expectedValidDealers, validDealers)
+}
+
+func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) {
+	k, _ := keepertest.BlsKeeper(t)
+
+	// Create test epoch data with 3 participants
+	epochBLSData := createTestEpochBLSData(uint64(28), 3)
+
+	// Set up dealer parts for all participants
+	for i := 0; i < 3; i++ {
+		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
+		epochBLSData.DealerParts[i].Commitments = [][]byte{createTestG2Commitment()}
+	}
+
+	// Verifier 0 submits full vector, verifier 1 submits short vector, verifier 2 abstains.
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, true}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true} // missing votes for dealers 1 and 2
+
+	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
+	require.NoError(t, err)
+
+	// Need 2 of 3 approvals:
+	// Dealer 0 gets approvals from verifiers 0 and 1 => VALID
+	// Dealers 1 and 2 only have verifier 0 approval => INVALID
+	expectedValidDealers := []bool{true, false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 

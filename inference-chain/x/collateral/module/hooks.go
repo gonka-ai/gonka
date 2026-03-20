@@ -81,6 +81,10 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr sdk.Va
 	)
 
 	// Tendermint driven slashing is not limited per epoch, so pass in a blank reason
-	_, err := h.k.Slash(sdkCtx, accAddr, fraction, "")
+	// TODO(tokenomics-v2): Align staking-hook slashing with required-collateral semantics.
+	// We currently pass requiredCollateral=0 here, which preserves legacy behavior
+	// (slash from total actual balance) and may over-penalize over-collateralized participants.
+	// requiredCollateral=zero means slash from total actual balance (legacy behavior for staking hooks)
+	_, err := h.k.Slash(sdkCtx, accAddr, fraction, "", math.ZeroInt())
 	return err
 }

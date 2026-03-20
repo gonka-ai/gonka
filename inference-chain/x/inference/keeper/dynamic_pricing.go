@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
@@ -53,18 +52,10 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 		return nil
 	}
 
-	// Calculate time window for utilization
-	blockTime := sdk.UnwrapSDKContext(ctx).BlockTime()
-	currentTimeMillis := blockTime.UnixMilli()                         // Current time in milliseconds
-	windowDurationSeconds := int64(dpParams.UtilizationWindowDuration) // Window duration in seconds (e.g., 60)
-	windowDurationMillis := windowDurationSeconds * 1000               // Convert to milliseconds for time queries
-	timeWindowStartMillis := currentTimeMillis - windowDurationMillis  // Start time in milliseconds
-
+	windowBlocks := types.UtilizationWindowToBlocks(dpParams.UtilizationWindowDuration)
 	k.LogInfo("Starting dynamic pricing update", types.Pricing,
-		"currentTime", currentTimeMillis, "windowStart", timeWindowStartMillis, "windowDuration", windowDurationMillis)
-
-	// Get utilization stats for all models over the time window (using milliseconds)
-	statsMap := k.GetSummaryByModelAndTime(ctx, timeWindowStartMillis, currentTimeMillis)
+		"windowSeconds", dpParams.UtilizationWindowDuration,
+		"windowBlocks", windowBlocks)
 
 	totalModelsProcessed := 0
 	totalPriceChanges := 0
@@ -79,25 +70,31 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 			continue
 		}
 
-		// Get utilization stats for this model
-		stats, hasStats := statsMap[modelId]
-		tokensUsed := int64(0)
-		if hasStats {
-			tokensUsed = stats.TokensUsed
+		averageLoadPerBlock, found, err := k.GetModelLoadRollingAveragePerBlock(
+			ctx,
+			modelId,
+			windowBlocks,
+		)
+		if err != nil {
+			k.LogWarn("Failed to get model load rolling average, defaulting to zero load", types.Pricing,
+				"modelId", modelId, "error", err)
+			averageLoadPerBlock = decimal.Zero
+		}
+		if !found {
+			averageLoadPerBlock = decimal.Zero
 		}
 
-		// Calculate utilization (0.0 to 1.0+)
-		// capacity is tokens/second, so scale it to the window duration in seconds
+		// Calculate utilization (0.0 to 1.0+) from average load-per-block and per-block capacity.
+		// capacity is tokens/second, so scale it by the estimated block duration (~5s).
 		utilization := decimal.Zero
 		if capacity > 0 {
-			// Integer multiplication is safe
-			capacityForWindow := capacity * windowDurationSeconds // capacity * seconds = total tokens
-			utilization = decimal.NewFromInt(tokensUsed).Div(decimal.NewFromInt(capacityForWindow))
+			capacityPerBlock := decimal.NewFromInt(capacity).Mul(decimal.NewFromUint64(types.DynamicPricingEstimatedBlockSeconds))
+			utilization = averageLoadPerBlock.Div(capacityPerBlock)
 		}
 
 		k.LogInfo("Model utilization calculated", types.Pricing,
-			"modelId", modelId, "tokensUsed", tokensUsed, "capacityPerSec", capacity,
-			"windowDuration", windowDurationMillis, "utilization", utilization.String())
+			"modelId", modelId, "averageLoadPerBlock", averageLoadPerBlock.String(),
+			"capacityPerSec", capacity, "utilization", utilization.String())
 
 		// Calculate new price using our algorithm
 		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(ctx, modelId, utilization)
@@ -128,7 +125,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 
 	k.LogInfo("Completed dynamic pricing update", types.Pricing,
 		"totalModels", len(mainEpochData.SubGroupModels), "modelsProcessed", totalModelsProcessed,
-		"priceChanges", totalPriceChanges, "windowDuration", windowDurationMillis)
+		"priceChanges", totalPriceChanges)
 
 	return nil
 }
