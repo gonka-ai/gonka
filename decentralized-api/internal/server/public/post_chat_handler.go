@@ -25,6 +25,8 @@ import (
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // AuthKeyContext represents the context in which an AuthKey was used
@@ -713,6 +715,12 @@ func (s *Server) getExecutorForRequest(ctx context.Context, model string) (*Exec
 		Model: model,
 	})
 	if err != nil {
+		if st, ok := grpcstatus.FromError(err); ok {
+			switch st.Code() {
+			case codes.Internal, codes.NotFound:
+				return nil, ErrModelNotSupported
+			}
+		}
 		return nil, err
 	}
 	executor := response.Executor
