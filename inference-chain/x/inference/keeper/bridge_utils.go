@@ -21,36 +21,31 @@ func keccak256Hash(data []byte) [32]byte {
 	return result
 }
 
-// ethereumAddressToBytes converts an Ethereum hex address string to 20 bytes
-// Handles addresses with or without 0x prefix and preserves case (matching Solidity abi.encodePacked behavior)
-func ethereumAddressToBytes(address string) []byte {
+// ethereumAddressToBytes converts an Ethereum hex address string to 20 bytes.
+// Handles addresses with or without 0x prefix and preserves case (matching Solidity abi.encodePacked behavior).
+// Returns an error if the address is empty or contains invalid hex characters.
+func ethereumAddressToBytes(address string) ([]byte, error) {
 	// Remove 0x prefix if present
 	addr := address
 	if len(addr) >= 2 && addr[:2] == "0x" {
 		addr = addr[2:]
 	}
 
-	// Convert hex string to 20 bytes using encoding/hex
-	// Truncate to at most 40 hex chars and ensure even length (ignore dangling nibble)
-	maxLen := 40
-	n := len(addr)
-	if n > maxLen {
-		n = maxLen
-	}
-	if n%2 == 1 {
-		n--
+	if len(addr) == 0 {
+		return nil, fmt.Errorf("empty ethereum address")
 	}
 
-	addrBytes := make([]byte, 20)
-	if n <= 0 {
-		return addrBytes
+	// Ethereum addresses must be exactly 40 hex characters (20 bytes)
+	if len(addr) != 40 {
+		return nil, fmt.Errorf("invalid ethereum address length: expected 40 hex chars, got %d", len(addr))
 	}
-	decoded := make([]byte, n/2)
-	if _, err := hex.Decode(decoded, []byte(addr[:n])); err != nil {
-		return addrBytes
+
+	decoded, err := hex.DecodeString(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid hex in ethereum address %q: %w", address, err)
 	}
-	copy(addrBytes, decoded)
-	return addrBytes
+
+	return decoded, nil
 }
 
 // chainIdToBytes32 converts a numeric chain ID string to bytes32 format (uint256)
