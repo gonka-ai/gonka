@@ -226,7 +226,7 @@ func (v *ValidationAdapter) fetchPayloadsFromExecutor(ctx context.Context, req s
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil
 }
 
-// resolveExecutorPubKeys queries InferenceParticipant (cold key) and
+// resolveExecutorPubKeys queries AccountByAddress (cold key) and
 // GranteesByMessageType (warm keys) to collect all pubkeys that the executor
 // might use to sign payloads. Returns base64-encoded pubkey strings.
 func (v *ValidationAdapter) resolveExecutorPubKeys(ctx context.Context, executorAddress string) ([]string, error) {
@@ -244,7 +244,7 @@ func (v *ValidationAdapter) resolveExecutorPubKeys(ctx context.Context, executor
 		pubkeys = append(pubkeys, g.PubKey)
 	}
 
-	participant, err := qc.InferenceParticipant(ctx, &chaintypes.QueryInferenceParticipantRequest{
+	participant, err := qc.AccountByAddress(ctx, &chaintypes.QueryAccountByAddressRequest{
 		Address: executorAddress,
 	})
 	if err != nil {
