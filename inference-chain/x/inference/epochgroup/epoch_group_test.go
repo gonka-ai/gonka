@@ -598,10 +598,11 @@ func TestAddToModelGroups_UsesModelSpecificWeight(t *testing.T) {
 	parent.subGroups["model-a"] = subGroup
 
 	member := EpochMember{
-		Address: "addr1",
-		Weight:  999,
-		Pubkey:  "pk",
-		Models:  []string{"model-a"},
+		Address:            "addr1",
+		Weight:             999,
+		ConfirmationWeight: 999,
+		Pubkey:             "pk",
+		Models:             []string{"model-a"},
 		MlNodes: []*types.ModelMLNodes{
 			{
 				MlNodes: []*types.MLNodeInfo{
@@ -618,5 +619,78 @@ func TestAddToModelGroups_UsesModelSpecificWeight(t *testing.T) {
 	require.True(t, found)
 	require.Len(t, updated.ValidationWeights, 1)
 	require.Equal(t, int64(10), updated.ValidationWeights[0].Weight)
+	require.Equal(t, int64(10), updated.ValidationWeights[0].ConfirmationWeight)
 	require.Equal(t, int64(10), updated.TotalWeight)
+}
+
+func TestAddToModelGroups_UsesPerModelWeights_MultipleModels(t *testing.T) {
+	ctx := context.Background()
+	groupKeeper := &mockGroupKeeper{
+		fn: func(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
+			return &group.QueryGroupMembersResponse{Members: []*group.GroupMember{}}, nil
+		},
+	}
+	dataKeeper := mockEpochGroupDataKeeper{}
+
+	parentData := &types.EpochGroupData{
+		EpochGroupId: 1,
+		EpochIndex:   1,
+	}
+	parent := NewEpochGroup(groupKeeper, nil, nil, nil, "admin", &mockLogger{}, dataKeeper, parentData)
+
+	subGroupAData := types.EpochGroupData{
+		EpochGroupId: 1,
+		EpochIndex:   1,
+		ModelId:      "model-a",
+	}
+	dataKeeper.SetEpochGroupData(ctx, subGroupAData)
+	subGroupA := NewEpochGroup(groupKeeper, nil, nil, nil, "admin", &mockLogger{}, dataKeeper, &subGroupAData)
+	parent.subGroups["model-a"] = subGroupA
+
+	subGroupBData := types.EpochGroupData{
+		EpochGroupId: 1,
+		EpochIndex:   1,
+		ModelId:      "model-b",
+	}
+	dataKeeper.SetEpochGroupData(ctx, subGroupBData)
+	subGroupB := NewEpochGroup(groupKeeper, nil, nil, nil, "admin", &mockLogger{}, dataKeeper, &subGroupBData)
+	parent.subGroups["model-b"] = subGroupB
+
+	member := EpochMember{
+		Address:            "addr1",
+		Weight:             999,
+		ConfirmationWeight: 999,
+		Pubkey:             "pk",
+		Models:             []string{"model-a", "model-b"},
+		MlNodes: []*types.ModelMLNodes{
+			{
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "a1", PocWeight: 100, TimeslotAllocation: []bool{true, false}},
+					{NodeId: "a2", PocWeight: 7, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+			{
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "b1", PocWeight: 3, TimeslotAllocation: []bool{true, false}},
+					{NodeId: "b2", PocWeight: 9, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+		},
+	}
+
+	parent.addToModelGroups(ctx, member)
+
+	updatedA, foundA := dataKeeper.GetEpochGroupData(ctx, 1, "model-a")
+	require.True(t, foundA)
+	require.Len(t, updatedA.ValidationWeights, 1)
+	require.Equal(t, int64(100), updatedA.ValidationWeights[0].Weight)
+	require.Equal(t, int64(100), updatedA.ValidationWeights[0].ConfirmationWeight)
+	require.Equal(t, int64(100), updatedA.TotalWeight)
+
+	updatedB, foundB := dataKeeper.GetEpochGroupData(ctx, 1, "model-b")
+	require.True(t, foundB)
+	require.Len(t, updatedB.ValidationWeights, 1)
+	require.Equal(t, int64(3), updatedB.ValidationWeights[0].Weight)
+	require.Equal(t, int64(3), updatedB.ValidationWeights[0].ConfirmationWeight)
+	require.Equal(t, int64(3), updatedB.TotalWeight)
 }

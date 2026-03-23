@@ -52,6 +52,35 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 }
 
+func (m EpochMember) ForModel(modelId string) EpochMember {
+	// We're explicitly passing only this model to prevent further recursion
+	subMember := m
+	subMember.Models = []string{modelId}
+	subMember.MlNodes = m.modelMLNodes(modelId)
+
+	// Model subgroup weight = PoC node weight for this model's nodes
+	modelWeight := calculatePocParticipatingNodesWeight(subMember.MlNodes)
+	subMember.Weight = modelWeight
+	subMember.ConfirmationWeight = modelWeight
+
+	return subMember
+}
+
+func (m EpochMember) modelMLNodes(modelId string) []*types.ModelMLNodes {
+	modelIndex := -1
+	for i, model := range m.Models {
+		if model == modelId {
+			modelIndex = i
+			break
+		}
+	}
+
+	if modelIndex >= 0 && modelIndex < len(m.MlNodes) {
+		return []*types.ModelMLNodes{m.MlNodes[modelIndex]}
+	}
+	return []*types.ModelMLNodes{}
+}
+
 // calculatePocParticipatingNodesWeight calculates the total weight of nodes participating in PoC
 func calculatePocParticipatingNodesWeight(mlNodes []*types.ModelMLNodes) int64 {
 	totalWeight := int64(0)
@@ -258,27 +287,7 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 			continue
 		}
 
-		// Add the member to the sub-group with the same pubkey, etc.
-		// We're explicitly passing only this model to prevent further recursion
-		subMember := member
-		subMember.Models = []string{modelId}
-
-		// Find the model index and copy the corresponding MLNode array
-		modelIndex := -1
-		for i, model := range member.Models {
-			if model == modelId {
-				modelIndex = i
-				break
-			}
-		}
-
-		// Copy only the MLNode array for this specific model
-		if modelIndex >= 0 && modelIndex < len(member.MlNodes) {
-			subMember.MlNodes = []*types.ModelMLNodes{member.MlNodes[modelIndex]}
-		} else {
-			subMember.MlNodes = []*types.ModelMLNodes{}
-		}
-		subMember.Weight = calculatePocParticipatingNodesWeight(subMember.MlNodes)
+		subMember := member.ForModel(modelId)
 
 		err = subGroup.AddMember(ctx, subMember)
 		if err != nil {
