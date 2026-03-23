@@ -93,6 +93,9 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 		k.LogError("invalid base_weight_ratio:", types.Tokenomics, "error", err)
 		return err
 	}
+	if baseWeightRatio.IsNegative() || baseWeightRatio.GTE(math.LegacyOneDec()) {
+		return fmt.Errorf("base_weight_ratio %s is out of valid range [0, 1)", baseWeightRatio.String())
+	}
 	collateralPerWeightUnit, err := collateralParams.CollateralPerWeightUnit.ToLegacyDec()
 	if err != nil {
 		k.LogError("invalid collateral_per_weight_unit:", types.Tokenomics, "error", err)
