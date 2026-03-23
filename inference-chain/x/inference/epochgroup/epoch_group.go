@@ -258,7 +258,7 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 			continue
 		}
 
-		// Add the member to the sub-group with the same weight, pubkey, etc.
+		// Add the member to the sub-group with the same pubkey, etc.
 		// We're explicitly passing only this model to prevent further recursion
 		subMember := member
 		subMember.Models = []string{modelId}
@@ -278,6 +278,7 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 		} else {
 			subMember.MlNodes = []*types.ModelMLNodes{}
 		}
+		subMember.Weight = calculatePocParticipatingNodesWeight(subMember.MlNodes)
 
 		err = subGroup.AddMember(ctx, subMember)
 		if err != nil {

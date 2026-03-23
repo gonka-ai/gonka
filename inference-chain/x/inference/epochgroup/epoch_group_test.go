@@ -64,7 +64,36 @@ func (m *mockGroupKeeper) ProposalsByGroupPolicy(ctx context.Context, req *group
 	return nil, nil
 }
 
+type epochGroupKey struct {
+	epochIndex uint64
+	modelId    string
+}
+
+type mockEpochGroupDataKeeper map[epochGroupKey]types.EpochGroupData
+
+func (m mockEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
+	m[epochGroupKey{epochIndex: epochGroupData.EpochIndex, modelId: epochGroupData.ModelId}] = epochGroupData
+}
+
+func (m mockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val types.EpochGroupData, found bool) {
+	val, found = m[epochGroupKey{epochIndex: epochIndex, modelId: modelId}]
+	return val, found
+}
+
+func (m mockEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) {
+	delete(m, epochGroupKey{epochIndex: epochIndex, modelId: modelId})
+}
+
+func (m mockEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Context) []types.EpochGroupData {
+	result := make([]types.EpochGroupData, 0, len(m))
+	for _, value := range m {
+		result = append(result, value)
+	}
+	return result
+}
+
 func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
+	// Nodes with POC_SLOT=true (index 1 = true) should be EXCLUDED
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -542,4 +571,52 @@ func TestGetGroupMembers_UsesPagination(t *testing.T) {
 	require.Len(t, result, 2)
 	require.Equal(t, "addr1", result[0].Member.Address)
 	require.Equal(t, "addr2", result[1].Member.Address)
+}
+
+func TestAddToModelGroups_UsesModelSpecificWeight(t *testing.T) {
+	ctx := context.Background()
+	groupKeeper := &mockGroupKeeper{
+		fn: func(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
+			return &group.QueryGroupMembersResponse{Members: []*group.GroupMember{}}, nil
+		},
+	}
+	dataKeeper := mockEpochGroupDataKeeper{}
+
+	parentData := &types.EpochGroupData{
+		EpochGroupId: 1,
+		EpochIndex:   1,
+	}
+	parent := NewEpochGroup(groupKeeper, nil, nil, nil, "admin", &mockLogger{}, dataKeeper, parentData)
+
+	subGroupData := types.EpochGroupData{
+		EpochGroupId: 1,
+		EpochIndex:   1,
+		ModelId:      "model-a",
+	}
+	dataKeeper.SetEpochGroupData(ctx, subGroupData)
+	subGroup := NewEpochGroup(groupKeeper, nil, nil, nil, "admin", &mockLogger{}, dataKeeper, &subGroupData)
+	parent.subGroups["model-a"] = subGroup
+
+	member := EpochMember{
+		Address: "addr1",
+		Weight:  999,
+		Pubkey:  "pk",
+		Models:  []string{"model-a"},
+		MlNodes: []*types.ModelMLNodes{
+			{
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "n1", PocWeight: 10, TimeslotAllocation: []bool{true, false}},
+					{NodeId: "n2", PocWeight: 20, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+		},
+	}
+
+	parent.addToModelGroups(ctx, member)
+
+	updated, found := dataKeeper.GetEpochGroupData(ctx, 1, "model-a")
+	require.True(t, found)
+	require.Len(t, updated.ValidationWeights, 1)
+	require.Equal(t, int64(10), updated.ValidationWeights[0].Weight)
+	require.Equal(t, int64(10), updated.TotalWeight)
 }
