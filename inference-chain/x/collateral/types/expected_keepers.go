@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
@@ -31,4 +32,10 @@ type BookkeepingBankKeeper interface {
 type ParamSubspace interface {
 	Get(context.Context, []byte, interface{})
 	Set(context.Context, []byte, interface{})
+}
+
+// CollateralKeeper defines the read-only collateral semantics that the collateral module
+// consumes from inference when computing slash base for staking-driven slashing.
+type CollateralKeeper interface {
+	GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int
 }

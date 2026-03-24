@@ -27,6 +27,7 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/testenv"
+	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
@@ -1035,9 +1036,18 @@ type ModuleInputs struct {
 type ModuleOutputs struct {
 	depinject.Out
 
-	InferenceKeeper keeper.Keeper
-	Module          appmodule.AppModule
-	Hooks           stakingtypes.StakingHooksWrapper
+	InferenceKeeper  keeper.Keeper
+	Module           appmodule.AppModule
+	Hooks            stakingtypes.StakingHooksWrapper
+	CollateralKeeper collateraltypes.CollateralKeeper
+}
+
+type slashBaseCollateralKeeper struct {
+	keeper keeper.Keeper
+}
+
+func (k slashBaseCollateralKeeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
+	return k.keeper.GetRequiredCollateralForSlash(ctx, participantAddress)
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -1077,9 +1087,10 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	)
 
 	return ModuleOutputs{
-		InferenceKeeper: k,
-		Module:          m,
-		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
+		InferenceKeeper:  k,
+		Module:           m,
+		Hooks:            stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
+		CollateralKeeper: slashBaseCollateralKeeper{keeper: k},
 	}
 }
 

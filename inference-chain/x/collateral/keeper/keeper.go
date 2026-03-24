@@ -36,6 +36,7 @@ type (
 
 		bankViewKeeper        types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
+		collateralKeeper      types.CollateralKeeper
 		params                collections.Item[types.Params]
 		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
 		Schema                collections.Schema
@@ -57,6 +58,7 @@ func NewKeeper(
 
 	bankKeeper types.BankKeeper,
 	bookkeepingBankKeeper types.BookkeepingBankKeeper,
+	collateralKeeper types.CollateralKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		//nolint:forbidigo
@@ -82,6 +84,7 @@ func NewKeeper(
 
 		bankViewKeeper:        bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
+		collateralKeeper:      collateralKeeper,
 		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
@@ -105,6 +108,16 @@ func NewKeeper(
 	ak.Schema = schema
 
 	return ak
+}
+
+// GetRequiredCollateralForSlash returns the tokenomics-required collateral for a participant.
+// If no provider is configured, legacy slashing semantics are preserved by returning zero.
+func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
+	if k.collateralKeeper == nil {
+		return math.ZeroInt()
+	}
+
+	return k.collateralKeeper.GetRequiredCollateralForSlash(ctx, participantAddress)
 }
 
 // GetAuthority returns the module's authority.
