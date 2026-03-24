@@ -304,6 +304,8 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.In
 		ensureParticipantEpochStats(executor)
 		executor.CurrentEpochStats.InferenceCount++
 		executor.LastInferenceTime = inference.EndBlockTimestamp
+		// Notify circuit breaker of successful inference (resolves PROBE state if active).
+		k.RecordCBResult(ctx, executor.Index, ctx.BlockHeight(), true)
 	}
 
 	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)

@@ -321,6 +321,10 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	if err != nil {
 		am.LogError("Error updating participant for expired inference", types.Participants, "error", err)
 	}
+
+	// Notify circuit breaker of the missed inference (resolves PROBE state if active).
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	am.keeper.RecordCBResult(ctx, executor.Index, sdkCtx.BlockHeight(), false)
 }
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
@@ -898,6 +902,11 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	if err != nil {
 		am.LogError("Unable to clear active invalidations", types.EpochGroup, "error", err.Error())
 	}
+
+	// Clear all circuit breaker state on epoch boundary.
+	// Epoch-based recovery is the final backstop — fresh epoch means fresh slate.
+	am.keeper.ClearAllCBState(ctx)
+	am.LogInfo("CircuitBreaker: cleared all CB state on epoch transition", types.EpochGroup, "blockHeight", blockHeight)
 }
 
 // applyEpochPowerCapping applies universal power capping to activeParticipants after ComputeNewWeights
