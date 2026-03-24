@@ -287,6 +287,8 @@ func New(
 		panic(err)
 	}
 
+	app.CollateralKeeper.SetRequiredCollateralProvider(app.InferenceKeeper)
+
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
 	// SendRestriction configuration is handled automatically through dependency injection

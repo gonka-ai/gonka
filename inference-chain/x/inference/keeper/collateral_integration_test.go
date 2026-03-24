@@ -112,7 +112,6 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		authority.String(),
 		nil,                // bank keeper
 		bookkepingBankMock, // bookkeeping bank keeper
-		nil,
 	)
 
 	// Create a BLS keeper for testing (similar to testutil/keeper/inference.go)

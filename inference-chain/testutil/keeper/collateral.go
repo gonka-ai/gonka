@@ -79,8 +79,10 @@ func CollateralKeeperWithMockAndProvider(
 		authority.String(),
 		nil,
 		bankKeeper,
-		collateralKeeper,
 	)
+	if collateralKeeper != nil {
+		k.SetRequiredCollateralProvider(collateralKeeper)
+	}
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 

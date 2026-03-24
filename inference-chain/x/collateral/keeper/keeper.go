@@ -19,6 +19,10 @@ import (
 )
 
 type (
+	collateralProviderRef struct {
+		provider types.CollateralKeeper
+	}
+
 	// UnbondingIndexes groups the secondary indexes for the UnbondingCollateral map
 	UnbondingIndexes struct {
 		// ByParticipant indexes primary keys by participant address, to allow queries by participant
@@ -36,7 +40,7 @@ type (
 
 		bankViewKeeper        types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
-		collateralKeeper      types.CollateralKeeper
+		collateralProviderRef *collateralProviderRef
 		params                collections.Item[types.Params]
 		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
 		Schema                collections.Schema
@@ -58,7 +62,6 @@ func NewKeeper(
 
 	bankKeeper types.BankKeeper,
 	bookkeepingBankKeeper types.BookkeepingBankKeeper,
-	collateralKeeper types.CollateralKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		//nolint:forbidigo
@@ -84,7 +87,7 @@ func NewKeeper(
 
 		bankViewKeeper:        bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
-		collateralKeeper:      collateralKeeper,
+		collateralProviderRef: &collateralProviderRef{},
 		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
@@ -113,11 +116,19 @@ func NewKeeper(
 // GetRequiredCollateralForSlash returns the tokenomics-required collateral for a participant.
 // If no provider is configured, legacy slashing semantics are preserved by returning zero.
 func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
-	if k.collateralKeeper == nil {
+	if k.collateralProviderRef == nil || k.collateralProviderRef.provider == nil {
 		return math.ZeroInt()
 	}
 
-	return k.collateralKeeper.GetRequiredCollateralForSlash(ctx, participantAddress)
+	return k.collateralProviderRef.provider.GetRequiredCollateralForSlash(ctx, participantAddress)
+}
+
+func (k Keeper) SetRequiredCollateralProvider(collateralKeeper types.CollateralKeeper) {
+	if k.collateralProviderRef == nil {
+		k.collateralProviderRef = &collateralProviderRef{}
+	}
+
+	k.collateralProviderRef.provider = collateralKeeper
 }
 
 // GetAuthority returns the module's authority.

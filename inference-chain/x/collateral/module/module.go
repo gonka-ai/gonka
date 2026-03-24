@@ -192,7 +192,6 @@ type ModuleInputs struct {
 	AccountKeeper    types.AccountKeeper
 	BankKeeper       types.BankKeeper
 	BankEscrowKeeper types.BookkeepingBankKeeper
-	CollateralKeeper types.CollateralKeeper `optional:"true"`
 }
 
 type ModuleOutputs struct {
@@ -216,7 +215,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority.String(),
 		in.BankKeeper,
 		in.BankEscrowKeeper,
-		in.CollateralKeeper,
 	)
 	m := NewAppModule(
 		in.Cdc,
