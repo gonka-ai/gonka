@@ -106,7 +106,7 @@ func NewStateMachine(
 	userAddress string,
 	verifier signing.Verifier,
 	opts ...SMOption,
-) *StateMachine {
+) (*StateMachine, error) {
 	slotToAddr := make(map[uint32]string, len(group))
 	addrToSlotCount := make(map[string]uint32, len(group))
 	for _, s := range group {
@@ -130,12 +130,19 @@ func NewStateMachine(
 		slices.Sort(slots)
 	}
 
+	// Charge the one-time subnet creation fee at state initialization.
+	if balance < config.CreateSubnetFee {
+		return nil, fmt.Errorf("%w: create subnet fee %d exceeds escrow amount %d",
+			types.ErrInsufficientBalance, config.CreateSubnetFee, balance)
+	}
+	initialBalance := balance - config.CreateSubnetFee
+
 	sm := &StateMachine{
 		state: &types.EscrowState{
 			EscrowID:      escrowID,
 			Config:        config,
 			Group:         groupCopy,
-			Balance:       balance,
+			Balance:       initialBalance,
 			Inferences:    make(map[uint64]*types.InferenceRecord),
 			HostStats:     hostStats,
 			RevealedSeeds: make(map[uint32]int64),
@@ -155,13 +162,14 @@ func NewStateMachine(
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
 		"group_size", len(group),
-		"balance", balance,
+		"balance", initialBalance,
+		"create_subnet_fee", config.CreateSubnetFee,
 		"token_price", config.TokenPrice,
 		"vote_threshold", config.VoteThreshold,
 		"user_address", userAddress,
 	)
 
-	return sm
+	return sm, nil
 }
 
 // ApplyDiff validates user signature and post_state_root, then applies the diff.
@@ -203,6 +211,10 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	// Snapshot mutable state so fee charging and root computation remain atomic
+	// with respect to this nonce, matching applyCore semantics.
+	snap := sm.snapshotMutable()
+
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
@@ -233,6 +245,13 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 		applied = append(applied, tx)
 	}
 
+	// Charge per applied nonce after tx effects are known.
+	if sm.state.Balance < sm.state.Config.FeePerNonce {
+		sm.restoreMutable(snap)
+		return nil, nil, types.ErrInsufficientBalance
+	}
+	sm.state.Balance -= sm.state.Config.FeePerNonce
+
 	sm.state.LatestNonce = nonce
 
 	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
@@ -250,6 +269,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 
 	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys)
 	if err != nil {
+		sm.restoreMutable(snap)
 		return nil, nil, fmt.Errorf("compute state root: %w", err)
 	}
 
@@ -259,6 +279,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 		"group_size", len(sm.state.Group),
 		"host_stats_count", len(sm.state.HostStats),
 		"config_token_price", sm.state.Config.TokenPrice,
+		"config_fee_per_nonce", sm.state.Config.FeePerNonce,
 	)
 	return root, applied, nil
 }
@@ -298,7 +319,14 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.SubnetTx, postState
 		}
 	}
 
-	// 5. Update nonce.
+	// 5. Charge per applied nonce after tx effects are known.
+	if sm.state.Balance < sm.state.Config.FeePerNonce {
+		sm.restoreMutable(snap)
+		return nil, types.ErrInsufficientBalance
+	}
+	sm.state.Balance -= sm.state.Config.FeePerNonce
+
+	// 6. Update nonce.
 	sm.state.LatestNonce = nonce
 
 	// Track FinalizeNonce: the nonce at which finalization started.
@@ -318,13 +346,13 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.SubnetTx, postState
 		}
 	}
 
-	// 6. Compute state root.
+	// 7. Compute state root.
 	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys)
 	if err != nil {
 		return nil, fmt.Errorf("compute state root: %w", err)
 	}
 
-	// 7. Verify post_state_root if present. On mismatch, roll back everything.
+	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
 		logging.Error("state root mismatch diagnostic",
 			"subsystem", "state",
@@ -336,6 +364,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.SubnetTx, postState
 			"phase", sm.state.Phase,
 			"warm_keys_count", len(sm.state.WarmKeys),
 			"config_token_price", sm.state.Config.TokenPrice,
+			"config_fee_per_nonce", sm.state.Config.FeePerNonce,
 			"config_vote_threshold", sm.state.Config.VoteThreshold,
 			"config_validation_rate", sm.state.Config.ValidationRate,
 			"escrow_id", sm.state.EscrowID,

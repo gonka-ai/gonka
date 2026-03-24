@@ -1186,6 +1186,115 @@ func TestApplyDiff_AtomicRollback(t *testing.T) {
 	require.Equal(t, uint64(1), st.LatestNonce, "nonce should not advance on failure")
 }
 
+func TestNewStateMachine_DeductsCreateSubnetFee(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	config.CreateSubnetFee = 25
+	verifier := signing.NewSecp256k1Verifier()
+
+	sm, err := NewStateMachine("escrow-1", config, group, 100, user.Address(), verifier)
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint64(75), st.Balance)
+	require.Equal(t, uint64(25), st.Fees)
+}
+
+func TestNewStateMachine_CreateSubnetFeeInsufficientBalance(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	config.CreateSubnetFee = 101
+	verifier := signing.NewSecp256k1Verifier()
+
+	_, err := NewStateMachine("escrow-1", config, group, 100, user.Address(), verifier)
+	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+}
+
+func TestApplyDiff_FeePerNonce_Deducted(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.FeePerNonce = 7
+	verifier := signing.NewSecp256k1Verifier()
+	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint64(1), st.LatestNonce)
+	require.Equal(t, uint64(10000-150-7), st.Balance)
+}
+
+func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.FeePerNonce = 1
+	verifier := signing.NewSecp256k1Verifier()
+
+	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
+	sm := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint64(0), st.LatestNonce)
+	require.Equal(t, uint64(150), st.Balance)
+	require.Empty(t, st.Inferences)
+}
+
+func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.FeePerNonce = 1
+	verifier := signing.NewSecp256k1Verifier()
+
+	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
+	sm := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+
+	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.SubnetTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})})
+	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+	require.Nil(t, applied)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint64(0), st.LatestNonce)
+	require.Equal(t, uint64(150), st.Balance)
+	require.Empty(t, st.Inferences)
+}
+
 // --- Attack / bug regression tests ---
 
 func TestAttack_SybilValidationBypass(t *testing.T) {
@@ -1902,7 +2011,7 @@ func TestApplyDiff_RevealSeed_ForgeSeedSig(t *testing.T) {
 	seedMsg := &types.MsgRevealSeed{
 		SlotId:    0,
 		Signature: wrongSeedSig,
-		EscrowId: "escrow-1",
+		EscrowId:  "escrow-1",
 	}
 	// Proposer sig is correct (from hosts[0]).
 	cloned := &types.MsgRevealSeed{SlotId: 0, Signature: wrongSeedSig, EscrowId: "escrow-1"}
@@ -2970,4 +3079,3 @@ func TestApplyDiff_Validation_Invalid_CostUnderflowGuard(t *testing.T) {
 	require.Equal(t, types.StatusInvalidated, st.Inferences[1].Status)
 	require.Equal(t, uint64(0), st.HostStats[1].Cost)
 }
-
