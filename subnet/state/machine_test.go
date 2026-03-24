@@ -19,7 +19,8 @@ func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	require.NoError(t, err)
 	return sm, user
 }
 
@@ -511,14 +512,15 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{3, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 5/2 = 2
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Start inference. Executor slot = group[1%5].SlotID = 1 (owned by signer0).
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
 		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
 	})})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// One accept vote from signer2 (slot 4, weight=1) -- not enough alone.
@@ -1136,7 +1138,8 @@ func TestApplyDiff_CostOverflow_StartInference(t *testing.T) {
 	config := types.SessionConfig{TokenPrice: 3, VoteThreshold: 1}
 	group := testutil.MakeGroup(hosts)
 	verifier := signing.NewSecp256k1Verifier()
-	smHigh := NewStateMachine("escrow-1", config, group, math.MaxUint64, user.Address(), verifier)
+	smHigh, err := NewStateMachine("escrow-1", config, group, math.MaxUint64, user.Address(), verifier)
+	require.NoError(t, err)
 
 	diff = testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
@@ -1221,7 +1224,8 @@ func TestApplyDiff_FeePerNonce_Deducted(t *testing.T) {
 	config := testutil.DefaultConfig(len(group))
 	config.FeePerNonce = 7
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1,
@@ -1231,7 +1235,7 @@ func TestApplyDiff_FeePerNonce_Deducted(t *testing.T) {
 		MaxTokens:   50,
 		StartedAt:   1000,
 	})})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	st := sm.SnapshotState()
@@ -1248,7 +1252,8 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1,
@@ -1258,7 +1263,7 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 		MaxTokens:   50,
 		StartedAt:   1000,
 	})})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 
 	st := sm.SnapshotState()
@@ -1276,7 +1281,8 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+	require.NoError(t, err)
 
 	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1,
@@ -1370,7 +1376,8 @@ func TestApplyDiff_Validation_DuplicateAddress(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
 	config := testutil.DefaultConfig(len(group))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[0]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
@@ -1380,7 +1387,7 @@ func TestApplyDiff_Validation_DuplicateAddress(t *testing.T) {
 	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{txValidation(valMsg)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Same address (signer[1]) tries again from slot 2 -> idempotent no-op.
@@ -1402,7 +1409,8 @@ func TestApplyDiff_ValidationVote_MultiSlotWeight(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 4/2 = 2
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[0]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
@@ -1412,7 +1420,7 @@ func TestApplyDiff_ValidationVote_MultiSlotWeight(t *testing.T) {
 	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{txValidation(valMsg)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Signer[0] votes invalid from slot 0. Weight = 2 (owns slots 0 and 1).
@@ -1444,7 +1452,8 @@ func TestApplyDiff_ValidationVote_MultiSlotDedup(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 6/2 = 3
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inference 1: executor = group[1%6].SlotID = 1 (owned by signer[0]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
@@ -1454,7 +1463,7 @@ func TestApplyDiff_ValidationVote_MultiSlotDedup(t *testing.T) {
 	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{txValidation(valMsg)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Signer[0] votes from slot 0 (weight=2). VotesInvalid = 1+2 = 3, not > 3. Still Challenged.
@@ -1523,7 +1532,8 @@ func TestApplyDiff_PostStateRoot_Valid(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
-	sm2 := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	txs := []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
@@ -1615,14 +1625,15 @@ func TestApplyDiff_RevealSeed_DuplicateAddress(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
 	config := testutil.DefaultConfig(len(group))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Finalize.
 	nonce := uint64(1)
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{
 		{Tx: &types.SubnetTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
 	})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// First reveal from slot 0 (signer[0]).
@@ -1680,7 +1691,8 @@ func TestApplyDiff_RevealSeed_ComplianceComputed(t *testing.T) {
 		ValidationRate:   10000, // 100%
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// 3 finished inferences. Each uses 3 nonces (start, confirm, finish).
 	// inference 1: executor = slot 1%3=1. inference 4: slot 4%3=1. inference 7: slot 7%3=1.
@@ -1694,7 +1706,7 @@ func TestApplyDiff_RevealSeed_ComplianceComputed(t *testing.T) {
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{
 		{Tx: &types.SubnetTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
 	})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Reveal from slot 0 (hosts[0]).
@@ -1731,7 +1743,8 @@ func TestApplyDiff_RevealSeed_CompletedValidationsCounted(t *testing.T) {
 		ValidationRate:   10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inference 1: executor = slot 1%3=1 (hosts[1]).
 	// ShouldValidate(seed, 1) = true with this fixed key. So it counts as required.
@@ -1742,7 +1755,7 @@ func TestApplyDiff_RevealSeed_CompletedValidationsCounted(t *testing.T) {
 	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
 	nonce := sm.LatestNonce() + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{txValidation(valMsg)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Finalize.
@@ -1784,7 +1797,8 @@ func TestApplyDiff_Validation_MultipleValidators_ComplianceCredit(t *testing.T) 
 		ValidationRate:   10000, // 100%
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inference 1: executor = slot 1%3=1 (hosts[1]).
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
@@ -1794,7 +1808,7 @@ func TestApplyDiff_Validation_MultipleValidators_ComplianceCredit(t *testing.T) 
 	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
 	nonce := sm.LatestNonce() + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{txValidation(valMsg)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// hosts[2] also validates inference 1: valid=true, stays Finished, sets bitmap.
@@ -1854,7 +1868,8 @@ func TestApplyDiff_RevealSeed_ZeroRateNoRequirements(t *testing.T) {
 		ValidationRate:   0, // 0% -- no validations required
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
 
@@ -1863,7 +1878,7 @@ func TestApplyDiff_RevealSeed_ZeroRateNoRequirements(t *testing.T) {
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{
 		{Tx: &types.SubnetTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
 	})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	seedMsg := testutil.SignRevealSeed(t, hosts[0], "escrow-1", 0)
@@ -1887,7 +1902,8 @@ func TestApplyDiff_RevealSeed_MultipleRevealers(t *testing.T) {
 		VoteThreshold: uint32(len(hosts)) / 2, ValidationRate: 10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// 3 inferences, all with executor=slot 1 (hosts[1]).
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
@@ -1899,7 +1915,7 @@ func TestApplyDiff_RevealSeed_MultipleRevealers(t *testing.T) {
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{
 		{Tx: &types.SubnetTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
 	})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Reveal from all 3 validators.
@@ -1947,7 +1963,8 @@ func TestApplyDiff_RevealSeed_ExecutorSkipsSelf(t *testing.T) {
 		ValidationRate:   10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inference 1: nonces 1,2,3. executor = slot 1%3 = 1 = hosts[1].
 	// But we want hosts[0] to be the executor. Inference ID 3 has executor slot 3%3=0.
@@ -1959,7 +1976,7 @@ func TestApplyDiff_RevealSeed_ExecutorSkipsSelf(t *testing.T) {
 	// Instead, advance nonce first, then use inference_id = 3 at nonce = 3.
 	// Simplest: apply two empty diffs first.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, nil)
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, nil)
 	_, err = sm.ApplyDiff(diff)
@@ -2290,14 +2307,15 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Session A: escrow-A.
-	smA := NewStateMachine("escrow-A", config, group, 10000, user.Address(), verifier)
+	smA, err := NewStateMachine("escrow-A", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Start + confirm + finish in session A.
 	diff := testutil.SignDiff(t, user, "escrow-A", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
 		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
 	})})
-	_, err := smA.ApplyDiff(diff)
+	_, err = smA.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-A", 1, []byte("prompt"), "llama", 100, 50, 1000, 1000)
@@ -2320,7 +2338,8 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Session B: escrow-B, same hosts.
-	smB := NewStateMachine("escrow-B", config, group, 10000, user.Address(), verifier)
+	smB, err := NewStateMachine("escrow-B", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	diff = testutil.SignDiff(t, user, "escrow-B", 1, []*types.SubnetTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
@@ -2391,7 +2410,8 @@ func TestCompliance_FinishAfterReveal(t *testing.T) {
 		VoteThreshold: uint32(len(hosts)) / 2, ValidationRate: 10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Start + confirm inference 1 (executor = slot 1). Don't finish yet.
 	nonce := uint64(1)
@@ -2399,7 +2419,7 @@ func TestCompliance_FinishAfterReveal(t *testing.T) {
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
 		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
 	})})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, 50, 1000, 1000)
@@ -2532,7 +2552,8 @@ func newTestSMWithWarmKey(t *testing.T, hosts []*signing.Secp256k1Signer, balanc
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, WithWarmKeyResolver(resolver))
+	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
 	return sm, user
 }
 
@@ -2884,7 +2905,8 @@ func TestApplyLocal_WithInjectedWarmKeys(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm2 := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Inject the warm keys that were captured from SM1.
 	sm2.InjectWarmKeys(warmBefore)

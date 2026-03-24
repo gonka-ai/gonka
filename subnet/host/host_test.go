@@ -42,7 +42,8 @@ func newTestHostWithChecker(t *testing.T, hostIdx int, hosts []*signing.Secp256k
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	var opts []HostOption
 	opts = append(opts, WithGrace(grace))
@@ -107,7 +108,8 @@ func TestHost_SignsState(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
-	sm2 := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm2, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	_, err = sm2.ApplyDiff(diff)
 	require.NoError(t, err)
 	root, err := sm2.ComputeStateRoot()
@@ -276,10 +278,11 @@ func TestHost_NotInGroup(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, outsider.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, outsider.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 
-	_, err := NewHost(sm, outsider, engine, "escrow-1", group, nil, WithGrace(10))
+	_, err = NewHost(sm, outsider, engine, "escrow-1", group, nil, WithGrace(10))
 	require.ErrorIs(t, err, types.ErrHostNotInGroup)
 }
 
@@ -299,7 +302,8 @@ func newMultiSlotHost(t *testing.T, hostIdx int, hosts []*signing.Secp256k1Signe
 	t.Helper()
 	config := testutil.DefaultConfig(len(group))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[hostIdx], engine, "escrow-1", group, nil, WithGrace(grace))
 	require.NoError(t, err)
@@ -472,7 +476,8 @@ func TestHost_StoresOwnSignature(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithStorage(store), WithVerifier(verifier))
@@ -498,7 +503,8 @@ func TestHost_AccumulateGossipSig(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithStorage(store), WithVerifier(verifier))
@@ -539,7 +545,8 @@ func TestHost_AccumulateGossipSig_WrongSigner(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithStorage(store), WithVerifier(verifier))
@@ -574,7 +581,8 @@ func TestHost_GetSignatures(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithStorage(store), WithVerifier(verifier))
@@ -608,7 +616,8 @@ func TestHost_FinalizationThreshold(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithStorage(store), WithVerifier(verifier))
@@ -676,7 +685,8 @@ func TestHost_ExecuteFailure_ReturnsReceiptNoMempool(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewFailingEngine(fmt.Errorf("GPU error"))
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
@@ -715,7 +725,8 @@ func TestHost_SignReceipt_NoDuplicateExecution(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
@@ -743,7 +754,8 @@ func TestHost_ExecutingCleanup(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
@@ -772,7 +784,8 @@ func TestHost_ChallengeReceipt_AlreadyExecuting(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
@@ -807,7 +820,8 @@ func TestHost_ChallengeReceipt_AlreadyFinished(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
@@ -847,12 +861,13 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
 
 	// Apply start + confirm with warm key to populate WarmKeys in state.
 	nonce := uint64(1)
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{testutil.StartTx(1)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
@@ -913,7 +928,8 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 		ValidationRate:   10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	valEngine := &trackingValidationEngine{valid: true}
 	engine := stub.NewInferenceEngine()
@@ -1071,13 +1087,14 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
 
 	// Create warm key binding via confirm start.
 	// inference 1 % 3 = 1, executor = slot 1.
 	nonce := uint64(1)
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.SubnetTx{testutil.StartTx(1)})
-	_, err := sm.ApplyDiff(diff)
+	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
@@ -1092,7 +1109,8 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	engine := stub.NewInferenceEngine()
 
 	// Create a fresh SM+host for storage population.
-	sm2 := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm2, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
 	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{testutil.StartTx(1)})
 	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.SubnetTx{confirmTx})
 

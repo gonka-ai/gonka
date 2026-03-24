@@ -53,7 +53,8 @@ func setupRecoverableSession(
 	// Create hosts.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
@@ -61,7 +62,8 @@ func setupRecoverableSession(
 	}
 
 	// Create user session with storage.
-	userSM := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, WithStorage(store))
 	require.NoError(t, err)
 
@@ -92,7 +94,8 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
@@ -137,7 +140,8 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 
 	clients := make([]HostClient, 3)
 	for i := range hosts {
-		sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil)
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
@@ -181,9 +185,10 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 		return false, nil
 	}
 
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
 		state.WithWarmKeyResolver(resolver),
 	)
+	require.NoError(t, err)
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
@@ -226,7 +231,8 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 	// Recover WITHOUT a resolver. Warm keys must come from stored delta only.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm2 := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
 		h, hErr := host.NewHost(sm2, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil)
 		require.NoError(t, hErr)
 		clients[i] = &InProcessClient{Host: h}
@@ -267,7 +273,8 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil)
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
@@ -303,7 +310,8 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}

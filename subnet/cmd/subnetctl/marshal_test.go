@@ -27,7 +27,7 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	inferences := map[uint64]*types.InferenceRecord{
 		1: {
 			Status: types.StatusFinished, ExecutorSlot: 0, Model: "llama",
-			PromptHash: []byte("abcdefghijklmnopqrstuvwxyz012345"), // 32 bytes
+			PromptHash:  []byte("abcdefghijklmnopqrstuvwxyz012345"), // 32 bytes
 			InputLength: 100, MaxTokens: 50, ReservedCost: 150,
 		},
 	}

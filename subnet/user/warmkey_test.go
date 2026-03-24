@@ -58,14 +58,16 @@ func setupWarmKeySession(t *testing.T, n int) (*Session, []*signing.Secp256k1Sig
 
 	clients := make([]HostClient, n)
 	for i := range coldKeys {
-		sm := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, smOpts...)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, smOpts...)
+		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, warmKeys[i], engine, "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, smOpts...)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, smOpts...)
+	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 	return session, coldKeys, warmKeys
@@ -101,9 +103,10 @@ func TestProcessResponse_WarmKey_Rejected(t *testing.T) {
 	config := testutil.DefaultConfig(3)
 	verifier := signing.NewSecp256k1Verifier()
 
-	userSM := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
 		state.WithWarmKeyResolver(rejectAll),
 	)
+	require.NoError(t, err)
 
 	// Apply a diff locally.
 	startTx := testutil.StartTx(1)
@@ -146,7 +149,8 @@ func TestProcessResponse_WarmKey_NoResolver(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// No warm key resolver option.
-	userSM := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+	require.NoError(t, err)
 
 	startTx := testutil.StartTx(1)
 	root, err := userSM.ApplyLocal(1, []*types.SubnetTx{startTx})

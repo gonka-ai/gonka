@@ -162,7 +162,8 @@ func setupTestProxy(t *testing.T, numHosts int, engines []subnet.InferenceEngine
 	killables := make([]*killableClient, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+		require.NoError(t, err)
 		var engine subnet.InferenceEngine
 		if engines != nil {
 			engine = engines[i]
@@ -182,7 +183,8 @@ func setupTestProxy(t *testing.T, numHosts int, engines []subnet.InferenceEngine
 		}
 	}
 
-	userSM := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userKey, "escrow-proxy", group, clients, verifier)
 	require.NoError(t, err)
 

@@ -118,7 +118,8 @@ func populateStore(t *testing.T, store storage.Storage, numDiffs int) ([]types.S
 		InitialBalance: 100000,
 	}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	for i := uint64(1); i <= uint64(numDiffs); i++ {
 		txs := []*types.SubnetTx{startTx(i)}
@@ -253,7 +254,8 @@ func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 		InitialBalance: 100000,
 	}))
 
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Diff 1: correct state hash.
 	txs1 := []*types.SubnetTx{startTx(1)}
