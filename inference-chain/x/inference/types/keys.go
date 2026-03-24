@@ -76,6 +76,7 @@ var (
 	SubnetEscrowEpochCountPrefix           = collections.NewPrefix(50)
 	SubnetHostEpochStatsPrefix             = collections.NewPrefix(51)
 	SubnetEscrowsByEpochPrefix             = collections.NewPrefix(52)
+	CircuitBreakerStatePrefix              = collections.NewPrefix(53)
 	ParamsKey                              = []byte("p_inference")
 )
 
@@ -84,9 +85,10 @@ func KeyPrefix(p string) []byte {
 }
 
 const (
-	TokenomicsDataKey  = "TokenomicsData/value/"
-	GenesisOnlyDataKey = "GenesisOnlyData/value/"
-	MLNodeVersionKey   = "MLNodeVersion/value/"
+	TokenomicsDataKey      = "TokenomicsData/value/"
+	GenesisOnlyDataKey     = "GenesisOnlyData/value/"
+	MLNodeVersionKey       = "MLNodeVersion/value/"
+	CircuitBreakerStateKey = "CircuitBreakerState/value/"
 )
 
 // TransientStore prefixes
