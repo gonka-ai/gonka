@@ -15,7 +15,7 @@ const (
 type InferenceStatus uint8
 
 const (
-	StatusPending     InferenceStatus = iota
+	StatusPending InferenceStatus = iota
 	StatusStarted
 	StatusFinished
 	StatusChallenged
@@ -57,16 +57,18 @@ type HostStats struct {
 type SessionConfig struct {
 	RefusalTimeout   int64  // seconds before reason=refused timeout
 	ExecutionTimeout int64  // seconds before reason=execution timeout
-	TokenPrice       uint64 // price per unit (flat per session)
+	TokenPrice       uint64 // price per input / output token (flat per session)
+	CreateSubnetFee  uint64 // one-time fee charged when creating a subnet session
+	FeePerNonce      uint64 // fee charged per applied nonce (diff)
 	VoteThreshold    uint32 // minimum accept votes for timeout (total_slots / 2)
 	ValidationRate   uint32 // basis points (10000 = 100%, 1000 = 10%)
 }
 
 // EscrowState is the full state of a subnet session.
 type EscrowState struct {
-	EscrowID    string
-	Config      SessionConfig
-	Group       []SlotAssignment
+	EscrowID      string
+	Config        SessionConfig
+	Group         []SlotAssignment
 	Balance       uint64
 	Phase         SessionPhase
 	FinalizeNonce uint64
