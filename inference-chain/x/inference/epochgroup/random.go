@@ -53,7 +53,11 @@ func (eg *EpochGroup) GetRandomMember(
 		return nil, status.Error(codes.Internal, "After filtering participants the length is 0")
 	}
 
-	participantIndex := selectRandomParticipant(filteredParticipants)
+	// Build reputation-adjusted selection weights from stored ValidationWeights.
+	// PoC voting weights and block-production power (cosmos-sdk group weights) are
+	// unaffected — only the executor-selection lottery uses these adjusted weights.
+	selectionWeights := eg.buildSelectionWeightsMap()
+	participantIndex := selectRandomParticipant(filteredParticipants, selectionWeights)
 
 	participant, ok := eg.ParticipantKeeper.GetParticipant(ctx, participantIndex)
 	if !ok {
@@ -65,8 +69,29 @@ func (eg *EpochGroup) GetRandomMember(
 	return &participant, nil
 }
 
-func selectRandomParticipant(participants []*group.GroupMember) string {
-	cumulativeArray := computeCumulativeArray(participants)
+// buildSelectionWeightsMap computes reputation-adjusted selection weights for all members
+// stored in the group's ValidationWeights. Keys are member addresses.
+//
+// PoC voting weights (ValidationWeights[].Weight) and the cosmos-sdk group member
+// weights (used for block production) are NOT modified; this map is used solely by
+// the executor-selection lottery.
+func (eg *EpochGroup) buildSelectionWeightsMap() map[string]int64 {
+	weights := make(map[string]int64, len(eg.GroupData.ValidationWeights))
+	for _, vw := range eg.GroupData.ValidationWeights {
+		if vw == nil {
+			continue
+		}
+		selWeight := CalculateSelectionWeight(vw.Weight, int64(vw.Reputation))
+		weights[vw.MemberAddress] = selWeight
+	}
+	return weights
+}
+
+// selectRandomParticipant picks a random member using cumulative weighted random
+// selection. selectionWeights overrides the cosmos-sdk group weights for the
+// lottery; if a member address is absent from the map the raw group weight is used.
+func selectRandomParticipant(participants []*group.GroupMember, selectionWeights map[string]int64) string {
+	cumulativeArray := computeCumulativeArray(participants, selectionWeights)
 
 	randomNumber := rand.Int63n(cumulativeArray[len(cumulativeArray)-1])
 	for i, cumulativeWeight := range cumulativeArray {
@@ -78,13 +103,26 @@ func selectRandomParticipant(participants []*group.GroupMember) string {
 	return participants[len(participants)-1].Member.Address
 }
 
-func computeCumulativeArray(participants []*group.GroupMember) []int64 {
+// computeCumulativeArray builds a prefix-sum array of effective selection weights.
+func computeCumulativeArray(participants []*group.GroupMember, selectionWeights map[string]int64) []int64 {
 	cumulativeArray := make([]int64, len(participants))
-	cumulativeArray[0] = int64(getWeight(participants[0]))
+	cumulativeArray[0] = getEffectiveWeight(participants[0], selectionWeights)
 	for i := 1; i < len(participants); i++ {
-		cumulativeArray[i] = cumulativeArray[i-1] + getWeight(participants[i])
+		cumulativeArray[i] = cumulativeArray[i-1] + getEffectiveWeight(participants[i], selectionWeights)
 	}
 	return cumulativeArray
+}
+
+// getEffectiveWeight returns the selection weight for a participant.
+// It prefers the value from selectionWeights (reputation-adjusted) and falls
+// back to the raw cosmos-sdk group weight when no override is present.
+func getEffectiveWeight(participant *group.GroupMember, selectionWeights map[string]int64) int64 {
+	if selectionWeights != nil && participant != nil && participant.Member != nil {
+		if w, ok := selectionWeights[participant.Member.Address]; ok {
+			return w
+		}
+	}
+	return getWeight(participant)
 }
 
 func getWeight(participant *group.GroupMember) int64 {

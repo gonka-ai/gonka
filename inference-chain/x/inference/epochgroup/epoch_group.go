@@ -52,6 +52,32 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 }
 
+// CalculateSelectionWeight scales staking weight by reputation (0–100).
+//
+// Floor: 1% of stakeWeight ensures no complete exclusion at this layer —
+// SPRT handles final exclusion. New nodes (reputation 0) get 1% traffic
+// during ramp-up via the floor.
+func CalculateSelectionWeight(stakeWeight int64, reputation int64) int64 {
+	if stakeWeight <= 0 {
+		return 0
+	}
+	if reputation >= 100 {
+		return stakeWeight
+	}
+	if reputation <= 0 {
+		reputation = 1 // new nodes get 1% traffic during ramp-up
+	}
+	floor := stakeWeight / 100
+	if floor < 1 {
+		floor = 1
+	}
+	adjusted := stakeWeight * reputation / 100
+	if adjusted < floor {
+		return floor
+	}
+	return adjusted
+}
+
 // calculatePocParticipatingNodesWeight calculates the total weight of nodes participating in PoC
 func calculatePocParticipatingNodesWeight(mlNodes []*types.ModelMLNodes) int64 {
 	totalWeight := int64(0)
