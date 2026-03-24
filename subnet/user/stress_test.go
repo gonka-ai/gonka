@@ -227,7 +227,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 	// --- State root at peak (pre-finalize, measures raw hashing cost at N inferences) ---
 	preFinSt := session.StateMachine().SnapshotState()
 	srStart := time.Now()
-	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys)
+	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys, preFinSt.Fees)
 	require.NoError(t, err)
 	srDuration := time.Since(srStart)
 

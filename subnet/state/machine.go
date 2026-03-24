@@ -269,7 +269,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 		}
 	}
 
-	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys)
+	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees)
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, nil, fmt.Errorf("compute state root: %w", err)
@@ -350,7 +350,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.SubnetTx, postState
 	}
 
 	// 7. Compute state root.
-	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys)
+	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees)
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("compute state root: %w", err)
@@ -483,7 +483,7 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 func (sm *StateMachine) ComputeStateRoot() ([]byte, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys)
+	return ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees)
 }
 
 // WarmKeys returns the current warm key bindings (shallow copy).

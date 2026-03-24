@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -13,13 +12,16 @@ import (
 
 	"subnet/bridge"
 	"subnet/state"
+	"subnet/types"
 	"subnet/user"
 )
 
 type SettlementJSON struct {
-	EscrowID   string              `json:"escrow_id"`
-	StateRoot  string              `json:"state_root"`
-	Nonce      uint64              `json:"nonce"`
+	EscrowID  string `json:"escrow_id"`
+	StateRoot string `json:"state_root"`
+	Nonce     uint64 `json:"nonce"`
+	// Fees is the total fee amount deducted during session execution.
+	Fees       uint64              `json:"fees"`
 	RestHash   string              `json:"rest_hash"`
 	HostStats  []HostStatsJSON     `json:"host_stats"`
 	Signatures []SlotSignatureJSON `json:"signatures"`
@@ -143,11 +145,7 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := sha256.New()
-	h.Write(hsHash)
-	h.Write(p.RestHash)
-	h.Write([]byte{0x02})
-	root := h.Sum(nil)
+	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
@@ -165,7 +163,7 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 
 	return json.MarshalIndent(SettlementJSON{
 		EscrowID: p.EscrowID, StateRoot: base64.StdEncoding.EncodeToString(root),
-		Nonce: p.Nonce, RestHash: base64.StdEncoding.EncodeToString(p.RestHash),
+		Nonce: p.Nonce, Fees: p.Fees, RestHash: base64.StdEncoding.EncodeToString(p.RestHash),
 		HostStats: stats, Signatures: sigs,
 	}, "", "  ")
 }
