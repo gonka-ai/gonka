@@ -543,3 +543,175 @@ func TestGetGroupMembers_UsesPagination(t *testing.T) {
 	require.Equal(t, "addr1", result[0].Member.Address)
 	require.Equal(t, "addr2", result[1].Member.Address)
 }
+
+// ---------------------------------------------------------------------------
+// CalculateSelectionWeight tests
+// ---------------------------------------------------------------------------
+
+func TestCalculateSelectionWeight_PerfectReputation(t *testing.T) {
+	// reputation == 100 → no scaling, return raw stake
+	require.Equal(t, int64(1000), CalculateSelectionWeight(1000, 100))
+}
+
+func TestCalculateSelectionWeight_AboveMax(t *testing.T) {
+	// reputation > 100 still treated as 100
+	require.Equal(t, int64(1000), CalculateSelectionWeight(1000, 120))
+}
+
+func TestCalculateSelectionWeight_ZeroStake(t *testing.T) {
+	// stakeWeight == 0 → always 0
+	require.Equal(t, int64(0), CalculateSelectionWeight(0, 50))
+}
+
+func TestCalculateSelectionWeight_NegativeStake(t *testing.T) {
+	// negative stakeWeight → 0
+	require.Equal(t, int64(0), CalculateSelectionWeight(-500, 50))
+}
+
+func TestCalculateSelectionWeight_ZeroReputation(t *testing.T) {
+	// reputation == 0 → floor (1% of stake, min 1)
+	result := CalculateSelectionWeight(1000, 0)
+	// floor = 1000/100 = 10
+	require.Equal(t, int64(10), result)
+}
+
+func TestCalculateSelectionWeight_NewNodeTinyStake(t *testing.T) {
+	// stake so small floor would be 0 → clamp to 1
+	result := CalculateSelectionWeight(5, 0)
+	require.Equal(t, int64(1), result)
+}
+
+func TestCalculateSelectionWeight_50PctReputation(t *testing.T) {
+	// reputation 50 → 50% of stake (above floor)
+	result := CalculateSelectionWeight(1000, 50)
+	require.Equal(t, int64(500), result)
+}
+
+func TestCalculateSelectionWeight_FloorKicksIn(t *testing.T) {
+	// reputation 0 → adjusted = 0, must return floor
+	// With reputation clamped to 1: adjusted = 1000*1/100 = 10, floor = 10 → equal → return floor
+	require.Equal(t, int64(10), CalculateSelectionWeight(1000, 0))
+	// reputation 1 → adjusted = 10, floor = 10 → return 10
+	require.Equal(t, int64(10), CalculateSelectionWeight(1000, 1))
+}
+
+// ---------------------------------------------------------------------------
+// Proportional traffic distribution test
+// ---------------------------------------------------------------------------
+
+// TestSelectionWeights_ProportionalTraffic verifies that two nodes with equal
+// stake but different reputations receive proportional executor-selection
+// traffic. We run many lottery draws and check that the ratio converges.
+func TestSelectionWeights_ProportionalTraffic(t *testing.T) {
+	const (
+		stake     = int64(1000)
+		repHigh   = int64(100) // perfect node
+		repLow    = int64(50)  // 50% reputation
+		draws     = 100_000
+		tolerance = 0.03 // ±3 percentage points
+	)
+
+	members := []*group.GroupMember{
+		{Member: &group.Member{Address: "high", Weight: "1000"}},
+		{Member: &group.Member{Address: "low", Weight: "1000"}},
+	}
+
+	selectionWeights := map[string]int64{
+		"high": CalculateSelectionWeight(stake, repHigh), // 1000
+		"low":  CalculateSelectionWeight(stake, repLow),  // 500
+	}
+
+	highCount := 0
+	for i := 0; i < draws; i++ {
+		addr := selectRandomParticipant(members, selectionWeights)
+		if addr == "high" {
+			highCount++
+		}
+	}
+
+	// Expected: high gets 1000/(1000+500) ≈ 66.67%, low gets ≈ 33.33%
+	expectedHighFraction := float64(selectionWeights["high"]) / float64(selectionWeights["high"]+selectionWeights["low"])
+	observedHighFraction := float64(highCount) / float64(draws)
+
+	diff := observedHighFraction - expectedHighFraction
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > tolerance {
+		t.Errorf("traffic ratio out of bounds: expected %.4f, got %.4f (diff %.4f > tolerance %.4f)",
+			expectedHighFraction, observedHighFraction, diff, tolerance)
+	}
+}
+
+// TestSelectionWeights_ZeroReputationGetsFloor verifies that a node with
+// reputation 0 still receives ~1% of traffic (floor), not zero.
+func TestSelectionWeights_ZeroReputationGetsFloor(t *testing.T) {
+	const (
+		stake   = int64(1000)
+		draws   = 100_000
+		minFrac = 0.005 // must get at least 0.5% (floor is ~1%)
+	)
+
+	members := []*group.GroupMember{
+		{Member: &group.Member{Address: "good", Weight: "1000"}},
+		{Member: &group.Member{Address: "new", Weight: "1000"}},
+	}
+
+	selectionWeights := map[string]int64{
+		"good": CalculateSelectionWeight(stake, 100), // 1000
+		"new":  CalculateSelectionWeight(stake, 0),   // floor = 10
+	}
+
+	newCount := 0
+	for i := 0; i < draws; i++ {
+		addr := selectRandomParticipant(members, selectionWeights)
+		if addr == "new" {
+			newCount++
+		}
+	}
+
+	newFrac := float64(newCount) / float64(draws)
+	if newFrac < minFrac {
+		t.Errorf("new node (rep=0) received too little traffic: %.4f < %.4f (floor not applied)", newFrac, minFrac)
+	}
+}
+
+// TestBuildSelectionWeightsMap verifies that buildSelectionWeightsMap
+// correctly translates ValidationWeights into reputation-adjusted selection weights.
+func TestBuildSelectionWeightsMap(t *testing.T) {
+	eg := &EpochGroup{
+		GroupData: &types.EpochGroupData{
+			ValidationWeights: []*types.ValidationWeight{
+				{MemberAddress: "perfect", Weight: 1000, Reputation: 100},
+				{MemberAddress: "half", Weight: 1000, Reputation: 50},
+				{MemberAddress: "new", Weight: 1000, Reputation: 0},
+			},
+		},
+	}
+
+	m := eg.buildSelectionWeightsMap()
+
+	require.Equal(t, int64(1000), m["perfect"])
+	require.Equal(t, int64(500), m["half"])
+	require.Equal(t, int64(10), m["new"]) // floor = 1000/100 = 10
+}
+
+// TestValidationWeightsUnchanged verifies that ValidationWeights.Weight is NOT
+// modified by the selection weight computation — PoC voting uses raw stake.
+func TestValidationWeightsUnchanged(t *testing.T) {
+	const rawStake = int64(1000)
+
+	eg := &EpochGroup{
+		GroupData: &types.EpochGroupData{
+			ValidationWeights: []*types.ValidationWeight{
+				{MemberAddress: "addr1", Weight: rawStake, Reputation: 50},
+			},
+		},
+	}
+
+	// Build selection weights — must not mutate ValidationWeights
+	_ = eg.buildSelectionWeightsMap()
+
+	require.Equal(t, rawStake, eg.GroupData.ValidationWeights[0].Weight,
+		"ValidationWeights.Weight must remain raw stake after selection weight computation")
+}
