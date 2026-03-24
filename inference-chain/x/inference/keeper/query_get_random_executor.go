@@ -95,17 +95,112 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if isActive {
-		return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
-	}
+	// Build the health (circuit-breaker) filter — applied in every path.
+	healthFilter := k.createHealthFilterFn(goCtx, sdkCtx.BlockHeight())
 
-	if currentPhase == types.InferencePhase && sdkCtx.BlockHeight() > epochContext.SetNewValidators() {
+	if isActive {
+		pocFilter, err := k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
+		if err != nil {
+			return nil, err
+		}
 		return func(members []*group.GroupMember) []*group.GroupMember {
-			return members
+			return pocFilter(healthFilter(members))
 		}, nil
 	}
 
-	return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
+	if currentPhase == types.InferencePhase && sdkCtx.BlockHeight() > epochContext.SetNewValidators() {
+		// Inference phase: only health filter applies.
+		return healthFilter, nil
+	}
+
+	pocFilter, err := k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
+	if err != nil {
+		return nil, err
+	}
+	return func(members []*group.GroupMember) []*group.GroupMember {
+		return pocFilter(healthFilter(members))
+	}, nil
+}
+
+// createHealthFilterFn builds a fast circuit-breaker filter that excludes nodes with high
+// current-epoch miss rates, manages PROBE state transitions on cooldown expiry, and falls back
+// to the full member list if all candidates are excluded (safety valve).
+func (k Keeper) createHealthFilterFn(goCtx context.Context, blockHeight int64) func([]*group.GroupMember) []*group.GroupMember {
+	return func(members []*group.GroupMember) []*group.GroupMember {
+		filtered := make([]*group.GroupMember, 0, len(members))
+
+		for _, m := range members {
+			if m == nil || m.Member == nil {
+				continue
+			}
+			address := m.Member.Address
+
+			cb := k.GetCBEntry(goCtx, address)
+
+			switch cb.State {
+			case CBStateProbe:
+				// Node is in probe — include it regardless of current miss rate.
+				// RecordCBResult will update state once the inference completes/expires.
+				filtered = append(filtered, m)
+				k.Logger().Debug("CircuitBreaker: including probe node",
+					"address", address, "blockHeight", blockHeight)
+
+			case CBStateExcluded:
+				cooldownDone := blockHeight >= cb.ExcludedAtBlock+cb.CooldownBlocks
+				if cooldownDone {
+					// Cooldown expired — promote to PROBE so it gets one test slot.
+					k.PromoteCBEntryToProbe(goCtx, address, blockHeight)
+					filtered = append(filtered, m)
+					k.Logger().Info("CircuitBreaker: promoted excluded node to probe",
+						"address", address, "blockHeight", blockHeight)
+				} else {
+					blocksRemaining := (cb.ExcludedAtBlock + cb.CooldownBlocks) - blockHeight
+					k.Logger().Debug("CircuitBreaker: skipping excluded node",
+						"address", address, "blockHeight", blockHeight, "blocksRemaining", blocksRemaining)
+				}
+
+			default: // CBStateHealthy
+				// Check current-epoch stats for fast-exclusion threshold.
+				participant, found := k.GetParticipant(goCtx, address)
+				if !found {
+					// If participant data is missing, include by default.
+					filtered = append(filtered, m)
+					continue
+				}
+
+				var inferenceCount, missedRequests uint64
+				if participant.CurrentEpochStats != nil {
+					inferenceCount = participant.CurrentEpochStats.InferenceCount
+					missedRequests = participant.CurrentEpochStats.MissedRequests
+				}
+
+				total := inferenceCount + missedRequests
+				if total >= DefaultCBMinSamples && missedRequests*100 > DefaultCBMissThresholdPct*total {
+					// Miss rate exceeded threshold — exclude immediately.
+					k.ExcludeCBEntry(goCtx, address, blockHeight, false)
+					k.Logger().Info("CircuitBreaker: excluding node due to high miss rate",
+						"address", address, "blockHeight", blockHeight,
+						"inferenceCount", inferenceCount,
+						"missedRequests", missedRequests,
+						"total", total)
+					// Do not include in filtered list.
+					continue
+				}
+
+				filtered = append(filtered, m)
+			}
+		}
+
+		// Safety fallback: if all candidates ended up excluded, return the original list
+		// to prevent an empty selection pool crash.
+		if len(filtered) == 0 && len(members) > 0 {
+			k.Logger().Warn("CircuitBreaker: all nodes excluded, falling back to full member list",
+				"memberCount", len(members), "blockHeight", blockHeight)
+			return members
+		}
+
+		return filtered
+	}
 }
 
 func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId uint64, modelId string) (func(members []*group.GroupMember) []*group.GroupMember, error) {
