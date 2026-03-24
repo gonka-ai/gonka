@@ -143,6 +143,7 @@ func NewStateMachine(
 			Config:        config,
 			Group:         groupCopy,
 			Balance:       initialBalance,
+			Fees:          config.CreateSubnetFee,
 			Inferences:    make(map[uint64]*types.InferenceRecord),
 			HostStats:     hostStats,
 			RevealedSeeds: make(map[uint32]int64),
@@ -251,6 +252,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 		return nil, nil, types.ErrInsufficientBalance
 	}
 	sm.state.Balance -= sm.state.Config.FeePerNonce
+	sm.state.Fees += sm.state.Config.FeePerNonce
 
 	sm.state.LatestNonce = nonce
 
@@ -325,6 +327,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.SubnetTx, postState
 		return nil, types.ErrInsufficientBalance
 	}
 	sm.state.Balance -= sm.state.Config.FeePerNonce
+	sm.state.Fees += sm.state.Config.FeePerNonce
 
 	// 6. Update nonce.
 	sm.state.LatestNonce = nonce
@@ -426,6 +429,7 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 // mutableSnapshot holds the mutable fields of EscrowState for rollback.
 type mutableSnapshot struct {
 	Balance       uint64
+	Fees          uint64
 	Phase         types.SessionPhase
 	FinalizeNonce uint64
 	LatestNonce   uint64
@@ -452,6 +456,7 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 
 	return mutableSnapshot{
 		Balance:       sm.state.Balance,
+		Fees:          sm.state.Fees,
 		Phase:         sm.state.Phase,
 		FinalizeNonce: sm.state.FinalizeNonce,
 		LatestNonce:   sm.state.LatestNonce,
@@ -464,6 +469,7 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 
 func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.Balance = snap.Balance
+	sm.state.Fees = snap.Fees
 	sm.state.Phase = snap.Phase
 	sm.state.FinalizeNonce = snap.FinalizeNonce
 	sm.state.LatestNonce = snap.LatestNonce

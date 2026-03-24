@@ -70,6 +70,7 @@ type EscrowState struct {
 	Config        SessionConfig
 	Group         []SlotAssignment
 	Balance       uint64
+	Fees          uint64 // total fees collected (subnet create + per-nonce)
 	Phase         SessionPhase
 	FinalizeNonce uint64
 	Inferences    map[uint64]*InferenceRecord
