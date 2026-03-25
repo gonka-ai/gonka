@@ -1,4 +1,4 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy check
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy check generate
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -164,6 +164,10 @@ build-%:
 	@echo "Building for OS: $(OS), ARCH: $(ARCH)"
 	@mkdir -p build/$(OS)/$(ARCH)
 	@GOOS=$(OS) GOARCH=$(ARCH) go build -o build/$(OS)/$(ARCH)/decentralized-api
+
+generate:
+	@echo "--> running go generate"
+	@go generate ./...
 
 check:
 	@echo "--> running tests"
