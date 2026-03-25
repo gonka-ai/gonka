@@ -88,6 +88,7 @@ type settlementFileJSON struct {
 	EscrowID   string                    `json:"escrow_id"`
 	StateRoot  string                    `json:"state_root"`
 	Nonce      uint64                    `json:"nonce"`
+	Fees       uint64                    `json:"fees"`
 	RestHash   string                    `json:"rest_hash"`
 	HostStats  []settlementHostStatsJSON `json:"host_stats"`
 	Signatures []slotSignatureJSON       `json:"signatures"`
@@ -172,6 +173,7 @@ func SettleSubnetEscrowCmd() *cobra.Command {
 				EscrowId:   escrowID,
 				StateRoot:  stateRoot,
 				Nonce:      sf.Nonce,
+				Fees:       sf.Fees,
 				RestHash:   restHash,
 				HostStats:  hostStats,
 				Signatures: sigs,
