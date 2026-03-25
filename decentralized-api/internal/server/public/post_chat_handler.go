@@ -247,6 +247,9 @@ func (s *Server) enforceDeveloperAccessGate(ctx context.Context, requesterAddres
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch chain params")
 	}
+	if paramsResp == nil {
+		return nil
+	}
 	p := paramsResp.Params.DeveloperAccessParams
 	if p == nil || p.UntilBlockHeight == 0 {
 		return nil
@@ -291,7 +294,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	requester, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
 	if err != nil {
 		logging.Error("Failed to get inference requester", types.Inferences, "address", request.RequesterAddress, "error", err)
-		return err
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to query inference participant")
 	}
 
 	promptText := ""
@@ -997,7 +1000,7 @@ func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, re
 		ModelId: request.OpenAiRequest.Model,
 	})
 
-	if err == nil && priceResponse.Found {
+	if err == nil && priceResponse != nil && priceResponse.Found {
 		// Use dynamic pricing
 		perTokenPrice = priceResponse.Price
 
