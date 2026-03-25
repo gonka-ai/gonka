@@ -4,6 +4,7 @@ import groovy.lang.Closure
 
 plugins {
     kotlin("jvm") version "2.0.10"
+    id("com.google.protobuf") version "0.9.4"
 }
 
 group = "com.productscience"
@@ -255,6 +256,29 @@ dependencies {
     // Jackson for YAML parsing with Kotlin data class support
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.15.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
+    implementation("io.grpc:grpc-stub:1.70.0")
+    implementation("io.grpc:grpc-protobuf:1.70.0")
+    implementation("io.grpc:grpc-netty-shaded:1.70.0")
+    implementation("com.google.protobuf:protobuf-java:4.29.3")
+    implementation("javax.annotation:javax.annotation-api:1.3.2")
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.29.3"
+    }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.70.0"
+        }
+    }
+    generateProtoTasks {
+        all().forEach {
+            it.plugins {
+                create("grpc")
+            }
+        }
+    }
 }
 
 tasks.withType<JavaExec>().configureEach {
