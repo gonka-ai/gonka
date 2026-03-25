@@ -18,6 +18,13 @@ import (
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
+	"net"
+
+	"decentralized-api/nodemanager"
+	nmgen "decentralized-api/nodemanager/gen"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	internalsubnet "decentralized-api/internal/subnet"
 	"decentralized-api/internal/validation"
@@ -253,6 +260,21 @@ func main() {
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue, payloadStore)
 	adminServer.Start(addr)
+
+	nmGrpcServer := grpc.NewServer()
+	nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker))
+	reflection.Register(nmGrpcServer)
+	addr = fmt.Sprintf(":%v", config.GetApiConfig().NodeManagerGrpcPort)
+	nmLis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("node manager failed to listen on %v: %v", addr, err)
+	}
+	go func() {
+		logging.Info("start node manager gRPC server", types.Server, "addr", addr)
+		if err := nmGrpcServer.Serve(nmLis); err != nil {
+			log.Fatalf("node manager gRPC server failed: %v", err)
+		}
+	}()
 
 	logging.Info("Servers started", types.Server, "addr", addr)
 
