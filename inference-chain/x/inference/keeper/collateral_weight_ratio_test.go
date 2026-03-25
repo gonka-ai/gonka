@@ -3,12 +3,18 @@ package keeper_test
 import (
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/testutil/sample"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestAdjustWeightsByCollateral_RejectsInvalidBaseWeightRatio(t *testing.T) {
-	k, _, ctx, _ := setupKeeperWithMocksForIntegration(t)
+	k, _, ctx, mocks := setupKeeperWithMocksForIntegration(t)
+
+	// Generate a valid bech32 address for the participant
+	participantAddr := sample.AccAddress()
 
 	params := types.DefaultParams()
 	// Set grace period to 0 so collateral logic is active
@@ -19,8 +25,14 @@ func TestAdjustWeightsByCollateral_RejectsInvalidBaseWeightRatio(t *testing.T) {
 	k.SetEffectiveEpochIndex(ctx, 10)
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 10}))
 
+	// Mock collateral keeper — participant has no collateral
+	mocks.CollateralKeeper.EXPECT().
+		GetCollateral(gomock.Any(), gomock.Any()).
+		Return(sdk.Coin{}, false).
+		AnyTimes()
+
 	participants := []*types.ActiveParticipant{
-		{Index: "gonka1qnk2n4nlkpw9xfqntladh74w6ujtulwnz7rf8", Weight: 100},
+		{Index: participantAddr, Weight: 100},
 	}
 
 	tests := []struct {
