@@ -41,8 +41,11 @@ func setupKeeperWithMocksForIntegration(t testing.TB) (keeper.Keeper, types.MsgS
 func seedSlashBaseForParticipant(t testing.TB, ctx sdk.Context, k keeper.Keeper, participantAddr string, weight int64, mocks *keepertest.InferenceMocks) math.Int {
 	t.Helper()
 
-	err := setEffectiveEpoch(ctx, k, 1, mocks)
-	require.NoError(t, err)
+	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	if !found || effectiveEpoch == nil || effectiveEpoch.Index != 1 {
+		err := setEffectiveEpoch(ctx, k, 1, mocks)
+		require.NoError(t, err)
+	}
 
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 1,
@@ -55,15 +58,10 @@ func seedSlashBaseForParticipant(t testing.TB, ctx sdk.Context, k keeper.Keeper,
 		},
 	})
 
-	params, err := k.GetParams(ctx)
+	participantAcc, err := sdk.AccAddressFromBech32(participantAddr)
 	require.NoError(t, err)
 
-	baseWeightRatio, err := params.CollateralParams.BaseWeightRatio.ToLegacyDec()
-	require.NoError(t, err)
-	collateralPerWeightUnit, err := params.CollateralParams.CollateralPerWeightUnit.ToLegacyDec()
-	require.NoError(t, err)
-
-	return math.LegacyNewDec(weight).Mul(math.LegacyOneDec().Sub(baseWeightRatio)).Mul(collateralPerWeightUnit).TruncateInt()
+	return k.GetRequiredCollateralForSlash(ctx, participantAcc)
 }
 
 func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeeper.Keeper, types.MsgServer, collateralTypes.MsgServer, *keepertest.InferenceMocks) {
@@ -245,12 +243,14 @@ func TestSlashingForInvalidStatus_Integration_GracePeriodUsesZeroRequiredCollate
 		Address: participantAddrStr,
 		Status:  types.ParticipantStatus_INVALID,
 	}
+	expectedRequiredCollateral := seedSlashBaseForParticipant(t, ctx, k, participantAddrStr, 100, mocks)
 
 	expectedSlashFraction, err := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, math.ZeroInt()).
+		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, expectedRequiredCollateral).
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
+	require.True(t, expectedRequiredCollateral.IsZero())
 
 	k.SlashForInvalidStatus(ctx, participant, params)
 }
@@ -276,17 +276,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	participantAcc, err := sdk.AccAddressFromBech32(participantAddrStr)
 	require.NoError(t, err)
 	authority := k.GetAuthority()
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 1,
-		ModelId:    "",
-		ValidationWeights: []*types.ValidationWeight{
-			{
-				MemberAddress: participantAddrStr,
-				Weight:        100,
-			},
-		},
-	})
-	expectedRequiredCollateral := math.NewInt(80)
+	expectedRequiredCollateral := seedSlashBaseForParticipant(t, ctx, k, participantAddrStr, 100, mocks)
 
 	// --- Stateful Mock Logic ---
 	fakeCollateralAmount := math.NewInt(1000)
@@ -364,7 +354,8 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	require.True(t, found)
 
 	// Calculate expected result and assert
-	expectedAmount := math.NewInt(984)
+	expectedSlashedAmount := math.LegacyNewDecFromInt(math.MinInt(expectedRequiredCollateral, math.NewInt(1000))).Mul(expectedSlashFraction).TruncateInt()
+	expectedAmount := math.NewInt(1000).Sub(expectedSlashedAmount)
 	require.Equal(t, expectedAmount, finalCollateral.Amount)
 	// And also check the fake variable directly for good measure
 	require.Equal(t, expectedAmount, fakeCollateralAmount)

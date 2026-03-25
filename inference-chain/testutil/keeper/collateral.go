@@ -59,7 +59,7 @@ func CollateralKeeperWithMock(
 func CollateralKeeperWithMockAndProvider(
 	t testing.TB,
 	bankKeeper *MockBookkeepingBankKeeper,
-	collateralKeeper types.CollateralKeeper,
+	collateralProvider types.RequiredCollateralProvider,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -80,8 +80,8 @@ func CollateralKeeperWithMockAndProvider(
 		nil,
 		bankKeeper,
 	)
-	if collateralKeeper != nil {
-		k.SetRequiredCollateralProvider(collateralKeeper)
+	if collateralProvider != nil {
+		k.SetRequiredCollateralProvider(collateralProvider)
 	}
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

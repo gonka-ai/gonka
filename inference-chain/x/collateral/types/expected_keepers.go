@@ -34,8 +34,8 @@ type ParamSubspace interface {
 	Set(context.Context, []byte, interface{})
 }
 
-// CollateralKeeper defines the read-only collateral semantics that the collateral module
-// consumes from inference when computing slash base for staking-driven slashing.
-type CollateralKeeper interface {
+// RequiredCollateralProvider defines the read-only tokenomics data that the collateral
+// module consumes from inference when computing slash base for staking-driven slashing.
+type RequiredCollateralProvider interface {
 	GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int
 }

@@ -20,7 +20,7 @@ import (
 
 type (
 	collateralProviderRef struct {
-		provider types.CollateralKeeper
+		provider types.RequiredCollateralProvider
 	}
 
 	// UnbondingIndexes groups the secondary indexes for the UnbondingCollateral map
@@ -116,19 +116,15 @@ func NewKeeper(
 // GetRequiredCollateralForSlash returns the tokenomics-required collateral for a participant.
 // If no provider is configured, legacy slashing semantics are preserved by returning zero.
 func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
-	if k.collateralProviderRef == nil || k.collateralProviderRef.provider == nil {
+	if k.collateralProviderRef.provider == nil {
 		return math.ZeroInt()
 	}
 
 	return k.collateralProviderRef.provider.GetRequiredCollateralForSlash(ctx, participantAddress)
 }
 
-func (k Keeper) SetRequiredCollateralProvider(collateralKeeper types.CollateralKeeper) {
-	if k.collateralProviderRef == nil {
-		k.collateralProviderRef = &collateralProviderRef{}
-	}
-
-	k.collateralProviderRef.provider = collateralKeeper
+func (k *Keeper) SetRequiredCollateralProvider(collateralProvider types.RequiredCollateralProvider) {
+	k.collateralProviderRef.provider = collateralProvider
 }
 
 // GetAuthority returns the module's authority.
