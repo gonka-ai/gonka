@@ -1,5 +1,6 @@
 import com.productscience.*
 import com.productscience.data.*
+import kotlin.test.assertNotNull
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -11,13 +12,27 @@ import java.util.concurrent.Executors
 import kotlin.test.assertNotNull
 
 class SubnetTests : TestermintTest() {
-
     private val noRestrictionsSpec = spec<AppState> {
         this[AppState::restrictions] = spec<RestrictionsState> {
             this[RestrictionsState::params] = spec<RestrictionsParams> {
                 this[RestrictionsParams::restrictionEndBlock] = 0L
                 this[RestrictionsParams::emergencyTransferExemptions] = emptyList<EmergencyTransferExemption>()
                 this[RestrictionsParams::exemptionUsageTracking] = emptyList<ExemptionUsageEntry>()
+            }
+        }
+    }
+
+    private val alwaysValidateSpec = spec<AppState> {
+        this[AppState::inference] = spec<InferenceState> {
+            this[InferenceState::params] = spec<InferenceParams> {
+                this[InferenceParams::validationParams] = spec<ValidationParams> {
+                    this[ValidationParams::minValidationAverage] = Decimal.fromDouble(100.0)
+                    this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(100.0)
+                    this[ValidationParams::downtimeHThreshold] = Decimal.fromDouble(100.0)
+                }
+                this[InferenceParams::bandwidthLimitsParams] = spec<BandwidthLimitsParams> {
+                    this[BandwidthLimitsParams::minimumConcurrentInvalidations] = 100L
+                }
             }
         }
     }
@@ -31,6 +46,13 @@ class SubnetTests : TestermintTest() {
             epochLength = 40,
             epochShift = 10
         ).merge(noRestrictionsSpec)
+    )
+
+    private val noRestrictionsAlwaysValidateConfig = inferenceConfig.copy(
+        genesisSpec = inferenceConfig.genesisSpec
+            ?.merge(noRestrictionsSpec)
+            ?.merge(alwaysValidateSpec)
+            ?: noRestrictionsSpec.merge(alwaysValidateSpec)
     )
 
     @Test
@@ -187,7 +209,8 @@ class SubnetTests : TestermintTest() {
 
         try {
             logSection("Sending streaming chat completions via proxy")
-            for (i in 0 until 20) {
+            val numInferences = 20L
+            for (i in 0 until numInferences) {
                 val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i", stream = true)
                 assertThat(response).isNotEmpty()
                 assertThat(response).contains("data:")
@@ -209,6 +232,17 @@ class SubnetTests : TestermintTest() {
             logSection("Verifying escrow settled")
             val escrow = genesis.node.querySubnetEscrow(1)
             assertThat(escrow.escrow!!.settled).isTrue()
+
+            logSection("Verifying inference statuses")
+            for (inferenceId in 1..numInferences) {
+                val inference = cosmosJson.fromJson(
+                    genesis.getSubnetInferenceState(handle.proxyUrl, inferenceId),
+                    SubnetInferencePayload::class.java,
+                )
+                logSection("Inference $inferenceId: $inference")
+                assertNotNull(inference)
+                assertThat(inference.status).isEqualTo(SubnetInferenceStatus.FINISHED)
+            }
         } finally {
             genesis.stopSubnetProxy(1)
         }
@@ -328,5 +362,92 @@ class SubnetTests : TestermintTest() {
         val mempool = genesis.api.getSubnetMempool(1)
         assertThat(mempool.txs).isNotNull()
         assertThat(mempool.txs).isEmpty()
+    }
+
+    @Test
+    fun `invalid inference is challenged`() {
+        val (cluster, genesis) = initCluster(config = noRestrictionsAlwaysValidateConfig, reboot = true)
+        genesis.waitForNextEpoch()
+
+        cluster.allPairs.forEach { pair ->
+            pair.mock?.setInferenceResponse(
+                defaultInferenceResponseObject,
+                streamDelay = Duration.ofMillis(50),
+                segment = "",
+            )
+        }
+        cluster.allPairs.last().mock?.setInferenceResponse(
+            defaultInferenceResponseObject.withMissingLogit(),
+            segment = "",
+        )
+
+        logSection("Creating separate user account")
+        val userKeyName = "subnet-proxy-stream-user"
+        val userKey = genesis.node.createKey(userKeyName)
+        val userAddress = userKey.address
+        val fundAmount = 10_000_000_000L
+        val transferResp = genesis.submitTransaction(
+            listOf("bank", "send", genesis.node.getColdAddress(), userAddress, "${fundAmount}${genesis.config.denom}")
+        )
+        assertThat(transferResp.code).isEqualTo(0)
+
+        genesis.waitForNextInferenceWindow()
+
+        logSection("Creating subnet escrow from user account")
+        val escrowAmount = 7_000_000_000L
+        val txResp = genesis.createSubnetEscrow(escrowAmount, from = userKeyName)
+        assertThat(txResp.code).isEqualTo(0)
+
+        logSection("Starting subnet proxy")
+        val escrowId = 1L
+        val handle = genesis.startSubnetProxy(escrowId, keyName = userKeyName)
+
+        try {
+            logSection("Sending streaming chat completions via proxy")
+            val numInferences = 20L
+            for (i in 0 until numInferences) {
+                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
+                assertThat(response).isNotEmpty()
+            }
+
+            logSection("Finalizing via proxy")
+            val result = genesis.finalizeSubnetProxy(handle.proxyUrl)
+
+            logSection("Verifying settlement data")
+            assertThat(result.parsed.escrowId).isEqualTo("$escrowId")
+            assertThat(result.parsed.nonce).isGreaterThan(0)
+            assertThat(result.parsed.hostStats).isNotEmpty()
+            assertThat(result.parsed.signatures).isNotEmpty()
+
+            logSection("Submitting settlement from user account")
+            val settleResp = genesis.settleSubnetEscrow(result.rawJson, from = userKeyName)
+            assertThat(settleResp.code).isEqualTo(0)
+
+            logSection("Verifying escrow settled")
+            val escrow = genesis.node.querySubnetEscrow(escrowId)
+            assertThat(escrow.escrow!!.settled).isTrue()
+
+            logSection("Verifying inference status")
+            val inferenceId = 1L
+            val maxTries = 10
+            val inference = (0 until numInferences).firstNotNullOf {
+                val inference = cosmosJson.fromJson(
+                    genesis.getSubnetInferenceState(handle.proxyUrl, it),
+                    SubnetInferencePayload::class.java,
+                )
+                inference?.status?.let { status ->
+                    if (status == SubnetInferenceStatus.CHALLENGED) {
+                        inference
+                    } else {
+                        null
+                    }
+                }
+            }
+            logSection("Inference: $inference")
+            assertThat(inference.status).isEqualTo(SubnetInferenceStatus.CHALLENGED)
+            assertThat(inference.votesInvalid).isNotZero()
+        } finally {
+            genesis.stopSubnetProxy(escrowId)
+        }
     }
 }
