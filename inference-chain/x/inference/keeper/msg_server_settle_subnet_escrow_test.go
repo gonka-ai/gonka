@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"context"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -40,7 +41,8 @@ func TestSettleSubnetEscrow_HappyPath(t *testing.T) {
 
 	costPerSlot := uint64(100_000_000) // 0.1 GNK per slot
 	hostStats := makeHostStats(keeper.SubnetGroupSize, costPerSlot)
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	fees := uint64(200_000_000)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, fees)
 
 	// Expect payments to validators (deduplicated by address)
 	mocks.BankKeeper.EXPECT().
@@ -49,9 +51,15 @@ func TestSettleSubnetEscrow_HappyPath(t *testing.T) {
 		Times(keeper.SubnetGroupSize) // 16 unique validators
 
 	// Expect refund to creator
+	// Refund is reduced by fees; exact amount is verified in mock callback.
+	expectedRefund := escrow.Amount - uint64(keeper.SubnetGroupSize)*100_000_000 - fees
 	mocks.BankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("subnet_escrow_refund")).
-		Return(nil)
+		DoAndReturn(func(_ context.Context, _ string, _ sdk.AccAddress, coins sdk.Coins, _ string) error {
+			require.Len(t, coins, 1)
+			require.Equal(t, expectedRefund, coins[0].Amount.Uint64())
+			return nil
+		})
 
 	resp, err := ms.SettleSubnetEscrow(ctx, msg)
 	require.NoError(t, err)
@@ -137,7 +145,7 @@ func TestSettleSubnetEscrow_ZeroCostSettlement(t *testing.T) {
 	require.NoError(t, err)
 
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 0) // all costs = 0
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	// No validator payments expected (all costs are 0)
 	// Full amount refunded to creator

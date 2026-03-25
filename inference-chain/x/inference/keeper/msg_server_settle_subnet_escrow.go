@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math/bits"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -34,7 +35,11 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 			return nil, fmt.Errorf("host_stats slot_id %d out of range", hs.SlotId)
 		}
 		addr := escrow.Slots[hs.SlotId]
-		validatorCosts[addr] += hs.Cost
+		nextValidatorCost, carry := bits.Add64(validatorCosts[addr], hs.Cost, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("validator cost overflow for %s", addr)
+		}
+		validatorCosts[addr] = nextValidatorCost
 	}
 
 	// Pay validators in slot order (deterministic iteration over escrow.Slots)
@@ -46,7 +51,11 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 			continue
 		}
 		paidValidators[addr] = true
-		totalCost += cost
+		nextTotalCost, carry := bits.Add64(totalCost, cost, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("total validator cost overflow")
+		}
+		totalCost = nextTotalCost
 
 		recipientAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
@@ -62,8 +71,13 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 		}
 	}
 
-	// Refund remainder to creator
-	remainder := escrow.Amount - totalCost
+	totalDebit, carry := bits.Add64(totalCost, msg.Fees, 0)
+	if carry != 0 {
+		return nil, fmt.Errorf("total debit overflow")
+	}
+
+	// Refund remainder to creator (fees stay in module account)
+	remainder := escrow.Amount - totalDebit
 	if remainder > 0 {
 		creatorAddr, err := sdk.AccAddressFromBech32(escrow.Creator)
 		if err != nil {
@@ -108,6 +122,7 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 		sdk.NewAttribute("escrow_id", fmt.Sprint(escrow.Id)),
 		sdk.NewAttribute("settler", msg.Settler),
 		sdk.NewAttribute("total_cost", fmt.Sprint(totalCost)),
+		sdk.NewAttribute("fees", fmt.Sprint(msg.Fees)),
 		sdk.NewAttribute("remainder", fmt.Sprint(remainder)),
 	))
 

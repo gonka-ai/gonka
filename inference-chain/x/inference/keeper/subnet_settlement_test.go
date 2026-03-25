@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"cmp"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -11,8 +12,8 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	dcrdecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	dcrdsecp "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	dcrdecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/inference/keeper"
@@ -36,12 +37,18 @@ func signGoEthFormat(key *dcrdsecp.PrivateKey, hash []byte) ([]byte, error) {
 	// go-ethereum: [R(32) || S(32) || V(1)]
 	goEthSig := make([]byte, 65)
 	copy(goEthSig[0:32], dcrdSig[1:33])   // R
-	copy(goEthSig[32:64], dcrdSig[33:65])  // S
-	goEthSig[64] = dcrdSig[0] - 27         // V
+	copy(goEthSig[32:64], dcrdSig[33:65]) // S
+	goEthSig[64] = dcrdSig[0] - 27        // V
 	return goEthSig, nil
 }
 
-func buildSettlementTestData(t *testing.T, escrow types.SubnetEscrow, keys []*dcrdsecp.PrivateKey, hostStats []*types.SubnetSettlementHostStats) *types.MsgSettleSubnetEscrow {
+func buildSettlementTestData(
+	t *testing.T,
+	escrow types.SubnetEscrow,
+	keys []*dcrdsecp.PrivateKey,
+	hostStats []*types.SubnetSettlementHostStats,
+	fees uint64,
+) *types.MsgSettleSubnetEscrow {
 	t.Helper()
 
 	entries := make([]*types.SubnetHostStatsProto, len(hostStats))
@@ -61,9 +68,12 @@ func buildSettlementTestData(t *testing.T, escrow types.SubnetEscrow, keys []*dc
 	hostStatsHash := sha256.Sum256(hostStatsData)
 
 	restHash := sha256.Sum256([]byte("rest_data"))
+	feesBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(feesBytes, fees)
 
-	rootInput := make([]byte, 0, 65)
+	rootInput := make([]byte, 0, 73)
 	rootInput = append(rootInput, hostStatsHash[:]...)
+	rootInput = append(rootInput, feesBytes...)
 	rootInput = append(rootInput, restHash[:]...)
 	rootInput = append(rootInput, 0x02)
 	stateRoot := sha256.Sum256(rootInput)
@@ -92,6 +102,7 @@ func buildSettlementTestData(t *testing.T, escrow types.SubnetEscrow, keys []*dc
 		EscrowId:   escrow.Id,
 		StateRoot:  stateRoot[:],
 		Nonce:      42,
+		Fees:       fees,
 		RestHash:   restHash[:],
 		HostStats:  hostStats,
 		Signatures: sigs,
@@ -132,7 +143,7 @@ func TestVerifySubnetSettlement_HappyPath(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.NoError(t, err)
@@ -162,7 +173,7 @@ func TestVerifySubnetSettlement_InsufficientQuorum(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 	msg.Signatures = msg.Signatures[:10] // below quorum of 11
 
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
@@ -178,7 +189,23 @@ func TestVerifySubnetSettlement_CostExceedsAmount(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 1_000_000_000, Slots: slots,
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 1_000_000_000) // 16 GNK total > 1 GNK
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+
+	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds escrow amount")
+}
+
+func TestVerifySubnetSettlement_FeesExceedAmount(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateSubnetKeys(t, keeper.SubnetGroupSize)
+	escrow := types.SubnetEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 1_000_000_000, Slots: slots,
+	}
+	// cost + fees = 1_000_000_001
+	hostStats := makeHostStats(keeper.SubnetGroupSize, 50_000_000) // total 800M
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 200_000_001)
 
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.Error(t, err)
@@ -199,7 +226,7 @@ func TestVerifySubnetSettlement_InvalidSignature(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err = keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.Error(t, err)
@@ -222,7 +249,7 @@ func TestVerifySubnetSettlement_WarmKeyAccepted(t *testing.T) {
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
 
 	// Build settlement with warm keys signing
-	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats)
+	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
 
 	// Without warm key checker, should fail
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
@@ -253,7 +280,7 @@ func TestVerifySubnetSettlement_WarmKeyRejected(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: coldSlots,
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
-	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats)
+	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
 
 	// Warm key checker that rejects all
 	rejectAll := func(granter, grantee string) bool {
@@ -287,7 +314,7 @@ func TestVerifySubnetSettlement_DuplicateSignerMultiSlot(t *testing.T) {
 	for i := range keys {
 		keys[i] = key
 	}
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err = keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.NoError(t, err) // 16 slot votes >= 11 quorum
@@ -331,7 +358,7 @@ func TestVerifySubnetSettlement_DuplicateHostStatsSlotId(t *testing.T) {
 	hostStats = append(hostStats, &types.SubnetSettlementHostStats{
 		SlotId: 0, Cost: 100_000_000, RequiredValidations: 10, CompletedValidations: 9,
 	})
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.Error(t, err)
@@ -346,7 +373,7 @@ func TestVerifySubnetSettlement_DuplicateSlotId(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	// Replace all 11 signatures with copies of slot 0's signature
 	slot0Sig := msg.Signatures[0]
@@ -383,7 +410,7 @@ func TestVerifySubnetSettlement_UnsortedHostStats(t *testing.T) {
 		}
 	}
 
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.NoError(t, err)
@@ -398,7 +425,7 @@ func TestVerifySubnetSettlement_ZeroCost(t *testing.T) {
 	}
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 0) // zero cost
 
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
 	require.NoError(t, err)
@@ -429,7 +456,7 @@ func TestVerifySubnetSettlement_WrongPhaseRejected(t *testing.T) {
 	hostStats := makeHostStats(keeper.SubnetGroupSize, 100_000_000)
 
 	// Build a valid message first
-	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	// Recompute state root with wrong phase byte (Active=0x00 instead of Settlement=0x02).
 	// This simulates an attacker trying to settle a non-finalized session.
