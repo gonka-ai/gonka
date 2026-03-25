@@ -133,11 +133,13 @@ define DOCKER_BUILD_UPGRADE
 	@rm -rf .docker-context
 endef
 
+HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=linux/$(HOST_ARCH))
 	$(eval GOOS=linux)
-	$(eval GOARCH=amd64)
+	$(eval GOARCH=$(HOST_ARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/inferenced:$(VERSION))
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))

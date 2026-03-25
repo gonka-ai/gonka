@@ -1,4 +1,4 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy check
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -80,11 +80,13 @@ build: download-linux-deps
 		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
 		go build $(BUILD_FLAGS) -tags muslc -o ./build/dapi
 
+HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=linux/$(HOST_ARCH))
 	$(eval GOOS=linux)
-	$(eval GOARCH=amd64)
+	$(eval GOARCH=$(HOST_ARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)
@@ -162,6 +164,10 @@ build-%:
 	@echo "Building for OS: $(OS), ARCH: $(ARCH)"
 	@mkdir -p build/$(OS)/$(ARCH)
 	@GOOS=$(OS) GOARCH=$(ARCH) go build -o build/$(OS)/$(ARCH)/decentralized-api
+
+check:
+	@echo "--> running tests"
+	@go test ./... -timeout 120s
 
 package:
 	@echo "Packaging binaries..."
