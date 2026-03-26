@@ -1,4 +1,4 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -306,3 +306,6 @@ mock-expected-keepers:
 	@mockgen -source=x/inference/types/expected_keepers.go \
 		-package keeper \
 		-destination=testutil/keeper/expected_keepers_mocks.go
+
+proto:
+	ignite generate proto-go
