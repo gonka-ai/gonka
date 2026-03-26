@@ -100,12 +100,24 @@ class SubnetTests : TestermintTest() {
             assertThat(result.parsed.nonce).isGreaterThan(0)
             assertThat(result.parsed.hostStats).isNotEmpty()
             assertThat(result.parsed.signatures).isNotEmpty()
+            assertThat(result.parsed.fees).isGreaterThan(0)
             val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
             assertThat(totalCompletedValidations).isGreaterThan(0)
+            val totalCost = result.parsed.hostStats.sumOf { it.cost }
+            val expectedRemainder = escrowAmount - totalCost - result.parsed.fees
 
             logSection("Submitting settlement from user account")
             val settleResp = genesis.settleSubnetEscrow(result.rawJson, from = userKeyName)
             assertThat(settleResp.code).isEqualTo(0)
+
+            val settleEvent = settleResp.events.firstOrNull { it.type == "subnet_escrow_settled" }
+            assertThat(settleEvent).isNotNull()
+            assertThat(settleEvent!!.attributes.firstOrNull { it.key == "total_cost" }?.value)
+                .isEqualTo(totalCost.toString())
+            assertThat(settleEvent.attributes.firstOrNull { it.key == "fees" }?.value)
+                .isEqualTo(result.parsed.fees.toString())
+            assertThat(settleEvent.attributes.firstOrNull { it.key == "remainder" }?.value)
+                .isEqualTo(expectedRemainder.toString())
 
             logSection("Verifying escrow settled")
             val escrow = genesis.node.querySubnetEscrow(1)
@@ -113,7 +125,7 @@ class SubnetTests : TestermintTest() {
 
             logSection("Verifying user got refund")
             val balanceAfter = genesis.getBalance(userAddress)
-            assertThat(balanceAfter).isGreaterThan(fundAmount - escrowAmount)
+            assertThat(balanceAfter).isEqualTo(fundAmount - totalCost - expectedFees)
         } finally {
             genesis.stopSubnetProxy(1)
         }

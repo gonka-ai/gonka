@@ -31,6 +31,7 @@ data class SubnetSettlementData(
     val nonce: Long,
     @SerializedName("rest_hash")
     val restHash: String,
+    val fees: Long,
     @SerializedName("host_stats")
     val hostStats: List<SubnetHostStatsEntry>,
     val signatures: List<SubnetSlotSignatureEntry>
