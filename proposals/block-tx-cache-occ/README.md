@@ -1,4 +1,4 @@
-# Two-Level Block/Tx Cache with OCC Conflict Detection
+# Two-Level Block/Tx Cache with Conflict Detection for OCC
 
 ## Motivation
 
@@ -10,11 +10,11 @@ the same block.
 The goal of this proposal is twofold:
 
 1. **Phase 1 (current):** Introduce a two-level block/tx cache implemented by
-   `OptimisticStore` (name kept for code compatibility), eliminating redundant
+   `OptimisticStore` (name kept for code compatibility) to eliminate redundant
    marshal/unmarshal within a block while remaining fully deterministic and
    compatible with the existing sequential execution model.
 
-2. **Phase 2 (future):** Use the same conflict-tracking infrastructure to
+2. **Phase 2 (future):** Reuse the same conflict-tracking infrastructure to
    enable **Optimistic Concurrency Control (OCC)** — parallel execution of
    transactions with automatic conflict detection and rollback.
 
@@ -28,7 +28,7 @@ execute in parallel and touch overlapping store keys, the final state depends on
 execution timing rather than block ordering. This breaks consensus.
 
 The Cosmos SDK's optional optimistic execution mode is not a universal,
-one-size-fits-all feature. Its implementation is highly case-specific to each
+one-size-fits-all feature. Its implementation is highly case-specific to the
 module's access patterns. Gonka therefore implements its own OCC scheme tailored
 to inference-chain workloads.
 
@@ -68,12 +68,12 @@ validator makes the same choice deterministically.
 
 ### Grouping by Similarity
 
-Grouping criterion is the *predicted access pattern* of the message type. In
-Gonka, inference messages hit `EpochGroupData` keyed by `(epoch, model)` and
-`Params` (singleton). Two `MsgValidation` for the same model and epoch are
+Grouping criterion is the *predicted access pattern* of the message type.
+Two `MsgValidation` for the same model and epoch are
 "similar" — they access the same keys and take roughly the same time to execute.
-Static analysis per message type provides the access prediction; arbitrary
-message types fall back to a conservative "touches everything" group.
+Static analysis per message type provides the access prediction.
+Most of hot messages will be gone when shardchains start to work,
+but anyway this approach continues to work and will be useful.
 
 ### Gas for Rescheduled Transactions
 
@@ -84,10 +84,13 @@ successful execution, not to failed speculative attempts.
 
 ### High-Contention Liveness
 
-If a transaction keeps conflicting with a hot key, it could theoretically be
-rescheduled indefinitely. The safeguard: after **N retries** (configurable), the
-transaction is forced into **sequential execution** in a singleton batch. This
-guarantees forward progress even under extreme contention.
+By design, there should be no persistent hot keys. Shared data is mostly read
+and then written in deterministic flow, so sustained conflicts should not appear
+in normal operation.
+
+As a safety fallback only, if repeated conflicts still happen due to unexpected
+workload shape, a transaction can be forced into **sequential execution** after
+**N retries** (configurable), guaranteeing forward progress.
 
 ### Throughput Improvement
 
@@ -105,11 +108,11 @@ k approaches 1.0 and throughput scales nearly linearly with cores.
 ## Phase 1: Two-Level Block/Tx Cache (Current Implementation)
 
 Phase 1 is fully implemented and merged. There is **no parallel scheduler** yet.
-All transactions still execute sequentially. This is not an "optimistic mode"
-yet: it is a deterministic two-level cache (tx draft + block cache) with
-conflict detection that can be reused by a future OCC scheduler.
+All transactions still execute sequentially. This is not optimistic execution by
+itself; it is a deterministic 2-level cache (tx draft + block cache) with
+conflict detection that can be used later in optimistic concurrent mode.
 
-The current cache provides these benefits:
+This cache provides these benefits:
 
 1. **Eliminate repeated marshal/unmarshal** for store values accessed multiple
    times within a block (e.g. `Params`, `EpochGroupData`).
@@ -117,34 +120,29 @@ The current cache provides these benefits:
    transaction, so conflict detection can be enabled with a single environment
    variable (`COSMOS_OCC_ENABLED=1`).
 
-### Shared System Data Focus
+### Shared System Data and Cache Scope
 
-The two-level cache is used for shared system data that is read frequently:
+We use this 2-level block/tx cache for frequently read shared system data:
 
-- `Params` (singleton system configuration)
-- `EpochGroupData` (hot-path epoch/model state)
+- `Params`
+- `EpochGroupData`
 
-These values are frequently read by system flows, so avoiding repeated
-marshal/unmarshal provides meaningful latency and throughput wins.
+These are hot system reads, so caching removes repeated codec overhead on the
+same values inside a block and transaction flow.
 
-For `EpochGroupData`, this is also relevant for system protection checks, such
-as identifying participants slashed for missed inferences or missed cPoCs. Those
-checks are system-level checks and are acceptable to keep gas-free in this
-module's policy.
+### Protobuf Marshal/Unmarshal and Gas
 
-### Gas, Protobuf Encoding, and Why Caching Helps
+Cosmos SDK marshals/unmarshals protobuf data on store reads/writes, including as
+part of store gas accounting. When reads/writes are served from this cache,
+repeated codec operations are skipped and no extra gas is spent for those cached
+operations in these system paths.
 
-Cosmos SDK marshals and unmarshals protobuf values on each store write/read.
-This is also part of how store access gas costs are calculated.
-
-With this cache layer, repeated accesses can be served from in-memory draft/block
-cache, skipping repeated protobuf encode/decode for those hits. In practice,
-this means we avoid spending gas on those repeated codec operations in these
-system paths.
-
-This is acceptable in Gonka's design because system messages are already handled
-with no-gas or fixed-gas policies (for DDoS resistance), and the priority here
-is fast deterministic execution for shared system data.
+This is acceptable in our design because we already use no-gas or fixed-gas
+policies for system messages (to reduce DDoS spam risk while keeping deterministic
+execution). For example, `EpochGroupData` reads may be used by endpoint
+protection logic to identify participants slashed for missing inferences or
+missing cPoCs; this is a system check where fast execution is preferred over
+repeated marshalling/unmarshalling.
 
 ### Architecture
 
@@ -178,7 +176,7 @@ is fast deterministic execution for shared system data.
 During `CheckTx`, the SDK validates a transaction before it enters the mempool.
 The optimistic store **does not commit drafts** during `CheckTx`:
 
-```
+```go
 PostHandler:
   if ctx.IsCheckTx() || simulate {
       return  // skip commit — mempool validation only
@@ -231,7 +229,7 @@ store and returns a merged commit function.
 
 ---
 
-## How the Two-Level Cache Wraps Existing Storage
+## How OptimisticStore Works Around Existing Storage
 
 `OptimisticStore` is a **decorator** — it wraps existing storage without
 replacing it. The `StoreBackend` interface makes this explicit:
