@@ -63,6 +63,15 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 
 	if !msg.Revalidation {
+		// Rate limit: cap validations per validator per epoch to prevent bandwidth DoS.
+		// MaximumInvalidationsReached already caps invalidations; this caps validations.
+		validationCount, _ := k.CountEpochGroupValidations(ctx, inference.EpochId, msg.Creator)
+		if validationCount > 500 {
+			k.LogWarn("Validation rate limit exceeded", types.Validation,
+				"creator", msg.Creator, "epochId", inference.EpochId, "count", validationCount)
+			return &types.MsgValidationResponse{}, nil
+		}
+
 		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
 		if err != nil {
 			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
