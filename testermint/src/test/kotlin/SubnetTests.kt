@@ -93,6 +93,7 @@ class SubnetTests : TestermintTest() {
             }
 
             logSection("Finalizing via proxy")
+            val status = genesis.getSubnetProxyStatus(handle.proxyUrl)
             val result = genesis.finalizeSubnetProxy(handle.proxyUrl)
 
             logSection("Verifying settlement data")
@@ -100,7 +101,8 @@ class SubnetTests : TestermintTest() {
             assertThat(result.parsed.nonce).isGreaterThan(0)
             assertThat(result.parsed.hostStats).isNotEmpty()
             assertThat(result.parsed.signatures).isNotEmpty()
-            assertThat(result.parsed.fees).isGreaterThan(0)
+            val expectedFees = status.config.createSubnetFee + (status.config.feePerNonce * result.parsed.nonce)
+            assertThat(result.parsed.fees).isEqualTo(expectedFees)
             val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
             assertThat(totalCompletedValidations).isGreaterThan(0)
             val totalCost = result.parsed.hostStats.sumOf { it.cost }

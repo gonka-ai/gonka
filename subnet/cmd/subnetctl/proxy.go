@@ -387,6 +387,20 @@ type statusResponse struct {
 	Nonce    uint64 `json:"nonce"`
 	Phase    string `json:"phase"`
 	Balance  uint64 `json:"balance"`
+	// Config is the active session configuration used by the subnet state machine.
+	Config statusSessionConfig `json:"config"`
+}
+
+// statusSessionConfig is the JSON representation of session config values
+// returned by the subnetctl status endpoint.
+type statusSessionConfig struct {
+	RefusalTimeout   int64  `json:"refusal_timeout"`
+	ExecutionTimeout int64  `json:"execution_timeout"`
+	TokenPrice       uint64 `json:"token_price"`
+	CreateSubnetFee  uint64 `json:"create_subnet_fee"`
+	FeePerNonce      uint64 `json:"fee_per_nonce"`
+	VoteThreshold    uint32 `json:"vote_threshold"`
+	ValidationRate   uint32 `json:"validation_rate"`
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -447,10 +461,10 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"nonce":             st.LatestNonce,
-		"balance":           st.Balance,
-		"total_inferences":  len(st.Inferences),
-		"status_counts":     counts,
+		"nonce":            st.LatestNonce,
+		"balance":          st.Balance,
+		"total_inferences": len(st.Inferences),
+		"status_counts":    counts,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -476,11 +490,21 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	st := p.sm.SnapshotState()
+	cfg := st.Config
 	resp := statusResponse{
 		EscrowID: p.escrowID,
 		Nonce:    p.session.Nonce(),
 		Phase:    phaseStr,
 		Balance:  st.Balance,
+		Config: statusSessionConfig{
+			RefusalTimeout:   cfg.RefusalTimeout,
+			ExecutionTimeout: cfg.ExecutionTimeout,
+			TokenPrice:       cfg.TokenPrice,
+			CreateSubnetFee:  cfg.CreateSubnetFee,
+			FeePerNonce:      cfg.FeePerNonce,
+			VoteThreshold:    cfg.VoteThreshold,
+			ValidationRate:   cfg.ValidationRate,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
