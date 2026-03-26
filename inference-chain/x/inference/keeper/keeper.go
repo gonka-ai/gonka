@@ -61,6 +61,7 @@ type (
 		InferenceTimeouts             collections.Map[collections.Pair[uint64, string], types.InferenceTimeout]
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
+		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
 		epochGroupStore               *OptimisticCollMap[epochGroupCacheKey, collections.Pair[uint64, string], types.EpochGroupData]
 		paramsStore                   *OptimisticItem[types.Params]
 		storeGroup                    OptimisticStoreGroup
@@ -526,6 +527,9 @@ func NewKeeper(
 			collections.NoValue{},
 		),
 	}
+
+	// Keep legacy direct map access while routing writes/reads through optimistic layer.
+	k.EpochGroupDataMap = k.epochGroupStore.Map
 
 	// Register all optimistic stores with the group
 	k.storeGroup.Register(k.epochGroupStore.OptimisticStore)

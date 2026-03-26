@@ -258,3 +258,31 @@ func (k Keeper) IsAllowedTransferAgent(ctx context.Context, taAddress string) bo
 	}
 	return false
 }
+
+// GetSubnetEscrowParams returns subnet escrow params, falling back to defaults if unset.
+func (k Keeper) GetSubnetEscrowParams(ctx context.Context) *types.SubnetEscrowParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetSubnetEscrowParams", types.System, "error", err)
+		return types.DefaultSubnetEscrowParams()
+	}
+	if p.SubnetEscrowParams == nil {
+		return types.DefaultSubnetEscrowParams()
+	}
+	return p.SubnetEscrowParams
+}
+
+// IsAllowedEscrowCreator returns true if the address is allowed to create/settle subnet escrows.
+// An empty allowlist means everyone is allowed.
+func (k Keeper) IsAllowedEscrowCreator(ctx context.Context, address string) bool {
+	ep := k.GetSubnetEscrowParams(ctx)
+	if len(ep.AllowedCreatorAddresses) == 0 {
+		return true
+	}
+	for _, a := range ep.AllowedCreatorAddresses {
+		if a == address {
+			return true
+		}
+	}
+	return false
+}

@@ -21,10 +21,8 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, err
 	}
 
-	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
-	if err != nil {
-		k.LogWarn("Validation: failed to inject params", types.Validation, "error", err)
-	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	var err error
 
 	k.LogInfo("Received MsgValidation", types.Validation,
 		"msg.Creator", msg.Creator,
