@@ -224,6 +224,10 @@ func (bl *BandwidthLimiter) RecordRequest(startBlockHeight int64, estimatedKB fl
 	defer bl.mu.Unlock()
 
 	completionBlock := startBlockHeight + bl.requestLifespanBlocks
+	// Guard: if maps grow too large between cleanup intervals, force inline cleanup
+	if len(bl.usagePerBlock) > 10000 {
+		bl.cleanupOldEntriesLocked()
+	}
 	bl.usagePerBlock[completionBlock] += estimatedKB
 	bl.inferencesPerBlock[completionBlock]++
 }
@@ -256,6 +260,12 @@ func (bl *BandwidthLimiter) startCleanupRoutine(interval time.Duration) {
 func (bl *BandwidthLimiter) cleanupOldEntries() {
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
+	bl.cleanupOldEntriesLocked()
+}
+
+// cleanupOldEntriesLocked performs cleanup without acquiring the lock.
+// Caller must hold bl.mu.
+func (bl *BandwidthLimiter) cleanupOldEntriesLocked() {
 
 	// Find newest block across both maps
 	var newestBlock int64
