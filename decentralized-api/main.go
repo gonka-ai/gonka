@@ -35,6 +35,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"strconv"
 	"strings"
 	"time"
@@ -144,9 +146,9 @@ func main() {
 	tendermintClient := cosmosclient.TendermintClient{
 		ChainNodeUrl: config.GetChainNodeConfig().Url,
 	}
-	// Create a cancellable context for the entire system
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure resources are cleaned up
+	// Create a context that cancels on SIGINT/SIGTERM for graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Start periodic config auto-flush of dynamic data to DB
 	config.StartAutoFlush(ctx, 60*time.Second)
@@ -288,11 +290,17 @@ func main() {
 	logging.Info("Servers started", types.Server, "addr", addr)
 
 	<-ctx.Done()
+	logging.Info("Received shutdown signal, draining...", types.Server)
 
-	ctxFlush, cancelFlush := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelFlush()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+
+	// Drain gRPC server — finish in-flight RPCs
+	grpcServer.GracefulStop()
+
+	// Flush config to DB
 	logging.Info("Flushing config to the DB on app exit", types.Config)
-	_ = config.FlushNow(ctxFlush)
+	_ = config.FlushNow(shutdownCtx)
 
 	// Close DB gracefully
 	if db := config.SqlDb().GetDb(); db != nil {
