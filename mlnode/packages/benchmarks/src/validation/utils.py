@@ -41,20 +41,26 @@ def _get_lock_for_path(path: str) -> threading.Lock:
         return _output_path_to_lock[path]
 
 
+def _extract_logprob_token(s: str) -> str:
+    if "token_id" in s:
+        return s.split("token_id:")[1]
+    return s
+
+
 class EnforcedToken(BaseModel):
     token: str
     top_tokens: List[str] = Field(default_factory=list)
 
+
 class EnforcedTokens(BaseModel):
-    tokens: List[EnforcedToken]
+    tokens: List[int]
 
     @classmethod
     def from_content(cls, content: List[Dict[str, Any]]) -> "EnforcedTokens":
         tokens = []
         for position in content:
-            token = position["token"]
-            top_tokens = [x["token"] for x in position["top_logprobs"]]
-            tokens.append(EnforcedToken(token=token, top_tokens=top_tokens))
+            token = _extract_logprob_token(position["token"])
+            tokens.append(int(token))
         return cls(tokens=tokens)
     
     @classmethod
@@ -101,6 +107,8 @@ def inference(
         "n": 1,
         "top_logprobs": request_params.top_logprobs,
         "skip_special_tokens": False,
+        "return_token_ids": True, #return prompt token ids
+        "return_tokens_as_token_ids": True,
         **_sampling_extras(request_params),
     }
     
@@ -113,29 +121,23 @@ def inference(
 def validation(
     model_info: ModelInfo,
     request_params: RequestParams,
-    prompt: str,
-    enforced_str: Optional[str] = None,
-    enforced_tokens: Optional[EnforcedTokens] = None,
+    prompt_tokens: List[int],
+    enforced_tokens: List[int],
 ) -> Dict[str, Any]:
-    url = f"{model_info.url}/v1/chat/completions"
+    url = f"{model_info.url}/v1/completions"
     payload = {
         "model": model_info.name,
-        "messages": _prepare_messages(prompt),
-        "max_tokens": request_params.max_tokens,
+        "prompt": prompt_tokens + enforced_tokens,
+        "max_tokens": 1,
         "temperature": request_params.temperature,
         "seed": request_params.seed,
         "stream": False,
-        "logprobs": True,
-        "top_logprobs": request_params.top_logprobs,
         "n": 1,
         "skip_special_tokens": False,
+        "prompt_logprobs": request_params.top_logprobs,
+        "return_tokens_as_token_ids": True,
         **_sampling_extras(request_params),
     }
-    
-    if enforced_str:
-        payload["enforced_str"] = enforced_str
-    if enforced_tokens:
-        payload["enforced_tokens"] = enforced_tokens.dict()
 
     response = requests.post(url, json=payload)
     if response.status_code != 200:
@@ -162,6 +164,36 @@ def _extract_enforced_tokens(resp) -> EnforcedTokens:
     return EnforcedTokens.from_content(resp["choices"][0]["logprobs"]["content"])
 
 
+def _extract_prompt_logprobs(resp, prompt_len) -> Result:
+    logprobs_val = resp["choices"][0]["prompt_logprobs"][prompt_len:]
+    val_data = []
+    token_ids = []
+    for el in logprobs_val:
+        top_logprobs = []
+        for token_id, info in el.items():
+            top_logprobs.append({
+                    "token": token_id,
+                    "logprob": info["logprob"],
+                    "rank": info["rank"],
+                    "decoded_token": info["decoded_token"]
+                })
+
+        pos = top_logprobs[0]
+        token_ids.append(int(pos["token"]))
+        pos["top_logprobs"] = top_logprobs
+        val_data.append(pos)
+
+    results = []
+    for position in val_data:
+        res = PositionResult(
+            token=position["token"],
+            logprobs={logprob["token"]: logprob["logprob"] for logprob in position["top_logprobs"]}
+        )
+        results.append(res)
+
+    return Result(text="", results=results)
+
+
 def generate_and_validate(
     experiment_request: ExperimentRequest
 ) -> ValidationItem:
@@ -170,18 +202,36 @@ def generate_and_validate(
         experiment_request.request_params,
         experiment_request.prompt,
     )
+
+    inference_prompt_len = inference_resp["usage"]["prompt_tokens"]
+    inference_prompt_tokens = inference_resp["prompt_token_ids"]
     inference_result = _extract_logprobs(inference_resp)
     enforced_tokens = _extract_enforced_tokens(inference_resp)
+
     validation_resp = validation(
         experiment_request.validation_model,
         experiment_request.request_params,
-        experiment_request.prompt,
-        enforced_tokens=enforced_tokens
+        inference_prompt_tokens,
+        enforced_tokens.tokens
     )
-    validation_result = _extract_logprobs(validation_resp)
-    if validation_result.text != inference_result.text:
+    
+    validation_result = _extract_prompt_logprobs(validation_resp, inference_prompt_len)
+    inference_tok_ids = [
+        _extract_logprob_token(el['token']) 
+        for el in inference_resp["choices"][0]["logprobs"]["content"]
+    ]
+    validation_tok_ids = [
+        list(el.keys())[0] 
+        for el in validation_resp["choices"][0]["prompt_logprobs"][inference_prompt_len:]
+    ]
+    
+    if inference_tok_ids != validation_tok_ids:
         raise RuntimeError(
-            "Text sequences don't match between inference and validation."
+            f"token id sequences don't match\n" +
+            f"inference:\n {inference_tok_ids}\n" +
+            f"{'-'*10}\n" +
+            f"validation:\n {validation_tok_ids}\n" +
+            f"{'-'*100}"
         )
 
     item = experiment_request.to_result(

@@ -1,6 +1,7 @@
 from pydantic import (
     BaseModel,
     Field,
+    model_validator,
 )
 from typing import (
     List,
@@ -9,6 +10,9 @@ from typing import (
     Union,
 )
 import pandas as pd
+
+import copy
+from datetime import datetime
 
 
 class PositionResult(BaseModel):
@@ -105,3 +109,120 @@ def load_from_jsonl(
                 break
             results.append(ValidationItem.model_validate_json(line))
     return results
+
+
+def parse_gpu_count(gpu_spec: str) -> int:
+    """Parse a GPU spec like '8xH100' or '1xA100' and return the leading count.
+
+    Falls back to 1 when the spec is empty or cannot be parsed.
+    """
+    if not gpu_spec:
+        return 1
+    parts = gpu_spec.split('x', 1)
+    leading = parts[0]
+    digits = ''.join(ch for ch in leading if ch.isdigit())
+    return int(digits) if digits else 1
+
+
+def _set_flag_value(args: List[str], flag: str, value: str) -> None:
+    # Update the first occurrence; append if missing; remove any extras
+    first_idx = None
+    for i, token in enumerate(args):
+        if token == flag:
+            first_idx = i
+            break
+    if first_idx is None:
+        args.extend([flag, value])
+        return
+    # Set/append the value for the first occurrence
+    if first_idx + 1 < len(args):
+        args[first_idx + 1] = value
+    else:
+        args.append(value)
+    # Remove any subsequent duplicate occurrences of the flag and their value
+    i = first_idx + 2
+    while i < len(args):
+        if args[i] == flag:
+            del args[i]
+            if i < len(args):
+                del args[i]
+            continue
+        i += 1
+
+
+def apply_parallelism_args(model_preset: "ModelPreset", gpu_count: int) -> None:
+    _set_flag_value(model_preset.additional_args, '--tensor-parallel-size', str(gpu_count))
+    _set_flag_value(model_preset.additional_args, '--pipeline-parallel-size', '1')
+
+
+class ModelPreset(BaseModel):
+    model: str
+    precision: str
+    dtype: str
+    additional_args: List[str] = Field(default_factory=list)
+
+    def to_deploy_payload(self) -> Dict[str, Union[str, List[str]]]:
+        return {
+            "model": self.model,
+            "dtype": self.dtype,
+            "additional_args": self.additional_args,
+        }
+
+
+class ServerConfig(BaseModel):
+    ip: str
+    node_port: str
+    inference_port: str
+    gpu: str
+
+    def up_url(self) -> str:
+        return f"http://{self.ip}:{self.node_port}/api/v1/inference/up"
+
+    def inference_url(self) -> str:
+        return f"http://{self.ip}:{self.inference_port}/"
+
+
+class RunParams(BaseModel):
+    exp_name: str
+    output_path: str
+    n_prompts: int
+    timeout: int
+    tokenizer_model_name: str = "unsloth/llama-3-8b-Instruct"
+    request: RequestParams
+
+
+class InferenceValidationRun(BaseModel):
+    model_inference: ModelPreset
+    model_validation: ModelPreset
+    server_inference: ServerConfig
+    server_validation: ServerConfig
+    run_inference: RunParams
+    run_validation: RunParams
+    max_workers: Optional[int] = None
+
+    @model_validator(mode='after')
+    def _apply_parallelism_from_servers(self) -> 'InferenceValidationRun':
+        # Work on copies so original presets are not mutated
+        self.model_inference = copy.deepcopy(self.model_inference)
+        self.model_validation = copy.deepcopy(self.model_validation)
+
+        # Update inference preset from inference server
+        inf_gpus = parse_gpu_count(self.server_inference.gpu)
+        apply_parallelism_args(self.model_inference, inf_gpus)
+
+        # Update validation preset from validation server
+        val_gpus = parse_gpu_count(self.server_validation.gpu)
+        apply_parallelism_args(self.model_validation, val_gpus)
+
+        # Apply max workers to both presets
+        if self.max_workers is not None:
+            _set_flag_value(self.model_inference.additional_args, '--max-num-seqs', str(self.max_workers))
+            _set_flag_value(self.model_validation.additional_args, '--max-num-seqs', str(self.max_workers))
+
+        return self
+
+    def setting_filename(self) -> str:
+        inf_model_name = f"{self.model_inference.model.split('/')[-1]}-{self.model_inference.precision}-{self.server_inference.gpu}"
+        val_model_name = f"{self.model_validation.model.split('/')[-1]}-{self.model_validation.precision}-{self.server_validation.gpu}"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+        return f"{inf_model_name}___{val_model_name}__{self.run_inference.exp_name}__{timestamp}.jsonl"
