@@ -105,8 +105,14 @@ class SubnetTests : TestermintTest() {
             assertThat(result.parsed.fees).isEqualTo(expectedFees)
             val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
             assertThat(totalCompletedValidations).isGreaterThan(0)
+
             val totalCost = result.parsed.hostStats.sumOf { it.cost }
-            val expectedRemainder = escrowAmount - totalCost - result.parsed.fees
+
+            // Hosts should receive the total cost for their inferneces + fees paid by the user.
+            val totalPayout = totalCost + result.parsed.fees
+
+            // Refund: the user should get back any remaining balance after inference costs + fees.
+            val expectedRemainder = escrowAmount - totalPayout
 
             logSection("Submitting settlement from user account")
             val settleResp = genesis.settleSubnetEscrow(result.rawJson, from = userKeyName)
@@ -114,8 +120,8 @@ class SubnetTests : TestermintTest() {
 
             val settleEvent = settleResp.events.firstOrNull { it.type == "subnet_escrow_settled" }
             assertThat(settleEvent).isNotNull()
-            assertThat(settleEvent!!.attributes.firstOrNull { it.key == "total_cost" }?.value)
-                .isEqualTo(totalCost.toString())
+            assertThat(settleEvent!!.attributes.firstOrNull { it.key == "total_payout" }?.value)
+                .isEqualTo(totalPayout.toString())
             assertThat(settleEvent.attributes.firstOrNull { it.key == "fees" }?.value)
                 .isEqualTo(result.parsed.fees.toString())
             assertThat(settleEvent.attributes.firstOrNull { it.key == "remainder" }?.value)
@@ -127,7 +133,7 @@ class SubnetTests : TestermintTest() {
 
             logSection("Verifying user got refund")
             val balanceAfter = genesis.getBalance(userAddress)
-            assertThat(balanceAfter).isEqualTo(fundAmount - totalCost - expectedFees)
+            assertThat(balanceAfter).isEqualTo(fundAmount - totalPayout)
         } finally {
             genesis.stopSubnetProxy(1)
         }
