@@ -79,4 +79,5 @@ var (
 	ErrNotAllowedEscrowCreator               = sdkerrors.Register(ModuleName, 1173, "address is not allowed to create subnet escrows for subnets")
 	ErrRandomSeedNotFound                    = sdkerrors.Register(ModuleName, 1174, "sender random seed not found for epoch")
 	ErrNotDesignatedValidator                = sdkerrors.Register(ModuleName, 1175, "sender is not the designated validator for this inference")
+	ErrInferenceValidationDetailsNotFound    = sdkerrors.Register(ModuleName, 1176, "inference validation details not found")
 )
