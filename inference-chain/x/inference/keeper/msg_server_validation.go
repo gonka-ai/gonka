@@ -62,14 +62,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return &types.MsgValidationResponse{}, nil
 	}
 
-	if !msg.Revalidation {
-		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
-		if err != nil {
-			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
-			return nil, err
-		}
-	}
-
 	if inference.Status == types.InferenceStatus_INVALIDATED {
 		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
 		return &types.MsgValidationResponse{}, nil
@@ -129,6 +121,15 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	if modelThreshold == nil {
 		k.LogError("Validation threshold missing", types.Validation, "model", inference.Model, "epochIndex", inference.EpochId)
 		return nil, types.ErrModelSnapshotNotFound
+	}
+
+	// We do this only when upper checks pass, to avoid adding the inference to the epoch group validations if it's not going to be validated.
+	if !msg.Revalidation {
+		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
+		if err != nil {
+			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
+			return nil, err
+		}
 	}
 
 	passValue := modelThreshold.ToDecimal()
