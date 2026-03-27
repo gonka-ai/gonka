@@ -140,6 +140,43 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		}
 	}
 
+	// We check here if the sender is the designated validator for this inference
+	// So we need to get the inference validation details and participant seed to execute calculations.ShouldValidate
+	participantSeed, found := k.GetParticipantEpochSeed(ctx, inference.EpochId, msg.Creator)
+	//After patch apply we can have no seeds stored because we should first wait for next epoch to start
+	//So we need to skip the should validate check if the seed is not found
+	//TODO: After patch applyed and seeds are stored we need to remove this skip and handle the error case
+	skipTheShouldValidateCheck := false
+	if !found {
+		skipTheShouldValidateCheck = true
+		//k.LogError("Sender random seed not found", types.Validation, "epochIndex", inference.EpochId, "participant", msg.Creator)
+		//return nil, types.ErrRandomSeedNotFound
+	}
+
+	inferenceDetails, foundDetails := k.GetInferenceValidationDetails(ctx, inference.EpochId, inference.InferenceId)
+	if !foundDetails {
+		k.LogError("Inference validation details not found", types.Validation, "inferenceId", inference.InferenceId, "epochId", inference.EpochId)
+		return nil, types.ErrInferenceValidationDetailsNotFound
+	}
+
+	if !skipTheShouldValidateCheck {
+		params, err := k.GetParams(ctx)
+		if err != nil {
+			k.LogError("Failed to get params", types.Validation, "error", err)
+			return nil, err
+		}
+		executorPower := inferenceDetails.ExecutorPower
+
+		shouldValidate, _ := calculations.ShouldValidate(participantSeed, &inferenceDetails, uint32(totalWeight), uint32(participantWeight), uint32(executorPower),
+			params.ValidationParams, false)
+		if !shouldValidate {
+			k.LogError("Sender should not validate this inference", types.Validation, "epochIndex", inference.EpochId, "participant", msg.Creator)
+			return nil, types.ErrNotDesignatedValidator
+		}
+	} else {
+		k.LogInfo("Skipping should validate check", types.Validation, "epochIndex", inference.EpochId, "participant", msg.Creator)
+	}
+
 	passValue := modelThreshold.ToDecimal()
 	messageValue := getValidationValue(msg)
 
