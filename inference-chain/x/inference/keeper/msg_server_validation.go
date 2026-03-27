@@ -66,6 +66,14 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
 		return &types.MsgValidationResponse{}, nil
 	}
+	if inference.Status == types.InferenceStatus_VALIDATED {
+		k.LogInfo("Inference already validated, skipping", types.Validation, "inferenceId", inference.InferenceId)
+		return &types.MsgValidationResponse{}, nil
+	}
+	if !msg.Revalidation && inference.Status == types.InferenceStatus_VOTING {
+		k.LogInfo("Inference already in voting, skipping", types.Validation, "inferenceId", inference.InferenceId)
+		return &types.MsgValidationResponse{}, nil
+	}
 	if inference.Status == types.InferenceStatus_STARTED {
 		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished

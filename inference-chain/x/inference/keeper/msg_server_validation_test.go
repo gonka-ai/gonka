@@ -335,7 +335,7 @@ func TestMsgServer_Validation_InvalidationsLimit_AllowsVote_WithHighRollingActiv
 	require.Equal(t, types.InferenceStatus_VOTING, saved.Status)
 }
 
-func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(t *testing.T) {
+func TestMsgServer_Validation_DuplicateValidation_IsNoOpAfterValidated(t *testing.T) {
 	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
 	createParticipants(t, inferenceHelper.MessageServer, ctx)
 
@@ -358,12 +358,92 @@ func TestMsgServer_Validation_DuplicateValidation_ReturnsErrDuplicateValidation(
 	})
 	require.NoError(t, err)
 
-	// Second validation (same validator, same inference, not a revalidation) should return ErrDuplicateValidation
+	// Second validation (same validator, same inference, not a revalidation) should be a no-op.
 	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Validator,
 		ValueDecimal: types.DecimalFromFloat(0.99),
 	})
-	require.Error(t, err)
-	require.ErrorIs(t, err, types.ErrDuplicateValidation)
+	require.NoError(t, err)
+	saved, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VALIDATED, saved.Status)
+}
+
+func TestMsgServer_Validation_AlreadyValidated_SkipsSecondValidator(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+	addMembersToGroupData(k, ctx)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
+
+	// First validator passes and sets VALIDATED.
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.99),
+	})
+	require.NoError(t, err)
+	saved, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VALIDATED, saved.Status)
+
+	// Second non-revalidation validator should be skipped (no status/accounting change).
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Requester,
+		ValueDecimal: types.DecimalFromFloat(0.99),
+	})
+	require.NoError(t, err)
+	saved, found = k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VALIDATED, saved.Status)
+}
+
+func TestMsgServer_Validation_AlreadyVoting_SkipsSecondInvalidation(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+	addMembersToGroupData(k, ctx)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
+
+	// First failing validation opens voting.
+	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 11}, nil)
+	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 12}, nil)
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.10),
+	})
+	require.NoError(t, err)
+	saved, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, saved.Status)
+
+	// Another non-revalidation failing validation should be skipped and stay VOTING.
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Requester,
+		ValueDecimal: types.DecimalFromFloat(0.10),
+	})
+	require.NoError(t, err)
+	saved, found = k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, saved.Status)
 }
