@@ -70,7 +70,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogInfo("Inference already validated, skipping", types.Validation, "inferenceId", inference.InferenceId)
 		return &types.MsgValidationResponse{}, nil
 	}
-	if inference.Status == types.InferenceStatus_VOTING {
+	if !msg.Revalidation && inference.Status == types.InferenceStatus_VOTING {
 		k.LogInfo("Inference already in voting, skipping", types.Validation, "inferenceId", inference.InferenceId)
 		return &types.MsgValidationResponse{}, nil
 	}
@@ -131,17 +131,11 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrModelSnapshotNotFound
 	}
 
-	// Record validation/revalidation activity only after upper checks pass.
+	// Record only the initial validation attempt for claim accounting.
 	if !msg.Revalidation {
 		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
 		if err != nil {
 			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
-			return nil, err
-		}
-	} else {
-		err := k.addInferenceToEpochGroupRevalidations(ctx, msg, inference)
-		if err != nil {
-			k.LogError("Failed to add inference to epoch group revalidations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
 			return nil, err
 		}
 	}
@@ -558,16 +552,3 @@ func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *typ
 	return k.SetEpochGroupValidation(ctx, inference.EpochId, msg.Creator, msg.InferenceId)
 }
 
-func (k msgServer) addInferenceToEpochGroupRevalidations(ctx sdk.Context, msg *types.MsgValidation, inference types.Inference) error {
-	entryKey := collections.Join3(inference.EpochId, msg.Creator, msg.InferenceId)
-	alreadyRevalidated, err := k.EpochGroupRevalidationEntry.Has(ctx, entryKey)
-	if err != nil {
-		return err
-	}
-	if alreadyRevalidated {
-		k.LogInfo("Inference already revalidated", types.Validation, "inferenceId", msg.InferenceId)
-		return nil
-	}
-	k.LogInfo("Adding inference to epoch group revalidations", types.Validation, "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochPocStartBlockHeight)
-	return k.SetEpochGroupRevalidation(ctx, inference.EpochId, msg.Creator, msg.InferenceId)
-}
