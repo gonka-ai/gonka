@@ -71,7 +71,7 @@ func TestPermission_Participant(t *testing.T) {
 	k, ms, ctx, _ := setupPermissionsHarness(t)
 
 	signer := testutil.Executor
-	msg := &types.MsgSubmitSeed{Creator: signer, EpochIndex: 1, Signature: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	msg := &types.MsgSubmitSeed{Creator: signer, EpochIndex: 1, Seed: 1, Signature: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 
 	// failure: participant not in store
 	err := keeper.CheckPermission(ms, ctx, msg, keeper.ParticipantPermission)

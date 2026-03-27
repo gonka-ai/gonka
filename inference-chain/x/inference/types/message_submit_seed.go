@@ -13,6 +13,7 @@ func NewMsgSubmitSeed(creator string, seed int64, epochId uint64, signature stri
 		Creator:    creator,
 		EpochIndex: epochId,
 		Signature:  signature,
+		Seed:       seed,
 	}
 }
 
@@ -24,6 +25,10 @@ func (msg *MsgSubmitSeed) ValidateBasic() error {
 	// block_height must be > 0
 	if msg.EpochIndex <= 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "block_height must be > 0")
+	}
+	// seed must be strictly positive to match deterministic seed generation.
+	if msg.Seed <= 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "seed must be > 0")
 	}
 	// signature required and must decode to 64 bytes (r||s) - But it's 96? Why?
 	//if err := utils.ValidateBase64RSig64("signature", msg.Signature); err != nil {

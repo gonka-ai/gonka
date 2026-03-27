@@ -4,6 +4,7 @@ package keeper_test
 import (
 	"testing"
 
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,7 @@ func TestSubmitSeed(t *testing.T) {
 			inputMsg: &types.MsgSubmitSeed{
 				Creator:    testutil.Executor,
 				EpochIndex: 10,
+				Seed:       1,
 				Signature:  "signature",
 			},
 			expectErr:    nil,
@@ -34,10 +36,23 @@ func TestSubmitSeed(t *testing.T) {
 			inputMsg: &types.MsgSubmitSeed{
 				Creator:    testutil.Creator,
 				EpochIndex: 11,
+				Seed:       1,
 				Signature:  "signature",
 			},
 			expectErr:    nil,
 			expectCalled: true,
+		},
+		{
+			name:                "reject zero seed",
+			effectiveEpochIndex: 10,
+			inputMsg: &types.MsgSubmitSeed{
+				Creator:    testutil.Creator,
+				EpochIndex: 10,
+				Seed:       0,
+				Signature:  "signature",
+			},
+			expectErr:    sdkerrors.ErrInvalidRequest,
+			expectCalled: false,
 		},
 	}
 

@@ -20,14 +20,47 @@ func TestMsgSubmitSeed_ValidateBasic(t *testing.T) {
 			msg: MsgSubmitSeed{
 				Creator:    "invalid_address",
 				EpochIndex: 1,
+				Seed:       1,
 				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 			err: sdkerrors.ErrInvalidAddress,
-		}, {
+		},
+		{
+			name: "invalid epoch index",
+			msg: MsgSubmitSeed{
+				Creator:    sample.AccAddress(),
+				EpochIndex: 0,
+				Seed:       1,
+				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		},
+		{
+			name: "invalid zero seed",
+			msg: MsgSubmitSeed{
+				Creator:    sample.AccAddress(),
+				EpochIndex: 1,
+				Seed:       0,
+				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		},
+		{
+			name: "invalid negative seed",
+			msg: MsgSubmitSeed{
+				Creator:    sample.AccAddress(),
+				EpochIndex: 1,
+				Seed:       -10,
+				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		},
+		{
 			name: "valid minimal",
 			msg: MsgSubmitSeed{
 				Creator:    sample.AccAddress(),
 				EpochIndex: 1,
+				Seed:       1,
 				Signature:  base64.StdEncoding.EncodeToString(make([]byte, 64)),
 			},
 		},
