@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"fmt"
+	"sync"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
@@ -11,6 +12,20 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// randomSeedCacheKey keys the warm cache by (epochIndex, participant).
+type randomSeedCacheKey struct {
+	Epoch       uint64
+	Participant string
+}
+
+// randomSeedCache holds RandomSeed for current effective epoch only.
+type randomSeedCache struct {
+	mu      sync.RWMutex
+	inited  bool
+	current uint64
+	m       map[randomSeedCacheKey]types.RandomSeed
+}
 
 type (
 	Keeper struct {
@@ -59,6 +74,8 @@ type (
 		// Epoch collections
 		Epochs              collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex collections.Item[uint64]
+		// RandomSeed warm cache: current effective epoch only; inited on first Get, refreshed on SetEffectiveEpochIndex.
+		randomSeedCache *randomSeedCache
 		// TODO(v0.2.11-cleanup): remove legacy aggregate map after upgrade migration period.
 		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
 		EpochGroupValidationEntry collections.KeySet[collections.Triple[uint64, string, string]]
@@ -284,6 +301,7 @@ func NewKeeper(
 			"effective_epoch_index",
 			collections.Uint64Value,
 		),
+		randomSeedCache: &randomSeedCache{m: make(map[randomSeedCacheKey]types.RandomSeed)},
 		// TODO(v0.2.11-cleanup): remove legacy aggregate map wiring after migration period.
 		EpochGroupValidationsMap: collections.NewMap(
 			sb,
