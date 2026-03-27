@@ -70,7 +70,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogInfo("Inference already validated, skipping", types.Validation, "inferenceId", inference.InferenceId)
 		return &types.MsgValidationResponse{}, nil
 	}
-	if !msg.Revalidation && inference.Status == types.InferenceStatus_VOTING {
+	if inference.Status == types.InferenceStatus_VOTING {
 		k.LogInfo("Inference already in voting, skipping", types.Validation, "inferenceId", inference.InferenceId)
 		return &types.MsgValidationResponse{}, nil
 	}
