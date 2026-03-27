@@ -273,6 +273,7 @@ message MsgSubmitSeed {
   string creator = 1;
   uint64 epoch_index = 2;
   string signature = 3;
+  int64 seed = 4;
 }
 
 message MsgSubmitSeedResponse {}
