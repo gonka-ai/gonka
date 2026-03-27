@@ -76,6 +76,8 @@ var (
 	SubnetEscrowEpochCountPrefix           = collections.NewPrefix(50)
 	SubnetHostEpochStatsPrefix             = collections.NewPrefix(51)
 	SubnetEscrowsByEpochPrefix             = collections.NewPrefix(52)
+	EpochGroupRevalidationsPrefix          = collections.NewPrefix(53)
+	EpochGroupRevalidationEntryPrefix      = collections.NewPrefix(54)
 	ParamsKey                              = []byte("p_inference")
 )
 

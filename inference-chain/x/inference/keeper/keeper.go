@@ -79,6 +79,9 @@ type (
 		// TODO(v0.2.11-cleanup): remove legacy aggregate map after upgrade migration period.
 		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
 		EpochGroupValidationEntry collections.KeySet[collections.Triple[uint64, string, string]]
+		// Revalidation tracking (parallel to validations), used by ClaimRewards without per-inference reads.
+		EpochGroupRevalidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
+		EpochGroupRevalidationEntry collections.KeySet[collections.Triple[uint64, string, string]]
 		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
 		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
 		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
@@ -314,6 +317,19 @@ func NewKeeper(
 			sb,
 			types.EpochGroupValidationEntryPrefix,
 			"epoch_group_validation_entry",
+			collections.TripleKeyCodec(collections.Uint64Key, collections.StringKey, collections.StringKey),
+		),
+		EpochGroupRevalidationsMap: collections.NewMap(
+			sb,
+			types.EpochGroupRevalidationsPrefix,
+			"epoch_group_revalidations",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			codec.CollValue[types.EpochGroupValidations](cdc),
+		),
+		EpochGroupRevalidationEntry: collections.NewKeySet(
+			sb,
+			types.EpochGroupRevalidationEntryPrefix,
+			"epoch_group_revalidation_entry",
 			collections.TripleKeyCodec(collections.Uint64Key, collections.StringKey, collections.StringKey),
 		),
 		SettleAmounts: collections.NewMap(

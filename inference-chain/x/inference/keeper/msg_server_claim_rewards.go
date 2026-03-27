@@ -332,6 +332,14 @@ func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRe
 	for _, inferenceId := range wasValidatedRaw.ValidatedInferences {
 		wasValidated[inferenceId] = true
 	}
+
+	// Count revalidations as completed validation work too.
+	wasRevalidatedRaw, foundReval := k.GetEpochGroupRevalidations(ctx, msg.Creator, msg.EpochIndex)
+	if foundReval {
+		for _, inferenceId := range wasRevalidatedRaw.ValidatedInferences {
+			wasValidated[inferenceId] = true
+		}
+	}
 	return wasValidated
 }
 
