@@ -153,13 +153,12 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		//return nil, types.ErrRandomSeedNotFound
 	}
 
-	inferenceDetails, foundDetails := k.GetInferenceValidationDetails(ctx, inference.EpochId, inference.InferenceId)
-	if !foundDetails {
-		k.LogError("Inference validation details not found", types.Validation, "inferenceId", inference.InferenceId, "epochId", inference.EpochId)
-		return nil, types.ErrInferenceValidationDetailsNotFound
-	}
-
 	if !skipTheShouldValidateCheck {
+		inferenceDetails, foundDetails := k.GetInferenceValidationDetails(ctx, inference.EpochId, inference.InferenceId)
+		if !foundDetails {
+			k.LogError("Inference validation details not found", types.Validation, "inferenceId", inference.InferenceId, "epochId", inference.EpochId)
+			return nil, types.ErrInferenceValidationDetailsNotFound
+		}
 		params, err := k.GetParams(ctx)
 		if err != nil {
 			k.LogError("Failed to get params", types.Validation, "error", err)

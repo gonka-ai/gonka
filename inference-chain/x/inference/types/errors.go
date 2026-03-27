@@ -77,4 +77,6 @@ var (
 	ErrTAComponentMismatch                   = sdkerrors.Register(ModuleName, 1171, "transfer agent signature components mismatch")
 	ErrInferenceRoleMismatch                 = sdkerrors.Register(ModuleName, 1172, "inference role/address invariant mismatch")
 	ErrNotAllowedEscrowCreator               = sdkerrors.Register(ModuleName, 1173, "address is not allowed to create subnet escrows for subnets")
+	ErrRandomSeedNotFound                    = sdkerrors.Register(ModuleName, 1174, "sender random seed not found for epoch")
+	ErrNotDesignatedValidator                = sdkerrors.Register(ModuleName, 1175, "sender is not the designated validator for this inference")
 )
