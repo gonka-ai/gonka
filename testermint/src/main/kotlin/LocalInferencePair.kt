@@ -785,7 +785,7 @@ data class LocalInferencePair(
     fun getSubnetProxyStatus(proxyUrl: String): SubnetProxyStatus {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf $proxyUrl/v1/status"
+            "curl --silent --show-error --fail $proxyUrl/v1/status"
         ), null).joinToString("")
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')

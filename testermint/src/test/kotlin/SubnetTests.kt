@@ -8,6 +8,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.util.concurrent.Executors
+import kotlin.test.assertNotNull
 
 class SubnetTests : TestermintTest() {
 
@@ -118,9 +119,8 @@ class SubnetTests : TestermintTest() {
             val settleResp = genesis.settleSubnetEscrow(result.rawJson, from = userKeyName)
             assertThat(settleResp.code).isEqualTo(0)
 
-            val settleEvent = settleResp.events.firstOrNull { it.type == "subnet_escrow_settled" }
-            assertThat(settleEvent).isNotNull()
-            assertThat(settleEvent!!.attributes.firstOrNull { it.key == "total_payout" }?.value)
+            val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "subnet_escrow_settled" })
+            assertThat(settleEvent.attributes.firstOrNull { it.key == "total_payout" }?.value)
                 .isEqualTo(totalPayout.toString())
             assertThat(settleEvent.attributes.firstOrNull { it.key == "fees" }?.value)
                 .isEqualTo(result.parsed.fees.toString())
