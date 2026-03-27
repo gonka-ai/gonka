@@ -70,7 +70,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogInfo("Inference already validated, skipping", types.Validation, "inferenceId", inference.InferenceId)
 		return &types.MsgValidationResponse{}, nil
 	}
-	if !msg.Revalidation && inference.Status == types.InferenceStatus_VOTING {
+	if inference.Status == types.InferenceStatus_VOTING {
 		k.LogInfo("Inference already in voting, skipping", types.Validation, "inferenceId", inference.InferenceId)
 		return &types.MsgValidationResponse{}, nil
 	}
@@ -86,8 +86,8 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantNotFound
 	}
 
-	if executor.Address == msg.Creator && !msg.Revalidation {
-		k.LogError("Participant cannot validate own inference", types.Validation, "participant", msg.Creator, "inferenceId", msg.InferenceId)
+	if executor.Address == msg.Creator {
+		k.LogError("Participant cannot validate or revalidate own inference", types.Validation, "participant", msg.Creator, "inferenceId", msg.InferenceId)
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
