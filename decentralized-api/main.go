@@ -87,7 +87,7 @@ func main() {
 	// Version sync is handled later in the event processing loop when blockchain is fully ready
 	// This prevents EOF errors during startup from breaking the entire application
 
-	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+	chainPhaseTracker := &chainphase.ChainPhaseTracker{}
 	// NOTE: getParams is waiting for rpc to be ready, don't add request before it
 	params, err := getParams(context.Background(), *recorder)
 	if err != nil {
@@ -124,22 +124,22 @@ func main() {
 		return
 	}
 
-	logging.Debug("Initializing PoC orchestrator",
+	logging.Debug("Initializing PoC off-chain validator",
 		types.PoC, "name", recorder.GetApiAccount().SignerAccount.Name,
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
-	// Create v2 orchestrator for artifact-based PoC
-	pocOrchestrator := poc.NewOrchestrator(
+	offChainValidator := poc.NewOffChainValidator(
+		recorder,
+		nodeBroker,
+		chainPhaseTracker,
+		config.GetApiConfig().PoCCallbackUrl,
 		participantInfo.GetPubKey(),
 		participantInfo.GetAddress(),
-		nodeBroker,
-		config.GetApiConfig().PoCCallbackUrl,
 		config.GetChainNodeConfig().Url,
-		recorder,
-		chainPhaseTracker,
+		poc.DefaultValidationConfig(),
 	)
-	logging.Info("PoC orchestrator initialized", types.PoC)
+	logging.Info("PoC off-chain validator initialized", types.PoC)
 
 	tendermintClient := cosmosclient.TendermintClient{
 		ChainNodeUrl: config.GetChainNodeConfig().Url,
@@ -168,7 +168,7 @@ func main() {
 	blsManager := bls.NewBlsManager(*recorder)
 	listener := event_listener.NewEventListener(
 		config,
-		pocOrchestrator,
+		offChainValidator,
 		nodeBroker,
 		validator,
 		*recorder,

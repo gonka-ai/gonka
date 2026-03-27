@@ -59,7 +59,7 @@ func (m *mockPayloadStorage) PruneEpoch(ctx context.Context, epochId uint64) err
 }
 
 func newTestPhaseTracker(epochIndex uint64) *chainphase.ChainPhaseTracker {
-	tracker := chainphase.NewChainPhaseTracker()
+	tracker := &chainphase.ChainPhaseTracker{}
 	epoch := types.Epoch{Index: epochIndex}
 	params := types.EpochParams{
 		EpochLength:      200,

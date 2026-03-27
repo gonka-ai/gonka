@@ -20,11 +20,6 @@ import (
 // Stores artifacts locally for off-chain proofs. Store commits and weight distributions
 // are submitted to chain separately by CommitWorker and the block dispatcher.
 func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
-	// V2 endpoints disabled when not in V2 mode and not in migration mode
-	if s.broker != nil && !s.broker.IsV2EndpointsEnabled() {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "V2 endpoints disabled")
-	}
-
 	if s.artifactStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
 	}
@@ -98,11 +93,6 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 // postValidatedArtifactsV2 handles PoC v2 validation result callbacks from MLNode.
 // Receives validation results and submits them to chain via MsgSubmitPocValidationsV2 (batch).
 func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
-	// V2 endpoints disabled when not in V2 mode and not in migration mode
-	if s.broker != nil && !s.broker.IsV2EndpointsEnabled() {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "V2 endpoints disabled")
-	}
-
 	var body mlnodeclient.ValidatedResultV2
 
 	if err := ctx.Bind(&body); err != nil {

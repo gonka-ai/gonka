@@ -32,7 +32,6 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
 	e.Use(middleware.LoggingMiddleware)
-	g := e.Group("/mlnode/v1/")
 
 	s := &Server{
 		e:        e,
@@ -44,13 +43,6 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 		opt(s)
 	}
 
-	// V1 callback routes (on-chain batches, used when poc_v2_enabled=false)
-	g.POST("poc-batches/generated", s.postGeneratedBatchesV1)
-	e.POST("/v1/poc-batches/generated", s.postGeneratedBatchesV1)
-	g.POST("poc-batches/validated", s.postValidatedBatchesV1)
-	e.POST("/v1/poc-batches/validated", s.postValidatedBatchesV1)
-
-	// V2 callback routes (off-chain artifacts, used when poc_v2_enabled=true)
 	e.POST("/v2/poc-batches/generated", s.postGeneratedArtifactsV2)
 	e.POST("/v2/poc-batches/validated", s.postValidatedArtifactsV2)
 	return s

@@ -152,7 +152,7 @@ func TestCommitWorker_StartAndStop(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
-	tracker := chainphase.NewChainPhaseTracker()
+	tracker := &chainphase.ChainPhaseTracker{}
 
 	worker := NewCommitWorker(store, mockRecorder, tracker, "participant_addr", 100*time.Millisecond)
 
@@ -430,7 +430,6 @@ func TestCommitWorker_HeightChangeResetsState(t *testing.T) {
 	worker.lastDistributionAttempt = time.Now().Add(-time.Hour)
 
 	epochState := createCommitWorkerTestEpochState(types.PoCGeneratePhase, 210, 200)
-	epochState.PocV2Enabled = true
 
 	worker.mu.Lock()
 	pocHeight := GetCurrentPocStageHeight(epochState)

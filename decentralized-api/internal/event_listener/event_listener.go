@@ -11,7 +11,6 @@ import (
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
 	"decentralized-api/statsstorage"
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
@@ -70,7 +69,7 @@ func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
 
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
-	pocOrchestrator poc.Orchestrator,
+	offChainValidator pocValidator,
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
@@ -84,7 +83,7 @@ func NewEventListener(
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
 		nodeBroker,
 		configManager,
-		pocOrchestrator,
+		offChainValidator,
 		&transactionRecorder,
 		phaseTracker,
 		DefaultReconciliationConfig,
@@ -555,7 +554,7 @@ func parseEventUnixMillis(events map[string][]string, key string, idx int) (stat
 	if err != nil {
 		return 0, err
 	}
-	if parsed < statsstorage.UnixMillisTimestampThreshold {
+	if parsed != 0 && parsed < statsstorage.UnixMillisTimestampThreshold {
 		return 0, fmt.Errorf("timestamp is in seconds %s", v)
 	}
 	return statsstorage.UnixMillis(parsed), nil

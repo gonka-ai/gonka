@@ -133,56 +133,10 @@ func (b *Broker) GetParticipantAddress() string {
 	return b.participantInfo.GetAddress()
 }
 
-// IsPoCv2Enabled returns whether PoC V2 (off-chain artifacts) is enabled.
-// Returns true by default if phaseTracker is not available.
-func (b *Broker) IsPoCv2Enabled() bool {
-	if b == nil || b.phaseTracker == nil {
-		return true // default V2
-	}
-	return b.phaseTracker.IsPoCv2Enabled()
-}
-
-// IsV2EndpointsEnabled returns whether V2 endpoints should be enabled.
-// True when poc_v2_enabled=true OR confirmation_poc_v2_enabled=true (migration mode).
-func (b *Broker) IsV2EndpointsEnabled() bool {
-	if b == nil || b.phaseTracker == nil {
-		return true
-	}
-	return b.phaseTracker.IsPoCv2Enabled() || b.phaseTracker.IsConfirmationPoCv2Enabled()
-}
-
-// IsMigrationMode returns whether we're in migration mode.
-// Migration mode: poc_v2_enabled=false, confirmation_poc_v2_enabled=true.
-func (b *Broker) IsMigrationMode() bool {
-	if b == nil || b.phaseTracker == nil {
-		return false
-	}
-	return !b.phaseTracker.IsPoCv2Enabled() && b.phaseTracker.IsConfirmationPoCv2Enabled()
-}
-
-// shouldUseV2ForPoC determines if V2 should be used for PoC based on mode and event.
-// - Full V2 mode: always V2
-// - Migration mode + confirmation PoC event_sequence == 0: V2
-// - Otherwise: V1
-func (b *Broker) shouldUseV2ForPoC(confirmationEvent *types.ConfirmationPoCEvent) bool {
-	if b.IsPoCv2Enabled() {
-		return true
-	}
-	if b.IsMigrationMode() && confirmationEvent != nil && confirmationEvent.EventSequence == 0 {
-		return true
-	}
-	return false
-}
-
 const PoCBatchesBasePathV2 = "/v2/poc-batches"
-const PoCBatchesBasePathV1 = "/v1/poc-batches"
 
 func GetPoCCallbackBaseURLV2(callbackUrl string) string {
 	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV2)
-}
-
-func GetPoCCallbackBaseURLV1(callbackUrl string) string {
-	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV1)
 }
 
 type ModelArgs struct {
@@ -1234,46 +1188,20 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 		switch nodeState.PocIntendedStatus {
 		case PocStatusGenerating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
-				// Dispatch V1 or V2 based on governance parameter and migration mode
-				if b.shouldUseV2ForPoC(confirmationEvent) {
-					return StartPoCNodeCommandV2{
-						BlockHeight: pocGenParams.startPoCBlockHeight,
-						BlockHash:   pocGenParams.startPoCBlockHash,
-						PubKey:      b.participantInfo.GetPubKey(),
-						CallbackUrl: GetPoCCallbackBaseURLV2(b.callbackUrl),
-						TotalNodes:  totalNodes,
-						Model:       pocGenParams.modelId,
-						SeqLen:      pocGenParams.seqLen,
-					}
-				}
-				return StartPoCNodeCommandV1{
+				return StartPoCNodeCommandV2{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
 					BlockHash:   pocGenParams.startPoCBlockHash,
 					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPoCCallbackBaseURLV1(b.callbackUrl),
+					CallbackUrl: GetPoCCallbackBaseURLV2(b.callbackUrl),
 					TotalNodes:  totalNodes,
-					ModelParams: nil, // V1 uses chain-stored model params
+					Model:       pocGenParams.modelId,
+					SeqLen:      pocGenParams.seqLen,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
 			return nil
 		case PocStatusValidating:
-			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
-				// Dispatch V1 or V2 based on governance parameter and migration mode
-				if b.shouldUseV2ForPoC(confirmationEvent) {
-					return TransitionPoCToValidatingCommandV2{}
-				}
-				return InitValidateNodeCommandV1{
-					BlockHeight: pocGenParams.startPoCBlockHeight,
-					BlockHash:   pocGenParams.startPoCBlockHash,
-					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPoCCallbackBaseURLV1(b.callbackUrl),
-					TotalNodes:  totalNodes,
-					ModelParams: nil, // V1 uses chain-stored model params
-				}
-			}
-			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
-			return nil
+			return TransitionPoCToValidatingCommandV2{}
 		default:
 			return nil // No action for other phases if status is POC
 		}

@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: read
       checks: write
+      packages: write
 
     uses: ./.github/workflows/test-workflow.yml
     secrets: inherit

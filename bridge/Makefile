@@ -3,11 +3,19 @@
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
+USE_REGISTRY_CACHE ?= 0
+ifeq ($(USE_REGISTRY_CACHE),1)
+DOCKER_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/bridge:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/bridge:buildcache,mode=min
+else
+DOCKER_CACHE_ARGS :=
+endif
 
 define DOCKER_BUILD
 	@echo "--> building bridge docker image"
 	@echo "    platform: $(PLATFORM)"
-	@docker build \
+	@docker buildx build \
+		--load \
+		$(DOCKER_CACHE_ARGS) \
 		--platform $(PLATFORM) \
 		-f $(DOCKER_FILE) \
 		. \
