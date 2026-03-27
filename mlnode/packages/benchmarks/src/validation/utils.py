@@ -1,3 +1,7 @@
+import base64
+import logging
+import mimetypes
+from pathlib import Path
 import requests
 import math
 import threading
@@ -8,12 +12,10 @@ from typing import (
     Callable,
     Optional
 )
-
-from pydantic import BaseModel
-
-
-from typing import Any, Dict, List
+import numpy as np
+import requests
 from pydantic import BaseModel, Field
+
 
 from validation.data import (
     ModelInfo,
@@ -23,7 +25,6 @@ from validation.data import (
     Result,
     PositionResult
 )
-
 from common.logger import create_logger
 
 
@@ -61,7 +62,41 @@ class EnforcedTokens(BaseModel):
     def from_result(cls, result: Result) -> "EnforcedTokens":
         return cls(tokens=[EnforcedToken(token=r.token, top_tokens=list(r.logprobs.keys())) for r in result.results])
 
-    
+
+def _http_headers(api_key: Optional[str]) -> Dict[str, str]:
+    h: Dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        h["Authorization"] = f"Bearer {api_key}"
+    return h
+
+
+def _encode_image_data_url(image_path: Path) -> str:
+    suffix = image_path.suffix.lower()
+    mime, _ = mimetypes.guess_type(str(image_path))
+    if mime is None:
+        mime = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+    data = image_path.read_bytes()
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
+def build_vlm_user_content(
+    *,
+    text: str,
+    image_paths: List[Path],
+    image_detail: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """OpenAI-style multimodal user message content (text + image_url parts)."""
+    parts: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+    for img in image_paths:
+        url = _encode_image_data_url(img)
+        image_url: Dict[str, Any] = {"url": url}
+        if image_detail:
+            image_url["detail"] = image_detail
+        parts.append({"type": "image_url", "image_url": image_url})
+    return parts
+
+
 def _prepare_messages(
     prompt: str,
 ) -> List[Dict[str, Any]]:
@@ -88,11 +123,13 @@ def inference(
     model_info: ModelInfo,
     request_params: RequestParams,
     prompt: str,
+    messages: Optional[List[Dict[str, Any]]] = None,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     url = f"{model_info.url}/v1/chat/completions"
     payload = {
         "model": model_info.name,
-        "messages": _prepare_messages(prompt),
+        "messages": messages if messages is not None else _prepare_messages(prompt),
         "max_tokens": request_params.max_tokens,
         "temperature": request_params.temperature,
         "seed": request_params.seed,
@@ -104,7 +141,7 @@ def inference(
         **_sampling_extras(request_params),
     }
     
-    response = requests.post(url, json=payload)
+    response = requests.post(url, json=payload, headers=_http_headers(api_key))
     if response.status_code != 200:
         raise RuntimeError(f"Inference API request failed with status {response.status_code} {response.text}")
     return response.json()
@@ -116,11 +153,13 @@ def validation(
     prompt: str,
     enforced_str: Optional[str] = None,
     enforced_tokens: Optional[EnforcedTokens] = None,
+    messages: Optional[List[Dict[str, Any]]] = None,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     url = f"{model_info.url}/v1/chat/completions"
     payload = {
         "model": model_info.name,
-        "messages": _prepare_messages(prompt),
+        "messages": messages if messages is not None else _prepare_messages(prompt),
         "max_tokens": request_params.max_tokens,
         "temperature": request_params.temperature,
         "seed": request_params.seed,
@@ -137,7 +176,7 @@ def validation(
     if enforced_tokens:
         payload["enforced_tokens"] = enforced_tokens.dict()
 
-    response = requests.post(url, json=payload)
+    response = requests.post(url, json=payload, headers=_http_headers(api_key))
     if response.status_code != 200:
         raise RuntimeError(f"Validation API request failed with status {response.status_code} {response.text}\n(enforced_tokens: {enforced_tokens})\n(payload: {payload})")
     

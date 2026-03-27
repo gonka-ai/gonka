@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
+from collections.abc import Mapping
 
 from validation.utils import distance2
 from validation import stats
@@ -63,9 +64,7 @@ def plot_distances_and_matches(items, distances, top_k_matches_ratios, title_pre
     """
     n_tokens = [len(item.inference_result.results) for item in items]
     
-    # Format title_prefix for better readability by breaking long paths
     if len(title_prefix) > 40:
-        # Break on path separators and long underscores for better readability
         formatted_prefix = title_prefix.replace('/', '/\n').replace('___', '___\n')
     else:
         formatted_prefix = title_prefix
@@ -177,19 +176,103 @@ def plot_classification_results(distances, classifications, lower_bound, upper_b
     plt.show()
 
 
-def plot_length_vs_distance_comparison(name, honest_items, honest_distances, fraud_items, fraud_distances):
-    """Create combined length vs distance plot for comparison"""
-    # Calculate lengths for honest and fraud items
-    honest_lengths = [len(item.inference_result.text) for item in honest_items]
-    fraud_lengths = [len(item.inference_result.text) for item in fraud_items]
+def _get_item_text_length(item) -> int:
+    """Extract len(inference_result.text) from either pydantic-like objects or dict rows."""
+    try:
+        if hasattr(item, "inference_result") and hasattr(item.inference_result, "text"):
+            return len(item.inference_result.text)
+    except Exception:
+        pass
+    if isinstance(item, dict):
+        inf_res = item.get("inference_result")
+        if isinstance(inf_res, dict) and "text" in inf_res:
+            return len(inf_res["text"])
+        if hasattr(inf_res, "text"):
+            return len(inf_res.text)
+    raise TypeError(f"Unsupported item type for text length: {type(item)}")
 
-    # Combined overlay plot only
+
+def plot_length_vs_distance_comparison(
+    name,
+    honest_items,
+    honest_distances,
+    fraud_items,
+    fraud_distances,
+    bounds=None,
+    save_to=None,
+):
+    """Create combined length vs distance plot for comparison"""
+    def _flatten_items_and_distances(items, distances):
+        if isinstance(items, Mapping) and isinstance(distances, Mapping):
+            flat_items = []
+            flat_distances = []
+            for k in distances.keys():
+                if k not in items:
+                    continue
+                subitems = items[k]
+                subdistances = distances[k]
+                if isinstance(subitems, Mapping):
+                    raise TypeError(
+                        "plot_length_vs_distance_comparison: expected items[k] to be a list, got Mapping"
+                    )
+                try:
+                    subitems_list = list(subitems)
+                except TypeError as e:
+                    raise TypeError(
+                        f"plot_length_vs_distance_comparison: items[{k!r}] is not iterable: {type(subitems)}"
+                    ) from e
+                try:
+                    subdist_list = list(subdistances)
+                except TypeError as e:
+                    raise TypeError(
+                        f"plot_length_vs_distance_comparison: distances[{k!r}] is not iterable: {type(subdistances)}"
+                    ) from e
+                for item, d in zip(subitems_list, subdist_list):
+                    flat_items.append(item)
+                    flat_distances.append(d)
+            return flat_items, flat_distances
+
+        if isinstance(distances, Mapping):
+            raise TypeError(
+                "plot_length_vs_distance_comparison: unsupported combination of items/distances types: "
+                f"{type(items)} vs {type(distances)}"
+            )
+
+        items_seq = list(items.values()) if isinstance(items, Mapping) else list(items)
+        dist_seq = list(distances)
+        return items_seq, dist_seq
+
     plt.figure(figsize=(10, 6))
-    plt.scatter(honest_lengths, honest_distances, alpha=0.5, color='blue', label='Honest Items', s=10)
-    plt.scatter(fraud_lengths, fraud_distances, alpha=0.5, color='red', label='Fraud Items', s=10)
+
+    honest_flat = _flatten_items_and_distances(honest_items, honest_distances)
+    honest_items_seq, honest_dist_vals = honest_flat
+    honest_lengths = [_get_item_text_length(item) for item in honest_items_seq]
+
+    fraud_flat = _flatten_items_and_distances(fraud_items, fraud_distances)
+    fraud_items_seq, fraud_dist_vals = fraud_flat
+    fraud_lengths = [_get_item_text_length(item) for item in fraud_items_seq]
+
+    plt.scatter(honest_lengths, honest_dist_vals, alpha=0.5, color='blue', label='Honest Items', s=10)
+    plt.scatter(fraud_lengths, fraud_dist_vals, alpha=0.5, color='red', label='Fraud Items', s=10)
     plt.title(f'{name} - Length vs Distance Comparison')
     plt.xlabel('Length (characters)')
     plt.ylabel('Distance')
     plt.legend()
     plt.grid(True, alpha=0.3)
+
+    if bounds is not None:
+        try:
+            lower, upper = bounds
+            if lower is not None:
+                plt.axhline(lower, color="blue", linestyle="--", linewidth=1, label="Lower bound")
+            if upper is not None:
+                plt.axhline(upper, color="orange", linestyle="--", linewidth=1, label="Upper bound")
+        except Exception:
+            pass
+
+    if save_to:
+        try:
+            plt.savefig(save_to, bbox_inches="tight")
+        except Exception:
+            pass
     plt.show()
