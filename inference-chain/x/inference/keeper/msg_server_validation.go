@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"cosmossdk.io/collections"
@@ -24,6 +25,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
 	if err != nil {
 		k.LogWarn("Validation: failed to inject params", types.Validation, "error", err)
+		return nil, fmt.Errorf("validation: failed to inject params into context: %w", err)
 	}
 
 	k.LogInfo("Received MsgValidation", types.Validation,
