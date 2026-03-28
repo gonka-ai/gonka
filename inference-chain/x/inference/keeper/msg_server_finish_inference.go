@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	sdkerrors "cosmossdk.io/errors"
@@ -22,6 +23,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
 	if err != nil {
 		k.LogWarn("FinishInference: failed to inject params", types.Inferences, "error", err)
+		return nil, fmt.Errorf("cannot finish inference with stale params: %w", err)
 	}
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)

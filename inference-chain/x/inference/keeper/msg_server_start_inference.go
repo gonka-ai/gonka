@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"encoding/base64"
@@ -21,6 +22,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
 	if err != nil {
 		k.LogWarn("StartInference: failed to inject params", types.Inferences, "error", err)
+		return nil, fmt.Errorf("cannot start inference with stale params: %w", err)
 	}
 
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
