@@ -40,6 +40,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"strconv"
 	"strings"
 	"time"
@@ -154,9 +156,10 @@ func main() {
 	)
 	logging.Info("PoC off-chain validator initialized", types.PoC)
 
-	// Create a cancellable context for the entire system
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure resources are cleaned up
+	// Create a context that is cancelled on SIGTERM or SIGINT.
+	// This ensures deferred cleanup (config flush, etc.) runs on graceful shutdown.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	// Initialize OpenTelemetry. Returns a noop shutdown when disabled, so it
 	// is safe to defer unconditionally. Trace context propagation is wired in
