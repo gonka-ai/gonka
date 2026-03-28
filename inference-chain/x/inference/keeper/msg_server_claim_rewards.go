@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
+	"regexp"
+	"strconv"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
@@ -123,12 +125,19 @@ func (ms msgServer) handleUnderfundedWork(ctx sdk.Context, err error, settleAmou
 	ms.finishSettle(ctx, settleAmount)
 }
 
+// balanceErrPattern extracts the spendable and required amounts from a Cosmos SDK
+// ErrInsufficientFunds error message without depending on specific denomination names.
+// The SDK message format is: "spendable balance <amount><denom> is smaller than <amount><denom>"
+var balanceErrPattern = regexp.MustCompile(`spendable balance (\d+)\S+ is smaller than (\d+)\S+`)
+
 func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required int64) {
-	_, err := fmt.Sscanf(errMsg, "spendable balance %dnicoin is smaller than %dngonka", &spendable, &required)
-	if err != nil {
+	m := balanceErrPattern.FindStringSubmatch(errMsg)
+	if len(m) != 3 {
 		return 0, 0
 	}
-	return spendable, required
+	spendable, _ = strconv.ParseInt(m[1], 10, 64)
+	required, _ = strconv.ParseInt(m[2], 10, 64)
+	return
 }
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
