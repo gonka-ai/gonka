@@ -22,8 +22,8 @@ const (
 )
 
 // Default circuit breaker parameters.
-// These are intentionally kept as Go constants (not proto params) for the initial implementation.
-// They can be promoted to ValidationParams fields once the proto pipeline is updated.
+// These compile-time constants are used as fallback defaults when the governance
+// parameters (ValidationParams.CbMissThresholdPct etc.) are not set (zero value).
 const (
 	// DefaultCBMissThresholdPct is the miss-rate percentage (0–100) above which a node is excluded.
 	DefaultCBMissThresholdPct = uint64(25)
@@ -37,6 +37,44 @@ const (
 	// ~50 minutes at 5 s/block.
 	DefaultCBMaxCooldownBlocks = int64(500)
 )
+
+// cbParams holds the resolved circuit-breaker tuning parameters for a single call.
+type cbParams struct {
+	MissThresholdPct      uint64
+	MinSamples            uint64
+	InitialCooldownBlocks int64
+	MaxCooldownBlocks     int64
+}
+
+// getCBParams reads CB parameters from ValidationParams and falls back to Go
+// compile-time defaults for any field that is zero (unset).
+func (k Keeper) getCBParams(ctx context.Context) cbParams {
+	p := cbParams{
+		MissThresholdPct:      DefaultCBMissThresholdPct,
+		MinSamples:            DefaultCBMinSamples,
+		InitialCooldownBlocks: DefaultCBInitialCooldownBlocks,
+		MaxCooldownBlocks:     DefaultCBMaxCooldownBlocks,
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return p
+	}
+	if vp := params.ValidationParams; vp != nil {
+		if vp.CbMissThresholdPct != 0 {
+			p.MissThresholdPct = vp.CbMissThresholdPct
+		}
+		if vp.CbMinSamples != 0 {
+			p.MinSamples = vp.CbMinSamples
+		}
+		if vp.CbInitialCooldownBlocks != 0 {
+			p.InitialCooldownBlocks = vp.CbInitialCooldownBlocks
+		}
+		if vp.CbMaxCooldownBlocks != 0 {
+			p.MaxCooldownBlocks = vp.CbMaxCooldownBlocks
+		}
+	}
+	return p
+}
 
 // CircuitBreakerEntry holds the per-node state managed by the fast circuit breaker.
 type CircuitBreakerEntry struct {
@@ -127,17 +165,18 @@ func (k Keeper) ClearAllCBState(ctx context.Context) {
 // If the node was already excluded (re-exclusion during probe), the cooldown doubles (capped).
 func (k Keeper) ExcludeCBEntry(ctx context.Context, address string, blockHeight int64, reExclusion bool) {
 	entry := k.GetCBEntry(ctx, address)
+	cbp := k.getCBParams(ctx)
 
 	newCooldown := entry.CooldownBlocks
 	if newCooldown <= 0 {
-		newCooldown = DefaultCBInitialCooldownBlocks
+		newCooldown = cbp.InitialCooldownBlocks
 	}
 
 	if reExclusion {
 		// Exponential backoff: double the cooldown
 		newCooldown *= 2
-		if newCooldown > DefaultCBMaxCooldownBlocks {
-			newCooldown = DefaultCBMaxCooldownBlocks
+		if newCooldown > cbp.MaxCooldownBlocks {
+			newCooldown = cbp.MaxCooldownBlocks
 		}
 		entry.ProbeAttempts++
 	}
@@ -197,8 +236,10 @@ func (k Keeper) GetAllCBEntries(ctx context.Context) []CircuitBreakerEntry {
 // It performs two passes:
 // 1. Promote any EXCLUDED entries whose cooldown has expired to PROBE state.
 // 2. Scan active participants and exclude any HEALTHY nodes that have crossed the
-//    miss-rate threshold (DefaultCBMissThresholdPct, DefaultCBMinSamples).
+//    miss-rate threshold (read from ValidationParams, falling back to Go constant defaults).
 func (k Keeper) UpdateCBStateForBlock(ctx context.Context, blockHeight int64) {
+	cbp := k.getCBParams(ctx)
+
 	// Pass 1: EXCLUDED → PROBE promotion for expired cooldowns
 	entries := k.GetAllCBEntries(ctx)
 	for _, entry := range entries {
@@ -227,7 +268,7 @@ func (k Keeper) UpdateCBStateForBlock(ctx context.Context, blockHeight int64) {
 			continue
 		}
 
-		if total >= DefaultCBMinSamples && missedRequests*100 > DefaultCBMissThresholdPct*total {
+		if total >= cbp.MinSamples && missedRequests*100 > cbp.MissThresholdPct*total {
 			k.ExcludeCBEntry(ctx, p.Index, blockHeight, false)
 			k.Logger().Info("CircuitBreaker: excluded node via EndBlock miss-rate check",
 				"address", p.Index, "inferenceCount", inferenceCount,
