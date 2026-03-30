@@ -621,6 +621,11 @@ type ValidationParams struct {
 	QuickFailureThreshold          *Decimal `protobuf:"bytes,23,opt,name=quick_failure_threshold,json=quickFailureThreshold,proto3" json:"quick_failure_threshold,omitempty"`
 	BinomTestP0                    *Decimal `protobuf:"bytes,24,opt,name=binom_test_p0,json=binomTestP0,proto3" json:"binom_test_p0,omitempty"`
 	ClaimValidationEnabled         bool     `protobuf:"varint,25,opt,name=claim_validation_enabled,json=claimValidationEnabled,proto3" json:"claim_validation_enabled,omitempty"`
+	// Circuit breaker parameters (governance-adjustable without a chain upgrade)
+	CbMissThresholdPct      uint64 `protobuf:"varint,26,opt,name=cb_miss_threshold_pct,json=cbMissThresholdPct,proto3" json:"cb_miss_threshold_pct,omitempty"`
+	CbMinSamples            uint64 `protobuf:"varint,27,opt,name=cb_min_samples,json=cbMinSamples,proto3" json:"cb_min_samples,omitempty"`
+	CbInitialCooldownBlocks int64  `protobuf:"varint,28,opt,name=cb_initial_cooldown_blocks,json=cbInitialCooldownBlocks,proto3" json:"cb_initial_cooldown_blocks,omitempty"`
+	CbMaxCooldownBlocks     int64  `protobuf:"varint,29,opt,name=cb_max_cooldown_blocks,json=cbMaxCooldownBlocks,proto3" json:"cb_max_cooldown_blocks,omitempty"`
 }
 
 func (m *ValidationParams) Reset()         { *m = ValidationParams{} }
@@ -829,6 +834,34 @@ func (m *ValidationParams) GetClaimValidationEnabled() bool {
 		return m.ClaimValidationEnabled
 	}
 	return false
+}
+
+func (m *ValidationParams) GetCbMissThresholdPct() uint64 {
+	if m != nil {
+		return m.CbMissThresholdPct
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetCbMinSamples() uint64 {
+	if m != nil {
+		return m.CbMinSamples
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetCbInitialCooldownBlocks() int64 {
+	if m != nil {
+		return m.CbInitialCooldownBlocks
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetCbMaxCooldownBlocks() int64 {
+	if m != nil {
+		return m.CbMaxCooldownBlocks
+	}
+	return 0
 }
 
 type PoCModelParams struct {
@@ -2551,6 +2584,18 @@ func (this *ValidationParams) Equal(that interface{}) bool {
 	if this.ClaimValidationEnabled != that1.ClaimValidationEnabled {
 		return false
 	}
+	if this.CbMissThresholdPct != that1.CbMissThresholdPct {
+		return false
+	}
+	if this.CbMinSamples != that1.CbMinSamples {
+		return false
+	}
+	if this.CbInitialCooldownBlocks != that1.CbInitialCooldownBlocks {
+		return false
+	}
+	if this.CbMaxCooldownBlocks != that1.CbMaxCooldownBlocks {
+		return false
+	}
 	return true
 }
 func (this *PoCModelParams) Equal(that interface{}) bool {
@@ -3643,6 +3688,34 @@ func (m *ValidationParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.CbMaxCooldownBlocks != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CbMaxCooldownBlocks))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0xe8
+	}
+	if m.CbInitialCooldownBlocks != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CbInitialCooldownBlocks))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0xe0
+	}
+	if m.CbMinSamples != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CbMinSamples))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0xd8
+	}
+	if m.CbMissThresholdPct != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CbMissThresholdPct))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0xd0
+	}
 	if m.ClaimValidationEnabled {
 		i--
 		if m.ClaimValidationEnabled {
@@ -5174,6 +5247,18 @@ func (m *ValidationParams) Size() (n int) {
 	}
 	if m.ClaimValidationEnabled {
 		n += 3
+	}
+	if m.CbMissThresholdPct != 0 {
+		n += 2 + sovParams(uint64(m.CbMissThresholdPct))
+	}
+	if m.CbMinSamples != 0 {
+		n += 2 + sovParams(uint64(m.CbMinSamples))
+	}
+	if m.CbInitialCooldownBlocks != 0 {
+		n += 2 + sovParams(uint64(m.CbInitialCooldownBlocks))
+	}
+	if m.CbMaxCooldownBlocks != 0 {
+		n += 2 + sovParams(uint64(m.CbMaxCooldownBlocks))
 	}
 	return n
 }
@@ -7953,6 +8038,82 @@ func (m *ValidationParams) Unmarshal(dAtA []byte) error {
 				}
 			}
 			m.ClaimValidationEnabled = bool(v != 0)
+		case 26:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CbMissThresholdPct", wireType)
+			}
+			m.CbMissThresholdPct = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CbMissThresholdPct |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 27:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CbMinSamples", wireType)
+			}
+			m.CbMinSamples = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CbMinSamples |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 28:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CbInitialCooldownBlocks", wireType)
+			}
+			m.CbInitialCooldownBlocks = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CbInitialCooldownBlocks |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 29:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CbMaxCooldownBlocks", wireType)
+			}
+			m.CbMaxCooldownBlocks = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CbMaxCooldownBlocks |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipParams(dAtA[iNdEx:])
