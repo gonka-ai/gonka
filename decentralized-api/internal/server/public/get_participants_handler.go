@@ -281,6 +281,15 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	// 2. The implemented proof system has a bug anyway and needs to be revisited
 
 	blockHeight := activeParticipants.CreatedAtBlockHeight
+
+	// If CreatedAtBlockHeight is 0 (old epochs before this field was populated),
+	// skip the proof query — CometBFT rejects height=0 with an error.
+	// Return the first query result directly instead.
+	if blockHeight == 0 {
+		logging.Warn("CreatedAtBlockHeight is 0 for epoch, skipping proof query", types.Participants)
+		return result, nil
+	}
+
 	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
 	if err != nil {
 		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
