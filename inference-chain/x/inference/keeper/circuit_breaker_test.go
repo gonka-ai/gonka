@@ -190,9 +190,9 @@ func TestHealthFilterExcludesHighMissRate(t *testing.T) {
 	// Should be excluded due to high miss rate
 	require.Empty(t, result, "node with >25% miss rate should be excluded")
 
-	// Check CB state was updated
+	// Filter is now read-only: CB state must remain Healthy (EndBlock handles state transition)
 	entry := k.GetCBEntry(ctx, cbAddr1)
-	require.Equal(t, keeperpkg.CBStateExcluded, entry.State)
+	require.Equal(t, keeperpkg.CBStateHealthy, entry.State)
 }
 
 // TestHealthFilterIncludesHealthyNode verifies healthy nodes pass the filter.
@@ -265,9 +265,11 @@ func TestHealthFilterProbeNodePromotedOnCooldownExpiry(t *testing.T) {
 	members := makeCBMockMembers(cbAddr1)
 	result := filter(members)
 
-	require.Len(t, result, 1, "excluded node with expired cooldown should be promoted to probe and included")
+	require.Len(t, result, 1, "excluded node with expired cooldown should be included (probe pending EndBlock)")
+
+	// Filter is now read-only: CB state must remain Excluded (EndBlock handles EXCLUDED → PROBE transition)
 	entry := k.GetCBEntry(ctx, cbAddr1)
-	require.Equal(t, keeperpkg.CBStateProbe, entry.State)
+	require.Equal(t, keeperpkg.CBStateExcluded, entry.State)
 }
 
 // TestHealthFilterExcludedNodeStillInCooldown verifies that an excluded node
