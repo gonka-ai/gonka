@@ -122,9 +122,10 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 	}, nil
 }
 
-// createHealthFilterFn builds a fast circuit-breaker filter that excludes nodes with high
-// current-epoch miss rates, manages PROBE state transitions on cooldown expiry, and falls back
-// to the full member list if all candidates are excluded (safety valve).
+// createHealthFilterFn builds a read-only circuit-breaker filter that excludes nodes with high
+// current-epoch miss rates, includes cooldown-expired nodes for probe (state written by EndBlock),
+// and falls back to the full member list if all candidates are excluded (safety valve).
+// This function makes no writes to state — all CB state transitions are handled by EndBlock.
 func (k Keeper) createHealthFilterFn(goCtx context.Context, blockHeight int64) func([]*group.GroupMember) []*group.GroupMember {
 	return func(members []*group.GroupMember) []*group.GroupMember {
 		filtered := make([]*group.GroupMember, 0, len(members))
@@ -148,10 +149,10 @@ func (k Keeper) createHealthFilterFn(goCtx context.Context, blockHeight int64) f
 			case CBStateExcluded:
 				cooldownDone := blockHeight >= cb.ExcludedAtBlock+cb.CooldownBlocks
 				if cooldownDone {
-					// Cooldown expired — promote to PROBE so it gets one test slot.
-					k.PromoteCBEntryToProbe(goCtx, address, blockHeight)
+					// Cooldown expired — include the node so it gets one test slot.
+					// EndBlock will handle the EXCLUDED → PROBE state transition.
 					filtered = append(filtered, m)
-					k.Logger().Info("CircuitBreaker: promoted excluded node to probe",
+					k.Logger().Info("CircuitBreaker: including cooldown-expired node (probe pending EndBlock)",
 						"address", address, "blockHeight", blockHeight)
 				} else {
 					blocksRemaining := (cb.ExcludedAtBlock + cb.CooldownBlocks) - blockHeight
@@ -176,9 +177,9 @@ func (k Keeper) createHealthFilterFn(goCtx context.Context, blockHeight int64) f
 
 				total := inferenceCount + missedRequests
 				if total >= DefaultCBMinSamples && missedRequests*100 > DefaultCBMissThresholdPct*total {
-					// Miss rate exceeded threshold — exclude immediately.
-					k.ExcludeCBEntry(goCtx, address, blockHeight, false)
-					k.Logger().Info("CircuitBreaker: excluding node due to high miss rate",
+					// Miss rate exceeded threshold — exclude from selection pool.
+					// EndBlock will handle the state transition to CBStateExcluded.
+					k.Logger().Debug("CircuitBreaker: excluding unhealthy node (exclusion pending EndBlock)",
 						"address", address, "blockHeight", blockHeight,
 						"inferenceCount", inferenceCount,
 						"missedRequests", missedRequests,
