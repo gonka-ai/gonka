@@ -170,6 +170,72 @@ func (k Keeper) PromoteCBEntryToProbe(ctx context.Context, address string, block
 		"probeAttempts", entry.ProbeAttempts)
 }
 
+// GetAllCBEntries returns all stored circuit breaker entries.
+// Used by EndBlock to apply state transitions across the full CB table.
+func (k Keeper) GetAllCBEntries(ctx context.Context) []CircuitBreakerEntry {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.CircuitBreakerStateKey))
+
+	iter := store.Iterator(nil, nil)
+	defer iter.Close()
+
+	var entries []CircuitBreakerEntry
+	for ; iter.Valid(); iter.Next() {
+		var entry CircuitBreakerEntry
+		if err := json.Unmarshal(iter.Value(), &entry); err != nil {
+			k.Logger().Error("GetAllCBEntries: failed to unmarshal entry", "error", err)
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// UpdateCBStateForBlock processes circuit breaker state transitions for the current block.
+// Must be called from EndBlock (write context only).
+//
+// It performs two passes:
+// 1. Promote any EXCLUDED entries whose cooldown has expired to PROBE state.
+// 2. Scan active participants and exclude any HEALTHY nodes that have crossed the
+//    miss-rate threshold (DefaultCBMissThresholdPct, DefaultCBMinSamples).
+func (k Keeper) UpdateCBStateForBlock(ctx context.Context, blockHeight int64) {
+	// Pass 1: EXCLUDED → PROBE promotion for expired cooldowns
+	entries := k.GetAllCBEntries(ctx)
+	for _, entry := range entries {
+		if entry.State == CBStateExcluded {
+			if blockHeight >= entry.ExcludedAtBlock+entry.CooldownBlocks {
+				k.PromoteCBEntryToProbe(ctx, entry.Address, blockHeight)
+				k.Logger().Info("CircuitBreaker: promoted expired entry to probe",
+					"address", entry.Address, "blockHeight", blockHeight)
+			}
+		}
+	}
+
+	// Pass 2: HEALTHY → EXCLUDED for high-miss-rate participants
+	participants := k.GetAllParticipant(ctx)
+	for _, p := range participants {
+		if p.CurrentEpochStats == nil {
+			continue
+		}
+		inferenceCount := p.CurrentEpochStats.InferenceCount
+		missedRequests := p.CurrentEpochStats.MissedRequests
+		total := inferenceCount + missedRequests
+
+		// Only apply threshold if node already has a clean bill of health (not already excluded/probe)
+		existing := k.GetCBEntry(ctx, p.Index)
+		if existing.State != CBStateHealthy {
+			continue
+		}
+
+		if total >= DefaultCBMinSamples && missedRequests*100 > DefaultCBMissThresholdPct*total {
+			k.ExcludeCBEntry(ctx, p.Index, blockHeight, false)
+			k.Logger().Info("CircuitBreaker: excluded node via EndBlock miss-rate check",
+				"address", p.Index, "inferenceCount", inferenceCount,
+				"missedRequests", missedRequests, "blockHeight", blockHeight)
+		}
+	}
+}
+
 // RecordCBResult updates the circuit breaker state after an inference result.
 // success=true: node completed inference → restore to HEALTHY.
 // success=false: node missed/timed out → re-exclude with doubled cooldown.
