@@ -30,8 +30,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		k.LogError(PocFailureTag+"[SubmitPocValidationsV2] Error checking confirmation PoC event", types.PoC, "error", err)
 	}
 
-	isMigrationTracking := params.PocParams.ConfirmationPocV2Enabled && isActive && activeEvent != nil && activeEvent.EventSequence == 0
-	if !params.PocParams.PocV2Enabled && !isMigrationTracking {
+	if !params.PocParams.PocV2Enabled {
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
 

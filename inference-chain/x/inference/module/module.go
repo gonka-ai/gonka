@@ -546,18 +546,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	// Dispatch to V1 or V2 weight calculation based on poc_v2_enabled flag
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err.Error())
-		return
-	}
-	var activeParticipants []*types.ActiveParticipant
-	if params.PocParams.PocV2Enabled {
-		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
-	} else {
-		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
-	}
+	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
 	if activeParticipants == nil {
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return

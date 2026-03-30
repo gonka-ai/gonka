@@ -43,6 +43,7 @@ jobs:
     permissions:
       contents: read
       checks: write
+      packages: write
 
     with:
       test_name: "Integration Tests"

@@ -382,22 +382,7 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	}
 	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
 
-	migrationState := GetMigrationStateFromParams(params.PocParams)
-
-	useV2, dryRun := false, false
-	switch migrationState {
-	case ModeFullV2:
-		useV2 = true
-		// Grace period: dry-run for the epoch when V2 was enabled
-		if graceEpoch, ok := am.keeper.GetPocV2EnabledEpoch(ctx); ok && event.EpochIndex == graceEpoch {
-			dryRun = true
-		}
-	case ModeMigration:
-		if event.EventSequence == 0 {
-			useV2, dryRun = true, true
-		}
-	}
-	am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, weightScaleFactor, useV2, dryRun)
+	am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, weightScaleFactor)
 
 	return nil
 }
@@ -408,15 +393,8 @@ func (am AppModule) evaluateConfirmation(
 	epochGroupData *types.EpochGroupData,
 	currentValidatorWeights map[string]int64,
 	weightScaleFactor mathsdk.LegacyDec,
-	useV2 bool,
-	dryRun bool,
 ) {
-	var confirmationParticipants []*types.ActiveParticipant
-	if useV2 {
-		confirmationParticipants = am.updateConfirmationWeightsV2(ctx, event, currentValidatorWeights, weightScaleFactor)
-	} else {
-		confirmationParticipants = am.UpdateConfirmationWeightsV1(ctx, event, currentValidatorWeights, weightScaleFactor)
-	}
+	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, currentValidatorWeights, weightScaleFactor)
 
 	confirmationWeights := make(map[string]int64)
 	for _, cp := range confirmationParticipants {
@@ -424,11 +402,7 @@ func (am AppModule) evaluateConfirmation(
 	}
 
 	am.LogInfo("evaluateConfirmation: Confirmation weights", types.PoC,
-		"useV2", useV2, "dryRun", dryRun, "confirmationWeights", confirmationWeights)
-
-	if dryRun {
-		return
-	}
+		"confirmationWeights", confirmationWeights)
 
 	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex)
 	if err != nil {

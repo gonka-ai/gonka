@@ -5,7 +5,6 @@
 ################################################################################
 FROM golang:1.24.2-alpine3.20 AS builder
 
-ARG BUILD_FLAGS
 ARG GOOS
 ARG GOARCH
 ARG BLST_PORTABLE=0

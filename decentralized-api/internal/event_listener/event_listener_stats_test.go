@@ -33,6 +33,28 @@ func TestParseInferenceFinishedRecords_Success(t *testing.T) {
 	require.Equal(t, statsstorage.UnixMillis(1700000001000), records[0].InferenceTimestamp)
 }
 
+func TestParseInferenceFinishedRecords_ZeroTimestamps(t *testing.T) {
+	events := map[string][]string{
+		"inference_finished.inference_id":           {"inf-1"},
+		"inference_finished.requested_by":           {"gonka1dev"},
+		"inference_finished.model":                  {"model-a"},
+		"inference_finished.status":                 {"FINISHED"},
+		"inference_finished.epoch_id":               {"42"},
+		"inference_finished.prompt_token_count":     {"100"},
+		"inference_finished.completion_token_count": {"50"},
+		"inference_finished.actual_cost_in_coins":   {"12345"},
+		"inference_finished.start_block_timestamp":  {"0"},
+		"inference_finished.end_block_timestamp":    {"1700000001000"},
+	}
+
+	records, err := parseInferenceFinishedRecords(events)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, statsstorage.UnixMillis(0), records[0].StartBlockTimestamp)
+	require.Equal(t, statsstorage.UnixMillis(1700000001000), records[0].EndBlockTimestamp)
+	require.Equal(t, statsstorage.UnixMillis(1700000001000), records[0].InferenceTimestamp)
+}
+
 func TestParseInferenceFinishedRecords_MissingRequiredField(t *testing.T) {
 	events := map[string][]string{
 		"inference_finished.inference_id": {"inf-1"},

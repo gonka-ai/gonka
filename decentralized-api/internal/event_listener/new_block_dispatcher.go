@@ -19,7 +19,6 @@ import (
 	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -36,6 +35,10 @@ type ChainStateClient interface {
 type StatusFunc func() (*coretypes.ResultStatus, error)
 
 type SetHeightFunc func(blockHeight int64) error
+
+type pocValidator interface {
+	ValidateAll(pocStageStartBlockHeight int64, pocStartBlockHash string)
+}
 
 // PoCParams contains Proof of Compute parameters
 type PoCParams struct {
@@ -59,7 +62,7 @@ type MlNodeReconciliationConfig struct {
 // OnNewBlockDispatcher orchestrates processing of new block events
 type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
-	pocOrchestrator      poc.Orchestrator
+	offChainValidator    pocValidator
 	queryClient          ChainStateClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
@@ -96,7 +99,7 @@ var DefaultReconciliationConfig = MlNodeReconciliationConfig{
 // NewOnNewBlockDispatcher creates a new dispatcher with default configuration
 func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
-	pocOrchestrator poc.Orchestrator,
+	offChainValidator pocValidator,
 	queryClient ChainStateClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
@@ -108,7 +111,7 @@ func NewOnNewBlockDispatcher(
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
 		nodeBroker:           nodeBroker,
-		pocOrchestrator:      pocOrchestrator,
+		offChainValidator:    offChainValidator,
 		queryClient:          queryClient,
 		phaseTracker:         phaseTracker,
 		reconciliationConfig: reconciliationConfig,
@@ -125,7 +128,7 @@ func NewOnNewBlockDispatcher(
 func NewOnNewBlockDispatcherFromCosmosClient(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
-	pocOrchestrator poc.Orchestrator,
+	offChainValidator pocValidator,
 	cosmosClient cosmosclient.CosmosMessageClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	reconciliationConfig MlNodeReconciliationConfig,
@@ -146,7 +149,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
-		pocOrchestrator,
+		offChainValidator,
 		queryClient,
 		phaseTracker,
 		getStatusFunc,
@@ -233,11 +236,6 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					"enabled", cache.IsEnabled, "count", len(addresses))
 			}
 
-			// Update PoC V2 enabled flags for runtime V1/V2 switching
-			if params.Params.PocParams != nil {
-				d.phaseTracker.UpdatePocV2Enabled(params.Params.PocParams.PocV2Enabled)
-				d.phaseTracker.UpdateConfirmationPocV2Enabled(params.Params.PocParams.ConfirmationPocV2Enabled)
-			}
 		}
 	}
 
@@ -345,7 +343,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {
-		logging.Info("DapiStage:IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
+		logging.Info("DapiStage:IsStartOfPocStage: generating and submitting PoC seed for upcoming epoch", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "epochIndex", epochContext.EpochIndex)
 		d.randomSeedManager.GenerateSeedInfo(epochContext.EpochIndex)
 		return
 	}
@@ -372,7 +370,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 					"pocStartBlockHeight", pocStartBlockHeight, "error", err)
 				return
 			}
-			d.pocOrchestrator.ValidateReceivedArtifacts(pocStartBlockHeight, pocStartBlockHash)
+			d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
 		}()
 	}
 
@@ -486,7 +484,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 				"poc_seed_block_hash", event.PocSeedBlockHash)
 
 			go func() {
-				d.pocOrchestrator.ValidateReceivedArtifacts(event.TriggerHeight, event.PocSeedBlockHash)
+				d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
 			}()
 		}
 
