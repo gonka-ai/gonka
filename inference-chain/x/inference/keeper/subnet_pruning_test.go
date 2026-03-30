@@ -1,6 +1,8 @@
 package keeper_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -218,6 +220,73 @@ func TestPruneSubnetData_UnsettledDistributionAmounts(t *testing.T) {
 	}
 
 	require.NoError(t, pruneSubnet(k, ctx, 5))
+}
+
+func TestPruneSubnetData_UnsettledEscrowPreservedOnPartialSendFailure(t *testing.T) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	// Create 4 unique validators in 16 slots (4 slots each)
+	addrs := make([]sdk.AccAddress, 4)
+	for i := range addrs {
+		addrs[i] = sdk.AccAddress(make([]byte, 20))
+		addrs[i][0] = byte(i + 1)
+	}
+
+	slots := make([]string, keeper.SubnetGroupSize)
+	for i := 0; i < 4; i++ {
+		slots[i] = addrs[0].String()
+	}
+	for i := 4; i < 8; i++ {
+		slots[i] = addrs[1].String()
+	}
+	for i := 8; i < 12; i++ {
+		slots[i] = addrs[2].String()
+	}
+	for i := 12; i < 16; i++ {
+		slots[i] = addrs[3].String()
+	}
+
+	escrow := &types.SubnetEscrow{
+		Creator:    "gonka1creator",
+		Amount:     8_000_000_000, // 8 GNK
+		Slots:      slots,
+		EpochIndex: 3,
+		Settled:    false, // unsettled
+	}
+	id, err := k.StoreSubnetEscrow(ctx, escrow, 1)
+	require.NoError(t, err)
+
+	// Validators are paid in slot order (deterministic): addr1, addr2, addr3, addr4.
+	// First 2 succeed, 3rd fails — distribution should abort with error.
+	sendCallCount := 0
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Eq("subnet_escrow_unsettled_distribution")).
+		DoAndReturn(func(_ context.Context, _ string, _ sdk.AccAddress, _ sdk.Coins, _ string) error {
+			sendCallCount++
+			if sendCallCount == 3 {
+				return fmt.Errorf("simulated bank send failure")
+			}
+			return nil
+		}).
+		Times(3) // called 3 times: 2 succeed, 3rd fails, 4th never reached
+
+	// The Remover should NOT delete the escrow when distribution fails.
+	// The Pruner framework logs the error and continues, so pruneSubnet returns nil.
+	// But the escrow must be preserved for retry on the next block.
+	err = pruneSubnet(k, ctx, 5)
+	require.NoError(t, err)
+
+	// Escrow must still exist so it can be retried next block.
+	_, found := k.GetSubnetEscrow(ctx, id)
+	require.True(t, found, "escrow must be preserved when distribution fails — fund loss bug")
+
+	// Pruning state must NOT advance past this epoch (epoch 3 is not fully pruned).
+	st, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Less(t, st.SubnetPrunedEpoch, int64(3),
+		"pruning state must not advance past epoch with failed distribution")
 }
 
 func TestPruneSubnetData_TracksProgress(t *testing.T) {

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -134,17 +135,17 @@ func (k Keeper) GetSubnetPruner(params types.Params) Pruner[collections.Pair[uin
 			escrow, found := k.GetSubnetEscrow(ctx, escrowID)
 			if found && !escrow.Settled {
 				if err := k.distributeUnsettledEscrow(ctx, escrow); err != nil {
-					k.LogError("failed to distribute unsettled escrow", types.Pruning,
-						"escrow_id", escrowID, "error", err)
+					// Do not delete the escrow — it must be retried next block.
+					return fmt.Errorf("failed to distribute unsettled escrow %d: %w", escrowID, err)
 				}
 			}
 
 			// Delete escrow and index entry
 			if err := k.SubnetEscrows.Remove(ctx, escrowID); err != nil {
-				k.LogError("failed to remove subnet escrow", types.Pruning, "escrow_id", escrowID, "error", err)
+				return fmt.Errorf("failed to remove subnet escrow %d: %w", escrowID, err)
 			}
 			if err := k.SubnetEscrowsByEpoch.Remove(ctx, collections.Join(epochIndex, escrowID)); err != nil {
-				k.LogError("failed to remove subnet escrow index", types.Pruning, "escrow_id", escrowID, "error", err)
+				return fmt.Errorf("failed to remove subnet escrow index %d: %w", escrowID, err)
 			}
 			return nil
 		},

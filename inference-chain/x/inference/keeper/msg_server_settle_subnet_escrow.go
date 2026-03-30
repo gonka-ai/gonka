@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -34,6 +35,9 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 			return nil, fmt.Errorf("host_stats slot_id %d out of range", hs.SlotId)
 		}
 		addr := escrow.Slots[hs.SlotId]
+		if validatorCosts[addr] > math.MaxUint64-hs.Cost {
+			return nil, fmt.Errorf("cost overflow for validator %s", addr)
+		}
 		validatorCosts[addr] += hs.Cost
 	}
 

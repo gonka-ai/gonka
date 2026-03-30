@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -52,8 +53,7 @@ func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.Subn
 		}
 		err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, recipient, coins, "subnet_escrow_unsettled_distribution")
 		if err != nil {
-			k.LogError("failed to distribute unsettled escrow funds", types.Pruning,
-				"escrow_id", escrow.Id, "address", addr, "error", err)
+			return fmt.Errorf("failed to distribute unsettled escrow %d to %s: %w", escrow.Id, addr, err)
 		}
 	}
 
