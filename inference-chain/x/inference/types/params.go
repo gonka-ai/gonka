@@ -209,6 +209,11 @@ func DefaultValidationParams() *ValidationParams {
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
 		BinomTestP0:                    DecimalFromFloat(0.10),
 		ClaimValidationEnabled:         false,
+		// Circuit breaker parameters — match the Go constant defaults in circuit_breaker.go
+		CbMissThresholdPct:      25,
+		CbMinSamples:            4,
+		CbInitialCooldownBlocks: 50,
+		CbMaxCooldownBlocks:     500,
 	}
 }
 

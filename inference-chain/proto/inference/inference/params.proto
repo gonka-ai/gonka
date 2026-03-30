@@ -104,6 +104,12 @@ message ValidationParams {
   Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
   Decimal binom_test_p0 = 24; // The null hypothesis probability for the binomial test (default 0.10)
   bool claim_validation_enabled = 25; // Enables claim-time validation checks in MsgClaimRewards
+
+  // Circuit breaker parameters (governance-adjustable without a chain upgrade)
+  uint64 cb_miss_threshold_pct = 26;       // miss rate % (0–100) above which a node is excluded (default 25)
+  uint64 cb_min_samples = 27;              // minimum inferences before threshold applies (default 4)
+  int64  cb_initial_cooldown_blocks = 28;  // initial exclusion cooldown in blocks (~5 min at 5s/block; default 50)
+  int64  cb_max_cooldown_blocks = 29;      // max cooldown with exponential backoff (~50 min; default 500)
 }
 
 message PoCModelParams {
