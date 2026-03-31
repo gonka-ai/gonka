@@ -517,3 +517,11 @@ func (b *Broker) autoTestNodeIfTimeAllows(node Node, caller string) {
 	_ = b.QueueMessage(NewSetNodeFailureReasonCommand(node.Id, ""))
 	logging.Info(caller+". Auto-test passed", types.Nodes, "node_id", node.Id)
 }
+
+// getFirstModelIdFromNode returns the first model ID from a node's Models map, or "" if empty.
+func getFirstModelIdFromNode(node Node) string {
+	for modelId := range node.Models {
+		return modelId
+	}
+	return ""
+}

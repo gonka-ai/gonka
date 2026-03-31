@@ -38,6 +38,7 @@ type Server struct {
 	statusReporter    *StatusReporter
 	tester            *MLnodeTestingOrchestrator
 	latestTestResults map[string]*TestResult
+	testingNodes      map[string]bool
 }
 
 func NewServer(
@@ -64,6 +65,7 @@ func NewServer(
 		statusReporter:    NewStatusReporter(),
 		tester:            NewMLnodeTestingOrchestrator(configManager, nodeBroker),
 		latestTestResults: map[string]*TestResult{},
+		testingNodes:      map[string]bool{},
 	}
 
 	e.Use(middleware.LoggingMiddleware)

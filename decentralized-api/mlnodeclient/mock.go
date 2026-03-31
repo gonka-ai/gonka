@@ -44,8 +44,6 @@ type MockClient struct {
 	DeleteModelError      error
 	ListModelsError       error
 	GetDiskSpaceError     error
-	InitGenerateV1Error   error
-	InitValidateV1Error   error
 
 	// Call tracking
 	StopCalled             int
@@ -73,22 +71,10 @@ type MockClient struct {
 	StopPowV2Called      int
 
 	// PoC v2 state
-	PowStatusV2           string // "IDLE", "GENERATING", etc.
-	InitGenerateV1Called  int
-	InitValidateV1Called  int
-	ValidateBatchV1Called int
-	GetPowStatusV1Called  int
-	GetPowStatusV2Called  int
-	StopPowV2Called       int
-	InitGenerateV2Called  int
-	PowStatusV1           PowStateV1
-	SetV2Status           func(status string)
+	PowStatusV2 string // "IDLE", "GENERATING", etc.
 
 	// Capture parameters
-	LastInitDto         *InitDtoV1
-	LastInitValidateDto *InitDtoV1
-	LastValidateBatch   ProofBatchV1
-	LastInferenceModel  string
+	LastInferenceModel string
 	LastInferenceArgs   []string
 	LastTrainingParams  struct {
 		TaskId         uint64
@@ -109,88 +95,11 @@ type MockClient struct {
 func (m *MockClient) SetV2Status(status string) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
-	m.V2Status = status
+	m.PowStatusV2 = status
 }
 
-// GetStopCalled returns the number of times Stop() was called (for tests)
-func (m *MockClient) GetStopCalled() int {
-	return m.StopCalled
-}
-
-// Stub for missing MLNodeClient methods
 func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
 	return []string{}, nil
-}
-func (m *MockClient) Reset() {}
-func (m *MockClient) InitGenerateV1(ctx context.Context, dto InitDtoV1) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.InitGenerateV1Called++
-	m.LastInitDto = &dto
-
-	if m.InitGenerateV1Error != nil {
-		return m.InitGenerateV1Error
-	}
-
-	// V1: init generate should move node into POW + GENERATING
-	m.CurrentState = MlNodeState_POW
-	m.PowStatusV1 = PowStateV1Generating
-	return nil
-}
-
-func (m *MockClient) InitValidateV1(ctx context.Context, dto InitDtoV1) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.InitValidateV1Called++
-	m.LastInitValidateDto = &dto
-
-	if m.InitValidateV1Error != nil {
-		return m.InitValidateV1Error
-	}
-
-	// V1: init validate should move node into POW + VALIDATING
-	m.CurrentState = MlNodeState_POW
-	m.PowStatusV1 = PowStateV1Validating
-	return nil
-}
-
-func (m *MockClient) ValidateBatchV1(ctx context.Context, batch ProofBatchV1) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.ValidateBatchV1Called++
-	m.LastValidateBatch = batch
-
-	// optional: validating a batch implies we are in validating mode
-	if m.PowStatusV1 == "" {
-		m.PowStatusV1 = PowStateV1Validating
-	}
-	return nil
-}
-
-func (m *MockClient) GetPowStatusV1(ctx context.Context) (*PowStatusResponseV1, error) {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.GetPowStatusV1Called++
-
-	if m.GetPowStatusError != nil {
-		return nil, m.GetPowStatusError
-	}
-
-	status := m.PowStatusV1
-	if status == "" {
-		status = PowStateV1Stopped
-		if m.CurrentState == MlNodeState_POW {
-			status = PowStateV1Idle
-		}
-	}
-	return &PowStatusResponseV1{
-		Status:             status,
-		IsModelInitialized: false,
-	}, nil
 }
 func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequestV2) (*PoCInitGenerateResponseV2, error) {
 	m.InitGenerateV2Called++
@@ -203,7 +112,7 @@ func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, 
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.GetPowStatusV2Called++
-	return &PoCStatusResponseV2{Status: m.V2Status}, nil
+	return &PoCStatusResponseV2{Status: m.PowStatusV2}, nil
 }
 func (m *MockClient) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) {
 	m.Mu.Lock()
