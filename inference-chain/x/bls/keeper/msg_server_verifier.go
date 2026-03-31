@@ -153,18 +153,19 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 }
 
 func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {
-	trueDealers := make(map[uint32]struct{})
-	for dealerIndex, isValid := range msg.DealerValidity {
+	trueDealerCount := 0
+	for _, isValid := range msg.DealerValidity {
 		if isValid {
-			trueDealers[uint32(dealerIndex)] = struct{}{}
+			trueDealerCount++
 		}
 	}
 
-	if len(msg.DealerValidityProofs) != len(trueDealers) {
-		return fmt.Errorf("dealer_validity_proofs count %d does not match true dealer count %d", len(msg.DealerValidityProofs), len(trueDealers))
+	if len(msg.DealerValidityProofs) != trueDealerCount {
+		return fmt.Errorf("dealer_validity_proofs count %d does not match true dealer count %d", len(msg.DealerValidityProofs), trueDealerCount)
 	}
 
-	proofsByDealer := make(map[uint32]*types.DealerValidityProof, len(msg.DealerValidityProofs))
+	// Index proofs by dealer index to keep validation path deterministic and allocation-light
+	proofsByDealer := make([]*types.DealerValidityProof, len(msg.DealerValidity))
 	for i := range msg.DealerValidityProofs {
 		proof := &msg.DealerValidityProofs[i]
 		if proof.DealerIndex >= uint32(len(epochBLSData.Participants)) {
@@ -173,13 +174,14 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 		if len(proof.ProofSignature) == 0 {
 			return fmt.Errorf("dealer_validity_proofs[%d].proof_signature must be non-empty", i)
 		}
-		if _, exists := trueDealers[proof.DealerIndex]; !exists {
+		dealerIndex := int(proof.DealerIndex)
+		if dealerIndex >= len(msg.DealerValidity) || !msg.DealerValidity[dealerIndex] {
 			return fmt.Errorf("proof provided for dealer %d that is marked false", proof.DealerIndex)
 		}
-		if _, exists := proofsByDealer[proof.DealerIndex]; exists {
+		if proofsByDealer[dealerIndex] != nil {
 			return fmt.Errorf("duplicate proof for dealer %d", proof.DealerIndex)
 		}
-		proofsByDealer[proof.DealerIndex] = proof
+		proofsByDealer[dealerIndex] = proof
 	}
 
 	slotIndices, err := participantSlotIndices(epochBLSData, participantIndex)
@@ -187,12 +189,17 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 		return err
 	}
 
-	for dealerIndex := range trueDealers {
-		proof, exists := proofsByDealer[dealerIndex]
-		if !exists {
+	// Deterministic iteration: walk dealer_validity by index
+	for dealerIndex, isValid := range msg.DealerValidity {
+		if !isValid {
+			continue
+		}
+
+		proof := proofsByDealer[dealerIndex]
+		if proof == nil {
 			return fmt.Errorf("missing proof for dealer %d", dealerIndex)
 		}
-		if err := ms.verifyDealerValidityProof(epochBLSData, int(dealerIndex), slotIndices, proof.ProofSignature); err != nil {
+		if err := ms.verifyDealerValidityProof(epochBLSData, dealerIndex, slotIndices, proof.ProofSignature); err != nil {
 			return fmt.Errorf("invalid proof for dealer %d: %w", dealerIndex, err)
 		}
 	}
@@ -218,7 +225,6 @@ func participantSlotIndices(epochBLSData *types.EpochBLSData, participantIndex i
 
 	return slotIndices, nil
 }
-
 
 func validateComplaintIndices(epochBLSData *types.EpochBLSData, dealerIndex, complainerIndex int, complaint *types.VerificationDealerComplaint) error {
 	if complaint == nil {
