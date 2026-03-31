@@ -101,7 +101,7 @@ func NewServer(
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
-	g.GET("participants/:address", s.getInferenceParticipantByAddress)
+	g.GET("participants/:address", s.getAccountByAddress)
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
 
@@ -161,6 +161,10 @@ func NewServer(
 
 	// PoC artifact state endpoint (for testermint/validators to get real count and root_hash)
 	g.GET("poc/artifacts/state", s.getPocArtifactsState)
+
+	v2 := e.Group("/v2/")
+	v2.GET("participants/:address", s.getParticipantByAddress)
+	v2.GET("accounts/:address", s.getAccountByAddress)
 
 	return s
 }

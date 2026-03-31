@@ -401,7 +401,7 @@ func (bm *BlsManager) getAllowedPubKeysForParticipant(participantAddress string)
 	}
 
 	// Get the participant's own public key
-	participant, err := queryClient.InferenceParticipant(bm.ctx, &inferenceTypes.QueryInferenceParticipantRequest{
+	participant, err := queryClient.AccountByAddress(bm.ctx, &inferenceTypes.QueryAccountByAddressRequest{
 		Address: participantAddress,
 	})
 	if err != nil {

@@ -28,23 +28,23 @@ type PubKeyGetter interface {
 	GetAccountPubKeysWithGrantees(ctx context.Context, granterAddress string) ([]string, error)
 }
 
-// SignatureData contains signature strings and participant pointers
+// SignatureData contains signature strings and signer addresses
 type SignatureData struct {
-	DevSignature      string             `json:"dev_signature"`
-	TransferSignature string             `json:"transfer_signature"`
-	ExecutorSignature string             `json:"executor_signature"`
-	Dev               *types.Participant `json:"dev"`
-	TransferAgent     *types.Participant `json:"transfer_agent"`
-	Executor          *types.Participant `json:"executor"`
+	DevSignature      string `json:"dev_signature"`
+	TransferSignature string `json:"transfer_signature"`
+	ExecutorSignature string `json:"executor_signature"`
+	Dev               string `json:"dev"`
+	TransferAgent     string `json:"transfer_agent"`
+	Executor          string `json:"executor"`
 }
 
-// VerifyKeys verifies signatures for each non-null participant in SignatureData
+// VerifyKeys verifies signatures for each provided address in SignatureData
 func VerifyKeys(ctx context.Context, components SignatureComponents, sigData SignatureData, pubKeyGetter PubKeyGetter) error {
-	// Check developer signature if developer participant is provided
-	if sigData.Dev != nil && sigData.DevSignature != "" {
-		devKey, err := pubKeyGetter.GetAccountPubKey(ctx, sigData.Dev.Address)
+	// Check developer signature if developer address is provided
+	if sigData.Dev != "" && sigData.DevSignature != "" {
+		devKey, err := pubKeyGetter.GetAccountPubKey(ctx, sigData.Dev)
 		if err != nil {
-			return sdkerrors.Wrap(types.ErrParticipantNotFound, sigData.Dev.Address)
+			return sdkerrors.Wrapf(err, "failed to get dev pubkey for account %s", sigData.Dev)
 		}
 
 		err = ValidateSignature(components, Developer, devKey, sigData.DevSignature)
@@ -53,11 +53,11 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 		}
 	}
 
-	// Check transfer agent signature if transfer agent participant is provided
-	if sigData.TransferAgent != nil && sigData.TransferSignature != "" {
-		agentKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.TransferAgent.Address)
+	// Check transfer agent signature if transfer agent address is provided
+	if sigData.TransferAgent != "" && sigData.TransferSignature != "" {
+		agentKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.TransferAgent)
 		if err != nil {
-			return sdkerrors.Wrap(types.ErrParticipantNotFound, sigData.TransferAgent.Address)
+			return sdkerrors.Wrapf(err, "failed to get transfer agent pubkeys for account %s", sigData.TransferAgent)
 		}
 
 		err = ValidateSignatureWithGrantees(components, TransferAgent, agentKeys, sigData.TransferSignature)
@@ -66,11 +66,11 @@ func VerifyKeys(ctx context.Context, components SignatureComponents, sigData Sig
 		}
 	}
 
-	// Check executor signature if executor participant is provided
-	if sigData.Executor != nil && sigData.ExecutorSignature != "" {
-		executorKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.Executor.Address)
+	// Check executor signature if executor address is provided
+	if sigData.Executor != "" && sigData.ExecutorSignature != "" {
+		executorKeys, err := pubKeyGetter.GetAccountPubKeysWithGrantees(ctx, sigData.Executor)
 		if err != nil {
-			return sdkerrors.Wrap(types.ErrParticipantNotFound, sigData.Executor.Address)
+			return sdkerrors.Wrapf(err, "failed to get executor pubkeys for account %s", sigData.Executor)
 		}
 
 		err = ValidateSignatureWithGrantees(components, ExecutorAgent, executorKeys, sigData.ExecutorSignature)

@@ -8,7 +8,7 @@ import (
 
 var (
 	ErrRequestAuth                  = echo.NewHTTPError(http.StatusUnauthorized, "Authorization is required")
-	ErrInferenceParticipantNotFound = echo.NewHTTPError(http.StatusNotFound, "Inference participant not found")
+	ErrAccountNotFound = echo.NewHTTPError(http.StatusNotFound, "Account not found")
 	ErrInsufficientBalance          = echo.NewHTTPError(http.StatusPaymentRequired, "Insufficient balance")
 
 	ErrIdRequired           = echo.NewHTTPError(http.StatusBadRequest, "Id is required")

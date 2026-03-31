@@ -143,6 +143,12 @@ type ModelPriceDto struct {
 	Capacity    *int64   `json:"capacity,omitempty"`    // Model capacity if available
 }
 
+type AccountDto struct {
+	Pubkey  string `json:"pubkey"`
+	Balance int64  `json:"balance"`
+	Denom   string `json:"denom"`
+}
+
 // FinalizedBlock represents a finalized block with optional receipts
 type BridgeBlock struct {
 	BlockNumber  string          `json:"blockNumber"`

@@ -17,18 +17,36 @@ import (
 func mockParticipantServer(t *testing.T, expectedAddress string, shouldSucceed bool) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/participants" {
-			// Handle participant lookup for waiting
-			if strings.HasPrefix(r.URL.Path, "/v1/participants/") && r.Method == "GET" {
+			// Handle participant lookup for waiting (v2 API)
+			if strings.HasPrefix(r.URL.Path, "/v2/participants/") && r.Method == "GET" {
 				if shouldSucceed {
-					response := InferenceParticipantResponse{
-						Pubkey:  "test-pubkey",
-						Balance: 1000,
+					response := ParticipantResponse{
+						Participant: struct {
+							Address      string `json:"address"`
+							InferenceUrl string `json:"inferenceUrl"`
+							Status       string `json:"status"`
+						}{
+							Address:      expectedAddress,
+							InferenceUrl: "http://test-node:8080",
+							Status:       "active",
+						},
 					}
 					w.Header().Set("Content-Type", "application/json")
 					json.NewEncoder(w).Encode(response)
 				} else {
 					http.NotFound(w, r)
 				}
+				return
+			}
+			// Handle account balance lookup (v2 API)
+			if strings.HasPrefix(r.URL.Path, "/v2/accounts/") && r.Method == "GET" {
+				response := AccountResponse{
+					Pubkey:  "test-pubkey",
+					Balance: 1000,
+					Denom:   "ngonka",
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(response)
 				return
 			}
 			http.NotFound(w, r)
