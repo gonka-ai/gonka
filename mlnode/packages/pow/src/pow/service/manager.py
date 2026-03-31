@@ -31,6 +31,7 @@ class PowInitRequest(BaseModel):
     r_target: float
     fraud_threshold: float
     params: Params = Params()
+    poc_stronger_rng: bool = False
 
 
 class PowInitRequestUrl(PowInitRequest):
@@ -79,6 +80,7 @@ class PowManager(IManager):
             batch_size=init_request.batch_size,
             r_target=init_request.r_target,
             devices=None,
+            poc_stronger_rng=init_request.poc_stronger_rng,
         )
         self.pow_sender = Sender(
             url=init_request.url,

@@ -39,6 +39,7 @@ class Controller:
         validated_batch_queue: Queue,
         to_validate_batch_queue: Queue,
         node_id: int,
+        poc_stronger_rng: bool = False,
     ):
         ctx = mp.get_context("spawn")
 
@@ -75,6 +76,7 @@ class Controller:
                 self.devices,
                 iterator,
                 self.node_id,
+                poc_stronger_rng,
             ),
             daemon=False,
         )
@@ -96,6 +98,7 @@ class Controller:
         devices: List[str],
         iterator: Iterator[int],
         node_id: int,
+        poc_stronger_rng: bool = False,
     ):
         worker = Worker(
             idx,
@@ -113,6 +116,7 @@ class Controller:
             devices,
             iterator,
             node_id,
+            poc_stronger_rng,
         )
         worker.run()
 
@@ -196,6 +200,7 @@ class ParallelController(ITrackableTask):
         batch_size: int,
         r_target: float,
         devices: Optional[List[str]] = None,
+        poc_stronger_rng: bool = False,
     ):
         ctx = mp.get_context("spawn")
 
@@ -247,6 +252,7 @@ class ParallelController(ITrackableTask):
                 validated_batch_queue=self.validated_batch_queue,
                 to_validate_batch_queue=self.to_validate_batch_queue,
                 node_id=self.node_id,
+                poc_stronger_rng=poc_stronger_rng,
             )
             for idx, gpu_group in enumerate(gpu_groups)
         ]

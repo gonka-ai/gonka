@@ -25,6 +25,7 @@ class PoCParamsModel(BaseModel):
     model: str
     seq_len: int
     k_dim: int = 12
+    poc_stronger_rng: bool = False
 
 
 class PoCInitGenerateRequest(BaseModel):

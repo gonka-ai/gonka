@@ -35,6 +35,7 @@ class Worker(multiprocessing.Process):
         devices: List[str],
         generator: Iterator[int],
         node_id: int,
+        poc_stronger_rng: bool = False,
     ):
         super().__init__()
         self.phase = phase
@@ -52,6 +53,7 @@ class Worker(multiprocessing.Process):
         self.generator = generator
         self.id = idx
         self.node_id = node_id
+        self.poc_stronger_rng = poc_stronger_rng
         self.compute: Compute = None
         self.interrupt_flag = False
         self.exception = None
@@ -66,6 +68,7 @@ class Worker(multiprocessing.Process):
             r_target=self.r_target,
             devices=self.devices,
             node_id=self.node_id,
+            poc_stronger_rng=self.poc_stronger_rng,
         )
         self.model_init_event.set()
         logger.info(f"[{self.id}] Worker initiated and models are created")

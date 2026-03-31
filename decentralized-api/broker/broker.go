@@ -785,6 +785,7 @@ type pocParams struct {
 	startPoCBlockHash   string
 	modelId             string
 	seqLen              int64
+	pocStrongerRng      bool
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1163,8 +1164,9 @@ func (b *Broker) enrichWithPocParams(params *pocParams) {
 	if paramsResp.Params.PocParams != nil {
 		params.modelId = paramsResp.Params.PocParams.ModelId
 		params.seqLen = paramsResp.Params.PocParams.SeqLen
+		params.pocStrongerRng = paramsResp.Params.PocParams.PocStrongerRngEnabled
 		logging.Info("Using PoC params", types.PoC,
-			"model_id", params.modelId, "seq_len", params.seqLen)
+			"model_id", params.modelId, "seq_len", params.seqLen, "poc_stronger_rng", params.pocStrongerRng)
 	}
 }
 
@@ -1184,6 +1186,7 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 					TotalNodes:  totalNodes,
 					Model:       pocGenParams.modelId,
 					SeqLen:      pocGenParams.seqLen,
+					PocStrongerRng:    pocGenParams.pocStrongerRng,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)

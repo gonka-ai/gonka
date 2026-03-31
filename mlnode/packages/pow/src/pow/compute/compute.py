@@ -61,12 +61,14 @@ class Compute(BaseCompute):
         r_target: float,
         devices: List[str],
         node_id: int,
+        poc_stronger_rng: bool = False,
     ):
         self.public_key = public_key
         self.block_hash = block_hash
         self.block_height = block_height
         self.r_target = r_target
         self.params = params
+        self.poc_stronger_rng = poc_stronger_rng
         self.stats = Stats()
         self.devices = devices
         
@@ -111,6 +113,7 @@ class Compute(BaseCompute):
                 nonce_batch,
                 dim=self.params.dim,
                 seq_len=self.params.seq_len,
+                poc_stronger_rng=self.poc_stronger_rng,
             )
 
         def get_permutations_batch(nonce_batch):

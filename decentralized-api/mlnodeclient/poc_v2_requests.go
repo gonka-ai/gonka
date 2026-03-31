@@ -15,6 +15,7 @@ import (
 type PoCParamsV2 struct {
 	Model  string `json:"model"`
 	SeqLen int64  `json:"seq_len"`
+    PocStrongerRng  bool   `json:"poc_stronger_rng,omitempty"`
 	// k_dim is intentionally omitted - MLNode will use its default
 }
 

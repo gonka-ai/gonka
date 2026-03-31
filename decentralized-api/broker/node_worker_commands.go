@@ -203,6 +203,7 @@ type StartPoCNodeCommandV2 struct {
 	TotalNodes  int
 	Model       string
 	SeqLen      int64
+	PocStrongerRng    bool
 }
 
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
@@ -244,6 +245,7 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		Params: mlnodeclient.PoCParamsV2{
 			Model:  c.Model,
 			SeqLen: c.SeqLen,
+			PocStrongerRng: c.PocStrongerRng,
 		},
 		URL: c.CallbackUrl,
 	}

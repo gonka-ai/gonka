@@ -146,6 +146,7 @@ message PocParams {
   PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
   uint32 validation_slots = 11;  // Number of slots sampled per participant (0 = disabled)
   bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
+  bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
 }
 
 message Decimal {
