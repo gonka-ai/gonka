@@ -660,7 +660,7 @@ func TestRegularPocScenario(t *testing.T) {
 	waitForAsync(300 * time.Millisecond)
 
 	// After PoC validation ends, V2 nodes remain in inference (PoC runs inside vLLM), no extra Stop/InferenceUp needed
-	expected = NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+	expected = NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InferenceUpCalled: 1}
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
