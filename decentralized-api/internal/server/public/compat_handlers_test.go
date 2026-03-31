@@ -95,9 +95,6 @@ func TestModelsEndpoint_Minimal(t *testing.T) {
 	require.Equal(t, uint64(4096), model.MaxOutputLength)
 	require.Equal(t, []string{"text"}, model.InputModalities)
 	require.Equal(t, []string{"text"}, model.OutputModalities)
-	require.NotNil(t, model.Pricing)
-	require.Equal(t, supportedSamplingParameters, model.SupportedSamplingParameters)
-	require.Equal(t, supportedFeatures, model.SupportedFeatures)
 
 	mc.AssertExpectations(t)
 }

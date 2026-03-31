@@ -35,43 +35,17 @@ func (s StringOrArray) First() string {
 	return s[0]
 }
 
-type ModelPricing struct {
-	Prompt          string `json:"prompt"`
-	Completion      string `json:"completion"`
-	Request         string `json:"request"`
-	Image           string `json:"image"`
-	InputCacheRead  string `json:"input_cache_read,omitempty"`
-	InputCacheWrite string `json:"input_cache_write,omitempty"`
-	Currency        string `json:"currency"`
-}
-
-type TopProvider struct {
-	ContextLength       uint64 `json:"context_length"`
-	MaxCompletionTokens uint64 `json:"max_completion_tokens"`
-	IsModerated         bool   `json:"is_moderated"`
-}
-
-type ModelMetadata struct {
-	Slug string `json:"slug"`
-}
-
 type ModelDescriptor struct {
-	ID                          string         `json:"id"`
-	HuggingFaceID               string         `json:"hugging_face_id,omitempty"`
-	Name                        string         `json:"name"`
-	Created                     int64          `json:"created"`
-	Description                 string         `json:"description,omitempty"`
-	InputModalities             []string       `json:"input_modalities"`
-	OutputModalities            []string       `json:"output_modalities"`
-	Quantization                string         `json:"quantization,omitempty"`
-	ContextLength               uint64         `json:"context_length"`
-	MaxOutputLength             uint64         `json:"max_output_length"`
-	Pricing                     *ModelPricing  `json:"pricing"`
-	SupportedSamplingParameters []string       `json:"supported_sampling_parameters"`
-	SupportedFeatures           []string       `json:"supported_features"`
-	TopProvider                 *TopProvider   `json:"top_provider,omitempty"`
-	PerRequestLimits            interface{}    `json:"per_request_limits,omitempty"`
-	Provider                    *ModelMetadata `json:"openrouter,omitempty"`
+	ID               string   `json:"id"`
+	HuggingFaceID    string   `json:"hugging_face_id,omitempty"`
+	Name             string   `json:"name"`
+	Created          int64    `json:"created"`
+	Description      string   `json:"description,omitempty"`
+	InputModalities  []string `json:"input_modalities"`
+	OutputModalities []string `json:"output_modalities"`
+	Quantization     string   `json:"quantization,omitempty"`
+	ContextLength    uint64   `json:"context_length"`
+	MaxOutputLength  uint64   `json:"max_output_length"`
 }
 
 type ModelsListResponse struct {

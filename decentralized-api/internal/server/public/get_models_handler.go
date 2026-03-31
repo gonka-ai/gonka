@@ -2,34 +2,10 @@ package public
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 )
-
-var (
-	modelSlugPrefix             = "gonka"
-	supportedSamplingParameters = []string{
-		"temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty", "stop", "seed",
-	}
-	supportedFeatures = []string{
-		"logprobs",
-	}
-)
-
-func pricingForModel(model *types.Model, unitOfComputePrice uint64) *ModelPricing {
-	pricePerToken := model.UnitsOfComputePerToken * unitOfComputePrice
-	priceStr := strconv.FormatUint(pricePerToken, 10)
-	return &ModelPricing{
-		Prompt:         priceStr,
-		Completion:     priceStr,
-		Request:        "0",
-		Image:          "0",
-		InputCacheRead: "0",
-		Currency:       "ngonka",
-	}
-}
 
 func (s *Server) getModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
@@ -43,7 +19,6 @@ func (s *Server) getModels(ctx echo.Context) error {
 
 	models := make([]ModelDescriptor, 0)
 	parentEpochData := currentEpoch.GetEpochGroupData()
-	unitOfComputePrice := uint64(parentEpochData.UnitOfComputePrice)
 
 	// Iterate over the subgroup models to get the snapshot for each one.
 	for _, modelId := range parentEpochData.SubGroupModels {
@@ -60,23 +35,18 @@ func (s *Server) getModels(ctx echo.Context) error {
 		if modelEpochData.EpochGroupData.ModelSnapshot != nil {
 			m := modelEpochData.EpochGroupData.ModelSnapshot
 			models = append(models, ModelDescriptor{
-				ID:                          m.Id,
-				HuggingFaceID:               m.HfRepo,
-				Name:                        m.Id,
-				Created:                     0,
-				InputModalities:             []string{"text"},
-				OutputModalities:            []string{"text"},
-				ContextLength:               m.ContextWindow,
-				MaxOutputLength:             m.ContextWindow,
-				Pricing:                     pricingForModel(m, unitOfComputePrice),
-				SupportedSamplingParameters: supportedSamplingParameters,
-				SupportedFeatures:           supportedFeatures,
-				Provider:                    &ModelMetadata{Slug: modelSlugPrefix},
+				ID:               m.Id,
+				HuggingFaceID:    m.HfRepo,
+				Name:             m.Id,
+				Created:          0,
+				InputModalities:  []string{"text"},
+				OutputModalities: []string{"text"},
+				ContextLength:    m.ContextWindow,
+				MaxOutputLength:  m.ContextWindow,
 			})
 		}
 	}
 
-	// NOTE: Response uses {data:[...]} envelope (OpenRouter-compatible).
 	return ctx.JSON(http.StatusOK, ModelsListResponse{
 		Data: models,
 	})
