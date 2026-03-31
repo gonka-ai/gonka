@@ -110,6 +110,12 @@ func (vc *VerificationCache) Get(epochID uint64) *VerificationResult {
 	return vc.results[epochID]
 }
 
+func (vc *VerificationCache) Delete(epochID uint64) {
+	vc.Lock()
+	defer vc.Unlock()
+	delete(vc.results, epochID)
+}
+
 func (vc *VerificationCache) GetCurrent() *VerificationResult {
 	vc.RLock()
 	defer vc.RUnlock()

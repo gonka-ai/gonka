@@ -164,6 +164,39 @@ func TestVerificationCacheEdgeCases(t *testing.T) {
 	assert.NotNil(t, cache.Get(1))
 }
 
+func TestVerificationCacheDelete(t *testing.T) {
+	cache := NewVerificationCache()
+
+	result1 := &VerificationResult{EpochID: 10, DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING}
+	result2 := &VerificationResult{EpochID: 11, DkgPhase: types.DKGPhase_DKG_PHASE_COMPLETED}
+	cache.Store(result1)
+	cache.Store(result2)
+
+	cache.Delete(10)
+
+	assert.Nil(t, cache.Get(10))
+	assert.Equal(t, result2, cache.Get(11))
+}
+
+func TestProcessDKGFailedClearsVerificationCache(t *testing.T) {
+	blsManager := NewBlsManager(createMockCosmosClient())
+	blsManager.cache.Store(&VerificationResult{EpochID: 77, DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING})
+	blsManager.cache.Store(&VerificationResult{EpochID: 78, DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING})
+
+	event := &chainevents.JSONRPCResponse{
+		Result: chainevents.Result{
+			Events: map[string][]string{
+				"inference.bls.EventDKGFailed.epoch_id": {"77"},
+			},
+		},
+	}
+
+	err := blsManager.ProcessDKGFailed(event)
+	assert.NoError(t, err)
+	assert.Nil(t, blsManager.GetVerificationResult(77))
+	assert.NotNil(t, blsManager.GetVerificationResult(78))
+}
+
 func TestVerifierCacheIntegration(t *testing.T) {
 	blsManager := NewBlsManager(createMockCosmosClient())
 

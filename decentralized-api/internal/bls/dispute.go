@@ -88,9 +88,9 @@ func (bm *BlsManager) ProcessDisputePhaseStarted(event *chainevents.JSONRPCRespo
 				"epochID", epochID, "dealerIndex", dealerIndex, "responses", len(responses), "error", err)
 			return nil
 		}
-		logging.Warn(blsLogTag+"Failed to submit dealer complaint responses on dispute start", inferenceTypes.BLS,
+		logging.Error(blsLogTag+"Failed to submit dealer complaint responses on dispute start", inferenceTypes.BLS,
 			"epochID", epochID, "dealerIndex", dealerIndex, "responses", len(responses), "error", err)
-		return nil
+		return fmt.Errorf("failed to submit dealer complaint responses for epoch %d dealer %d: %w", epochID, dealerIndex, err)
 	}
 
 	logging.Info(blsLogTag+"Submitted dealer complaint responses on dispute start", inferenceTypes.BLS,
@@ -110,6 +110,7 @@ func (bm *BlsManager) ProcessDKGFailed(event *chainevents.JSONRPCResponse) error
 	}
 
 	bm.deleteDealerOpeningsForEpoch(epochID)
+	bm.cache.Delete(epochID)
 	logging.Info(blsLogTag+"Cleaned dealer openings after DKG failure", inferenceTypes.BLS, "epochID", epochID)
 	return nil
 }
