@@ -119,9 +119,12 @@ func TestRecordCBResult_ProbeSuccess(t *testing.T) {
 
 	k.RecordCBResult(ctx, cbAddr1, 155, true)
 
-	// Entry should be deleted (=> defaults to healthy)
+	// Entry is kept in the store with State=HEALTHY, LastRestoredBlock set, and
+	// ProbeRestored=true so that EndBlock can apply the one-block grace period.
 	entry := k.GetCBEntry(ctx, cbAddr1)
 	require.Equal(t, keeperpkg.CBStateHealthy, entry.State)
+	require.Equal(t, int64(155), entry.LastRestoredBlock, "LastRestoredBlock should record the recovery block")
+	require.True(t, entry.ProbeRestored, "ProbeRestored should be true after probe success")
 }
 
 // TestRecordCBResult_ProbeFailure verifies PROBE → EXCLUDED (doubled cooldown) on miss.
@@ -167,11 +170,12 @@ func TestClearAllCBState(t *testing.T) {
 
 // TestHealthFilterExcludesHighMissRate verifies that a member with >25% miss rate
 // and ≥4 samples is excluded from the filtered list.
+// Uses two members so the safety fallback (return-all-when-all-excluded) doesn't fire.
 func TestHealthFilterExcludesHighMissRate(t *testing.T) {
 	k, ctx := keeper2.InferenceKeeper(t)
 
-	// 3 hits, 4 misses = 57% miss rate — above 25% threshold, above min 4 samples
-	participant := types.Participant{
+	// cbAddr1: 3 hits, 4 misses = 57% miss rate — above 25% threshold, above min 4 samples
+	unhealthy := types.Participant{
 		Index:   cbAddr1,
 		Address: cbAddr1,
 		Status:  types.ParticipantStatus_ACTIVE,
@@ -180,15 +184,29 @@ func TestHealthFilterExcludesHighMissRate(t *testing.T) {
 			MissedRequests: 4,
 		},
 	}
-	err := k.SetParticipant(ctx, participant)
+	err := k.SetParticipant(ctx, unhealthy)
+	require.NoError(t, err)
+
+	// cbAddr2: healthy node to prevent the safety fallback from returning all members
+	healthy := types.Participant{
+		Index:   cbAddr2,
+		Address: cbAddr2,
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 9,
+			MissedRequests: 1,
+		},
+	}
+	err = k.SetParticipant(ctx, healthy)
 	require.NoError(t, err)
 
 	filter := k.CreateHealthFilterFnForTest(ctx, ctx.BlockHeight())
-	members := makeCBMockMembers(cbAddr1)
+	members := makeCBMockMembers(cbAddr1, cbAddr2)
 	result := filter(members)
 
-	// Should be excluded due to high miss rate
-	require.Empty(t, result, "node with >25% miss rate should be excluded")
+	// cbAddr1 should be excluded; cbAddr2 should remain
+	require.Len(t, result, 1, "only the healthy node should survive the filter")
+	require.Equal(t, cbAddr2, result[0].Member.Address, "node with >25% miss rate should be excluded")
 
 	// Filter is now read-only: CB state must remain Healthy (EndBlock handles state transition)
 	entry := k.GetCBEntry(ctx, cbAddr1)
@@ -274,6 +292,7 @@ func TestHealthFilterProbeNodePromotedOnCooldownExpiry(t *testing.T) {
 
 // TestHealthFilterExcludedNodeStillInCooldown verifies that an excluded node
 // within its cooldown window remains excluded.
+// Uses two members so the safety fallback (return-all-when-all-excluded) doesn't fire.
 func TestHealthFilterExcludedNodeStillInCooldown(t *testing.T) {
 	k, ctx := keeper2.InferenceKeeper(t)
 
@@ -286,14 +305,29 @@ func TestHealthFilterExcludedNodeStillInCooldown(t *testing.T) {
 		CooldownBlocks:  cooldownBlocks,
 	})
 
+	// cbAddr2: healthy node to prevent the safety fallback from returning all members
+	healthy := types.Participant{
+		Index:   cbAddr2,
+		Address: cbAddr2,
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 9,
+			MissedRequests: 1,
+		},
+	}
+	err := k.SetParticipant(ctx, healthy)
+	require.NoError(t, err)
+
 	// Block height still within cooldown
 	blockHeight := excludedAtBlock + 10
 
 	filter := k.CreateHealthFilterFnForTest(ctx, blockHeight)
-	members := makeCBMockMembers(cbAddr1)
+	members := makeCBMockMembers(cbAddr1, cbAddr2)
 	result := filter(members)
 
-	require.Empty(t, result, "excluded node within cooldown should remain excluded")
+	// cbAddr1 (excluded, in cooldown) should be filtered out; cbAddr2 should remain
+	require.Len(t, result, 1, "only the healthy node should survive the filter")
+	require.Equal(t, cbAddr2, result[0].Member.Address, "excluded node within cooldown should remain excluded")
 }
 
 // TestHealthFilterFallbackAllDegraded verifies the safety fallback: if all nodes

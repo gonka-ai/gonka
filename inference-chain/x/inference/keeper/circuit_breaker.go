@@ -78,11 +78,19 @@ func (k Keeper) getCBParams(ctx context.Context) cbParams {
 
 // CircuitBreakerEntry holds the per-node state managed by the fast circuit breaker.
 type CircuitBreakerEntry struct {
-	Address        string  `json:"address"`
-	State          CBState `json:"state"`
-	ExcludedAtBlock int64  `json:"excluded_at_block"`
-	CooldownBlocks int64   `json:"cooldown_blocks"`
-	ProbeAttempts  int32   `json:"probe_attempts"`
+	Address          string  `json:"address"`
+	State            CBState `json:"state"`
+	ExcludedAtBlock  int64   `json:"excluded_at_block"`
+	CooldownBlocks   int64   `json:"cooldown_blocks"`
+	ProbeAttempts    int32   `json:"probe_attempts"`
+	// LastRestoredBlock is the block height at which a probe succeeded and the node was
+	// restored to HEALTHY. UpdateCBStateForBlock Pass 2 skips nodes where
+	// ProbeRestored == true && blockHeight == LastRestoredBlock (one-block grace period).
+	LastRestoredBlock int64 `json:"last_restored_block,omitempty"`
+	// ProbeRestored is true when the node was just restored from a probe success.
+	// This flag gates the grace-period check to avoid false positives when both
+	// LastRestoredBlock and blockHeight are zero (e.g. in tests or genesis block).
+	ProbeRestored bool `json:"probe_restored,omitempty"`
 }
 
 // cbStoreKey returns the raw byte key used to store a CB entry for an address.
@@ -268,6 +276,15 @@ func (k Keeper) UpdateCBStateForBlock(ctx context.Context, blockHeight int64) {
 			continue
 		}
 
+		// Grace period: skip nodes that were just restored to HEALTHY by a probe success
+		// in this same block. Without this, EndBlock Pass 2 would immediately re-exclude
+		// them based on stale miss-rate stats before any new inference data has arrived.
+		// ProbeRestored guards against false positives when LastRestoredBlock and
+		// blockHeight are both zero (default value for nodes never in a probe cycle).
+		if existing.ProbeRestored && existing.LastRestoredBlock == blockHeight {
+			continue
+		}
+
 		if total >= cbp.MinSamples && missedRequests*100 > cbp.MissThresholdPct*total {
 			k.ExcludeCBEntry(ctx, p.Index, blockHeight, false)
 			k.Logger().Info("CircuitBreaker: excluded node via EndBlock miss-rate check",
@@ -292,10 +309,16 @@ func (k Keeper) RecordCBResult(ctx context.Context, address string, blockHeight 
 	}
 
 	if success {
-		// Probe succeeded — restore to healthy, reset cooldown
+		// Probe succeeded — restore to HEALTHY and record the block height.
+		// We keep the entry (instead of deleting it) so that UpdateCBStateForBlock
+		// Pass 2 can detect the same-block grace period via LastRestoredBlock and
+		// skip the miss-rate re-exclusion check for this block.
 		k.Logger().Info("CircuitBreaker: probe succeeded, node restored to healthy",
 			"address", address, "blockHeight", blockHeight)
-		k.DeleteCBEntry(ctx, address)
+		entry.State = CBStateHealthy
+		entry.LastRestoredBlock = blockHeight
+		entry.ProbeRestored = true
+		k.SetCBEntry(ctx, entry)
 	} else {
 		// Probe failed — re-exclude with doubled cooldown
 		k.Logger().Info("CircuitBreaker: probe failed, re-excluding node",

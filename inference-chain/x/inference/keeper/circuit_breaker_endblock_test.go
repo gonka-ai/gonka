@@ -149,3 +149,114 @@ func TestUpdateCBStateForBlock_SkipsProbeNodes(t *testing.T) {
 	entry := k.GetCBEntry(ctx, cbAddr1)
 	require.Equal(t, keeperpkg.CBStateProbe, entry.State, "PROBE node should not be modified by miss-rate pass")
 }
+
+// TestProbeSuccessNotReExcludedSameBlock verifies the fix for the same-block re-exclusion bug:
+// When a probe succeeds in block N (RecordCBResult success=true), and then
+// UpdateCBStateForBlock runs in EndBlock of the same block N, the node should NOT
+// be re-excluded even if its miss-rate stats are above the threshold.
+func TestProbeSuccessNotReExcludedSameBlock(t *testing.T) {
+	k, ctx := keeper2.InferenceKeeper(t)
+	blockHeight := ctx.BlockHeight()
+
+	// Node is in PROBE state
+	k.SetCBEntry(ctx, keeperpkg.CircuitBreakerEntry{
+		Address:         cbAddr1,
+		State:           keeperpkg.CBStateProbe,
+		ExcludedAtBlock: blockHeight - 60,
+		CooldownBlocks:  keeperpkg.DefaultCBInitialCooldownBlocks,
+	})
+
+	// Participant has high miss-rate stats (stale — from before the probe)
+	participant := types.Participant{
+		Index:   cbAddr1,
+		Address: cbAddr1,
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 1,
+			MissedRequests: 3, // 75% miss rate — would normally trigger exclusion
+		},
+	}
+	err := k.SetParticipant(ctx, participant)
+	require.NoError(t, err)
+
+	// Probe succeeds in this block (e.g., FinishInference → RecordCBResult)
+	k.RecordCBResult(ctx, cbAddr1, blockHeight, true)
+
+	// Verify node is now HEALTHY with LastRestoredBlock set and ProbeRestored flagged
+	entry := k.GetCBEntry(ctx, cbAddr1)
+	require.Equal(t, keeperpkg.CBStateHealthy, entry.State, "probe success should restore node to HEALTHY")
+	require.Equal(t, blockHeight, entry.LastRestoredBlock, "LastRestoredBlock should be set to current block")
+	require.True(t, entry.ProbeRestored, "ProbeRestored should be true after probe success")
+
+	// EndBlock Pass 2 runs in the SAME block — node should survive re-exclusion check
+	k.UpdateCBStateForBlock(ctx, blockHeight)
+
+	entry = k.GetCBEntry(ctx, cbAddr1)
+	require.Equal(t, keeperpkg.CBStateHealthy, entry.State,
+		"probe-restored node should not be re-excluded by EndBlock miss-rate check in the same block")
+}
+
+// TestProbeSuccessCanBeExcludedNextBlock verifies that the one-block grace period is
+// exactly one block: in block N+1 the miss-rate check applies normally again.
+func TestProbeSuccessCanBeExcludedNextBlock(t *testing.T) {
+	k, ctx := keeper2.InferenceKeeper(t)
+	blockHeight := ctx.BlockHeight()
+
+	// Node is in PROBE state
+	k.SetCBEntry(ctx, keeperpkg.CircuitBreakerEntry{
+		Address:         cbAddr1,
+		State:           keeperpkg.CBStateProbe,
+		ExcludedAtBlock: blockHeight - 60,
+		CooldownBlocks:  keeperpkg.DefaultCBInitialCooldownBlocks,
+	})
+
+	// Probe succeeds in blockHeight
+	k.RecordCBResult(ctx, cbAddr1, blockHeight, true)
+
+	// High miss-rate participant stats
+	participant := types.Participant{
+		Index:   cbAddr1,
+		Address: cbAddr1,
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 1,
+			MissedRequests: 3, // 75% miss rate
+		},
+	}
+	err := k.SetParticipant(ctx, participant)
+	require.NoError(t, err)
+
+	// Next block: grace period has passed — miss-rate check applies
+	nextBlock := blockHeight + 1
+	k.UpdateCBStateForBlock(ctx, nextBlock)
+
+	entry := k.GetCBEntry(ctx, cbAddr1)
+	require.Equal(t, keeperpkg.CBStateExcluded, entry.State,
+		"in block N+1 (after grace), high miss-rate should cause re-exclusion")
+}
+
+// TestProbeFailureReExcludesImmediately verifies that a probe failure still
+// re-excludes the node immediately with doubled cooldown (unchanged behavior).
+func TestProbeFailureReExcludesImmediately(t *testing.T) {
+	k, ctx := keeper2.InferenceKeeper(t)
+	blockHeight := ctx.BlockHeight()
+
+	initialCooldown := keeperpkg.DefaultCBInitialCooldownBlocks
+	k.SetCBEntry(ctx, keeperpkg.CircuitBreakerEntry{
+		Address:         cbAddr1,
+		State:           keeperpkg.CBStateProbe,
+		ExcludedAtBlock: blockHeight - 60,
+		CooldownBlocks:  initialCooldown,
+	})
+
+	// Probe fails
+	k.RecordCBResult(ctx, cbAddr1, blockHeight, false)
+
+	entry := k.GetCBEntry(ctx, cbAddr1)
+	require.Equal(t, keeperpkg.CBStateExcluded, entry.State,
+		"probe failure should immediately re-exclude the node")
+	require.Equal(t, initialCooldown*2, entry.CooldownBlocks,
+		"cooldown should double on probe failure")
+	require.Equal(t, int32(1), entry.ProbeAttempts,
+		"probe attempts should increment on failure")
+}
