@@ -17,6 +17,7 @@ message AcquireMLNodeRequest {
 message AcquireMLNodeResponse {
   string lock_id  = 1;
   string endpoint = 2;
+  string node_id  = 3;
 }
 
 enum ReleaseOutcome {

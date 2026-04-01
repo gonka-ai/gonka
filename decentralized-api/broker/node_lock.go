@@ -11,29 +11,31 @@ import (
 var ErrLockNotFound = errors.New("lock not found")
 
 // AcquireMLNode queues a LockAvailableNode command, waits for a node,
-// records it in the lock map, and returns (lockID, inferenceURL).
-func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, error) {
+// records it in the lock map, and returns (lockID, inferenceURL, nodeID).
+func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error) {
 	ch := make(chan *Node, 2)
-	if err := b.QueueMessage(LockAvailableNode{
+	err = b.QueueMessage(LockAvailableNode{
 		Model:       model,
 		SkipNodeIDs: skipNodeIDs,
 		Response:    ch,
-	}); err != nil {
-		return "", "", err
+	})
+	if err != nil {
+		return
 	}
 
 	select {
 	case <-ctx.Done():
-		return "", "", ctx.Err()
+		return "", "", "", ctx.Err()
 	case node := <-ch:
 		if node == nil {
-			return "", "", ErrNoNodesAvailable
+			return "", "", "", ErrNoNodesAvailable
 		}
 		lockID := uuid.New().String()
 		b.lockMapMu.Lock()
 		b.lockMap[lockID] = lockEntry{nodeID: node.Id, createdAt: time.Now()}
 		b.lockMapMu.Unlock()
-		return lockID, node.InferenceUrl(), nil
+		version := b.configManager.GetCurrentNodeVersion()
+		return lockID, node.InferenceUrlWithVersion(version), node.Id, nil
 	}
 }
 
@@ -41,9 +43,7 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
 	b.lockMapMu.Lock()
 	entry, ok := b.lockMap[lockID]
-	if ok {
-		delete(b.lockMap, lockID)
-	}
+	delete(b.lockMap, lockID)
 	b.lockMapMu.Unlock()
 
 	if !ok {
@@ -53,7 +53,7 @@ func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
 	_ = b.QueueMessage(ReleaseNode{
 		NodeId:   entry.nodeID,
 		Outcome:  outcome,
-		Response: make(chan bool, 2),
+		Response: make(chan bool, 1),
 	})
 	return nil
 }

@@ -15,33 +15,35 @@ import (
 
 // mockBroker implements brokerAcquirer for testing.
 type mockBroker struct {
-	acquireFunc func(ctx context.Context, model string, skipNodeIDs []string) (string, string, error)
+	acquireFunc func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
 	releaseFunc func(lockID string, outcome broker.InferenceResult) error
 }
 
-func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, error) {
+func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error) {
 	return m.acquireFunc(ctx, model, skipNodeIDs)
 }
 func (m *mockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult) error {
 	return m.releaseFunc(lockID, outcome)
 }
+func (m *mockBroker) TriggerStatusQuery(_ bool) {}
 
 func TestAcquireMLNode_Success(t *testing.T) {
 	srv := NewServer(&mockBroker{
-		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, error) {
-			return "lock-abc", "http://host:8080/v1", nil
+		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
+			return "lock-abc", "http://host:8080/v1", "node-1", nil
 		},
 	})
 	resp, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})
 	require.NoError(t, err)
 	require.Equal(t, "lock-abc", resp.LockId)
 	require.Equal(t, "http://host:8080/v1", resp.Endpoint)
+	require.Equal(t, "node-1", resp.NodeId)
 }
 
 func TestAcquireMLNode_NoNodes(t *testing.T) {
 	srv := NewServer(&mockBroker{
-		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, error) {
-			return "", "", broker.ErrNoNodesAvailable
+		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
+			return "", "", "", broker.ErrNoNodesAvailable
 		},
 	})
 	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})
@@ -50,8 +52,8 @@ func TestAcquireMLNode_NoNodes(t *testing.T) {
 
 func TestAcquireMLNode_QueueFull(t *testing.T) {
 	srv := NewServer(&mockBroker{
-		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, error) {
-			return "", "", errors.New("queue full")
+		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
+			return "", "", "", errors.New("queue full")
 		},
 	})
 	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})

@@ -14,8 +14,9 @@ import (
 // brokerAcquirer is the subset of broker.Broker used by this server.
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
-	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint string, err error)
+	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
 	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
+	TriggerStatusQuery(bypassDebounce bool)
 }
 
 // Server implements gen.NodeManagerServer.
@@ -30,9 +31,9 @@ func NewServer(b brokerAcquirer) *Server {
 }
 
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	lockID, endpoint, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
+	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
 	if err == nil {
-		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint}, nil
+		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
 		return nil, status.Error(codes.ResourceExhausted, "no nodes available")
@@ -48,6 +49,9 @@ func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest)
 	outcome := outcomeFromProto(req.Outcome)
 	err := s.broker.ReleaseMLNode(req.LockId, outcome)
 	if err == nil {
+		if req.Outcome == gen.ReleaseOutcome_TRANSPORT_ERROR || req.Outcome == gen.ReleaseOutcome_TIMEOUT {
+			s.broker.TriggerStatusQuery(false)
+		}
 		return &gen.ReleaseMLNodeResponse{}, nil
 	}
 	if errors.Is(err, broker.ErrLockNotFound) {
