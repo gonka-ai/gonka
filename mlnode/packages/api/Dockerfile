@@ -72,9 +72,9 @@ COPY --from=builder /app/packages/api/.venv /app/packages/api/.venv
 
 COPY packages/api/src /app/packages/api/src
 
-COPY packages/pow/src /app/packages/pow/src
-COPY packages/pow/resources /app/packages/pow/resources
-COPY packages/pow/scripts /app/packages/pow/scripts
+# We patch the callbacks.py file to keep networking layer at mlnode
+# Callbacks are used when PoC v2 calculate nonces or validates batches.
+COPY packages/poc/patches /usr/local/lib/python3.12/dist-packages/vllm/poc/
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
@@ -102,9 +102,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && . /app/packages/api/.venv/bin/activate
 
 COPY packages/api/src /app/packages/api/src
-COPY packages/pow/src /app/packages/pow/src
-COPY packages/pow/resources /app/packages/pow/resources
-COPY packages/pow/scripts /app/packages/pow/scripts
+
+# We patch the callbacks.py file to keep networking layer at mlnode
+# Callbacks are used when PoC v2 calculate nonces or validates batches.
+COPY packages/poc/patches /usr/local/lib/python3.12/dist-packages/vllm/poc/
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
@@ -113,7 +114,6 @@ COPY packages/train/resources /app/packages/train/resources
 COPY packages/common/src /app/packages/common/src
 
 COPY packages/api/tests /app/packages/api/tests
-COPY packages/pow/tests /app/packages/pow/tests
 COPY packages/train/tests /app/packages/train/tests
 
 ENV PYTHONPATH="${PYTHONPATH}:/app/packages/api/src"
