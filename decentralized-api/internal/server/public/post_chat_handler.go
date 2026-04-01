@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -318,6 +319,9 @@ func validateMessageContent(message Message) error {
 
 	var s string
 	if json.Unmarshal(message.Content, &s) == nil {
+		if strings.TrimSpace(s) == "" {
+			return errors.New("empty message content")
+		}
 		return nil
 	}
 

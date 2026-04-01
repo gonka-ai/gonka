@@ -35,6 +35,7 @@ func (s *Server) getModels(ctx echo.Context) error {
 		if modelEpochData.EpochGroupData.ModelSnapshot != nil {
 			m := modelEpochData.EpochGroupData.ModelSnapshot
 			models = append(models, ModelDescriptor{
+				Object:           "model",
 				ID:               m.Id,
 				HuggingFaceID:    m.HfRepo,
 				Name:             m.Id,
@@ -48,7 +49,8 @@ func (s *Server) getModels(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, ModelsListResponse{
-		Data: models,
+		Object: "list",
+		Data:   models,
 	})
 }
 

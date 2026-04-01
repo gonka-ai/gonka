@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 
 	"decentralized-api/utils"
 
@@ -92,7 +91,7 @@ func (s *Server) completionFromChat(ctx echo.Context, body []byte, signBodyHash 
 	}
 	completionResp, err := transformChatToCompletionResponse(respBody)
 	if err != nil {
-		return nil, statusCode, respBody, nil
+		return nil, http.StatusInternalServerError, nil, fmt.Errorf("failed to transform chat to completion response: %w", err)
 	}
 	return completionResp, statusCode, respBody, nil
 }
@@ -151,35 +150,27 @@ func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *Comple
 	statusCodes := make([]int, len(prompts))
 	responseBodies := make([][]byte, len(prompts))
 
-	var wg sync.WaitGroup
 	for i, prompt := range prompts {
-		wg.Add(1)
-		go func(idx int, p string) {
-			defer wg.Done()
+		newBody, err := buildChatBodyFromCompletions(completionsReq, prompt)
+		if err != nil {
+			errors[i] = err
+			continue
+		}
 
-			newBody, err := buildChatBodyFromCompletions(completionsReq, p)
-			if err != nil {
-				errors[idx] = err
-				return
-			}
+		resp, statusCode, respBody, err := s.completionFromChat(ctx, newBody, signBodyHash)
+		if err != nil {
+			errors[i] = err
+			continue
+		}
 
-			resp, statusCode, respBody, err := s.completionFromChat(ctx, newBody, signBodyHash)
-			if err != nil {
-				errors[idx] = err
-				return
-			}
+		if resp == nil {
+			statusCodes[i] = statusCode
+			responseBodies[i] = respBody
+			continue
+		}
 
-			if resp == nil {
-				statusCodes[idx] = statusCode
-				responseBodies[idx] = respBody
-				return
-			}
-
-			results[idx] = resp
-		}(i, prompt)
+		results[i] = resp
 	}
-
-	wg.Wait()
 
 	for i, err := range errors {
 		if err != nil {

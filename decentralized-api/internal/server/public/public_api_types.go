@@ -36,6 +36,7 @@ func (s StringOrArray) First() string {
 }
 
 type ModelDescriptor struct {
+	Object           string   `json:"object,omitempty"`
 	ID               string   `json:"id"`
 	HuggingFaceID    string   `json:"hugging_face_id,omitempty"`
 	Name             string   `json:"name"`
@@ -49,7 +50,8 @@ type ModelDescriptor struct {
 }
 
 type ModelsListResponse struct {
-	Data []ModelDescriptor `json:"data"`
+	Object string            `json:"object"`
+	Data   []ModelDescriptor `json:"data"`
 }
 
 type CompletionsRequest struct {
