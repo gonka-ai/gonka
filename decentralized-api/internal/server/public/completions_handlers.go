@@ -92,12 +92,12 @@ func tryBuildOpenAiRequestFromCompletionsBody(body []byte) (OpenAiRequest, bool)
 		return OpenAiRequest{}, false
 	}
 
-	prompt := strings.TrimSpace(completionsReq.Prompt.First())
-	if prompt == "" {
+	rawPrompt := completionsReq.Prompt.First()
+	if strings.TrimSpace(rawPrompt) == "" {
 		return OpenAiRequest{}, false
 	}
 
-	content, err := json.Marshal(prompt)
+	content, err := json.Marshal(rawPrompt)
 	if err != nil {
 		return OpenAiRequest{}, false
 	}

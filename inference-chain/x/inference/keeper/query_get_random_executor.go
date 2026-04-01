@@ -73,7 +73,7 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 	if !found || effectiveEpoch == nil {
 		k.Logger().Error("GetRandomExecutor: createFilterFn: no effective epoch found",
 			"model_id", modelId)
-		return nil, status.Error(codes.NotFound, "GetRandomExecutor: no effective epoch found")
+		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: no effective epoch found")
 	}
 
 	epochParams, err := k.GetParams(goCtx)
@@ -83,7 +83,7 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 	if epochParams.EpochParams == nil {
 		k.Logger().Error("GetRandomExecutor: createFilterFn: epoch params are nil",
 			"model_id", modelId, "epoch_index", effectiveEpoch.Index)
-		return nil, status.Error(codes.NotFound, "GetRandomExecutor: epoch params are nill")
+		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: epoch params are nill")
 	}
 
 	epochContext, err := types.NewEpochContextFromEffectiveEpoch(*effectiveEpoch, *epochParams.EpochParams, sdkCtx.BlockHeight())
@@ -128,7 +128,7 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 		msg := fmt.Sprintf("GetRandomExecutor: createIsAvailableDuringPocFilterFn failed, can't find active participants. epochId = %d", epochId)
 		k.Logger().Error("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: active participants not found",
 			"epoch_id", epochId, "model_id", modelId)
-		return nil, status.Error(codes.NotFound, msg)
+		return nil, status.Error(codes.Unavailable, msg)
 	}
 
 	if activeParticipants.Participants == nil {

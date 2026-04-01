@@ -398,8 +398,11 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	executor, err := s.getExecutorForRequest(ctx.Request().Context(), request.OpenAiRequest.Model)
 	if err != nil {
 		logging.Error("Failed to get executor", types.Inferences, "model", request.OpenAiRequest.Model, "error", err)
-		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.NotFound {
-			return echo.NewHTTPError(http.StatusNotFound, "model not found")
+		if st, ok := grpcstatus.FromError(err); ok {
+			if st.Code() == codes.NotFound {
+				return echo.NewHTTPError(http.StatusNotFound, "model not found")
+			}
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "no executors available for model")
 		}
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "no executors available for model")
 	}

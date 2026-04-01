@@ -66,7 +66,7 @@ func (l *ChoiceLogprobs) UnmarshalJSON(data []byte) error {
 	// {"tokens":[...],"token_logprobs":[...],"top_logprobs":[{token:logprob,...}],...}
 	var completionLogprobs completionsLogprobs
 	if err := json.Unmarshal(data, &completionLogprobs); err != nil {
-		return nil
+		return err
 	}
 	if len(completionLogprobs.Tokens) == 0 {
 		l.Content = nil
