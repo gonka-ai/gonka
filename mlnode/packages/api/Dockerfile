@@ -72,9 +72,14 @@ COPY --from=builder /app/packages/api/.venv /app/packages/api/.venv
 
 COPY packages/api/src /app/packages/api/src
 
-# We patch the callbacks.py file to keep networking layer at mlnode
-# Callbacks are used when PoC v2 calculate nonces or validates batches.
-COPY packages/poc/patches /usr/local/lib/python3.12/dist-packages/vllm/poc/
+# We patch callbacks.py to keep the network layer at mlnode.
+# Resolve the installed vllm path dynamically to avoid hardcoding dist/site-packages.
+COPY packages/poc/patches /tmp/poc-patches
+RUN python3.12 -c "import pathlib, shutil; src = pathlib.Path('/tmp/poc-patches'); fallback = pathlib.Path('/usr/local/lib/python3.12/dist-packages/vllm/poc'); \
+try: import vllm; target = pathlib.Path(vllm.__file__).resolve().parent / 'poc' \
+except Exception: target = fallback; \
+target.mkdir(parents=True, exist_ok=True); [shutil.copy2(f, target / f.name) for f in src.glob('*')]" \
+    && rm -rf /tmp/poc-patches
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
@@ -103,9 +108,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY packages/api/src /app/packages/api/src
 
-# We patch the callbacks.py file to keep networking layer at mlnode
-# Callbacks are used when PoC v2 calculate nonces or validates batches.
-COPY packages/poc/patches /usr/local/lib/python3.12/dist-packages/vllm/poc/
+# We patch callbacks.py to keep the network layer at mlnode.
+# Resolve the installed vllm path dynamically to avoid hardcoding dist/site-packages.
+COPY packages/poc/patches /tmp/poc-patches
+RUN python3.12 -c "import pathlib, shutil; src = pathlib.Path('/tmp/poc-patches'); fallback = pathlib.Path('/usr/local/lib/python3.12/dist-packages/vllm/poc'); \
+try: import vllm; target = pathlib.Path(vllm.__file__).resolve().parent / 'poc' \
+except Exception: target = fallback; \
+target.mkdir(parents=True, exist_ok=True); [shutil.copy2(f, target / f.name) for f in src.glob('*')]" \
+    && rm -rf /tmp/poc-patches
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
