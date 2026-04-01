@@ -1253,7 +1253,7 @@ func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, 
 		additionalPubKeys = append(additionalPubKeys, append([]byte(nil), pubKeyBytes...))
 	}
 
-	//TODO: check if we should remove this additional key sorting
+	// Keep deterministic key ordering so ciphertext index mapping stays aligned across chain and DAPI
 	slices.SortFunc(additionalPubKeys, func(a, b []byte) int {
 		return bytes.Compare(a, b)
 	})

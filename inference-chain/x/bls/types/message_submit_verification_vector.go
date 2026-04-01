@@ -28,6 +28,10 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if len(m.DealerComplaints) > maxVerificationDealerComplaints {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_complaints exceeds maximum allowed count")
 	}
+	// A verifier can submit at most one complaint per dealer in a single verification vector.
+	if len(m.DealerComplaints) > len(m.DealerValidity) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_complaints count cannot exceed dealer_validity length")
+	}
 	seenDealers := make(map[uint32]struct{}, len(m.DealerComplaints))
 	for i, complaint := range m.DealerComplaints {
 		if complaint.DealerIndex >= uint32(len(m.DealerValidity)) {

@@ -49,18 +49,18 @@ func (bm *BlsManager) ProcessDisputePhaseStarted(event *chainevents.JSONRPCRespo
 
 		record, ok := bm.getDealerOpeningRecord(epochID, complaint.ComplainerIndex, ciphertextIndex)
 		if !ok {
-			logging.Warn(blsLogTag+"Missing opening record for complaint response", inferenceTypes.BLS,
+			logging.Error(blsLogTag+"Missing opening record for complaint response", inferenceTypes.BLS,
 				"epochID", epochID, "dealerIndex", dealerIndex, "complainerIndex", complaint.ComplainerIndex, "ciphertextIndex", ciphertextIndex)
 			continue
 		}
 		if record.slotIndex != disputedSlot {
-			logging.Warn(blsLogTag+"Opening record slot mismatch for complaint response", inferenceTypes.BLS,
+			logging.Error(blsLogTag+"Opening record slot mismatch for complaint response", inferenceTypes.BLS,
 				"epochID", epochID, "dealerIndex", dealerIndex, "complainerIndex", complaint.ComplainerIndex, "ciphertextIndex", ciphertextIndex,
 				"expectedSlot", disputedSlot, "actualSlot", record.slotIndex)
 			continue
 		}
 		if len(record.shareBytes) != 32 || len(record.seed) != dkgOpeningSeedLen {
-			logging.Warn(blsLogTag+"Opening record payload malformed for complaint response", inferenceTypes.BLS,
+			logging.Error(blsLogTag+"Opening record payload malformed for complaint response", inferenceTypes.BLS,
 				"epochID", epochID, "dealerIndex", dealerIndex, "complainerIndex", complaint.ComplainerIndex, "ciphertextIndex", ciphertextIndex,
 				"shareLen", len(record.shareBytes), "seedLen", len(record.seed))
 			continue

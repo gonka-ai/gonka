@@ -74,7 +74,10 @@ func (k Keeper) GetVerificationPhaseDurationBlocks(ctx context.Context) int64 {
 func (k Keeper) GetDisputePhaseDurationBlocks(ctx context.Context) int64 {
 	params, err := k.GetParams(ctx)
 	if err != nil {
-		return 0
+		return types.DefaultParams().DisputePhaseDurationBlocks
+	}
+	if params.DisputePhaseDurationBlocks <= 0 {
+		return types.DefaultParams().DisputePhaseDurationBlocks
 	}
 	return params.DisputePhaseDurationBlocks
 }
