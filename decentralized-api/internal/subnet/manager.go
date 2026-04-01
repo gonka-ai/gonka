@@ -394,7 +394,7 @@ func (m *HostManager) getValidatorPubKeys(ctx context.Context, validatorAddress,
 	queryClient := m.recorder.NewInferenceQueryClient()
 
 	// Account pubkey (secp256k1) -- the key used for signing payload requests
-	participant, err := queryClient.InferenceParticipant(ctx, &inferenceTypes.QueryInferenceParticipantRequest{
+	participant, err := queryClient.AccountByAddress(ctx, &inferenceTypes.QueryAccountByAddressRequest{
 		Address: granterAddress,
 	})
 	if err == nil && participant.Pubkey != "" {

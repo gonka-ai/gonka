@@ -554,7 +554,7 @@ func parseEventUnixMillis(events map[string][]string, key string, idx int) (stat
 	if err != nil {
 		return 0, err
 	}
-	if parsed < statsstorage.UnixMillisTimestampThreshold {
+	if parsed != 0 && parsed < statsstorage.UnixMillisTimestampThreshold {
 		return 0, fmt.Errorf("timestamp is in seconds %s", v)
 	}
 	return statsstorage.UnixMillis(parsed), nil

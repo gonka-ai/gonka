@@ -56,6 +56,7 @@ func initRootCmd(
 		txCommand(),
 		keys.Commands(),
 		SignatureCommands(),
+		PublishPubKeyCommand(),
 		CreateClientCommand(),
 		RegisterNewParticipantCommand(),
 		DownloadGenesisCommand(),

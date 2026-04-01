@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func (k Keeper) InferenceParticipant(goCtx context.Context, req *types.QueryInferenceParticipantRequest) (*types.QueryInferenceParticipantResponse, error) {
+func (k Keeper) AccountByAddress(goCtx context.Context, req *types.QueryAccountByAddressRequest) (*types.QueryAccountByAddressResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
@@ -24,18 +24,26 @@ func (k Keeper) InferenceParticipant(goCtx context.Context, req *types.QueryInfe
 
 	balance := k.BankView.SpendableCoin(ctx, addr, types.BaseCoin)
 
-	k.LogDebug("InferenceParticipant address converted", types.Participants, "address", addr.String())
+	k.LogDebug("AccountByAddress address converted", types.Participants, "address", addr.String())
 	acc := k.AccountKeeper.GetAccount(ctx, addr)
 	if acc == nil {
-		k.LogError("InferenceParticipant: Not Found", types.Participants, "address", req.Address)
+		k.LogError("AccountByAddress: Not Found", types.Participants, "address", req.Address)
 		return nil, status.Error(codes.NotFound, "account not found")
 	}
-	k.LogDebug("InferenceParticipant account found", types.Participants, "address", req.Address)
+	k.LogDebug("AccountByAddress account found", types.Participants, "address", req.Address)
 
-	k.LogDebug("InferenceParticipant balance", types.Participants, "balance", balance)
-	k.LogDebug("InferenceParticipant pubkey", types.Participants, "pubkey", acc.GetPubKey().Bytes())
-	return &types.QueryInferenceParticipantResponse{
-		Pubkey:  base64.StdEncoding.EncodeToString(acc.GetPubKey().Bytes()),
+	k.LogDebug("AccountByAddress balance", types.Participants, "balance", balance)
+
+	pubKey := acc.GetPubKey()
+	if pubKey == nil {
+		k.LogError("AccountByAddress: PubKey not found", types.Participants, "address", req.Address)
+		return nil, status.Error(codes.NotFound, types.ErrPubKeyUnavailable.Error())
+	}
+
+	k.LogDebug("AccountByAddress pubkey", types.Participants, "pubkey", pubKey.Bytes())
+	return &types.QueryAccountByAddressResponse{
+		Pubkey:  base64.StdEncoding.EncodeToString(pubKey.Bytes()),
 		Balance: balance.Amount.Int64(),
+		Denom:   types.BaseCoin,
 	}, nil
 }

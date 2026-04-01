@@ -69,8 +69,8 @@ service Query {
 
   }
 
-  // Queries a list of InferenceParticipant items.
-  rpc InferenceParticipant (QueryInferenceParticipantRequest) returns (QueryInferenceParticipantResponse) {
+  // Queries account public key and balance by address.
+  rpc AccountByAddress (QueryAccountByAddressRequest) returns (QueryAccountByAddressResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_participant/{address}";
 
   }
@@ -545,13 +545,14 @@ message QueryAllParticipantResponse {
            int64                                  block_height = 3;
 }
 
-message QueryInferenceParticipantRequest {
+message QueryAccountByAddressRequest {
   string address = 1;
 }
 
-message QueryInferenceParticipantResponse {
+message QueryAccountByAddressResponse {
   string pubkey  = 1;
   int64  balance = 2;
+  string denom   = 3;
 }
 
 message QueryGetRandomExecutorRequest {
