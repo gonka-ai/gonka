@@ -94,7 +94,7 @@ class SubnetTests : TestermintTest() {
             }
 
             logSection("Finalizing via proxy")
-            val status = genesis.getSubnetProxyStatus(handle.proxyUrl)
+            val statusBeforeFinalization = genesis.getSubnetProxyStatus(handle.proxyUrl)
             val result = genesis.finalizeSubnetProxy(handle.proxyUrl)
 
             logSection("Verifying settlement data")
@@ -102,14 +102,21 @@ class SubnetTests : TestermintTest() {
             assertThat(result.parsed.nonce).isGreaterThan(0)
             assertThat(result.parsed.hostStats).isNotEmpty()
             assertThat(result.parsed.signatures).isNotEmpty()
-            val expectedFees = status.config.createSubnetFee + (status.config.feePerNonce * result.parsed.nonce)
+
+            // Verify the fees.
+            // Note: no fees are charged for finalization nonces,
+            // so we calculate the expected fees based on the latest nonce _before_ finalization began.
+            val activeNonces = statusBeforeFinalization.nonce
+            val expectedFees = statusBeforeFinalization.config.createSubnetFee + (statusBeforeFinalization.config.feePerNonce * activeNonces)
+            assertThat(result.parsed.nonce).isGreaterThanOrEqualTo(activeNonces)
             assertThat(result.parsed.fees).isEqualTo(expectedFees)
+
             val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
             assertThat(totalCompletedValidations).isGreaterThan(0)
 
             val totalCost = result.parsed.hostStats.sumOf { it.cost }
 
-            // Hosts should receive the total cost for their inferneces + fees paid by the user.
+            // Hosts should receive the total cost for their inferences + fees paid by the user.
             val totalPayout = totalCost + result.parsed.fees
 
             // Refund: the user should get back any remaining balance after inference costs + fees.

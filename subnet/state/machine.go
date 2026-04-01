@@ -246,13 +246,18 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 		applied = append(applied, tx)
 	}
 
-	// Charge per applied nonce after tx effects are known.
-	if sm.state.Balance < sm.state.Config.FeePerNonce {
-		sm.restoreMutable(snap)
-		return nil, nil, types.ErrInsufficientBalance
+	// Charge per applied nonce only during the active phase.
+	// NOTE: During the finalization round, the `txs` slice will contain a [types.MsgFinalizeRound] message,
+	// the call to [StateMachine.applyTx] above will transition the state machine's phase to [types.PhaseFinalizing],
+	// and this block will be skipped.
+	if sm.state.Phase == types.PhaseActive {
+		if sm.state.Balance < sm.state.Config.FeePerNonce {
+			sm.restoreMutable(snap)
+			return nil, nil, types.ErrInsufficientBalance
+		}
+		sm.state.Balance -= sm.state.Config.FeePerNonce
+		sm.state.Fees += sm.state.Config.FeePerNonce
 	}
-	sm.state.Balance -= sm.state.Config.FeePerNonce
-	sm.state.Fees += sm.state.Config.FeePerNonce
 
 	sm.state.LatestNonce = nonce
 
@@ -321,13 +326,15 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.SubnetTx, postState
 		}
 	}
 
-	// 5. Charge per applied nonce after tx effects are known.
-	if sm.state.Balance < sm.state.Config.FeePerNonce {
-		sm.restoreMutable(snap)
-		return nil, types.ErrInsufficientBalance
+	// 5. Charge per applied nonce only during the active phase.
+	if sm.state.Phase == types.PhaseActive {
+		if sm.state.Balance < sm.state.Config.FeePerNonce {
+			sm.restoreMutable(snap)
+			return nil, types.ErrInsufficientBalance
+		}
+		sm.state.Balance -= sm.state.Config.FeePerNonce
+		sm.state.Fees += sm.state.Config.FeePerNonce
 	}
-	sm.state.Balance -= sm.state.Config.FeePerNonce
-	sm.state.Fees += sm.state.Config.FeePerNonce
 
 	// 6. Update nonce.
 	sm.state.LatestNonce = nonce

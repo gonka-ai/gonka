@@ -1272,6 +1272,33 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	require.Empty(t, st.Inferences)
 }
 
+// Verifies finalization rounds are free.
+func TestApplyDiff_FeePerNonce_NotChargedDuringFinalization(t *testing.T) {
+	// Build a session with a non-zero fee per nonce.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.CreateSubnetFee = 10
+	config.FeePerNonce = 7
+	verifier := signing.NewSecp256k1Verifier()
+
+	// Initialize the state machine and capture the pre-finalization balances.
+	sm, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier)
+	require.NoError(t, err)
+	stateBefore := sm.SnapshotState()
+
+	// Apply a finalize round diff and ensure no fee is charged.
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.SubnetTx{txFinalize()})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	stateAfter := sm.SnapshotState()
+	require.Equal(t, types.PhaseFinalizing, stateAfter.Phase)
+	require.Equal(t, stateBefore.Balance, stateAfter.Balance)
+	require.Equal(t, stateBefore.Fees, stateAfter.Fees)
+}
+
 func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
