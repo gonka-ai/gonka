@@ -198,6 +198,12 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
+	// Process maintenance window lifecycle transitions (Scheduled->Active, Active->Completed)
+	err = am.keeper.ProcessMaintenanceTransitions(ctx)
+	if err != nil {
+		am.LogError("Failed to process maintenance transitions", types.Maintenance, "error", err)
+	}
+
 	return nil
 }
 

@@ -75,5 +75,9 @@ func (msg *MsgRequestBridgeWithdrawal) GetSignersStrings() []string { return []s
 func (msg *MsgCreateSubnetEscrow) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgSettleSubnetEscrow) GetSignersStrings() []string { return []string{msg.Settler} }
 
+// Maintenance messages
+func (msg *MsgScheduleMaintenance) GetSignersStrings() []string { return []string{msg.Creator} }
+func (msg *MsgCancelMaintenance) GetSignersStrings() []string   { return []string{msg.Creator} }
+
 // And one validator signed message?
 func (msg *MsgBridgeExchange) GetSignersStrings() []string { return []string{msg.Validator} }
