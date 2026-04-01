@@ -16,7 +16,7 @@ from .data import Artifact
 logger = init_logger(__name__)
 
 # Signature key for HMAC-SHA256 (same format as receiver). Override via POC_SIGNATURE_KEY env.
-POC_SIGNATURE_KEY = (os.environ.get("POC_SIGNATURE_KEY") or "SIGNATURE").encode("utf-8")
+POC_SIGNATURE_KEY = (os.environ.get("POC_SIGNATURE_KEY") or "SOME_SIGNATURE_KEY").encode("utf-8")
 
 POC_CALLBACK_INTERVAL_SEC = float(os.environ.get("POC_CALLBACK_INTERVAL_SEC", "5"))
 POC_CALLBACK_MAX_ARTIFACTS = int(os.environ.get("POC_CALLBACK_MAX_ARTIFACTS", "1000000"))
