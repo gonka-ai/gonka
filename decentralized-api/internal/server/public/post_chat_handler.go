@@ -45,6 +45,8 @@ const (
 	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MB)
 	// This prevents memory exhaustion attacks from oversized requests
 	MaxRequestBodySize = 10 * 1024 * 1024
+
+	chatCompletionsPath = "/v1/chat/completions"
 )
 
 // Package-level variables for AuthKey reuse prevention
@@ -211,13 +213,13 @@ func (s *Server) postChat(ctx echo.Context) error {
 		logging.Error("Unable to read request body", types.Server, "error", err)
 		return err
 	}
-	return s.postChatWithBody(ctx, body, utils.GenerateSHA256Hash(string(body)))
+	return s.postChatWithBody(ctx, body, utils.GenerateSHA256Hash(string(body)), chatCompletionsPath, body)
 }
 
-func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash string) error {
+func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) error {
 	logging.Debug("PostChat. Received request", types.Inferences, "path", ctx.Request().URL.Path)
 
-	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAccountAddress(), body, signBodyHash)
+	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAccountAddress(), body, signBodyHash, forwardPath, forwardBody)
 	if err != nil {
 		return err
 	}
@@ -423,8 +425,16 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		}
 	}()
 
-	// It's important here to send the ORIGINAL body, not the finalRequest body. The executor will AGAIN go through
-	// the same process to create the same final request body
+	forwardPath := request.ForwardPath
+	if forwardPath == "" {
+		forwardPath = chatCompletionsPath
+	}
+	forwardBody := request.ForwardBody
+	if len(forwardBody) == 0 {
+		forwardBody = request.Body
+	}
+
+	// Send the same body shape to the next hop that was used for developer signature verification.
 	logging.Debug("Sending request to executor", types.Inferences, "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
 
 	if s.configManager.GetApiConfig().PublicUrl == executor.Url {
@@ -440,7 +450,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return s.handleExecutorRequest(ctx, request, ctx.Response().Writer)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
+	req, err := http.NewRequest(http.MethodPost, executor.Url+forwardPath, bytes.NewReader(forwardBody))
 	if err != nil {
 		logging.Error("handleTransferRequest. Failed to create request to the executor node", types.Inferences, "error", err)
 		return err
@@ -991,7 +1001,7 @@ func getInferenceErrorMessage(resp *http.Response) string {
 	}
 }
 
-func readRequest(request *http.Request, transferAddress string, body []byte, signBodyHash string) (*ChatRequest, error) {
+func readRequest(request *http.Request, transferAddress string, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) (*ChatRequest, error) {
 	openAiRequest := OpenAiRequest{}
 	if err := json.Unmarshal(body, &openAiRequest); err != nil {
 		logging.Warn("Invalid chat completion request body", types.Inferences, "error", err)
@@ -1005,9 +1015,17 @@ func readRequest(request *http.Request, transferAddress string, body []byte, sig
 	if request.Header.Get(utils.XTransferAddressHeader) != "" {
 		transferAddress = request.Header.Get(utils.XTransferAddressHeader)
 	}
+	if forwardPath == "" {
+		forwardPath = chatCompletionsPath
+	}
+	if len(forwardBody) == 0 {
+		forwardBody = body
+	}
 
 	return &ChatRequest{
 		Body:              body,
+		ForwardPath:       forwardPath,
+		ForwardBody:       append([]byte(nil), forwardBody...),
 		Request:           request,
 		OpenAiRequest:     openAiRequest,
 		AuthKey:           request.Header.Get(utils.AuthorizationHeader),

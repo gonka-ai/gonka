@@ -14,6 +14,8 @@ import (
 
 type ChatRequest struct {
 	Body              []byte
+	ForwardPath       string
+	ForwardBody       []byte
 	Request           *http.Request
 	OpenAiRequest     OpenAiRequest
 	AuthKey           string // signature signing inference request
