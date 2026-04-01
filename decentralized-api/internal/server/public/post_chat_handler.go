@@ -573,6 +573,11 @@ func (s *Server) extractPromptTextFromRequest(requestBytes []byte) (string, erro
 	if err != nil {
 		return "", err
 	}
+	if len(openAiRequest.Messages) == 0 {
+		if completionsRequest, ok := tryBuildOpenAiRequestFromCompletionsBody(requestBytes); ok {
+			openAiRequest = completionsRequest
+		}
+	}
 
 	promptText, ignoredParts := FlattenMessagesText(openAiRequest.Messages)
 	if ignoredParts > 0 {
@@ -618,11 +623,15 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
+	inferencePath := request.ForwardPath
+	if inferencePath == "" {
+		inferencePath = chatCompletionsPath
+	}
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
 			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()))
 
-		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "/v1/chat/completions")
+		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), inferencePath)
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
@@ -1002,10 +1011,19 @@ func getInferenceErrorMessage(resp *http.Response) string {
 }
 
 func readRequest(request *http.Request, transferAddress string, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) (*ChatRequest, error) {
+	if forwardPath == "" {
+		forwardPath = chatCompletionsPath
+	}
+
 	openAiRequest := OpenAiRequest{}
 	if err := json.Unmarshal(body, &openAiRequest); err != nil {
 		logging.Warn("Invalid chat completion request body", types.Inferences, "error", err)
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid chat completion request: "+err.Error())
+	}
+	if len(openAiRequest.Messages) == 0 && forwardPath == completionsPath {
+		if completionsRequest, ok := tryBuildOpenAiRequestFromCompletionsBody(body); ok {
+			openAiRequest = completionsRequest
+		}
 	}
 
 	timestamp, err := strconv.ParseInt(request.Header.Get(utils.XTimestampHeader), 10, 64)
@@ -1014,9 +1032,6 @@ func readRequest(request *http.Request, transferAddress string, body []byte, sig
 	}
 	if request.Header.Get(utils.XTransferAddressHeader) != "" {
 		transferAddress = request.Header.Get(utils.XTransferAddressHeader)
-	}
-	if forwardPath == "" {
-		forwardPath = chatCompletionsPath
 	}
 	if len(forwardBody) == 0 {
 		forwardBody = body

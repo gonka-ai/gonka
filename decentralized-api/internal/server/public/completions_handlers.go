@@ -1,12 +1,8 @@
 package public
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 
 	"decentralized-api/utils"
@@ -14,11 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-const (
-	scannerInitBufSize = 64 * 1024   // 64 KB initial buffer for SSE scanner
-	scannerMaxBufSize  = 1024 * 1024 // 1 MB max buffer for SSE scanner
-	completionsPath    = "/v1/completions"
-)
+const completionsPath = "/v1/completions"
 
 func transformCompletionsToChatRequest(req *CompletionsRequest) map[string]interface{} {
 	chatReq := map[string]interface{}{
@@ -59,306 +51,77 @@ func transformCompletionsToChatRequest(req *CompletionsRequest) map[string]inter
 	return chatReq
 }
 
-func transformCompletionsToChatRequestWithPrompt(req *CompletionsRequest, prompt string) map[string]interface{} {
-	clone := *req
-	clone.Prompt = StringOrArray{prompt}
-	return transformCompletionsToChatRequest(&clone)
-}
-
-func buildChatBodyFromCompletions(req *CompletionsRequest, prompt string) ([]byte, error) {
-	chatReq := transformCompletionsToChatRequestWithPrompt(req, prompt)
-	return json.Marshal(chatReq)
-}
-
-func (s *Server) executeChatRequest(ctx echo.Context, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) (int, []byte, error) {
-	rec := httptest.NewRecorder()
-	req := ctx.Request().Clone(ctx.Request().Context())
-
-	echoCtx := ctx.Echo().NewContext(req, rec)
-	if err := s.postChatWithBody(echoCtx, body, signBodyHash, forwardPath, forwardBody); err != nil {
-		echoCtx.Echo().HTTPErrorHandler(err, echoCtx)
-	}
-
-	return rec.Code, rec.Body.Bytes(), nil
-}
-
-func (s *Server) completionFromChat(ctx echo.Context, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) (*CompletionResponse, int, []byte, error) {
-	statusCode, respBody, err := s.executeChatRequest(ctx, body, signBodyHash, forwardPath, forwardBody)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	if statusCode != http.StatusOK {
-		return nil, statusCode, respBody, nil
-	}
-	completionResp, err := transformChatToCompletionResponse(respBody)
-	if err != nil {
-		return nil, http.StatusInternalServerError, nil, fmt.Errorf("failed to transform chat to completion response: %w", err)
-	}
-	return completionResp, statusCode, respBody, nil
-}
-
 func (s *Server) postCompletions(ctx echo.Context) error {
-	body, err := io.ReadAll(ctx.Request().Body)
+	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
 	}
-	ctx.Request().Body.Close()
-	signBodyHash := utils.GenerateSHA256Hash(string(body))
-	forwardBody := append([]byte(nil), body...)
 
 	var completionsReq CompletionsRequest
 	if err := json.Unmarshal(body, &completionsReq); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request format")
 	}
 
-	if len(completionsReq.Prompt) == 0 || completionsReq.Prompt.First() == "" {
+	if strings.TrimSpace(completionsReq.Model) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "model is required")
+	}
+	if len(completionsReq.Prompt) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "prompt is required")
 	}
-
-	if completionsReq.Stream {
-		return s.handleStreamingCompletions(ctx, &completionsReq, signBodyHash, forwardBody)
-	}
-
 	if len(completionsReq.Prompt) > 1 {
-		return s.handleBatchCompletions(ctx, &completionsReq, signBodyHash, forwardBody)
+		return echo.NewHTTPError(http.StatusBadRequest, "batch prompts are not supported")
+	}
+	for _, prompt := range completionsReq.Prompt {
+		if strings.TrimSpace(prompt) == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "prompt is required")
+		}
 	}
 
-	return s.handleSingleCompletion(ctx, &completionsReq, signBodyHash, forwardBody)
+	// Use the common request pipeline without local proxy recursion.
+	// Signature is always validated against the original /v1/completions body.
+	signBodyHash := utils.GenerateSHA256Hash(string(body))
+	return s.postChatWithBody(ctx, body, signBodyHash, completionsPath, body)
 }
 
-func (s *Server) handleSingleCompletion(ctx echo.Context, completionsReq *CompletionsRequest, signBodyHash string, forwardBody []byte) error {
-	newBody, err := buildChatBodyFromCompletions(completionsReq, completionsReq.Prompt.First())
+func tryBuildOpenAiRequestFromCompletionsBody(body []byte) (OpenAiRequest, bool) {
+	var completionsReq CompletionsRequest
+	if err := json.Unmarshal(body, &completionsReq); err != nil {
+		return OpenAiRequest{}, false
+	}
+	if strings.TrimSpace(completionsReq.Model) == "" || len(completionsReq.Prompt) != 1 {
+		return OpenAiRequest{}, false
+	}
+
+	prompt := strings.TrimSpace(completionsReq.Prompt.First())
+	if prompt == "" {
+		return OpenAiRequest{}, false
+	}
+
+	content, err := json.Marshal(prompt)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create chat request")
+		return OpenAiRequest{}, false
 	}
 
-	completionResp, statusCode, respBody, err := s.completionFromChat(ctx, newBody, signBodyHash, completionsPath, forwardBody)
-	if err != nil {
-		return err
+	var maxTokens int32
+	if completionsReq.MaxTokens != nil {
+		maxTokens = *completionsReq.MaxTokens
 	}
-	if completionResp == nil {
-		ctx.Response().WriteHeader(statusCode)
-		_, _ = ctx.Response().Write(respBody)
-		return nil
+	var seed int32
+	if completionsReq.Seed != nil {
+		seed = *completionsReq.Seed
 	}
 
-	return ctx.JSON(http.StatusOK, completionResp)
+	return OpenAiRequest{
+		Model:               completionsReq.Model,
+		Seed:                seed,
+		MaxTokens:           maxTokens,
+		MaxCompletionTokens: maxTokens,
+		Messages: []Message{{
+			Role:    "user",
+			Content: content,
+		}},
+	}, true
 }
-
-func (s *Server) handleBatchCompletions(ctx echo.Context, completionsReq *CompletionsRequest, signBodyHash string, forwardBody []byte) error {
-	prompts := completionsReq.Prompt
-	results := make([]*CompletionResponse, len(prompts))
-	errors := make([]error, len(prompts))
-	statusCodes := make([]int, len(prompts))
-	responseBodies := make([][]byte, len(prompts))
-
-	for i, prompt := range prompts {
-		newBody, err := buildChatBodyFromCompletions(completionsReq, prompt)
-		if err != nil {
-			errors[i] = err
-			continue
-		}
-
-		resp, statusCode, respBody, err := s.completionFromChat(ctx, newBody, signBodyHash, completionsPath, forwardBody)
-		if err != nil {
-			errors[i] = err
-			continue
-		}
-
-		if resp == nil {
-			statusCodes[i] = statusCode
-			responseBodies[i] = respBody
-			continue
-		}
-
-		results[i] = resp
-	}
-
-	for i, err := range errors {
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-		}
-		if results[i] == nil {
-			statusCode := statusCodes[i]
-			if statusCode == 0 {
-				return echo.NewHTTPError(http.StatusInternalServerError, "request failed without status")
-			}
-			ctx.Response().WriteHeader(statusCode)
-			_, _ = ctx.Response().Write(responseBodies[i])
-			return nil
-		}
-	}
-
-	return ctx.JSON(http.StatusOK, mergeBatchCompletionResponses(results))
-}
-
-func mergeBatchCompletionResponses(results []*CompletionResponse) *CompletionResponse {
-	if len(results) == 0 {
-		return nil
-	}
-
-	merged := &CompletionResponse{
-		ID:      results[0].ID,
-		Object:  "text_completion",
-		Created: results[0].Created,
-		Model:   results[0].Model,
-		Choices: make([]CompletionChoice, 0),
-	}
-
-	var totalPromptTokens, totalCompletionTokens, totalTokens int
-	hasUsage := false
-
-	for i, r := range results {
-		if r == nil {
-			continue
-		}
-		for _, c := range r.Choices {
-			c.Index = i
-			merged.Choices = append(merged.Choices, c)
-		}
-		if r.Usage != nil {
-			hasUsage = true
-			totalPromptTokens += r.Usage.PromptTokens
-			totalCompletionTokens += r.Usage.CompletionTokens
-			totalTokens += r.Usage.TotalTokens
-		}
-	}
-
-	if hasUsage {
-		merged.Usage = &struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		}{
-			PromptTokens:     totalPromptTokens,
-			CompletionTokens: totalCompletionTokens,
-			TotalTokens:      totalTokens,
-		}
-	}
-
-	return merged
-}
-
-func (s *Server) handleStreamingCompletions(ctx echo.Context, completionsReq *CompletionsRequest, signBodyHash string, forwardBody []byte) error {
-	if len(completionsReq.Prompt) > 1 {
-		return echo.NewHTTPError(http.StatusBadRequest, "streaming with batch prompts is not supported")
-	}
-
-	newBody, err := buildChatBodyFromCompletions(completionsReq, completionsReq.Prompt.First())
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create chat request")
-	}
-
-	pr, pw := io.Pipe()
-	statusChan := make(chan int, 1)
-
-	req := ctx.Request().Clone(ctx.Request().Context())
-
-	pipeResponseWriter := &pipeResponseWriter{
-		header:     make(http.Header),
-		pipeWriter: pw,
-		statusChan: statusChan,
-	}
-
-	echoCtx := ctx.Echo().NewContext(req, pipeResponseWriter)
-
-	go func() {
-		defer pw.Close()
-		if err := s.postChatWithBody(echoCtx, newBody, signBodyHash, completionsPath, forwardBody); err != nil {
-			echoCtx.Echo().HTTPErrorHandler(err, echoCtx)
-		}
-	}()
-
-	statusCode := <-statusChan
-
-	if statusCode != http.StatusOK {
-		body, _ := io.ReadAll(pr)
-		ctx.Response().WriteHeader(statusCode)
-		_, _ = ctx.Response().Write(body)
-		return nil
-	}
-
-	ctx.Response().Header().Set("Content-Type", "text/event-stream")
-	ctx.Response().Header().Set("Cache-Control", "no-cache")
-	ctx.Response().Header().Set("Connection", "keep-alive")
-	ctx.Response().WriteHeader(http.StatusOK)
-
-	scanner := bufio.NewScanner(pr)
-	scanner.Buffer(make([]byte, 0, scannerInitBufSize), scannerMaxBufSize)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if line == "" {
-			fmt.Fprintln(ctx.Response().Writer, "")
-			ctx.Response().Flush()
-			continue
-		}
-
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-
-			if data == "[DONE]" {
-				fmt.Fprintln(ctx.Response().Writer, "data: [DONE]")
-				ctx.Response().Flush()
-				continue
-			}
-
-			transformed, err := transformChatChunkToCompletionChunk(data)
-			if err != nil {
-				fmt.Fprintln(ctx.Response().Writer, line)
-			} else {
-				fmt.Fprintf(ctx.Response().Writer, "data: %s\n", transformed)
-			}
-			ctx.Response().Flush()
-		} else {
-			fmt.Fprintln(ctx.Response().Writer, line)
-			ctx.Response().Flush()
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(ctx.Response().Writer, "data: {\"error\": \"stream error: %s\"}\n", err.Error())
-		ctx.Response().Flush()
-	}
-
-	return nil
-}
-
-type pipeResponseWriter struct {
-	header      http.Header
-	statusCode  int
-	pipeWriter  *io.PipeWriter
-	statusChan  chan int
-	headersSent bool
-}
-
-func (w *pipeResponseWriter) Header() http.Header {
-	return w.header
-}
-
-func (w *pipeResponseWriter) Write(data []byte) (int, error) {
-	if !w.headersSent {
-		w.sendStatus(http.StatusOK)
-	}
-	return w.pipeWriter.Write(data)
-}
-
-func (w *pipeResponseWriter) WriteHeader(statusCode int) {
-	w.sendStatus(statusCode)
-}
-
-func (w *pipeResponseWriter) sendStatus(statusCode int) {
-	if !w.headersSent {
-		w.statusCode = statusCode
-		w.headersSent = true
-		if w.statusChan != nil {
-			w.statusChan <- statusCode
-		}
-	}
-}
-
-func (w *pipeResponseWriter) Flush() {}
 
 func transformChatChunkToCompletionChunk(chatChunkJSON string) (string, error) {
 	var chatChunk ChatCompletionChunk

@@ -187,8 +187,8 @@ func (f *fakePricingQueryServer) GetModelPerTokenPrice(ctx context.Context, req 
 	}, nil
 }
 
-func (f *fakePricingQueryServer) InferenceParticipant(ctx context.Context, req *types.QueryInferenceParticipantRequest) (*types.QueryInferenceParticipantResponse, error) {
-	return &types.QueryInferenceParticipantResponse{
+func (f *fakePricingQueryServer) AccountByAddress(ctx context.Context, req *types.QueryAccountByAddressRequest) (*types.QueryAccountByAddressResponse, error) {
+	return &types.QueryAccountByAddressResponse{
 		Pubkey:  f.pubkey,
 		Balance: f.balance,
 	}, nil
@@ -249,7 +249,7 @@ func TestValidateRequester_InsufficientBalance(t *testing.T) {
 	mockCosmos.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
 
 	s := &Server{recorder: mockCosmos}
-	requester := &types.QueryInferenceParticipantResponse{
+	requester := &types.QueryAccountByAddressResponse{
 		Pubkey:  devKey.GetPubKeyBase64(),
 		Balance: 0,
 	}
@@ -303,7 +303,7 @@ func TestValidateRequester_UnsupportedModel(t *testing.T) {
 	mockCosmos := &cosmosclient.MockCosmosMessageClient{}
 	mockCosmos.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
 
-	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker := &chainphase.ChainPhaseTracker{}
 	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 1}
 	params := &types.EpochParams{EpochLength: 1}
 	phaseTracker.Update(chainphase.BlockInfo{Height: 1, Hash: "hash-1"}, epoch, params, true, nil)
@@ -313,7 +313,7 @@ func TestValidateRequester_UnsupportedModel(t *testing.T) {
 		phaseTracker:        phaseTracker,
 		epochGroupDataCache: internal.NewEpochGroupDataCache(mockCosmos),
 	}
-	requester := &types.QueryInferenceParticipantResponse{
+	requester := &types.QueryAccountByAddressResponse{
 		Pubkey:  devKey.GetPubKeyBase64(),
 		Balance: 100,
 	}
