@@ -48,7 +48,7 @@ Each task includes:
 ### Section 1: Maintenance Data Model and API Surface
 
 #### 1.1 Define Maintenance Proto Messages and Queries
-- **Task**: [ ] Add maintenance-window message and query definitions
+- **Task**: [?] Add maintenance-window message and query definitions
 - **What**:
   - Define the message(s) and query surface for maintenance windows:
     - `MsgScheduleMaintenance`
@@ -68,7 +68,7 @@ Each task includes:
 - **Dependencies**: None
 
 #### 1.2 Add Maintenance State Types
-- **Task**: [ ] Define maintenance reservation state and per-participant `MaintenanceState`
+- **Task**: [?] Define maintenance reservation state and per-participant `MaintenanceState`
 - **What**:
   - Add a `MaintenanceReservation` state type with:
     - reservation ID
@@ -98,7 +98,7 @@ Each task includes:
 - **Dependencies**: 1.1
 
 #### 1.3 Add Governance Parameters
-- **Task**: [ ] Introduce maintenance parameter group inside global inference params
+- **Task**: [?] Introduce maintenance parameter group inside global inference params
 - **What**:
   - Add a maintenance parameter group to global params with at least:
     - enable/disable flag

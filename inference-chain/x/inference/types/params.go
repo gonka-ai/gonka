@@ -93,6 +93,14 @@ const (
 	DefaultSubnetMaxEscrowsPerEpoch uint32 = 100
 	DefaultSubnetGroupSize          uint32 = 16
 	DefaultSubnetTokenPrice         uint64 = 1
+
+	DefaultMaintenanceEnabled                          = false
+	DefaultMaintenanceMinScheduleLeadBlocks     uint64 = 100
+	DefaultMaintenanceMaxWindowBlocks           uint64 = 200
+	DefaultMaintenanceMaxConcurrentValidators   uint32 = 3
+	DefaultMaintenanceMaxConcurrentPowerBps     uint32 = 1000 // 10% in basis points
+	DefaultMaintenanceCreditCapBlocks           uint64 = 400
+	DefaultMaintenanceCreditEarnPerEpochBlocks  uint64 = 20
 )
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
@@ -158,7 +166,8 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
-		SubnetEscrowParams: DefaultSubnetEscrowParams(),
+		SubnetEscrowParams:  DefaultSubnetEscrowParams(),
+		MaintenanceParams:   DefaultMaintenanceParams(),
 	}
 }
 
@@ -317,6 +326,34 @@ func DefaultSubnetEscrowParams() *SubnetEscrowParams {
 		AllowedCreatorAddresses: nil,
 		TokenPrice:              DefaultSubnetTokenPrice,
 	}
+}
+
+func DefaultMaintenanceParams() *MaintenanceParams {
+	return &MaintenanceParams{
+		MaintenanceEnabled:                             DefaultMaintenanceEnabled,
+		MaintenanceMinScheduleLeadBlocks:               DefaultMaintenanceMinScheduleLeadBlocks,
+		MaintenanceMaxWindowBlocks:                     DefaultMaintenanceMaxWindowBlocks,
+		MaintenanceMaxConcurrentValidators:             DefaultMaintenanceMaxConcurrentValidators,
+		MaintenanceMaxConcurrentPowerBps:               DefaultMaintenanceMaxConcurrentPowerBps,
+		MaintenanceCreditCapBlocks:                     DefaultMaintenanceCreditCapBlocks,
+		MaintenanceCreditEarnPerSuccessfulEpochBlocks:  DefaultMaintenanceCreditEarnPerEpochBlocks,
+	}
+}
+
+func (p *MaintenanceParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.MaintenanceMaxWindowBlocks == 0 {
+		return fmt.Errorf("maintenance max window blocks must be positive")
+	}
+	if p.MaintenanceCreditCapBlocks == 0 {
+		return fmt.Errorf("maintenance credit cap blocks must be positive")
+	}
+	if p.MaintenanceMaxConcurrentPowerBps > 10000 {
+		return fmt.Errorf("maintenance max concurrent power bps cannot exceed 10000")
+	}
+	return nil
 }
 
 func (p *SubnetEscrowParams) Validate() error {
@@ -503,6 +540,12 @@ func (p Params) Validate() error {
 
 	if p.SubnetEscrowParams != nil {
 		if err := p.SubnetEscrowParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.MaintenanceParams != nil {
+		if err := p.MaintenanceParams.Validate(); err != nil {
 			return err
 		}
 	}
