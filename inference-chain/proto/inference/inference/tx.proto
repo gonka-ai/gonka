@@ -14,6 +14,7 @@ import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/subnet_escrow.proto";
+import "inference/inference/maintenance.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -72,6 +73,8 @@ service Msg {
   rpc RegisterIbcTokenMetadata         (MsgRegisterIbcTokenMetadata) returns (MsgRegisterIbcTokenMetadataResponse);
   rpc CreateSubnetEscrow               (MsgCreateSubnetEscrow) returns (MsgCreateSubnetEscrowResponse);
   rpc SettleSubnetEscrow               (MsgSettleSubnetEscrow) returns (MsgSettleSubnetEscrowResponse);
+  rpc ScheduleMaintenance              (MsgScheduleMaintenance) returns (MsgScheduleMaintenanceResponse);
+  rpc CancelMaintenance                (MsgCancelMaintenance) returns (MsgCancelMaintenanceResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -626,3 +629,25 @@ message MsgSettleSubnetEscrow {
 }
 
 message MsgSettleSubnetEscrowResponse {}
+
+// MsgScheduleMaintenance schedules a maintenance window for a participant.
+message MsgScheduleMaintenance {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator       = 1;
+  string participant   = 2;
+  int64  start_height  = 3;
+  uint64 duration_blocks = 4;
+}
+
+message MsgScheduleMaintenanceResponse {
+  uint64 reservation_id = 1;
+}
+
+// MsgCancelMaintenance cancels a not-yet-active maintenance reservation.
+message MsgCancelMaintenance {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator        = 1;
+  uint64 reservation_id = 2;
+}
+
+message MsgCancelMaintenanceResponse {}

@@ -104,6 +104,12 @@ const (
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
 	Query_SubnetEscrow_FullMethodName                              = "/inference.inference.Query/SubnetEscrow"
 	Query_SubnetHostEpochStats_FullMethodName                      = "/inference.inference.Query/SubnetHostEpochStats"
+	Query_MaintenanceCredit_FullMethodName                         = "/inference.inference.Query/MaintenanceCredit"
+	Query_MaintenanceScheduled_FullMethodName                      = "/inference.inference.Query/MaintenanceScheduled"
+	Query_MaintenanceActive_FullMethodName                         = "/inference.inference.Query/MaintenanceActive"
+	Query_MaintenanceStatus_FullMethodName                         = "/inference.inference.Query/MaintenanceStatus"
+	Query_MaintenanceConcurrency_FullMethodName                    = "/inference.inference.Query/MaintenanceConcurrency"
+	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
 )
 
 // QueryClient is the client API for Query service.
@@ -255,6 +261,18 @@ type QueryClient interface {
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
 	SubnetEscrow(ctx context.Context, in *QueryGetSubnetEscrowRequest, opts ...grpc.CallOption) (*QueryGetSubnetEscrowResponse, error)
 	SubnetHostEpochStats(ctx context.Context, in *QueryGetSubnetHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetSubnetHostEpochStatsResponse, error)
+	// Queries the maintenance credit balance for a participant.
+	MaintenanceCredit(ctx context.Context, in *QueryMaintenanceCreditRequest, opts ...grpc.CallOption) (*QueryMaintenanceCreditResponse, error)
+	// Queries scheduled maintenance windows for a participant.
+	MaintenanceScheduled(ctx context.Context, in *QueryMaintenanceScheduledRequest, opts ...grpc.CallOption) (*QueryMaintenanceScheduledResponse, error)
+	// Queries all currently active maintenance windows.
+	MaintenanceActive(ctx context.Context, in *QueryMaintenanceActiveRequest, opts ...grpc.CallOption) (*QueryMaintenanceActiveResponse, error)
+	// Queries the full maintenance status for a participant at the current height.
+	MaintenanceStatus(ctx context.Context, in *QueryMaintenanceStatusRequest, opts ...grpc.CallOption) (*QueryMaintenanceStatusResponse, error)
+	// Queries the concurrent reserved participant count and power at a given height.
+	MaintenanceConcurrency(ctx context.Context, in *QueryMaintenanceConcurrencyRequest, opts ...grpc.CallOption) (*QueryMaintenanceConcurrencyResponse, error)
+	// Queries whether a proposed maintenance window is schedulable.
+	MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error)
 }
 
 type queryClient struct {
@@ -1030,6 +1048,60 @@ func (c *queryClient) SubnetHostEpochStats(ctx context.Context, in *QueryGetSubn
 	return out, nil
 }
 
+func (c *queryClient) MaintenanceCredit(ctx context.Context, in *QueryMaintenanceCreditRequest, opts ...grpc.CallOption) (*QueryMaintenanceCreditResponse, error) {
+	out := new(QueryMaintenanceCreditResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceCredit_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceScheduled(ctx context.Context, in *QueryMaintenanceScheduledRequest, opts ...grpc.CallOption) (*QueryMaintenanceScheduledResponse, error) {
+	out := new(QueryMaintenanceScheduledResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceScheduled_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceActive(ctx context.Context, in *QueryMaintenanceActiveRequest, opts ...grpc.CallOption) (*QueryMaintenanceActiveResponse, error) {
+	out := new(QueryMaintenanceActiveResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceActive_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceStatus(ctx context.Context, in *QueryMaintenanceStatusRequest, opts ...grpc.CallOption) (*QueryMaintenanceStatusResponse, error) {
+	out := new(QueryMaintenanceStatusResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceStatus_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceConcurrency(ctx context.Context, in *QueryMaintenanceConcurrencyRequest, opts ...grpc.CallOption) (*QueryMaintenanceConcurrencyResponse, error) {
+	out := new(QueryMaintenanceConcurrencyResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceConcurrency_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error) {
+	out := new(QueryMaintenanceSchedulabilityResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceSchedulability_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -1179,6 +1251,18 @@ type QueryServer interface {
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
 	SubnetEscrow(context.Context, *QueryGetSubnetEscrowRequest) (*QueryGetSubnetEscrowResponse, error)
 	SubnetHostEpochStats(context.Context, *QueryGetSubnetHostEpochStatsRequest) (*QueryGetSubnetHostEpochStatsResponse, error)
+	// Queries the maintenance credit balance for a participant.
+	MaintenanceCredit(context.Context, *QueryMaintenanceCreditRequest) (*QueryMaintenanceCreditResponse, error)
+	// Queries scheduled maintenance windows for a participant.
+	MaintenanceScheduled(context.Context, *QueryMaintenanceScheduledRequest) (*QueryMaintenanceScheduledResponse, error)
+	// Queries all currently active maintenance windows.
+	MaintenanceActive(context.Context, *QueryMaintenanceActiveRequest) (*QueryMaintenanceActiveResponse, error)
+	// Queries the full maintenance status for a participant at the current height.
+	MaintenanceStatus(context.Context, *QueryMaintenanceStatusRequest) (*QueryMaintenanceStatusResponse, error)
+	// Queries the concurrent reserved participant count and power at a given height.
+	MaintenanceConcurrency(context.Context, *QueryMaintenanceConcurrencyRequest) (*QueryMaintenanceConcurrencyResponse, error)
+	// Queries whether a proposed maintenance window is schedulable.
+	MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1440,6 +1524,24 @@ func (UnimplementedQueryServer) SubnetEscrow(context.Context, *QueryGetSubnetEsc
 }
 func (UnimplementedQueryServer) SubnetHostEpochStats(context.Context, *QueryGetSubnetHostEpochStatsRequest) (*QueryGetSubnetHostEpochStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubnetHostEpochStats not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceCredit(context.Context, *QueryMaintenanceCreditRequest) (*QueryMaintenanceCreditResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceCredit not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceScheduled(context.Context, *QueryMaintenanceScheduledRequest) (*QueryMaintenanceScheduledResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceScheduled not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceActive(context.Context, *QueryMaintenanceActiveRequest) (*QueryMaintenanceActiveResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceActive not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceStatus(context.Context, *QueryMaintenanceStatusRequest) (*QueryMaintenanceStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceStatus not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceConcurrency(context.Context, *QueryMaintenanceConcurrencyRequest) (*QueryMaintenanceConcurrencyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceConcurrency not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceSchedulability not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2984,6 +3086,114 @@ func _Query_SubnetHostEpochStats_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_MaintenanceCredit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceCreditRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceCredit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceCredit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceCredit(ctx, req.(*QueryMaintenanceCreditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceScheduled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceScheduledRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceScheduled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceScheduled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceScheduled(ctx, req.(*QueryMaintenanceScheduledRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceActive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceActiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceActive(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceActive_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceActive(ctx, req.(*QueryMaintenanceActiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceStatus(ctx, req.(*QueryMaintenanceStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceConcurrency_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceConcurrencyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceConcurrency(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceConcurrency_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceConcurrency(ctx, req.(*QueryMaintenanceConcurrencyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceSchedulability_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceSchedulabilityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceSchedulability(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceSchedulability_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceSchedulability(ctx, req.(*QueryMaintenanceSchedulabilityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3330,6 +3540,30 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubnetHostEpochStats",
 			Handler:    _Query_SubnetHostEpochStats_Handler,
+		},
+		{
+			MethodName: "MaintenanceCredit",
+			Handler:    _Query_MaintenanceCredit_Handler,
+		},
+		{
+			MethodName: "MaintenanceScheduled",
+			Handler:    _Query_MaintenanceScheduled_Handler,
+		},
+		{
+			MethodName: "MaintenanceActive",
+			Handler:    _Query_MaintenanceActive_Handler,
+		},
+		{
+			MethodName: "MaintenanceStatus",
+			Handler:    _Query_MaintenanceStatus_Handler,
+		},
+		{
+			MethodName: "MaintenanceConcurrency",
+			Handler:    _Query_MaintenanceConcurrency_Handler,
+		},
+		{
+			MethodName: "MaintenanceSchedulability",
+			Handler:    _Query_MaintenanceSchedulability_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
