@@ -36,11 +36,14 @@ import (
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
 
+const validationHttpTimeout = 5 * time.Minute
+
 type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
 	nodeBroker    *broker.Broker
 	configManager *apiconfig.ConfigManager
 	phaseTracker  *chainphase.ChainPhaseTracker
+	httpClient    *http.Client
 }
 
 func NewInferenceValidator(
@@ -53,6 +56,7 @@ func NewInferenceValidator(
 		configManager: configManager,
 		recorder:      recorder,
 		phaseTracker:  phaseTracker,
+		httpClient:    &http.Client{Timeout: validationHttpTimeout},
 	}
 }
 
@@ -890,7 +894,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, err
 	}
 
-	resp, err := utils.SendPostJsonRequestWithAuth(context.Background(), http.DefaultClient, completionsUrl, requestMap, inferenceNode.AuthToken)
+	resp, err := utils.SendPostJsonRequestWithAuth(context.Background(), s.httpClient, completionsUrl, requestMap, inferenceNode.AuthToken)
 	if err != nil {
 		return nil, err
 	}

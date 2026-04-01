@@ -19,30 +19,34 @@ import (
 func (b *Broker) validateInferenceNode(node apiconfig.InferenceNodeConfig, excludeNodeId string) error {
 	errors := apiconfig.ValidateInferenceNodeBasic(node)
 
-	// Check for duplicate host+port combinations
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	// Check inference port uniqueness
-	for id, existingNode := range b.nodes {
-		if excludeNodeId != "" && id == excludeNodeId {
-			continue
-		}
-		if existingNode.Node.Host == node.Host && existingNode.Node.InferencePort == node.InferencePort {
-			errors = append(errors, fmt.Sprintf("duplicate inference host+port combination: %s:%d (already used by node '%s')", node.Host, node.InferencePort, id))
-			break
-		}
-	}
+	hasBaseURL := strings.TrimSpace(node.BaseURL) != ""
 
-	// Check PoC port uniqueness
 	for id, existingNode := range b.nodes {
 		if excludeNodeId != "" && id == excludeNodeId {
 			continue
 		}
-		if existingNode.Node.Host == node.Host && existingNode.Node.PoCPort == node.PoCPort {
-			errors = append(errors, fmt.Sprintf("duplicate PoC host+port combination: %s:%d (already used by node '%s')", node.Host, node.PoCPort, id))
-			break
+
+		existingHasBaseURL := strings.TrimSpace(existingNode.Node.BaseURL) != ""
+
+		if hasBaseURL && existingHasBaseURL {
+			// Both use baseURL mode: check baseURL uniqueness
+			if strings.TrimRight(node.BaseURL, "/") == strings.TrimRight(existingNode.Node.BaseURL, "/") {
+				errors = append(errors, fmt.Sprintf("duplicate baseURL: %s (already used by node '%s')", node.BaseURL, id))
+				break
+			}
+		} else if !hasBaseURL && !existingHasBaseURL {
+			// Both use Host+Port mode: check host+port uniqueness
+			if existingNode.Node.Host == node.Host && existingNode.Node.InferencePort == node.InferencePort {
+				errors = append(errors, fmt.Sprintf("duplicate inference host+port combination: %s:%d (already used by node '%s')", node.Host, node.InferencePort, id))
+			}
+			if existingNode.Node.Host == node.Host && existingNode.Node.PoCPort == node.PoCPort {
+				errors = append(errors, fmt.Sprintf("duplicate PoC host+port combination: %s:%d (already used by node '%s')", node.Host, node.PoCPort, id))
+			}
 		}
+		// baseURL vs Host+Port: different registration modes, no conflict possible
 	}
 
 	if len(errors) > 0 {

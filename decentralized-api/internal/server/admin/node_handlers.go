@@ -56,6 +56,8 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 			InferencePort:    node.InferencePort,
 			PoCSegment:       node.PoCSegment,
 			PoCPort:          node.PoCPort,
+			BaseURL:          node.BaseURL,
+			AuthToken:        node.AuthToken,
 			Models:           models,
 			Id:               node.Id,
 			MaxConcurrent:    node.MaxConcurrent,

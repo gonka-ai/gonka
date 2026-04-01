@@ -471,7 +471,7 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			Prompt: text,
 		}
 
-		resp, postErr := utils.SendPostJsonRequestWithAuth(context.Background(), http.DefaultClient, tokenizeUrl, reqBody, node.AuthToken)
+		resp, postErr := utils.SendPostJsonRequestWithAuth(context.Background(), s.httpClient, tokenizeUrl, reqBody, node.AuthToken)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
