@@ -76,6 +76,12 @@ var (
 	SubnetEscrowEpochCountPrefix           = collections.NewPrefix(50)
 	SubnetHostEpochStatsPrefix             = collections.NewPrefix(51)
 	SubnetEscrowsByEpochPrefix             = collections.NewPrefix(52)
+	// Maintenance window collections
+	MaintenanceReservationsPrefix          = collections.NewPrefix(53)
+	MaintenanceReservationCounterPrefix    = collections.NewPrefix(54)
+	MaintenanceStatesPrefix                = collections.NewPrefix(55)
+	MaintenanceTransitionsPrefix           = collections.NewPrefix(56)
+	MaintenanceStartHeightIndexPrefix      = collections.NewPrefix(57)
 	ParamsKey                              = []byte("p_inference")
 )
 

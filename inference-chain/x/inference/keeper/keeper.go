@@ -98,6 +98,12 @@ type (
 		SubnetEscrowEpochCount  collections.Map[uint64, uint64]
 		SubnetHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.SubnetHostEpochStats]
 		SubnetEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		// Maintenance window collections
+		MaintenanceReservations      collections.Map[uint64, types.MaintenanceReservation]
+		MaintenanceReservationCounter collections.Item[uint64]
+		MaintenanceStates            collections.Map[sdk.AccAddress, types.MaintenanceState]
+		MaintenanceTransitions       collections.Map[collections.Pair[int64, uint64], uint32]
+		MaintenanceStartHeightIndex  collections.Map[collections.Pair[int64, uint64], uint64]
 	}
 )
 
@@ -503,6 +509,41 @@ func NewKeeper(
 			"subnet_escrows_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
+		),
+		// Maintenance window collections
+		MaintenanceReservations: collections.NewMap(
+			sb,
+			types.MaintenanceReservationsPrefix,
+			"maintenance_reservations",
+			collections.Uint64Key,
+			codec.CollValue[types.MaintenanceReservation](cdc),
+		),
+		MaintenanceReservationCounter: collections.NewItem(
+			sb,
+			types.MaintenanceReservationCounterPrefix,
+			"maintenance_reservation_counter",
+			collections.Uint64Value,
+		),
+		MaintenanceStates: collections.NewMap(
+			sb,
+			types.MaintenanceStatesPrefix,
+			"maintenance_states",
+			sdk.AccAddressKey,
+			codec.CollValue[types.MaintenanceState](cdc),
+		),
+		MaintenanceTransitions: collections.NewMap(
+			sb,
+			types.MaintenanceTransitionsPrefix,
+			"maintenance_transitions",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+			collections.Uint32Value,
+		),
+		MaintenanceStartHeightIndex: collections.NewMap(
+			sb,
+			types.MaintenanceStartHeightIndexPrefix,
+			"maintenance_start_height_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+			collections.Uint64Value,
 		),
 	}
 	// Build the collections schema

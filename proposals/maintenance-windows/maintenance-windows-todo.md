@@ -118,7 +118,7 @@ Each task includes:
 - **Dependencies**: 1.2
 
 #### 1.4 Add Keeper Storage for Reservations
-- **Task**: [ ] Implement maintenance reservation persistence and indexes
+- **Task**: [?] Implement maintenance reservation persistence and indexes
 - **What**:
   - Add keeper state for:
     - reservation primary storage by reservation ID
