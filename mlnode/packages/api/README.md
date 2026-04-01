@@ -4,7 +4,7 @@ IMPORTNAT NOTE: Repo is originally named pow. Right after cloning, rename direct
 
 ## Setup
 
-1. Set up .env in root, packages/api, packages/pow, packages/train with the following (path below is an example):
+1. Set up .env in root, packages/api, and packages/train with the following (path below is an example):
 ```
 PROJECT_ROOT=/mnt/ramdisk/tamaz/mlnode
 ```
@@ -32,12 +32,15 @@ docker compose run server
 ```
 
 ```
-docker compose run pow-api-test
+docker compose run --rm unit-tests
 ```
 
-```
-docker compose run train-api-test
-```
+Train integration targets live under `packages/train` (see that package’s compose/Makefile).
+</think>
+Fixing a README mistake — I introduced malformed markdown.
+
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+Read
 
 
 

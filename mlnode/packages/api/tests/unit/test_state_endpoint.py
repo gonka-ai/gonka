@@ -12,9 +12,6 @@ from api.service_management import ServiceState
 @pytest.fixture(autouse=True)
 def reset_app_state():
     """Each test starts with a clean slate: no services running, no vLLM backends."""
-    pow_manager = Mock()
-    pow_manager.is_running.return_value = False
-
     inference_manager = Mock()
     inference_manager.is_running.return_value = False
     inference_manager.vllm_runner = None
@@ -23,7 +20,6 @@ def reset_app_state():
     train_manager = Mock()
     train_manager.is_running.return_value = False
 
-    app.state.pow_manager = pow_manager
     app.state.inference_manager = inference_manager
     app.state.train_manager = train_manager
     app.state.service_state = ServiceState.STOPPED
@@ -43,20 +39,6 @@ def test_stopped_node_returns_only_state_field(client):
     assert response.status_code == 200
     data = response.json()
     assert data["state"] == "STOPPED"
-    assert data["poc_status"] is None
-    assert data["inference_healthy"] is None
-    assert data["loaded_model"] is None
-
-
-def test_pow_mode_returns_only_state_field(client):
-    """Node is running old chain-level PoW (not vLLM-based PoC) — no enrichment."""
-    app.state.pow_manager.is_running.return_value = True
-
-    response = client.get("/api/v1/state")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["state"] == "POW"
     assert data["poc_status"] is None
     assert data["inference_healthy"] is None
     assert data["loaded_model"] is None

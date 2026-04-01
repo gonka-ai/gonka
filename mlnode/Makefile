@@ -19,12 +19,10 @@ endif
 
 down-all:
 	docker compose -f $(PROJECT_ROOT)/packages/api/docker-compose.yml down
-	docker compose -f $(PROJECT_ROOT)/packages/pow/docker-compose.yml down
 	docker compose -f $(PROJECT_ROOT)/packages/train/docker-compose.yml down
 
 setup-envs:
 	@$(MAKE) -C packages/api setup-envs
-	@$(MAKE) -C packages/pow setup-envs
 	@$(MAKE) -C packages/train setup-envs
 
 	@echo "PROJECT_ROOT=$(PROJECT_ROOT)" >.env
@@ -46,8 +44,6 @@ setup-dev-env:
 locks:
 	cd packages/common \
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
-	cd packages/pow \
-		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	cd packages/train \
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	cd packages/api \
@@ -62,29 +58,24 @@ locks:
 integration-tests: down-all
 	@echo "Running integration tests"
 	@$(MAKE) -C packages/api integration-tests
-	@$(MAKE) -C packages/pow integration-tests
 	@$(MAKE) -C packages/train integration-tests
 
 unit-tests:
 	@echo "Running unit tests"
 	@$(MAKE) -C packages/api unit-tests
-	@$(MAKE) -C packages/pow unit-tests
 	@$(MAKE) -C packages/train unit-tests
 
 unit-tests-local:
 	@$(MAKE) -C packages/api unit-tests-local
-	@$(MAKE) -C packages/pow unit-tests-local
 	@$(MAKE) -C packages/train unit-tests-local
 
 unit-tests-gpu: down-all
 	@echo "Running GPU unit tests"
 	@$(MAKE) -C packages/api unit-tests-gpu
-	@$(MAKE) -C packages/pow unit-tests-gpu
 	@$(MAKE) -C packages/train unit-tests-gpu
 
 unit-tests-gpu-local:
 	@$(MAKE) -C packages/api unit-tests-gpu-local
-	@$(MAKE) -C packages/pow unit-tests-gpu-local
 	@$(MAKE) -C packages/train unit-tests-gpu-local
 
 tests: unit-tests integration-tests unit-tests-gpu
@@ -129,5 +120,4 @@ release-latest: release push-latest
 
 generate-docs:
 	@$(MAKE) -C packages/api generate-docs
-	@$(MAKE) -C packages/pow generate-docs
 	@$(MAKE) -C packages/train generate-docs

@@ -38,8 +38,6 @@ RUN pip install --upgrade pip && \
 
 WORKDIR /app
 
-COPY packages/pow/pyproject.toml packages/pow/poetry.lock packages/pow/README.md \
-    /app/packages/pow/
 COPY packages/train/pyproject.toml packages/train/poetry.lock packages/train/README.md \
     /app/packages/train/
 COPY packages/api/pyproject.toml packages/api/poetry.lock packages/api/README.md \
@@ -51,8 +49,6 @@ COPY packages/train/third_party /app/packages/train/third_party
 
 RUN mkdir -p /app/packages/api/src/api \
         && touch /app/packages/api/src/api/__init__.py \
-    && mkdir -p /app/packages/pow/src/pow \
-        && touch /app/packages/pow/src/pow/__init__.py \
     && mkdir -p /app/packages/train/src/zeroband \
         && touch /app/packages/train/src/zeroband/__init__.py \
     && mkdir -p /app/packages/common/src/common \

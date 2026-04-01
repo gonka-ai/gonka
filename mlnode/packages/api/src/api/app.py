@@ -16,9 +16,6 @@ from api.gpu.routes import router as gpu_router
 from zeroband.service.manager import TrainManager
 from zeroband.service.routes import router as train_router
 
-from pow.service.manager import PowManager
-from pow.service.routes import router as pow_router
-
 from api.health import router as health_router
 
 from api.service_management import (
@@ -37,7 +34,6 @@ WATCH_INTERVAL = 2
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.service_state = ServiceState.STOPPED
-    app.state.pow_manager = PowManager()
     app.state.inference_manager = InferenceManager()
     app.state.train_manager = TrainManager()
     app.state.model_manager = ModelManager()
@@ -49,7 +45,6 @@ async def lifespan(app: FastAPI):
         watch_managers(
             app,
             [
-                app.state.pow_manager,
                 app.state.inference_manager,
                 app.state.train_manager,
             ],
@@ -58,11 +53,8 @@ async def lifespan(app: FastAPI):
     )
 
     yield
-    
-    if app.state.pow_manager.is_running():
-        app.state.pow_manager.stop()
+
     if app.state.inference_manager.is_running():
-        # Use async stop in async context to avoid blocking event loop
         await app.state.inference_manager._async_stop()
     if app.state.train_manager.is_running():
         app.state.train_manager.stop()
@@ -84,13 +76,6 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(health_router)
 
 app.add_middleware(ProxyMiddleware)
-
-app.include_router(
-    pow_router,
-    prefix=API_PREFIX,
-    tags=["PoW"],
-    dependencies=[Depends(check_service_conflicts)]
-)
 
 app.include_router(
     train_router,

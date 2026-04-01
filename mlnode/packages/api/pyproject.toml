@@ -13,7 +13,6 @@ packages = [{include = "api", from = "src"}]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.14"
 mlnode-train = { path = "../train", develop = true }
-mlnode-pow = { path = "../pow", develop = true }
 mlnode-common = { path = "../common", develop = true }
 scipy = ">=1.15.1"
 fire = ">=0.7.0"

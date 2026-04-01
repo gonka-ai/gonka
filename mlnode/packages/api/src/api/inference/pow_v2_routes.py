@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from common.logger import create_logger
 from api.proxy import (
     get_healthy_backends,
-    pick_backend_for_pow_generate,
+    pick_backend_for_poc_generate,
     call_backend,
     VLLM_HOST,
 )
@@ -190,7 +190,7 @@ async def status() -> dict:
 async def generate(body: PoCGenerateRequest) -> dict:
     """Route /generate to a backend using round-robin."""
     try:
-        port = await pick_backend_for_pow_generate()
+        port = await pick_backend_for_poc_generate()
     except RuntimeError:
         raise HTTPException(status_code=503, detail="No vLLM backends available")
     

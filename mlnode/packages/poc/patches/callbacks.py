@@ -121,7 +121,7 @@ class CallbackSender:
     async def _send_callback(self, session: aiohttp.ClientSession, payload: Dict, attempt: int = 1) -> bool:
         """Send callback with HMAC-SHA256 signature, return True on success."""
         try:
-            payload_json, signature = self._sign_payload(payload)
+            payload_json, signature = _sign_payload(payload)
             headers = {
                 "Content-Type": "application/json",
                 "X-Signature": signature,

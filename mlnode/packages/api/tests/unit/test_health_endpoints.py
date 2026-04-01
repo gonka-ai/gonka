@@ -35,14 +35,11 @@ class MockState:
         self.service_state = ServiceState.STOPPED
         
         # Mock managers
-        self.pow_manager = MagicMock()
         self.inference_manager = MagicMock()
         self.train_manager = MagicMock()
         self.gpu_manager = MagicMock()
         
         # Default: all managers not running and healthy
-        self.pow_manager.is_running.return_value = False
-        self.pow_manager.is_healthy.return_value = True
         self.inference_manager.is_running.return_value = False
         self.inference_manager.is_healthy.return_value = True
         self.train_manager.is_running.return_value = False
@@ -101,7 +98,6 @@ class TestGetHealthData:
         assert health_data.service_state == ServiceState.STOPPED
         assert health_data.gpu.available is True
         assert health_data.gpu.count == 2
-        assert health_data.managers.pow.running is False
         assert health_data.managers.inference.running is False
         assert health_data.managers.train.running is False
 
@@ -133,20 +129,6 @@ class TestGetHealthData:
         assert health_data.status == "unhealthy"
         assert health_data.managers.inference.running is True
         assert health_data.managers.inference.healthy is False
-
-    @pytest.mark.asyncio
-    async def test_get_health_data_pow_running_unhealthy(self):
-        """Test health data when POW manager is running but unhealthy."""
-        request = MockRequest()
-        request.app.state.service_state = ServiceState.POW
-        request.app.state.pow_manager.is_running.return_value = True
-        request.app.state.pow_manager.is_healthy.return_value = False
-        
-        health_data = await get_health_data(request)
-        
-        assert health_data.status == "unhealthy"
-        assert health_data.managers.pow.running is True
-        assert health_data.managers.pow.healthy is False
 
     @pytest.mark.asyncio
     async def test_get_health_data_train_running_unhealthy(self):
@@ -193,14 +175,11 @@ class TestHealthEndpoints:
         client = TestClient(app)
         
         # Mock the request dependencies
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -220,14 +199,11 @@ class TestHealthEndpoints:
         client = TestClient(app)
         
         # Mock the request dependencies
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -246,14 +222,11 @@ class TestHealthEndpoints:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -275,14 +248,11 @@ class TestHealthEndpoints:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.INFERENCE
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = True
         app.state.inference_manager.is_healthy.return_value = False
         app.state.train_manager.is_running.return_value = False
@@ -304,14 +274,11 @@ class TestHealthEndpoints:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -335,13 +302,10 @@ class TestHealthEndpoints:
         assert "devices" in data["gpu"]
         
         # Check managers info
-        assert "pow" in data["managers"]
         assert "inference" in data["managers"]
         assert "train" in data["managers"]
-        
-        # Check manager status fields
-        assert "running" in data["managers"]["pow"]
-        assert "healthy" in data["managers"]["pow"]
+        assert "running" in data["managers"]["inference"]
+        assert "healthy" in data["managers"]["inference"]
 
 
 # ============================================================================
@@ -357,13 +321,11 @@ class TestReadinessEndpoint:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
         app.state.inference_manager.is_running.return_value = False
         app.state.train_manager.is_running.return_value = False
         
@@ -376,13 +338,11 @@ class TestReadinessEndpoint:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
         app.state.inference_manager.is_running.return_value = False
         app.state.train_manager.is_running.return_value = False
         
@@ -398,13 +358,11 @@ class TestReadinessEndpoint:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.INFERENCE
         
-        app.state.pow_manager.is_running.return_value = False
         app.state.inference_manager.is_running.return_value = True
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -421,13 +379,11 @@ class TestReadinessEndpoint:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.INFERENCE
         
-        app.state.pow_manager.is_running.return_value = False
         app.state.inference_manager.is_running.return_value = True
         app.state.inference_manager.is_healthy.return_value = False
         app.state.train_manager.is_running.return_value = False
@@ -444,13 +400,11 @@ class TestReadinessEndpoint:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
         app.state.inference_manager.is_running.return_value = False
         app.state.train_manager.is_running.return_value = False
         
@@ -479,14 +433,11 @@ class TestResponseCaching:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -523,68 +474,8 @@ class TestResponseCaching:
 
 
 # ============================================================================
-# Tests for POW and TRAIN manager scenarios
+# Tests for TRAIN manager scenarios
 # ============================================================================
-
-class TestPOWManagerHealth:
-    """Test health endpoint with POW manager running."""
-
-    def test_health_pow_running_healthy(self):
-        """Test health when POW manager is running and healthy."""
-        app = FastAPI()
-        app.include_router(router)
-        client = TestClient(app)
-        
-        app.state.pow_manager = MagicMock()
-        app.state.inference_manager = MagicMock()
-        app.state.train_manager = MagicMock()
-        app.state.gpu_manager = MagicMock()
-        app.state.service_state = ServiceState.POW
-        
-        app.state.pow_manager.is_running.return_value = True
-        app.state.pow_manager.is_healthy.return_value = True
-        app.state.inference_manager.is_running.return_value = False
-        app.state.inference_manager.is_healthy.return_value = True
-        app.state.train_manager.is_running.return_value = False
-        app.state.train_manager.is_healthy.return_value = True
-        app.state.gpu_manager.is_cuda_available.return_value = True
-        app.state.gpu_manager.get_devices.return_value = []
-        app.state.gpu_manager.is_cuda_available_async = AsyncMock(return_value=True)
-        app.state.gpu_manager.get_devices_async = AsyncMock(return_value=[])
-        
-        response = client.get("/health")
-        data = response.json()
-        
-        assert response.status_code == 200
-        assert data["status"] == "healthy"
-        assert data["service_state"] == "POW"
-        assert data["managers"]["pow"]["running"] is True
-        assert data["managers"]["pow"]["healthy"] is True
-
-    def test_readyz_pow_running_healthy(self):
-        """Test readiness when POW is running and healthy."""
-        app = FastAPI()
-        app.include_router(router)
-        client = TestClient(app)
-        
-        app.state.pow_manager = MagicMock()
-        app.state.inference_manager = MagicMock()
-        app.state.train_manager = MagicMock()
-        app.state.gpu_manager = MagicMock()
-        app.state.service_state = ServiceState.POW
-        
-        app.state.pow_manager.is_running.return_value = True
-        app.state.pow_manager.is_healthy.return_value = True
-        app.state.inference_manager.is_running.return_value = False
-        app.state.train_manager.is_running.return_value = False
-        
-        response = client.get("/readyz")
-        data = response.json()
-        
-        # POW running returns 200 (ready)
-        assert response.status_code == 200
-        assert data["ready"] is True
-
 
 class TestTRAINManagerHealth:
     """Test health endpoint with TRAIN manager running."""
@@ -595,14 +486,11 @@ class TestTRAINManagerHealth:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.TRAIN
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = True
@@ -627,14 +515,11 @@ class TestTRAINManagerHealth:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.TRAIN
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = True
@@ -661,11 +546,9 @@ class TestEdgeCases:
     """Test edge cases and error scenarios."""
 
     def test_health_with_multiple_managers_all_running(self):
-        """Test health data when multiple managers are running (should not happen in practice)."""
+        """Test health data when inference is running (edge snapshot)."""
         request = MockRequest()
-        request.app.state.service_state = ServiceState.POW
-        request.app.state.pow_manager.is_running.return_value = True
-        request.app.state.pow_manager.is_healthy.return_value = True
+        request.app.state.service_state = ServiceState.INFERENCE
         request.app.state.inference_manager.is_running.return_value = True
         request.app.state.inference_manager.is_healthy.return_value = True
         request.app.state.train_manager.is_running.return_value = False
@@ -673,10 +556,9 @@ class TestEdgeCases:
 
         import asyncio
         health_data = asyncio.run(get_health_data(request))
-        
-        # If multiple are running and any is healthy, still should report their status
-        assert health_data.managers.pow.running is True
+
         assert health_data.managers.inference.running is True
+        assert health_data.managers.train.running is False
 
     def test_gpu_with_many_devices(self):
         """Test GPU info with many devices."""
@@ -684,14 +566,11 @@ class TestEdgeCases:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -722,14 +601,11 @@ class TestEdgeCases:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -754,14 +630,11 @@ class TestEdgeCases:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -790,30 +663,26 @@ class TestEdgeCases:
         assert data_health["status"] == data_livez["status"]
         assert data_health["service_state"] == data_livez["service_state"]
 
-    def test_readyz_only_checks_inference_health(self):
-        """Test that readiness only depends on inference health, not POW or TRAIN."""
+    def test_readyz_train_running_unhealthy_returns_503(self):
+        """When TRAIN is active, readiness reflects train manager health."""
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
-        
-        app.state.pow_manager = MagicMock()
+
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
-        app.state.service_state = ServiceState.POW  # POW is running
-        
-        app.state.pow_manager.is_running.return_value = True
-        app.state.pow_manager.is_healthy.return_value = False  # But unhealthy
+        app.state.service_state = ServiceState.TRAIN
+
         app.state.inference_manager.is_running.return_value = False
-        app.state.train_manager.is_running.return_value = False
-        
+        app.state.train_manager.is_running.return_value = True
+        app.state.train_manager.is_healthy.return_value = False
+
         response = client.get("/readyz")
         data = response.json()
-        
-        # Readiness should still be 200 because POW being unhealthy doesn't affect readiness
-        # (only inference affects readiness)
-        assert response.status_code == 200
-        assert data["ready"] is True
+
+        assert response.status_code == 503
+        assert data["ready"] is False
 
 
 # ============================================================================
@@ -829,14 +698,11 @@ class TestIntegration:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.INFERENCE
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
         app.state.train_manager.is_healthy.return_value = True
         app.state.gpu_manager.is_cuda_available.return_value = True
@@ -879,14 +745,11 @@ class TestIntegration:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -912,14 +775,11 @@ class TestIntegration:
         app.include_router(router)
         client = TestClient(app)
         
-        app.state.pow_manager = MagicMock()
         app.state.inference_manager = MagicMock()
         app.state.train_manager = MagicMock()
         app.state.gpu_manager = MagicMock()
         app.state.service_state = ServiceState.STOPPED
         
-        app.state.pow_manager.is_running.return_value = False
-        app.state.pow_manager.is_healthy.return_value = True
         app.state.inference_manager.is_running.return_value = False
         app.state.inference_manager.is_healthy.return_value = True
         app.state.train_manager.is_running.return_value = False
@@ -938,4 +798,4 @@ class TestIntegration:
         assert health_response.status == "healthy"
         assert health_response.service_state == ServiceState.STOPPED
         assert health_response.gpu.available is True
-        assert health_response.managers.pow.running is False
+        assert health_response.managers.inference.running is False

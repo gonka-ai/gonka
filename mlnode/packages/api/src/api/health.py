@@ -26,7 +26,6 @@ class ManagerStatus(BaseModel):
 
 
 class ManagersInfo(BaseModel):
-    pow: ManagerStatus
     inference: ManagerStatus
     train: ManagerStatus
 
@@ -53,15 +52,10 @@ async def get_health_data(request: Request) -> HealthResponse:
         devices=gpu_devices,
     )
 
-    # Service Managers
-    pow_manager = request.app.state.pow_manager
     inference_manager = request.app.state.inference_manager
     train_manager = request.app.state.train_manager
 
     managers_info = ManagersInfo(
-        pow=ManagerStatus(
-            running=pow_manager.is_running(), healthy=pow_manager.is_healthy()
-        ),
         inference=ManagerStatus(
             running=inference_manager.is_running(),
             healthy=inference_manager.is_healthy(),
@@ -78,8 +72,6 @@ async def get_health_data(request: Request) -> HealthResponse:
     if not gpu_info.available:
         overall_healthy = False
     
-    if managers_info.pow.running and not managers_info.pow.healthy:
-        overall_healthy = False
     if managers_info.inference.running and not managers_info.inference.healthy:
         overall_healthy = False
 
@@ -128,8 +120,10 @@ async def get_readiness(request: Request, response: Response):
         if not inference_manager.is_healthy():
             is_ready = False
     
-    # Add similar checks for POW and TRAIN if they have specific readiness requirements
-    # For now, we assume they are ready if running.
+    if request.app.state.service_state == ServiceState.TRAIN:
+        train_manager = request.app.state.train_manager
+        if train_manager.is_running() and not train_manager.is_healthy():
+            is_ready = False
 
     if not is_ready:
         response.status_code = 503

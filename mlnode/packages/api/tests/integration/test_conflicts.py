@@ -3,12 +3,10 @@ import pytest
 import requests
 import toml
 import urllib.parse
-import hashlib
-from datetime import datetime
-from pow.models.utils import Params, PARAMS_V1
-from pow.service.client import PowClient
+
 from api.inference.client import InferenceClient
 from zeroband.service.client import TrainClient
+
 
 @pytest.fixture(scope="session")
 def server_url():
@@ -17,49 +15,26 @@ def server_url():
         raise ValueError("SERVER_URL is not set")
     return url
 
-@pytest.fixture(scope="session")
-def batch_reciever_url():
-    url = os.getenv("BATCH_RECIEVER_URL")
-    if not url:
-        raise ValueError("BATCH_RECIEVER_URL is not set")
-    return url
-
-@pytest.fixture(scope="session")
-def block_hash():
-    now_str = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    return hashlib.sha256(now_str.encode()).hexdigest()
-
-@pytest.fixture(scope="session")
-def public_key():
-    return f"pub_key_1_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
 @pytest.fixture(scope="session")
 def train_config_dict():
     return toml.load("/app/packages/train/resources/configs/1B_3090_1x1.toml")
 
+
 @pytest.fixture(scope="session")
 def model_name():
     return "Qwen/Qwen3-4B-Instruct-2507"
 
-@pytest.fixture(scope="session")
-def pow_params():
-    return PARAMS_V1
 
 def test_exclusive_services(
     server_url,
-    batch_reciever_url,
-    block_hash,
-    public_key,
     train_config_dict,
     model_name,
-    pow_params
 ):
     requests.post(f"{server_url}/api/v1/stop").raise_for_status()
     train_client = TrainClient(server_url)
     inference_client = InferenceClient(server_url)
-    pow_client = PowClient(server_url)
 
-    # Start TRAIN (should succeed)
     train_client.start(train_config_dict, {
         "GLOBAL_ADDR": urllib.parse.urlparse(server_url).hostname,
         "GLOBAL_PORT": "5565",
@@ -73,40 +48,9 @@ def test_exclusive_services(
         inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     assert exc_info.value.response.status_code == 409
 
-    with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        pow_client.init_generate(
-            node_id=0,
-            node_count=1,
-            url=batch_reciever_url,
-            block_hash=block_hash,
-            block_height=1,
-            public_key=public_key,
-            batch_size=5000,
-            r_target=4,
-            fraud_threshold=0.01,
-            params=pow_params,
-        )
-    assert exc_info.value.response.status_code == 409
-
     train_client.stop()
 
-    print("Setting up inference")
     inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
-
-    with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        pow_client.init_generate(
-            node_id=0,
-            node_count=1,
-            url=batch_reciever_url,
-            block_hash=block_hash,
-            block_height=1,
-            public_key=public_key,
-            batch_size=5000,
-            r_target=4,
-            fraud_threshold=0.01,
-            params=pow_params,
-        )
-    assert exc_info.value.response.status_code == 409
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
         train_client.start(train_config_dict, {})
@@ -114,25 +58,10 @@ def test_exclusive_services(
 
     inference_client.inference_down()
 
-    pow_client.init_generate(
-        node_id=0,
-        node_count=1,
-        url=batch_reciever_url,
-        block_hash=block_hash,
-        block_height=1,
-        public_key=public_key,
-        batch_size=5000,
-        r_target=4,
-        fraud_threshold=0.01,
-        params=pow_params,
-    )
-
-    with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        train_client.start(train_config_dict, {})
-    assert exc_info.value.response.status_code == 409
+    train_client.start(train_config_dict, {})
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
         inference_client.inference_setup(model_name, "bfloat16", ["--max-model-len", "10000"])
     assert exc_info.value.response.status_code == 409
 
-    pow_client.stop()
+    train_client.stop()

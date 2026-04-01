@@ -83,7 +83,7 @@ class TestRoundRobinLoadBalancing:
     
     @patch('api.proxy.vllm_backend_ports', [5001, 5002])
     @patch('api.proxy.vllm_healthy', {5001: True, 5002: True})
-    @patch('api.proxy.pow_generate_rr_index', 0)
+    @patch('api.proxy.poc_generate_rr_index', 0)
     def test_round_robin_cycles_backends(self, client):
         """Test /generate cycles through backends in round-robin order."""
         captured_urls = []
@@ -124,7 +124,7 @@ class TestRoundRobinLoadBalancing:
     
     @patch('api.proxy.vllm_backend_ports', [5001, 5002, 5003])
     @patch('api.proxy.vllm_healthy', {5001: True, 5002: False, 5003: True})
-    @patch('api.proxy.pow_generate_rr_index', 0)
+    @patch('api.proxy.poc_generate_rr_index', 0)
     def test_round_robin_skips_unhealthy(self, client):
         """Test /generate skips unhealthy backends in round-robin."""
         captured_urls = []
