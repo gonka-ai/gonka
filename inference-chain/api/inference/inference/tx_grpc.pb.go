@@ -66,6 +66,8 @@ const (
 	Msg_RegisterIbcTokenMetadata_FullMethodName         = "/inference.inference.Msg/RegisterIbcTokenMetadata"
 	Msg_CreateSubnetEscrow_FullMethodName               = "/inference.inference.Msg/CreateSubnetEscrow"
 	Msg_SettleSubnetEscrow_FullMethodName               = "/inference.inference.Msg/SettleSubnetEscrow"
+	Msg_ScheduleMaintenance_FullMethodName              = "/inference.inference.Msg/ScheduleMaintenance"
+	Msg_CancelMaintenance_FullMethodName                = "/inference.inference.Msg/CancelMaintenance"
 )
 
 // MsgClient is the client API for Msg service.
@@ -123,6 +125,8 @@ type MsgClient interface {
 	RegisterIbcTokenMetadata(ctx context.Context, in *MsgRegisterIbcTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterIbcTokenMetadataResponse, error)
 	CreateSubnetEscrow(ctx context.Context, in *MsgCreateSubnetEscrow, opts ...grpc.CallOption) (*MsgCreateSubnetEscrowResponse, error)
 	SettleSubnetEscrow(ctx context.Context, in *MsgSettleSubnetEscrow, opts ...grpc.CallOption) (*MsgSettleSubnetEscrowResponse, error)
+	ScheduleMaintenance(ctx context.Context, in *MsgScheduleMaintenance, opts ...grpc.CallOption) (*MsgScheduleMaintenanceResponse, error)
+	CancelMaintenance(ctx context.Context, in *MsgCancelMaintenance, opts ...grpc.CallOption) (*MsgCancelMaintenanceResponse, error)
 }
 
 type msgClient struct {
@@ -556,6 +560,24 @@ func (c *msgClient) SettleSubnetEscrow(ctx context.Context, in *MsgSettleSubnetE
 	return out, nil
 }
 
+func (c *msgClient) ScheduleMaintenance(ctx context.Context, in *MsgScheduleMaintenance, opts ...grpc.CallOption) (*MsgScheduleMaintenanceResponse, error) {
+	out := new(MsgScheduleMaintenanceResponse)
+	err := c.cc.Invoke(ctx, Msg_ScheduleMaintenance_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) CancelMaintenance(ctx context.Context, in *MsgCancelMaintenance, opts ...grpc.CallOption) (*MsgCancelMaintenanceResponse, error) {
+	out := new(MsgCancelMaintenanceResponse)
+	err := c.cc.Invoke(ctx, Msg_CancelMaintenance_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -611,6 +633,8 @@ type MsgServer interface {
 	RegisterIbcTokenMetadata(context.Context, *MsgRegisterIbcTokenMetadata) (*MsgRegisterIbcTokenMetadataResponse, error)
 	CreateSubnetEscrow(context.Context, *MsgCreateSubnetEscrow) (*MsgCreateSubnetEscrowResponse, error)
 	SettleSubnetEscrow(context.Context, *MsgSettleSubnetEscrow) (*MsgSettleSubnetEscrowResponse, error)
+	ScheduleMaintenance(context.Context, *MsgScheduleMaintenance) (*MsgScheduleMaintenanceResponse, error)
+	CancelMaintenance(context.Context, *MsgCancelMaintenance) (*MsgCancelMaintenanceResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -758,6 +782,12 @@ func (UnimplementedMsgServer) CreateSubnetEscrow(context.Context, *MsgCreateSubn
 }
 func (UnimplementedMsgServer) SettleSubnetEscrow(context.Context, *MsgSettleSubnetEscrow) (*MsgSettleSubnetEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleSubnetEscrow not implemented")
+}
+func (UnimplementedMsgServer) ScheduleMaintenance(context.Context, *MsgScheduleMaintenance) (*MsgScheduleMaintenanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ScheduleMaintenance not implemented")
+}
+func (UnimplementedMsgServer) CancelMaintenance(context.Context, *MsgCancelMaintenance) (*MsgCancelMaintenanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelMaintenance not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1618,6 +1648,42 @@ func _Msg_SettleSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_ScheduleMaintenance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgScheduleMaintenance)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ScheduleMaintenance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ScheduleMaintenance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ScheduleMaintenance(ctx, req.(*MsgScheduleMaintenance))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_CancelMaintenance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCancelMaintenance)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CancelMaintenance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CancelMaintenance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CancelMaintenance(ctx, req.(*MsgCancelMaintenance))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1812,6 +1878,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleSubnetEscrow",
 			Handler:    _Msg_SettleSubnetEscrow_Handler,
+		},
+		{
+			MethodName: "ScheduleMaintenance",
+			Handler:    _Msg_ScheduleMaintenance_Handler,
+		},
+		{
+			MethodName: "CancelMaintenance",
+			Handler:    _Msg_CancelMaintenance_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
