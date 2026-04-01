@@ -7,6 +7,9 @@ import (
 )
 
 func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgScheduleMaintenance) (*types.MsgScheduleMaintenanceResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, AccountPermission); err != nil {
+		return nil, err
+	}
 	// TODO: implement in Task 2.1
 	return nil, types.ErrMaintenanceNotImplemented
 }

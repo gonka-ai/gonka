@@ -140,7 +140,7 @@ Each task includes:
 - **Dependencies**: 1.2
 
 #### 1.5 Add Reservation Lifecycle State Machine
-- **Task**: [ ] Implement reservation lifecycle transitions in `BeginBlock`
+- **Task**: [?] Implement reservation lifecycle transitions in `BeginBlock`
 - **What**:
   - Add a maintenance lifecycle state machine that transitions:
     - `Scheduled -> Active` when `block_height == start_height`
