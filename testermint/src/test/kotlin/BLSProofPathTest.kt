@@ -27,7 +27,11 @@ class BLSProofPathTest : TestermintTest() {
 
         val epochData = genesis.node.queryBLSEpochData(epochId).epochData
         val dealerCount = epochData.participants.size
-        val dealerValidity = List(dealerCount) { it == 0 }
+        val submitterAddress = participant.node.getColdAddress()
+        val submitterIndex = epochData.participants.indexOfFirst { it.address == submitterAddress }
+        assertThat(submitterIndex).isNotEqualTo(-1)
+        val nonSelfDealerIndex = epochData.participants.indices.first { it != submitterIndex }
+        val dealerValidity = List(dealerCount) { it == nonSelfDealerIndex }
 
         val result = runCatching {
             participant.submitMessage(

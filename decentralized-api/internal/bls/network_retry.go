@@ -10,7 +10,7 @@ import (
 var ErrOperationQueuedForRetry = errors.New("bls operation queued for async retry")
 
 func isQueuedForRetry(err error) bool {
-	return errors.Is(err, tx_manager.ErrTxFailedToBroadcastAndPutOnRetry)
+	return errors.Is(err, tx_manager.ErrTxQueuedForRetry)
 }
 
 func queuedForRetryError(operation string, err error) error {

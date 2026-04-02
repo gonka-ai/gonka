@@ -253,6 +253,18 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 		require.NoError(t, msg.ValidateBasic())
 	})
 
+	t.Run("one missing proof allowed by stateless check", func(t *testing.T) {
+		msg := &MsgSubmitVerificationVector{
+			Creator:        creator,
+			EpochId:        1,
+			DealerValidity: []bool{true, true, false},
+			DealerValidityProofs: []DealerValidityProof{
+				{DealerIndex: 1, ProofSignature: []byte{1}},
+			},
+		}
+		require.NoError(t, msg.ValidateBasic())
+	})
+
 	t.Run("too few proofs rejected", func(t *testing.T) {
 		msg := &MsgSubmitVerificationVector{
 			Creator:        creator,
