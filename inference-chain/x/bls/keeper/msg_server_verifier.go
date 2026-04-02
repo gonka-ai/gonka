@@ -153,15 +153,33 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 }
 
 func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {
-	trueDealerCount := 0
-	for _, isValid := range msg.DealerValidity {
-		if isValid {
-			trueDealerCount++
+	trueNonSelfDealerCount := 0
+	selfMarkedTrue := participantIndex >= 0 && participantIndex < len(msg.DealerValidity) && msg.DealerValidity[participantIndex]
+	for dealerIndex, isValid := range msg.DealerValidity {
+		if isValid && dealerIndex != participantIndex {
+			trueNonSelfDealerCount++
 		}
 	}
 
-	if len(msg.DealerValidityProofs) != trueDealerCount {
-		return fmt.Errorf("dealer_validity_proofs count %d does not match true dealer count %d", len(msg.DealerValidityProofs), trueDealerCount)
+	maxProofCount := trueNonSelfDealerCount
+	if selfMarkedTrue {
+		// Self proof is optional: self-vote is excluded from weighted quorum anyway.
+		maxProofCount++
+	}
+	if len(msg.DealerValidityProofs) < trueNonSelfDealerCount || len(msg.DealerValidityProofs) > maxProofCount {
+		if selfMarkedTrue {
+			return fmt.Errorf(
+				"dealer_validity_proofs count %d is invalid: expected %d (without self proof) or %d (with optional self proof)",
+				len(msg.DealerValidityProofs),
+				trueNonSelfDealerCount,
+				maxProofCount,
+			)
+		}
+		return fmt.Errorf(
+			"dealer_validity_proofs count %d does not match true non-self dealer count %d",
+			len(msg.DealerValidityProofs),
+			trueNonSelfDealerCount,
+		)
 	}
 
 	// Index proofs by dealer index to keep validation path deterministic and allocation-light
@@ -192,6 +210,9 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 	// Deterministic iteration: walk dealer_validity by index
 	for dealerIndex, isValid := range msg.DealerValidity {
 		if !isValid {
+			continue
+		}
+		if dealerIndex == participantIndex {
 			continue
 		}
 

@@ -372,7 +372,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Key generation initiated event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessKeyGenerationInitiated(event)
 		if err != nil {
-			logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process key generation initiated event", err, workerName)
 		}
 	}
 
@@ -380,7 +380,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Verifying phase started event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessVerifyingPhaseStarted(event)
 		if err != nil {
-			logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process verifying phase started event", err, workerName)
 		}
 	}
 
@@ -388,7 +388,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Dispute phase started event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessDisputePhaseStarted(event)
 		if err != nil {
-			logging.Error("Failed to process dispute phase started event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process dispute phase started event", err, workerName)
 		}
 	}
 
@@ -396,7 +396,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("DKG failed event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessDKGFailed(event)
 		if err != nil {
-			logging.Error("Failed to process DKG failed event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process DKG failed event", err, workerName)
 		}
 	}
 
@@ -404,9 +404,19 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Group public key generated event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessGroupPublicKeyGenerated(event)
 		if err != nil {
-			logging.Error("Failed to process group public key generated event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process group public key generated event", err, workerName)
 		}
 	}
+}
+
+func (el *EventListener) logBLSEventError(message string, err error, workerName string) {
+	if errors.Is(err, bls.ErrOperationQueuedForRetry) {
+		logging.Warn(message+" (queued for async retry)", types.EventProcessing,
+			"error", err,
+			"worker", workerName)
+		return
+	}
+	logging.Error(message, types.EventProcessing, "error", err, "worker", workerName)
 }
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {

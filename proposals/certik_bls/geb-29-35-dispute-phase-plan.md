@@ -281,3 +281,5 @@ Add an objective dispute stage to DKG so dealer validity is not finalized from b
 
 - This plan keeps the current boolean `DealerValidity` submission but upgrades final dealer selection to objective dispute resolution.
 - Long-term clean design remains PVSS-style verifiable encryption. This plan is intended as practical intermediate hardening with bounded complexity.
+- Known limitation (weighted slot quorum + self-exclusion): quorum is `floor(total_slots/2)+1`, while a dealer's self-vote is excluded from its own approval count.
+- As a result, any dealer controlling at least half of total slots (`>= 50%`) cannot mathematically reach quorum and cannot be finalized as a valid dealer.

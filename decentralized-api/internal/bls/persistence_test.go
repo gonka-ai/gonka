@@ -22,7 +22,7 @@ func TestDealerOpeningsPersistedAcrossManagerRestart(t *testing.T) {
 
 	share := []byte{1, 2, 3, 4}
 	seed := []byte{5, 6, 7, 8}
-	m1.storeDealerOpeningRecord(11, 2, 3, 44, share, seed)
+	require.NoError(t, m1.storeDealerOpeningRecord(11, 2, 3, 44, share, seed))
 
 	m2 := NewBlsManager(createMockCosmosClient())
 	require.NoError(t, m2.SetDealerOpeningsDB(db))
@@ -44,9 +44,9 @@ func TestDeleteDealerOpeningsPersists(t *testing.T) {
 	m1 := NewBlsManager(createMockCosmosClient())
 	require.NoError(t, m1.SetDealerOpeningsDB(db))
 
-	m1.storeDealerOpeningRecord(20, 1, 1, 10, []byte{1}, []byte{2})
-	m1.storeDealerOpeningRecord(21, 1, 1, 11, []byte{3}, []byte{4})
-	m1.deleteDealerOpeningsForEpoch(20)
+	require.NoError(t, m1.storeDealerOpeningRecord(20, 1, 1, 10, []byte{1}, []byte{2}))
+	require.NoError(t, m1.storeDealerOpeningRecord(21, 1, 1, 11, []byte{3}, []byte{4}))
+	require.NoError(t, m1.deleteDealerOpeningsForEpoch(20))
 
 	m2 := NewBlsManager(createMockCosmosClient())
 	require.NoError(t, m2.SetDealerOpeningsDB(db))

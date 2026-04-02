@@ -460,6 +460,28 @@ func TestDetermineValidDealersWithConsensus_TieVotes(t *testing.T) {
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
+func TestDetermineValidDealersWithConsensus_DealerOwnsExactlyHalfSlots(t *testing.T) {
+	k, _ := keepertest.BlsKeeper(t)
+
+	// 2 participants -> each gets exactly 50/100 slots in the fixture.
+	epochBLSData := createTestEpochBLSData(uint64(30), 2)
+
+	// Both participants submitted dealer parts.
+	epochBLSData.DealerParts[0].DealerAddress = "participant1"
+	epochBLSData.DealerParts[0].Commitments = [][]byte{createTestG2Commitment()}
+	epochBLSData.DealerParts[1].DealerAddress = "participant2"
+	epochBLSData.DealerParts[1].Commitments = [][]byte{createTestG2Commitment()}
+
+	// Everyone votes "true" for dealer 0 (including dealer 0 itself).
+	// Because self vote is excluded, dealer 0 can only get 50 non-self slots, while quorum is 51.
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true}
+
+	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false}, validDealers)
+}
+
 func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) {
 	k, _ := keepertest.BlsKeeper(t)
 

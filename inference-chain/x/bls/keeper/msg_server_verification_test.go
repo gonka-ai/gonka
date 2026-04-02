@@ -318,7 +318,7 @@ func TestSubmitVerificationVector_TrueDealerWithoutProof(t *testing.T) {
 	msg := &types.MsgSubmitVerificationVector{
 		Creator:        participant.Address,
 		EpochId:        epochID,
-		DealerValidity: []bool{true, false, false},
+		DealerValidity: []bool{false, true, false},
 	}
 
 	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
@@ -328,7 +328,31 @@ func TestSubmitVerificationVector_TrueDealerWithoutProof(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	require.Equal(t, codes.InvalidArgument, st.Code())
-	require.Contains(t, st.Message(), "dealer_validity_proofs count 0 does not match true dealer count 1")
+	require.Contains(t, st.Message(), "dealer_validity_proofs count 0 does not match true non-self dealer count 1")
+}
+
+func TestSubmitVerificationVector_SelfTrueWithoutProofAllowed(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(115)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{true, false, false},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, msg.DealerValidity, storedData.VerificationSubmissions[0].DealerValidity)
 }
 
 func TestSubmitVerificationVector_TrueDealerWithValidProof(t *testing.T) {

@@ -86,7 +86,7 @@ func (bm *BlsManager) ProcessDisputePhaseStarted(event *chainevents.JSONRPCRespo
 		if isQueuedForRetry(err) {
 			logging.Warn(blsLogTag+"Dealer complaint responses queued for retry", inferenceTypes.BLS,
 				"epochID", epochID, "dealerIndex", dealerIndex, "responses", len(responses), "error", err)
-			return nil
+			return queuedForRetryError("respond dealer complaints", err)
 		}
 		logging.Error(blsLogTag+"Failed to submit dealer complaint responses on dispute start", inferenceTypes.BLS,
 			"epochID", epochID, "dealerIndex", dealerIndex, "responses", len(responses), "error", err)
@@ -109,7 +109,9 @@ func (bm *BlsManager) ProcessDKGFailed(event *chainevents.JSONRPCResponse) error
 		return fmt.Errorf("failed to parse failed DKG epoch id %q: %w", epochIDStr, err)
 	}
 
-	bm.deleteDealerOpeningsForEpoch(epochID)
+	if err := bm.deleteDealerOpeningsForEpoch(epochID); err != nil {
+		return fmt.Errorf("failed to delete dealer openings for failed epoch %d: %w", epochID, err)
+	}
 	bm.cache.Delete(epochID)
 	logging.Info(blsLogTag+"Cleaned dealer openings after DKG failure", inferenceTypes.BLS, "epochID", epochID)
 	return nil

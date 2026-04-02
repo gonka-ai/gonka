@@ -353,6 +353,7 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 			return nil, fmt.Errorf("invalid slot range for dealer %d in epoch %d", dealerIndex, epochBLSData.EpochId)
 		}
 		dealerOwnSlots := uint64(dealerParticipant.SlotEndIndex-dealerParticipant.SlotStartIndex) + 1
+		dealerOwnSlotsAtLeastHalf := totalSlots > 0 && dealerOwnSlots*2 >= totalSlots
 		maxPossibleNonSelfVotingSlots := uint64(0)
 		if dealerOwnSlots <= totalSlots {
 			maxPossibleNonSelfVotingSlots = totalSlots - dealerOwnSlots
@@ -393,6 +394,7 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 				"epochId", epochBLSData.EpochId,
 				"dealerIndex", dealerIndex,
 				"dealerOwnSlots", dealerOwnSlots,
+				"dealerOwnSlotsAtLeastHalf", dealerOwnSlotsAtLeastHalf,
 				"maxNonSelfVotingSlots", maxPossibleNonSelfVotingSlots,
 				"quorumSlots", quorumSlots,
 				"totalSlots", totalSlots,

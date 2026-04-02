@@ -101,7 +101,8 @@ func (bm *BlsManager) ProcessVerifyingPhaseStarted(event *chainevents.JSONRPCRes
 func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *types.EpochBLSData) (bool, error) {
 	// Create new verification result for this epoch
 	verificationResult := &VerificationResult{
-		EpochID: epochID,
+		EpochID:          epochID,
+		ParticipantIndex: -1,
 	}
 
 	verificationResult.DkgPhase = epochData.DkgPhase
@@ -141,6 +142,7 @@ func (bm *BlsManager) setupAndPerformVerification(epochID uint64, epochData *typ
 
 	// Set participant info in verification result
 	verificationResult.IsParticipant = true
+	verificationResult.ParticipantIndex = myParticipantIndex
 	verificationResult.SlotRange = [2]uint32{myParticipant.SlotStartIndex, myParticipant.SlotEndIndex}
 
 	logging.Debug(verifierLogTag+"Found participant info from epoch data", inferenceTypes.BLS,
@@ -628,7 +630,7 @@ func (bm *BlsManager) submitVerificationVectorSimplified(epochID uint64) error {
 			logging.Warn(verifierLogTag+"Verification vector queued for retry", inferenceTypes.BLS,
 				"epochID", epochID,
 				"error", err)
-			return nil
+			return queuedForRetryError("submit verification vector", err)
 		}
 		return fmt.Errorf("failed to submit verification vector: %w", err)
 	}
@@ -673,6 +675,10 @@ func (bm *BlsManager) buildDealerValidityProofs(epochID uint64, verificationResu
 
 	for dealerIndex, isValid := range verificationResult.DealerValidity {
 		if !isValid {
+			continue
+		}
+		// Self-vote is excluded from weighted quorum on-chain, so skip proof generation for ourselves
+		if dealerIndex == verificationResult.ParticipantIndex {
 			continue
 		}
 
@@ -825,7 +831,9 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToVerify(event *chainevents.
 		"phase", completedResult.DkgPhase)
 
 	// Opening material is only needed through disputing phase.
-	bm.deleteDealerOpeningsForEpoch(epochID)
+	if err := bm.deleteDealerOpeningsForEpoch(epochID); err != nil {
+		return fmt.Errorf("failed to clean dealer openings for epoch %d: %w", epochID, err)
+	}
 
 	return nil
 }

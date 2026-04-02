@@ -373,9 +373,23 @@ type BLSDealerOpening struct {
 }
 
 func UpsertBLSDealerOpening(ctx context.Context, db *sql.DB, opening BLSDealerOpening) error {
+	return UpsertBLSDealerOpenings(ctx, db, []BLSDealerOpening{opening})
+}
+
+func UpsertBLSDealerOpenings(ctx context.Context, db *sql.DB, openings []BLSDealerOpening) error {
 	if db == nil {
 		return errors.New("db is nil")
 	}
+	if len(openings) == 0 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	q := `INSERT INTO bls_dealer_openings (
   epoch_id, recipient_index, ciphertext_index, slot_index, share_bytes, seed
 ) VALUES (?, ?, ?, ?, ?, ?)
@@ -384,8 +398,27 @@ ON CONFLICT(epoch_id, recipient_index, ciphertext_index) DO UPDATE SET
   share_bytes = excluded.share_bytes,
   seed = excluded.seed,
   updated_at = (STRFTIME('%Y-%m-%d %H:%M:%f','now'))`
-	_, err := db.ExecContext(ctx, q, opening.EpochID, opening.RecipientIndex, opening.CiphertextIndex, opening.SlotIndex, opening.ShareBytes, opening.Seed)
-	return err
+	stmt, err := tx.PrepareContext(ctx, q)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, opening := range openings {
+		if _, err := stmt.ExecContext(
+			ctx,
+			opening.EpochID,
+			opening.RecipientIndex,
+			opening.CiphertextIndex,
+			opening.SlotIndex,
+			opening.ShareBytes,
+			opening.Seed,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func ReadBLSDealerOpenings(ctx context.Context, db *sql.DB) ([]BLSDealerOpening, error) {
