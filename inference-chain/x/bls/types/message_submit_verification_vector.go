@@ -52,8 +52,15 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 			trueCount++
 		}
 	}
-	if len(m.DealerValidityProofs) != trueCount {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity_proofs count must match number of true dealer_validity entries")
+	// Allow one missing proof for optional self-vote; keeper enforces exact mapping.
+	minProofs := trueCount - 1
+	if minProofs < 0 {
+		minProofs = 0
+	}
+	if len(m.DealerValidityProofs) < minProofs || len(m.DealerValidityProofs) > trueCount {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest,
+			"dealer_validity_proofs count %d out of allowed range [%d, %d]",
+			len(m.DealerValidityProofs), minProofs, trueCount)
 	}
 
 	seenProofDealers := make(map[uint32]struct{}, len(m.DealerValidityProofs))
