@@ -5,7 +5,9 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"math/bits"
 	"slices"
 
 	cosmossecp "github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -16,8 +18,8 @@ import (
 )
 
 const (
-	SubnetGroupSize      = 16
-	SubnetQuorumSlots    = 2*SubnetGroupSize/3 + 1
+	SubnetGroupSize   = 16
+	SubnetQuorumSlots = 2*SubnetGroupSize/3 + 1
 	// SubnetSettlementPhase is the phase byte appended to the state root preimage.
 	// The chain hardcodes 0x02 (Settlement) so only fully-finalized subnet states
 	// can pass verification. States at phase Active (0x00) or Finalizing (0x01)
@@ -49,9 +51,12 @@ func VerifySubnetSettlement(escrow types.SubnetEscrow, msg *types.MsgSettleSubne
 		return fmt.Errorf("failed to compute host stats hash: %w", err)
 	}
 
-	// Verify state_root = sha256(host_stats_hash || rest_hash || 0x02)
-	rootInput := make([]byte, 0, len(hostStatsHash)+len(msg.RestHash)+1)
+	// Verify state_root = sha256(host_stats_hash || fees_be || rest_hash || 0x02)
+	feesBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(feesBytes, msg.Fees)
+	rootInput := make([]byte, 0, len(hostStatsHash)+len(feesBytes)+len(msg.RestHash)+1)
 	rootInput = append(rootInput, hostStatsHash...)
+	rootInput = append(rootInput, feesBytes...)
 	rootInput = append(rootInput, msg.RestHash...)
 	rootInput = append(rootInput, SubnetSettlementPhase)
 	expectedRoot := sha256.Sum256(rootInput)
@@ -106,7 +111,7 @@ func VerifySubnetSettlement(escrow types.SubnetEscrow, msg *types.MsgSettleSubne
 		return fmt.Errorf("insufficient quorum: %d slot votes, need %d", slotVotes, requiredQuorum)
 	}
 
-	// Verify total cost does not exceed escrow amount
+	// Verify total cost + fees does not exceed escrow amount
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
@@ -114,10 +119,18 @@ func VerifySubnetSettlement(escrow types.SubnetEscrow, msg *types.MsgSettleSubne
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
-		totalCost += hs.Cost
+		nextTotalCost, carry := bits.Add64(totalCost, hs.Cost, 0)
+		if carry != 0 {
+			return fmt.Errorf("total cost overflow")
+		}
+		totalCost = nextTotalCost
 	}
-	if totalCost > escrow.Amount {
-		return fmt.Errorf("total cost %d exceeds escrow amount %d", totalCost, escrow.Amount)
+	totalDebit, carry := bits.Add64(totalCost, msg.Fees, 0)
+	if carry != 0 {
+		return fmt.Errorf("total cost plus fees overflow")
+	}
+	if totalDebit > escrow.Amount {
+		return fmt.Errorf("total debit %d (cost %d + fees %d) exceeds escrow amount %d", totalDebit, totalCost, msg.Fees, escrow.Amount)
 	}
 
 	return nil

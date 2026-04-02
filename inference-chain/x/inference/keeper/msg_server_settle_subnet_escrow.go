@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math/bits"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -27,34 +28,78 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 		return nil, err
 	}
 
-	// Aggregate costs per unique validator address (deterministic: iterate by slot order)
-	validatorCosts := make(map[string]uint64)
+	if len(escrow.Slots) == 0 {
+		return nil, fmt.Errorf("escrow %d has no slots", escrow.Id)
+	}
+
+	totalSlots := uint64(len(escrow.Slots))
+	// How much of the total fees will be assigned to each slot
+	feePerSlot := msg.Fees / totalSlots
+	// Leftover fees; will be distributed 1 per slot
+	remainderFees := msg.Fees % totalSlots
+
+	// Aggregate costs + fees per unique validator address (deterministic: iterate by slot order)
+	validatorPayouts := make(map[string]uint64)
 	for _, hs := range msg.HostStats {
 		if int(hs.SlotId) >= len(escrow.Slots) {
 			return nil, fmt.Errorf("host_stats slot_id %d out of range", hs.SlotId)
 		}
 		addr := escrow.Slots[hs.SlotId]
-		validatorCosts[addr] += hs.Cost
+
+		// Assign cost of running inferences to this slot's validator
+		nextValidatorPayout, carry := bits.Add64(validatorPayouts[addr], hs.Cost, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("validator cost overflow for %s", addr)
+		}
+
+		// Assign fees paid by the user to this slot's validator
+		nextValidatorPayout, carry = bits.Add64(nextValidatorPayout, feePerSlot, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("validator fee share overflow for %s", addr)
+		}
+
+		// If there are remainder fees, distribute 1 additional coin to this slot.
+		if remainderFees > 0 {
+			nextValidatorPayout, carry = bits.Add64(nextValidatorPayout, 1, 0)
+			if carry != 0 {
+				return nil, fmt.Errorf("validator remainder fee overflow for %s", addr)
+			}
+			remainderFees--
+		}
+		validatorPayouts[addr] = nextValidatorPayout
 	}
 
-	// Pay validators in slot order (deterministic iteration over escrow.Slots)
-	var totalCost uint64
+	// Sanity check
+	if remainderFees != 0 {
+		return nil, fmt.Errorf("failed to allocate all remainder fees, %d left", remainderFees)
+	}
+
+	// Pay validators in slot order (deterministic iteration over escrow.Slots).
+	// Each validator receives total accumulated slot costs and fee shares.
+	var totalPayout uint64
 	paidValidators := make(map[string]bool)
 	for _, addr := range escrow.Slots {
-		cost, hasCost := validatorCosts[addr]
-		if !hasCost || cost == 0 || paidValidators[addr] {
+		payout, hasPayout := validatorPayouts[addr]
+		if !hasPayout || payout == 0 {
+			continue
+		}
+		if paidValidators[addr] {
 			continue
 		}
 		paidValidators[addr] = true
-		totalCost += cost
+		nextTotalPayout, carry := bits.Add64(totalPayout, payout, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("total validator payout overflow")
+		}
+		totalPayout = nextTotalPayout
 
 		recipientAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
 		}
-		coins, err := types.GetCoins(int64(cost))
+		coins, err := types.GetCoins(int64(payout))
 		if err != nil {
-			return nil, fmt.Errorf("invalid cost amount: %w", err)
+			return nil, fmt.Errorf("invalid payout amount: %w", err)
 		}
 		err = k.BankKeeper.SendCoinsFromModuleToAccount(goCtx, types.ModuleName, recipientAddr, coins, "subnet_escrow_payment")
 		if err != nil {
@@ -62,8 +107,8 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 		}
 	}
 
-	// Refund remainder to creator
-	remainder := escrow.Amount - totalCost
+	// Refund remainder to creator after validator costs and fee shares.
+	remainder := escrow.Amount - totalPayout
 	if remainder > 0 {
 		creatorAddr, err := sdk.AccAddressFromBech32(escrow.Creator)
 		if err != nil {
@@ -107,7 +152,8 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 		"subnet_escrow_settled",
 		sdk.NewAttribute("escrow_id", fmt.Sprint(escrow.Id)),
 		sdk.NewAttribute("settler", msg.Settler),
-		sdk.NewAttribute("total_cost", fmt.Sprint(totalCost)),
+		sdk.NewAttribute("total_payout", fmt.Sprint(totalPayout)),
+		sdk.NewAttribute("fees", fmt.Sprint(msg.Fees)),
 		sdk.NewAttribute("remainder", fmt.Sprint(remainder)),
 	))
 

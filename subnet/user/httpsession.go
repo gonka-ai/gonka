@@ -17,7 +17,7 @@ type HTTPSessionConfig struct {
 	PrivateKeyHex  string
 	EscrowID       string
 	Bridge         bridge.MainnetBridge
-	StoragePath    string              // optional: path to SQLite DB for session persistence
+	StoragePath    string                          // optional: path to SQLite DB for session persistence
 	StreamCallback func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 }
 
@@ -43,9 +43,12 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 
 	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
 
-	sm := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
+	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
 		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
 	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create state machine: %w", err)
+	}
 
 	clients := make([]HostClient, len(group))
 	clientCache := make(map[string]*transport.HTTPClient)

@@ -137,9 +137,12 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
-	sm := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
+	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("create state machine: %w", err)
+	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, group, nil,
 		host.WithValidator(m.validator),
@@ -188,11 +191,14 @@ func (m *HostManager) recoverSession(escrowID string) error {
 	if err != nil {
 		return fmt.Errorf("get session meta: %w", err)
 	}
-	sm := state.NewStateMachine(
+	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
 	)
+	if err != nil {
+		return fmt.Errorf("create state machine: %w", err)
+	}
 
 	if meta.LatestNonce > 0 {
 		records, err := m.store.GetDiffs(escrowID, 1, meta.LatestNonce)

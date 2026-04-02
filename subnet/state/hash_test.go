@@ -2,6 +2,7 @@ package state
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,9 +20,9 @@ func TestComputeStateRoot_Deterministic(t *testing.T) {
 		2: {Status: types.StatusFinished, ExecutorSlot: 1, ActualCost: 200},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil)
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil)
+	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
 	require.NoError(t, err)
 	require.Equal(t, root1, root2)
 }
@@ -34,9 +35,9 @@ func TestComputeStateRoot_DifferentState(t *testing.T) {
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil)
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(600, hostStats, inferences, types.PhaseActive, nil)
+	root2, err := ComputeStateRoot(600, hostStats, inferences, types.PhaseActive, nil, 99)
 	require.NoError(t, err)
 	require.NotEqual(t, root1, root2)
 }
@@ -50,8 +51,9 @@ func TestStateRoot_MerkleStructure(t *testing.T) {
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 50},
 	}
 	balance := uint64(875)
+	fees := uint64(123)
 
-	root, err := ComputeStateRoot(balance, hostStats, inferences, types.PhaseActive, nil)
+	root, err := ComputeStateRoot(balance, hostStats, inferences, types.PhaseActive, nil, fees)
 	require.NoError(t, err)
 
 	// Manually recompute and verify structure.
@@ -59,9 +61,12 @@ func TestStateRoot_MerkleStructure(t *testing.T) {
 	require.NoError(t, err)
 	restHash, err := ComputeRestHash(balance, inferences, nil)
 	require.NoError(t, err)
+	feesBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(feesBytes, fees)
 
 	h := sha256.New()
 	h.Write(hostStatsHash)
+	h.Write(feesBytes)
 	h.Write(restHash)
 	h.Write([]byte{uint8(types.PhaseActive)})
 	expected := h.Sum(nil)
@@ -85,9 +90,9 @@ func TestStateRoot_SortedKeys(t *testing.T) {
 
 	inferences := map[uint64]*types.InferenceRecord{}
 
-	root1, err := ComputeStateRoot(1000, stats1, inferences, types.PhaseActive, nil)
+	root1, err := ComputeStateRoot(1000, stats1, inferences, types.PhaseActive, nil, 0)
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(1000, stats2, inferences, types.PhaseActive, nil)
+	root2, err := ComputeStateRoot(1000, stats2, inferences, types.PhaseActive, nil, 0)
 	require.NoError(t, err)
 	require.Equal(t, root1, root2)
 }

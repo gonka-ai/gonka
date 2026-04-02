@@ -26,7 +26,8 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	config := testutil.DefaultConfig(1)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))

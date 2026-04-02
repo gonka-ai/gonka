@@ -32,9 +32,11 @@ func (m *mockBridge) GetHostInfo(addr string) (*HostInfo, error) {
 func (m *mockBridge) VerifyWarmKey(_, _ string) (bool, error) {
 	return false, ErrNotImplemented
 }
-func (m *mockBridge) OnEscrowCreated(_ EscrowInfo) error                            { return ErrNotImplemented }
-func (m *mockBridge) OnSettlementProposed(_ string, _ []byte, _ uint64) error       { return ErrNotImplemented }
-func (m *mockBridge) OnSettlementFinalized(_ string) error                          { return ErrNotImplemented }
+func (m *mockBridge) OnEscrowCreated(_ EscrowInfo) error { return ErrNotImplemented }
+func (m *mockBridge) OnSettlementProposed(_ string, _ []byte, _ uint64) error {
+	return ErrNotImplemented
+}
+func (m *mockBridge) OnSettlementFinalized(_ string) error { return ErrNotImplemented }
 func (m *mockBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint32][]byte) error {
 	return ErrNotImplemented
 }

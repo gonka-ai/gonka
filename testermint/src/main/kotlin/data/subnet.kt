@@ -23,6 +23,32 @@ data class SubnetMempoolResponse(
     val txs: List<Any>?
 )
 
+data class SubnetProxyStatus(
+    @SerializedName("escrow_id")
+    val escrowId: String,
+    val nonce: Long,
+    val phase: String,
+    val balance: Long,
+    val config: SubnetSessionConfig
+)
+
+data class SubnetSessionConfig(
+    @SerializedName("refusal_timeout")
+    val refusalTimeout: Long,
+    @SerializedName("execution_timeout")
+    val executionTimeout: Long,
+    @SerializedName("token_price")
+    val tokenPrice: Long,
+    @SerializedName("create_subnet_fee")
+    val createSubnetFee: Long,
+    @SerializedName("fee_per_nonce")
+    val feePerNonce: Long,
+    @SerializedName("vote_threshold")
+    val voteThreshold: Int,
+    @SerializedName("validation_rate")
+    val validationRate: Int
+)
+
 data class SubnetSettlementData(
     @SerializedName("escrow_id")
     val escrowId: String,
@@ -31,6 +57,7 @@ data class SubnetSettlementData(
     val nonce: Long,
     @SerializedName("rest_hash")
     val restHash: String,
+    val fees: Long,
     @SerializedName("host_stats")
     val hostStats: List<SubnetHostStatsEntry>,
     val signatures: List<SubnetSlotSignatureEntry>

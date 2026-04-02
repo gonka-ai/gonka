@@ -91,15 +91,15 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         )
         // Find primary mock server
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-mock-server" } }
-        
+
         // Find all mock servers for this participant (including numbered ones like mock-server-2, mock-server-3)
         val allMockContainers: List<Container> = mocks.filter { container ->
             container.names.any { containerName ->
-                containerName == "$name-mock-server" || 
+                containerName == "$name-mock-server" ||
                 containerName.matches(Regex("$name-mock-server-\\d+"))
             }
         }
-        
+
         val configWithName = config.copy(pairName = name)
         val nodeLogs = attachDockerLogs(dockerClient, name, "node", chainContainer.id)
         val dapiLogs = attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
@@ -121,7 +121,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         allMockContainers.forEach { mockContainer ->
             Logger.info("  Mock: ${mockContainer.names.first()} on port ${mockContainer.getMappedPort(8080)}")
         }
-        
+
         val executor = DockerExecutor(
             chainContainer.id,
             configWithName
@@ -587,9 +587,9 @@ data class LocalInferencePair(
     fun submitGovernanceProposal(proposal: GovernanceProposal): TxResponse =
         wrapLog("submitGovProposal", infoLevel = false) {
             val govAccount = this.node.getModuleAccount("gov")
-            val govValue = govAccount.account.value as? AccountValue 
+            val govValue = govAccount.account.value as? AccountValue
                 ?: throw IllegalStateException("Gov module account value is not AccountValue")
-            
+
             val finalProposal = proposal.copy(
                 messages = proposal.messages.map {
                     it.withAuthority(govValue.address)
@@ -780,6 +780,20 @@ data class LocalInferencePair(
             "curl -sf -X POST $proxyUrl/v1/chat/completions -H 'Content-Type: application/json' -d '${body.replace("'", "'\\''")}'"
         ), null)
         return result.joinToString("")
+    }
+
+    fun getSubnetProxyStatus(proxyUrl: String): SubnetProxyStatus {
+        val raw = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl --silent --show-error --fail $proxyUrl/v1/status"
+        ), null).joinToString("")
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("status returned no JSON object. raw:\n$raw")
+        }
+        val json = raw.substring(start, end + 1)
+        return Gson().fromJson(json, SubnetProxyStatus::class.java)
     }
 
     fun finalizeSubnetProxy(proxyUrl: String): SubnetctlResult {

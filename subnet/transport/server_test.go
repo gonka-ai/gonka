@@ -42,7 +42,8 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	config := testutil.DefaultConfig(1)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
@@ -281,11 +282,12 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 		return warmAddr == warmSigner.Address() && coldAddr == hostSigner.Address(), nil
 	}
 
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
 
 	// Create warm key binding via confirm start.
 	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.SubnetTx{testutil.StartTx(1)})
-	_, err := sm.ApplyDiff(diff1)
+	_, err = sm.ApplyDiff(diff1)
 	require.NoError(t, err)
 
 	// inference 1 % 1 = 0, executor = slot 0.
@@ -301,7 +303,8 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
 
 	// Rebuild SM from scratch for host (host needs nonce 0 start).
-	sm2 := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := host.NewHost(sm2, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
 	require.NoError(t, err)
@@ -460,7 +463,8 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Host at slot 0. Inference 1 maps to executor slot 1, so host 0 is NOT executor.
-	sm := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))

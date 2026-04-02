@@ -32,7 +32,8 @@ func TestFullSession_HappyPath(t *testing.T) {
 	escrowID := "escrow-integration"
 	initialBalance := uint64(100000)
 
-	sm := NewStateMachine(escrowID, config, group, initialBalance, user.Address(), verifier)
+	sm, err := NewStateMachine(escrowID, config, group, initialBalance, user.Address(), verifier)
+	require.NoError(t, err)
 
 	// Track pending operations from previous diffs that need to be included.
 	type pendingConfirm struct {
@@ -221,7 +222,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	restHash, err := ComputeRestHash(state.Balance, state.Inferences, state.WarmKeys)
 	require.NoError(t, err)
-	recomputedRoot, err := ComputeStateRoot(state.Balance, state.HostStats, state.Inferences, state.Phase, state.WarmKeys)
+	recomputedRoot, err := ComputeStateRoot(state.Balance, state.HostStats, state.Inferences, state.Phase, state.WarmKeys, state.Fees)
 	require.NoError(t, err)
 	require.Equal(t, finalStateRoot, recomputedRoot)
 
