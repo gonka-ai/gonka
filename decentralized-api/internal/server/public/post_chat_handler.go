@@ -246,9 +246,8 @@ func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash st
 	if err := s.enforceDeveloperAccessGate(ctx.Request().Context(), chatRequest.RequesterAddress); err != nil {
 		return err
 	}
-
-	if err := validateMessages(chatRequest.OpenAiRequest.Messages); err != nil {
-		return err
+	if err := completionapi.ValidateOpenAICompatRequestBody(chatRequest.Body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
