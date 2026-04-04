@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"math"
 	"bytes"
 	"cmp"
 	"context"
@@ -16,8 +17,8 @@ import (
 )
 
 const (
-	SubnetGroupSize      = 16
-	SubnetQuorumSlots    = 2*SubnetGroupSize/3 + 1
+	SubnetGroupSize   = 16
+	SubnetQuorumSlots = 2*SubnetGroupSize/3 + 1
 	// SubnetSettlementPhase is the phase byte appended to the state root preimage.
 	// The chain hardcodes 0x02 (Settlement) so only fully-finalized subnet states
 	// can pass verification. States at phase Active (0x00) or Finalizing (0x01)
@@ -114,6 +115,9 @@ func VerifySubnetSettlement(escrow types.SubnetEscrow, msg *types.MsgSettleSubne
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
+		if totalCost > math.MaxUint64-hs.Cost {
+			return fmt.Errorf("total cost overflow: accumulating slot %d cost %d would exceed uint64", hs.SlotId, hs.Cost)
+		}
 		totalCost += hs.Cost
 	}
 	if totalCost > escrow.Amount {

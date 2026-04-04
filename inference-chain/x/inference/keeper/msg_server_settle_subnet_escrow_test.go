@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"math"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -189,4 +190,46 @@ func TestSettleSubnetEscrow_AllowlistBlocks(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "address is not allowed to create subnet escrows")
+}
+
+func TestSettleSubnetEscrow_ValidatorCostOverflow(t *testing.T) {
+	// Use 2-slot escrow so quorum=2 (both keys sign), keeping test setup minimal.
+	k, ms, ctx, _ := setupSubnetEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateSubnetKeys(t, 2)
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xCC
+
+	// Set group_size=2 in params to allow a 2-slot escrow
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.SubnetEscrowParams = &types.SubnetEscrowParams{
+		MinAmount:               1,
+		MaxAmount:               math.MaxInt64,
+		MaxEscrowsPerEpoch:      100,
+		GroupSize:               2,
+		AllowedCreatorAddresses: []string{},
+		TokenPrice:              types.DefaultSubnetTokenPrice,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	escrow := types.SubnetEscrow{
+		Id: 1, Creator: creator.String(), Amount: math.MaxUint64, Slots: slots, Settled: false,
+	}
+	_, err = k.StoreSubnetEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	// slot[0] cost = MaxUint64, slot[1] cost = 1 → validatorCosts[addr0] overflows
+	hostStats := []*types.SubnetSettlementHostStats{
+		{SlotId: 0, Cost: math.MaxUint64, RequiredValidations: 10, CompletedValidations: 9},
+		{SlotId: 1, Cost: 1, RequiredValidations: 10, CompletedValidations: 9},
+	}
+	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+
+	// VerifySubnetSettlement is called first and should catch the overflow,
+	// so SettleSubnetEscrow returns an error before any bank operations.
+	_, err = ms.SettleSubnetEscrow(ctx, msg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "overflow")
 }

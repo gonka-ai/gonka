@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"cmp"
+	"math"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -524,4 +525,25 @@ func TestSignatureFormatConversion(t *testing.T) {
 	s := new(big.Int).SetBytes(goEthSig[32:64])
 	require.True(t, r.Sign() > 0)
 	require.True(t, s.Sign() > 0)
+}
+
+func TestVerifySubnetSettlement_TotalCostOverflow(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	// Use 2 slots: quorum for group_size=2 is 2/2 (100%), so both keys must sign.
+	keys, slots := generateSubnetKeys(t, 2)
+	escrow := types.SubnetEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: math.MaxUint64, Slots: slots,
+	}
+
+	// slot[0].Cost = MaxUint64, slot[1].Cost = 1 → totalCost wraps to 0
+	hostStats := []*types.SubnetSettlementHostStats{
+		{SlotId: 0, Cost: math.MaxUint64, RequiredValidations: 10, CompletedValidations: 9},
+		{SlotId: 1, Cost: 1, RequiredValidations: 10, CompletedValidations: 9},
+	}
+	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+
+	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "overflow")
 }

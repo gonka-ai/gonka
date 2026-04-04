@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"math"
 	"context"
 	"fmt"
 
@@ -34,6 +35,9 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 			return nil, fmt.Errorf("host_stats slot_id %d out of range", hs.SlotId)
 		}
 		addr := escrow.Slots[hs.SlotId]
+		if validatorCosts[addr] > math.MaxUint64-hs.Cost {
+			return nil, fmt.Errorf("validator cost overflow for slot %d addr %s", hs.SlotId, addr)
+		}
 		validatorCosts[addr] += hs.Cost
 	}
 
@@ -46,6 +50,9 @@ func (k msgServer) SettleSubnetEscrow(goCtx context.Context, msg *types.MsgSettl
 			continue
 		}
 		paidValidators[addr] = true
+		if totalCost > math.MaxUint64-cost {
+			return nil, fmt.Errorf("total cost overflow paying validator %s", addr)
+		}
 		totalCost += cost
 
 		recipientAddr, err := sdk.AccAddressFromBech32(addr)
