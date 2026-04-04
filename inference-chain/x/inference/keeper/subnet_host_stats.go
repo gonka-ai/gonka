@@ -27,14 +27,31 @@ func (k Keeper) AggregateSubnetHostStats(ctx context.Context, epochIndex uint64,
 			EpochIndex:  epochIndex,
 		}
 	}
+	if existing.Missed > math.MaxUint32-slotStats.Missed {
+		return fmt.Errorf("missed overflow aggregating subnet host stats: existing=%d add=%d", existing.Missed, slotStats.Missed)
+	}
 	existing.Missed += slotStats.Missed
+
+	if existing.Invalid > math.MaxUint32-slotStats.Invalid {
+		return fmt.Errorf("invalid overflow aggregating subnet host stats: existing=%d add=%d", existing.Invalid, slotStats.Invalid)
+	}
 	existing.Invalid += slotStats.Invalid
+
 	if existing.Cost > math.MaxUint64-slotStats.Cost {
 		return fmt.Errorf("cost overflow aggregating subnet host stats")
 	}
 	existing.Cost += slotStats.Cost
+
+	if existing.RequiredValidations > math.MaxUint32-slotStats.RequiredValidations {
+		return fmt.Errorf("required_validations overflow aggregating subnet host stats: existing=%d add=%d", existing.RequiredValidations, slotStats.RequiredValidations)
+	}
 	existing.RequiredValidations += slotStats.RequiredValidations
+
+	if existing.CompletedValidations > math.MaxUint32-slotStats.CompletedValidations {
+		return fmt.Errorf("completed_validations overflow aggregating subnet host stats: existing=%d add=%d", existing.CompletedValidations, slotStats.CompletedValidations)
+	}
 	existing.CompletedValidations += slotStats.CompletedValidations
+
 	return k.SubnetHostEpochStatsMap.Set(ctx, key, existing)
 }
 
@@ -46,6 +63,9 @@ func (k Keeper) IncrementSubnetHostEscrowCount(ctx context.Context, epochIndex u
 			Participant: participant.String(),
 			EpochIndex:  epochIndex,
 		}
+	}
+	if existing.EscrowCount == math.MaxUint32 {
+		return fmt.Errorf("escrow count overflow for participant %s epoch %d", participant.String(), epochIndex)
 	}
 	existing.EscrowCount++
 	return k.SubnetHostEpochStatsMap.Set(ctx, key, existing)
