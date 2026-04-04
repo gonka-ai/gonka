@@ -137,12 +137,18 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			ValidatedWeight:             validation.ValidatedWeight,
 		}
 
+		// HasPocValidationV2 above already validated bech32 addresses for both participant
+		// and validator. Any error here is therefore a storage-layer failure, not invalid input.
+		// Abort the entire batch: a storage failure is infrastructure-level and partial writes
+		// would leave consensus state inconsistent. Cosmos SDK rolls back the tx on non-nil error.
 		if err := k.SetPocValidationV2(ctx, storedValidation); err != nil {
-			k.LogWarn("[SubmitPocValidationsV2] Failed to store validation, skipping", types.PoC,
+			k.LogError("[SubmitPocValidationsV2] storage failure, aborting batch", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress,
+				"storedSoFar", storedCount,
 				"error", err)
-			continue
+			return nil, fmt.Errorf("storage failure storing poc validation for participant %s: %w",
+				validation.ParticipantAddress, err)
 		}
 
 		storedCount++
