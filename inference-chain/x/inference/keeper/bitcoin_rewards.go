@@ -90,18 +90,35 @@ func GetBitcoinSettleAmounts(
 			originalDecimalAmount := decimal.NewFromInt(originalAmount)
 			remainingSupply := decimal.NewFromInt(bitcoinResult.Amount)
 
-			// Apply proportional reduction to each participant
+			// Apply proportional reduction to each participant.
+			// Defense-in-depth overflow guard (PR #544 class): reducedReward is mathematically bounded
+			// by bitcoinResult.Amount (derived from int64 supply cap arithmetic), so overflow cannot
+			// occur with valid upstream data. The guard protects against the rewardCoins = ^uint64(0)
+			// path in CalculateParticipantBitcoinRewards propagating here as a reducedReward.
+			// On overflow: all remaining participants' rewards are zeroed (not just skipped), so
+			// they do not retain un-reduced amounts — the entire remainder flows to governance.
+			overflowed := false
 			for _, amount := range settleResults {
 				if amount.Settle != nil && amount.Error == nil {
+					if overflowed {
+						amount.Settle.RewardCoins = 0
+						continue
+					}
 					// This gives accurate response by not relying on a ratio before we need to
 					reducedReward := uint64(decimal.NewFromUint64(amount.Settle.RewardCoins).Mul(remainingSupply).Div(originalDecimalAmount).IntPart())
+					if reducedReward > 0 && totalDistributed > math.MaxUint64-reducedReward {
+						// Overflow detected: zero this and all remaining participants' rewards.
+						amount.Settle.RewardCoins = 0
+						overflowed = true
+						continue
+					}
 					amount.Settle.RewardCoins = reducedReward
 					totalDistributed += reducedReward
 				}
 			}
 
-			// Any remainder due to integer division truncation (or downtime punishments already
-			// baked into settleResults) should go to governance.
+			// Any remainder due to integer division truncation, downtime punishments, or the
+			// overflow guard above should go to governance.
 			remainder := uint64(bitcoinResult.Amount) - totalDistributed
 			if uint64(bitcoinResult.Amount) < totalDistributed {
 				remainder = 0
@@ -742,7 +759,15 @@ func CalculateParticipantBitcoinRewards(
 					// If still too large, participant gets maximum possible uint64
 					rewardCoins = ^uint64(0) // Max uint64
 				}
-				totalDistributed += rewardCoins
+				// Gap 2 guard: rewardCoins = MaxUint64 path above can overflow totalDistributed.
+				// Saturate totalDistributed to MaxUint64 rather than wrapping; the remainder
+				// calculation below clamps any excess to governance.
+				_, overflow := bits.Add64(totalDistributed, rewardCoins, 0)
+				if overflow != 0 {
+					totalDistributed = math.MaxUint64
+				} else {
+					totalDistributed += rewardCoins
+				}
 			}
 		}
 		settleAmount.RewardCoins = rewardCoins
@@ -750,11 +775,22 @@ func CalculateParticipantBitcoinRewards(
 			debt := uint64(-participant.CoinBalance)
 			if settleAmount.RewardCoins >= debt {
 				settleAmount.RewardCoins -= debt
-				// Debt recovered from reward goes to governance remainder
-				totalDistributed -= debt
+				// Debt recovered from reward goes to governance remainder.
+				// Underflow guard: totalDistributed should always be >= debt here,
+				// but saturate to 0 defensively.
+				if totalDistributed >= debt {
+					totalDistributed -= debt
+				} else {
+					totalDistributed = 0
+				}
 			} else {
-				// Partial debt recovery - all reward coins go to debt
-				totalDistributed -= settleAmount.RewardCoins
+				// Partial debt recovery - all reward coins go to debt.
+				// Underflow guard: same defensive pattern.
+				if totalDistributed >= settleAmount.RewardCoins {
+					totalDistributed -= settleAmount.RewardCoins
+				} else {
+					totalDistributed = 0
+				}
 				settleAmount.RewardCoins = 0
 				settleError = types.ErrNegativeCoinBalance
 			}
