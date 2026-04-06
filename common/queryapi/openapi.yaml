@@ -1,0 +1,288 @@
+openapi: "3.0.3"
+info:
+  title: query-api
+  version: "0.1.0"
+
+paths:
+  /v1/chat/completions:
+    post:
+      operationId: PostChatCompletions
+      summary: Submit an inference request (SSE streaming)
+      parameters:
+        - { name: X-Inference-Id,      in: header, required: false, schema: { type: string } }
+        - { name: X-Seed,              in: header, required: false, schema: { type: string } }
+        - { name: X-Transfer-Address,  in: header, required: false, schema: { type: string } }
+        - { name: X-Requester-Address, in: header, required: false, schema: { type: string } }
+        - { name: X-Timestamp,         in: header, required: true,  schema: { type: string } }
+        - { name: X-TA-Signature,      in: header, required: true,  schema: { type: string } }
+        - { name: X-Prompt-Hash,       in: header, required: true,  schema: { type: string } }
+        - { name: Authorization,       in: header, required: true,  schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        "200":
+          description: Inference response (SSE or JSON)
+          content:
+            text/event-stream:
+              schema: { type: string }
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+        "400": { description: Bad request }
+        "401": { description: Unauthorized }
+        "413": { description: Request entity too large }
+
+    get:
+      operationId: GetChatCompletions
+      summary: Retrieve an inference record by ID
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Inference record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferenceRecord'
+        "400": { description: Missing id parameter }
+        "404": { description: Inference not found }
+
+  /v1/status:
+    get:
+      operationId: GetStatus
+      summary: Service and chain status
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  /v1/models:
+    get:
+      operationId: GetModels
+      summary: List available models from chain
+      responses:
+        "200":
+          description: Models list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+
+  /v1/participants:
+    get:
+      operationId: GetParticipants
+      summary: List participants from chain
+      responses:
+        "200":
+          description: Participants list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParticipantsResponse'
+
+  /v1/training/tasks:
+    post:
+      operationId: CreateTrainingTask
+      summary: Submit a new training task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTrainingTaskRequest'
+      responses:
+        "200":
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingTask'
+        "400": { description: Bad request }
+    get:
+      operationId: GetTrainingTasks
+      summary: List training tasks from chain
+      responses:
+        "200":
+          description: Training tasks list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingTasksResponse'
+
+  /v1/training/tasks/{id}:
+    get:
+      operationId: GetTrainingTask
+      summary: Get a training task by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Training task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingTask'
+        "404": { description: Not found }
+
+  /v1/stats/models:
+    get:
+      operationId: GetStatsModels
+      summary: Per-model inference statistics
+      responses:
+        "200":
+          description: Model statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsModelsResponse'
+
+  /v1/stats/summary/epochs:
+    get:
+      operationId: GetStatsSummaryEpochs
+      summary: Per-epoch inference summary statistics
+      responses:
+        "200":
+          description: Epoch summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsEpochsResponse'
+
+  /v1/inference/payloads:
+    get:
+      operationId: GetPayloads
+      summary: Retrieve prompt/response payloads for validation
+      parameters:
+        - { name: inference_id,        in: query,  required: true,  schema: { type: string } }
+        - { name: X-Validator-Address, in: header, required: true,  schema: { type: string } }
+        - { name: X-Timestamp,         in: header, required: true,  schema: { type: string } }
+        - { name: X-Epoch-Id,          in: header, required: true,  schema: { type: string } }
+        - { name: Authorization,       in: header, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Payload response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferencePayloads'
+        "400": { description: Bad request }
+        "401": { description: Unauthorized }
+        "404": { description: Inference not found }
+
+components:
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:          { type: string }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role:    { type: string }
+              content: { type: string }
+        max_tokens:             { type: integer }
+        max_completion_tokens:  { type: integer }
+        seed:                   { type: integer }
+        stream:                 { type: boolean }
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:      { type: string }
+        object:  { type: string }
+        created: { type: integer }
+        model:   { type: string }
+        choices:
+          type: array
+          items: { type: object }
+
+    InferenceRecord:
+      type: object
+      properties:
+        id:     { type: string }
+        model:  { type: string }
+        status: { type: string }
+
+    StatusResponse:
+      type: object
+      properties:
+        status:      { type: string }
+        block_height: { type: integer }
+        epoch_id:    { type: integer }
+
+    ModelsResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items: { type: object }
+
+    ParticipantsResponse:
+      type: object
+      properties:
+        participants:
+          type: array
+          items: { type: object }
+
+    CreateTrainingTaskRequest:
+      type: object
+      required: [model]
+      properties:
+        model:       { type: string }
+        description: { type: string }
+
+    TrainingTask:
+      type: object
+      properties:
+        id:     { type: string }
+        model:  { type: string }
+        status: { type: string }
+
+    TrainingTasksResponse:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrainingTask'
+
+    StatsModelsResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items: { type: object }
+
+    StatsEpochsResponse:
+      type: object
+      properties:
+        epochs:
+          type: array
+          items: { type: object }
+
+    InferencePayloads:
+      type: object
+      required: [inference_id, prompt_payload, response_payload, executor_signature]
+      properties:
+        inference_id:       { type: string }
+        prompt_payload:     { type: string }
+        response_payload:   { type: string }
+        executor_signature: { type: string }
