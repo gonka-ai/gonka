@@ -73,3 +73,97 @@ func (s *KeeperTestSuite) TestStakingHooks_JailingAndUnjailing() {
 	s.Require().NoError(err)
 	s.Require().False(isJailed, "participant should be un-jailed")
 }
+
+func (s *KeeperTestSuite) TestStakingHooks_AfterValidatorRemoved() {
+	// Setup - create a validator address and its corresponding account address
+	valAddr, accAddr := sample.AccAddressAndValAddress()
+
+	// Setup collateral for the participant
+	initialCollateral := sdk.NewInt64Coin(inftypes.BaseCoin, int64(1000))
+	s.Require().NoError(s.k.SetCollateral(s.ctx, accAddr, initialCollateral))
+
+	// Setup jailed status
+	s.Require().NoError(s.k.SetJailed(s.ctx, accAddr))
+
+	// Setup unbonding entries across multiple epochs
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, accAddr, uint64(5), sdk.NewInt64Coin(inftypes.BaseCoin, int64(100))))
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, accAddr, uint64(10), sdk.NewInt64Coin(inftypes.BaseCoin, int64(200))))
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, accAddr, uint64(15), sdk.NewInt64Coin(inftypes.BaseCoin, int64(300))))
+
+	// Verify all data exists before removal
+	_, found := s.k.GetCollateral(s.ctx, accAddr)
+	s.Require().True(found, "collateral should exist before removal")
+
+	isJailed, err := s.k.IsJailed(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().True(isJailed, "participant should be jailed before removal")
+
+	unbondingEntries, err := s.k.GetUnbondingByParticipant(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().Len(unbondingEntries, 3, "should have 3 unbonding entries before removal")
+
+	// Trigger the hook
+	hooks := collateralmodule.NewStakingHooks(s.k)
+	err = hooks.AfterValidatorRemoved(s.ctx, nil, valAddr)
+	s.Require().NoError(err)
+
+	// Verify all data is cleaned up
+	_, found = s.k.GetCollateral(s.ctx, accAddr)
+	s.Require().False(found, "collateral should be removed after validator removal")
+
+	isJailed, err = s.k.IsJailed(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().False(isJailed, "jailed status should be removed after validator removal")
+
+	unbondingEntries, err = s.k.GetUnbondingByParticipant(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().Empty(unbondingEntries, "all unbonding entries should be removed after validator removal")
+}
+
+func (s *KeeperTestSuite) TestStakingHooks_AfterValidatorRemoved_NoData() {
+	// Test that the hook handles the case where validator has no associated data gracefully
+	valAddr, accAddr := sample.AccAddressAndValAddress()
+
+	// Verify no data exists before calling the hook
+	_, found := s.k.GetCollateral(s.ctx, accAddr)
+	s.Require().False(found, "should have no collateral")
+
+	isJailed, err := s.k.IsJailed(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().False(isJailed, "should not be jailed")
+
+	unbondingEntries, err := s.k.GetUnbondingByParticipant(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().Empty(unbondingEntries, "should have no unbonding entries")
+
+	// Trigger the hook - should succeed without errors
+	hooks := collateralmodule.NewStakingHooks(s.k)
+	err = hooks.AfterValidatorRemoved(s.ctx, nil, valAddr)
+	s.Require().NoError(err, "hook should succeed even when no data exists")
+}
+
+func (s *KeeperTestSuite) TestStakingHooks_AfterValidatorRemoved_PartialData() {
+	// Test that the hook handles the case where validator has only some types of data
+	valAddr, accAddr := sample.AccAddressAndValAddress()
+
+	// Setup only unbonding entries, no collateral or jailed status
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, accAddr, uint64(5), sdk.NewInt64Coin(inftypes.BaseCoin, int64(100))))
+
+	// Verify state before calling the hook
+	_, found := s.k.GetCollateral(s.ctx, accAddr)
+	s.Require().False(found, "should have no collateral")
+
+	unbondingEntries, err := s.k.GetUnbondingByParticipant(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().Len(unbondingEntries, 1, "should have 1 unbonding entry")
+
+	// Trigger the hook
+	hooks := collateralmodule.NewStakingHooks(s.k)
+	err = hooks.AfterValidatorRemoved(s.ctx, nil, valAddr)
+	s.Require().NoError(err)
+
+	// Verify unbonding entry is removed
+	unbondingEntries, err = s.k.GetUnbondingByParticipant(s.ctx, accAddr)
+	s.Require().NoError(err)
+	s.Require().Empty(unbondingEntries, "unbonding entries should be removed")
+}

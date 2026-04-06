@@ -66,7 +66,9 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 	// Reduce the active collateral
 	newCollateral := currentCollateral.Sub(msg.Amount)
 	if newCollateral.IsZero() {
-		k.RemoveCollateral(ctx, participantAddr)
+		if err := k.RemoveCollateral(ctx, participantAddr); err != nil {
+			return nil, err
+		}
 	} else {
 		if err := k.SetCollateral(ctx, participantAddr, newCollateral); err != nil {
 			return nil, err

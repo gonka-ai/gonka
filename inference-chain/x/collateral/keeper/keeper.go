@@ -117,6 +117,46 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
+// ReturnAllCollateral sends all active and unbonding collateral tokens back to the participant.
+// This must be called before removing collateral records to ensure tokens are not lost.
+func (k Keeper) ReturnAllCollateral(ctx sdk.Context, participantAddress sdk.AccAddress) error {
+	totalAmount := math.ZeroInt()
+	denom := inferencetypes.BaseCoin
+
+	// 1. Get active collateral amount
+	activeCollateral, found := k.GetCollateral(ctx, participantAddress)
+	if found && activeCollateral.Amount.IsPositive() {
+		totalAmount = totalAmount.Add(activeCollateral.Amount)
+	}
+
+	// 2. Get all unbonding collateral amounts
+	unbondingEntries, err := k.GetUnbondingByParticipant(ctx, participantAddress)
+	if err != nil {
+		return err
+	}
+	for _, entry := range unbondingEntries {
+		if entry.Amount.Amount.IsPositive() {
+			totalAmount = totalAmount.Add(entry.Amount.Amount)
+		}
+	}
+
+	// 3. Send total back to participant if non-zero
+	if totalAmount.IsPositive() {
+		coins := sdk.NewCoins(sdk.NewCoin(denom, totalAmount))
+		err := k.bookkeepingBankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, coins, "collateral returned on validator removal")
+		if err != nil {
+			return err
+		}
+
+		k.Logger().Info("returned collateral tokens to participant",
+			"participant", participantAddress.String(),
+			"amount", coins.String(),
+		)
+	}
+
+	return nil
+}
+
 // SetCollateral stores a participant's collateral amount
 func (k Keeper) SetCollateral(ctx context.Context, participantAddress sdk.AccAddress, amount sdk.Coin) error {
 	return k.CollateralMap.Set(ctx, participantAddress, amount)
@@ -129,8 +169,8 @@ func (k Keeper) GetCollateral(ctx context.Context, participantAddress sdk.AccAdd
 }
 
 // RemoveCollateral removes a participant's collateral from the store
-func (k Keeper) RemoveCollateral(ctx context.Context, participantAddress sdk.AccAddress) {
-	k.CollateralMap.Remove(ctx, participantAddress)
+func (k Keeper) RemoveCollateral(ctx context.Context, participantAddress sdk.AccAddress) error {
+	return k.CollateralMap.Remove(ctx, participantAddress)
 }
 
 func (k Keeper) IterateCollaterals(ctx context.Context, process func(address sdk.AccAddress, amount sdk.Coin) (stop bool)) error {
@@ -242,6 +282,42 @@ func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress sd
 		list = append(list, v)
 	}
 	return list, nil
+}
+
+// maxUnbondingEntriesPerParticipant is the maximum number of unbonding entries
+// that can be removed in a single call to prevent memory exhaustion attacks.
+const maxUnbondingEntriesPerParticipant int64 = 10000
+
+// RemoveAllUnbondingByParticipant removes all unbonding entries for a specific participant.
+// This is used when a validator is removed to clean up orphaned unbonding collateral.
+// Returns an error if the number of entries exceeds maxUnbondingEntriesPerParticipant.
+func (k Keeper) RemoveAllUnbondingByParticipant(ctx sdk.Context, participantAddress sdk.AccAddress) (int64, error) {
+	idxIter, err := k.UnbondingIM.Indexes.ByParticipant.MatchExact(ctx, participantAddress)
+	if err != nil {
+		return 0, err
+	}
+	defer idxIter.Close()
+
+	var keysToRemove []collections.Pair[uint64, sdk.AccAddress]
+	for ; idxIter.Valid(); idxIter.Next() {
+		if int64(len(keysToRemove)) >= maxUnbondingEntriesPerParticipant {
+			return 0, fmt.Errorf("unbonding entries count exceeds maximum allowed (%d) for participant %s",
+				maxUnbondingEntriesPerParticipant, participantAddress.String())
+		}
+		pk, err := idxIter.PrimaryKey()
+		if err != nil {
+			return 0, err
+		}
+		keysToRemove = append(keysToRemove, pk)
+	}
+
+	for _, pk := range keysToRemove {
+		if err := k.UnbondingIM.Remove(ctx, pk); err != nil {
+			return 0, err
+		}
+	}
+
+	return int64(len(keysToRemove)), nil
 }
 
 // GetCurrentEpoch retrieves the current epoch from the store.
