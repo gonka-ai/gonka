@@ -1,4 +1,5 @@
 from typing import Optional
+from importlib.metadata import version as pkg_version
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ router = APIRouter(
 
 class StateResponse(BaseModel):
     state: ServiceState
+    version: str = pkg_version("mlnode-api")
     poc_status: Optional[str] = None          # "IDLE" | "GENERATING" | "VALIDATING" | "MIXED" | "NO_BACKENDS"
     inference_healthy: Optional[bool] = None  # True when ≥1 vLLM backend is up
     loaded_model: Optional[str] = None        # Model the current vLLM process was started with
