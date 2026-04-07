@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -200,6 +201,45 @@ func TestRequestThresholdSignature_RejectsDuplicateRequestIDForActiveAndComplete
 			require.Contains(t, err.Error(), tc.status.String())
 		})
 	}
+}
+
+func TestRequestThresholdSignature_RejectsRetryAfterCancelled(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(305)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+
+	signingData := makeSigningDataForRetryTests(epochID, 40)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+	require.NoError(t, k.CancelThresholdSignature(ctx, signingData.RequestId))
+
+	cancelledRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED, cancelledRequest.Status)
+
+	err = k.RequestThresholdSignature(ctx, signingData)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request_id already exists")
+	require.Contains(t, err.Error(), types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED.String())
+}
+
+func TestBlsHooksSharedAcrossKeeperCopies(t *testing.T) {
+	k, _ := setupBlsKeeperForRetryTests(t)
+	kCopy := k
+
+	hook := &retryTestBlsHook{}
+	kCopy.SetHooks(hook)
+
+	require.NoError(t, k.Hooks().AfterThresholdSigningCompleted(context.Background(), bytes.Repeat([]byte{1}, 32), 1))
+	require.True(t, hook.called)
+}
+
+type retryTestBlsHook struct {
+	called bool
+}
+
+func (h *retryTestBlsHook) AfterThresholdSigningCompleted(_ context.Context, _ []byte, _ uint64) error {
+	h.called = true
+	return nil
 }
 
 func setSignedEpochForRetryTests(t *testing.T, k Keeper, ctx sdk.Context, epochID uint64) {

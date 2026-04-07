@@ -31,6 +31,7 @@ type (
 		AccountKeeper types.AccountKeeper
 		AuthzKeeper   types.AuthzKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
+		mintTokensFn  func(ctx sdk.Context, contractAddr, recipient, amount string) error
 
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
@@ -82,6 +83,8 @@ type (
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
+		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
+		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
 		WrappedTokenCodeIDItem         collections.Item[uint64]
 		WrappedTokenMetadataMap        collections.Map[collections.Pair[string, string], types.BridgeTokenMetadata]
 		WrappedTokenContractsMap       collections.Map[collections.Pair[string, string], types.BridgeWrappedTokenContract]
@@ -410,6 +413,20 @@ func NewKeeper(
 			collections.TripleKeyCodec(collections.StringKey, collections.StringKey, collections.StringKey),
 			codec.CollValue[types.BridgeTransaction](cdc),
 		),
+		BridgeMintRefundsMap: collections.NewMap(
+			sb,
+			types.BridgeMintRefundsPrefix,
+			"bridge_mint_refunds",
+			collections.StringKey,
+			codec.CollValue[types.MsgRequestBridgeMint](cdc),
+		),
+		BridgeWithdrawalRefundsMap: collections.NewMap(
+			sb,
+			types.BridgeWithdrawalRefundsPrefix,
+			"bridge_withdrawal_refunds",
+			collections.StringKey,
+			codec.CollValue[types.MsgRequestBridgeWithdrawal](cdc),
+		),
 		WrappedTokenMetadataMap: collections.NewMap(
 			sb,
 			types.WrappedTokenMetadataPrefix,
@@ -524,6 +541,10 @@ func (k Keeper) GetAuthority() string {
 // GetWasmKeeper returns the WASM keeper
 func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
 	return k.getWasmKeeper()
+}
+
+func (k *Keeper) SetMintTokensFnForTesting(mintTokensFn func(ctx sdk.Context, contractAddr, recipient, amount string) error) {
+	k.mintTokensFn = mintTokensFn
 }
 
 // GetCollateralKeeper returns the collateral keeper.

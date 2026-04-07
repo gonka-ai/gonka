@@ -49,6 +49,7 @@ service Msg {
   rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading) returns (MsgApproveBridgeTokenForTradingResponse);
   rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal) returns (MsgRequestBridgeWithdrawalResponse);
   rpc RequestBridgeMint                (MsgRequestBridgeMint) returns (MsgRequestBridgeMintResponse);
+  rpc CancelBridgeOperation            (MsgCancelBridgeOperation) returns (MsgCancelBridgeOperationResponse);
   rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract) returns (MsgRegisterWrappedTokenContractResponse);
   rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens) returns (MsgMigrateAllWrappedTokensResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
@@ -403,6 +404,14 @@ message MsgRequestBridgeMintResponse {
   uint64 epoch_index = 2; // Current epoch ID used for signature
   string bls_request_id = 3; // BLS signing request ID
 }
+
+message MsgCancelBridgeOperation {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string request_id = 2;
+}
+
+message MsgCancelBridgeOperationResponse {}
 
 // SetCw20CodeId updates the code id used for new wrapped-token instantiations.
 message MsgRegisterWrappedTokenContract {

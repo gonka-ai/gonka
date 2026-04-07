@@ -13,10 +13,15 @@ import (
 )
 
 type (
+	blsHooksState struct {
+		hooks types.BlsHooks
+	}
+
 	Keeper struct {
 		cdc          codec.BinaryCodec
 		storeService store.KVStoreService
 		logger       log.Logger
+		hooksState   *blsHooksState
 
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
@@ -46,6 +51,7 @@ func NewKeeper(
 		storeService: storeService,
 		authority:    authority,
 		logger:       logger,
+		hooksState:   &blsHooksState{},
 	}
 }
 
@@ -57,6 +63,23 @@ func (k Keeper) GetAuthority() string {
 // Logger returns a module-specific logger.
 func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
+}
+
+func (k Keeper) Hooks() types.BlsHooks {
+	if k.hooksState == nil || k.hooksState.hooks == nil {
+		return types.MultiBlsHooks{}
+	}
+	return k.hooksState.hooks
+}
+
+func (k *Keeper) SetHooks(hooks types.BlsHooks) {
+	if k.hooksState == nil {
+		k.hooksState = &blsHooksState{}
+	}
+	if k.hooksState.hooks != nil {
+		panic("cannot set bls hooks twice")
+	}
+	k.hooksState.hooks = hooks
 }
 
 // SetActiveEpochID sets the current active epoch undergoing DKG

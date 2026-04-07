@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
+	"sort"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -188,6 +191,7 @@ func init() {
 	appmodule.Register(
 		&modulev1.Module{},
 		appmodule.Provide(ProvideModule),
+		appmodule.Invoke(InvokeSetBlsHooks),
 	)
 }
 
@@ -230,4 +234,28 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	)
 
 	return ModuleOutputs{BlsKeeper: k, Module: m}
+}
+
+func InvokeSetBlsHooks(
+	keeper *keeper.Keeper,
+	blsHooks map[string]types.BlsHooksWrapper,
+) error {
+	if keeper == nil || len(blsHooks) == 0 {
+		return nil
+	}
+
+	modNames := slices.Collect(maps.Keys(blsHooks))
+	sort.Strings(modNames)
+
+	multiHooks := make(types.MultiBlsHooks, 0, len(modNames))
+	for _, modName := range modNames {
+		hook, ok := blsHooks[modName]
+		if !ok {
+			return fmt.Errorf("can't find bls hooks for module %s", modName)
+		}
+		multiHooks = append(multiHooks, hook)
+	}
+
+	keeper.SetHooks(multiHooks)
+	return nil
 }

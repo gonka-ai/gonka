@@ -431,18 +431,172 @@ func (m *BridgeWrappedTokenContract) GetWrappedContractAddress() string {
 	return ""
 }
 
+type BridgePendingMintRefund struct {
+	RequestId          string `protobuf:"bytes,1,opt,name=requestId,proto3" json:"requestId,omitempty"`
+	Creator            string `protobuf:"bytes,2,opt,name=creator,proto3" json:"creator,omitempty"`
+	Amount             string `protobuf:"bytes,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	DestinationAddress string `protobuf:"bytes,4,opt,name=destinationAddress,proto3" json:"destinationAddress,omitempty"`
+	ChainId            string `protobuf:"bytes,5,opt,name=chainId,proto3" json:"chainId,omitempty"`
+}
+
+func (m *BridgePendingMintRefund) Reset()         { *m = BridgePendingMintRefund{} }
+func (m *BridgePendingMintRefund) String() string { return proto.CompactTextString(m) }
+func (*BridgePendingMintRefund) ProtoMessage()    {}
+func (*BridgePendingMintRefund) Descriptor() ([]byte, []int) {
+	return fileDescriptor_3ad499bd0e2b8894, []int{5}
+}
+func (m *BridgePendingMintRefund) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *BridgePendingMintRefund) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_BridgePendingMintRefund.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *BridgePendingMintRefund) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_BridgePendingMintRefund.Merge(m, src)
+}
+func (m *BridgePendingMintRefund) XXX_Size() int {
+	return m.Size()
+}
+func (m *BridgePendingMintRefund) XXX_DiscardUnknown() {
+	xxx_messageInfo_BridgePendingMintRefund.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_BridgePendingMintRefund proto.InternalMessageInfo
+
+func (m *BridgePendingMintRefund) GetRequestId() string {
+	if m != nil {
+		return m.RequestId
+	}
+	return ""
+}
+
+func (m *BridgePendingMintRefund) GetCreator() string {
+	if m != nil {
+		return m.Creator
+	}
+	return ""
+}
+
+func (m *BridgePendingMintRefund) GetAmount() string {
+	if m != nil {
+		return m.Amount
+	}
+	return ""
+}
+
+func (m *BridgePendingMintRefund) GetDestinationAddress() string {
+	if m != nil {
+		return m.DestinationAddress
+	}
+	return ""
+}
+
+func (m *BridgePendingMintRefund) GetChainId() string {
+	if m != nil {
+		return m.ChainId
+	}
+	return ""
+}
+
+type BridgePendingWithdrawalRefund struct {
+	RequestId          string `protobuf:"bytes,1,opt,name=requestId,proto3" json:"requestId,omitempty"`
+	Creator            string `protobuf:"bytes,2,opt,name=creator,proto3" json:"creator,omitempty"`
+	UserAddress        string `protobuf:"bytes,3,opt,name=userAddress,proto3" json:"userAddress,omitempty"`
+	Amount             string `protobuf:"bytes,4,opt,name=amount,proto3" json:"amount,omitempty"`
+	DestinationAddress string `protobuf:"bytes,5,opt,name=destinationAddress,proto3" json:"destinationAddress,omitempty"`
+}
+
+func (m *BridgePendingWithdrawalRefund) Reset()         { *m = BridgePendingWithdrawalRefund{} }
+func (m *BridgePendingWithdrawalRefund) String() string { return proto.CompactTextString(m) }
+func (*BridgePendingWithdrawalRefund) ProtoMessage()    {}
+func (*BridgePendingWithdrawalRefund) Descriptor() ([]byte, []int) {
+	return fileDescriptor_3ad499bd0e2b8894, []int{6}
+}
+func (m *BridgePendingWithdrawalRefund) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *BridgePendingWithdrawalRefund) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_BridgePendingWithdrawalRefund.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *BridgePendingWithdrawalRefund) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_BridgePendingWithdrawalRefund.Merge(m, src)
+}
+func (m *BridgePendingWithdrawalRefund) XXX_Size() int {
+	return m.Size()
+}
+func (m *BridgePendingWithdrawalRefund) XXX_DiscardUnknown() {
+	xxx_messageInfo_BridgePendingWithdrawalRefund.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_BridgePendingWithdrawalRefund proto.InternalMessageInfo
+
+func (m *BridgePendingWithdrawalRefund) GetRequestId() string {
+	if m != nil {
+		return m.RequestId
+	}
+	return ""
+}
+
+func (m *BridgePendingWithdrawalRefund) GetCreator() string {
+	if m != nil {
+		return m.Creator
+	}
+	return ""
+}
+
+func (m *BridgePendingWithdrawalRefund) GetUserAddress() string {
+	if m != nil {
+		return m.UserAddress
+	}
+	return ""
+}
+
+func (m *BridgePendingWithdrawalRefund) GetAmount() string {
+	if m != nil {
+		return m.Amount
+	}
+	return ""
+}
+
+func (m *BridgePendingWithdrawalRefund) GetDestinationAddress() string {
+	if m != nil {
+		return m.DestinationAddress
+	}
+	return ""
+}
+
 // Bridge groups all bridge-related entities under a single parent structure
 type Bridge struct {
-	ContractAddresses   []*BridgeContractAddress `protobuf:"bytes,1,rep,name=contract_addresses,json=contractAddresses,proto3" json:"contract_addresses,omitempty"`
-	TokenMetadata       []*BridgeTokenMetadata   `protobuf:"bytes,2,rep,name=token_metadata,json=tokenMetadata,proto3" json:"token_metadata,omitempty"`
-	TradeApprovedTokens []*BridgeTokenReference  `protobuf:"bytes,3,rep,name=trade_approved_tokens,json=tradeApprovedTokens,proto3" json:"trade_approved_tokens,omitempty"`
+	ContractAddresses        []*BridgeContractAddress         `protobuf:"bytes,1,rep,name=contract_addresses,json=contractAddresses,proto3" json:"contract_addresses,omitempty"`
+	TokenMetadata            []*BridgeTokenMetadata           `protobuf:"bytes,2,rep,name=token_metadata,json=tokenMetadata,proto3" json:"token_metadata,omitempty"`
+	TradeApprovedTokens      []*BridgeTokenReference          `protobuf:"bytes,3,rep,name=trade_approved_tokens,json=tradeApprovedTokens,proto3" json:"trade_approved_tokens,omitempty"`
+	PendingMintRefunds       []*BridgePendingMintRefund       `protobuf:"bytes,4,rep,name=pending_mint_refunds,json=pendingMintRefunds,proto3" json:"pending_mint_refunds,omitempty"`
+	PendingWithdrawalRefunds []*BridgePendingWithdrawalRefund `protobuf:"bytes,5,rep,name=pending_withdrawal_refunds,json=pendingWithdrawalRefunds,proto3" json:"pending_withdrawal_refunds,omitempty"`
 }
 
 func (m *Bridge) Reset()         { *m = Bridge{} }
 func (m *Bridge) String() string { return proto.CompactTextString(m) }
 func (*Bridge) ProtoMessage()    {}
 func (*Bridge) Descriptor() ([]byte, []int) {
-	return fileDescriptor_3ad499bd0e2b8894, []int{5}
+	return fileDescriptor_3ad499bd0e2b8894, []int{7}
 }
 func (m *Bridge) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -492,6 +646,20 @@ func (m *Bridge) GetTradeApprovedTokens() []*BridgeTokenReference {
 	return nil
 }
 
+func (m *Bridge) GetPendingMintRefunds() []*BridgePendingMintRefund {
+	if m != nil {
+		return m.PendingMintRefunds
+	}
+	return nil
+}
+
+func (m *Bridge) GetPendingWithdrawalRefunds() []*BridgePendingWithdrawalRefund {
+	if m != nil {
+		return m.PendingWithdrawalRefunds
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterEnum("inference.inference.BridgeTransactionStatus", BridgeTransactionStatus_name, BridgeTransactionStatus_value)
 	proto.RegisterType((*BridgeContractAddress)(nil), "inference.inference.BridgeContractAddress")
@@ -499,53 +667,65 @@ func init() {
 	proto.RegisterType((*BridgeTokenReference)(nil), "inference.inference.BridgeTokenReference")
 	proto.RegisterType((*BridgeTransaction)(nil), "inference.inference.BridgeTransaction")
 	proto.RegisterType((*BridgeWrappedTokenContract)(nil), "inference.inference.BridgeWrappedTokenContract")
+	proto.RegisterType((*BridgePendingMintRefund)(nil), "inference.inference.BridgePendingMintRefund")
+	proto.RegisterType((*BridgePendingWithdrawalRefund)(nil), "inference.inference.BridgePendingWithdrawalRefund")
 	proto.RegisterType((*Bridge)(nil), "inference.inference.Bridge")
 }
 
 func init() { proto.RegisterFile("inference/inference/bridge.proto", fileDescriptor_3ad499bd0e2b8894) }
 
 var fileDescriptor_3ad499bd0e2b8894 = []byte{
-	// 630 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x54, 0x4d, 0x4f, 0x1b, 0x3d,
-	0x10, 0x8e, 0x13, 0xde, 0x40, 0x06, 0xc8, 0x0b, 0xe6, 0xa3, 0x16, 0x87, 0xd5, 0x6a, 0x4f, 0x5b,
-	0x54, 0x05, 0x89, 0xaa, 0xbd, 0x43, 0x12, 0xa1, 0x48, 0xe5, 0x43, 0x2e, 0x6a, 0x55, 0xaa, 0x2a,
-	0x72, 0xd6, 0x2e, 0xac, 0xc8, 0xae, 0x57, 0xb6, 0xc3, 0xc7, 0xbf, 0xa8, 0xd4, 0x4b, 0xaf, 0xfd,
-	0x35, 0xed, 0x91, 0x63, 0x8f, 0x15, 0xfc, 0x91, 0x6a, 0xbd, 0x9b, 0x74, 0x93, 0x06, 0xaa, 0x4a,
-	0xdc, 0x3c, 0xcf, 0x8c, 0x9f, 0x79, 0x66, 0x3c, 0x63, 0x70, 0xc3, 0xf8, 0xa3, 0x50, 0x22, 0x0e,
-	0xc4, 0xd6, 0xef, 0x53, 0x4f, 0x85, 0xfc, 0x54, 0x34, 0x12, 0x25, 0x8d, 0xc4, 0x2b, 0x23, 0xbc,
-	0x31, 0x3a, 0x79, 0xef, 0x61, 0x6d, 0xd7, 0x06, 0x35, 0x65, 0x6c, 0x14, 0x0b, 0xcc, 0x0e, 0xe7,
-	0x4a, 0x68, 0x8d, 0xeb, 0x50, 0x0e, 0x39, 0x41, 0x2e, 0xf2, 0x6b, 0xb4, 0x1c, 0x72, 0x4c, 0x60,
-	0x36, 0x38, 0x63, 0x61, 0xdc, 0xe1, 0xa4, 0x6c, 0xc1, 0xa1, 0x99, 0x7a, 0x58, 0x76, 0x89, 0x54,
-	0x32, 0x4f, 0x6e, 0x7a, 0x5f, 0x11, 0xac, 0x64, 0xec, 0xc7, 0xf2, 0x5c, 0xc4, 0xfb, 0xc2, 0x30,
-	0xce, 0x0c, 0x2b, 0x72, 0xa1, 0x71, 0x2e, 0x1f, 0xfe, 0x0f, 0xc6, 0x85, 0xe4, 0xd9, 0x26, 0x61,
-	0x8c, 0x61, 0x26, 0x66, 0x91, 0xc8, 0x53, 0xda, 0x33, 0x5e, 0x87, 0xaa, 0xbe, 0x8e, 0x7a, 0xb2,
-	0x4f, 0x66, 0x2c, 0x9a, 0x5b, 0x78, 0x03, 0xe6, 0xb8, 0x08, 0xc2, 0x88, 0xf5, 0x35, 0xf9, 0xcf,
-	0x45, 0xfe, 0x22, 0x1d, 0xd9, 0xde, 0x09, 0xac, 0x16, 0x24, 0x52, 0x91, 0x37, 0xe6, 0x31, 0x34,
-	0x7a, 0xdf, 0x2a, 0xb0, 0x9c, 0x93, 0x2b, 0x16, 0x6b, 0x16, 0x98, 0x50, 0xc6, 0xff, 0xd0, 0xd9,
-	0x29, 0x99, 0x2a, 0xd3, 0xbb, 0xe1, 0xc1, 0x82, 0xbc, 0x8c, 0x85, 0x1a, 0x86, 0x65, 0xf5, 0x8f,
-	0x61, 0x69, 0x77, 0x58, 0x24, 0x07, 0xb1, 0xb1, 0x3d, 0xa8, 0xd1, 0xdc, 0xc2, 0x2d, 0xa8, 0x6a,
-	0xc3, 0xcc, 0x40, 0x93, 0xaa, 0x8b, 0xfc, 0xfa, 0xf6, 0xb3, 0xc6, 0x94, 0x41, 0x69, 0xfc, 0x51,
-	0xc7, 0x6b, 0x7b, 0x87, 0xe6, 0x77, 0xb1, 0x0b, 0xf3, 0xbd, 0xbe, 0x0c, 0xce, 0x0f, 0x06, 0x51,
-	0x4f, 0x28, 0x32, 0x6b, 0x53, 0x14, 0xa1, 0x54, 0xa3, 0x12, 0x81, 0x08, 0x13, 0xd3, 0x89, 0xb9,
-	0xb8, 0x22, 0x73, 0x99, 0xc6, 0x22, 0x56, 0x88, 0xd1, 0x54, 0x4a, 0x43, 0x6a, 0x63, 0x31, 0x16,
-	0xc3, 0x0e, 0x80, 0x48, 0x64, 0x70, 0x96, 0xb1, 0x80, 0x8b, 0xfc, 0x19, 0x5a, 0x40, 0x52, 0xff,
-	0x05, 0xeb, 0x87, 0x9c, 0x19, 0xa9, 0x34, 0x99, 0x77, 0x2b, 0x7e, 0x8d, 0x16, 0x10, 0xbc, 0x0d,
-	0xab, 0x46, 0x1a, 0xd6, 0x7f, 0x93, 0x41, 0xa1, 0x8c, 0x8f, 0xe4, 0xa5, 0x50, 0x64, 0xc1, 0x45,
-	0x7e, 0x85, 0x4e, 0xf5, 0x79, 0x5f, 0x10, 0x6c, 0x64, 0x1d, 0x78, 0xab, 0x58, 0x92, 0x08, 0x6e,
-	0xa7, 0x65, 0xb8, 0x33, 0x8f, 0x32, 0xd0, 0x2f, 0x61, 0xfd, 0x32, 0xe3, 0x6e, 0x4e, 0x7d, 0xf3,
-	0x7b, 0xbc, 0xde, 0xe7, 0x32, 0x54, 0x33, 0x69, 0xf8, 0x1d, 0xe0, 0x21, 0x6b, 0x37, 0xdf, 0x41,
-	0xa1, 0x09, 0x72, 0x2b, 0xfe, 0xfc, 0xf6, 0xe6, 0x03, 0xaf, 0x3a, 0x41, 0x49, 0x97, 0x27, 0xb4,
-	0x09, 0x8d, 0x0f, 0xa1, 0x6e, 0xd2, 0x92, 0xbb, 0x51, 0xbe, 0xc4, 0xa4, 0x6c, 0x69, 0xfd, 0x87,
-	0x86, 0xa5, 0xb8, 0xf4, 0x74, 0xd1, 0x8c, 0xfd, 0x01, 0x1f, 0x60, 0xcd, 0x28, 0xc6, 0x45, 0x97,
-	0x25, 0x89, 0x92, 0x17, 0x82, 0x77, 0xad, 0x3f, 0xad, 0x36, 0xe5, 0x7d, 0xfa, 0x37, 0xde, 0xd1,
-	0xa6, 0xd2, 0x15, 0xcb, 0xb3, 0x93, 0xd3, 0x58, 0xa7, 0xde, 0x6c, 0xc2, 0x93, 0x7b, 0x26, 0x16,
-	0x63, 0xa8, 0xef, 0xd2, 0x4e, 0x6b, 0xaf, 0xdd, 0x3d, 0x6a, 0x1f, 0xb4, 0x3a, 0x07, 0x7b, 0x4b,
-	0x25, 0xbc, 0x0a, 0x4b, 0x39, 0xd6, 0x3c, 0xdc, 0x3f, 0x7a, 0xd5, 0x3e, 0x6e, 0xb7, 0x96, 0xd0,
-	0xee, 0xe1, 0xf7, 0x5b, 0x07, 0xdd, 0xdc, 0x3a, 0xe8, 0xe7, 0xad, 0x83, 0x3e, 0xdd, 0x39, 0xa5,
-	0x9b, 0x3b, 0xa7, 0xf4, 0xe3, 0xce, 0x29, 0x9d, 0xbc, 0x38, 0x0d, 0xcd, 0xd9, 0xa0, 0xd7, 0x08,
-	0x64, 0xb4, 0x95, 0x28, 0xc9, 0x07, 0x81, 0xd1, 0x41, 0x38, 0xf1, 0xfb, 0x5e, 0x15, 0xce, 0xe6,
-	0x3a, 0x11, 0xba, 0x57, 0xb5, 0x3f, 0xf1, 0xf3, 0x5f, 0x01, 0x00, 0x00, 0xff, 0xff, 0x25, 0x76,
-	0xef, 0x6a, 0xad, 0x05, 0x00, 0x00,
+	// 792 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x55, 0x41, 0x6f, 0xdb, 0x36,
+	0x14, 0x0e, 0xa3, 0xc4, 0xad, 0x5f, 0xda, 0x2c, 0x65, 0xd2, 0x4e, 0x08, 0x36, 0x43, 0xd0, 0x49,
+	0x2b, 0x06, 0x17, 0xf0, 0xb0, 0xdd, 0x1b, 0xdb, 0x28, 0x0c, 0x2c, 0x89, 0xc1, 0x15, 0x2b, 0xd6,
+	0x61, 0x33, 0x68, 0x91, 0x8d, 0x89, 0x5a, 0xa4, 0x46, 0x52, 0x75, 0xfb, 0x2f, 0x76, 0xdc, 0x75,
+	0xbf, 0x61, 0xbf, 0x60, 0xa7, 0xed, 0xd8, 0xe3, 0x8e, 0x43, 0x82, 0xfd, 0x8f, 0x41, 0x94, 0xac,
+	0x48, 0x8e, 0x9b, 0x6e, 0x68, 0x6e, 0xe4, 0xf7, 0xa8, 0xef, 0xbd, 0xf7, 0xf1, 0xe3, 0x13, 0x04,
+	0x42, 0xbe, 0xe0, 0x9a, 0xcb, 0x98, 0x3f, 0xba, 0x5c, 0x4d, 0xb5, 0x60, 0x67, 0xbc, 0x9b, 0x6a,
+	0x65, 0x15, 0xde, 0xaf, 0xf0, 0x6e, 0xb5, 0x0a, 0xbf, 0x87, 0xfb, 0x47, 0xee, 0x50, 0x5f, 0x49,
+	0xab, 0x69, 0x6c, 0x1f, 0x33, 0xa6, 0xb9, 0x31, 0x78, 0x17, 0x36, 0x05, 0xf3, 0x51, 0x80, 0xa2,
+	0x36, 0xd9, 0x14, 0x0c, 0xfb, 0x70, 0x2b, 0x9e, 0x51, 0x21, 0x47, 0xcc, 0xdf, 0x74, 0xe0, 0x72,
+	0x9b, 0x47, 0x68, 0xf1, 0x91, 0xef, 0x15, 0x91, 0x72, 0x1b, 0xfe, 0x8a, 0x60, 0xbf, 0x60, 0x7f,
+	0xaa, 0x5e, 0x72, 0x79, 0xcc, 0x2d, 0x65, 0xd4, 0xd2, 0x3a, 0x17, 0x6a, 0x72, 0x45, 0xf0, 0x51,
+	0xdc, 0x2c, 0xa4, 0xcc, 0xb6, 0x0a, 0x63, 0x0c, 0x5b, 0x92, 0x26, 0xbc, 0x4c, 0xe9, 0xd6, 0xf8,
+	0x01, 0xb4, 0xcc, 0x9b, 0x64, 0xaa, 0xe6, 0xfe, 0x96, 0x43, 0xcb, 0x1d, 0x3e, 0x84, 0xdb, 0x8c,
+	0xc7, 0x22, 0xa1, 0x73, 0xe3, 0x6f, 0x07, 0x28, 0xba, 0x4b, 0xaa, 0x7d, 0xf8, 0x1c, 0x0e, 0x6a,
+	0x25, 0x12, 0x5e, 0x0a, 0x73, 0x13, 0x35, 0x86, 0x7f, 0x78, 0x70, 0xaf, 0x24, 0xd7, 0x54, 0x1a,
+	0x1a, 0x5b, 0xa1, 0xe4, 0xff, 0x50, 0x76, 0x4d, 0x26, 0x6f, 0xbd, 0x1a, 0x21, 0xdc, 0x51, 0x0b,
+	0xc9, 0xf5, 0xf2, 0x58, 0xd1, 0x7f, 0x03, 0xcb, 0xd5, 0xa1, 0x89, 0xca, 0xa4, 0x75, 0x1a, 0xb4,
+	0x49, 0xb9, 0xc3, 0x03, 0x68, 0x19, 0x4b, 0x6d, 0x66, 0xfc, 0x56, 0x80, 0xa2, 0xdd, 0xde, 0xe7,
+	0xdd, 0x35, 0x46, 0xe9, 0x5e, 0xe9, 0xe3, 0x1b, 0xf7, 0x0d, 0x29, 0xbf, 0xc5, 0x01, 0xec, 0x4c,
+	0xe7, 0x2a, 0x7e, 0x79, 0x92, 0x25, 0x53, 0xae, 0xfd, 0x5b, 0x2e, 0x45, 0x1d, 0xca, 0x6b, 0xd4,
+	0x3c, 0xe6, 0x22, 0xb5, 0x23, 0xc9, 0xf8, 0x6b, 0xff, 0x76, 0x51, 0x63, 0x1d, 0xab, 0x9d, 0x31,
+	0x44, 0x29, 0xeb, 0xb7, 0x1b, 0x67, 0x1c, 0x86, 0x3b, 0x00, 0x3c, 0x55, 0xf1, 0xac, 0x60, 0x81,
+	0x00, 0x45, 0x5b, 0xa4, 0x86, 0xe4, 0xf1, 0x57, 0x74, 0x2e, 0x18, 0xb5, 0x4a, 0x1b, 0x7f, 0x27,
+	0xf0, 0xa2, 0x36, 0xa9, 0x21, 0xb8, 0x07, 0x07, 0x56, 0x59, 0x3a, 0xff, 0xb6, 0x80, 0x84, 0x92,
+	0x63, 0xb5, 0xe0, 0xda, 0xbf, 0x13, 0xa0, 0xc8, 0x23, 0x6b, 0x63, 0xe1, 0x2f, 0x08, 0x0e, 0x0b,
+	0x05, 0x9e, 0x69, 0x9a, 0xa6, 0x9c, 0x39, 0xb7, 0x2c, 0xdf, 0xcc, 0x8d, 0x18, 0xfa, 0x2b, 0x78,
+	0xb0, 0x28, 0xb8, 0xfb, 0x6b, 0xef, 0xfc, 0x1d, 0xd1, 0xf0, 0x37, 0x04, 0x1f, 0x17, 0xa5, 0x8d,
+	0xb9, 0x64, 0x42, 0x9e, 0x1d, 0x0b, 0x69, 0x09, 0x7f, 0x91, 0x49, 0x86, 0x3f, 0x81, 0xb6, 0xe6,
+	0x3f, 0x65, 0xdc, 0xd8, 0xaa, 0xb2, 0x4b, 0xc0, 0x55, 0xad, 0x79, 0x2e, 0x4a, 0x65, 0xbc, 0x62,
+	0x5b, 0xb3, 0x8a, 0xd7, 0xb0, 0x4a, 0x17, 0x30, 0xe3, 0xc6, 0x0a, 0xe9, 0xa4, 0x69, 0x9a, 0x6d,
+	0x4d, 0xa4, 0xae, 0xcb, 0x76, 0x43, 0x97, 0xf0, 0x77, 0x04, 0x9f, 0x36, 0xaa, 0x7e, 0x26, 0xec,
+	0x8c, 0x69, 0xba, 0xa0, 0xf3, 0x0f, 0xac, 0x3d, 0x80, 0x9d, 0xcc, 0x5c, 0xbe, 0x84, 0xa2, 0x81,
+	0x3a, 0x54, 0xeb, 0x6e, 0xeb, 0x3f, 0x74, 0xb7, 0xfd, 0xae, 0xee, 0xc2, 0x7f, 0x3c, 0x68, 0x15,
+	0x3d, 0xe0, 0xef, 0x00, 0x2f, 0xef, 0x73, 0x52, 0x4e, 0x3f, 0x6e, 0x7c, 0x14, 0x78, 0xd1, 0x4e,
+	0xef, 0xe1, 0x35, 0xef, 0x69, 0xe5, 0x32, 0xc9, 0xbd, 0x15, 0x57, 0x70, 0x83, 0x4f, 0x61, 0xd7,
+	0xe6, 0x66, 0x9b, 0x24, 0xe5, 0xf8, 0xf4, 0x37, 0x1d, 0x6d, 0x74, 0xdd, 0x33, 0xad, 0x8f, 0x5b,
+	0x72, 0xd7, 0x36, 0xa6, 0xef, 0x0f, 0x70, 0xdf, 0x6a, 0xca, 0xf8, 0x84, 0xa6, 0xa9, 0x56, 0xaf,
+	0x38, 0x9b, 0xb8, 0x78, 0x2e, 0x55, 0xce, 0xfb, 0xd9, 0xfb, 0x78, 0xab, 0x19, 0x49, 0xf6, 0x1d,
+	0xcf, 0xe3, 0x92, 0xc6, 0x05, 0x0d, 0xfe, 0x11, 0x0e, 0xd2, 0xe2, 0x4a, 0x27, 0x89, 0x90, 0x76,
+	0xa2, 0xdd, 0x75, 0xe6, 0x2e, 0xc9, 0xd9, 0xaf, 0x1b, 0x2e, 0x57, 0xfc, 0x4b, 0x70, 0xba, 0x0a,
+	0x19, 0x9c, 0xc2, 0xe1, 0x92, 0x7f, 0x51, 0x79, 0xa6, 0xca, 0xb2, 0xed, 0xb2, 0xf4, 0xde, 0x9f,
+	0x65, 0xd5, 0x6f, 0xc4, 0x4f, 0xd7, 0x07, 0xcc, 0xc3, 0xfe, 0xf2, 0x81, 0x5d, 0x99, 0x7e, 0x18,
+	0xc3, 0xee, 0x11, 0x19, 0x0d, 0x9e, 0x0c, 0x27, 0xe3, 0xe1, 0xc9, 0x60, 0x74, 0xf2, 0x64, 0x6f,
+	0x03, 0x1f, 0xc0, 0x5e, 0x89, 0xf5, 0x4f, 0x8f, 0xc7, 0x5f, 0x0f, 0x9f, 0x0e, 0x07, 0x7b, 0xe8,
+	0xe8, 0xf4, 0xcf, 0xf3, 0x0e, 0x7a, 0x7b, 0xde, 0x41, 0x7f, 0x9f, 0x77, 0xd0, 0xcf, 0x17, 0x9d,
+	0x8d, 0xb7, 0x17, 0x9d, 0x8d, 0xbf, 0x2e, 0x3a, 0x1b, 0xcf, 0xbf, 0x3c, 0x13, 0x76, 0x96, 0x4d,
+	0xbb, 0xb1, 0x4a, 0x1e, 0xa5, 0x5a, 0xb1, 0x2c, 0xb6, 0x26, 0x16, 0x2b, 0x7f, 0xf2, 0xd7, 0xb5,
+	0xb5, 0x7d, 0x93, 0x72, 0x33, 0x6d, 0xb9, 0xbf, 0xfa, 0x17, 0xff, 0x06, 0x00, 0x00, 0xff, 0xff,
+	0xd5, 0x96, 0x6a, 0x7c, 0xf9, 0x07, 0x00, 0x00,
 }
 
 func (m *BridgeContractAddress) Marshal() (dAtA []byte, err error) {
@@ -832,6 +1012,122 @@ func (m *BridgeWrappedTokenContract) MarshalToSizedBuffer(dAtA []byte) (int, err
 	return len(dAtA) - i, nil
 }
 
+func (m *BridgePendingMintRefund) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *BridgePendingMintRefund) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *BridgePendingMintRefund) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.ChainId) > 0 {
+		i -= len(m.ChainId)
+		copy(dAtA[i:], m.ChainId)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.ChainId)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.DestinationAddress) > 0 {
+		i -= len(m.DestinationAddress)
+		copy(dAtA[i:], m.DestinationAddress)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.DestinationAddress)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.Amount) > 0 {
+		i -= len(m.Amount)
+		copy(dAtA[i:], m.Amount)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.Amount)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.Creator) > 0 {
+		i -= len(m.Creator)
+		copy(dAtA[i:], m.Creator)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.Creator)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.RequestId) > 0 {
+		i -= len(m.RequestId)
+		copy(dAtA[i:], m.RequestId)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.RequestId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *BridgePendingWithdrawalRefund) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *BridgePendingWithdrawalRefund) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *BridgePendingWithdrawalRefund) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.DestinationAddress) > 0 {
+		i -= len(m.DestinationAddress)
+		copy(dAtA[i:], m.DestinationAddress)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.DestinationAddress)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.Amount) > 0 {
+		i -= len(m.Amount)
+		copy(dAtA[i:], m.Amount)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.Amount)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.UserAddress) > 0 {
+		i -= len(m.UserAddress)
+		copy(dAtA[i:], m.UserAddress)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.UserAddress)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.Creator) > 0 {
+		i -= len(m.Creator)
+		copy(dAtA[i:], m.Creator)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.Creator)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.RequestId) > 0 {
+		i -= len(m.RequestId)
+		copy(dAtA[i:], m.RequestId)
+		i = encodeVarintBridge(dAtA, i, uint64(len(m.RequestId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *Bridge) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -852,6 +1148,34 @@ func (m *Bridge) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.PendingWithdrawalRefunds) > 0 {
+		for iNdEx := len(m.PendingWithdrawalRefunds) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.PendingWithdrawalRefunds[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintBridge(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x2a
+		}
+	}
+	if len(m.PendingMintRefunds) > 0 {
+		for iNdEx := len(m.PendingMintRefunds) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.PendingMintRefunds[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintBridge(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x22
+		}
+	}
 	if len(m.TradeApprovedTokens) > 0 {
 		for iNdEx := len(m.TradeApprovedTokens) - 1; iNdEx >= 0; iNdEx-- {
 			{
@@ -1051,6 +1375,64 @@ func (m *BridgeWrappedTokenContract) Size() (n int) {
 	return n
 }
 
+func (m *BridgePendingMintRefund) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.RequestId)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.Creator)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.Amount)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.DestinationAddress)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.ChainId)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	return n
+}
+
+func (m *BridgePendingWithdrawalRefund) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.RequestId)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.Creator)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.UserAddress)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.Amount)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	l = len(m.DestinationAddress)
+	if l > 0 {
+		n += 1 + l + sovBridge(uint64(l))
+	}
+	return n
+}
+
 func (m *Bridge) Size() (n int) {
 	if m == nil {
 		return 0
@@ -1071,6 +1453,18 @@ func (m *Bridge) Size() (n int) {
 	}
 	if len(m.TradeApprovedTokens) > 0 {
 		for _, e := range m.TradeApprovedTokens {
+			l = e.Size()
+			n += 1 + l + sovBridge(uint64(l))
+		}
+	}
+	if len(m.PendingMintRefunds) > 0 {
+		for _, e := range m.PendingMintRefunds {
+			l = e.Size()
+			n += 1 + l + sovBridge(uint64(l))
+		}
+	}
+	if len(m.PendingWithdrawalRefunds) > 0 {
+		for _, e := range m.PendingWithdrawalRefunds {
 			l = e.Size()
 			n += 1 + l + sovBridge(uint64(l))
 		}
@@ -2082,6 +2476,426 @@ func (m *BridgeWrappedTokenContract) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *BridgePendingMintRefund) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowBridge
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: BridgePendingMintRefund: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: BridgePendingMintRefund: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RequestId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Creator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Amount = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DestinationAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DestinationAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ChainId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ChainId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipBridge(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *BridgePendingWithdrawalRefund) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowBridge
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: BridgePendingWithdrawalRefund: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: BridgePendingWithdrawalRefund: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RequestId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Creator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UserAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.UserAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Amount = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DestinationAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DestinationAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipBridge(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *Bridge) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -2210,6 +3024,74 @@ func (m *Bridge) Unmarshal(dAtA []byte) error {
 			}
 			m.TradeApprovedTokens = append(m.TradeApprovedTokens, &BridgeTokenReference{})
 			if err := m.TradeApprovedTokens[len(m.TradeApprovedTokens)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PendingMintRefunds", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PendingMintRefunds = append(m.PendingMintRefunds, &BridgePendingMintRefund{})
+			if err := m.PendingMintRefunds[len(m.PendingMintRefunds)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PendingWithdrawalRefunds", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowBridge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthBridge
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthBridge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PendingWithdrawalRefunds = append(m.PendingWithdrawalRefunds, &BridgePendingWithdrawalRefund{})
+			if err := m.PendingWithdrawalRefunds[len(m.PendingWithdrawalRefunds)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

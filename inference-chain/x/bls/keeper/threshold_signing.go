@@ -179,6 +179,26 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 	return &request, nil
 }
 
+func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) error {
+	request, err := k.GetSigningStatus(ctx, requestID)
+	if err != nil {
+		return err
+	}
+
+	if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
+		return fmt.Errorf("cannot cancel completed threshold signing request: %x", requestID)
+	}
+
+	if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED {
+		return nil
+	}
+
+	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
+
+	request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED
+	return k.storeThresholdSigningRequest(ctx, request)
+}
+
 // ListActiveSigningRequests returns all active threshold signing requests for a given epoch
 func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64) ([]*types.ThresholdSigningRequest, error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
@@ -418,6 +438,10 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 
 	// Persist terminal state before event emission
 	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+		return err
+	}
+
+	if err := k.Hooks().AfterThresholdSigningCompleted(ctx, request.RequestId, request.CurrentEpochId); err != nil {
 		return err
 	}
 

@@ -26,6 +26,9 @@ enum ThresholdSigningStatus {
   
   // EXPIRED represents the state when the deadline has passed without sufficient signatures
   THRESHOLD_SIGNING_STATUS_EXPIRED = 5;
+
+  // CANCELLED represents a manually cancelled request that cannot be retried
+  THRESHOLD_SIGNING_STATUS_CANCELLED = 6;
 }
 
 // SigningData represents the data structure for requesting a threshold signature
