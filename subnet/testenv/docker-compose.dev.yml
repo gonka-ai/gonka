@@ -1,0 +1,101 @@
+# Dev overlay for docker-compose.yml — live-reload + remote debugging.
+#
+# Usage (from subnet/testenv/):
+#   make dev-build                   # build the dev image once (or after go.mod changes)
+#   make dev-up                      # start everything with live-reload
+#   make dev-down                    # stop
+#   make dev-logs                    # follow logs
+#
+# Debug ports (on the host):
+#   :2345  →  mock-server  (delve)
+#   :2346  →  participant-0 (delve)
+#
+# Connect via VSCode/Cursor: see .vscode/launch.json at the repo root.
+#
+# How it works:
+#   - The dev image has Go toolchain + air + dlv (no baked binary).
+#   - The repo root is bind-mounted at /workspace inside every container.
+#   - air watches /workspace/subnet/**/*.go, rebuilds on change, restarts the
+#     binary (or delve wrapping the binary for the debug services).
+#   - Participants 1-9 use .air.subnethost.toml (live-reload only, no debugger).
+#   - participant-0 and mock-server use the .debug.toml variants and expose
+#     delve ports so you can set breakpoints from the IDE.
+
+x-subnethost-dev: &subnethost-dev
+  build:
+    context: ../..
+    dockerfile: subnet/testenv/Dockerfile.dev
+  image: subnet-host:dev
+  command: ["-c", "/workspace/subnet/testenv/.air.subnethost.toml"]
+  volumes:
+    - ../..:/workspace
+  restart: "no"
+
+services:
+
+  # ── Mock mainnet gRPC server (debug-capable) ──────────────────────────────
+  mock-server:
+    build:
+      context: ../..
+      dockerfile: subnet/testenv/Dockerfile.dev
+    image: subnet-mockserver:dev
+    command: ["-c", "/workspace/subnet/testenv/.air.mockserver.debug.toml"]
+    volumes:
+      - ../..:/workspace
+    ports:
+      - "2345:2345"    # delve remote debug
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    restart: "no"
+
+  # ── participant-0: debug-capable (delve on host :2346) ────────────────────
+  participant-0:
+    <<: *subnethost-dev
+    command: ["-c", "/workspace/subnet/testenv/.air.subnethost.debug.toml"]
+    ports:
+      - "2346:2345"    # delve remote debug
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+
+  # ── participants 1-9: live-reload only (no debugger overhead) ─────────────
+  participant-1:
+    <<: *subnethost-dev
+
+  participant-2:
+    <<: *subnethost-dev
+
+  participant-3:
+    <<: *subnethost-dev
+
+  participant-4:
+    <<: *subnethost-dev
+
+  participant-5:
+    <<: *subnethost-dev
+
+  participant-6:
+    <<: *subnethost-dev
+
+  participant-7:
+    <<: *subnethost-dev
+
+  participant-8:
+    <<: *subnethost-dev
+
+  participant-9:
+    <<: *subnethost-dev
+
+  # ── subnetctl: live-reload too (same dev image + air) ──────────────────────
+  subnetctl:
+    build:
+      context: ../..
+      dockerfile: subnet/testenv/Dockerfile.dev
+    image: subnet-host:dev
+    command: ["-c", "/workspace/subnet/testenv/.air.subnetctl.toml"]
+    volumes:
+      - ../..:/workspace
+    restart: "no"

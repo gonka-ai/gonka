@@ -1,0 +1,41 @@
+# Multi-stage build for the standalone subnet participant host.
+# Build context must be the repository root (gonka/) so that the replace
+# directive `subnet => ../subnet` resolves correctly.
+#
+# Build from subnet/testenv/:
+#   docker build -f Dockerfile.subnethost -t subnet-host:latest ../../..
+
+# ── stage 1: build ────────────────────────────────────────────────────────────
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+# Copy the two relevant Go modules so the replace directive works.
+COPY subnet/go.mod subnet/go.sum ./subnet/
+COPY subnet/testenv/go.mod subnet/testenv/go.sum ./subnet/testenv/
+
+# Download deps before copying sources (layer-cache friendly).
+WORKDIR /build/subnet/testenv
+RUN go mod download
+
+WORKDIR /build
+# Copy full source for both modules.
+COPY subnet/ ./subnet/
+COPY subnet/testenv/ ./subnet/testenv/
+
+WORKDIR /build/subnet/testenv
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /subnethost ./cmd/subnethost
+
+# ── stage 2: runtime ──────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates wget
+
+COPY --from=builder /subnethost /usr/local/bin/subnethost
+
+EXPOSE 8080
+
+ENTRYPOINT ["subnethost"]

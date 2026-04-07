@@ -1,0 +1,24 @@
+# air config — mockserver live-reload (no debugger attached).
+# Swap for .air.mockserver.debug.toml in docker-compose.dev.yml if you need to
+# step through mock mainnet gRPC handling.
+
+root = "/workspace"
+tmp_dir = "/tmp/air-mockserver"
+
+[build]
+  cmd        = "cd /workspace/subnet/testenv && go build -gcflags='all=-N -l' -o /tmp/air-mockserver/mockserver ./cmd/mockserver"
+  bin        = "/tmp/air-mockserver/mockserver"
+  args_bin   = ["-config", "/app/config.yaml"]
+  include_ext   = ["go"]
+  include_dir   = ["subnet"]
+  exclude_dir   = ["subnet/testenv/bin", "subnet/testenv/mockchain", "vendor"]
+  delay         = 500
+  send_interrupt = true
+  kill_delay    = "500ms"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

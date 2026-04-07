@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Attach to mock-server running under delve inside Docker (make dev-up).
+      // Delve port is mapped to host :2345.
+      "name": "Attach mock-server (Docker)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2345,
+      "showLog": true,
+      "substitutePath": [
+        {
+          "from": "${workspaceFolder}",
+          "to": "/workspace"
+        }
+      ]
+    },
+    {
+      // Attach to participant-0 running under delve inside Docker (make dev-up).
+      // Delve port is mapped to host :2346.
+      "name": "Attach participant-0 (Docker)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2346,
+      "showLog": true,
+      "substitutePath": [
+        {
+          "from": "${workspaceFolder}",
+          "to": "/workspace"
+        }
+      ]
+    }
+  ]
+}

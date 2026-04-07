@@ -1,0 +1,20 @@
+root = "/workspace"
+tmp_dir = "/tmp/air-subnetctl"
+
+[build]
+  cmd        = "cd /workspace/subnet/testenv && go build -o /tmp/air-subnetctl/subnetctl ./cmd/subnetctl"
+  bin        = "/tmp/air-subnetctl/subnetctl"
+  full_bin   = "sh -c 'while true; do /tmp/air-subnetctl/subnetctl -config /app/config.yaml && exit 0; echo \"[air-subnetctl] waiting for mock-server...\"; sleep 1; done'"
+  include_ext = ["go"]
+  include_dir = ["subnet"]
+  exclude_dir = ["subnet/testenv/bin", "subnet/testenv/mockchain", "vendor"]
+  delay       = 500
+  send_interrupt = true
+  kill_delay  = "1s"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

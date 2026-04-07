@@ -1,0 +1,191 @@
+# ════════════════════════════════════════════════════════════════════════════
+# Observability stack — appended by gencompose from observability/compose-fragment.yaml
+# Edit THIS file to change the observability services; re-run `make gen-compose`
+# to regenerate docker-compose.yml.
+#
+# Phase 1: performance metrics  (cAdvisor + Node Exporter → Alloy → VictoriaMetrics)
+# Phase 2: logs                 (Loki ← Alloy loki.source.docker)
+# Phase 3: traces               (Tempo — coming next)
+#
+# IPs: 172.30.0.100-119 reserved for observability services
+# ════════════════════════════════════════════════════════════════════════════
+#
+# NOTE: `services:` here makes this a valid standalone YAML file.
+# gencompose strips this line on append because `services:` is already open
+# in the generated template output.
+services:
+
+  # ── VictoriaMetrics — metrics storage and query engine ────────────────────
+  # UI + remote_write endpoint: http://localhost:8428
+  # Query (MetricsQL): http://localhost:8428/vmui
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.138.0
+    container_name: testenv-victoria-metrics
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=7d"
+      - "--httpListenAddr=:8428"
+      - "--search.maxUniqueTimeseries=1000000"
+    volumes:
+      - victoria-metrics-data:/storage
+    ports:
+      - "8428:8428"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.100
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8428/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── cAdvisor — per-container CPU, memory, network, disk I/O ──────────────
+  # Metrics endpoint (Prometheus): http://localhost:18080/metrics
+  # NOTE: on macOS/Docker Desktop, system mounts reflect the Linux VM — container
+  # metrics (CPU/memory/net per container name) work correctly on all platforms.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: testenv-cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock         # rw required — unix sockets need write to connect
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro  # cAdvisor v0.47+ uses containerd directly
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    command:
+      - "--store_container_labels=false"
+      - "--whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project"
+    ports:
+      - "18080:8080"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.102
+    restart: unless-stopped
+
+  # ── Node Exporter — host / VM hardware and OS metrics ────────────────────
+  # Metrics endpoint (Prometheus): http://localhost:9100/metrics
+  # NOTE: on macOS/Docker Desktop the proc/sys mounts reflect the Linux VM.
+  node-exporter:
+    image: prom/node-exporter:v1.10.2
+    container_name: testenv-node-exporter
+    pid: "host"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    ports:
+      - "9100:9100"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.103
+    restart: unless-stopped
+
+  # ── Loki — log aggregation backend ───────────────────────────────────────
+  # Push endpoint: http://loki:3100/loki/api/v1/push  (from Alloy)
+  # Query UI:      http://localhost:3100              (not exposed by default; use Grafana)
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: testenv-loki
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    command:
+      - "-config.file=/etc/loki/config.yaml"
+    ports:
+      - "3100:3100"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.104
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── Grafana — dashboards (metrics + logs) ────────────────────────────────
+  # UI: http://localhost:3000  (admin / admin — change on first login)
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: testenv-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.105
+    depends_on:
+      victoria-metrics:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── Grafana Alloy — scrapes metrics + tails Docker logs ───────────────────
+  # Alloy UI: http://localhost:12345
+  # Config:   observability/alloy/config.alloy
+  alloy:
+    image: grafana/alloy:v1.15.0
+    container_name: testenv-alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock   # loki.source.docker needs the Docker socket
+    command:
+      - "run"
+      - "/etc/alloy/config.alloy"
+      - "--storage.path=/var/lib/alloy/data"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+    ports:
+      - "12345:12345"    # Alloy UI + self-metrics
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.101
+    depends_on:
+      victoria-metrics:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      cadvisor:
+        condition: service_started
+      node-exporter:
+        condition: service_started
+    restart: unless-stopped
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  victoria-metrics-data:
+    driver: local
+  loki-data:
+    driver: local
+  alloy-data:
+    driver: local
+  grafana-data:
+    driver: local

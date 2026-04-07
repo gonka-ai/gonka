@@ -1,0 +1,94 @@
+escrow_id: "1"
+slots: 16
+amount: 1000000
+token_price: 1
+app_hash: ee2ccc7ffa2a1bf674073e0140b3fc2a03093bf0aa9e124f2b86f7a0897cf14c
+creator_address: gonka1f4unar56gnu4kywl2h62ls9pgasvyk53xnn4lr
+participants:
+    - private_key_hex: 2b67cbaced1fd6fa4a5df8ae638c29c14faba15c4bf3c09cf3520f42783cc678
+      address: gonka13hqq7vmtwje44w9zncuk5smjftrmx3lwcp7qem
+      slot_ids:
+        - 0
+        - 10
+      name: participant-0
+      ip: 172.30.0.10
+      port: 8080
+    - private_key_hex: 90ae51ea3e7fb7af8d9c2b3c982690a05cba270c77b8c5bd0eae475758e3de5f
+      address: gonka1km70vt4scshllhcfam08en9rws89qkjfxcjr3a
+      slot_ids:
+        - 1
+        - 11
+      name: participant-1
+      ip: 172.30.0.11
+      port: 8080
+    - private_key_hex: c8d4b4d97e808c1ffc995384aa1c50ea2b86e2bda28eb23055cd3b2418dfd9ba
+      address: gonka1ct8snujmlqlyzjsrxxu7uaqgwvzrkvnnq7a5py
+      slot_ids:
+        - 2
+        - 12
+      name: participant-2
+      ip: 172.30.0.12
+      port: 8080
+    - private_key_hex: 68e1be2dd4736cc80e72698277d213fd0e68a9d98cde11b143de214c8dfe4e15
+      address: gonka1fy7u9w0e8jm28j6mevfma8zeenqc3gmmsppsfr
+      slot_ids:
+        - 3
+        - 13
+      name: participant-3
+      ip: 172.30.0.13
+      port: 8080
+    - private_key_hex: b5a0d38b45fa0f8c4417a800611f7968fe464704eb35161c745328924ebc1a04
+      address: gonka1c4jfvaet2mjlhf5pkwajruufukl8nknn56vkex
+      slot_ids:
+        - 4
+        - 14
+      name: participant-4
+      ip: 172.30.0.14
+      port: 8080
+    - private_key_hex: cef3cc69222b1e77d1ee9111254d6b76ef758dfa1e1435bdf46981efebbeda28
+      address: gonka16m3jyz0qg7m0wka94ua8yhg747kqdqgyatrvyc
+      slot_ids:
+        - 5
+        - 15
+      name: participant-5
+      ip: 172.30.0.15
+      port: 8080
+    - private_key_hex: be4f3bc0298ca7f1169bb7261248e52cd481a9c39d82f45b61c88d1ecab997c3
+      address: gonka19dmtf7gekqvvlghy92xmuht7dx77kzf0euczqq
+      slot_ids:
+        - 6
+      name: participant-6
+      ip: 172.30.0.16
+      port: 8080
+    - private_key_hex: 7f8485252270db8617f1746ec3a2a256543eb9a69596c2e872d067fe0a1918ee
+      address: gonka1hykd90r6x0y9g3jeqqt70uusnrvx9pm3ahufcd
+      slot_ids:
+        - 7
+      name: participant-7
+      ip: 172.30.0.17
+      port: 8080
+    - private_key_hex: cfbcf86ffd3fd5a559364535af539cd2ae54349eb8beb55ddf0b4a85060d35a7
+      address: gonka1m3ekepemz0vtzm0sp6d76mctrtd7ghccvytml4
+      slot_ids:
+        - 8
+      name: participant-8
+      ip: 172.30.0.18
+      port: 8080
+    - private_key_hex: 6c134981804745364ade5abf91a3e35acc49316b592636107ef61b83198f71ef
+      address: gonka1zp9cmj77xpmkcf8wrar0vrq73kcqshshufs8yd
+      slot_ids:
+        - 9
+      name: participant-9
+      ip: 172.30.0.19
+      port: 8080
+network:
+    subnet: 172.30.0.0/24
+    base_ip: 172.30.0
+mock_server:
+    port: 9090
+    ip: 172.30.0.2
+    name: mock-server
+user:
+    private_key_hex: 4711a880f4459ca1a0b6f337417353d30ab393ad8c667d4f2d6139f2f3f82f51
+    address: gonka1f4unar56gnu4kywl2h62ls9pgasvyk53xnn4lr
+    port: 8081

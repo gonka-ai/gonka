@@ -1,0 +1,26 @@
+# air config — mockserver live-reload + delve remote debugger.
+# Used by mock-server in docker-compose.dev.yml.
+# Delve listens on :2345 inside the container (mapped to host :2345).
+#
+# Connect via VSCode / Cursor: .vscode/launch.json → "Attach mock-server"
+
+root = "/workspace"
+tmp_dir = "/tmp/air-mockserver"
+
+[build]
+  cmd      = "cd /workspace/subnet/testenv && go build -gcflags='all=-N -l' -o /tmp/air-mockserver/mockserver ./cmd/mockserver"
+  bin      = "/tmp/air-mockserver/mockserver"
+  full_bin = "dlv exec --headless --continue --listen=:2345 --api-version=2 --accept-multiclient /tmp/air-mockserver/mockserver -- -config /app/config.yaml"
+  include_ext   = ["go"]
+  include_dir   = ["subnet"]
+  exclude_dir   = ["subnet/testenv/bin", "subnet/testenv/mockchain", "vendor"]
+  delay         = 500
+  send_interrupt = true
+  kill_delay    = "1s"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,6 +25,11 @@ import (
 )
 
 const contextKeySender = "subnet_sender"
+const traceLevel = slog.Level(-8)
+
+func trace(msg string, keyvals ...any) {
+	slog.Log(context.Background(), traceLevel, msg, keyvals...)
+}
 
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
@@ -131,12 +137,35 @@ func writeJSON(c echo.Context, code int, v interface{}) error {
 // or a verified warm key for any group member.
 func (s *Server) isAllowedSender(addr string) bool {
 	if s.userAddr != "" && addr == s.userAddr {
+		trace("auth sender allowed as owner",
+			"subsystem", "transport",
+			"sender_addr", addr,
+			"user_addr", s.userAddr,
+		)
 		return true
 	}
 	if s.host.IsGroupMemberAddr(addr) {
+		trace("auth sender allowed as group member",
+			"subsystem", "transport",
+			"sender_addr", addr,
+			"user_addr", s.userAddr,
+		)
 		return true
 	}
-	return s.isWarmKeySender(addr)
+	if s.isWarmKeySender(addr) {
+		trace("auth sender allowed as warm key",
+			"subsystem", "transport",
+			"sender_addr", addr,
+			"user_addr", s.userAddr,
+		)
+		return true
+	}
+	logging.Warn("auth sender rejected",
+		"subsystem", "transport",
+		"sender_addr", addr,
+		"user_addr", s.userAddr,
+	)
+	return false
 }
 
 // isWarmKeySender checks if addr is a known warm key (from state) or can be
@@ -220,6 +249,12 @@ func (s *Server) AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 		}
+		trace("auth sender recovered",
+			"subsystem", "transport",
+			"sender_addr", addr,
+			"user_addr", s.userAddr,
+			"path", c.Request().URL.Path,
+		)
 
 		if !s.isAllowedSender(addr) {
 			return echo.NewHTTPError(http.StatusForbidden, "sender not in group")

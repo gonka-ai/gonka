@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package mockchain;
+
+option go_package = "subnet/testenv/mockchain";
+
+// MockQuery serves read queries used by participants to bootstrap from the mock mainnet.
+service MockQuery {
+  rpc GetEscrow(GetEscrowRequest) returns (GetEscrowResponse);
+  rpc GetParticipant(GetParticipantRequest) returns (GetParticipantResponse);
+  rpc GetGrantees(GetGranteesRequest) returns (GetGranteesResponse);
+}
+
+// MockTx handles state-changing calls (escrow lifecycle).
+service MockTx {
+  rpc CreateEscrow(CreateEscrowRequest) returns (CreateEscrowResponse);
+  rpc SettleEscrow(SettleEscrowRequest) returns (SettleEscrowResponse);
+}
+
+// ── Query messages ────────────────────────────────────────────────────────────
+
+message GetEscrowRequest {
+  string escrow_id = 1;
+}
+
+message GetEscrowResponse {
+  string escrow_id       = 1;
+  uint64 amount          = 2;
+  string creator_address = 3;
+  bytes  app_hash        = 4;
+  repeated string slots  = 5;
+  uint64 token_price     = 6;
+}
+
+message GetParticipantRequest {
+  string address = 1;
+}
+
+message GetParticipantResponse {
+  string address = 1;
+  string url     = 2;
+}
+
+message GetGranteesRequest {
+  string validator_address = 1;
+  string message_type      = 2;
+}
+
+message GetGranteesResponse {
+  repeated string addresses = 1;
+}
+
+// ── Tx messages ───────────────────────────────────────────────────────────────
+
+// CreateEscrowRequest triggers creation of the pre-configured escrow.
+message CreateEscrowRequest {}
+
+message CreateEscrowResponse {
+  string escrow_id = 1;
+}
+
+// HostStats carries per-slot accounting for settlement verification.
+message HostStats {
+  uint32 slot_id               = 1;
+  uint32 missed                = 2;
+  uint32 invalid               = 3;
+  uint64 cost                  = 4;
+  uint32 required_validations  = 5;
+  uint32 completed_validations = 6;
+}
+
+// SlotSignature pairs a slot ID with the host's signature over the state root.
+message SlotSignature {
+  uint32 slot_id   = 1;
+  bytes  signature = 2;
+}
+
+message SettleEscrowRequest {
+  string              escrow_id  = 1;
+  bytes               state_root = 2;
+  uint64              nonce      = 3;
+  bytes               rest_hash  = 4;
+  repeated HostStats  host_stats = 5;
+  repeated SlotSignature signatures = 6;
+}
+
+message SettleEscrowResponse {
+  bool   ok      = 1;
+  string message = 2;
+}

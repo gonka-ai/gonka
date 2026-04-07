@@ -1,0 +1,28 @@
+# air config — subnethost live-reload + delve remote debugger.
+# Used by participant-0 in docker-compose.dev.yml.
+# Delve listens on :2345 inside the container (mapped to host :2346).
+#
+# Connect via VSCode / Cursor: .vscode/launch.json → "Attach participant-0"
+# On each file save, air kills delve+binary, rebuilds, restarts delve.
+# The IDE will lose the connection — reconnect manually or enable auto-reconnect.
+
+root = "/workspace"
+tmp_dir = "/tmp/air-subnethost"
+
+[build]
+  cmd      = "cd /workspace/subnet/testenv && go build -gcflags='all=-N -l' -o /tmp/air-subnethost/subnethost ./cmd/subnethost"
+  bin      = "/tmp/air-subnethost/subnethost"
+  full_bin = "sh -c 'while true; do dlv exec --headless --continue --listen=:2345 --api-version=2 --accept-multiclient /tmp/air-subnethost/subnethost && exit 0; echo \"[air-subnethost-debug] waiting for mock-server...\"; sleep 1; done'"
+  include_ext   = ["go"]
+  include_dir   = ["subnet"]
+  exclude_dir   = ["subnet/testenv/bin", "subnet/testenv/mockchain", "vendor"]
+  delay         = 500
+  send_interrupt = true
+  kill_delay    = "1s"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

@@ -189,6 +189,30 @@ func WithGossip(g *gossip.Gossip) HostOption {
 	return func(h *Host) { h.gsp = g }
 }
 
+// CreateGossip constructs a Gossip instance wired to this host and stores it
+// internally so that seed-reveal eager-broadcasts (h.gsp) work correctly.
+//
+// It automatically supplies:
+//   - the host's escrow ID and primary (lowest) slot ID as gossip identity
+//   - the host's mempool as the MempoolSink
+//   - the host itself as SigAccumulator (always required)
+//
+// Additional options are appended after the mandatory SigAccumulator, so
+// callers only need to supply optional extras such as gossip.WithRecovery:
+//
+//	g := h.CreateGossip(peers, gossip.WithRecovery(fetcher, h))
+//
+// The returned *gossip.Gossip still needs to be passed to transport.Server.SetGossip
+// and started with g.Start(ctx).
+func (h *Host) CreateGossip(peers []gossip.PeerClient, opts ...gossip.GossipOption) *gossip.Gossip {
+	all := append([]gossip.GossipOption{gossip.WithSigAccumulator(h)}, opts...)
+	g := gossip.NewGossip(h.escrowID, h.sortedSlots[0], peers, h.mempool, all...)
+	h.mu.Lock()
+	h.gsp = g
+	h.mu.Unlock()
+	return g
+}
+
 // WithValidator sets the validation engine for validating other hosts' inferences.
 func WithValidator(v subnet.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }

@@ -1,0 +1,26 @@
+# Dev image: Go toolchain + air (live-reload) + delve (remote debugger).
+# No binary is baked in — source is bind-mounted at runtime via docker-compose.dev.yml.
+# Build context must be the repository root (gonka/) so the replace directive resolves.
+#
+# Build with:
+#   docker build -f subnet/testenv/Dockerfile.dev -t subnet-dev:latest .   (from repo root)
+# Or via Makefile:
+#   make dev-build
+
+FROM golang:1.25-alpine
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Install air (live-reload) and delve (remote debugger)
+RUN go install github.com/air-verse/air@latest \
+ && go install github.com/go-delve/delve/cmd/dlv@latest
+
+WORKDIR /workspace/subnet/testenv
+
+# Pre-warm the module cache. Source will be bind-mounted at /workspace at runtime.
+COPY subnet/go.mod subnet/go.sum /workspace/subnet/
+COPY subnet/testenv/go.mod subnet/testenv/go.sum /workspace/subnet/testenv/
+RUN go mod download
+
+# air -c <config> is passed as CMD from docker-compose.dev.yml
+ENTRYPOINT ["air"]

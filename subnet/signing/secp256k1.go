@@ -37,6 +37,18 @@ func (s *Secp256k1Signer) Address() string {
 	return s.address
 }
 
+func (s *Secp256k1Signer) PublicKeyBytes() []byte {
+	return crypto.FromECDSAPub(&s.key.PublicKey)
+}
+
+// Key returns the underlying ECDSA private key. Useful for serialization.
+func (s *Secp256k1Signer) Key() *ecdsa.PrivateKey { return s.key }
+
+// PrivateKeyHex returns the private key as a lowercase hex string (no 0x prefix).
+func (s *Secp256k1Signer) PrivateKeyHex() string {
+	return fmt.Sprintf("%x", crypto.FromECDSA(s.key))
+}
+
 // Secp256k1Verifier recovers addresses from secp256k1 signatures.
 type Secp256k1Verifier struct{}
 
@@ -54,10 +66,6 @@ func (v *Secp256k1Verifier) RecoverAddress(message []byte, sig []byte) (string, 
 		return "", fmt.Errorf("ecrecover failed: %w", err)
 	}
 	return addressFromUncompressedPubkey(pubkey)
-}
-
-func (s *Secp256k1Signer) PublicKeyBytes() []byte {
-	return crypto.FromECDSAPub(&s.key.PublicKey)
 }
 
 func GenerateKey() (*Secp256k1Signer, error) {

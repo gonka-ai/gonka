@@ -1,0 +1,27 @@
+# air config — subnethost live-reload (no debugger attached).
+# Used by participants 1-9 in docker-compose.dev.yml.
+# For participant-0 debugging use .air.subnethost.debug.toml instead.
+#
+# Watches all .go files under /workspace/subnet/ (covers both the subnet
+# library module and the testenv module in the same pass).
+
+root = "/workspace"
+tmp_dir = "/tmp/air-subnethost"
+
+[build]
+  cmd        = "cd /workspace/subnet/testenv && go build -gcflags='all=-N -l' -o /tmp/air-subnethost/subnethost ./cmd/subnethost"
+  bin        = "/tmp/air-subnethost/subnethost"
+  full_bin   = "sh -c 'while true; do /tmp/air-subnethost/subnethost && exit 0; echo \"[air-subnethost] waiting for mock-server...\"; sleep 1; done'"
+  include_ext   = ["go"]
+  include_dir   = ["subnet"]
+  exclude_dir   = ["subnet/testenv/bin", "subnet/testenv/mockchain", "vendor"]
+  delay         = 500
+  send_interrupt = true
+  kill_delay    = "500ms"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

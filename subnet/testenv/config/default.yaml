@@ -1,0 +1,42 @@
+# Subnet testenv default configuration.
+# Run `make gen-compose` to derive private keys, addresses, slot assignments,
+# and produce a ready-to-use docker-compose.yml from this file.
+
+escrow_id: "1"
+# Optional. Mock GetEscrow CreatorAddress. Leave empty to use user.address (recommended).
+# Set to another gonka1… address to test creator/operator mismatch (expect 403 from hosts).
+creator_address: ""
+slots: 16
+amount: 1000000
+token_price: 1
+# app_hash defaults to sha256("testenv") when left empty
+app_hash: ""
+
+# 10 participants; private_key_hex filled in by gencompose
+participants:
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+  - {}
+
+network:
+  subnet: "172.30.0.0/24"
+  base_ip: "172.30.0"
+
+mock_server:
+  port: 9090
+  ip: "172.30.0.2"
+  name: "mock-server"
+
+# Subnetctl operator (signs requests to participants). Must match creator_address
+# in GetEscrow for inference to succeed (or leave creator_address empty so both use this address).
+user:
+  private_key_hex: ""
+  address: ""
+  port: 8081
