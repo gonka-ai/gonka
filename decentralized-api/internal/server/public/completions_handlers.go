@@ -12,45 +12,6 @@ import (
 
 const completionsPath = "/v1/completions"
 
-func transformCompletionsToChatRequest(req *CompletionsRequest) map[string]interface{} {
-	chatReq := map[string]interface{}{
-		"model": req.Model,
-		"messages": []map[string]string{
-			{"role": "user", "content": req.Prompt.First()},
-		},
-	}
-
-	if req.MaxTokens != nil {
-		chatReq["max_tokens"] = *req.MaxTokens
-	}
-	if req.Temperature != nil {
-		chatReq["temperature"] = *req.Temperature
-	}
-	if req.TopP != nil {
-		chatReq["top_p"] = *req.TopP
-	}
-	if req.TopK != nil {
-		chatReq["top_k"] = *req.TopK
-	}
-	if req.FrequencyPenalty != nil {
-		chatReq["frequency_penalty"] = *req.FrequencyPenalty
-	}
-	if req.PresencePenalty != nil {
-		chatReq["presence_penalty"] = *req.PresencePenalty
-	}
-	if req.Stream {
-		chatReq["stream"] = req.Stream
-	}
-	if len(req.Stop) > 0 {
-		chatReq["stop"] = req.Stop
-	}
-	if req.Seed != nil {
-		chatReq["seed"] = *req.Seed
-	}
-
-	return chatReq
-}
-
 func (s *Server) postCompletions(ctx echo.Context) error {
 	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
 	if err != nil {
@@ -117,72 +78,4 @@ func tryBuildOpenAiRequestFromCompletionsBody(body []byte) (OpenAiRequest, bool)
 			Content: MessageContent{Text: &promptText},
 		}},
 	}, true
-}
-
-func transformChatChunkToCompletionChunk(chatChunkJSON string) (string, error) {
-	var chatChunk ChatCompletionChunk
-	if err := json.Unmarshal([]byte(chatChunkJSON), &chatChunk); err != nil {
-		return "", err
-	}
-
-	completionChunk := CompletionChunk{
-		ID:      chatChunk.ID,
-		Object:  "text_completion",
-		Created: chatChunk.Created,
-		Model:   chatChunk.Model,
-		Usage:   chatChunk.Usage,
-		Choices: make([]struct {
-			Text         string  `json:"text"`
-			Index        int     `json:"index"`
-			Logprobs     *int    `json:"logprobs"`
-			FinishReason *string `json:"finish_reason"`
-		}, 0),
-	}
-
-	for _, c := range chatChunk.Choices {
-		completionChunk.Choices = append(completionChunk.Choices, struct {
-			Text         string  `json:"text"`
-			Index        int     `json:"index"`
-			Logprobs     *int    `json:"logprobs"`
-			FinishReason *string `json:"finish_reason"`
-		}{
-			Text:         c.Delta.Content,
-			Index:        c.Index,
-			Logprobs:     nil,
-			FinishReason: c.FinishReason,
-		})
-	}
-
-	result, err := json.Marshal(completionChunk)
-	if err != nil {
-		return "", err
-	}
-
-	return string(result), nil
-}
-
-func transformChatToCompletionResponse(chatResponseBody []byte) (*CompletionResponse, error) {
-	var chatResp ChatCompletionResponse
-	if err := json.Unmarshal(chatResponseBody, &chatResp); err != nil {
-		return nil, err
-	}
-
-	choices := make([]CompletionChoice, len(chatResp.Choices))
-	for i, c := range chatResp.Choices {
-		choices[i] = CompletionChoice{
-			Text:         c.Message.Content,
-			Index:        c.Index,
-			Logprobs:     nil,
-			FinishReason: c.FinishReason,
-		}
-	}
-
-	return &CompletionResponse{
-		ID:      chatResp.ID,
-		Object:  "text_completion",
-		Created: chatResp.Created,
-		Model:   chatResp.Model,
-		Choices: choices,
-		Usage:   chatResp.Usage,
-	}, nil
 }
