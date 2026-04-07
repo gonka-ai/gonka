@@ -308,6 +308,9 @@ func AcceptedGrpcQueries() wasmkeeper.AcceptedQueries {
 		"/inference.inference.Query/ValidateWrappedTokenForTrade": func() proto.Message {
 			return &inferencetypes.QueryValidateWrappedTokenForTradeResponse{}
 		},
+		"/inference.inference.Query/ValidateIbcTokenForTrade": func() proto.Message {
+			return &inferencetypes.QueryValidateIbcTokenForTradeResponse{}
+		},
 	}
 }
 
@@ -319,6 +322,9 @@ func AcceptedStargateQueries() wasmkeeper.AcceptedQueries {
 		},
 		"/inference.inference.Query/ValidateWrappedTokenForTrade": func() proto.Message {
 			return &inferencetypes.QueryValidateWrappedTokenForTradeResponse{}
+		},
+		"/inference.inference.Query/ValidateIbcTokenForTrade": func() proto.Message {
+			return &inferencetypes.QueryValidateIbcTokenForTradeResponse{}
 		},
 	}
 }

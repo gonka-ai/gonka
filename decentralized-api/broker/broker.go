@@ -507,9 +507,9 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	leastBusyNode := b.getLeastBusyNode(command)
 
 	if leastBusyNode != nil {
-		b.mu.RLock()
+		b.mu.Lock()
 		leastBusyNode.State.LockCount++
-		b.mu.RUnlock()
+		b.mu.Unlock()
 	}
 	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
 	if leastBusyNode == nil {
@@ -595,23 +595,19 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentE
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
-	b.mu.RLock()
+	b.mu.Lock()
 	node, ok := b.nodes[command.NodeId]
-	b.mu.RUnlock()
+	if ok {
+		node.State.LockCount--
+	}
+	b.mu.Unlock()
 
 	if !ok {
 		command.Response <- false
 		return
-	} else {
-		b.mu.RLock()
-		node.State.LockCount--
-		b.mu.RUnlock()
-		if !command.Outcome.IsSuccess() {
-			logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
-			// FIXME: need a write lock here?
-			//  not sure if we should update the state, we have health checks for that
-			// node.State.Failure("Inference failed")
-		}
+	}
+	if !command.Outcome.IsSuccess() {
+		logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
 	}
 	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
 	command.Response <- true

@@ -1,0 +1,46 @@
+syntax = "proto3";
+package subnet.v1;
+option go_package = "subnet/types";
+
+// Deterministic serialization for state hash computation.
+// Not the runtime state representation (that's domain types in Go).
+// FROZEN: field numbers and types must not change. Must produce identical
+// serialization as chain-side inference/inference/subnet_settlement.proto.
+// See chain-side TestComputeSubnetHostStatsHash_GoldenValue for validation.
+
+message HostStatsProto {
+  uint32 slot_id = 1;
+  uint32 missed = 2;
+  uint32 invalid = 3;
+  uint64 cost = 4;
+  uint32 required_validations = 5;
+  uint32 completed_validations = 6;
+}
+
+message HostStatsMapProto {
+  repeated HostStatsProto entries = 1;
+}
+
+message InferenceRecordProto {
+  uint64 inference_id = 1;
+  uint32 status = 2;
+  uint32 executor_slot = 3;
+  string model = 4;
+  bytes  prompt_hash = 5;
+  bytes  response_hash = 6;
+  uint64 input_length = 7;
+  uint64 max_tokens = 8;
+  uint64 input_tokens = 9;
+  uint64 output_tokens = 10;
+  uint64 reserved_cost = 11;
+  uint64 actual_cost = 12;
+  int64  started_at = 13;
+  int64  confirmed_at = 14;
+  uint32 votes_valid = 15;
+  uint32 votes_invalid = 16;
+  bytes  validated_by = 17;
+}
+
+message InferencesMapProto {
+  repeated InferenceRecordProto entries = 1;
+}

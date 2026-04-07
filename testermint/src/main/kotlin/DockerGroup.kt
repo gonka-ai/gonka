@@ -171,15 +171,19 @@ data class DockerGroup(
             val containers = getRawContainers(config)
             val node =
                 containers.getCli(this.pairName) ?: error("Could not find node container for keyName=${this.pairName}")
-            val validatorKey = (1..5).fold<Int, String?>(null) { acc, _ ->
-                acc ?: try {
-                    node.getValidatorInfo().key
-                } catch (e: com.google.gson.JsonSyntaxException) {
+            val validatorDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos()
+            var validatorKey: String? = null
+            while (validatorKey == null) {
+                try {
+                    validatorKey = node.getValidatorInfo().key
+                } catch (e: Exception) {
                     Logger.warn("Validator key not yet available, waiting 5 seconds and trying again", "")
+                    if (System.nanoTime() >= validatorDeadline) {
+                        throw IllegalStateException("Failed to get validator info within 90 seconds", e)
+                    }
                     Thread.sleep(Duration.ofSeconds(5))
-                    null
                 }
-            } ?: throw IllegalStateException("Failed to get validator info after 3 attempts")
+            }
             node.registerNewParticipant(
                 publicUrl,
                 accountPubKey,
@@ -243,6 +247,7 @@ data class DockerGroup(
             put("DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE", "1")
             put("DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_TIMEOUT_SECONDS", "1")
             put("DAPI_TX_BATCHING__POC_COMMIT_INTERVAL_SECONDS", "1")
+            put("DAPI_STATS_FILE_STORAGE_ENABLED", "true")
             put("NODE_CONFIG_PATH", "/root/node_config.json")
             put("NODE_CONFIG", nodeConfigFile)
             put("PUBLIC_URL", publicUrl)
@@ -260,6 +265,7 @@ data class DockerGroup(
             put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
             put("SNAPSHOT_INTERVAL", "100")
             put("SNAPSHOT_KEEP_RECENT", "5")
+            put("REST_API_ACTIVE", "true")
             put("P2P_EXTERNAL_ADDRESS", p2pExternalAddress)
 
             genesisGroup?.let {
@@ -427,8 +433,29 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         Logger.info("Initializing cluster with {} nodes", allGroups.size)
         allGroups.forEach { it.tearDownExisting() }
         genesisGroup.init()
-        // TODO: can we wait here by querying the genesis API?
         Thread.sleep(Duration.ofSeconds(30L))
+        val genesisNode = getRawContainers(config).getCli(genesisGroup.pairName)
+            ?: error("Could not find node container for keyName=${genesisGroup.pairName}")
+        Logger.info("Waiting for genesis RPC readiness", "")
+        val readinessDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos()
+        while (true) {
+            try {
+                if (genesisNode.getStatus().syncInfo.latestBlockHeight >= 1) {
+                    break
+                }
+            } catch (e: Exception) {
+                Logger.debug("Genesis RPC not ready yet: ${e.message}", "")
+            }
+            if (System.nanoTime() >= readinessDeadline) {
+                error("Genesis RPC did not become ready within 90 seconds")
+            }
+            Thread.sleep(1000)
+        }
+        val genesisPair = getLocalInferencePairs(config)
+            .firstOrNull { it.name == genesisGroup.pairName || it.name == "/${genesisGroup.pairName}" }
+            ?: error("Could not find local inference pair for keyName=${genesisGroup.pairName}")
+        Logger.info("Waiting for genesis API and ML nodes readiness", "")
+        genesisPair.waitForMlNodesToLoad(maxWaitAttempts = 18)
         joinGroups.forEach { it.init() }
         return allGroups
     } finally {

@@ -142,6 +142,12 @@ func (m *MockClient) GetInferenceHealthCalled() int {
 	return m.InferenceHealthCalled
 }
 
+func (m *MockClient) GetInitGenerateV2Called() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InitGenerateV2Called
+}
+
 func (m *MockClient) Reset() {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
@@ -518,6 +524,19 @@ func getModelKey(model Model) string {
 		return model.HfRepo + ":" + *model.HfCommit
 	}
 	return model.HfRepo + ":latest"
+}
+
+// Getter methods for thread-safe access
+func (m *MockClient) GetInitGenerateCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InitGenerateV1Called
+}
+
+func (m *MockClient) GetInitValidateCalled() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.InitValidateCalled
 }
 
 // PoC v2 mock methods

@@ -10,23 +10,17 @@ import (
 
 // SetInference set a specific inference in the store from its index
 func (k Keeper) SetInference(ctx context.Context, inference types.Inference) error {
-	// store via collections
 	k.addInferenceToPruningList(ctx, inference)
-	if err := k.Inferences.Set(ctx, inference.Index, inference); err != nil {
-		return err
-	}
-
-	err := k.SetDeveloperStats(ctx, inference)
-	if err != nil {
-		k.LogError("error setting developer stat", types.Stat, "err", err)
-	} else {
-		k.LogInfo("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
-	}
-	return nil
+	return k.setInferenceValue(ctx, inference)
 }
 
-func (k Keeper) SetInferenceWithoutDevStatComputation(ctx context.Context, inference types.Inference) error {
-	k.addInferenceToPruningList(ctx, inference)
+// SetInferenceWithoutPruning writes inference state without touching pruning index.
+// Useful when updating an already-indexed inference in hot paths.
+func (k Keeper) SetInferenceWithoutPruning(ctx context.Context, inference types.Inference) error {
+	return k.setInferenceValue(ctx, inference)
+}
+
+func (k Keeper) setInferenceValue(ctx context.Context, inference types.Inference) error {
 	return k.Inferences.Set(ctx, inference.Index, inference)
 }
 

@@ -35,4 +35,7 @@ pub enum ContractError {
 
     #[error("No tokens to purchase")]
     NoTokensToPurchase {},
+
+    #[error("Funds missing: expected exactly one coin in funds")]
+    FundsMissing {},
 } 

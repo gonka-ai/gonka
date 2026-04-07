@@ -5,7 +5,8 @@ from pydantic import (
 from typing import (
     List,
     Dict,
-    Union
+    Optional,
+    Union,
 )
 import pandas as pd
 
@@ -32,10 +33,18 @@ class RequestParams(BaseModel):
     seed: int
     additional_params: Dict[str, Union[str, int, float]] = Field(default_factory=dict)
     top_logprobs: int = 3
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    timeout_seconds: int = 300
+    retries_max_attempts: int = 3
+    retry_backoff_seconds_start: float = 1.0
+    retry_backoff_multiplier: float = 2.0
 
 
 class ValidationItem(BaseModel):
     prompt: str
+    language: Optional[str] = None
     inference_result: Result
     validation_result: Result
     inference_model: ModelInfo
@@ -48,13 +57,16 @@ class ValidationItem(BaseModel):
 
 class ExperimentRequest(BaseModel):
     prompt: str
+    language: Optional[str] = None
     inference_model: ModelInfo
     validation_model: ModelInfo
     request_params: RequestParams
+    output_path: Optional[str] = None
 
     def to_result(self, inference_result: Result, validation_result: Result) -> ValidationItem:
         return ValidationItem(
             prompt=self.prompt,
+            language=self.language,
             inference_result=inference_result,
             validation_result=validation_result,
             inference_model=self.inference_model,

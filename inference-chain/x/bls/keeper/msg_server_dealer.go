@@ -51,9 +51,10 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("expected encrypted shares for %d participants, got %d", len(epochBLSData.Participants), len(msg.EncryptedSharesForParticipants))
 	}
 
-	// Commitments must be non-empty (at least C_0) or later group public key computation can degenerate.
-	if len(msg.Commitments) == 0 {
-		return nil, fmt.Errorf("commitments must be non-empty")
+	// Enforce fixed polynomial degree: commitments must contain exactly t+1 coefficients.
+	expectedCommitmentsCount := int(epochBLSData.TSlotsDegree) + 1
+	if len(msg.Commitments) != expectedCommitmentsCount {
+		return nil, fmt.Errorf("expected %d commitments (t_slots_degree + 1), got %d", expectedCommitmentsCount, len(msg.Commitments))
 	}
 
 	// Create dealer part storage
